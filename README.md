@@ -58,13 +58,30 @@ Claude’s code context is powerful, but sending your code to the cloud costs to
 
 ## Requirements
 
-- Python 3.12+
+- Python 3.11+ (tested with Python 3.11+)
 - Disk: 1–2 GB free (model + caches + index)
 - Optional: NVIDIA GPU (CUDA 11/12) for FAISS acceleration; Apple Silicon (MPS) for embedding acceleration. These also speed up running the embedding model with SentenceTransformer, but everything still works on CPU.
 
 ## Install & Update
 
-### Install (one‑liner)
+### Windows Installation (Recommended)
+
+```powershell
+# 1. Clone the repository
+git clone https://github.com/yourusername/claude-context-mcp.git
+cd claude-context-mcp
+
+# 2. Run the automated Windows installer
+.\scripts\powershell\install-windows.ps1
+
+# 3. Install PyTorch with CUDA using UV (recommended)
+.\scripts\batch\install_pytorch_cuda.bat
+
+# 4. Configure Claude Code MCP integration (cross-directory compatible by default)
+.\scripts\powershell\configure_claude_code.ps1 -Global
+```
+
+### Install (Unix/Linux one‑liner)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/FarhanAliRaza/claude-context-local/main/scripts/install.sh | bash
@@ -100,6 +117,48 @@ The installer will:
 - Tries to install `faiss-gpu` if an NVIDIA GPU is detected (interactive mode only)
 - **Preserves all your indexed projects and embeddings** across updates
 
+### Windows Installation
+
+For Windows users:
+
+```powershell
+# 1. Clone the repository
+git clone https://github.com/FarhanAliRaza/claude-context-local.git
+cd claude-context-local
+
+# 2. Run the automated Windows installer
+.\scripts\powershell\install-windows.ps1
+
+# 3. Install PyTorch with CUDA using UV (recommended)
+.\scripts\batch\install_pytorch_cuda.bat
+
+# 4. Configure Claude Code MCP integration (cross-directory compatible by default)
+.\scripts\powershell\configure_claude_code.ps1 -Global
+```
+
+**Windows Requirements:**
+
+- Python 3.11+ (tested with Python 3.11.1)
+- Windows 10/11
+- CUDA 12.1 for GPU acceleration (optional)
+- UV package manager (automatically installed)
+
+**Why use UV on Windows:**
+
+- Superior dependency resolution for PyTorch + CUDA
+- Handles complex version conflicts automatically
+- Faster and more reliable than pip for ML packages
+
+**Cross-Directory Compatibility:**
+- Works from any directory - VS Code, different project folders, command prompt
+- Automatic wrapper script ensures correct working directory
+- No path dependencies - launch Claude Code from anywhere and MCP tools work perfectly
+
+**Additional Tools Available:**
+- `tools/index_project.py` - Interactive project indexer for any codebase
+- `tools/search_helper.py` - Standalone semantic search interface
+- `start_mcp_server.bat` - Main launcher with integrated tools (Advanced Tools menu)
+
 ## Quick Start
 
 ### 1) Register the MCP server (stdio)
@@ -108,7 +167,20 @@ The installer will:
 claude mcp add code-search --scope user -- uv run --directory ~/.local/share/claude-context-local python mcp_server/server.py
 ```
 
-Then open Claude Code; the server will run in stdio mode inside the `uv` environment.
+**Windows Configuration Options:**
+
+```powershell
+# Default: Wrapper script (cross-directory compatible)
+.\scripts\powershell\configure_claude_code.ps1 -Global
+
+# Explicit wrapper method
+.\scripts\powershell\configure_claude_code.ps1 -UseWrapper -Global
+
+# Direct Python method (requires working directory)
+.\scripts\powershell\configure_claude_code.ps1 -DirectPython -Global
+```
+
+Then open Claude Code; the server will run in stdio mode inside the appropriate environment.
 
 ### 2) Index your codebase
 
@@ -168,10 +240,12 @@ graph TD
 The system uses advanced parsing to create semantically meaningful chunks across all supported languages:
 
 ### Chunking Strategies
+
 - **Python**: AST-based parsing for rich metadata extraction
 - **All other languages**: Tree-sitter parsing with language-specific node type recognition
 
 ### Chunk Types Extracted
+
 - **Functions/Methods**: Complete with signatures, docstrings, decorators
 - **Classes/Structs**: Full definitions with member functions as separate chunks
 - **Interfaces/Traits**: Type definitions and contracts
@@ -180,6 +254,7 @@ The system uses advanced parsing to create semantically meaningful chunks across
 - **Templates/Generics**: Parameterized type definitions
 
 ### Rich Metadata for All Languages
+
 - File path and folder structure
 - Function/class/type names and relationships
 - Language-specific features (async, generics, modifiers, etc.)
@@ -213,7 +288,7 @@ accepting terms and/or authentication to download.
 
 1. Visit the model page and accept any terms:
 
-   - https://huggingface.co/google/embeddinggemma-300m
+   - <https://huggingface.co/google/embeddinggemma-300m>
 
 2. Authenticate one of the following ways:
 
@@ -225,6 +300,7 @@ accepting terms and/or authentication to download.
      ```
 
    - Environment variable:
+
      ```bash
      export HUGGING_FACE_HUB_TOKEN=hf_XXXXXXXXXXXXXXXXXXXXXXXX
      ```

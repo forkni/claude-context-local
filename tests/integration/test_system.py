@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """Test the core functionality without dependencies that might not be installed yet."""
 
+import os
 import sys
 import tempfile
-import os
 from pathlib import Path
 
 # Add the package to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+
 def test_chunking():
     """Test AST-based chunking."""
     print("Testing AST-based chunking...")
-    
+
     from chunking.multi_language_chunker import MultiLanguageChunker
-    
+
     # Create a more complex test Python file
     test_code = '''
 import os
@@ -90,50 +91,51 @@ def get_user_profile(user_id: int) -> Dict:
     
     return profiles[0]
 '''
-    
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
         f.write(test_code)
         f.flush()
-        
+
         # Test chunking
         chunker = MultiLanguageChunker(os.path.dirname(f.name))
         chunks = chunker.chunk_file(f.name)
-        
-        print(f"\n✅ Generated {len(chunks)} chunks from test file:")
-        
+
+        print(f"\n[OK] Generated {len(chunks)} chunks from test file:")
+
         for i, chunk in enumerate(chunks, 1):
             print(f"\n{i}. {chunk.chunk_type.upper()}: {chunk.name or 'unnamed'}")
-            print(f"   📍 Lines: {chunk.start_line}-{chunk.end_line}")
-            print(f"   🏷️  Tags: {chunk.tags}")
-            print(f"   📄 Docstring: {'✅' if chunk.docstring else '❌'}")
-            print(f"   🎯 Decorators: {chunk.decorators}")
+            print(f"   [LOC] Lines: {chunk.start_line}-{chunk.end_line}")
+            print(f"   [TAGS] Tags: {chunk.tags}")
+            print(f"   [DOC] Docstring: {'[OK]' if chunk.docstring else '[NONE]'}")
+            print(f"   [DEC] Decorators: {chunk.decorators}")
             if chunk.parent_name:
-                print(f"   👤 Parent: {chunk.parent_name}")
-            
+                print(f"   [PARENT] Parent: {chunk.parent_name}")
+
             # Show content preview
-            content_preview = chunk.content.replace('\n', ' ').strip()
+            content_preview = chunk.content.replace("\n", " ").strip()
             if len(content_preview) > 100:
                 content_preview = content_preview[:100] + "..."
-            print(f"   📝 Preview: {content_preview}")
-        
-        print(f"\n✅ Chunking test completed successfully!")
-        
+            print(f"   [PREVIEW] Preview: {content_preview}")
+
+        print("\n[OK] Chunking test completed successfully!")
+
     os.unlink(f.name)
     return True
 
+
 def test_metadata_richness():
     """Test the richness of metadata extraction."""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Testing metadata extraction richness...")
-    
+
     from chunking.multi_language_chunker import MultiLanguageChunker
-    
+
     # Create a test file in a nested directory structure
     test_dir = tempfile.mkdtemp()
     project_dir = Path(test_dir) / "test_project"
     src_dir = project_dir / "src" / "auth"
     src_dir.mkdir(parents=True)
-    
+
     test_file = src_dir / "user_auth.py"
     test_code = '''
 from typing import Optional
@@ -178,65 +180,83 @@ class UserAuthenticator:
             logger.error(f"Authentication error: {e}")
             raise
 '''
-    
+
     test_file.write_text(test_code)
-    
+
     # Test chunking with the nested structure
     chunker = MultiLanguageChunker(str(project_dir))
     chunks = chunker.chunk_file(str(test_file))
-    
-    print(f"\n✅ Generated {len(chunks)} chunks from nested project structure:")
-    print(f"   📁 Project root: {project_dir}")
-    print(f"   📄 Test file: {test_file.relative_to(project_dir)}")
-    
+
+    print(f"\n[OK] Generated {len(chunks)} chunks from nested project structure:")
+    print(f"   [DIR] Project root: {project_dir}")
+    print(f"   [FILE] Test file: {test_file.relative_to(project_dir)}")
+
     for i, chunk in enumerate(chunks, 1):
         print(f"\n{i}. {chunk.chunk_type.upper()}: {chunk.name or 'unnamed'}")
-        print(f"   📍 Location: {chunk.relative_path}:{chunk.start_line}-{chunk.end_line}")
-        print(f"   📁 Folders: {' → '.join(chunk.folder_structure) if chunk.folder_structure else 'root'}")
-        print(f"   🏷️  Tags: {chunk.tags}")
-        print(f"   📚 Imports: {len(chunk.imports)} import(s)")
-        print(f"   📄 Docstring: {'✅ ' + chunk.docstring[:50] + '...' if chunk.docstring else '❌'}")
-        print(f"   🎯 Decorators: {chunk.decorators if chunk.decorators else 'None'}")
-        print(f"   🧮 Complexity: {chunk.complexity_score}")
-        
+        print(
+            f"   [LOC] Location: {chunk.relative_path}:{chunk.start_line}-{chunk.end_line}"
+        )
+        print(
+            f"   [DIR] Folders: {' -> '.join(chunk.folder_structure) if chunk.folder_structure else 'root'}"
+        )
+        print(f"   [TAGS] Tags: {chunk.tags}")
+        print(f"   [IMPORTS] Imports: {len(chunk.imports)} import(s)")
+        print(
+            f"   [DOC] Docstring: {'[OK] ' + chunk.docstring[:50] + '...' if chunk.docstring else '[NONE]'}"
+        )
+        print(
+            f"   [DEC] Decorators: {chunk.decorators if chunk.decorators else 'None'}"
+        )
+        print(f"   [COMPLEX] Complexity: {chunk.complexity_score}")
+
         if chunk.parent_name:
-            print(f"   👤 Parent class: {chunk.parent_name}")
-    
+            print(f"   [PARENT] Parent class: {chunk.parent_name}")
+
     # Cleanup
     import shutil
+
     shutil.rmtree(test_dir)
-    
-    print(f"\n✅ Metadata extraction test completed successfully!")
+
+    print("\n[OK] Metadata extraction test completed successfully!")
     return True
+
 
 def main():
     """Run all tests."""
-    print("🧪 Testing Claude Code Embedding Search System")
+    print("[TEST] Testing Claude Code Embedding Search System")
     print("=" * 60)
-    
+
     try:
         # Test basic chunking
         test_chunking()
-        
-        # Test metadata richness  
+
+        # Test metadata richness
         test_metadata_richness()
-        
-        print("\n" + "="*60)
-        print("🎉 ALL TESTS PASSED!")
-        print("="*60)
-        print("\n📋 Next steps:")
-        print("1. Wait for dependencies to finish installing (uv add sentence-transformers faiss-cpu mcp fastmcp)")
-        print("2. Index your first codebase: ./scripts/index_codebase.py /path/to/python/project")
-        print("3. Add MCP server to Claude Code: claude mcp add code-search -- python mcp_server/server.py")
+
+        print("\n" + "=" * 60)
+        print("[SUCCESS] ALL TESTS PASSED!")
+        print("=" * 60)
+        print("\n[INFO] Next steps:")
+        print(
+            "1. Wait for dependencies to finish installing (uv add sentence-transformers faiss-cpu mcp fastmcp)"
+        )
+        print(
+            "2. Index your first codebase: ./scripts/index_codebase.py /path/to/python/project"
+        )
+        print(
+            "3. Add MCP server to Claude Code: claude mcp add code-search -- python mcp_server/server.py"
+        )
         print("4. Start using semantic search in Claude Code!")
-        
+
         return True
-        
+
     except Exception as e:
-        print(f"\n❌ Test failed: {e}")
+        print(f"\n[ERROR] Test failed: {e}")
         import traceback
+
         traceback.print_exc()
         return False
+
 
 if __name__ == "__main__":
     success = main()

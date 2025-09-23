@@ -7,7 +7,7 @@ name = "claude-context-local"
 version = "0.1.0"
 description = "Local semantic code search for Claude Code (MCP) using EmbeddingGemma, FAISS, and AST/tree-sitter chunking. 100% local embeddings and indexing."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 authors = [
     { name = "Farhan Ali Raza" }
 ]
@@ -31,6 +31,8 @@ dependencies = [
     "fastmcp>=2.12.2",
     "huggingface-hub>=0.34.4",
     "mcp>=1.13.1",
+    "psutil>=6.0.0",
+    "torch>=2.4.0",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.1.0",
     "pytest-cov>=6.2.1",
@@ -55,6 +57,7 @@ dependencies = [
 classifiers = [
     "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
