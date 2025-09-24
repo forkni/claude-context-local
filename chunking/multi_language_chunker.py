@@ -16,7 +16,7 @@ class MultiLanguageChunker:
     # Supported extensions
     SUPPORTED_EXTENSIONS = {
         '.py',    # Python
-        '.js',    # JavaScript  
+        '.js',    # JavaScript
         '.jsx',   # JSX
         '.ts',    # TypeScript
         '.tsx',   # TSX
@@ -29,7 +29,14 @@ class MultiLanguageChunker:
         '.cc',    # C++
         '.cxx',   # C++
         '.c++',   # C++
-        '.cs'     # C#
+        '.cs',    # C#
+        '.glsl',  # GLSL shader
+        '.frag',  # Fragment shader
+        '.vert',  # Vertex shader
+        '.comp',  # Compute shader
+        '.geom',  # Geometry shader
+        '.tesc',  # Tessellation control shader
+        '.tese'   # Tessellation evaluation shader
     }
     
     # Common large/build/tooling directories to skip during traversal
@@ -149,6 +156,11 @@ class MultiLanguageChunker:
                 'annotation_type_declaration': 'annotation',  # Java
                 'script_element': 'script',  # Svelte
                 'style_element': 'style',  # Svelte
+                'variable_declaration': 'variable',  # GLSL uniforms, varying, attributes
+                'preprocessor_define': 'define',  # GLSL preprocessor defines
+                'preprocessor_function_def': 'define',  # GLSL preprocessor function defines
+                'block_statement': 'block',  # GLSL code blocks
+                'compound_statement': 'block',  # GLSL compound statements
             }
             
             chunk_type = chunk_type_map.get(tchunk.node_type, tchunk.node_type)

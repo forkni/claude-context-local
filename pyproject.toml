@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "claude-context-local"
+name = "claude-context-mcp"
 version = "0.1.0"
 description = "Local semantic code search for Claude Code (MCP) using EmbeddingGemma, FAISS, and AST/tree-sitter chunking. 100% local embeddings and indexing."
 readme = "README.md"
@@ -32,7 +32,9 @@ dependencies = [
     "huggingface-hub>=0.34.4",
     "mcp>=1.13.1",
     "psutil>=6.0.0",
-    "torch>=2.4.0",
+    "torch>=2.5.1",
+    "torchvision>=0.20.1",
+    "torchaudio>=2.5.1",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.1.0",
     "pytest-cov>=6.2.1",
@@ -44,6 +46,7 @@ dependencies = [
     "tree-sitter-c>=0.24.1",
     "tree-sitter-c-sharp>=0.23.1",
     "tree-sitter-cpp>=0.23.4",
+    "tree-sitter-glsl>=0.1.0",
     "tree-sitter-go>=0.25.0",
     "tree-sitter-java>=0.23.5",
     "tree-sitter-javascript>=0.25.0",
@@ -65,10 +68,29 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/FarhanAliRaza/claude-context-local"
-Repository = "https://github.com/FarhanAliRaza/claude-context-local"
-Documentation = "https://github.com/FarhanAliRaza/claude-context-local#readme"
-Issues = "https://github.com/FarhanAliRaza/claude-context-local/issues"
+Homepage = "https://github.com/forkni/claude-context-local"
+Repository = "https://github.com/forkni/claude-context-local"
+Documentation = "https://github.com/forkni/claude-context-local#readme"
+Issues = "https://github.com/forkni/claude-context-local/issues"
 
 [tool.setuptools.packages.find]
 include = ["claude_embedding_search*"]
+
+[tool.uv]
+index-url = "https://pypi.org/simple"
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu121", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+    { index = "pytorch-cu121", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchaudio = [
+    { index = "pytorch-cu121", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]

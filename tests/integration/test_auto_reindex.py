@@ -114,7 +114,7 @@ def test_auto_reindex():
     print(f"   - Needs reindex (0.01 min threshold): {needs_short}")
 
     print(f"\n{'=' * 60}")
-    print("✅ Auto-reindex test completed!")
+    print("[OK] Auto-reindex test completed!")
     print(f"{'=' * 60}\n")
 
 
@@ -127,6 +127,6 @@ if __name__ == "__main__":
         logging.shutdown()
         sys.exit(0)
     except Exception as e:
-        print(f"\n❌ Test failed: {e}")
+        print(f"\n[ERROR] Test failed: {e}")
         logging.shutdown()
         sys.exit(1)

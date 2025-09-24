@@ -194,7 +194,10 @@ class IncrementalIndexer:
             all_files = dag.get_all_files()
 
             # Filter supported files
-            supported_files = [f for f in all_files if self.chunker.is_supported(f)]
+            supported_files = [f for f in all_files if self.chunker.is_supported(str(Path(project_path) / f))]
+            logger.info(f"Found {len(supported_files)} supported files out of {len(all_files)} total files")
+            for sf in supported_files:
+                logger.info(f"  Supported: {sf}")
 
             # Collect all chunks first, then embed in a single pass for efficiency
             all_chunks = []
@@ -204,14 +207,21 @@ class IncrementalIndexer:
                     chunks = self.chunker.chunk_file(str(full_path))
                     if chunks:
                         all_chunks.extend(chunks)
+                        logger.info(f"Chunked {file_path}: {len(chunks)} chunks")
+                    else:
+                        logger.warning(f"No chunks generated for {file_path}")
                 except Exception as e:
                     logger.warning(f"Failed to chunk {file_path}: {e}")
+
+            logger.info(f"Total chunks collected: {len(all_chunks)}")
 
             # Embed all chunks in one batched call
             all_embedding_results = []
             if all_chunks:
                 try:
+                    logger.info(f"Starting embedding for {len(all_chunks)} chunks")
                     all_embedding_results = self.embedder.embed_chunks(all_chunks)
+                    logger.info(f"Successfully embedded {len(all_embedding_results)} chunks")
                     # Update metadata
                     for chunk, embedding_result in zip(
                         all_chunks, all_embedding_results
@@ -219,11 +229,17 @@ class IncrementalIndexer:
                         embedding_result.metadata["project_name"] = project_name
                         embedding_result.metadata["content"] = chunk.content
                 except Exception as e:
-                    logger.warning(f"Embedding failed: {e}")
+                    logger.error(f"Embedding failed: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
 
             # Add all embeddings to index at once
             if all_embedding_results:
+                logger.info(f"Adding {len(all_embedding_results)} embeddings to index")
                 self.indexer.add_embeddings(all_embedding_results)
+                logger.info("Successfully added embeddings to index")
+            else:
+                logger.warning("No embedding results to add to index")
 
             chunks_added = len(all_embedding_results)
 

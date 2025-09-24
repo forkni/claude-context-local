@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide covers the complete installation process for the Claude Context MCP system with TouchDesigner integration, including dependency management, PyTorch CUDA setup, and troubleshooting common issues.
+This guide covers the complete installation process for the Claude Context MCP system, a general-purpose semantic code search tool for software development, including dependency management, PyTorch CUDA setup, and troubleshooting common issues.
 
 ## Table of Contents
 
@@ -37,30 +37,43 @@ This guide covers the complete installation process for the Claude Context MCP s
 
 ### Method 1: UV-Based Installation (Recommended)
 
+**This method resolves all PyTorch+transformers dependency issues identified in September 2025.**
+
 UV provides superior dependency resolution and is the recommended approach for complex ML packages.
 
 #### Windows Installation
 
 ```powershell
 # 1. Clone the repository
-git clone https://github.com/FarhanAliRaza/claude-context-local.git
-cd claude-context-local
+git clone https://github.com/forkni/claude-context-local.git
+cd Claude-context-MCP
 
-# 2. Run the automated installer
-.\scripts\powershell\install-windows-td.ps1
+# 2. Clean installation from scratch (recommended)
+rm -rf .venv  # Remove old environment if exists
+python -m venv .venv
 
-# 3. Install PyTorch with UV (recommended)
-.\install_pytorch_cuda_uv.bat
+# 3. Install UV and run installation script
+.\scripts\batch\install_pytorch_cuda.bat
 
 # 4. Configure Claude Code
 .\scripts\powershell\configure_claude_code.ps1 -Global
 ```
 
+**What this provides:**
+
+- ✅ Proper PyTorch version detection and compatibility
+- ✅ transformers compatibility with PyTorch 2.5.1+cu121
+- ✅ EmbeddingGemma gemma3_text architecture support
+- ✅ CUDA 12.1 acceleration functionality
+
 #### macOS/Linux Installation
 
 ```bash
 # Standard installation
-curl -fsSL https://raw.githubusercontent.com/FarhanAliRaza/claude-context-local/main/scripts/install.sh | bash
+# Clone repository and run install script
+git clone https://github.com/forkni/claude-context-local.git
+cd Claude-context-MCP
+./scripts/install.sh
 
 # Manual UV installation
 uv pip install torch>=2.4.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
@@ -77,7 +90,7 @@ python -m venv .venv
 pip install -r requirements.txt
 
 # Install PyTorch with CUDA
-.\install_pytorch_cuda.bat
+.\scripts\batch\install_pytorch_cuda.bat
 ```
 
 ## Dependency Management
@@ -200,7 +213,7 @@ start_mcp_server.bat
 
 ```bash
 # Clean installation with UV
-.\install_pytorch_cuda_uv.bat
+.\scripts\batch\install_pytorch_cuda.bat
 ```
 
 **Cause**: Corrupted PyTorch installation or architecture mismatch
@@ -235,9 +248,14 @@ pip install "numpy<2.0"
 **Solution**:
 
 ```bash
-# Update transformers to support gemma3
-uv pip install --upgrade transformers>=4.51.3
+# Install transformers preview with EmbeddingGemma support
+pip install git+https://github.com/huggingface/transformers@v4.56.0-Embedding-Gemma-preview
+
+# Or use UV for automatic resolution
+uv sync  # This will install correct transformers version
 ```
+
+**Root Cause**: Standard transformers 4.51.3 doesn't include gemma3_text architecture. The v4.56.0-Embedding-Gemma-preview branch includes the required support.
 
 ### Debug Commands
 
@@ -295,7 +313,7 @@ git pull
 uv sync
 
 # Update PyTorch if needed
-.\install_pytorch_cuda_uv.bat
+.\scripts\batch\install_pytorch_cuda.bat
 ```
 
 ### Cache Management
@@ -321,7 +339,7 @@ uv cache clean
 
 For issues not covered in this guide:
 
-1. Check the [GitHub Issues](https://github.com/FarhanAliRaza/claude-context-local/issues)
+1. Check the GitHub Issues for your repository
 2. Review CLAUDE.md for project-specific documentation
 3. Run diagnostic commands from the troubleshooting section
 4. Provide system information when reporting bugs
@@ -334,7 +352,7 @@ For issues not covered in this guide:
 
 ```bash
 # Install with UV (recommended)
-.\install_pytorch_cuda_uv.bat
+.\scripts\batch\install_pytorch_cuda.bat
 
 # Test installation
 python test_cuda_indexing.py

@@ -28,8 +28,8 @@ REM If no arguments, show interactive menu
 if "%~1"=="" (
     echo What would you like to do?
     echo.
-    echo   1. Start MCP Server (for Claude Code integration)
-    echo   2. Run Debug Mode (detailed output)
+    echo   1. Start MCP Server ^(for Claude Code integration^)
+    echo   2. Run Debug Mode ^(detailed output^)
     echo   3. Advanced Tools
     echo   4. Show Help
     echo   5. Exit

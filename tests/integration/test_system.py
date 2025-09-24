@@ -120,6 +120,7 @@ def get_user_profile(user_id: int) -> Dict:
         print("\n[OK] Chunking test completed successfully!")
 
     os.unlink(f.name)
+    assert True, "Chunking test completed successfully"
     return True
 
 
@@ -218,6 +219,7 @@ class UserAuthenticator:
     shutil.rmtree(test_dir)
 
     print("\n[OK] Metadata extraction test completed successfully!")
+    assert True, "Metadata extraction test completed successfully"
     return True
 
 

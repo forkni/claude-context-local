@@ -70,7 +70,8 @@ echo [INFO] If server fails, error details will be shown below
 echo ================================================
 echo.
 
-REM Start the server with full error output
+REM Start the server with debug mode enabled and full error output
+set MCP_DEBUG=1
 .\.venv\Scripts\python.exe -m mcp_server.server 2>&1
 
 REM Capture exit code

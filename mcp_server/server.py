@@ -25,15 +25,26 @@ from embeddings.embedder import CodeEmbedder
 from search.indexer import CodeIndexManager
 from search.searcher import IntelligentSearcher
 
-# Initialize logging with more verbose output for development
+# Initialize logging - check for debug mode from environment
+debug_mode = os.getenv("MCP_DEBUG", "").lower() in ("1", "true", "yes")
+log_level = logging.DEBUG if debug_mode else logging.INFO
+log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s" if debug_mode else "%(asctime)s - %(message)s"
+
 logging.basicConfig(
-    level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=log_level,
+    format=log_format,
+    datefmt="%H:%M:%S"
 )
 logger = logging.getLogger(__name__)
 
-# Enable FastMCP internal logging
-logging.getLogger("mcp").setLevel(logging.DEBUG)
-logging.getLogger("fastmcp").setLevel(logging.DEBUG)
+# Set appropriate logging levels for MCP components
+if debug_mode:
+    logging.getLogger("mcp").setLevel(logging.DEBUG)
+    logging.getLogger("fastmcp").setLevel(logging.DEBUG)
+else:
+    logging.getLogger("mcp").setLevel(logging.WARNING)
+    logging.getLogger("fastmcp").setLevel(logging.WARNING)
+    logging.getLogger("asyncio").setLevel(logging.WARNING)
 
 # Initialize MCP server
 mcp = FastMCP("Code Search")
@@ -1079,17 +1090,31 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Add diagnostic logging at startup
-    logger.info("MCP Server starting up")
-    logger.info(f"Server location: {PROJECT_ROOT}")
-    logger.info(f"Current working directory: {os.getcwd()}")
-    logger.info(f"Python executable: {sys.executable}")
+    # Startup logging
+    if debug_mode:
+        logger.info("MCP Server starting up (debug mode)")
+        logger.info(f"Server location: {PROJECT_ROOT}")
+        logger.info(f"Current working directory: {os.getcwd()}")
+        logger.info(f"Python executable: {sys.executable}")
+    else:
+        logger.info("MCP Server starting up")
+        logger.info(f"Server location: {PROJECT_ROOT}")
+        logger.info("Ready for Claude Code connections")
 
     # Map "http" to the correct FastMCP transport name
     transport = "sse" if args.transport == "http" else args.transport
 
-    if transport in ["sse", "streamable-http"]:
-        logger.info(f"Starting HTTP server on {args.host}:{args.port}")
-        mcp.run(transport=transport)
-    else:
-        mcp.run(transport=transport)
+    try:
+        if transport in ["sse", "streamable-http"]:
+            logger.info(f"Starting HTTP server on {args.host}:{args.port}")
+            mcp.run(transport=transport)
+        else:
+            mcp.run(transport=transport)
+    except KeyboardInterrupt:
+        # Handle Ctrl+C gracefully
+        logger.info("\nShutting down gracefully...")
+        sys.exit(0)
+    except Exception as e:
+        # Handle other unexpected errors
+        logger.error(f"Server error: {e}")
+        sys.exit(1)

@@ -68,8 +68,8 @@ Claude’s code context is powerful, but sending your code to the cloud costs to
 
 ```powershell
 # 1. Clone the repository
-git clone https://github.com/yourusername/claude-context-mcp.git
-cd claude-context-mcp
+git clone https://github.com/forkni/claude-context-local.git
+cd Claude-context-MCP
 
 # 2. Run the automated Windows installer
 .\scripts\powershell\install-windows.ps1
@@ -81,90 +81,49 @@ cd claude-context-mcp
 .\scripts\powershell\configure_claude_code.ps1 -Global
 ```
 
-### Install (Unix/Linux one‑liner)
+### Install (Unix/Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/FarhanAliRaza/claude-context-local/main/scripts/install.sh | bash
-```
-
-If your system doesn't have `curl`, you can use `wget`:
-
-```bash
-wget -qO- https://raw.githubusercontent.com/FarhanAliRaza/claude-context-local/main/scripts/install.sh | bash
+# Clone repository and run installation
+git clone https://github.com/forkni/claude-context-local.git
+cd Claude-context-MCP
+./scripts/install.sh
 ```
 
 ### Update existing installation
 
-Run the same install command to update:
+Update by pulling latest changes:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/FarhanAliRaza/claude-context-local/main/scripts/install.sh | bash
+# Navigate to your project directory
+cd Claude-context-MCP
+git pull
+./scripts/install.sh
 ```
 
 The installer will:
 
-- Detect your existing installation
-- Preserve your embeddings and indexed projects in `~/.claude_code_search`
-- Stash any local changes automatically (if running via curl)
 - Update the code and dependencies
+- Preserve your embeddings and indexed projects in `~/.claude_code_search`
+- Update only changed components
 
 ### What the installer does
 
 - Installs `uv` if missing and creates a project venv
-- Clones/updates `claude-context-local` in `~/.local/share/claude-context-local`
+- Manages Claude-context-MCP dependencies and configuration
 - Installs Python dependencies with `uv sync`
 - Downloads the EmbeddingGemma model (~1.2–1.3 GB) if not already cached
 - Tries to install `faiss-gpu` if an NVIDIA GPU is detected (interactive mode only)
 - **Preserves all your indexed projects and embeddings** across updates
 
-### Windows Installation
-
-For Windows users:
-
-```powershell
-# 1. Clone the repository
-git clone https://github.com/FarhanAliRaza/claude-context-local.git
-cd claude-context-local
-
-# 2. Run the automated Windows installer
-.\scripts\powershell\install-windows.ps1
-
-# 3. Install PyTorch with CUDA using UV (recommended)
-.\scripts\batch\install_pytorch_cuda.bat
-
-# 4. Configure Claude Code MCP integration (cross-directory compatible by default)
-.\scripts\powershell\configure_claude_code.ps1 -Global
-```
-
-**Windows Requirements:**
-
-- Python 3.11+ (tested with Python 3.11.1)
-- Windows 10/11
-- CUDA 12.1 for GPU acceleration (optional)
-- UV package manager (automatically installed)
-
-**Why use UV on Windows:**
-
-- Superior dependency resolution for PyTorch + CUDA
-- Handles complex version conflicts automatically
-- Faster and more reliable than pip for ML packages
-
-**Cross-Directory Compatibility:**
-- Works from any directory - VS Code, different project folders, command prompt
-- Automatic wrapper script ensures correct working directory
-- No path dependencies - launch Claude Code from anywhere and MCP tools work perfectly
-
-**Additional Tools Available:**
-- `tools/index_project.py` - Interactive project indexer for any codebase
-- `tools/search_helper.py` - Standalone semantic search interface
-- `start_mcp_server.bat` - Main launcher with integrated tools (Advanced Tools menu)
 
 ## Quick Start
 
 ### 1) Register the MCP server (stdio)
 
 ```bash
-claude mcp add code-search --scope user -- uv run --directory ~/.local/share/claude-context-local python mcp_server/server.py
+# Use your actual project path
+claude mcp add code-search --scope user -- "path/to/Claude-context-MCP/.venv/Scripts/python.exe" -m mcp_server.server
 ```
 
 **Windows Configuration Options:**
@@ -193,7 +152,7 @@ Interact via chat inside Claude Code; no function calls or commands are required
 ## Architecture
 
 ```
-claude-context-local/
+Claude-context-MCP/
 ├── chunking/                         # Multi-language chunking (15 extensions)
 │   ├── multi_language_chunker.py     # Unified orchestrator (Python AST + tree-sitter)
 │   ├── python_ast_chunker.py         # Python-specific chunking (rich metadata)

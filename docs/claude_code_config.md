@@ -1,6 +1,6 @@
 # Claude Code MCP Integration Configuration
 
-## Adding claude-context-local to Claude Code
+## Adding Claude-context-MCP to Claude Code
 
 ### Method 1: Global Configuration (Recommended)
 
@@ -8,24 +8,24 @@ Add the MCP server globally so it's available in all projects:
 
 ```bash
 # Windows Command (run in Command Prompt or PowerShell)
-claude mcp add code-search --scope user -- "F:\RD_PROJECTS\COMPONENTS\claude-context-local\claude-context-local\.venv\Scripts\python.exe" -m mcp_server.server
+claude mcp add code-search --scope user -- "F:\RD_PROJECTS\COMPONENTS\Claude-context-MCP\.venv\Scripts\python.exe" -m mcp_server.server
 
 # Alternative with full paths
-claude mcp add code-search --scope user -- "F:\RD_PROJECTS\COMPONENTS\claude-context-local\claude-context-local\.venv\Scripts\python.exe" "F:\RD_PROJECTS\COMPONENTS\claude-context-local\claude-context-local\mcp_server\server.py"
+claude mcp add code-search --scope user -- "F:\RD_PROJECTS\COMPONENTS\Claude-context-MCP\.venv\Scripts\python.exe" "F:\RD_PROJECTS\COMPONENTS\Claude-context-MCP\mcp_server\server.py"
 ```
 
 ### Method 2: Project-Specific Configuration
 
-For specific TouchDesigner projects, create a `.claude-code.json` file in the project root:
+For project-specific configuration, create a `.claude-code.json` file in the project root:
 
 ```json
 {
   "mcp": {
     "servers": {
       "code-search": {
-        "command": "F:\\RD_PROJECTS\\COMPONENTS\\claude-context-local\\claude-context-local\\.venv\\Scripts\\python.exe",
+        "command": "F:\\RD_PROJECTS\\COMPONENTS\\Claude-context-MCP\\.venv\\Scripts\\python.exe",
         "args": ["-m", "mcp_server.server"],
-        "cwd": "F:\\RD_PROJECTS\\COMPONENTS\\claude-context-local\\claude-context-local"
+        "cwd": "F:\\RD_PROJECTS\\COMPONENTS\\Claude-context-MCP"
       }
     }
   }
@@ -64,27 +64,28 @@ Once configured, these tools will be available in Claude Code:
 - `clear_index()` - Clear current project index
 - `index_test_project()` - Index built-in test project for demo
 
-## TouchDesigner Workflow
+## General Development Workflow
 
-### Step 1: Index Your TouchDesigner Project
+### Step 1: Index Your Software Project
 
 ```
-/index_directory C:\Path\To\Your\TouchDesigner\Project
+/index_directory C:\Path\To\Your\Software\Project
 ```
 
 ### Step 2: Search for Code
 
 ```
-/search_code "callback functions for buttons"
-/search_code "parameter value change handlers"
-/search_code "extension class initialization"
-/search_code "data input output processing"
+/search_code "authentication functions"
+/search_code "error handling patterns"
+/search_code "database connection setup"
+/search_code "API endpoint handlers"
+/search_code "configuration loading"
 ```
 
 ### Step 3: Find Similar Code
 
 ```
-/find_similar_code "path/to/file.py:10-25:function:onValueChange"
+/find_similar_code "path/to/file.py:10-25:function:handleRequest"
 ```
 
 ### Step 4: Check Index Status
@@ -103,29 +104,32 @@ With MCP integration, you get:
 - **Context-aware results** with similarity scoring
 - **Incremental indexing** - fast updates when files change
 
-## Example Commands for TouchDesigner
+## Example Commands for Software Development
 
 ```bash
-# Index a TouchDesigner project
-/index_directory "C:\TouchDesigner\Projects\MyProject"
+# Index a software project
+/index_directory "C:\Development\Projects\MyProject"
 
-# Find button callback implementations
-/search_code "button callback onOffToOn"
+# Find authentication implementations
+/search_code "login authentication functions"
 
-# Find parameter change handlers
-/search_code "parameter value change onValueChange"
+# Find API route handlers
+/search_code "api route endpoint handlers"
 
-# Find extension initialization patterns
-/search_code "extension __init__ ownerComp"
+# Find class initialization patterns
+/search_code "class __init__ constructor"
 
 # Find error handling patterns
 /search_code "try except error handling"
 
-# Find timer and cooking related code
-/search_code "cook frame timer callback"
+# Find async and callback related code
+/search_code "async await callback functions"
 
-# Find MIDI or input handling
-/search_code "MIDI input processing"
+# Find database query handling
+/search_code "database query connection"
+
+# Find configuration and settings
+/search_code "config settings environment"
 ```
 
 ## Troubleshooting
@@ -145,7 +149,7 @@ With MCP integration, you get:
 ### Performance Issues
 
 - Use incremental indexing (enabled by default)
-- Index only the Scripts/ or Extensions/ folders if the project is large
+- Index only specific source folders (src/, lib/, app/) if the project is large
 - Check available disk space for the index
 
 ## Storage Location
