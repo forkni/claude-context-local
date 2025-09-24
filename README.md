@@ -29,12 +29,12 @@ Claude Context without the cloud. Semantic code search that runs 100% locally us
 - 💰 **Zero API costs - forever free**
 - ⚡ **Fewer tokens in Claude Code and fast local searches**
 
-An intelligent code search system that uses Google's EmbeddingGemma model and advanced multi-language chunking to provide semantic search capabilities across 15 file extensions and 9+ programming languages, integrated with Claude Code via MCP (Model Context Protocol).
+An intelligent code search system that uses Google's EmbeddingGemma model and advanced multi-language chunking to provide semantic search capabilities across 22 file extensions and 11 programming languages, integrated with Claude Code via MCP (Model Context Protocol).
 
 ## 🚧 Beta Release
 
 - Core functionality working
-- Installation tested on Mac/Linux
+- Installation tested on Windows/Mac/Linux
 - Benchmarks coming soon
 - Please report issues!
 
@@ -44,8 +44,8 @@ An intelligent code search system that uses Google's EmbeddingGemma model and ad
 
 ## Features
 
-- **Multi-language support**: 9+ programming languages with 15 file extensions
-- **Intelligent chunking**: AST-based (Python) + tree-sitter (JS/TS/Go/Java/Rust/C/C++/C#)
+- **Multi-language support**: 11 programming languages with 22 file extensions
+- **Intelligent chunking**: AST-based (Python) + tree-sitter (JS/TS/JSX/TSX/Svelte/Go/Java/Rust/C/C++/C#/GLSL)
 - **Semantic search**: Natural language queries to find code across all languages
 - **Rich metadata**: File paths, folder structure, semantic tags, language-specific info
 - **MCP integration**: Direct integration with Claude Code
@@ -69,7 +69,7 @@ Claude’s code context is powerful, but sending your code to the cloud costs to
 ```powershell
 # 1. Clone the repository
 git clone https://github.com/forkni/claude-context-local.git
-cd Claude-context-MCP
+cd claude-context-local
 
 # 2. Run the automated Windows installer
 .\scripts\powershell\install-windows.ps1
@@ -86,7 +86,7 @@ cd Claude-context-MCP
 ```bash
 # Clone repository and run installation
 git clone https://github.com/forkni/claude-context-local.git
-cd Claude-context-MCP
+cd claude-context-local
 ./scripts/install.sh
 ```
 
@@ -96,7 +96,7 @@ Update by pulling latest changes:
 
 ```bash
 # Navigate to your project directory
-cd Claude-context-MCP
+cd claude-context-local
 git pull
 ./scripts/install.sh
 ```
@@ -123,7 +123,7 @@ The installer will:
 
 ```bash
 # Use your actual project path
-claude mcp add code-search --scope user -- "path/to/Claude-context-MCP/.venv/Scripts/python.exe" -m mcp_server.server
+claude mcp add code-search --scope user -- "path/to/claude-context-local/.venv/Scripts/python.exe" -m mcp_server.server
 ```
 
 **Windows Configuration Options:**
@@ -152,11 +152,11 @@ Interact via chat inside Claude Code; no function calls or commands are required
 ## Architecture
 
 ```
-Claude-context-MCP/
-├── chunking/                         # Multi-language chunking (15 extensions)
+claude-context-local/
+├── chunking/                         # Multi-language chunking (22 extensions)
 │   ├── multi_language_chunker.py     # Unified orchestrator (Python AST + tree-sitter)
 │   ├── python_ast_chunker.py         # Python-specific chunking (rich metadata)
-│   └── tree_sitter.py                # Tree-sitter: JS/TS/JSX/TSX/Svelte/Go/Java/Rust/C/C++/C#
+│   └── tree_sitter.py                # Tree-sitter: JS/TS/JSX/TSX/Svelte/Go/Java/Rust/C/C++/C#/GLSL
 ├── embeddings/
 │   └── embedder.py                   # EmbeddingGemma; device=auto (CUDA→MPS→CPU); offline cache
 ├── search/
@@ -170,9 +170,17 @@ Claude-context-MCP/
 ├── mcp_server/
 │   └── server.py                     # MCP tools for Claude Code (stdio/HTTP)
 └── scripts/
-    ├── install.sh                    # One-liner remote installer (uv + model + faiss)
-    ├── download_model_standalone.py  # Pre-fetch embedding model
-    └── index_codebase.py             # Standalone indexing utility
+    ├── batch/                        # Windows batch scripts
+    │   ├── install_pytorch_cuda.bat  # PyTorch CUDA installation
+    │   ├── mcp_server_wrapper.bat   # MCP server wrapper script
+    │   ├── start_mcp_debug.bat      # Debug mode launcher
+    │   └── start_mcp_simple.bat     # Simple MCP server launcher
+    ├── powershell/                  # Windows PowerShell scripts
+    │   ├── configure_claude_code.ps1 # Claude Code MCP configuration
+    │   ├── hf_auth_fix.ps1          # Hugging Face authentication helper
+    │   ├── install-windows.ps1     # Windows automated installer
+    │   └── start_mcp_server.ps1     # PowerShell MCP server launcher
+    └── install.sh                   # Unix/Linux installer
 ```
 
 ### Data flow
@@ -211,6 +219,7 @@ The system uses advanced parsing to create semantically meaningful chunks across
 - **Enums/Constants**: Value definitions and module-level declarations
 - **Namespaces/Modules**: Organizational structures
 - **Templates/Generics**: Parameterized type definitions
+- **GLSL Shaders**: Vertex, fragment, compute, geometry, tessellation shaders with uniforms and layouts
 
 ### Rich Metadata for All Languages
 
@@ -269,7 +278,7 @@ and prefer offline loads for speed and reliability.
 
 ### Supported Languages & Extensions
 
-**Fully Supported (15 extensions across 9+ languages):**
+**Fully Supported (22 extensions across 10+ languages):**
 
 | Language | Extensions |
 |----------|------------|
@@ -283,8 +292,9 @@ and prefer offline loads for speed and reliability.
 | **C++** | `.cpp`, `.cc`, `.cxx`, `.c++` |
 | **C#** | `.cs` |
 | **Svelte** | `.svelte` |
+| **GLSL** | `.glsl`, `.frag`, `.vert`, `.comp`, `.geom`, `.tesc`, `.tese` |
 
-**Total**: **15 file extensions** across **9+ programming languages**
+**Total**: **22 file extensions** across **11 programming languages**
 
 ## Storage
 
