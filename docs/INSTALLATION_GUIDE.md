@@ -4,8 +4,6 @@
 
 This guide covers the complete installation process for the Claude Context MCP system, a **Windows-optimized general-purpose semantic code search tool** for software development. The system provides streamlined installation with automated CUDA detection and comprehensive verification.
 
-> **📁 Archived Content**: Development tools, test scripts, and TouchDesigner-specific features have been preserved in `_archive/` directory. See `_archive/README.md` for details.
-
 ## Table of Contents
 
 1. [Prerequisites](#prerequisites)
@@ -177,10 +175,6 @@ start_mcp_server.bat
 ### Advanced Testing Tools
 
 ```powershell
-# Development and debug tools available in archive
-_archive/test_scripts/test-cpu-mode.bat     # CPU-only mode testing
-_archive/debug_tools/debug_*.py            # Component-specific debugging
-
 # Unit tests for developers
 .venv\Scripts\python.exe -m pytest tests/unit/ -v
 ```
@@ -324,9 +318,8 @@ uv cache clean
 For issues not covered in this guide:
 
 1. Check the GitHub Issues for your repository
-2. Review CLAUDE.md for project-specific documentation
-3. Run diagnostic commands from the troubleshooting section
-4. Provide system information when reporting bugs
+2. Run diagnostic commands from the troubleshooting section
+3. Provide system information when reporting bugs
 
 ---
 
@@ -351,6 +344,6 @@ python -m mcp_server.tools index_directory "path/to/project"
 ### File Locations
 
 - **Scripts**: `scripts/powershell/` (Windows PowerShell), `scripts/batch/` (Windows batch)
-- **Configuration**: `CLAUDE.md`, `pyproject.toml`
+- **Configuration**: `pyproject.toml`
 - **Cache**: `~/.claude_code_search/`
 - **Logs**: MCP server stdout/stderr
