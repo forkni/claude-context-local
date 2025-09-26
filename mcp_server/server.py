@@ -22,19 +22,21 @@ except ImportError:
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from embeddings.embedder import CodeEmbedder
+from search.config import get_config_manager, get_search_config
+from search.hybrid_searcher import HybridSearcher
 from search.indexer import CodeIndexManager
 from search.searcher import IntelligentSearcher
 
 # Initialize logging - check for debug mode from environment
 debug_mode = os.getenv("MCP_DEBUG", "").lower() in ("1", "true", "yes")
 log_level = logging.DEBUG if debug_mode else logging.INFO
-log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s" if debug_mode else "%(asctime)s - %(message)s"
-
-logging.basicConfig(
-    level=log_level,
-    format=log_format,
-    datefmt="%H:%M:%S"
+log_format = (
+    "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    if debug_mode
+    else "%(asctime)s - %(message)s"
 )
+
+logging.basicConfig(level=log_level, format=log_format, datefmt="%H:%M:%S")
 logger = logging.getLogger(__name__)
 
 # Set appropriate logging levels for MCP components
@@ -237,7 +239,7 @@ def get_index_manager(project_path: str = None) -> CodeIndexManager:
     return _index_manager
 
 
-def get_searcher(project_path: str = None) -> IntelligentSearcher:
+def get_searcher(project_path: str = None):
     """Get searcher for specific project or current project."""
     global _searcher, _current_project
 
@@ -248,7 +250,55 @@ def get_searcher(project_path: str = None) -> IntelligentSearcher:
 
     # If switching projects, reset the searcher
     if _current_project != project_path or _searcher is None:
-        _searcher = IntelligentSearcher(get_index_manager(project_path), get_embedder())
+        # Update current project BEFORE using it
+        _current_project = project_path or _current_project
+        config = get_search_config()
+
+        logger.info(
+            f"[GET_SEARCHER] Initializing searcher for project: {_current_project}"
+        )
+
+        # Choose searcher based on configuration
+        if config.enable_hybrid_search:
+            # Use the same centralized storage as the indexer
+            project_storage = get_project_storage_dir(_current_project)
+            storage_dir = project_storage / "index"
+            logger.info(f"[GET_SEARCHER] Using storage directory: {storage_dir}")
+            _searcher = HybridSearcher(
+                storage_dir=str(storage_dir),
+                embedder=get_embedder(),
+                bm25_weight=config.bm25_weight,
+                dense_weight=config.dense_weight,
+                rrf_k=config.rrf_k_parameter,
+                max_workers=2,
+            )
+
+            # If existing dense index exists, try to populate hybrid searcher
+            try:
+                existing_index_manager = get_index_manager(
+                    project_path or _current_project
+                )
+                if (
+                    existing_index_manager.index
+                    and existing_index_manager.index.ntotal > 0
+                ):
+                    logger.info(
+                        "Attempting to populate HybridSearcher with existing dense index data"
+                    )
+                    # The HybridSearcher will need to be indexed with the same data
+                    # This will be handled during the first search if indices are empty
+            except Exception as e:
+                logger.warning(f"Could not check existing indices: {e}")
+
+            logger.info(
+                f"HybridSearcher initialized (BM25: {config.bm25_weight}, Dense: {config.dense_weight})"
+            )
+        else:
+            _searcher = IntelligentSearcher(
+                get_index_manager(project_path), get_embedder()
+            )
+            logger.info("IntelligentSearcher initialized (semantic-only mode)")
+
         logger.info(
             f"Searcher initialized for project: {Path(_current_project).name if _current_project else 'unknown'}"
         )
@@ -312,13 +362,28 @@ def search_code(
                 f"Checking if index needs refresh (max age: {max_age_minutes} minutes)"
             )
 
-            # Initialize incremental indexer
-            index_manager = get_index_manager(_current_project)
+            # Initialize incremental indexer - use same indexer type as configured
+            config_for_reindex = get_search_config()
+            if config_for_reindex.enable_hybrid_search:
+                # Use HybridSearcher for reindexing when hybrid search is enabled
+                project_storage = get_project_storage_dir(_current_project)
+                storage_dir = project_storage / "index"
+                indexer_for_reindex = HybridSearcher(
+                    storage_dir=str(storage_dir),
+                    embedder=get_embedder(),
+                    bm25_weight=config_for_reindex.bm25_weight,
+                    dense_weight=config_for_reindex.dense_weight,
+                    rrf_k=config_for_reindex.rrf_k_parameter,
+                    max_workers=2,
+                )
+            else:
+                indexer_for_reindex = get_index_manager(_current_project)
+
             embedder = get_embedder()
             chunker = MultiLanguageChunker(_current_project)
 
             incremental_indexer = IncrementalIndexer(
-                indexer=index_manager, embedder=embedder, chunker=chunker
+                indexer=indexer_for_reindex, embedder=embedder, chunker=chunker
             )
 
             # Auto-reindex if needed (this is very fast if no changes)
@@ -337,9 +402,27 @@ def search_code(
         searcher = get_searcher()
         logger.info(f"Current project: {_current_project}")
 
-        # Debug: Check index stats
-        index_stats = searcher.index_manager.get_stats()
-        total_chunks = index_stats.get("total_chunks", 0)
+        # Debug: Check index stats (handle both searcher types)
+        if hasattr(searcher, "index_manager"):
+            # IntelligentSearcher
+            index_stats = searcher.index_manager.get_stats()
+            total_chunks = index_stats.get("total_chunks", 0)
+        elif hasattr(searcher, "get_stats"):
+            # HybridSearcher with proper stats method
+            index_stats = searcher.get_stats()
+            total_chunks = index_stats.get("total_chunks", 0)
+            logger.info(
+                f"[SEARCH] HybridSearcher stats - BM25: {index_stats.get('bm25_documents', 0)}, Dense: {index_stats.get('dense_vectors', 0)}, Ready: {index_stats.get('is_ready', False)}"
+            )
+        elif hasattr(searcher, "is_ready"):
+            # Fallback for HybridSearcher without get_stats method
+            if searcher.is_ready:
+                total_chunks = 1  # Assume ready means we have content
+            else:
+                total_chunks = 0
+        else:
+            total_chunks = 0
+
         logger.info(f"Index contains {total_chunks} chunks")
 
         # Provide helpful error if no project is indexed
@@ -356,6 +439,15 @@ def search_code(
             }
             return json.dumps(error_msg, indent=2)
 
+        # Determine actual search mode
+        config_manager = get_config_manager()
+        actual_search_mode = config_manager.get_search_mode_for_query(
+            query, search_mode
+        )
+        logger.info(
+            f"Using search mode: {actual_search_mode} (requested: {search_mode})"
+        )
+
         # Build filters
         filters = {}
         if file_pattern:
@@ -365,18 +457,27 @@ def search_code(
 
         logger.info(f"Search filters: {filters}")
 
-        # Perform search
-        context_depth = 1 if include_context else 0
-        logger.info(
-            f"Calling searcher.search with query='{query}', k={k}, mode={search_mode}"
-        )
-        results = searcher.search(
-            query=query,
-            k=k,
-            search_mode=search_mode,
-            context_depth=context_depth,
-            filters=filters if filters else None,
-        )
+        # Perform search based on searcher type
+        if isinstance(searcher, HybridSearcher):
+            # HybridSearcher: use its search method with mode support
+            results = searcher.search(
+                query=query,
+                k=k,
+                search_mode=actual_search_mode,
+                min_bm25_score=0.1,
+                use_parallel=get_search_config().use_parallel_search,
+                filters=filters if filters else None,
+            )
+        else:
+            # IntelligentSearcher: use original method
+            context_depth = 1 if include_context else 0
+            results = searcher.search(
+                query=query,
+                k=k,
+                search_mode=actual_search_mode,
+                context_depth=context_depth,
+                filters=filters if filters else None,
+            )
         logger.info(f"Search returned {len(results)} results")
 
         #
@@ -442,16 +543,38 @@ def search_code(
 
         formatted_results = []
         for result in results:
+            # Handle both HybridSearcher SearchResult and regular search results
+            if hasattr(result, "relative_path"):
+                # Direct attribute access (IntelligentSearcher)
+                file_path = result.relative_path
+                start_line = result.start_line
+                end_line = result.end_line
+                chunk_type = result.chunk_type
+                similarity_score = result.similarity_score
+                chunk_id = result.chunk_id
+                name = getattr(result, "name", None)
+                content_preview = getattr(result, "content_preview", None)
+            else:
+                # Access from metadata (HybridSearcher)
+                file_path = result.metadata.get("relative_path", "")
+                start_line = result.metadata.get("start_line", 0)
+                end_line = result.metadata.get("end_line", 0)
+                chunk_type = result.metadata.get("chunk_type", "unknown")
+                similarity_score = result.score
+                chunk_id = result.doc_id
+                name = result.metadata.get("name")
+                content_preview = result.metadata.get("content_preview")
+
             item = {
-                "file": result.relative_path,
-                "lines": f"{result.start_line}-{result.end_line}",
-                "kind": result.chunk_type,
-                "score": round(result.similarity_score, 2),
-                "chunk_id": result.chunk_id,
+                "file": file_path,
+                "lines": f"{start_line}-{end_line}",
+                "kind": chunk_type,
+                "score": round(similarity_score, 2),
+                "chunk_id": chunk_id,
             }
-            if result.name:
-                item["name"] = result.name
-            snippet = make_snippet(result.content_preview)
+            if name:
+                item["name"] = name
+            snippet = make_snippet(content_preview)
             if snippet:
                 item["snippet"] = snippet
             formatted_results.append(item)
@@ -519,13 +642,32 @@ def index_directory(
         project_name = project_name or directory_path.name
         logger.info(f"Indexing directory: {directory_path} (incremental={incremental})")
 
-        # Initialize incremental indexer
-        index_manager = get_index_manager(str(directory_path))
+        # Initialize incremental indexer - use HybridSearcher if hybrid search is enabled
+        config = get_search_config()
+        if config.enable_hybrid_search:
+            # Use HybridSearcher for indexing when hybrid search is enabled
+            project_storage = get_project_storage_dir(str(directory_path))
+            storage_dir = project_storage / "index"
+            indexer = HybridSearcher(
+                storage_dir=str(storage_dir),
+                embedder=get_embedder(),
+                bm25_weight=config.bm25_weight,
+                dense_weight=config.dense_weight,
+                rrf_k=config.rrf_k_parameter,
+                max_workers=2,
+            )
+            logger.info(
+                "Using HybridSearcher for indexing to populate both BM25 and dense indices"
+            )
+        else:
+            indexer = get_index_manager(str(directory_path))
+            logger.info("Using CodeIndexManager for dense-only indexing")
+
         embedder = get_embedder()
         chunker = MultiLanguageChunker(str(directory_path))
 
         incremental_indexer = IncrementalIndexer(
-            indexer=index_manager, embedder=embedder, chunker=chunker
+            indexer=indexer, embedder=embedder, chunker=chunker
         )
 
         # Perform indexing
@@ -1066,6 +1208,143 @@ def cleanup_resources() -> str:
 
     except (ImportError, AttributeError, RuntimeError) as e:
         logger.error(f"Error during resource cleanup: {e}")
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def configure_search_mode(
+    search_mode: str = "hybrid",
+    bm25_weight: float = 0.4,
+    dense_weight: float = 0.6,
+    enable_parallel: bool = True,
+) -> str:
+    """
+    Configure search mode and hybrid search parameters.
+
+    Args:
+        search_mode: Default search mode - "hybrid", "semantic", "bm25", or "auto"
+        bm25_weight: Weight for BM25 sparse search (0.0 to 1.0)
+        dense_weight: Weight for dense vector search (0.0 to 1.0)
+        enable_parallel: Enable parallel BM25 + Dense search execution
+
+    Returns:
+        JSON confirmation of configuration changes
+    """
+    try:
+        # Validate search mode
+        valid_modes = ["hybrid", "semantic", "bm25", "auto"]
+        if search_mode not in valid_modes:
+            return json.dumps(
+                {
+                    "error": f"Invalid search_mode '{search_mode}'. Must be one of: {valid_modes}"
+                }
+            )
+
+        # Validate weights
+        if not (0.0 <= bm25_weight <= 1.0) or not (0.0 <= dense_weight <= 1.0):
+            return json.dumps({"error": "Weights must be between 0.0 and 1.0"})
+
+        # Normalize weights if they don't sum to 1.0
+        total_weight = bm25_weight + dense_weight
+        if total_weight > 0:
+            bm25_weight = bm25_weight / total_weight
+            dense_weight = dense_weight / total_weight
+
+        # Get current config and update
+        config_manager = get_config_manager()
+        config = config_manager.load_config()
+
+        # Update configuration
+        config.default_search_mode = search_mode
+        config.enable_hybrid_search = search_mode == "hybrid"
+        config.bm25_weight = bm25_weight
+        config.dense_weight = dense_weight
+        config.use_parallel_search = enable_parallel
+
+        # Save configuration
+        config_manager.save_config(config)
+
+        # Reset searcher to pick up new configuration
+        global _searcher
+        _searcher = None
+
+        response = {
+            "success": True,
+            "message": "Search configuration updated successfully",
+            "new_config": {
+                "search_mode": search_mode,
+                "enable_hybrid_search": config.enable_hybrid_search,
+                "bm25_weight": round(bm25_weight, 3),
+                "dense_weight": round(dense_weight, 3),
+                "use_parallel_search": enable_parallel,
+            },
+            "note": "Changes will take effect on next search. Searcher will be reinitialized.",
+        }
+
+        logger.info(
+            f"Search configuration updated: mode={search_mode}, "
+            f"weights=({bm25_weight:.3f}, {dense_weight:.3f}), parallel={enable_parallel}"
+        )
+
+        return json.dumps(response, indent=2)
+
+    except Exception as e:
+        logger.error(f"Error configuring search mode: {e}")
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def get_search_config_status() -> str:
+    """
+    Get current search configuration status and available options.
+
+    Returns:
+        JSON with current configuration and available settings
+    """
+    try:
+        config = get_search_config()
+        config_manager = get_config_manager()
+
+        # Check current searcher type
+        current_searcher_type = "None"
+        if _searcher:
+            current_searcher_type = type(_searcher).__name__
+
+        response = {
+            "current_configuration": {
+                "default_search_mode": config.default_search_mode,
+                "enable_hybrid_search": config.enable_hybrid_search,
+                "bm25_weight": config.bm25_weight,
+                "dense_weight": config.dense_weight,
+                "use_parallel_search": config.use_parallel_search,
+                "rrf_k_parameter": config.rrf_k_parameter,
+                "prefer_gpu": config.prefer_gpu,
+                "enable_auto_reindex": config.enable_auto_reindex,
+            },
+            "runtime_status": {
+                "current_searcher_type": current_searcher_type,
+                "active_project": _current_project or "None",
+                "config_file": config_manager.config_file,
+            },
+            "available_modes": {
+                "hybrid": "BM25 + Dense vector search with RRF reranking (recommended)",
+                "semantic": "Dense vector search only",
+                "bm25": "Text-based sparse search only",
+                "auto": "Automatically choose based on query characteristics",
+            },
+            "environment_variables": {
+                "CLAUDE_SEARCH_MODE": "Override default search mode",
+                "CLAUDE_ENABLE_HYBRID": "Enable/disable hybrid search (true/false)",
+                "CLAUDE_BM25_WEIGHT": "BM25 weight (0.0-1.0)",
+                "CLAUDE_DENSE_WEIGHT": "Dense weight (0.0-1.0)",
+                "CLAUDE_USE_PARALLEL": "Enable parallel search (true/false)",
+            },
+        }
+
+        return json.dumps(response, indent=2)
+
+    except Exception as e:
+        logger.error(f"Error getting search config status: {e}")
         return json.dumps({"error": str(e)})
 
 

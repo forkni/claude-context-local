@@ -36,7 +36,20 @@ def find_projects(search_path: str = "C:\\Projects") -> list:
     print(f"Searching for projects in: {search_path}")
 
     # Look for project files (TouchDesigner .toe, Python, JS, TS, etc.)
-    project_extensions = ["*.toe", "*.py", "*.js", "*.ts", "*.tsx", "*.jsx", "*.go", "*.rs", "*.java", "*.c", "*.cpp", "*.cs"]
+    project_extensions = [
+        "*.toe",
+        "*.py",
+        "*.js",
+        "*.ts",
+        "*.tsx",
+        "*.jsx",
+        "*.go",
+        "*.rs",
+        "*.java",
+        "*.c",
+        "*.cpp",
+        "*.cs",
+    ]
 
     found_dirs = set()
 
@@ -84,7 +97,12 @@ def index_project(project_path: str, include_subfolders: bool = True) -> dict:
         return {"error": f"Project path does not exist: {project_path}"}
 
     # Look for common project indicators
-    project_indicators = list(project_path.glob("*.toe")) + list(project_path.glob("package.json")) + list(project_path.glob("pyproject.toml")) + list(project_path.glob("Cargo.toml"))
+    project_indicators = (
+        list(project_path.glob("*.toe"))
+        + list(project_path.glob("package.json"))
+        + list(project_path.glob("pyproject.toml"))
+        + list(project_path.glob("Cargo.toml"))
+    )
 
     if project_indicators:
         print(f"Found project indicator: {project_indicators[0].name}")
@@ -93,7 +111,19 @@ def index_project(project_path: str, include_subfolders: bool = True) -> dict:
         print("Indexing as a general code directory.")
 
     # Count code files
-    code_extensions = ["*.py", "*.js", "*.ts", "*.tsx", "*.jsx", "*.go", "*.rs", "*.java", "*.c", "*.cpp", "*.cs"]
+    code_extensions = [
+        "*.py",
+        "*.js",
+        "*.ts",
+        "*.tsx",
+        "*.jsx",
+        "*.go",
+        "*.rs",
+        "*.java",
+        "*.c",
+        "*.cpp",
+        "*.cs",
+    ]
     code_files = []
 
     for ext in code_extensions:
@@ -121,7 +151,9 @@ def index_project(project_path: str, include_subfolders: bool = True) -> dict:
     print(f"\nIndexing project: {project_path.name}")
 
     # Use the MCP server's index_directory function
-    result = index_directory(str(project_path), project_name=f"Proj_{project_path.name}")
+    result = index_directory(
+        str(project_path), project_name=f"Proj_{project_path.name}"
+    )
 
     try:
         result_data = json.loads(result)
@@ -140,12 +172,8 @@ def index_project(project_path: str, include_subfolders: bool = True) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Index project for semantic search"
-    )
-    parser.add_argument(
-        "project_path", nargs="?", help="Path to project directory"
-    )
+    parser = argparse.ArgumentParser(description="Index project for semantic search")
+    parser.add_argument("project_path", nargs="?", help="Path to project directory")
     parser.add_argument(
         "--find",
         "-f",

@@ -98,13 +98,14 @@ except ImportError:
 @dataclass
 class TreeSitterChunk:
     """Represents a code chunk extracted using tree-sitter."""
-    
+
     content: str
     start_line: int
     end_line: int
     node_type: str
     language: str
     metadata: Dict[str, Any]
+    chunk_id: Optional[str] = None  # unique identifier for evaluation
     
     def to_dict(self) -> Dict:
         """Convert to dictionary format compatible with existing system."""

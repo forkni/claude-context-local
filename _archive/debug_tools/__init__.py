@@ -1,0 +1,1 @@
+# Debug scripts for troubleshooting Claude-context-MCP functionality

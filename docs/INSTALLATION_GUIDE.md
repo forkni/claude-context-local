@@ -2,7 +2,9 @@
 
 ## Overview
 
-This guide covers the complete installation process for the Claude Context MCP system, a general-purpose semantic code search tool for software development, including dependency management, PyTorch CUDA setup, and troubleshooting common issues.
+This guide covers the complete installation process for the Claude Context MCP system, a **Windows-optimized general-purpose semantic code search tool** for software development. The system provides streamlined installation with automated CUDA detection and comprehensive verification.
+
+> **📁 Archived Content**: Development tools, test scripts, and TouchDesigner-specific features have been preserved in `_archive/` directory. See `_archive/README.md` for details.
 
 ## Table of Contents
 
@@ -19,13 +21,15 @@ This guide covers the complete installation process for the Claude Context MCP s
 ### System Requirements
 
 - **Python**: 3.11+ (tested with Python 3.11.1)
-- **Operating System**: Windows 10/11, macOS, or Linux
+- **Operating System**: Windows 10/11
 - **Disk Space**: 2-3 GB free space
   - EmbeddingGemma model: ~1.3 GB
   - PyTorch with CUDA: ~2.4 GB
   - Dependencies and cache: ~500 MB
 - **Memory**: 4GB RAM minimum, 8GB+ recommended
 - **GPU** (optional): NVIDIA GPU with CUDA 12.1 support
+
+> **Windows Focus**: This system is optimized for Windows environments with automated installers and comprehensive verification tools.
 
 ### Software Dependencies
 
@@ -35,63 +39,38 @@ This guide covers the complete installation process for the Claude Context MCP s
 
 ## Installation Methods
 
-### Method 1: UV-Based Installation (Recommended)
+### Recommended: Windows One-Click Installation
 
-**This method resolves all PyTorch+transformers dependency issues identified in September 2025.**
+**The streamlined Windows installation process with automated verification.**
 
-UV provides superior dependency resolution and is the recommended approach for complex ML packages.
-
-#### Windows Installation
+#### Windows Installation (Primary Method)
 
 ```powershell
 # 1. Clone the repository
 git clone https://github.com/forkni/claude-context-local.git
-cd Claude-context-MCP
+cd claude-context-local
 
-# 2. Clean installation from scratch (recommended)
-rm -rf .venv  # Remove old environment if exists
-python -m venv .venv
+# 2. Run the unified Windows installer
+install-windows.bat
 
-# 3. Install UV and run installation script
-.\scripts\batch\install_pytorch_cuda.bat
+# 3. Verify installation
+verify-installation.bat
 
-# 4. Configure Claude Code
-.\scripts\powershell\configure_claude_code.ps1 -Global
+# 4. (Optional) Configure Claude Code MCP integration
+scripts\powershell\configure_claude_code.ps1 -Global
 ```
 
 **What this provides:**
 
-- ✅ Proper PyTorch version detection and compatibility
-- ✅ transformers compatibility with PyTorch 2.5.1+cu121
-- ✅ EmbeddingGemma gemma3_text architecture support
-- ✅ CUDA 12.1 acceleration functionality
+- ✅ **Smart CUDA Detection**: Automatically detects and installs appropriate PyTorch version
+- ✅ **Complete Setup**: All dependencies including hybrid search components
+- ✅ **Professional Organization**: Clean, streamlined script structure
+- ✅ **Comprehensive Verification**: Built-in testing with verify-installation.bat
+- ✅ **Windows Optimized**: Specifically designed for Windows environments
 
-#### macOS/Linux Installation
+### Alternative Platforms
 
-```bash
-# Standard installation
-# Clone repository and run install script
-git clone https://github.com/forkni/claude-context-local.git
-cd Claude-context-MCP
-./scripts/install.sh
-
-# Manual UV installation
-uv pip install torch>=2.4.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-```
-
-### Method 2: Traditional pip Installation
-
-```powershell
-# Create virtual environment
-python -m venv .venv
-.venv\Scripts\activate.bat
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Install PyTorch with CUDA
-.\scripts\batch\install_pytorch_cuda.bat
-```
+For macOS and Linux support, please use the cross-platform version at [FarhanAliRaza/claude-context-local](https://github.com/FarhanAliRaza/claude-context-local), which this project was forked from.
 
 ## Dependency Management
 
@@ -142,8 +121,6 @@ pip install -r requirements.txt
 # Windows
 uv pip install torch>=2.4.0 torchvision torchaudio --python .venv\Scripts\python.exe --index-url https://download.pytorch.org/whl/cu121
 
-# macOS/Linux
-uv pip install torch>=2.4.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
 
 #### pip Method (Fallback)
@@ -160,45 +137,52 @@ pip install torch>=2.4.0 torchvision torchaudio --index-url https://download.pyt
 
 ## Verification & Testing
 
-### 1. Basic Installation Check
+### Comprehensive Verification
 
-```python
+The system includes a professional verification tool that tests all components:
+
+```powershell
+# Run the comprehensive verification script
+verify-installation.bat
+
+# Expected output:
+# [PASS] 15 tests completed successfully
+# [OVERALL] Installation is FULLY FUNCTIONAL
+# System ready for Claude Code integration
+```
+
+**Verification Tests Include:**
+- ✅ Virtual environment and Python version
+- ✅ PyTorch CUDA availability and GPU detection
+- ✅ Core dependencies (transformers, sentence-transformers, FAISS)
+- ✅ Hybrid search dependencies (BM25, NLTK)
+- ✅ MCP server functionality
+- ✅ Multi-language parsers (Python, JS, TS, Java, Go, Rust, C, C++, C#, GLSL)
+- ✅ Performance benchmark
+- ✅ EmbeddingGemma model loading
+
+### Manual Component Testing
+
+```powershell
 # Test basic imports
-python -c "import torch; print('PyTorch:', torch.__version__)"
-python -c "from sentence_transformers import SentenceTransformer; print('Sentence Transformers: OK')"
-python -c "from transformers import AutoModel; print('Transformers: OK')"
-```
+.venv\Scripts\python.exe -c "import torch; print('PyTorch:', torch.__version__)"
 
-### 2. CUDA Verification
-
-```python
 # Test CUDA functionality
-python -c "import torch; print('CUDA available:', torch.cuda.is_available()); print('GPU count:', torch.cuda.device_count())"
-```
+.venv\Scripts\python.exe -c "import torch; print('CUDA available:', torch.cuda.is_available())"
 
-### 3. Full System Test
-
-```bash
-# Run the comprehensive test
-python test_cuda_indexing.py
-```
-
-Expected output:
-
-- PyTorch version: 2.5.1+cu121
-- CUDA available: True
-- GPU memory usage metrics
-- Indexing performance stats
-- Search functionality test
-
-### 4. MCP Server Test
-
-```bash
 # Start MCP server
 start_mcp_server.bat
+```
 
-# Expected: Server starts without errors
-# Look for: "MCP Server starting up" message
+### Advanced Testing Tools
+
+```powershell
+# Development and debug tools available in archive
+_archive/test_scripts/test-cpu-mode.bat     # CPU-only mode testing
+_archive/debug_tools/debug_*.py            # Component-specific debugging
+
+# Unit tests for developers
+.venv\Scripts\python.exe -m pytest tests/unit/ -v
 ```
 
 ## Troubleshooting
@@ -366,7 +350,7 @@ python -m mcp_server.tools index_directory "path/to/project"
 
 ### File Locations
 
-- **Scripts**: `scripts/powershell/` (Windows), `scripts/` (Unix)
+- **Scripts**: `scripts/powershell/` (Windows PowerShell), `scripts/batch/` (Windows batch)
 - **Configuration**: `CLAUDE.md`, `pyproject.toml`
 - **Cache**: `~/.claude_code_search/`
 - **Logs**: MCP server stdout/stderr

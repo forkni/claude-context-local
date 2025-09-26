@@ -79,9 +79,7 @@ class CodeSearchHelper:
             projects = projects_data.get("projects", [])
             if not projects:
                 print("[DIR] No indexed projects found.")
-                print(
-                    "   Use index_project.py to index a project first."
-                )
+                print("   Use index_project.py to index a project first.")
                 return
 
             print("[DIR] Available Indexed Projects:")

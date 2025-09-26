@@ -218,11 +218,36 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Project-specific documentation and development files
-tests/
-TD_RAG/
-MEMORY.md
-CLAUDE.md
-docs/TOUCHDESIGNER_WINDOWS_INTEGRATION_PLAN.md
-docs/TOUCHDESIGNER_MCP_INTEGRATION_GUIDE.md
-docs/READY_TO_USE.md
+# Internal development files (temporarily allowing for development branch)
+# MEMORY.md
+# _archive/
+
+# Evaluation and test results (temporary/generated files)
+custom_evaluation_results/
+test_evaluation/
+evaluation.log
+sample_dataset.json
+
+# Windows-specific temporary files
+nul
+*.bat.bak
+
+# Claude Code search indices and user data
+.claude_indices/
+~/.claude_code_search/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local configuration files
+local_config.json
+*.local
+
+# Temporary files and directories
+*.tmp
+tmp/
+temp/

@@ -146,7 +146,9 @@ class IncrementalIndexer:
             )
 
             # Update index
+            logger.info("[INCREMENTAL] Saving index...")
             self.indexer.save_index()
+            logger.info("[INCREMENTAL] Index saved")
 
             return IncrementalIndexResult(
                 files_added=len(changes.added),
@@ -194,8 +196,14 @@ class IncrementalIndexer:
             all_files = dag.get_all_files()
 
             # Filter supported files
-            supported_files = [f for f in all_files if self.chunker.is_supported(str(Path(project_path) / f))]
-            logger.info(f"Found {len(supported_files)} supported files out of {len(all_files)} total files")
+            supported_files = [
+                f
+                for f in all_files
+                if self.chunker.is_supported(str(Path(project_path) / f))
+            ]
+            logger.info(
+                f"Found {len(supported_files)} supported files out of {len(all_files)} total files"
+            )
             for sf in supported_files:
                 logger.info(f"  Supported: {sf}")
 
@@ -221,7 +229,9 @@ class IncrementalIndexer:
                 try:
                     logger.info(f"Starting embedding for {len(all_chunks)} chunks")
                     all_embedding_results = self.embedder.embed_chunks(all_chunks)
-                    logger.info(f"Successfully embedded {len(all_embedding_results)} chunks")
+                    logger.info(
+                        f"Successfully embedded {len(all_embedding_results)} chunks"
+                    )
                     # Update metadata
                     for chunk, embedding_result in zip(
                         all_chunks, all_embedding_results
@@ -231,6 +241,7 @@ class IncrementalIndexer:
                 except Exception as e:
                     logger.error(f"Embedding failed: {e}")
                     import traceback
+
                     logger.error(traceback.format_exc())
 
             # Add all embeddings to index at once
@@ -256,7 +267,9 @@ class IncrementalIndexer:
             )
 
             # Save index
+            logger.info("[INCREMENTAL] Saving index...")
             self.indexer.save_index()
+            logger.info("[INCREMENTAL] Index saved")
 
             return IncrementalIndexResult(
                 files_added=len(supported_files),
@@ -346,7 +359,15 @@ class IncrementalIndexer:
 
         # Add all embeddings to index at once
         if all_embedding_results:
+            logger.info(
+                f"[INCREMENTAL] Adding {len(all_embedding_results)} embeddings to index"
+            )
+            logger.info(f"[INCREMENTAL] Indexer type: {type(self.indexer).__name__}")
+
+            # Add embeddings
             self.indexer.add_embeddings(all_embedding_results)
+
+            logger.info("[INCREMENTAL] Successfully added embeddings")
 
         return len(all_embedding_results)
 
