@@ -149,174 +149,152 @@ Configure GPU usage and memory thresholds:
 }
 ```
 
-### Reranking Parameters
+### Parallel Processing Settings
 
-Fine-tune the RRF (Reciprocal Rank Fusion) algorithm:
-
-```json
-{
-  "rrf_k_parameter": 100,
-  "enable_result_reranking": true
-}
-```
-
-- **Lower k values**: More emphasis on top-ranked results
-- **Higher k values**: More balanced consideration of all results
-
-### Parallel Execution
-
-Control CPU/GPU parallel execution:
+Control CPU and GPU coordination:
 
 ```json
 {
   "use_parallel_search": true,
-  "max_parallel_workers": 2
+  "max_worker_threads": 4,
+  "gpu_batch_size": 32,
+  "cpu_chunk_size": 100
 }
 ```
 
-## Troubleshooting
+### Index Management
 
-### Common Issues
+Configure automatic reindexing behavior:
 
-#### 1. Hybrid Search Not Working
-
-**Check current mode:**
-```bash
-/get_search_config_status
+```json
+{
+  "enable_auto_reindex": true,
+  "max_index_age_minutes": 5.0,
+  "force_reindex_on_startup": false
+}
 ```
 
-**Enable hybrid search:**
+## Performance Tuning
+
+### For Large Codebases (>10k files)
+
+```json
+{
+  "bm25_weight": 0.3,
+  "dense_weight": 0.7,
+  "use_parallel_search": true,
+  "gpu_batch_size": 64,
+  "prefer_gpu": true
+}
+```
+
+### For Fast Development Cycles
+
+```json
+{
+  "bm25_weight": 0.6,
+  "dense_weight": 0.4,
+  "max_index_age_minutes": 1.0,
+  "enable_auto_reindex": true
+}
+```
+
+### For Semantic Code Discovery
+
+```json
+{
+  "bm25_weight": 0.2,
+  "dense_weight": 0.8,
+  "rrf_k_parameter": 50,
+  "prefer_gpu": true
+}
+```
+
+## Monitoring and Diagnostics
+
+### Check System Status
+
 ```bash
+/get_memory_status     # Monitor RAM/GPU usage
+/get_index_status      # Check index health
+/get_search_config_status  # View current settings
+```
+
+### Performance Metrics
+
+The system tracks:
+- Query response times
+- Index build times
+- Memory usage patterns
+- Search success rates
+- Hardware utilization
+
+### Troubleshooting
+
+#### Search Quality Issues
+1. Increase semantic weight for conceptual queries
+2. Increase BM25 weight for exact text matches
+3. Check index freshness with `/get_index_status`
+
+#### Performance Issues
+1. Enable GPU acceleration if available
+2. Reduce batch sizes for memory constraints
+3. Use auto-reindexing for dynamic codebases
+
+#### Memory Issues
+1. Monitor with `/get_memory_status`
+2. Cleanup with `/cleanup_resources`
+3. Adjust batch sizes in configuration
+
+## Integration Examples
+
+### Claude Code Workflow
+
+```bash
+# 1. Index your project
+/index_directory "C:\your\project\path"
+
+# 2. Configure for your use case
 /configure_search_mode "hybrid" 0.4 0.6 true
-```
 
-#### 2. Poor Search Results
+# 3. Search naturally
+/search_code "database connection pooling"
 
-**Try different weights:**
-```bash
-# More semantic focus
-/configure_search_mode "hybrid" 0.2 0.8 true
-
-# More text matching focus
-/configure_search_mode "hybrid" 0.8 0.2 true
-```
-
-**Switch to specific mode:**
-```bash
-# Force semantic-only
-/configure_search_mode "semantic" 0.0 1.0 true
-
-# Force text-only
-/configure_search_mode "bm25" 1.0 0.0 true
-```
-
-#### 3. Performance Issues
-
-**Check memory status:**
-```bash
-/get_memory_status
-```
-
-**Disable parallel execution:**
-```bash
-/configure_search_mode "hybrid" 0.4 0.6 false
-```
-
-**Clear resources:**
-```bash
-/cleanup_resources
-```
-
-### Debugging
-
-Enable debug mode to see detailed search execution:
-
-```powershell
-# Windows PowerShell
-$env:MCP_DEBUG="1"
-```
-
-Then restart the MCP server to see detailed logging.
-
-## Performance Monitoring
-
-### Search Statistics
-
-Monitor search performance and effectiveness:
-
-```bash
+# 4. Monitor performance
 /get_search_config_status
 ```
 
-Look for the `runtime_status` section to see:
-- Current searcher type being used
-- Active project
-- Configuration file location
+### Batch Configuration
 
-### Memory Usage
-
-Monitor GPU and system memory usage:
-
-```bash
-/get_memory_status
-```
-
-This shows:
-- Available RAM/VRAM
-- Current index memory usage
-- GPU acceleration status
-
-## Migration from Semantic-Only
-
-If you were previously using semantic-only search:
-
-### No Action Needed
-
-Hybrid search is backward compatible. Your existing workflows continue working with improved results.
-
-### To Disable Hybrid Search
-
-If you prefer the old semantic-only behavior:
-
-```bash
-/configure_search_mode "semantic" 0.0 1.0 true
-```
-
-Or set environment variable:
 ```powershell
-$env:CLAUDE_ENABLE_HYBRID="false"
+# Windows batch setup
+$env:CLAUDE_SEARCH_MODE="hybrid"
+$env:CLAUDE_BM25_WEIGHT="0.4"
+$env:CLAUDE_DENSE_WEIGHT="0.6"
+
+# Start server with configuration
+start_mcp_server.bat
 ```
 
 ## Best Practices
 
-### 1. Query Optimization
+### Search Strategy
+1. **Start with defaults** - hybrid mode with 0.4/0.6 weights
+2. **Monitor results** - adjust based on search success
+3. **Use auto-mode** for mixed query types
+4. **Tune weights** for specific use cases
 
-#### Good Hybrid Queries
-- "authentication functions" - Finds both exact text and semantic matches
-- "database connection setup" - Combines technical terms with concepts
-- "error handling patterns" - Balances exact error terms with patterns
+### Performance
+1. **Enable GPU** when available for better speed
+2. **Use parallel search** for optimal resource utilization
+3. **Monitor memory** usage with large indices
+4. **Regular cleanup** to maintain performance
 
-#### Mode-Specific Queries
-- **BM25 Mode**: "UserNotFound exception", "import statements"
-- **Semantic Mode**: "similar functionality", "code that does X"
-- **Auto Mode**: Let system decide based on query characteristics
-
-### 2. Weight Adjustment
-
-Start with defaults (0.4, 0.6) and adjust based on results:
-
-- **Too many irrelevant results**: Increase BM25 weight
-- **Missing obvious matches**: Increase BM25 weight
-- **Not finding conceptual matches**: Increase dense weight
-- **Results too literal**: Increase dense weight
-
-### 3. Performance Optimization
-
-For large codebases:
-1. Use parallel execution (default: true)
-2. Enable GPU acceleration (default: true)
-3. Set reasonable k values (default: 5-10 results)
-4. Enable auto-reindexing for changed files
+### Maintenance
+1. **Auto-reindex** for active development
+2. **Manual reindex** after major changes
+3. **Monitor index age** and refresh as needed
+4. **Backup indices** for large projects
 
 ## Configuration Reference
 
@@ -329,46 +307,18 @@ For large codebases:
   "bm25_weight": 0.4,
   "dense_weight": 0.6,
   "use_parallel_search": true,
-  "max_parallel_workers": 2,
-  "bm25_k_parameter": 100,
-  "bm25_use_stopwords": true,
-  "min_bm25_score": 0.1,
   "rrf_k_parameter": 100,
-  "enable_result_reranking": true,
   "prefer_gpu": true,
-  "gpu_memory_threshold": 0.8,
+  "gpu_batch_size": 32,
+  "cpu_chunk_size": 100,
+  "max_worker_threads": 4,
   "enable_auto_reindex": true,
   "max_index_age_minutes": 5.0,
-  "default_k": 5,
-  "max_k": 50
+  "force_reindex_on_startup": false,
+  "gpu_memory_threshold": 0.8,
+  "cache_embeddings": true,
+  "debug_mode": false
 }
 ```
 
-### Environment Variables Reference
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CLAUDE_SEARCH_MODE` | "hybrid" | Default search mode |
-| `CLAUDE_ENABLE_HYBRID` | true | Enable hybrid search |
-| `CLAUDE_BM25_WEIGHT` | 0.4 | BM25 weight (0.0-1.0) |
-| `CLAUDE_DENSE_WEIGHT` | 0.6 | Dense weight (0.0-1.0) |
-| `CLAUDE_USE_PARALLEL` | true | Enable parallel execution |
-| `CLAUDE_PREFER_GPU` | true | Prefer GPU acceleration |
-| `CLAUDE_GPU_THRESHOLD` | 0.8 | Max GPU memory usage |
-| `CLAUDE_AUTO_REINDEX` | true | Enable auto-reindexing |
-| `CLAUDE_MAX_INDEX_AGE` | 5.0 | Max index age in minutes |
-| `CLAUDE_DEFAULT_K` | 5 | Default results count |
-| `CLAUDE_MAX_K` | 50 | Maximum results count |
-
-## Conclusion
-
-Hybrid search provides significant improvements in both accuracy and efficiency. The default configuration works well for most use cases, but the extensive configuration options allow fine-tuning for specific needs.
-
-**Key Takeaways:**
-- ✅ **Default hybrid mode** provides best balance for most users
-- ✅ **Weight tuning** allows optimization for specific query types
-- ✅ **Multiple configuration methods** provide flexibility
-- ✅ **Backward compatibility** ensures smooth migration
-- ✅ **Performance monitoring** helps optimize usage
-
-For questions or issues, refer to the troubleshooting section above or check the system logs with debug mode enabled.
+This configuration provides optimal performance for most Windows development environments with CUDA-capable GPUs.

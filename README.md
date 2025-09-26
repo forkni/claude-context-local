@@ -36,7 +36,6 @@ An intelligent code search system that uses Google's EmbeddingGemma model and ad
 > **📁 Archived Content**: TouchDesigner-specific features and development tools have been preserved in `_archive/` directory. See `_archive/README.md` for details.
 
 ## ✅ Production Ready
-
 - Core functionality fully operational
 - Windows-optimized installation with automated setup
 - All search modes working (semantic, BM25, hybrid)
@@ -183,6 +182,39 @@ scripts\powershell\configure_claude_code.ps1 -Global
 
 **No manual configuration needed** - the system automatically uses the best search mode for your queries.
 
+## Search Modes & Performance
+
+### Available Search Modes
+
+| Mode | Description | Best For | Performance | Quality Metrics | Status |
+|------|-------------|----------|-------------|-----------------|--------|
+| **hybrid** | BM25 + Semantic with RRF reranking (default) | General use, balanced accuracy | 487ms, optimal accuracy | 44.4% precision, 100% MRR | ✅ Fully operational |
+| **semantic** | Dense vector search only | Conceptual queries, code similarity | 487ms, semantic understanding | 38.9% precision, 100% MRR | ✅ Fixed 2025-09-25 |
+| **bm25** | Text-based sparse search only | Exact matches, error messages | 162ms, fastest | 33.3% precision, 61.1% MRR | ✅ Fully operational |
+| **auto** | Automatically choose based on query | Let system optimize | Adaptive performance | Context-dependent | ✅ Fully operational |
+
+For detailed configuration options, see [Hybrid Search Configuration Guide](docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md).
+
+📊 **Performance benchmarks and detailed metrics**: [View Benchmarks](docs/BENCHMARKS.md)
+
+## MCP Tools Reference
+
+The following MCP tools are available in Claude Code:
+
+### Essential Tools
+1. **`/index_directory`** - Index a codebase for semantic search
+2. **`/search_code`** - Natural language code search with hybrid approach
+3. **`/get_index_status`** - Check current index statistics
+4. **`/switch_project`** - Switch between indexed projects
+
+### Advanced Tools
+5. **`/find_similar_code`** - Find functionally similar code chunks
+6. **`/configure_search_mode`** - Adjust search parameters and weights
+7. **`/get_search_config_status`** - View current search configuration
+8. **`/list_projects`** - List all indexed projects
+9. **`/get_memory_status`** - Monitor system memory usage
+10. **`/cleanup_resources`** - Free memory and cleanup resources
+
 ## Architecture
 
 ```
@@ -208,6 +240,9 @@ claude-context-local/
 ├── tools/                           # Development utilities
 │   ├── index_project.py             # Interactive project indexing
 │   └── search_helper.py             # Standalone search interface
+├── evaluation/                       # Comprehensive evaluation framework
+│   ├── semantic_evaluator.py         # Performance testing and benchmarking
+│   └── README.md                     # Evaluation documentation
 ├── scripts/
 │   ├── batch/                       # Essential Windows batch scripts
 │   │   ├── install_pytorch_cuda.bat # PyTorch CUDA installation
