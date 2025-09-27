@@ -479,7 +479,11 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo [INFO] Testing EmbeddingGemma model loading...
-.venv\Scripts\python.exe -c "try: from sentence_transformers import SentenceTransformer; model = SentenceTransformer('google/embeddinggemma-300m'); print('[OK] EmbeddingGemma loaded successfully'); print('[OK] Model device:', model.device); except Exception as e: print('[WARNING] EmbeddingGemma test failed:', str(e)); print('[INFO] Model will be downloaded on first use')"
+.venv\Scripts\python.exe -c "from sentence_transformers import SentenceTransformer; model = SentenceTransformer('google/embeddinggemma-300m'); print('[OK] EmbeddingGemma loaded successfully'); print('[OK] Model device:', model.device)" 2>nul
+if %ERRORLEVEL% neq 0 (
+    echo [WARNING] EmbeddingGemma test failed - model will be downloaded on first use
+    echo [INFO] This is normal if the model hasn't been downloaded yet
+)
 
 echo [INFO] Testing hybrid search dependencies...
 .venv\Scripts\python.exe -c "import rank_bm25; import nltk; print('[OK] BM25 and NLTK available')"
