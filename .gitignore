@@ -225,6 +225,14 @@ CLAUDE.md
 MEMORY.md
 local_only/
 
+# Documentation - only specific files are public
+docs/*
+!docs/BENCHMARKS.md
+!docs/claude_code_config.md
+!docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md
+!docs/INSTALLATION_GUIDE.md
+!docs/TESTING_GUIDE.md
+
 # Evaluation and test results (temporary/generated files)
 custom_evaluation_results/
 test_evaluation/
