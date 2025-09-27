@@ -1,15 +1,14 @@
 """Python AST-based intelligent code chunking."""
 
-import ast
-import os
-from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
+from pathlib import Path
+from typing import List, Optional
 
 
 @dataclass
 class CodeChunk:
     """Represents a semantically meaningful chunk of code."""
+
     content: str
     chunk_type: str  # function, class, method, module_level, import_block
     start_line: int
@@ -34,7 +33,7 @@ class CodeChunk:
     # Evaluation framework compatibility
     language: str = "python"  # programming language
     chunk_id: Optional[str] = None  # unique identifier for evaluation
-    
+
     def __post_init__(self):
         if self.decorators is None:
             self.decorators = []
@@ -42,12 +41,11 @@ class CodeChunk:
             self.imports = []
         if self.tags is None:
             self.tags = []
-        
+
         # Extract folder structure from path
         if self.file_path and not self.folder_structure:
             path_parts = Path(self.relative_path).parent.parts
-            self.folder_structure = list(path_parts) if path_parts != ('.',) else []
+            self.folder_structure = list(path_parts) if path_parts != (".",) else []
 
 
 # python ast chunker removed
-   

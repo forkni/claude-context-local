@@ -47,10 +47,10 @@ def test_imports():
 
     if success_count == len(modules_to_test):
         print("All dependencies installed correctly!")
-        return True
+        assert True
     else:
         print("Some dependencies failed to import")
-        return False
+        assert False, f"Only {success_count}/{len(modules_to_test)} modules imported successfully"
 
 
 if __name__ == "__main__":

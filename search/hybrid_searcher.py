@@ -649,15 +649,23 @@ class HybridSearcher:
             bm25_dir = self.storage_dir / "bm25"
             dense_size = self.dense_index.index.ntotal if self.dense_index.index else 0
 
-            self._logger.info(f"[SAVE] === PRE-SAVE STATE ===")
+            self._logger.info("[SAVE] === PRE-SAVE STATE ===")
             self._logger.info(f"[SAVE] BM25 directory exists: {bm25_dir.exists()}")
-            self._logger.info(f"[SAVE] BM25 index size: {self.bm25_index.size} documents")
-            self._logger.info(f"[SAVE] BM25 has index: {self.bm25_index._bm25 is not None}")
-            self._logger.info(f"[SAVE] BM25 tokenized docs: {len(self.bm25_index._tokenized_docs)}")
+            self._logger.info(
+                f"[SAVE] BM25 index size: {self.bm25_index.size} documents"
+            )
+            self._logger.info(
+                f"[SAVE] BM25 has index: {self.bm25_index._bm25 is not None}"
+            )
+            self._logger.info(
+                f"[SAVE] BM25 tokenized docs: {len(self.bm25_index._tokenized_docs)}"
+            )
             self._logger.info(f"[SAVE] Dense index size: {dense_size} vectors")
-            self._logger.info(f"[SAVE] Dense has index: {self.dense_index.index is not None}")
+            self._logger.info(
+                f"[SAVE] Dense has index: {self.dense_index.index is not None}"
+            )
             self._logger.info(f"[SAVE] Overall ready state: {self.is_ready}")
-            self._logger.info(f"[SAVE] === END PRE-SAVE STATE ===")
+            self._logger.info("[SAVE] === END PRE-SAVE STATE ===")
 
             # Log BM25 state before save (keep original logging for compatibility)
             self._logger.info(f"[SAVE] BM25 size before save: {self.bm25_index.size}")
@@ -687,19 +695,27 @@ class HybridSearcher:
 
             # Log comprehensive state after save
             bm25_dir = self.storage_dir / "bm25"
-            dense_size_after = self.dense_index.index.ntotal if self.dense_index.index else 0
+            dense_size_after = (
+                self.dense_index.index.ntotal if self.dense_index.index else 0
+            )
 
-            self._logger.info(f"[SAVE] === POST-SAVE STATE ===")
+            self._logger.info("[SAVE] === POST-SAVE STATE ===")
             self._logger.info(f"[SAVE] BM25 directory exists: {bm25_dir.exists()}")
             if bm25_dir.exists():
                 files = list(bm25_dir.iterdir())
                 self._logger.info(f"[SAVE] BM25 files: {[f.name for f in files]}")
-            self._logger.info(f"[SAVE] BM25 index size: {self.bm25_index.size} documents")
-            self._logger.info(f"[SAVE] BM25 has index: {self.bm25_index._bm25 is not None}")
+            self._logger.info(
+                f"[SAVE] BM25 index size: {self.bm25_index.size} documents"
+            )
+            self._logger.info(
+                f"[SAVE] BM25 has index: {self.bm25_index._bm25 is not None}"
+            )
             self._logger.info(f"[SAVE] Dense index size: {dense_size_after} vectors")
-            self._logger.info(f"[SAVE] Dense has index: {self.dense_index.index is not None}")
+            self._logger.info(
+                f"[SAVE] Dense has index: {self.dense_index.index is not None}"
+            )
             self._logger.info(f"[SAVE] Overall ready state: {self.is_ready}")
-            self._logger.info(f"[SAVE] === END POST-SAVE STATE ===")
+            self._logger.info("[SAVE] === END POST-SAVE STATE ===")
 
             self._logger.info("[SAVE] Hybrid indices saved successfully")
         except Exception as e:

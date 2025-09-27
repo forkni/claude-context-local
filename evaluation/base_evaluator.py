@@ -2,18 +2,18 @@
 
 import json
 import logging
-import os
+import statistics
 import time
 from abc import ABC, abstractmethod
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple
-from dataclasses import dataclass, asdict
-import statistics
+from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass
 class RetrievalResult:
     """Single retrieval result."""
+
     file_path: str
     chunk_id: str
     score: float
@@ -30,6 +30,7 @@ class RetrievalResult:
 @dataclass
 class SearchMetrics:
     """Search performance metrics."""
+
     query_time: float
     total_results: int
     precision: float
@@ -48,6 +49,7 @@ class SearchMetrics:
 @dataclass
 class EvaluationInstance:
     """Single evaluation instance."""
+
     instance_id: str
     query: str
     ground_truth_files: List[str]
@@ -63,10 +65,7 @@ class BaseEvaluator(ABC):
     """Base class for search evaluation systems."""
 
     def __init__(
-        self,
-        output_dir: str,
-        max_instances: Optional[int] = None,
-        k: int = 10
+        self, output_dir: str, max_instances: Optional[int] = None, k: int = 10
     ):
         """
         Initialize evaluator.
@@ -93,9 +92,7 @@ class BaseEvaluator(ABC):
         pass
 
     def calculate_precision_recall(
-        self,
-        retrieved_files: List[str],
-        ground_truth_files: List[str]
+        self, retrieved_files: List[str], ground_truth_files: List[str]
     ) -> Tuple[float, float]:
         """
         Calculate precision and recall.
@@ -126,9 +123,7 @@ class BaseEvaluator(ABC):
         return 2 * (precision * recall) / (precision + recall)
 
     def calculate_mrr(
-        self,
-        retrieved_files: List[str],
-        ground_truth_files: List[str]
+        self, retrieved_files: List[str], ground_truth_files: List[str]
     ) -> float:
         """
         Calculate Mean Reciprocal Rank.
@@ -152,7 +147,7 @@ class BaseEvaluator(ABC):
         self,
         retrieved_files: List[str],
         ground_truth_files: List[str],
-        scores: List[float]
+        scores: List[float],
     ) -> float:
         """
         Calculate Normalized Discounted Cumulative Gain.
@@ -165,6 +160,7 @@ class BaseEvaluator(ABC):
         Returns:
             NDCG score
         """
+
         def dcg_at_k(relevances: List[float], k: int) -> float:
             """Calculate DCG at k."""
             dcg = 0.0
@@ -176,7 +172,7 @@ class BaseEvaluator(ABC):
         relevances = []
         ground_truth_set = set(ground_truth_files)
 
-        for file_path in retrieved_files[:self.k]:
+        for file_path in retrieved_files[: self.k]:
             relevances.append(1.0 if file_path in ground_truth_set else 0.0)
 
         if not any(relevances):
@@ -193,9 +189,7 @@ class BaseEvaluator(ABC):
         return dcg / idcg if idcg > 0 else 0.0
 
     def evaluate_single_query(
-        self,
-        instance: EvaluationInstance,
-        project_path: str
+        self, instance: EvaluationInstance, project_path: str
     ) -> SearchMetrics:
         """
         Evaluate a single query.
@@ -237,7 +231,7 @@ class BaseEvaluator(ABC):
                 recall=recall,
                 f1_score=f1_score,
                 mrr=mrr,
-                ndcg=ndcg
+                ndcg=ndcg,
             )
 
             self.logger.debug(
@@ -256,13 +250,11 @@ class BaseEvaluator(ABC):
                 recall=0.0,
                 f1_score=0.0,
                 mrr=0.0,
-                ndcg=0.0
+                ndcg=0.0,
             )
 
     def run_evaluation(
-        self,
-        instances: List[EvaluationInstance],
-        project_path: str
+        self, instances: List[EvaluationInstance], project_path: str
     ) -> Dict[str, Any]:
         """
         Run full evaluation on a list of instances.
@@ -278,7 +270,7 @@ class BaseEvaluator(ABC):
 
         # Limit instances if specified
         if self.max_instances and len(instances) > self.max_instances:
-            instances = instances[:self.max_instances]
+            instances = instances[: self.max_instances]
             self.logger.info(f"Limited to {len(instances)} instances")
 
         # Build index once
@@ -293,16 +285,16 @@ class BaseEvaluator(ABC):
         results_by_instance = {}
 
         for i, instance in enumerate(instances):
-            self.logger.info(f"Processing instance {i+1}/{len(instances)}")
+            self.logger.info(f"Processing instance {i + 1}/{len(instances)}")
 
             metrics = self.evaluate_single_query(instance, project_path)
             all_metrics.append(metrics)
 
             # Store detailed results
             results_by_instance[instance.instance_id] = {
-                'instance': instance.to_dict(),
-                'metrics': metrics.to_dict(),
-                'timestamp': time.time()
+                "instance": instance.to_dict(),
+                "metrics": metrics.to_dict(),
+                "timestamp": time.time(),
             }
 
         # Calculate aggregate statistics
@@ -313,15 +305,15 @@ class BaseEvaluator(ABC):
 
         # Compile final results
         evaluation_results = {
-            'metadata': {
-                'total_instances': len(instances),
-                'project_path': str(project_path),
-                'k': self.k,
-                'build_time': build_time,
-                'evaluation_timestamp': time.time()
+            "metadata": {
+                "total_instances": len(instances),
+                "project_path": str(project_path),
+                "k": self.k,
+                "build_time": build_time,
+                "evaluation_timestamp": time.time(),
             },
-            'aggregate_metrics': aggregate_results,
-            'results_by_instance': results_by_instance
+            "aggregate_metrics": aggregate_results,
+            "results_by_instance": results_by_instance,
         }
 
         # Save results
@@ -330,7 +322,9 @@ class BaseEvaluator(ABC):
         self.logger.info("Evaluation completed successfully")
         return evaluation_results
 
-    def _calculate_aggregate_metrics(self, all_metrics: List[SearchMetrics]) -> Dict[str, Any]:
+    def _calculate_aggregate_metrics(
+        self, all_metrics: List[SearchMetrics]
+    ) -> Dict[str, Any]:
         """Calculate aggregate metrics across all queries."""
         if not all_metrics:
             return {}
@@ -345,51 +339,53 @@ class BaseEvaluator(ABC):
         total_results = [m.total_results for m in all_metrics]
 
         return {
-            'count': len(all_metrics),
-            'query_time': {
-                'mean': statistics.mean(query_times),
-                'median': statistics.median(query_times),
-                'stdev': statistics.stdev(query_times) if len(query_times) > 1 else 0.0,
-                'min': min(query_times),
-                'max': max(query_times)
+            "count": len(all_metrics),
+            "query_time": {
+                "mean": statistics.mean(query_times),
+                "median": statistics.median(query_times),
+                "stdev": statistics.stdev(query_times) if len(query_times) > 1 else 0.0,
+                "min": min(query_times),
+                "max": max(query_times),
             },
-            'precision': {
-                'mean': statistics.mean(precisions),
-                'median': statistics.median(precisions),
-                'stdev': statistics.stdev(precisions) if len(precisions) > 1 else 0.0
+            "precision": {
+                "mean": statistics.mean(precisions),
+                "median": statistics.median(precisions),
+                "stdev": statistics.stdev(precisions) if len(precisions) > 1 else 0.0,
             },
-            'recall': {
-                'mean': statistics.mean(recalls),
-                'median': statistics.median(recalls),
-                'stdev': statistics.stdev(recalls) if len(recalls) > 1 else 0.0
+            "recall": {
+                "mean": statistics.mean(recalls),
+                "median": statistics.median(recalls),
+                "stdev": statistics.stdev(recalls) if len(recalls) > 1 else 0.0,
             },
-            'f1_score': {
-                'mean': statistics.mean(f1_scores),
-                'median': statistics.median(f1_scores),
-                'stdev': statistics.stdev(f1_scores) if len(f1_scores) > 1 else 0.0
+            "f1_score": {
+                "mean": statistics.mean(f1_scores),
+                "median": statistics.median(f1_scores),
+                "stdev": statistics.stdev(f1_scores) if len(f1_scores) > 1 else 0.0,
             },
-            'mrr': {
-                'mean': statistics.mean(mrr_scores),
-                'median': statistics.median(mrr_scores),
-                'stdev': statistics.stdev(mrr_scores) if len(mrr_scores) > 1 else 0.0
+            "mrr": {
+                "mean": statistics.mean(mrr_scores),
+                "median": statistics.median(mrr_scores),
+                "stdev": statistics.stdev(mrr_scores) if len(mrr_scores) > 1 else 0.0,
             },
-            'ndcg': {
-                'mean': statistics.mean(ndcg_scores),
-                'median': statistics.median(ndcg_scores),
-                'stdev': statistics.stdev(ndcg_scores) if len(ndcg_scores) > 1 else 0.0
+            "ndcg": {
+                "mean": statistics.mean(ndcg_scores),
+                "median": statistics.median(ndcg_scores),
+                "stdev": statistics.stdev(ndcg_scores) if len(ndcg_scores) > 1 else 0.0,
             },
-            'total_results': {
-                'mean': statistics.mean(total_results),
-                'median': statistics.median(total_results),
-                'stdev': statistics.stdev(total_results) if len(total_results) > 1 else 0.0
-            }
+            "total_results": {
+                "mean": statistics.mean(total_results),
+                "median": statistics.median(total_results),
+                "stdev": statistics.stdev(total_results)
+                if len(total_results) > 1
+                else 0.0,
+            },
         }
 
     def _save_results(self, results: Dict[str, Any]) -> None:
         """Save evaluation results to disk."""
         # Save main results file
         results_file = self.output_dir / "evaluation_results.json"
-        with open(results_file, 'w', encoding='utf-8') as f:
+        with open(results_file, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2, default=str)
 
         self.logger.info(f"Results saved to {results_file}")
@@ -397,10 +393,10 @@ class BaseEvaluator(ABC):
         # Save summary file
         summary_file = self.output_dir / "evaluation_summary.json"
         summary = {
-            'metadata': results['metadata'],
-            'aggregate_metrics': results['aggregate_metrics']
+            "metadata": results["metadata"],
+            "aggregate_metrics": results["aggregate_metrics"],
         }
-        with open(summary_file, 'w', encoding='utf-8') as f:
+        with open(summary_file, "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2, default=str)
 
         self.logger.info(f"Summary saved to {summary_file}")
@@ -421,8 +417,8 @@ class BaseEvaluator(ABC):
 
         self.logger.info(f"Loading dataset from {dataset_path}")
 
-        if dataset_file.suffix == '.json':
-            with open(dataset_file, 'r', encoding='utf-8') as f:
+        if dataset_file.suffix == ".json":
+            with open(dataset_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
             instances = []
@@ -430,8 +426,8 @@ class BaseEvaluator(ABC):
             if isinstance(data, list):
                 raw_instances = data
             elif isinstance(data, dict):
-                if 'instances' in data:
-                    raw_instances = data['instances']
+                if "instances" in data:
+                    raw_instances = data["instances"]
                 else:
                     raw_instances = [data]
             else:
@@ -439,11 +435,11 @@ class BaseEvaluator(ABC):
 
             for item in raw_instances:
                 instance = EvaluationInstance(
-                    instance_id=item.get('instance_id', str(len(instances))),
-                    query=item['query'],
-                    ground_truth_files=item['ground_truth_files'],
-                    ground_truth_content=item.get('ground_truth_content'),
-                    metadata=item.get('metadata', {})
+                    instance_id=item.get("instance_id", str(len(instances))),
+                    query=item["query"],
+                    ground_truth_files=item["ground_truth_files"],
+                    ground_truth_content=item.get("ground_truth_content"),
+                    metadata=item.get("metadata", {}),
                 )
                 instances.append(instance)
 
@@ -463,8 +459,8 @@ class BaseEvaluator(ABC):
         Returns:
             Formatted report string
         """
-        metadata = results['metadata']
-        agg_metrics = results['aggregate_metrics']
+        metadata = results["metadata"]
+        agg_metrics = results["aggregate_metrics"]
 
         report_lines = [
             "=" * 80,
@@ -481,28 +477,27 @@ class BaseEvaluator(ABC):
         ]
 
         if agg_metrics:
-            report_lines.extend([
-                f"Query Time (avg): {agg_metrics['query_time']['mean']:.3f}s ± {agg_metrics['query_time']['stdev']:.3f}s",
-                f"Precision (avg): {agg_metrics['precision']['mean']:.3f} ± {agg_metrics['precision']['stdev']:.3f}",
-                f"Recall (avg): {agg_metrics['recall']['mean']:.3f} ± {agg_metrics['recall']['stdev']:.3f}",
-                f"F1-Score (avg): {agg_metrics['f1_score']['mean']:.3f} ± {agg_metrics['f1_score']['stdev']:.3f}",
-                f"MRR (avg): {agg_metrics['mrr']['mean']:.3f} ± {agg_metrics['mrr']['stdev']:.3f}",
-                f"NDCG (avg): {agg_metrics['ndcg']['mean']:.3f} ± {agg_metrics['ndcg']['stdev']:.3f}",
-                f"Results per Query (avg): {agg_metrics['total_results']['mean']:.1f}",
-            ])
+            report_lines.extend(
+                [
+                    f"Query Time (avg): {agg_metrics['query_time']['mean']:.3f}s ± {agg_metrics['query_time']['stdev']:.3f}s",
+                    f"Precision (avg): {agg_metrics['precision']['mean']:.3f} ± {agg_metrics['precision']['stdev']:.3f}",
+                    f"Recall (avg): {agg_metrics['recall']['mean']:.3f} ± {agg_metrics['recall']['stdev']:.3f}",
+                    f"F1-Score (avg): {agg_metrics['f1_score']['mean']:.3f} ± {agg_metrics['f1_score']['stdev']:.3f}",
+                    f"MRR (avg): {agg_metrics['mrr']['mean']:.3f} ± {agg_metrics['mrr']['stdev']:.3f}",
+                    f"NDCG (avg): {agg_metrics['ndcg']['mean']:.3f} ± {agg_metrics['ndcg']['stdev']:.3f}",
+                    f"Results per Query (avg): {agg_metrics['total_results']['mean']:.1f}",
+                ]
+            )
         else:
             report_lines.append("No metrics available.")
 
-        report_lines.extend([
-            "",
-            "=" * 80
-        ])
+        report_lines.extend(["", "=" * 80])
 
         report = "\n".join(report_lines)
 
         # Save report to file
         report_file = self.output_dir / "evaluation_report.txt"
-        with open(report_file, 'w', encoding='utf-8') as f:
+        with open(report_file, "w", encoding="utf-8") as f:
             f.write(report)
 
         self.logger.info(f"Benchmark report saved to {report_file}")

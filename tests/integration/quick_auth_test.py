@@ -1,30 +1,29 @@
 #!/usr/bin/env python3
 """Quick authentication test"""
 
-from huggingface_hub import login, whoami
+import sys
+from huggingface_hub import login, whoami, HfFolder
 
-# Your token
-token = "YOUR_HF_TOKEN_HERE"  # Replace with your actual Hugging Face token
+# Get existing token or skip test
+token = HfFolder.get_token()
+
+if not token:
+    print("SKIP: No HuggingFace token available")
+    print("To authenticate, run: huggingface-cli login")
+    sys.exit(0)
 
 try:
     print("Testing authentication...")
-    login(token=token, add_to_git_credential=False)
+    # Token is already stored, just verify it works
+    # login(token=token, add_to_git_credential=False)  # Not needed if token already exists
 
     info = whoami()
     print("SUCCESS: Authentication successful!")
     print(f"   User: {info['name']}")
     print(f"   Type: {info.get('type', 'unknown')}")
+    print(f"   Token: {'claude-context-local' if 'claude-context-local' in str(info) else 'Valid'}")
 
-    # Save token for persistence
-    from pathlib import Path
-
-    token_dir = Path.home() / ".cache" / "huggingface"
-    token_dir.mkdir(parents=True, exist_ok=True)
-
-    with open(token_dir / "token", "w") as f:
-        f.write(token)
-
-    print("SUCCESS: Token saved for future sessions")
+    print("SUCCESS: Authentication verified!")
 
 except Exception as e:
     print(f"ERROR: Authentication failed: {e}")

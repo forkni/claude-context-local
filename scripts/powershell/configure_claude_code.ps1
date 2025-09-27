@@ -10,7 +10,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$PROJECT_DIR = "F:\RD_PROJECTS\COMPONENTS\Claude-context-MCP"
+$PROJECT_DIR = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $PYTHON_PATH = "$PROJECT_DIR\.venv\Scripts\python.exe"
 $SERVER_MODULE = "mcp_server.server"
 $WRAPPER_SCRIPT = "$PROJECT_DIR\scripts\batch\mcp_server_wrapper.bat"

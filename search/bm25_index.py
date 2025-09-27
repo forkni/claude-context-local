@@ -229,7 +229,9 @@ class BM25Index:
                 )
 
             except Exception as bm25_error:
-                self._logger.error(f"[BM25_INDEX] Failed to create BM25 index: {bm25_error}")
+                self._logger.error(
+                    f"[BM25_INDEX] Failed to create BM25 index: {bm25_error}"
+                )
                 # Reset the BM25 index to None on failure
                 self._bm25 = None
                 raise ValueError(f"BM25 index creation failed: {bm25_error}")

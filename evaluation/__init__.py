@@ -1,1 +1,1 @@
-"""Claude Context MCP Evaluation Framework."""
+"""claude-context-local Evaluation Framework."""

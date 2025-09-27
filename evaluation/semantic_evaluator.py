@@ -3,12 +3,13 @@
 import logging
 import time
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
-from .base_evaluator import BaseEvaluator, RetrievalResult
-from search.hybrid_searcher import HybridSearcher
 from chunking.multi_language_chunker import MultiLanguageChunker
 from embeddings.embedder import CodeEmbedder
+from search.hybrid_searcher import HybridSearcher
+
+from .base_evaluator import BaseEvaluator, RetrievalResult
 
 
 class SemanticSearchEvaluator(BaseEvaluator):
@@ -22,7 +23,7 @@ class SemanticSearchEvaluator(BaseEvaluator):
         k: int = 10,
         use_gpu: bool = True,
         bm25_weight: float = 0.4,
-        dense_weight: float = 0.6
+        dense_weight: float = 0.6,
     ):
         """
         Initialize semantic search evaluator.
@@ -64,7 +65,7 @@ class SemanticSearchEvaluator(BaseEvaluator):
         self.hybrid_searcher = HybridSearcher(
             storage_dir=self.storage_dir,
             bm25_weight=self.bm25_weight,
-            dense_weight=self.dense_weight
+            dense_weight=self.dense_weight,
         )
 
         # Check if index already exists and is recent
@@ -75,7 +76,9 @@ class SemanticSearchEvaluator(BaseEvaluator):
             self.logger.info("Loading existing search index...")
             success = self.hybrid_searcher.load_indices()
             if not success:
-                self.logger.warning("Failed to load existing index, building new one...")
+                self.logger.warning(
+                    "Failed to load existing index, building new one..."
+                )
                 self._build_fresh_index(project_path)
 
     def _should_rebuild_index(self, project_path: str) -> bool:
@@ -135,11 +138,11 @@ class SemanticSearchEvaluator(BaseEvaluator):
 
                         # Build metadata
                         chunk_metadata = {
-                            'file_path': str(file_path.relative_to(project_dir)),
-                            'language': chunk.language,
-                            'chunk_type': chunk.chunk_type,
-                            'start_line': chunk.start_line,
-                            'end_line': chunk.end_line
+                            "file_path": str(file_path.relative_to(project_dir)),
+                            "language": chunk.language,
+                            "chunk_type": chunk.chunk_type,
+                            "start_line": chunk.start_line,
+                            "end_line": chunk.end_line,
                         }
                         metadata[chunk.chunk_id] = chunk_metadata
 
@@ -148,7 +151,9 @@ class SemanticSearchEvaluator(BaseEvaluator):
             except Exception as e:
                 self.logger.warning(f"Failed to chunk file {file_path}: {e}")
 
-        self.logger.info(f"Generated {len(all_chunks)} chunks from {len(supported_files)} files")
+        self.logger.info(
+            f"Generated {len(all_chunks)} chunks from {len(supported_files)} files"
+        )
 
         if not all_chunks:
             raise ValueError("No chunks generated from project files")
@@ -158,7 +163,9 @@ class SemanticSearchEvaluator(BaseEvaluator):
         start_time = time.time()
         embedding_results = self.embedder.embed_chunks(all_chunks)
         embed_time = time.time() - start_time
-        self.logger.info(f"Generated {len(embedding_results)} embeddings in {embed_time:.2f}s")
+        self.logger.info(
+            f"Generated {len(embedding_results)} embeddings in {embed_time:.2f}s"
+        )
 
         # Extract embeddings list
         embeddings = []
@@ -171,7 +178,7 @@ class SemanticSearchEvaluator(BaseEvaluator):
             documents=documents,
             doc_ids=doc_ids,
             embeddings=embeddings,
-            metadata=metadata
+            metadata=metadata,
         )
 
         # Save indices
@@ -197,27 +204,25 @@ class SemanticSearchEvaluator(BaseEvaluator):
         try:
             # Execute hybrid search
             search_results = self.hybrid_searcher.search(
-                query=query,
-                k=k,
-                use_parallel=True
+                query=query, k=k, use_parallel=True
             )
 
             # Convert to RetrievalResult format
             retrieval_results = []
             for result in search_results:
                 # Extract metadata
-                file_path = result.metadata.get('file_path', 'unknown')
-                start_line = result.metadata.get('start_line', 0)
-                end_line = result.metadata.get('end_line', 0)
+                file_path = result.metadata.get("file_path", "unknown")
+                start_line = result.metadata.get("start_line", 0)
+                end_line = result.metadata.get("end_line", 0)
 
                 retrieval_result = RetrievalResult(
                     file_path=file_path,
                     chunk_id=result.doc_id,
                     score=result.score,
-                    content=result.metadata.get('content', ''),
+                    content=result.metadata.get("content", ""),
                     metadata=result.metadata,
                     line_start=start_line,
-                    line_end=end_line
+                    line_end=end_line,
                 )
                 retrieval_results.append(retrieval_result)
 
@@ -240,7 +245,7 @@ class SemanticSearchEvaluator(BaseEvaluator):
         try:
             if self.hybrid_searcher:
                 self.hybrid_searcher.shutdown()
-            if hasattr(self.embedder, 'cleanup'):
+            if hasattr(self.embedder, "cleanup"):
                 self.embedder.cleanup()
             self.logger.info("Evaluator cleanup completed")
         except Exception as e:
@@ -259,10 +264,7 @@ class BM25OnlyEvaluator(SemanticSearchEvaluator):
     """Evaluator using only BM25 search (no dense vectors)."""
 
     def __init__(self, *args, **kwargs):
-        kwargs.update({
-            'bm25_weight': 1.0,
-            'dense_weight': 0.0
-        })
+        kwargs.update({"bm25_weight": 1.0, "dense_weight": 0.0})
         super().__init__(*args, **kwargs)
         self.logger = logging.getLogger(self.__class__.__name__)
 
@@ -278,7 +280,9 @@ class BM25OnlyEvaluator(SemanticSearchEvaluator):
             if file_path.is_file() and self.chunker.is_supported(str(file_path)):
                 supported_files.append(file_path)
 
-        self.logger.info(f"Found {len(supported_files)} supported files for BM25-only index")
+        self.logger.info(
+            f"Found {len(supported_files)} supported files for BM25-only index"
+        )
 
         # Chunk files and build documents for BM25
         documents = []
@@ -294,12 +298,12 @@ class BM25OnlyEvaluator(SemanticSearchEvaluator):
                         doc_ids.append(chunk.chunk_id)
 
                         chunk_metadata = {
-                            'file_path': str(file_path.relative_to(project_dir)),
-                            'language': chunk.language,
-                            'chunk_type': chunk.chunk_type,
-                            'start_line': chunk.start_line,
-                            'end_line': chunk.end_line,
-                            'content': chunk.content
+                            "file_path": str(file_path.relative_to(project_dir)),
+                            "language": chunk.language,
+                            "chunk_type": chunk.chunk_type,
+                            "start_line": chunk.start_line,
+                            "end_line": chunk.end_line,
+                            "content": chunk.content,
                         }
                         metadata[chunk.chunk_id] = chunk_metadata
 
@@ -309,9 +313,7 @@ class BM25OnlyEvaluator(SemanticSearchEvaluator):
         # Index only in BM25 (no embeddings)
         self.logger.info("Building BM25-only index...")
         self.hybrid_searcher.bm25_index.index_documents(
-            documents=documents,
-            doc_ids=doc_ids,
-            metadata=metadata
+            documents=documents, doc_ids=doc_ids, metadata=metadata
         )
 
         # Save only BM25 index
@@ -323,9 +325,6 @@ class DenseOnlyEvaluator(SemanticSearchEvaluator):
     """Evaluator using only dense vector search (no BM25)."""
 
     def __init__(self, *args, **kwargs):
-        kwargs.update({
-            'bm25_weight': 0.0,
-            'dense_weight': 1.0
-        })
+        kwargs.update({"bm25_weight": 0.0, "dense_weight": 1.0})
         super().__init__(*args, **kwargs)
         self.logger = logging.getLogger(self.__class__.__name__)
