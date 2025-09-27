@@ -7,12 +7,14 @@ The Claude Context MCP system now includes **hybrid search capabilities** that c
 ## Key Benefits
 
 ### 🚀 **Performance Improvements**
+
 - **Optimized search efficiency** through dual-approach methodology
 - **Reduced search iterations** via improved result relevance
 - **5-10x faster** indexing through incremental updates
 - **Parallel execution** with BM25 on CPU, dense search on GPU
 
 ### 🎯 **Improved Accuracy**
+
 - **Reciprocal Rank Fusion (RRF)** combines results from multiple search methods
 - **Complementary strengths**: BM25 for exact text matches, dense search for semantic similarity
 - **Proven quality metrics**: 44.4% precision, 46.7% F1-score, 100% MRR (see [BENCHMARKS.md](BENCHMARKS.md))
@@ -51,6 +53,7 @@ This shows your current configuration and available options.
 ```
 
 Parameters:
+
 - `search_mode`: "hybrid" (default), "semantic", "bm25", or "auto"
 - `bm25_weight`: Weight for BM25 sparse search (0.0 to 1.0)
 - `dense_weight`: Weight for dense vector search (0.0 to 1.0)
@@ -106,23 +109,29 @@ Create a `search_config.json` file in your project root:
 ### Tuning for Different Use Cases
 
 #### Code Structure Queries
+
 ```bash
 /configure_search_mode "hybrid" 0.3 0.7 true
 ```
+
 - Emphasize semantic search for understanding code relationships
 - Good for: "find classes that implement interface", "similar functions"
 
 #### Error/Log Analysis
+
 ```bash
 /configure_search_mode "hybrid" 0.7 0.3 true
 ```
+
 - Emphasize text search for exact error message matches
 - Good for: "find error handling", "exception messages"
 
 #### Balanced General Use
+
 ```bash
 /configure_search_mode "hybrid" 0.4 0.6 true
 ```
+
 - Default balanced approach
 - Good for: most queries, general code exploration
 
@@ -223,6 +232,7 @@ Configure automatic reindexing behavior:
 ### Performance Metrics
 
 The system tracks:
+
 - Query response times
 - Index build times
 - Memory usage patterns
@@ -232,16 +242,19 @@ The system tracks:
 ### Troubleshooting
 
 #### Search Quality Issues
+
 1. Increase semantic weight for conceptual queries
 2. Increase BM25 weight for exact text matches
 3. Check index freshness with `/get_index_status`
 
 #### Performance Issues
+
 1. Enable GPU acceleration if available
 2. Reduce batch sizes for memory constraints
 3. Use auto-reindexing for dynamic codebases
 
 #### Memory Issues
+
 1. Monitor with `/get_memory_status`
 2. Cleanup with `/cleanup_resources`
 3. Adjust batch sizes in configuration
@@ -279,18 +292,21 @@ start_mcp_server.bat
 ## Best Practices
 
 ### Search Strategy
+
 1. **Start with defaults** - hybrid mode with 0.4/0.6 weights
 2. **Monitor results** - adjust based on search success
 3. **Use auto-mode** for mixed query types
 4. **Tune weights** for specific use cases
 
 ### Performance
+
 1. **Enable GPU** when available for better speed
 2. **Use parallel search** for optimal resource utilization
 3. **Monitor memory** usage with large indices
 4. **Regular cleanup** to maintain performance
 
 ### Maintenance
+
 1. **Auto-reindex** for active development
 2. **Manual reindex** after major changes
 3. **Monitor index age** and refresh as needed

@@ -1348,6 +1348,125 @@ def get_search_config_status() -> str:
         return json.dumps({"error": str(e)})
 
 
+@mcp.tool()
+def run_benchmark(
+    benchmark_type: str = "token-efficiency",
+    project_path: str = "test_evaluation",
+    max_instances: int = 3,
+    use_gpu: bool = None,
+) -> str:
+    """
+    Run performance benchmarks to validate system efficiency and search quality.
+
+    This tool provides access to the comprehensive evaluation framework for measuring
+    token efficiency, search quality, and performance characteristics.
+
+    Args:
+        benchmark_type: Type of benchmark to run
+                      - "token-efficiency": Measures 99.9% token reduction vs file reading
+                      - "custom": Project-specific search quality evaluation
+                      - "swe-bench": Industry-standard software engineering benchmark
+        project_path: Path to project for evaluation (default: test_evaluation)
+        max_instances: Maximum test instances to evaluate (default: 3)
+        use_gpu: Force GPU usage (True), CPU usage (False), or auto-detect (None)
+
+    Returns:
+        JSON string with benchmark results and performance metrics
+
+    Examples:
+        /run_benchmark "token-efficiency"
+        /run_benchmark "custom" "path/to/your/project"
+        /run_benchmark "token-efficiency" "test_evaluation" 1 false
+    """
+    try:
+        import subprocess
+        import sys
+
+        # Validate benchmark type
+        valid_types = ["token-efficiency", "custom", "swe-bench"]
+        if benchmark_type not in valid_types:
+            return json.dumps(
+                {
+                    "error": f"Invalid benchmark type: {benchmark_type}",
+                    "valid_types": valid_types,
+                }
+            )
+
+        # Construct command
+        python_exe = sys.executable
+        script_path = PROJECT_ROOT / "evaluation" / "run_evaluation.py"
+
+        if not script_path.exists():
+            return json.dumps(
+                {
+                    "error": "Evaluation script not found",
+                    "path": str(script_path),
+                    "suggestion": "Run from project root directory",
+                }
+            )
+
+        # Build command arguments
+        cmd = [python_exe, str(script_path), benchmark_type]
+
+        if benchmark_type in ["custom", "token-efficiency"]:
+            cmd.extend(["--project", project_path])
+            cmd.extend(["--max-instances", str(max_instances)])
+
+        if benchmark_type == "swe-bench":
+            cmd.extend(["--max-instances", str(max_instances)])
+
+        # Handle GPU/CPU flags for token-efficiency
+        if benchmark_type == "token-efficiency" and use_gpu is not None:
+            if use_gpu:
+                cmd.append("--gpu")
+            else:
+                cmd.append("--cpu")
+
+        logger.info(f"Running benchmark: {' '.join(cmd)}")
+
+        # Execute benchmark
+        result = subprocess.run(
+            cmd,
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=300,  # 5 minute timeout
+        )
+
+        if result.returncode == 0:
+            return json.dumps(
+                {
+                    "success": True,
+                    "benchmark_type": benchmark_type,
+                    "project_path": project_path,
+                    "max_instances": max_instances,
+                    "gpu_used": use_gpu if use_gpu is not None else "auto-detected",
+                    "output": result.stdout,
+                    "message": f"Benchmark '{benchmark_type}' completed successfully",
+                }
+            )
+        else:
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": f"Benchmark failed with return code {result.returncode}",
+                    "stderr": result.stderr,
+                    "stdout": result.stdout,
+                }
+            )
+
+    except subprocess.TimeoutExpired:
+        return json.dumps(
+            {
+                "error": "Benchmark timed out (5 minutes)",
+                "suggestion": "Try reducing max_instances or use a smaller project",
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error running benchmark: {e}")
+        return json.dumps({"error": str(e)})
+
+
 if __name__ == "__main__":
     import argparse
 

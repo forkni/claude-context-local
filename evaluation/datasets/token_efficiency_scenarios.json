@@ -1,0 +1,86 @@
+{
+  "metadata": {
+    "name": "Token Efficiency Evaluation Scenarios",
+    "description": "Test scenarios comparing MCP semantic search vs vanilla file reading for token efficiency",
+    "version": "1.0",
+    "created": "2025-01-26",
+    "use_case": "Benchmark token savings when using semantic search instead of manual file reading"
+  },
+  "instances": [
+    {
+      "instance_id": "auth_function_search",
+      "query": "find authentication and login functions",
+      "ground_truth_files": [
+        "auth.py",
+        "api/handlers.py"
+      ],
+      "ground_truth_content": "Functions that handle user authentication, login, and security validation",
+      "metadata": {
+        "difficulty": "medium",
+        "scenario_type": "specific_function_search",
+        "expected_token_savings": "70-85%",
+        "description": "Finding specific authentication functions across a codebase without reading entire modules"
+      }
+    },
+    {
+      "instance_id": "error_handling_patterns",
+      "query": "error handling try except exception patterns",
+      "ground_truth_files": [
+        "database/connection.py",
+        "api/handlers.py",
+        "config/settings.py"
+      ],
+      "ground_truth_content": "Code patterns for error handling, exception management, and error recovery",
+      "metadata": {
+        "difficulty": "medium",
+        "scenario_type": "pattern_search",
+        "expected_token_savings": "60-80%",
+        "description": "Locating error handling patterns without reading entire files"
+      }
+    },
+    {
+      "instance_id": "database_connection_setup",
+      "query": "database connection initialization setup configuration",
+      "ground_truth_files": [
+        "database/connection.py"
+      ],
+      "ground_truth_content": "Database connection setup, initialization, and configuration code",
+      "metadata": {
+        "difficulty": "medium",
+        "scenario_type": "initialization_search",
+        "expected_token_savings": "65-85%",
+        "description": "Finding database setup code without exploring entire database modules"
+      }
+    },
+    {
+      "instance_id": "class_inheritance_relationships",
+      "query": "class inheritance User extends enum dataclass models",
+      "ground_truth_files": [
+        "models/user.py",
+        "auth.py"
+      ],
+      "ground_truth_content": "Class definitions and inheritance relationships for user models",
+      "metadata": {
+        "difficulty": "hard",
+        "scenario_type": "inheritance_analysis",
+        "expected_token_savings": "50-75%",
+        "description": "Understanding class inheritance relationships without reading all related files"
+      }
+    },
+    {
+      "instance_id": "configuration_loading",
+      "query": "configuration loading settings environment variables",
+      "ground_truth_files": [
+        "config/settings.py",
+        "main.py"
+      ],
+      "ground_truth_content": "Code that loads configuration, reads settings, and handles environment variables",
+      "metadata": {
+        "difficulty": "medium",
+        "scenario_type": "config_search",
+        "expected_token_savings": "70-90%",
+        "description": "Finding configuration handling without reading entire application setup"
+      }
+    }
+  ]
+}

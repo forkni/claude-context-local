@@ -9,7 +9,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$PROJECT_DIR = "F:\RD_PROJECTS\COMPONENTS\Claude-context-MCP"
+$PROJECT_DIR = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 Write-Host "=== Hugging Face Authentication Fix ===" -ForegroundColor Cyan
 Write-Host "Project Directory: $PROJECT_DIR" -ForegroundColor Gray
@@ -128,7 +128,7 @@ except Exception as e:
     Write-Host "`nNo token provided. Please choose an authentication method:`n" -ForegroundColor Yellow
 
     Write-Host "Option 1: Provide token directly" -ForegroundColor Cyan
-    Write-Host "  .\hf_auth_fix.ps1 -Token 'hf_YOUR_TOKEN_HERE'" -ForegroundColor Gray
+    Write-Host "  .\hf_auth.ps1 -Token 'hf_YOUR_TOKEN_HERE'" -ForegroundColor Gray
     Write-Host ""
 
     Write-Host "Option 2: Use interactive login (may have issues)" -ForegroundColor Cyan
@@ -137,7 +137,7 @@ except Exception as e:
 
     Write-Host "Option 3: Manual environment variable" -ForegroundColor Cyan
     Write-Host "  `$env:HF_TOKEN = 'hf_YOUR_TOKEN_HERE'" -ForegroundColor Gray
-    Write-Host "  .\hf_auth_fix.ps1 -TestOnly" -ForegroundColor Gray
+    Write-Host "  .\hf_auth.ps1 -TestOnly" -ForegroundColor Gray
     Write-Host ""
 
     Write-Host "[GUIDE] To get your token:" -ForegroundColor Green

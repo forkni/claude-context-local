@@ -561,7 +561,7 @@ async def http_exception_handler(request, exc):
 '''
 
 # Simple utility module
-SAMPLE_UTILS_MODULE = '''
+SAMPLE_UTILS_MODULE = r'''
 import re
 import hashlib
 from typing import List, Dict, Any, Optional

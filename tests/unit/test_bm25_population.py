@@ -119,12 +119,14 @@ def test_bm25_population():
         searcher2.shutdown()
 
         print("[TEST] BM25 population test completed successfully!")
+        # Test passes
+        assert True
 
     except Exception as e:
         print(f"[TEST] Test failed with error: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        assert False, f"Test failed with error: {e}"
     finally:
         # Cleanup
         try:
@@ -132,8 +134,6 @@ def test_bm25_population():
             print(f"[TEST] Cleaned up temporary directory: {temp_dir}")
         except Exception as e:
             print(f"[TEST] Failed to cleanup {temp_dir}: {e}")
-
-    return True
 
 if __name__ == "__main__":
     success = test_bm25_population()

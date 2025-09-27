@@ -6,16 +6,14 @@ dependency installation, and verification.
 """
 
 import os
-import subprocess
-import pytest
-import tempfile
-import shutil
 from pathlib import Path
-from unittest.mock import patch, Mock
+from unittest.mock import Mock, patch
+
+import pytest
+
 from tests.fixtures.installation_mocks import (
     MockInstallationEnvironment,
     get_mock_environment,
-    MOCK_SUBPROCESS_RESPONSES
 )
 
 
@@ -51,9 +49,9 @@ class TestCompleteInstallationFlow:
         assert pytorch_result["cuda_support"] is True
 
         # Step 6: Additional dependencies
-        deps_result = env.simulate_dependency_installation([
-            "transformers", "sentence_transformers", "faiss", "rank_bm25", "nltk"
-        ])
+        deps_result = env.simulate_dependency_installation(
+            ["transformers", "sentence_transformers", "faiss", "rank_bm25", "nltk"]
+        )
         assert deps_result["success"] is True
 
         # Step 7: Verification tests
@@ -168,11 +166,11 @@ class TestBatchScriptIntegration:
 
     def setup_method(self):
         """Set up test environment."""
-        self.project_root = Path("F:/RD_PROJECTS/COMPONENTS/Claude-context-MCP")
+        self.project_root = Path(__file__).parent.parent.parent
         self.test_scripts = [
             "install-windows.bat",
             "verify-installation.bat",
-            "test-cpu-mode.bat"
+            "test-cpu-mode.bat",
         ]
 
     def test_batch_scripts_exist(self):
@@ -188,22 +186,21 @@ class TestBatchScriptIntegration:
             script_path = self.project_root / script
 
             # Read script content
-            with open(script_path, 'r', encoding='utf-8') as f:
+            with open(script_path, "r", encoding="utf-8") as f:
                 content = f.read()
 
             # Basic syntax checks
             assert content.strip(), f"Script {script} is empty"
-            assert "@echo off" in content.lower() or "echo" in content.lower(), \
+            assert "@echo off" in content.lower() or "echo" in content.lower(), (
                 f"Script {script} might have syntax issues"
+            )
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_verify_installation_mock(self, mock_run):
         """Test verify-installation.bat with mocked responses."""
         # Mock successful responses
         mock_run.return_value = Mock(
-            returncode=0,
-            stdout="Python 3.11.1\nPyTorch 2.5.1+cu121\n",
-            stderr=""
+            returncode=0, stdout="Python 3.11.1\nPyTorch 2.5.1+cu121\n", stderr=""
         )
 
         # This would normally run the actual script
@@ -220,7 +217,7 @@ class TestBatchScriptIntegration:
             ("--cuda", "CUDA mode"),
             ("--cpu", "CPU mode"),
             ("--auto", "Auto detection"),
-            ("--help", "Help message")
+            ("--help", "Help message"),
         ]
 
         for arg, expected_behavior in test_cases:
@@ -235,10 +232,7 @@ class TestInstallationValidation:
 
     def test_python_environment_validation(self):
         """Test Python environment validation logic."""
-        env = MockInstallationEnvironment(
-            has_python=True,
-            python_version="3.11.1"
-        )
+        env = MockInstallationEnvironment(has_python=True, python_version="3.11.1")
 
         result = env.simulate_python_check()
         assert result["success"] is True
@@ -254,7 +248,9 @@ class TestInstallationValidation:
         env = get_mock_environment("ideal_cuda")
 
         # Test CUDA PyTorch
-        result = env.simulate_pytorch_installation("https://download.pytorch.org/whl/cu121")
+        result = env.simulate_pytorch_installation(
+            "https://download.pytorch.org/whl/cu121"
+        )
         assert result["success"] is True
         assert "cu121" in result["version"]
 
@@ -267,7 +263,13 @@ class TestInstallationValidation:
         """Test dependency compatibility validation."""
         env = get_mock_environment("ideal_cuda")
 
-        dependencies = ["transformers", "sentence_transformers", "faiss", "rank_bm25", "nltk"]
+        dependencies = [
+            "transformers",
+            "sentence_transformers",
+            "faiss",
+            "rank_bm25",
+            "nltk",
+        ]
         result = env.simulate_dependency_installation(dependencies)
 
         assert result["success"] is True
@@ -277,7 +279,7 @@ class TestInstallationValidation:
         expected_versions = {
             "transformers": "4.56.0",
             "sentence_transformers": "5.1.0",
-            "faiss": "1.12.0"
+            "faiss": "1.12.0",
         }
 
         for pkg, expected_version in expected_versions.items():
@@ -302,7 +304,7 @@ class TestInstallationValidation:
             "cuda_functional",
             "embedding_model",
             "hybrid_search",
-            "mcp_server"
+            "mcp_server",
         ]
 
         for check in required_checks:
@@ -312,7 +314,7 @@ class TestInstallationValidation:
         """Test that installation can be rolled back on failure."""
         env = MockInstallationEnvironment(
             has_network=False,  # This will cause failures
-            disk_space_gb=1.0
+            disk_space_gb=1.0,
         )
 
         # Attempt installation steps
@@ -321,7 +323,7 @@ class TestInstallationValidation:
 
         # Check failure handling
         assert venv_result["success"] is False  # Due to low disk space
-        assert uv_result["success"] is False   # Due to no network
+        assert uv_result["success"] is False  # Due to no network
 
         # Verify cleanup would be possible
         summary = env.get_install_summary()

@@ -8,7 +8,13 @@ import sys
 from pathlib import Path
 
 
-def test_file_encoding(file_path: Path) -> dict:
+def test_file_encoding() -> None:
+    """Test encoding validation using test_all_files function."""
+    success = test_all_files()
+    assert success, "Encoding validation failed for some files"
+
+
+def _test_file_encoding_detailed(file_path: Path) -> dict:
     """Test a single file for encoding issues."""
     result = {
         "file": str(file_path),
@@ -113,7 +119,7 @@ def test_all_files():
         # PowerShell files
         "scripts/powershell/install-windows.ps1",
         "scripts/powershell/configure_claude_code.ps1",
-        "scripts/powershell/hf_auth_fix.ps1",
+        "scripts/powershell/hf_auth.ps1",
         # Batch files
         "start_mcp_server.bat",
         # "td_tools.bat", # Removed - functionality integrated into main launcher
@@ -133,7 +139,7 @@ def test_all_files():
             print(f"[SKIP] {file_path} - File not found")
             continue
 
-        result = test_file_encoding(full_path)
+        result = _test_file_encoding_detailed(full_path)
 
         # Determine pass/fail
         is_ascii = result["ascii_compatible"]

@@ -1,24 +1,24 @@
 ```
- ██████╗ ██╗       █████╗  ██╗   ██╗ ██████╗  ███████╗
-██╔════╝ ██║      ██╔══██╗ ██║   ██║ ██╔══██╗ ██╔════╝
-██║      ██║      ███████║ ██║   ██║ ██║  ██║ █████╗
-██║      ██║      ██╔══██║ ██║   ██║ ██║  ██║ ██╔══╝
-╚██████╗ ███████╗ ██║  ██║ ╚██████╔╝ ██████╔╝ ███████╗
- ╚═════╝ ╚══════╝ ╚═╝  ╚═╝  ╚═════╝  ╚═════╝  ╚══════╝
+  ██████╗ ██╗       █████╗  ██╗   ██╗ ██████╗  ███████╗
+ ██╔════╝ ██║      ██╔══██╗ ██║   ██║ ██╔══██╗ ██╔════╝
+ ██║      ██║      ███████║ ██║   ██║ ██║  ██║ █████╗
+ ██║      ██║      ██╔══██║ ██║   ██║ ██║  ██║ ██╔══╝
+ ╚██████╗ ███████╗ ██║  ██║ ╚██████╔╝ ██████╔╝ ███████╗
+  ╚═════╝ ╚══════╝ ╚═╝  ╚═╝  ╚═════╝  ╚═════╝  ╚══════╝
 
- ██████╗  ██████╗  ███╗   ██╗ ████████╗ ███████╗ ██╗  ██╗ ████████╗
-██╔════╝ ██╔═══██╗ ████╗  ██║ ╚══██╔══╝ ██╔════╝ ╚██╗██╔╝ ╚══██╔══╝
-██║      ██║   ██║ ██╔██╗ ██║    ██║    █████╗    ╚███╔╝     ██║
-██║      ██║   ██║ ██║╚██╗██║    ██║    ██╔══╝    ██╔██╗     ██║
-╚██████╗ ╚██████╔╝ ██║ ╚████║    ██║    ███████╗ ██╔╝ ██╗    ██║
- ╚═════╝  ╚═════╝  ╚═╝  ╚═══╝    ╚═╝    ╚══════╝ ╚═╝  ╚═╝    ╚═╝
+  ██████╗  ██████╗  ███╗   ██╗ ████████╗ ███████╗ ██╗  ██╗ ████████╗
+ ██╔════╝ ██╔═══██╗ ████╗  ██║ ╚══██╔══╝ ██╔════╝ ╚██╗██╔╝ ╚══██╔══╝
+ ██║      ██║   ██║ ██╔██╗ ██║    ██║    █████╗    ╚███╔╝     ██║
+ ██║      ██║   ██║ ██║╚██╗██║    ██║    ██╔══╝    ██╔██╗     ██║
+ ╚██████╗ ╚██████╔╝ ██║ ╚████║    ██║    ███████╗ ██╔╝ ██╗    ██║
+  ╚═════╝  ╚═════╝  ╚═╝  ╚═══╝    ╚═╝    ╚══════╝ ╚═╝  ╚═╝    ╚═╝
 
-██╗       ██████╗   ██████╗  █████╗  ██╗
-██║      ██╔═══██╗ ██╔════╝ ██╔══██╗ ██║
-██║      ██║   ██║ ██║      ███████║ ██║
-██║      ██║   ██║ ██║      ██╔══██║ ██║
-███████╗ ╚██████╔╝ ╚██████╗ ██║  ██║ ███████╗
-╚══════╝  ╚═════╝   ╚═════╝ ╚═╝  ╚═╝ ╚══════╝
+ ██╗       ██████╗   ██████╗  █████╗  ██╗
+ ██║      ██╔═══██╗ ██╔════╝ ██╔══██╗ ██║
+ ██║      ██║   ██║ ██║      ███████║ ██║
+ ██║      ██║   ██║ ██║      ██╔══██║ ██║
+ ███████╗ ╚██████╔╝ ╚██████╗ ██║  ██║ ███████╗
+ ╚══════╝  ╚═════╝   ╚═════╝ ╚═╝  ╚═╝ ╚══════╝
 
 ```
 
@@ -33,7 +33,9 @@
 
 An intelligent code search system that uses Google's EmbeddingGemma model and advanced multi-language chunking to provide semantic search capabilities across 22 file extensions and 11 programming languages, integrated with Claude Code via MCP (Model Context Protocol).
 
+
 ## ✅ Production Ready
+
 - Core functionality fully operational
 - Windows-optimized installation with automated setup
 - All search modes working (semantic, BM25, hybrid)
@@ -45,28 +47,29 @@ An intelligent code search system that uses Google's EmbeddingGemma model and ad
 
 ## Features
 
-### 🔥 **NEW: Hybrid Search** (v2.0)
-- **BM25 + Semantic fusion**: Combines text matching with semantic understanding
+### 🔍 **Advanced Search Capabilities**
+
+- **Hybrid search**: BM25 + Semantic fusion combines text matching with semantic understanding
+- **Three search modes**: Semantic, BM25 text-based, and hybrid with RRF reranking
 - **Proven search quality**: 44.4% precision, 46.7% F1-score, 100% MRR (see [benchmarks](docs/BENCHMARKS.md))
-- **RRF reranking**: Advanced result fusion for optimal accuracy
+- **Sub-second performance**: 162-487ms response times across all search modes
 - **Configurable weights**: Tune balance between text and semantic search
 - **Auto-mode detection**: System automatically chooses best search strategy
-- **Recent Fix (2025-09-25)**: Semantic search mode fully restored - all three modes now operational
-- **Sub-second performance**: 162-487ms response times across all search modes
 
 ### 🚀 **Core Features**
+
 - **Multi-language support**: 11 programming languages with 22 file extensions
 - **Intelligent chunking**: AST-based (Python) + tree-sitter (JS/TS/JSX/TSX/Svelte/Go/Java/Rust/C/C++/C#/GLSL)
 - **Semantic search**: Natural language queries to find code across all languages
 - **Rich metadata**: File paths, folder structure, semantic tags, language-specific info
-- **MCP integration**: Direct integration with Claude Code
-- **Local processing**: All embeddings stored locally, no API calls
-- **Fast search**: FAISS for efficient similarity search
+- **MCP integration**: Direct integration with Claude Code for seamless workflow
+- **Local processing**: All embeddings stored locally, no API calls required
+- **Fast search**: FAISS for efficient similarity search with GPU acceleration support
 - **Incremental indexing**: 5-10x faster updates with Merkle tree change detection
 
 ## Why this
 
-Claude's code context is powerful, but sending your code to the cloud costs tokens and raises privacy concerns. This project keeps semantic code search entirely on your machine. It integrates with Claude Code via MCP, so you keep the same workflow—just faster, cheaper, and private.
+Claude’s code context is powerful, but sending your code to the cloud costs tokens and raises privacy concerns. This project keeps semantic code search entirely on your machine. It integrates with Claude Code via MCP, so you keep the same workflow—just faster, cheaper, and private.
 
 ## Requirements
 
@@ -94,38 +97,44 @@ scripts\powershell\configure_claude_code.ps1 -Global
 ```
 
 **Windows Installer Features:**
+
 - **Smart CUDA Detection**: Automatically detects your CUDA version and installs appropriate PyTorch
 - **One-Click Setup**: Complete installation with single command
 - **Built-in Verification**: Comprehensive testing with verify-installation.bat
 - **Professional Organization**: Clean, streamlined script structure
 
-
 ### Update existing installation
 
 Update by pulling latest changes:
 
-```bash
+```powershell
 # Navigate to your project directory
-cd claude-context-local
+cd claude-context-MCP
 git pull
-./scripts/install.sh
+
+# Re-run the Windows installer to update dependencies
+install-windows.bat
+
+# Verify the update
+verify-installation.bat
 ```
 
-The installer will:
+The Windows installer will:
 
-- Update the code and dependencies
+- Update the code and dependencies automatically
 - Preserve your embeddings and indexed projects in `~/.claude_code_search`
-- Update only changed components
+- Update only changed components with intelligent caching
+- Maintain your existing MCP server configuration
 
-### What the installer does
+### What the Windows installer does
 
-- Installs `uv` if missing and creates a project venv
-- Manages Claude-context-MCP dependencies and configuration
-- Installs Python dependencies with `uv sync`
+- Detects and installs `uv` package manager if missing
+- Creates and manages the project virtual environment
+- Installs Python dependencies with optimized resolution using `uv sync`
 - Downloads the EmbeddingGemma model (~1.2–1.3 GB) if not already cached
-- Tries to install `faiss-gpu` if an NVIDIA GPU is detected (interactive mode only)
+- Automatically detects CUDA and installs appropriate PyTorch version
+- Configures `faiss-gpu` if an NVIDIA GPU is detected
 - **Preserves all your indexed projects and embeddings** across updates
-
 
 ## Quick Start
 
@@ -145,38 +154,151 @@ verify-installation.bat
 # - Creates virtual environment
 ```
 
-### 2) Start the Server
+### 2) Start the MCP Server
 
 ```powershell
-# Interactive menu with configuration options
+# Main entry point - Interactive menu with 8 functional options
 start_mcp_server.bat
 
-# Or register MCP server manually
-claude mcp add code-search --scope user -- "path/to/claude-context-local/.venv/Scripts/python.exe" -m mcp_server.server
+# Alternative launchers:
+# Debug mode with enhanced logging
+scripts\batch\start_mcp_debug.bat
+
+# Simple mode with minimal output
+scripts\batch\start_mcp_simple.bat
 ```
 
-**Configuration Options:**
+**Optional: Configure Claude Code Integration**
 
 ```powershell
-# Configure Claude Code integration
+# One-time setup to register MCP server with Claude Code
 scripts\powershell\configure_claude_code.ps1 -Global
+
+# Manual registration (alternative)
+claude mcp add code-search --scope user -- "F:\path\to\claude-context-MCP\.venv\Scripts\python.exe" -m mcp_server.server
 ```
 
 ### 3) Use in Claude Code
 
+#### Essential Workflow
+
 ```bash
-# Index your project
+# 1. Index your project (one-time setup)
 /index_directory "C:\path\to\your\project"
 
-# Search your code with natural language
+# 2. Search your code with natural language
 /search_code "authentication functions"
 /search_code "error handling patterns"
 /search_code "database connection setup"
-
-# Enjoy optimized search with hybrid semantic + text matching!
+/search_code "API endpoint handlers"
+/search_code "configuration loading"
 ```
 
+#### Advanced Search Examples
+
+```bash
+# Find similar code to existing implementations
+/find_similar_code "project_file.py:123-145:function:authenticate_user"
+
+# Check system status and performance
+/get_index_status
+/get_memory_status
+
+# Configure search modes for specific needs
+/configure_search_mode "hybrid" 0.4 0.6 true
+/get_search_config_status
+
+# Project management
+/list_projects
+/switch_project "C:\different\project\path"
+```
+
+#### Practical Usage Tips
+
+- **Start simple**: Use natural language queries like "error handling" or "database connection"
+- **Be specific**: "React component with useState hook" vs just "React"
+- **Use context**: "authentication middleware" vs "auth" for better results
+- **Try different modes**: Switch between semantic, hybrid, and text search as needed
+- **Clean up**: Use `/cleanup_resources` when switching between large projects
+
 **No manual configuration needed** - the system automatically uses the best search mode for your queries.
+
+## Test Suite
+
+The project includes a comprehensive test suite with 37 test files organized into professional categories:
+
+### Test Organization
+
+- **Unit Tests** (14 files): Component isolation testing in `tests/unit/`
+- **Integration Tests** (23 files): Workflow validation testing in `tests/integration/`
+- **Test Fixtures**: Reusable mocks and sample data in `tests/fixtures/`
+- **Test Data**: Sample projects and datasets in `tests/test_data/`
+
+### Running Tests
+
+```bash
+# Run all tests
+pytest tests/
+
+# Run only unit tests (fast)
+pytest tests/unit/
+
+# Run only integration tests
+pytest tests/integration/
+
+# Run with verbose output
+pytest tests/ -v
+
+# Run with coverage report
+pytest tests/ --cov=. --cov-report=html
+```
+
+📚 **Detailed testing documentation**: [View Test Suite Guide](tests/README.md)
+
+## Running Performance Benchmarks
+
+To validate the system's performance claims and test your hardware setup, you can run comprehensive benchmarks:
+
+### Quick Benchmark (Recommended)
+
+```bash
+# Windows - Interactive menu with 5 benchmark options
+run_benchmarks.bat
+
+# Select option 1: Token Efficiency Benchmark (~10 seconds)
+# Shows 99.9% token reduction vs traditional file reading
+```
+
+### Available Benchmarks
+
+| Benchmark | Description | Duration | Key Metrics |
+|-----------|-------------|----------|-------------|
+| **Token Efficiency** | Compares MCP semantic search vs vanilla file reading | ~10 seconds | 99.9% token reduction, 8.6x GPU speedup |
+| **Custom Project** | Evaluates search quality on your codebase | ~30-60 seconds | Precision, recall, F1-score for your code |
+| **SWE-bench** | Industry-standard software engineering benchmark | Several minutes | Comparison with other tools |
+| **Complete Suite** | Runs multiple benchmarks together | 1-2 minutes | Comprehensive performance profile |
+
+### Command Line Usage
+
+```bash
+# Token efficiency benchmark (measures token savings)
+.venv\Scripts\python.exe evaluation/run_evaluation.py token-efficiency
+
+# Custom project evaluation (test search quality)
+.venv\Scripts\python.exe evaluation/run_evaluation.py custom --project "path/to/your/project"
+
+# SWE-bench industry benchmark
+.venv\Scripts\python.exe evaluation/run_evaluation.py swe-bench --max-instances 10
+```
+
+### Why Run Benchmarks?
+
+- **Validate Performance**: Confirm 99.9% token reduction on your hardware
+- **Test GPU Acceleration**: Verify CUDA performance (8.6x faster indexing)
+- **Quality Assurance**: Measure search accuracy on your specific codebase
+- **Hardware Optimization**: Compare CPU vs GPU performance
+
+📊 **Detailed results and methodology**: [View Complete Benchmarks](docs/BENCHMARKS.md)
 
 ## Search Modes & Performance
 
@@ -193,23 +315,6 @@ For detailed configuration options, see [Hybrid Search Configuration Guide](docs
 
 📊 **Performance benchmarks and detailed metrics**: [View Benchmarks](docs/BENCHMARKS.md)
 
-## MCP Tools Reference
-
-The following MCP tools are available in Claude Code:
-
-### Essential Tools
-1. **`/index_directory`** - Index a codebase for semantic search
-2. **`/search_code`** - Natural language code search with hybrid approach
-3. **`/get_index_status`** - Check current index statistics
-4. **`/switch_project`** - Switch between indexed projects
-
-### Advanced Tools
-5. **`/find_similar_code`** - Find functionally similar code chunks
-6. **`/configure_search_mode`** - Adjust search parameters and weights
-7. **`/get_search_config_status`** - View current search configuration
-8. **`/list_projects`** - List all indexed projects
-9. **`/get_memory_status`** - Monitor system memory usage
-10. **`/cleanup_resources`** - Free memory and cleanup resources
 
 ## Architecture
 
@@ -245,7 +350,7 @@ claude-context-local/
 │   │   └── mcp_server_wrapper.bat  # MCP server wrapper script
 │   ├── powershell/                  # Windows PowerShell scripts
 │   │   ├── configure_claude_code.ps1 # Claude Code MCP configuration
-│   │   ├── hf_auth_fix.ps1          # Hugging Face authentication helper
+│   │   ├── hf_auth.ps1              # Hugging Face authentication helper
 │   │   ├── install-windows.ps1     # Windows automated installer
 │   │   └── start_mcp_server.ps1     # PowerShell MCP server launcher
 │   └── verify_installation.py       # Python verification system
@@ -396,15 +501,18 @@ For detailed configuration options, see [Hybrid Search Configuration Guide](docs
 The following MCP tools are available in Claude Code:
 
 ### Core Search Tools
+
 - `/search_code` - Main search with hybrid capabilities
 - `/index_directory` - Index a project for searching
 - `/find_similar_code` - Find code similar to a specific chunk
 
 ### Configuration Tools
+
 - `/configure_search_mode` - Configure hybrid search parameters
 - `/get_search_config_status` - View current configuration
 
 ### Management Tools
+
 - `/get_index_status` - Check index statistics
 - `/get_memory_status` - Monitor memory usage
 - `/cleanup_resources` - Free memory and cleanup
@@ -465,17 +573,20 @@ Tips:
 ## Recent Improvements (2025-09-25)
 
 ### 🎉 **Semantic Search Mode Restored**
+
 - **Fixed critical bug**: Restored semantic search functionality with simple one-line fix
 - **Root cause**: `HybridSearcher` was calling non-existent `embed_text()` instead of `embed_query()`
 - **Impact**: All three search modes (semantic, BM25, hybrid) now fully operational
 
 ### ✅ **Hybrid Search System Complete**
+
 - **Production ready**: Hybrid search system is complete and ready for use
 - **Performance maintained**: 39.4% token reduction capability intact
 - **Windows-optimized**: Streamlined for Windows environments with comprehensive automation
 - **BM25 integration**: Successfully completed with proper index population
 
 ### 🚀 **Enhanced Performance**
+
 - **Sub-second response times**: Fast search across all modes
 - **Memory optimization**: Efficient resource usage and cleanup
 - **Incremental indexing**: 5-10x faster updates with change detection

@@ -8,10 +8,10 @@ Add the MCP server globally so it's available in all projects:
 
 ```bash
 # Windows Command (run in Command Prompt or PowerShell)
-claude mcp add code-search --scope user -- "F:\RD_PROJECTS\COMPONENTS\Claude-context-MCP\.venv\Scripts\python.exe" -m mcp_server.server
+claude mcp add code-search --scope user -- "C:\path\to\claude-context-local\.venv\Scripts\python.exe" -m mcp_server.server
 
 # Alternative with full paths
-claude mcp add code-search --scope user -- "F:\RD_PROJECTS\COMPONENTS\Claude-context-MCP\.venv\Scripts\python.exe" "F:\RD_PROJECTS\COMPONENTS\Claude-context-MCP\mcp_server\server.py"
+claude mcp add code-search --scope user -- "C:\path\to\claude-context-local\.venv\Scripts\python.exe" "C:\path\to\claude-context-local\mcp_server\server.py"
 ```
 
 ### Method 2: Project-Specific Configuration
@@ -23,9 +23,9 @@ For project-specific configuration, create a `.claude-code.json` file in the pro
   "mcp": {
     "servers": {
       "code-search": {
-        "command": "F:\\RD_PROJECTS\\COMPONENTS\\Claude-context-MCP\\.venv\\Scripts\\python.exe",
+        "command": "C:\\path\\to\\claude-context-local\\.venv\\Scripts\\python.exe",
         "args": ["-m", "mcp_server.server"],
-        "cwd": "F:\\RD_PROJECTS\\COMPONENTS\\Claude-context-MCP"
+        "cwd": "C:\\path\\to\\claude-context-local"
       }
     }
   }

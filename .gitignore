@@ -218,9 +218,12 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Internal development files (temporarily allowing for development branch)
-# MEMORY.md
-# _archive/
+# Local-only content (NEVER commit to ANY branch)
+_archive/
+benchmark_results/
+CLAUDE.md
+MEMORY.md
+local_only/
 
 # Evaluation and test results (temporary/generated files)
 custom_evaluation_results/

@@ -5,14 +5,12 @@ Comprehensive testing of all system components
 """
 
 import os
-import sys
-import subprocess
-import tempfile
 import shutil
-import importlib.util
-import platform
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
-from typing import Tuple, Optional, Dict, Any
+from typing import Tuple
 
 
 class InstallationVerifier:
@@ -40,15 +38,17 @@ class InstallationVerifier:
                 [str(self.python_exe), "-c", code],
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=60,
             )
             return result.returncode == 0, result.stdout + result.stderr
         except subprocess.TimeoutExpired:
-            return False, f"Test timed out after 60 seconds"
+            return False, "Test timed out after 60 seconds"
         except Exception as e:
             return False, f"Failed to run test: {e}"
 
-    def _print_test_result(self, test_name: str, passed: bool, output: str = "", details: str = ""):
+    def _print_test_result(
+        self, test_name: str, passed: bool, output: str = "", details: str = ""
+    ):
         """Print formatted test result."""
         if passed:
             print(f"[PASS] {test_name}")
@@ -62,7 +62,7 @@ class InstallationVerifier:
                 print(f"       Error: {output.strip()}")
 
         if output and passed and details != output.strip():
-            for line in output.strip().split('\n'):
+            for line in output.strip().split("\n"):
                 if line.strip():
                     print(f"       {line.strip()}")
 
@@ -72,7 +72,7 @@ class InstallationVerifier:
         print(f"       {message}")
         self.warn_count += 1
         if output:
-            for line in output.strip().split('\n'):
+            for line in output.strip().split("\n"):
                 if line.strip():
                     print(f"       {line.strip()}")
 
@@ -83,26 +83,34 @@ class InstallationVerifier:
 
         # Check if virtual environment directory exists
         if not self.python_exe.exists():
-            self._print_test_result("Virtual Environment", False,
-                                  f"Virtual environment not found at {self.python_exe}")
+            self._print_test_result(
+                "Virtual Environment",
+                False,
+                f"Virtual environment not found at {self.python_exe}",
+            )
             return False
 
-        self._print_test_result("Virtual Environment", True,
-                              details="Virtual environment exists")
+        self._print_test_result(
+            "Virtual Environment", True, details="Virtual environment exists"
+        )
         return True
 
     def test_python_version(self) -> bool:
         """Test Python version."""
-        success, output = self._run_python_test("import sys; print(f'Python {sys.version.split()[0]}')",
-                                               "Python Version")
+        success, output = self._run_python_test(
+            "import sys; print(f'Python {sys.version.split()[0]}')", "Python Version"
+        )
 
         if success:
             version_line = output.strip()
-            self._print_test_result("Python Version", True, details=f"{version_line} working")
+            self._print_test_result(
+                "Python Version", True, details=f"{version_line} working"
+            )
             return True
         else:
-            self._print_test_result("Python Version", False,
-                                  "Python not working in virtual environment")
+            self._print_test_result(
+                "Python Version", False, "Python not working in virtual environment"
+            )
             return False
 
     def test_pytorch_cuda(self) -> bool:
@@ -122,8 +130,9 @@ print(f'PyTorch version: {torch.__version__}')
             self._print_test_result("PyTorch Installation", False, output)
             return False
 
-        self._print_test_result("PyTorch Installation", True,
-                              details="PyTorch imported successfully")
+        self._print_test_result(
+            "PyTorch Installation", True, details="PyTorch imported successfully"
+        )
         print(f"       {output.strip()}")
 
         # Test CUDA availability
@@ -138,15 +147,17 @@ else:
         success, output = self._run_python_test(cuda_code, "CUDA Availability")
 
         if not success:
-            self._print_test_result("CUDA Availability", False,
-                                  "CUDA test failed - Python/PyTorch error")
-            print(f"       This usually means PyTorch is not installed correctly")
+            self._print_test_result(
+                "CUDA Availability", False, "CUDA test failed - Python/PyTorch error"
+            )
+            print("       This usually means PyTorch is not installed correctly")
             return False
 
         # Check if CUDA is actually available
         if "CUDA available: True" in output:
-            self._print_test_result("CUDA Availability", True,
-                                  details="CUDA acceleration available")
+            self._print_test_result(
+                "CUDA Availability", True, details="CUDA acceleration available"
+            )
             print(f"       {output.strip()}")
 
             # Get GPU information
@@ -174,16 +185,27 @@ else:
         print()
 
         dependencies = [
-            ("Transformers Library", "import transformers; print(f'Transformers version: {transformers.__version__}')"),
-            ("Sentence Transformers", "from sentence_transformers import SentenceTransformer; print('SentenceTransformer available')"),
-            ("FAISS Vector Search", "import faiss; print('FAISS version:', getattr(faiss, '__version__', 'Available'))"),
+            (
+                "Transformers Library",
+                "import transformers; print(f'Transformers version: {transformers.__version__}')",
+            ),
+            (
+                "Sentence Transformers",
+                "from sentence_transformers import SentenceTransformer; print('SentenceTransformer available')",
+            ),
+            (
+                "FAISS Vector Search",
+                "import faiss; print('FAISS version:', getattr(faiss, '__version__', 'Available'))",
+            ),
         ]
 
         all_passed = True
         for name, code in dependencies:
             success, output = self._run_python_test(code, name)
             if success:
-                self._print_test_result(name, True, details=f"{name.split()[0]} library working")
+                self._print_test_result(
+                    name, True, details=f"{name.split()[0]} library working"
+                )
                 if output.strip():
                     print(f"       {output.strip()}")
             else:
@@ -205,19 +227,24 @@ else:
         success, output = self._run_python_test(bm25_code, "BM25 Text Search")
 
         if success:
-            self._print_test_result("BM25 Text Search", True,
-                                  details="BM25 text search available")
+            self._print_test_result(
+                "BM25 Text Search", True, details="BM25 text search available"
+            )
         else:
-            self._print_test_result("BM25 Text Search", False,
-                                  "BM25 (rank_bm25) import failed")
+            self._print_test_result(
+                "BM25 Text Search", False, "BM25 (rank_bm25) import failed"
+            )
 
         # Test NLTK
         nltk_code = "import nltk; print(f'NLTK version: {nltk.__version__}')"
-        nltk_success, nltk_output = self._run_python_test(nltk_code, "NLTK Natural Language Processing")
+        nltk_success, nltk_output = self._run_python_test(
+            nltk_code, "NLTK Natural Language Processing"
+        )
 
         if nltk_success:
-            self._print_test_result("NLTK Natural Language Processing", True,
-                                  details="NLTK available")
+            self._print_test_result(
+                "NLTK Natural Language Processing", True, details="NLTK available"
+            )
             print(f"       {nltk_output.strip()}")
 
             # Test NLTK data
@@ -230,14 +257,19 @@ try:
 except:
     raise Exception('NLTK data not found')
 """
-            data_success, data_output = self._run_python_test(nltk_data_code, "NLTK Data Resources")
+            data_success, data_output = self._run_python_test(
+                nltk_data_code, "NLTK Data Resources"
+            )
 
             if data_success:
-                self._print_test_result("NLTK Data Resources", True,
-                                      details="NLTK data resources available")
+                self._print_test_result(
+                    "NLTK Data Resources", True, details="NLTK data resources available"
+                )
             else:
-                self._print_warning("NLTK Data Resources",
-                                  "NLTK data not fully available - downloading...")
+                self._print_warning(
+                    "NLTK Data Resources",
+                    "NLTK data not fully available - downloading...",
+                )
 
                 # Try to download NLTK data
                 download_code = """
@@ -246,17 +278,24 @@ nltk.download('punkt', quiet=True)
 nltk.download('stopwords', quiet=True)
 print('NLTK data downloaded')
 """
-                download_success, download_output = self._run_python_test(download_code, "NLTK Data Download")
+                download_success, download_output = self._run_python_test(
+                    download_code, "NLTK Data Download"
+                )
 
                 if download_success:
-                    self._print_test_result("NLTK Data Resources", True,
-                                          details="NLTK data downloaded successfully")
+                    self._print_test_result(
+                        "NLTK Data Resources",
+                        True,
+                        details="NLTK data downloaded successfully",
+                    )
                 else:
-                    self._print_test_result("NLTK Data Resources", False,
-                                          "NLTK data download failed")
+                    self._print_test_result(
+                        "NLTK Data Resources", False, "NLTK data download failed"
+                    )
         else:
-            self._print_test_result("NLTK Natural Language Processing", False,
-                                  "NLTK import failed")
+            self._print_test_result(
+                "NLTK Natural Language Processing", False, "NLTK import failed"
+            )
 
         return success and nltk_success
 
@@ -271,11 +310,13 @@ print('NLTK data downloaded')
         success, output = self._run_python_test(mcp_code, "MCP Server Module")
 
         if success:
-            self._print_test_result("MCP Server Module", True,
-                                  details="MCP server module available")
+            self._print_test_result(
+                "MCP Server Module", True, details="MCP server module available"
+            )
         else:
-            self._print_test_result("MCP Server Module", False,
-                                  "MCP server import failed")
+            self._print_test_result(
+                "MCP Server Module", False, "MCP server import failed"
+            )
             return False
 
         # Test MCP server help command
@@ -284,19 +325,24 @@ print('NLTK data downloaded')
                 [str(self.python_exe), "-m", "mcp_server.server", "--help"],
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=30,
             )
 
             if result.returncode == 0:
-                self._print_test_result("MCP Server Functionality", True,
-                                      details="MCP server responds to commands")
+                self._print_test_result(
+                    "MCP Server Functionality",
+                    True,
+                    details="MCP server responds to commands",
+                )
             else:
-                self._print_test_result("MCP Server Functionality", False,
-                                      "MCP server not responding")
+                self._print_test_result(
+                    "MCP Server Functionality", False, "MCP server not responding"
+                )
                 return False
         except Exception as e:
-            self._print_test_result("MCP Server Functionality", False,
-                                  f"MCP server test failed: {e}")
+            self._print_test_result(
+                "MCP Server Functionality", False, f"MCP server test failed: {e}"
+            )
             return False
 
         return True
@@ -329,14 +375,18 @@ except ImportError as e:
         success, output = self._run_python_test(parser_code, "Multi-language Parsers")
 
         if success:
-            self._print_test_result("Multi-language Parsers", True,
-                                  details="All tree-sitter parsers available")
-            for line in output.strip().split('\n'):
+            self._print_test_result(
+                "Multi-language Parsers",
+                True,
+                details="All tree-sitter parsers available",
+            )
+            for line in output.strip().split("\n"):
                 if line.strip():
                     print(f"       {line.strip()}")
         else:
-            self._print_warning("Multi-language Parsers",
-                              "Some tree-sitter parsers missing", output)
+            self._print_warning(
+                "Multi-language Parsers", "Some tree-sitter parsers missing", output
+            )
 
         return True  # Don't fail the overall test for missing parsers
 
@@ -375,17 +425,23 @@ else:
 print(f'Performance: {perf}')
 """
 
-        success, output = self._run_python_test(perf_code, "Quick Performance Benchmark")
+        success, output = self._run_python_test(
+            perf_code, "Quick Performance Benchmark"
+        )
 
         if success:
-            self._print_test_result("Quick Performance Benchmark", True,
-                                  details="Performance test completed")
-            for line in output.strip().split('\n'):
+            self._print_test_result(
+                "Quick Performance Benchmark",
+                True,
+                details="Performance test completed",
+            )
+            for line in output.strip().split("\n"):
                 if line.strip():
                     print(f"       {line.strip()}")
         else:
-            self._print_test_result("Quick Performance Benchmark", False,
-                                  "Performance test failed")
+            self._print_test_result(
+                "Quick Performance Benchmark", False, "Performance test failed"
+            )
 
         return success
 
@@ -416,18 +472,25 @@ except Exception as e:
     raise
 """
 
-        success, output = self._run_python_test(embedding_code, "EmbeddingGemma Model Loading")
+        success, output = self._run_python_test(
+            embedding_code, "EmbeddingGemma Model Loading"
+        )
 
         if success:
-            self._print_test_result("EmbeddingGemma Model Loading", True,
-                                  details="EmbeddingGemma model working")
-            for line in output.strip().split('\n'):
+            self._print_test_result(
+                "EmbeddingGemma Model Loading",
+                True,
+                details="EmbeddingGemma model working",
+            )
+            for line in output.strip().split("\n"):
                 if line.strip():
                     print(f"       {line.strip()}")
         else:
-            self._print_warning("EmbeddingGemma Model Loading",
-                              "EmbeddingGemma model test failed",
-                              "Model will be downloaded on first use")
+            self._print_warning(
+                "EmbeddingGemma Model Loading",
+                "EmbeddingGemma model test failed",
+                "Model will be downloaded on first use",
+            )
 
         return True  # Don't fail overall test for model download issues
 
@@ -483,7 +546,7 @@ else:
 
         success, output = self._run_python_test(system_code, "System Status")
         if success:
-            for line in output.strip().split('\n'):
+            for line in output.strip().split("\n"):
                 print(line)
 
         print()
@@ -493,8 +556,10 @@ else:
             print("2. Re-run verification: verify-installation.bat")
         else:
             print("1. Start MCP server: start_mcp_server.bat")
-            print("2. Configure Claude Code: scripts\\powershell\\configure_claude_code.ps1")
-            print("3. Test with Claude Code: /index_directory \"your-project-path\"")
+            print(
+                "2. Configure Claude Code: scripts\\powershell\\configure_claude_code.ps1"
+            )
+            print('3. Test with Claude Code: /index_directory "your-project-path"')
         print()
 
     def run_all_tests(self):
@@ -530,7 +595,7 @@ else:
         if os.path.exists(self.temp_dir):
             try:
                 shutil.rmtree(self.temp_dir)
-                print(f"[INFO] Temp files cleaned successfully")
+                print("[INFO] Temp files cleaned successfully")
             except Exception as e:
                 print(f"[WARN] Could not remove all temp files: {e}")
                 print(f"[WARN] Location: {self.temp_dir}")

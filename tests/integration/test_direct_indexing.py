@@ -15,7 +15,7 @@ def test_direct_indexing():
     from chunking.multi_language_chunker import MultiLanguageChunker
     from search.indexer import CodeIndexManager
 
-    project_path = "F:/RD_PROJECTS/COMPONENTS/Claude-context-MCP/test_glsl_dir"
+    project_path = str(Path(__file__).parent.parent.parent / "test_glsl_dir")
     project_name = "DirectTest"
 
     print("TESTING DIRECT INCREMENTAL INDEXING")
@@ -114,7 +114,7 @@ def test_incremental_indexer_class():
         # Create without embedder to avoid dependency issues
         indexer = IncrementalIndexer()
 
-        project_path = "F:/RD_PROJECTS/COMPONENTS/Claude-context-MCP/test_glsl_dir"
+        project_path = str(Path(__file__).parent.parent.parent / "test_glsl_dir")
 
         # Force a full index
         print("Calling incremental_index with force_full=True")

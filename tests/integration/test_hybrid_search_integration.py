@@ -6,18 +6,17 @@ data flow through the hybrid search system.
 """
 
 import json
-import tempfile
-import pytest
 import shutil
+import tempfile
 from pathlib import Path
-from typing import List, Dict, Any
 
-from search.hybrid_searcher import HybridSearcher
-from search.config import SearchConfig, SearchConfigManager
-from search.incremental_indexer import IncrementalIndexer
-from search.indexer import CodeIndexManager
-from embeddings.embedder import CodeEmbedder
+import pytest
+
 from chunking.multi_language_chunker import MultiLanguageChunker
+from embeddings.embedder import CodeEmbedder
+from search.config import SearchConfigManager
+from search.hybrid_searcher import HybridSearcher
+from search.incremental_indexer import IncrementalIndexer
 
 
 class TestHybridSearchIntegration:
@@ -151,7 +150,7 @@ class DatabaseConnection:
             results.append(dict(zip(columns, row)))
 
         return results
-'''
+''',
         }
 
         for filename, content in test_files.items():
@@ -169,9 +168,7 @@ class DatabaseConnection:
 
             # Initialize hybrid searcher
             self.hybrid_searcher = HybridSearcher(
-                storage_dir=str(self.storage_dir),
-                bm25_weight=0.4,
-                dense_weight=0.6
+                storage_dir=str(self.storage_dir), bm25_weight=0.4, dense_weight=0.6
             )
 
             # Initialize incremental indexer
@@ -179,7 +176,7 @@ class DatabaseConnection:
             self.incremental_indexer = IncrementalIndexer(
                 indexer=self.hybrid_searcher,
                 embedder=self.embedder,
-                chunker=self.chunker
+                chunker=self.chunker,
             )
 
         except Exception as e:
@@ -190,8 +187,9 @@ class DatabaseConnection:
         self.initialize_components()
 
         # This should not fail
-        assert hasattr(self.hybrid_searcher, 'add_embeddings'), \
+        assert hasattr(self.hybrid_searcher, "add_embeddings"), (
             "HybridSearcher missing add_embeddings method required by incremental indexer"
+        )
 
     def test_incremental_indexing_with_hybrid_search(self):
         """Test that incremental indexing works with hybrid search."""
@@ -200,9 +198,7 @@ class DatabaseConnection:
         # Attempt to index the project
         try:
             result = self.incremental_indexer.incremental_index(
-                str(self.project_dir),
-                project_name="test_project",
-                force_full=True
+                str(self.project_dir), project_name="test_project", force_full=True
             )
 
             assert result.success, f"Indexing failed: {result.error}"
@@ -220,26 +216,28 @@ class DatabaseConnection:
 
         # Index the project
         result = self.incremental_indexer.incremental_index(
-            str(self.project_dir),
-            project_name="test_project",
-            force_full=True
+            str(self.project_dir), project_name="test_project", force_full=True
         )
 
         assert result.success, "Indexing must succeed for this test"
 
         # Check that HybridSearcher is ready (both indices populated)
-        assert self.hybrid_searcher.is_ready, \
+        assert self.hybrid_searcher.is_ready, (
             "HybridSearcher should be ready after indexing (both BM25 and dense indices populated)"
+        )
 
         # Check BM25 index specifically
-        assert not self.hybrid_searcher.bm25_index.is_empty, \
+        assert not self.hybrid_searcher.bm25_index.is_empty, (
             "BM25 index should not be empty after indexing"
+        )
 
         # Check dense index specifically
-        assert self.hybrid_searcher.dense_index.index is not None, \
+        assert self.hybrid_searcher.dense_index.index is not None, (
             "Dense index should exist after indexing"
-        assert self.hybrid_searcher.dense_index.index.ntotal > 0, \
+        )
+        assert self.hybrid_searcher.dense_index.index.ntotal > 0, (
             "Dense index should contain vectors after indexing"
+        )
 
     def test_hybrid_search_returns_results(self):
         """Test that hybrid search returns results from both indices."""
@@ -247,9 +245,7 @@ class DatabaseConnection:
 
         # Index the project
         result = self.incremental_indexer.incremental_index(
-            str(self.project_dir),
-            project_name="test_project",
-            force_full=True
+            str(self.project_dir), project_name="test_project", force_full=True
         )
         assert result.success, "Indexing must succeed"
 
@@ -259,13 +255,12 @@ class DatabaseConnection:
             "def add_numbers",
             "UserManager",
             "sqlite3",
-
             # Should favor dense/semantic (conceptual matches)
             "database connection",
             "user authentication",
             "API client",
             "error handling",
-            "calculate numbers"
+            "calculate numbers",
         ]
 
         for query in queries_to_test:
@@ -274,10 +269,12 @@ class DatabaseConnection:
 
             # Check that results have the expected format
             for result in results:
-                assert hasattr(result, 'doc_id'), "Result missing doc_id"
-                assert hasattr(result, 'score'), "Result missing score"
-                assert hasattr(result, 'metadata'), "Result missing metadata"
-                assert result.score > 0, f"Result score should be positive: {result.score}"
+                assert hasattr(result, "doc_id"), "Result missing doc_id"
+                assert hasattr(result, "score"), "Result missing score"
+                assert hasattr(result, "metadata"), "Result missing metadata"
+                assert result.score > 0, (
+                    f"Result score should be positive: {result.score}"
+                )
 
     def test_bm25_vs_dense_results_differ(self):
         """Test that BM25-only and dense-only searches return different results."""
@@ -285,9 +282,7 @@ class DatabaseConnection:
 
         # Index the project
         result = self.incremental_indexer.incremental_index(
-            str(self.project_dir),
-            project_name="test_project",
-            force_full=True
+            str(self.project_dir), project_name="test_project", force_full=True
         )
         assert result.success, "Indexing must succeed"
 
@@ -310,8 +305,9 @@ class DatabaseConnection:
 
         # The results should be different (different ranking/selection)
         # This tests that both indices are contributing to the search
-        assert bm25_doc_ids != dense_doc_ids, \
+        assert bm25_doc_ids != dense_doc_ids, (
             "BM25 and dense search should return different results for semantic queries"
+        )
 
     def test_hybrid_reranking_combines_results(self):
         """Test that hybrid reranking properly combines BM25 and dense results."""
@@ -319,9 +315,7 @@ class DatabaseConnection:
 
         # Index the project
         result = self.incremental_indexer.incremental_index(
-            str(self.project_dir),
-            project_name="test_project",
-            force_full=True
+            str(self.project_dir), project_name="test_project", force_full=True
         )
         assert result.success, "Indexing must succeed"
 
@@ -343,8 +337,10 @@ class DatabaseConnection:
         dense_doc_ids = {doc_id for doc_id, _, _ in dense_results}
 
         # At least some hybrid results should come from BM25 or dense
-        assert len(hybrid_doc_ids & bm25_doc_ids) > 0 or len(hybrid_doc_ids & dense_doc_ids) > 0, \
-            "Hybrid results should include documents from BM25 or dense searches"
+        assert (
+            len(hybrid_doc_ids & bm25_doc_ids) > 0
+            or len(hybrid_doc_ids & dense_doc_ids) > 0
+        ), "Hybrid results should include documents from BM25 or dense searches"
 
     def test_parallel_vs_sequential_search(self):
         """Test that parallel and sequential search modes work and return similar results."""
@@ -352,9 +348,7 @@ class DatabaseConnection:
 
         # Index the project
         result = self.incremental_indexer.incremental_index(
-            str(self.project_dir),
-            project_name="test_project",
-            force_full=True
+            str(self.project_dir), project_name="test_project", force_full=True
         )
         assert result.success, "Indexing must succeed"
 
@@ -374,8 +368,9 @@ class DatabaseConnection:
 
         # Allow for some differences due to threading, but expect significant overlap
         overlap = len(set(parallel_doc_ids) & set(sequential_doc_ids))
-        assert overlap >= len(parallel_results) // 2, \
+        assert overlap >= len(parallel_results) // 2, (
             "Parallel and sequential search should have significant overlap in results"
+        )
 
     def test_index_persistence(self):
         """Test that hybrid indices persist across searcher instances."""
@@ -383,9 +378,7 @@ class DatabaseConnection:
 
         # Index with first searcher instance
         result = self.incremental_indexer.incremental_index(
-            str(self.project_dir),
-            project_name="test_project",
-            force_full=True
+            str(self.project_dir), project_name="test_project", force_full=True
         )
         assert result.success, "Initial indexing must succeed"
 
@@ -394,9 +387,7 @@ class DatabaseConnection:
 
         # Create new searcher instance
         new_searcher = HybridSearcher(
-            storage_dir=str(self.storage_dir),
-            bm25_weight=0.4,
-            dense_weight=0.6
+            storage_dir=str(self.storage_dir), bm25_weight=0.4, dense_weight=0.6
         )
 
         # Load indices
@@ -404,7 +395,9 @@ class DatabaseConnection:
         assert load_success, "Loading indices should succeed"
 
         # Verify the new searcher is ready
-        assert new_searcher.is_ready, "New searcher should be ready after loading indices"
+        assert new_searcher.is_ready, (
+            "New searcher should be ready after loading indices"
+        )
 
         # Test that search works with loaded indices
         query = "calculate sum"
@@ -417,9 +410,7 @@ class DatabaseConnection:
 
         # Initial indexing
         result = self.incremental_indexer.incremental_index(
-            str(self.project_dir),
-            project_name="test_project",
-            force_full=True
+            str(self.project_dir), project_name="test_project", force_full=True
         )
         assert result.success, "Initial indexing must succeed"
         initial_chunks = result.chunks_added
@@ -442,9 +433,7 @@ def validate_item(item):
 
         # Incremental update
         update_result = self.incremental_indexer.incremental_index(
-            str(self.project_dir),
-            project_name="test_project",
-            force_full=False
+            str(self.project_dir), project_name="test_project", force_full=False
         )
 
         assert update_result.success, "Incremental update must succeed"
@@ -465,9 +454,7 @@ def validate_item(item):
 
         # Index the project
         result = self.incremental_indexer.incremental_index(
-            str(self.project_dir),
-            project_name="test_project",
-            force_full=True
+            str(self.project_dir), project_name="test_project", force_full=True
         )
         assert result.success, "Indexing must succeed"
 
@@ -501,9 +488,7 @@ def validate_item(item):
 
         # Test with zero k
         result = self.incremental_indexer.incremental_index(
-            str(self.project_dir),
-            project_name="test_project",
-            force_full=True
+            str(self.project_dir), project_name="test_project", force_full=True
         )
         assert result.success, "Indexing must succeed"
 
@@ -516,17 +501,15 @@ def validate_item(item):
 
         # Index the project
         result = self.incremental_indexer.incremental_index(
-            str(self.project_dir),
-            project_name="test_project",
-            force_full=True
+            str(self.project_dir), project_name="test_project", force_full=True
         )
         assert result.success, "Indexing must succeed"
 
         # Get initial stats
         stats = self.hybrid_searcher.stats
-        assert 'bm25_stats' in stats, "Stats should include BM25 information"
-        assert 'dense_stats' in stats, "Stats should include dense information"
-        assert 'gpu_memory' in stats, "Stats should include GPU memory information"
+        assert "bm25_stats" in stats, "Stats should include BM25 information"
+        assert "dense_stats" in stats, "Stats should include dense information"
+        assert "gpu_memory" in stats, "Stats should include GPU memory information"
 
         # Perform some searches to generate performance stats
         queries = ["calculate", "user", "database", "API"]
@@ -535,13 +518,15 @@ def validate_item(item):
 
         # Get search mode stats
         search_stats = self.hybrid_searcher.get_search_mode_stats()
-        assert search_stats['total_searches'] == len(queries), "Should track search count"
-        assert 'average_times' in search_stats, "Should include timing information"
+        assert search_stats["total_searches"] == len(queries), (
+            "Should track search count"
+        )
+        assert "average_times" in search_stats, "Should include timing information"
 
     def teardown_method(self):
         """Clean up test environment."""
         try:
-            if hasattr(self, 'hybrid_searcher') and self.hybrid_searcher:
+            if hasattr(self, "hybrid_searcher") and self.hybrid_searcher:
                 self.hybrid_searcher.shutdown()
         except:
             pass
@@ -568,10 +553,10 @@ class TestHybridSearchConfigIntegration:
             "enable_hybrid_search": True,
             "bm25_weight": 0.3,
             "dense_weight": 0.7,
-            "use_parallel_search": True
+            "use_parallel_search": True,
         }
 
-        with open(self.config_file, 'w') as f:
+        with open(self.config_file, "w") as f:
             json.dump(config_data, f)
 
         # Load config
@@ -591,10 +576,10 @@ class TestHybridSearchConfigIntegration:
             "bm25_weight": 0.7,
             "dense_weight": 0.3,
             "rrf_k_parameter": 50,
-            "use_parallel_search": False
+            "use_parallel_search": False,
         }
 
-        with open(self.config_file, 'w') as f:
+        with open(self.config_file, "w") as f:
             json.dump(config_data, f)
 
         # Create searcher (should use config values)
@@ -605,7 +590,7 @@ class TestHybridSearchConfigIntegration:
             storage_dir=str(self.temp_dir / "indices"),
             bm25_weight=config.bm25_weight,
             dense_weight=config.dense_weight,
-            rrf_k=config.rrf_k_parameter
+            rrf_k=config.rrf_k_parameter,
         )
 
         assert searcher.bm25_weight == 0.7

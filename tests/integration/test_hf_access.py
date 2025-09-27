@@ -26,7 +26,7 @@ def test_basic_authentication():
     except Exception as e:
         print(f"[ERROR] Authentication failed: {e}")
         print("\n[INFO] Troubleshooting suggestions:")
-        print("   1. Run: hf_auth_fix.ps1 -Token 'your_token_here'")
+        print("   1. Run: hf_auth.ps1 -Token 'your_token_here'")
         print("   2. Ensure token starts with 'hf_'")
         print("   3. Verify token has 'Read' permissions")
         assert False, f"Authentication failed: {e}"
@@ -224,7 +224,23 @@ def test_embedder_integration():
         ]
 
         print("   Testing embedder with code chunks...")
-        embeddings = embedder.generate_embeddings(test_chunks)
+        # Create proper CodeChunk objects for testing
+        from chunking.python_ast_chunker import CodeChunk
+        chunks = [
+            CodeChunk(
+                content=content,
+                chunk_type="function" if "def" in content else "class",
+                start_line=1,
+                end_line=content.count('\n') + 1,
+                file_path="test.py",
+                relative_path="test.py",
+                folder_structure=[]
+            ) for content in test_chunks
+        ]
+
+        # Use embed_chunks which is the correct method
+        embedding_results = embedder.embed_chunks(chunks)
+        embeddings = [result.embedding for result in embedding_results]
 
         print("[OK] Project embedder working!")
         print(f"   Generated {len(embeddings)} embeddings")

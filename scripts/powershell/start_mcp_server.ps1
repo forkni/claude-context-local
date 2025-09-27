@@ -8,7 +8,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$PROJECT_DIR = "F:\RD_PROJECTS\COMPONENTS\Claude-context-MCP"
+$PROJECT_DIR = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 Write-Host "=== MCP Server Startup ===" -ForegroundColor Cyan
 Write-Host "Starting claude-context-local MCP server" -ForegroundColor Cyan

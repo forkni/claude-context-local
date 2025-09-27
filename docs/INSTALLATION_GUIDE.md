@@ -4,6 +4,8 @@
 
 This guide covers the complete installation process for the Claude Context MCP system, a **Windows-optimized general-purpose semantic code search tool** for software development. The system provides streamlined installation with automated CUDA detection and comprehensive verification.
 
+> **📁 Archived Content**: Development tools, test scripts, and TouchDesigner-specific features have been preserved in `_archive/` directory. See `_archive/README.md` for details.
+
 ## Table of Contents
 
 1. [Prerequisites](#prerequisites)
@@ -150,6 +152,7 @@ verify-installation.bat
 ```
 
 **Verification Tests Include:**
+
 - ✅ Virtual environment and Python version
 - ✅ PyTorch CUDA availability and GPU detection
 - ✅ Core dependencies (transformers, sentence-transformers, FAISS)
@@ -168,16 +171,147 @@ verify-installation.bat
 # Test CUDA functionality
 .venv\Scripts\python.exe -c "import torch; print('CUDA available:', torch.cuda.is_available())"
 
-# Start MCP server
+# Start MCP server (interactive menu with 8 functional options)
 start_mcp_server.bat
+
+# Alternative launcher options
+scripts\batch\start_mcp_debug.bat    # Debug mode with enhanced logging
+scripts\batch\start_mcp_simple.bat   # Simple mode with minimal output
 ```
 
 ### Advanced Testing Tools
 
+#### Comprehensive Test Suite
+
+The project includes 37 test files organized into professional categories:
+
 ```powershell
-# Unit tests for developers
+# Run all tests (37 test files)
+.venv\Scripts\python.exe -m pytest tests/ -v
+
+# Unit tests only (14 files) - Fast component testing
 .venv\Scripts\python.exe -m pytest tests/unit/ -v
+
+# Integration tests only (23 files) - Workflow validation
+.venv\Scripts\python.exe -m pytest tests/integration/ -v
+
+# Run with coverage report
+.venv\Scripts\python.exe -m pytest tests/ --cov=. --cov-report=html
+
+# Quick validation test
+.venv\Scripts\python.exe -m pytest tests/unit/test_imports.py -v
 ```
+
+#### Test Categories
+
+- **Unit Tests** (`tests/unit/`): Component isolation testing for search, indexing, evaluation
+- **Integration Tests** (`tests/integration/`): End-to-end workflow testing for MCP, installation, CUDA
+- **Test Fixtures** (`tests/fixtures/`): Reusable mocks and sample data
+- **Test Data** (`tests/test_data/`): Sample projects in Python, GLSL, multi-language
+
+#### Development Debug Tools
+
+```powershell
+# Development and debug tools available in archive
+_archive/test_scripts/test-cpu-mode.bat     # CPU-only mode testing
+_archive/debug_tools/debug_*.py            # Component-specific debugging
+
+# Full test documentation
+tests/README.md                            # Comprehensive test guide (285 lines)
+```
+
+📚 **Complete testing guide**: [tests/README.md](../tests/README.md)
+
+### MCP Server Launcher Scripts
+
+The system provides multiple launcher options for different use cases:
+
+#### Main Launcher (start_mcp_server.bat)
+
+```powershell
+# Interactive menu with 8 functional options
+start_mcp_server.bat
+```
+
+**Features:**
+
+- Interactive menu with configuration options
+- Performance benchmarking integration
+- Installation and verification tools
+- Project indexing and search utilities
+- All menu options verified and functional
+
+#### Debug Mode (start_mcp_debug.bat)
+
+```powershell
+# Enhanced logging and error reporting
+scripts\batch\start_mcp_debug.bat
+```
+
+**Features:**
+
+- Verbose output for troubleshooting
+- Enhanced error reporting
+- Debug environment variables set
+- Detailed execution logging
+
+#### Simple Mode (start_mcp_simple.bat)
+
+```powershell
+# Minimal output for production use
+scripts\batch\start_mcp_simple.bat
+```
+
+**Features:**
+
+- Minimal console output
+- Suppressed debug messages
+- Clean production startup
+- Error-only reporting
+
+## Performance Verification (Optional)
+
+After successful installation, verify system performance and validate token efficiency claims:
+
+### Quick Performance Test
+
+```bash
+# Interactive benchmark menu (Recommended)
+run_benchmarks.bat
+```
+
+Select **Option 1: Token Efficiency Benchmark** for a quick validation (~10 seconds).
+
+**Expected Results:**
+
+- ✅ **Token Savings**: 99.9% reduction vs traditional file reading
+- ✅ **GPU Acceleration**: 8.6x faster indexing (with CUDA GPU)
+- ✅ **Search Quality**: High precision on test scenarios
+
+### Individual Benchmarks
+
+```bash
+# Token efficiency only (fastest validation)
+.venv\Scripts\python.exe evaluation/run_evaluation.py token-efficiency --max-instances 1
+
+# Full token efficiency suite
+.venv\Scripts\python.exe evaluation/run_evaluation.py token-efficiency
+
+# Custom project evaluation
+.venv\Scripts\python.exe evaluation/run_evaluation.py custom --project test_evaluation
+```
+
+### Performance Validation Checklist
+
+- [ ] **GPU Detection**: System detects your GPU correctly
+- [ ] **Token Efficiency**: Shows >99% token reduction
+- [ ] **Indexing Speed**: Fast index building (seconds, not minutes)
+- [ ] **Search Quality**: Finds relevant code chunks for queries
+- [ ] **Memory Management**: Proper cleanup after benchmarks
+
+**If benchmarks fail**: Check GPU drivers, verify PyTorch CUDA installation, or run with `--cpu` flag for CPU-only testing.
+
+📊 **Complete benchmark results**: [View Detailed Benchmarks](BENCHMARKS.md)
 
 ## Troubleshooting
 
@@ -318,8 +452,9 @@ uv cache clean
 For issues not covered in this guide:
 
 1. Check the GitHub Issues for your repository
-2. Run diagnostic commands from the troubleshooting section
-3. Provide system information when reporting bugs
+2. Review CLAUDE.md for project-specific documentation
+3. Run diagnostic commands from the troubleshooting section
+4. Provide system information when reporting bugs
 
 ---
 
@@ -344,6 +479,6 @@ python -m mcp_server.tools index_directory "path/to/project"
 ### File Locations
 
 - **Scripts**: `scripts/powershell/` (Windows PowerShell), `scripts/batch/` (Windows batch)
-- **Configuration**: `pyproject.toml`
+- **Configuration**: `CLAUDE.md`, `pyproject.toml`
 - **Cache**: `~/.claude_code_search/`
 - **Logs**: MCP server stdout/stderr

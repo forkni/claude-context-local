@@ -7,14 +7,16 @@ specifically designed to demonstrate the current hybrid search issues.
 """
 
 import sys
-import pytest
 import traceback
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+
+import pytest
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
+
 
 def run_integration_tests():
     """Run hybrid search integration tests."""
@@ -38,11 +40,11 @@ def run_integration_tests():
     # Run pytest with verbose output
     args = [
         str(test_file),
-        "-v",                    # Verbose output
-        "-s",                    # Don't capture stdout/stderr
-        "--tb=short",            # Short traceback format
-        "--color=yes",           # Colored output
-        "--durations=10"         # Show slowest 10 tests
+        "-v",  # Verbose output
+        "-s",  # Don't capture stdout/stderr
+        "--tb=short",  # Short traceback format
+        "--color=yes",  # Colored output
+        "--durations=10",  # Show slowest 10 tests
     ]
 
     try:
@@ -53,6 +55,7 @@ def run_integration_tests():
         traceback.print_exc()
         return False
 
+
 def run_specific_test(test_name: str):
     """Run a specific test method."""
     test_file = Path(__file__).parent / "test_hybrid_search_integration.py"
@@ -60,12 +63,7 @@ def run_specific_test(test_name: str):
     print(f"Running specific test: {test_name}")
     print("-" * 60)
 
-    args = [
-        f"{test_file}::{test_name}",
-        "-v",
-        "-s",
-        "--tb=long"
-    ]
+    args = [f"{test_file}::{test_name}", "-v", "-s", "--tb=long"]
 
     try:
         result = pytest.main(args)
@@ -74,6 +72,7 @@ def run_specific_test(test_name: str):
         print(f"ERROR running test {test_name}: {e}")
         traceback.print_exc()
         return False
+
 
 def demonstrate_current_issues():
     """Run tests that will demonstrate the current hybrid search issues."""
@@ -119,23 +118,32 @@ def demonstrate_current_issues():
     if failed_tests > 0:
         print()
         print("EXPECTED FAILURES:")
-        print("- test_hybrid_searcher_has_add_embeddings_method: HybridSearcher missing add_embeddings method")
-        print("- test_incremental_indexing_with_hybrid_search: Incremental indexer can't use HybridSearcher")
+        print(
+            "- test_hybrid_searcher_has_add_embeddings_method: HybridSearcher missing add_embeddings method"
+        )
+        print(
+            "- test_incremental_indexing_with_hybrid_search: Incremental indexer can't use HybridSearcher"
+        )
         print("- test_hybrid_indices_are_populated: BM25 index never gets populated")
         print()
         print("These failures confirm the issues identified in the analysis:")
         print("1. HybridSearcher lacks add_embeddings() method")
-        print("2. Integration between incremental indexer and hybrid searcher is broken")
+        print(
+            "2. Integration between incremental indexer and hybrid searcher is broken"
+        )
         print("3. BM25 index is not populated during indexing process")
 
     return failed_tests == 0
+
 
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Run hybrid search integration tests")
     parser.add_argument("--test", help="Run specific test method")
-    parser.add_argument("--demo", action="store_true", help="Demonstrate current issues")
+    parser.add_argument(
+        "--demo", action="store_true", help="Demonstrate current issues"
+    )
     parser.add_argument("--all", action="store_true", help="Run all tests")
 
     args = parser.parse_args()

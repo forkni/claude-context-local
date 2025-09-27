@@ -5,37 +5,38 @@ Validates CUDA version detection, PyTorch index mapping, and hardware compatibil
 """
 
 import subprocess
+from unittest.mock import Mock, patch
+
 import pytest
-from unittest.mock import patch, Mock, MagicMock
+
 from tests.fixtures.installation_mocks import (
     CUDA_VERSIONS,
     MOCK_NVIDIA_SMI_OUTPUTS,
-    get_mock_environment
+    get_mock_environment,
 )
 
 
 class TestCUDADetection:
     """Test CUDA detection functionality."""
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_nvidia_smi_detection_success(self, mock_run):
         """Test successful CUDA detection via nvidia-smi."""
         mock_run.return_value = Mock(
-            returncode=0,
-            stdout=MOCK_NVIDIA_SMI_OUTPUTS["cuda_12_1"],
-            stderr=""
+            returncode=0, stdout=MOCK_NVIDIA_SMI_OUTPUTS["cuda_12_1"], stderr=""
         )
 
         # Simulate CUDA detection logic
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=cuda_version", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True
+            capture_output=True,
+            text=True,
         )
 
         assert result.returncode == 0
         assert "12.1" in result.stdout
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_nvidia_smi_not_found(self, mock_run):
         """Test handling when nvidia-smi is not available."""
         mock_run.side_effect = FileNotFoundError("'nvidia-smi' is not recognized")
@@ -63,14 +64,24 @@ class TestCUDADetection:
     def test_cuda_version_parsing(self):
         """Test parsing CUDA version from nvidia-smi output."""
         test_outputs = [
-            ("NVIDIA GeForce RTX 4090, Driver Version: 537.13, CUDA Version: 12.1", "12.1"),
-            ("NVIDIA GeForce RTX 3080, Driver Version: 516.94, CUDA Version: 11.8", "11.8"),
-            ("NVIDIA GeForce RTX 3070, Driver Version: 516.40, CUDA Version: 11.7", "11.7"),
+            (
+                "NVIDIA GeForce RTX 4090, Driver Version: 537.13, CUDA Version: 12.1",
+                "12.1",
+            ),
+            (
+                "NVIDIA GeForce RTX 3080, Driver Version: 516.94, CUDA Version: 11.8",
+                "11.8",
+            ),
+            (
+                "NVIDIA GeForce RTX 3070, Driver Version: 516.40, CUDA Version: 11.7",
+                "11.7",
+            ),
         ]
 
         for output, expected_version in test_outputs:
             # Simulate version extraction logic
             import re
+
             match = re.search(r"CUDA Version: ([\d.]+)", output)
             assert match is not None
             assert match.group(1) == expected_version
@@ -81,7 +92,9 @@ class TestHardwareCompatibility:
 
     def test_supported_cuda_versions(self):
         """Test identification of supported CUDA versions."""
-        supported_versions = [v for v, info in CUDA_VERSIONS.items() if info["supported"]]
+        supported_versions = [
+            v for v, info in CUDA_VERSIONS.items() if info["supported"]
+        ]
 
         assert "12.1" in supported_versions
         assert "12.0" in supported_versions
@@ -92,7 +105,9 @@ class TestHardwareCompatibility:
 
     def test_recommended_cuda_versions(self):
         """Test identification of recommended CUDA versions."""
-        recommended_versions = [v for v, info in CUDA_VERSIONS.items() if info.get("recommended", False)]
+        recommended_versions = [
+            v for v, info in CUDA_VERSIONS.items() if info.get("recommended", False)
+        ]
 
         assert "12.1" in recommended_versions
         assert "12.0" in recommended_versions
@@ -100,9 +115,12 @@ class TestHardwareCompatibility:
 
     def test_pytorch_index_selection(self):
         """Test automatic PyTorch index selection based on CUDA version."""
+
         def get_pytorch_index(cuda_version):
             cuda_info = CUDA_VERSIONS.get(cuda_version, {})
-            return cuda_info.get("pytorch_index", "https://pypi.org/simple")
+            pytorch_index = cuda_info.get("pytorch_index")
+            # Return CPU fallback for unsupported versions (None pytorch_index)
+            return pytorch_index if pytorch_index is not None else "https://pypi.org/simple"
 
         assert get_pytorch_index("12.1") == "https://download.pytorch.org/whl/cu121"
         assert get_pytorch_index("11.8") == "https://download.pytorch.org/whl/cu118"

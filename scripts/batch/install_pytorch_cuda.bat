@@ -1,6 +1,6 @@
 @echo off
 echo =================================================
-echo Claude-context-MCP: PyTorch CUDA Installation Script
+echo claude-context-local: PyTorch CUDA Installation Script
 echo Resolves PyTorch+CUDA and Transformers Issues
 echo =================================================
 
