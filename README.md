@@ -96,6 +96,8 @@ verify-installation.bat
 scripts\powershell\configure_claude_code.ps1 -Global
 ```
 
+> **⚠️ Important**: The installer will prompt for HuggingFace authentication during setup. You'll need a HuggingFace token to access the EmbeddingGemma model. Get your token at [https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) and accept terms at [https://huggingface.co/google/embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m).
+
 **Windows Installer Features:**
 
 - **Smart CUDA Detection**: Automatically detects your CUDA version and installs appropriate PyTorch
