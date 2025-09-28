@@ -512,17 +512,17 @@ echo =================================================
 
 if "!CUDA_AVAILABLE!"=="1" (
     echo Installed Components:
-    echo   - Python Environment: ✓
-    echo   - PyTorch with CUDA !CUDA_VERSION!: ✓
-    echo   - Hybrid Search ^(BM25 + Semantic^): ✓
-    echo   - MCP Integration: ✓
-    echo   - GPU Acceleration: ✓ !GPU_NAME!
+    echo   - Python Environment: [OK]
+    echo   - PyTorch with CUDA !CUDA_VERSION!: [OK]
+    echo   - Hybrid Search ^(BM25 + Semantic^): [OK]
+    echo   - MCP Integration: [OK]
+    echo   - GPU Acceleration: [OK] !GPU_NAME!
 ) else (
     echo Installed Components:
-    echo   - Python Environment: ✓
-    echo   - PyTorch CPU-Only: ✓
-    echo   - Hybrid Search ^(BM25 + Semantic^): ✓
-    echo   - MCP Integration: ✓
+    echo   - Python Environment: [OK]
+    echo   - PyTorch CPU-Only: [OK]
+    echo   - Hybrid Search ^(BM25 + Semantic^): [OK]
+    echo   - MCP Integration: [OK]
     echo   - Note: CPU-only mode ^(no GPU acceleration^)
 )
 
