@@ -1,0 +1,34 @@
+{
+  "metadata": {
+    "source": "SWE-bench Lite sample",
+    "note": "Minimal dataset for testing when HuggingFace is unavailable",
+    "created_for": "claude-context-local fallback testing",
+    "instances_count": 3
+  },
+  "instances": [
+    {
+      "instance_id": "sample_001",
+      "problem_statement": "Fix authentication bug in login function where users with expired tokens can still access protected routes",
+      "patch": "--- a/auth.py\n+++ b/auth.py\n@@ -1,5 +1,7 @@\n def login(token):\n-    return validate_user(token)\n+    if token_expired(token):\n+        raise AuthenticationError(\"Token expired\")\n+    return validate_user(token)\n \n def validate_user(token):\n     pass",
+      "repo": "sample/auth-service",
+      "base_commit": "abc123def456",
+      "modified_files": ["auth.py"]
+    },
+    {
+      "instance_id": "sample_002",
+      "problem_statement": "Database connection pool is not properly closed leading to connection leaks",
+      "patch": "--- a/database/connection.py\n+++ b/database/connection.py\n@@ -10,6 +10,8 @@\n class ConnectionPool:\n     def __init__(self):\n         self.pool = []\n+        \n+    def close_all(self):\n+        for conn in self.pool:\n+            conn.close()\n+        self.pool.clear()",
+      "repo": "sample/database-service",
+      "base_commit": "def456ghi789",
+      "modified_files": ["database/connection.py"]
+    },
+    {
+      "instance_id": "sample_003",
+      "problem_statement": "API endpoint returns incorrect status code for validation errors - should return 422 instead of 500",
+      "patch": "--- a/api/handlers.py\n+++ b/api/handlers.py\n@@ -15,7 +15,7 @@\n def validate_request(data):\n     errors = check_validation(data)\n     if errors:\n-        raise InternalServerError(errors)\n+        raise ValidationError(errors, status_code=422)\n     return True\n \n def check_validation(data):",
+      "repo": "sample/api-service",
+      "base_commit": "ghi789jkl012",
+      "modified_files": ["api/handlers.py"]
+    }
+  ]
+}
