@@ -235,7 +235,6 @@ docs/*
 
 # Evaluation and test results (temporary/generated files)
 custom_evaluation_results/
-test_evaluation/
 evaluation.log
 sample_dataset.json
 
