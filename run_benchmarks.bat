@@ -39,29 +39,24 @@ echo 2. Search Method Comparison (Medium, ~30-60 seconds)
 echo    - Compare hybrid, BM25, or semantic search methods
 echo    - Uses synthetic test_evaluation project
 echo.
-echo 3. SWE-bench Evaluation (Slow, several minutes)
-echo    - Industry-standard software engineering benchmark
-echo    - Compares multiple search methods
-echo.
-echo 4. Create Sample Dataset
+echo 3. Create Sample Dataset
 echo    - Generate sample evaluation dataset for testing
 echo.
-echo 5. Run All Benchmarks (Complete evaluation suite)
+echo 4. Run All Benchmarks (Complete evaluation suite)
 echo    - Runs token efficiency + sample project evaluation
 echo.
 echo 0. Exit
 echo.
 
-set /p choice="Enter your choice (0-5): "
+set /p choice="Enter your choice (0-4): "
 
 if "%choice%"=="0" goto :EOF
 if "%choice%"=="1" goto :TOKEN_EFFICIENCY
 if "%choice%"=="2" goto :CUSTOM_EVAL
-if "%choice%"=="3" goto :SWE_BENCH
-if "%choice%"=="4" goto :CREATE_SAMPLE
-if "%choice%"=="5" goto :RUN_ALL
+if "%choice%"=="3" goto :CREATE_SAMPLE
+if "%choice%"=="4" goto :RUN_ALL
 
-echo Invalid choice! Please enter a number between 0-5.
+echo Invalid choice! Please enter a number between 0-4.
 echo.
 goto :MENU
 
@@ -125,36 +120,6 @@ if errorlevel 1 (
 
 echo.
 echo Custom evaluation completed successfully!
-echo.
-pause
-goto :MENU
-
-:SWE_BENCH
-echo.
-echo ================================================================
-echo                     SWE-bench Evaluation
-echo ================================================================
-echo.
-echo WARNING: This benchmark downloads data and may take several minutes.
-echo.
-set /p confirm="Continue? (y/N): "
-if /i not "%confirm%"=="y" goto :MENU
-
-echo.
-echo Running SWE-bench evaluation...
-echo This will compare hybrid, BM25, and dense search methods.
-echo.
-
-".venv\Scripts\python.exe" evaluation\run_evaluation.py swe-bench --max-instances 10
-if errorlevel 1 (
-    echo.
-    echo ERROR: SWE-bench evaluation failed!
-    pause
-    goto :MENU
-)
-
-echo.
-echo SWE-bench evaluation completed successfully!
 echo.
 pause
 goto :MENU
