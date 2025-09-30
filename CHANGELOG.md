@@ -5,17 +5,14 @@ All notable changes to the Claude Context Local (MCP) semantic code search syste
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] - 2025-09-29
+## [0.3.0] - 2025-09-29
 
 ### Added
-- **Auto-Tuning System**: Parameter optimization tool for hybrid search weights (`tools/auto_tune_search.py`)
-  - Tests multiple BM25/Dense weight configurations (0.3/0.7, 0.4/0.6, 0.6/0.4)
-  - Uses F1-score as primary metric with query time as tie-breaker
-  - Generates optimization reports with recommended configurations
-  - Results saved to `benchmark_results/tuning/`
-- **Debug Scenarios Dataset**: 7 diverse test scenarios for evaluation (`evaluation/datasets/debug_scenarios.json`)
-- **Parameter Optimizer Module**: Core auto-tuning logic (`evaluation/parameter_optimizer.py`)
-- **CHANGELOG.md**: Comprehensive change tracking for all releases
+- **CHANGELOG.md**: Comprehensive change tracking following Keep a Changelog format
+- **GIT_WORKFLOW.md**: Complete Git workflow documentation with versioning guidance
+  - Semantic versioning strategy (MAJOR.MINOR.PATCH)
+  - Release workflow steps
+  - CHANGELOG maintenance guidelines
 
 ### Changed
 - **Documentation Accuracy**: Corrected token efficiency metrics across all documentation
@@ -29,17 +26,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Evaluation README**: Updated framework documentation (3 locations)
 - **Installation Guide**: Corrected expected benchmark results
 - **MCP Server Docstring**: Updated tool description with accurate metrics
-- **Git Workflow Documentation**: Consolidated to single authoritative document (GIT_WORKFLOW.md)
-- **Version Bump**: 0.1.0 → 0.2.0
+- **Version Bump**: 0.2.0 → 0.3.0
 
 ### Fixed
 - **Evaluation Consistency**: Verified all evaluators use identical calculation methods from `BaseEvaluator`
-- **Model Loading Overhead**: Fixed first query timing issue in auto-tuning by passing pre-created embedder
 - **Documentation Conflicts**: Removed outdated `Git_Workflow_Strategy.md` to eliminate contradictions
 
 ### Removed
 - **Outdated Documentation**: Deleted `docs/Git_Workflow_Strategy.md` (contradicted current .gitignore setup)
-- **Old Test Evaluation Files**: Removed deprecated test_evaluation synthetic project files
+
+---
+
+## [0.2.0] - 2025-09-28
+
+### Added
+- **Auto-Tuning System**: Parameter optimization tool for hybrid search weights (`tools/auto_tune_search.py`)
+  - Tests multiple BM25/Dense weight configurations (0.3/0.7, 0.4/0.6, 0.6/0.4)
+  - Uses F1-score as primary metric with query time as tie-breaker
+  - Generates optimization reports with recommended configurations
+  - Results saved to `benchmark_results/tuning/`
+- **Debug Scenarios Dataset**: 7 diverse test scenarios for evaluation (`evaluation/datasets/debug_scenarios.json`)
+- **Parameter Optimizer Module**: Core auto-tuning logic (`evaluation/parameter_optimizer.py`)
+
+### Changed
+- **Benchmark System**: Enhanced run_benchmarks.bat with auto-tuning option
+- **Evaluation Framework**: Added method-comparison mode for testing all search methods
+- **Version Bump**: 0.1.0 → 0.2.0
+
+### Fixed
+- **Model Loading Overhead**: Fixed first query timing issue in auto-tuning by passing pre-created embedder
+- **Search Method Comparison**: Improved benchmark comparison reporting
 
 ---
 
@@ -108,7 +124,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
-- **v0.2.0** - Documentation accuracy & auto-tuning (2025-09-29)
+- **v0.3.0** - Documentation accuracy & workflow consolidation (2025-09-29)
+- **v0.2.0** - Auto-tuning parameter optimization (2025-09-28)
 - **v0.1.0** - Initial release with hybrid search (2025-01-27)
 
 ---
