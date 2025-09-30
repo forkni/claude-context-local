@@ -33,17 +33,21 @@ echo.
 echo 1. Token Efficiency Benchmark (Fast, ~10 seconds)
 echo    - Compares MCP semantic search vs vanilla file reading
 echo    - Shows token savings and performance metrics
-echo    - Uses test_evaluation project
+echo    - Uses current project (claude-context-local)
 echo.
-echo 2. Search Method Comparison (Medium, ~30-60 seconds)
-echo    - Compare hybrid, BM25, or semantic search methods
-echo    - Uses synthetic test_evaluation project
+echo 2. Search Method Comparison (Medium, ~2-3 minutes)
+echo    - Compare ALL search methods: hybrid, BM25, and semantic
+echo    - Uses current project directory for realistic evaluation
+echo    - Provides comparison table with winner declaration
 echo.
-echo 3. Create Sample Dataset
-echo    - Generate sample evaluation dataset for testing
+echo 3. Auto-Tune Search Parameters (Fast, ~2 minutes)
+echo    - Optimize hybrid search weights for this codebase
+echo    - Tests 3 strategic configurations
+echo    - Provides recommended settings
 echo.
 echo 4. Run All Benchmarks (Complete evaluation suite)
-echo    - Runs token efficiency + sample project evaluation
+echo    - Runs token efficiency + search method comparison + auto-tuning
+echo    - Uses current project for realistic evaluation
 echo.
 echo 0. Exit
 echo.
@@ -53,7 +57,7 @@ set /p choice="Enter your choice (0-4): "
 if "%choice%"=="0" goto :EOF
 if "%choice%"=="1" goto :TOKEN_EFFICIENCY
 if "%choice%"=="2" goto :CUSTOM_EVAL
-if "%choice%"=="3" goto :CREATE_SAMPLE
+if "%choice%"=="3" goto :AUTO_TUNE
 if "%choice%"=="4" goto :RUN_ALL
 
 echo Invalid choice! Please enter a number between 0-4.
@@ -90,62 +94,68 @@ echo ================================================================
 echo                    Search Method Comparison
 echo ================================================================
 echo.
-echo Using synthetic test_evaluation project for method comparison...
-set project_path=test_evaluation
+echo This will compare ALL search methods automatically:
+echo   - HYBRID (BM25 + Semantic embeddings)
+echo   - BM25 ONLY (Keyword matching)
+echo   - SEMANTIC ONLY (Dense embeddings)
+echo.
+echo Project: Current directory (F:\RD_PROJECTS\COMPONENTS\claude-context-local)
+echo Estimated time: 2-3 minutes
+echo.
+set /p confirm="Continue with method comparison? (y/N): "
+if /i not "%confirm%"=="y" goto :MENU
 
 echo.
-echo Choose evaluation method:
-echo 1. Hybrid (BM25 + Semantic) - Recommended
-echo 2. Semantic only (Dense embeddings)
-echo 3. BM25 only (Text matching)
-echo.
-set /p method_choice="Enter method choice (1-3): "
-
-set method=hybrid
-if "%method_choice%"=="2" set method=dense
-if "%method_choice%"=="3" set method=bm25
-
-echo.
-echo Running custom evaluation on: %project_path%
-echo Method: %method%
+echo Starting comprehensive search method comparison...
 echo.
 
-".venv\Scripts\python.exe" evaluation\run_evaluation.py custom --dataset evaluation\datasets\token_efficiency_scenarios.json --project "%project_path%" --method %method% --output-dir benchmark_results\custom
+".venv\Scripts\python.exe" evaluation\run_evaluation.py method-comparison --dataset evaluation\datasets\token_efficiency_scenarios.json --project "." --output-dir benchmark_results\method_comparison --max-instances 5 --k 5
 if errorlevel 1 (
     echo.
-    echo ERROR: Custom evaluation failed!
+    echo ERROR: Method comparison failed!
     pause
     goto :MENU
 )
 
 echo.
-echo Custom evaluation completed successfully!
+echo Method comparison completed successfully!
+echo Results saved in benchmark_results\method_comparison\
 echo.
 pause
 goto :MENU
 
-:CREATE_SAMPLE
+:AUTO_TUNE
 echo.
 echo ================================================================
-echo                    Create Sample Dataset
+echo              Auto-Tune Search Parameters
 echo ================================================================
 echo.
-set /p output_path="Enter output path (or press Enter for default): "
-if "%output_path%"=="" (
-    ".venv\Scripts\python.exe" evaluation\run_evaluation.py create-sample
-) else (
-    ".venv\Scripts\python.exe" evaluation\run_evaluation.py create-sample --output "%output_path%"
-)
+echo This will optimize hybrid search weights for your codebase:
+echo   - Test 3 strategic configurations
+echo   - Build index once, test parameters quickly
+echo   - Provide recommended settings
+echo.
+echo Estimated time: ~2 minutes
+echo.
+set /p confirm="Continue with auto-tuning? (y/N): "
+if /i not "%confirm%"=="y" goto :MENU
 
+echo.
+echo Starting auto-tuning process...
+echo.
+
+".venv\Scripts\python.exe" tools\auto_tune_search.py --project "." --dataset evaluation\datasets\debug_scenarios.json --current-f1 0.367
 if errorlevel 1 (
     echo.
-    echo ERROR: Sample dataset creation failed!
+    echo ERROR: Auto-tuning failed!
     pause
     goto :MENU
 )
 
 echo.
-echo Sample dataset created successfully!
+echo Auto-tuning completed successfully!
+echo Results saved in benchmark_results\tuning\
+echo Logs saved in benchmark_results\logs\
 echo.
 pause
 goto :MENU
@@ -157,10 +167,11 @@ echo                     Complete Benchmark Suite
 echo ================================================================
 echo.
 echo This will run:
-echo 1. Token efficiency benchmark
-echo 2. Custom evaluation on test_evaluation project
+echo 1. Token efficiency benchmark (current project)
+echo 2. Complete search method comparison (all 3 methods)
+echo 3. Auto-tune search parameters
 echo.
-echo Estimated time: 1-2 minutes
+echo Estimated time: 5-6 minutes
 echo.
 set /p confirm="Continue? (y/N): "
 if /i not "%confirm%"=="y" goto :MENU
@@ -181,11 +192,22 @@ if errorlevel 1 (
 
 echo.
 echo ----------------------------------------------------------------
-echo Running Custom Evaluation (Hybrid method)...
+echo Running Search Method Comparison (All 3 methods)...
 echo ----------------------------------------------------------------
-".venv\Scripts\python.exe" evaluation\run_evaluation.py custom --dataset evaluation\datasets\token_efficiency_scenarios.json --project test_evaluation --method hybrid --output-dir benchmark_results\custom
+".venv\Scripts\python.exe" evaluation\run_evaluation.py method-comparison --dataset evaluation\datasets\token_efficiency_scenarios.json --project "." --output-dir benchmark_results\method_comparison --max-instances 5 --k 5
 if errorlevel 1 (
-    echo ERROR: Custom evaluation failed!
+    echo ERROR: Method comparison failed!
+    pause
+    goto :MENU
+)
+
+echo.
+echo ----------------------------------------------------------------
+echo Running Auto-Tune Search Parameters...
+echo ----------------------------------------------------------------
+".venv\Scripts\python.exe" tools\auto_tune_search.py --project "." --dataset evaluation\datasets\debug_scenarios.json --current-f1 0.367
+if errorlevel 1 (
+    echo ERROR: Auto-tuning failed!
     pause
     goto :MENU
 )
@@ -198,7 +220,9 @@ echo.
 echo All benchmarks completed successfully!
 echo Check the following directories for results:
 echo - benchmark_results\token_efficiency\
-echo - benchmark_results\custom\
+echo - benchmark_results\method_comparison\
+echo - benchmark_results\tuning\
+echo - benchmark_results\logs\ (for detailed logs)
 echo.
 pause
 goto :MENU

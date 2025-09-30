@@ -188,7 +188,10 @@ class BM25Index:
                 self._logger.debug(
                     f"[BM25_INDEX] Storing metadata for {len(metadata)} documents"
                 )
-                self._metadata.update(metadata)
+
+                # Store metadata with deep copy to avoid reference issues
+                for doc_id, meta in metadata.items():
+                    self._metadata[doc_id] = dict(meta)
 
             # Preprocess and tokenize documents
             self._logger.debug(f"[BM25_INDEX] Tokenizing {len(documents)} documents")
@@ -275,7 +278,11 @@ class BM25Index:
                 continue
 
             doc_id = self._doc_ids[idx]
-            metadata = self._metadata.get(doc_id, {})
+            metadata = dict(self._metadata.get(doc_id, {}))  # Return a copy, not reference
+
+            # Ensure content field exists - add from document store if missing
+            if 'content' not in metadata and idx < len(self._documents):
+                metadata['content'] = self._documents[idx]
 
             results.append((doc_id, score, metadata))
 

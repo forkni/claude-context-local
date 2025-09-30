@@ -255,6 +255,9 @@ class TokenEfficiencyEvaluator(BaseEvaluator):
         """
         self.logger.info(f"Evaluating token efficiency: {instance.instance_id}")
 
+        # Validate ground truth files exist in project
+        self._validate_ground_truth_files(instance.ground_truth_files, project_path)
+
         # 1. Execute semantic search and measure tokens
         search_start = time.time()
         search_results = self.search(instance.query, self.k)
@@ -262,10 +265,34 @@ class TokenEfficiencyEvaluator(BaseEvaluator):
 
         # Count tokens in search query and results
         query_tokens = self.token_counter.count_tokens(instance.query)
+
+        # Debug: Log content details for each result
+        result_token_details = []
+        for i, r in enumerate(search_results):
+            content_length = len(r.content) if r.content else 0
+            tokens = self.token_counter.count_tokens(r.content) if r.content else 0
+            result_token_details.append(f"Result {i+1}: {tokens} tokens ({content_length} chars)")
+
+            # Debug: Check metadata fields (only in DEBUG mode)
+            if self.logger.isEnabledFor(logging.DEBUG):
+                self.logger.debug(f"Result {i+1} metadata keys: {list(r.metadata.keys())}")
+                if 'content' in r.metadata:
+                    meta_content_len = len(r.metadata['content'])
+                    self.logger.debug(f"Result {i+1} metadata['content']: {meta_content_len} chars")
+                if 'content_preview' in r.metadata:
+                    meta_preview_len = len(r.metadata['content_preview'])
+                    self.logger.debug(f"Result {i+1} metadata['content_preview']: {meta_preview_len} chars")
+
+            self.logger.debug(f"Result {i+1} content preview: '{r.content[:100]}...' ({content_length} chars, {tokens} tokens)")
+
         result_tokens = sum(
-            self.token_counter.count_tokens(r.content) for r in search_results
+            self.token_counter.count_tokens(r.content) for r in search_results if r.content
         )
         search_total_tokens = query_tokens + result_tokens
+
+        # Debug: Log token breakdown
+        self.logger.info(f"Token breakdown - Query: {query_tokens}, Results: {result_tokens} (Total: {search_total_tokens})")
+        self.logger.info(f"Result details: {result_token_details}")
 
         # 2. Simulate vanilla file reading approach
         simulator = VanillaReadSimulator(project_path)
@@ -304,12 +331,20 @@ class TokenEfficiencyEvaluator(BaseEvaluator):
         retrieved_files = [r.file_path for r in search_results]
         scores = [r.score for r in search_results]
 
+        # Log detailed comparison information
+        self.logger.info(f"Search query: '{instance.query}'")
+        self.logger.info(f"Retrieved {len(retrieved_files)} files: {retrieved_files}")
+        self.logger.info(f"Ground truth files: {instance.ground_truth_files}")
+
         precision, recall = self.calculate_precision_recall(
             retrieved_files, instance.ground_truth_files
         )
         f1_score = self.calculate_f1_score(precision, recall)
         mrr = self.calculate_mrr(retrieved_files, instance.ground_truth_files)
         ndcg = self.calculate_ndcg(retrieved_files, instance.ground_truth_files, scores)
+
+        # Log calculated metrics
+        self.logger.info(f"Search quality metrics - Precision: {precision:.3f}, Recall: {recall:.3f}, F1: {f1_score:.3f}")
 
         search_metrics = SearchMetrics(
             query_time=search_time,
@@ -576,6 +611,60 @@ class TokenEfficiencyEvaluator(BaseEvaluator):
 
         self.logger.info(f"Token efficiency report saved to {report_file}")
         return report
+
+    def _validate_ground_truth_files(
+        self, ground_truth_files: List[str], project_path: str
+    ) -> None:
+        """
+        Validate that ground truth files exist in the project.
+
+        Args:
+            ground_truth_files: List of ground truth file paths
+            project_path: Path to the project being evaluated
+        """
+        import os
+        from pathlib import Path
+
+        project_root = Path(project_path).resolve()
+        missing_files = []
+        found_files = []
+
+        for file_path in ground_truth_files:
+            # Try various path combinations
+            candidates = [
+                project_root / file_path,
+                project_root / file_path.replace("/", os.sep),
+                project_root / file_path.replace("\\", "/"),
+            ]
+
+            file_found = False
+            for candidate in candidates:
+                if candidate.exists():
+                    found_files.append(str(candidate.relative_to(project_root)))
+                    file_found = True
+                    break
+
+            if not file_found:
+                missing_files.append(file_path)
+
+        # Log results
+        if found_files:
+            self.logger.info(f"Ground truth files found: {found_files}")
+
+        if missing_files:
+            self.logger.warning(f"Ground truth files NOT found in project: {missing_files}")
+            self.logger.info(f"Project path: {project_root}")
+            # List some actual files in the project for reference
+            try:
+                actual_files = [
+                    str(f.relative_to(project_root))
+                    for f in project_root.rglob("*.py")
+                    if f.is_file()
+                ][:10]  # Show first 10 Python files
+                if actual_files:
+                    self.logger.info(f"Sample files in project: {actual_files}")
+            except Exception:
+                pass
 
     def cleanup(self) -> None:
         """Clean up resources used by the token efficiency evaluator."""

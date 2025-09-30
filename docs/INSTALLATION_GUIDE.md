@@ -393,7 +393,7 @@ Select **Option 1: Token Efficiency Benchmark** for a quick validation (~10 seco
 
 **Expected Results:**
 
-- ✅ **Token Savings**: 99.9% reduction vs traditional file reading
+- ✅ **Token Savings**: 98.6% reduction vs traditional file reading
 - ✅ **GPU Acceleration**: 8.6x faster indexing (with CUDA GPU)
 - ✅ **Search Quality**: High precision on test scenarios
 

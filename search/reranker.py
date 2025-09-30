@@ -62,10 +62,15 @@ class RRFReranker:
 
         # Normalize weights
         total_weight = sum(weights)
+        original_weights = weights.copy()
         if total_weight > 0:
             weights = [w / total_weight for w in weights]
         else:
             weights = [1.0 / len(results_lists)] * len(results_lists)
+
+        self._logger.debug(
+            f"[RRF] Weights - Original: {original_weights}, Normalized: {weights}, k={self.k}"
+        )
 
         # Calculate RRF scores for each document
         rrf_scores: Dict[str, float] = {}

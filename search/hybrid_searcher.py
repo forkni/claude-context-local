@@ -63,7 +63,7 @@ class HybridSearcher:
         embedder=None,
         bm25_weight: float = 0.4,
         dense_weight: float = 0.6,
-        rrf_k: int = 100,
+        rrf_k: int = 60,
         max_workers: int = 2,
     ):
         """
@@ -370,6 +370,10 @@ class HybridSearcher:
 
             # Rerank results
             rerank_start = time.time()
+            self._logger.debug(
+                f"[RERANK] Using weights: BM25={self.bm25_weight}, Dense={self.dense_weight}, "
+                f"BM25_results={len(bm25_results)}, Dense_results={len(dense_results)}"
+            )
             final_results = self.reranker.rerank_simple(
                 bm25_results=bm25_results,
                 dense_results=dense_results,
@@ -378,6 +382,9 @@ class HybridSearcher:
                 dense_weight=self.dense_weight,
             )
             rerank_time = time.time() - rerank_start
+            self._logger.debug(
+                f"[RERANK] Produced {len(final_results)} results in {rerank_time:.3f}s"
+            )
 
         # Update statistics
         total_time = time.time() - start_time

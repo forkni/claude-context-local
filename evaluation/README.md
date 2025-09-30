@@ -6,7 +6,7 @@ This directory contains the comprehensive evaluation framework for the Claude Co
 
 The evaluation framework provides:
 
-- **Token Efficiency Evaluation**: Measures 99.9% token savings vs traditional file reading
+- **Token Efficiency Evaluation**: Measures 98.6% token savings vs traditional file reading
 - **Multi-metric Search Quality**: Precision, Recall, F1-score, MRR, NDCG
 - **GPU Acceleration Testing**: Automatic hardware detection and performance comparison
 - **Comparative Analysis**: Compare different search methods (Hybrid, BM25-only, Dense-only)
@@ -26,10 +26,11 @@ run_benchmarks.bat
 
 **Available Options:**
 
-1. **Token Efficiency Benchmark** (~10 seconds) - Validates 99.9% token reduction
+1. **Token Efficiency Benchmark** (~10 seconds) - Validates 98.6% token reduction
 2. **Custom Project Evaluation** (~30-60 seconds) - Tests search quality on your code
-3. **SWE-bench Evaluation** (several minutes) - Industry-standard comparison
-4. **Complete Suite** (1-2 minutes) - Comprehensive performance profile
+3. **Auto-Tune Search Parameters** (~2 minutes) - Optimize BM25/Dense weights for your codebase
+4. **SWE-bench Evaluation** (several minutes) - Industry-standard comparison
+5. **Complete Suite** (2-3 minutes) - Comprehensive performance profile
 
 ### Command Line Interface
 
@@ -46,6 +47,12 @@ run_benchmarks.bat
 # GPU vs CPU comparison
 .venv\Scripts\python.exe evaluation/run_evaluation.py token-efficiency --gpu
 .venv\Scripts\python.exe evaluation/run_evaluation.py token-efficiency --cpu
+
+# Auto-tune search parameters for your codebase
+.venv\Scripts\python.exe tools/auto_tune_search.py --project "." --dataset evaluation/datasets/debug_scenarios.json
+
+# Apply optimized parameters automatically
+.venv\Scripts\python.exe tools/auto_tune_search.py --project "." --apply
 ```
 
 ## Framework Architecture
@@ -73,7 +80,7 @@ run_benchmarks.bat
 - Token counting using tiktoken (cl100k_base encoding for GPT-4/Claude compatibility)
 - Vanilla file reading simulation for comparison
 - GPU vs CPU performance benchmarking
-- 99.9% token reduction validation
+- 98.6% token reduction validation
 
 #### 4. SWE-bench Integration (`swe_bench_evaluator.py`)
 
@@ -92,6 +99,22 @@ run_benchmarks.bat
   - `create-sample`: Generate test datasets
 - Automatic hardware detection and optimization
 - Logging and progress tracking
+
+#### 6. Parameter Optimizer (`parameter_optimizer.py`)
+
+- **NEW**: Auto-tune hybrid search parameters for your codebase
+- Tests multiple weight configurations (BM25/Dense)
+- Builds index once, tests parameters quickly (~2 minutes)
+- Uses tie-breaking logic (F1-score primary, query time secondary)
+- Generates recommendations with statistical analysis
+- Optional parameter application to hybrid_searcher.py
+
+**Key Features:**
+- Strategic parameter testing (0.3/0.7, 0.4/0.6, 0.6/0.4)
+- Index reuse for fast evaluation
+- Clear status reporting ([OK], [BEST], [FAILED])
+- Query time comparison for tie-breaking
+- Automatic or manual parameter application
 
 ## Key Features Ported from Zilliz
 
@@ -192,6 +215,52 @@ python evaluation/run_evaluation.py custom \
     --method hybrid \
     --output-dir my_results
 ```
+
+### 4. Auto-Tune Search Parameters
+
+Optimize hybrid search weights for your specific codebase:
+
+```bash
+# Basic auto-tuning (shows recommendations)
+python tools/auto_tune_search.py \
+    --project "path/to/your/project" \
+    --dataset evaluation/datasets/debug_scenarios.json
+
+# Auto-tuning with automatic parameter application
+python tools/auto_tune_search.py \
+    --project "." \
+    --apply
+
+# With verbose logging
+python tools/auto_tune_search.py \
+    --project "." \
+    --verbose
+```
+
+**Expected Output:**
+
+```
+Configuration Comparison:
+BM25/Dense      F1-Score     Precision    Recall       Query(s)   Status
+0.3/0.7         0.367        0.250        0.714        0.049      [OK]
+0.4/0.6         0.367        0.250        0.714        0.043      [BEST]
+0.6/0.4         0.338        0.226        0.714        0.041      [OK]
+
+NOTE: Multiple configurations achieved F1=0.367
+      Tie broken by query time (faster is better)
+
+RECOMMENDED CONFIGURATION:
+  bm25_weight: 0.4
+  dense_weight: 0.6
+  rrf_k: 60
+```
+
+**Key Benefits:**
+- Codebase-specific optimization
+- Fast evaluation (~2 minutes with index reuse)
+- Statistical tie-breaking with query time
+- Optional automatic parameter application
+- Detailed performance reporting
 
 ## Expected Results
 

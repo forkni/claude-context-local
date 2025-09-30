@@ -91,6 +91,34 @@ class BaseEvaluator(ABC):
         """Execute semantic search and return results."""
         pass
 
+    def _normalize_path(self, path: str) -> str:
+        """
+        Normalize file paths for consistent comparison.
+
+        Args:
+            path: File path to normalize
+
+        Returns:
+            Normalized path with forward slashes
+        """
+        import os
+
+        # Convert backslashes to forward slashes
+        normalized = path.replace("\\", "/")
+
+        # Remove leading "./" if present
+        if normalized.startswith("./"):
+            normalized = normalized[2:]
+
+        # Remove any project name prefix (e.g., "test_evaluation/")
+        if "/" in normalized:
+            parts = normalized.split("/")
+            # If first part looks like a project name, remove it
+            if len(parts) > 1 and parts[0] in ["test_evaluation", "claude-context-local"]:
+                normalized = "/".join(parts[1:])
+
+        return normalized
+
     def calculate_precision_recall(
         self, retrieved_files: List[str], ground_truth_files: List[str]
     ) -> Tuple[float, float]:
@@ -107,12 +135,30 @@ class BaseEvaluator(ABC):
         if not retrieved_files:
             return 0.0, 0.0
 
-        retrieved_set = set(retrieved_files)
-        ground_truth_set = set(ground_truth_files)
+        # Normalize paths for consistent comparison
+        normalized_retrieved = set(self._normalize_path(f) for f in retrieved_files)
+        normalized_ground_truth = set(self._normalize_path(f) for f in ground_truth_files)
 
-        true_positives = len(retrieved_set & ground_truth_set)
-        precision = true_positives / len(retrieved_set) if retrieved_files else 0.0
-        recall = true_positives / len(ground_truth_set) if ground_truth_files else 0.0
+        # Enhanced logging for debugging path matching issues
+        if hasattr(self, 'logger'):
+            self.logger.info(f"[NORMALIZE] Original retrieved: {retrieved_files}")
+            self.logger.info(f"[NORMALIZE] Original ground truth: {ground_truth_files}")
+            self.logger.info(f"[NORMALIZE] Normalized retrieved ({len(normalized_retrieved)}): {normalized_retrieved}")
+            self.logger.info(f"[NORMALIZE] Normalized ground truth ({len(normalized_ground_truth)}): {normalized_ground_truth}")
+
+        true_positives = len(normalized_retrieved & normalized_ground_truth)
+        precision = true_positives / len(normalized_retrieved) if normalized_retrieved else 0.0
+        recall = true_positives / len(normalized_ground_truth) if normalized_ground_truth else 0.0
+
+        # Enhanced intersection logging
+        if hasattr(self, 'logger'):
+            intersection = normalized_retrieved & normalized_ground_truth
+            self.logger.info(f"Precision/Recall calculation: TP={true_positives}, Retrieved={len(normalized_retrieved)}, GT={len(normalized_ground_truth)}")
+            self.logger.info(f"Precision={precision:.3f}, Recall={recall:.3f}")
+            if intersection:
+                self.logger.info(f"Matching files: {intersection}")
+            else:
+                self.logger.warning("No matching files found between retrieved and ground truth")
 
         return precision, recall
 
@@ -210,9 +256,26 @@ class BaseEvaluator(ABC):
             results = self.search(instance.query, self.k)
             query_time = time.time() - start_time
 
+            # Log search results for debugging
+            self.logger.info(f"Search returned {len(results)} results for query '{instance.query}'")
+            if not results:
+                self.logger.warning("No search results returned!")
+            else:
+                for i, result in enumerate(results[:3]):  # Log first 3 results
+                    self.logger.debug(f"Result {i+1}: {result.file_path} (score: {result.score:.3f})")
+
             # Extract file paths and scores
             retrieved_files = [r.file_path for r in results]
             scores = [r.score for r in results]
+
+            # Enhanced logging for path debugging
+            self.logger.info(f"[PATHS] Extracted {len(retrieved_files)} file paths from {len(results)} results")
+            self.logger.info(f"[PATHS] Retrieved files (raw): {retrieved_files}")
+            self.logger.info(f"[PATHS] Ground truth files (raw): {instance.ground_truth_files}")
+
+            # Additional validation
+            if not retrieved_files:
+                self.logger.warning("No file paths extracted from search results")
 
             # Calculate metrics
             precision, recall = self.calculate_precision_recall(

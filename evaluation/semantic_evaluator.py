@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from embeddings.embedder import CodeEmbedder
+from merkle.merkle_dag import MerkleDAG
 from search.hybrid_searcher import HybridSearcher
 
 from .base_evaluator import BaseEvaluator, RetrievalResult
@@ -24,6 +25,7 @@ class SemanticSearchEvaluator(BaseEvaluator):
         use_gpu: bool = True,
         bm25_weight: float = 0.4,
         dense_weight: float = 0.6,
+        rrf_k: int = 60,
     ):
         """
         Initialize semantic search evaluator.
@@ -36,6 +38,7 @@ class SemanticSearchEvaluator(BaseEvaluator):
             use_gpu: Whether to use GPU acceleration
             bm25_weight: Weight for BM25 results in hybrid search
             dense_weight: Weight for dense vector results in hybrid search
+            rrf_k: RRF parameter for reranking (lower = more emphasis on top ranks)
         """
         super().__init__(output_dir, max_instances, k)
 
@@ -43,6 +46,7 @@ class SemanticSearchEvaluator(BaseEvaluator):
         self.use_gpu = use_gpu
         self.bm25_weight = bm25_weight
         self.dense_weight = dense_weight
+        self.rrf_k = rrf_k
 
         # Initialize components
         self.hybrid_searcher: Optional[HybridSearcher] = None
@@ -61,11 +65,13 @@ class SemanticSearchEvaluator(BaseEvaluator):
         """
         self.logger.info(f"Building index for project: {project_path}")
 
-        # Initialize hybrid searcher
+        # Initialize hybrid searcher with embedder to avoid lazy loading
         self.hybrid_searcher = HybridSearcher(
             storage_dir=self.storage_dir,
+            embedder=self.embedder,
             bm25_weight=self.bm25_weight,
             dense_weight=self.dense_weight,
+            rrf_k=self.rrf_k,
         )
 
         # Check if index already exists and is recent
@@ -84,13 +90,29 @@ class SemanticSearchEvaluator(BaseEvaluator):
     def _should_rebuild_index(self, project_path: str) -> bool:
         """Check if we should rebuild the index."""
         try:
-            # Check if indices exist
+            # Check if indices exist based on search configuration
             storage_path = Path(self.storage_dir)
             bm25_path = storage_path / "bm25"
-            dense_path = storage_path / "dense"
 
-            if not (bm25_path.exists() and dense_path.exists()):
-                return True
+            # For BM25-only evaluators, only check BM25 index
+            if self.dense_weight == 0.0:
+                if not bm25_path.exists():
+                    self.logger.info("BM25 index missing, rebuilding...")
+                    return True
+            else:
+                # For hybrid or dense-only, check appropriate indices
+                dense_path = storage_path / "code.index"
+                required_paths = []
+
+                if self.bm25_weight > 0.0:
+                    required_paths.append(bm25_path)
+                if self.dense_weight > 0.0:
+                    required_paths.append(dense_path)
+
+                missing_paths = [p for p in required_paths if not p.exists()]
+                if missing_paths:
+                    self.logger.info(f"Missing index files: {[str(p) for p in missing_paths]}, rebuilding...")
+                    return True
 
             # For now, always rebuild for fresh evaluation
             # In production, you might want to check modification times
@@ -106,9 +128,18 @@ class SemanticSearchEvaluator(BaseEvaluator):
         if not project_dir.exists():
             raise FileNotFoundError(f"Project directory not found: {project_path}")
 
-        # Find all supported files
+        # Use MerkleDAG for ignore patterns
+        merkle_dag = MerkleDAG(project_path)
+
+        # Find all supported files (with directory filtering)
         supported_files = []
         for file_path in project_dir.rglob("*"):
+            # Skip ignored directories and files
+            if any(merkle_dag.should_ignore(parent) for parent in file_path.parents):
+                continue
+            if merkle_dag.should_ignore(file_path):
+                continue
+
             if file_path.is_file() and self.chunker.is_supported(str(file_path)):
                 supported_files.append(file_path)
 
@@ -143,6 +174,7 @@ class SemanticSearchEvaluator(BaseEvaluator):
                             "chunk_type": chunk.chunk_type,
                             "start_line": chunk.start_line,
                             "end_line": chunk.end_line,
+                            "content": chunk.content,  # CRITICAL: Add full content for token counting
                         }
                         metadata[chunk.chunk_id] = chunk_metadata
 
@@ -215,11 +247,14 @@ class SemanticSearchEvaluator(BaseEvaluator):
                 start_line = result.metadata.get("start_line", 0)
                 end_line = result.metadata.get("end_line", 0)
 
+                # Extract content from metadata (now properly included during indexing)
+                content = result.metadata.get("content", "")
+
                 retrieval_result = RetrievalResult(
                     file_path=file_path,
                     chunk_id=result.doc_id,
                     score=result.score,
-                    content=result.metadata.get("content", ""),
+                    content=content,
                     metadata=result.metadata,
                     line_start=start_line,
                     line_end=end_line,
@@ -232,6 +267,7 @@ class SemanticSearchEvaluator(BaseEvaluator):
         except Exception as e:
             self.logger.error(f"Search failed: {e}")
             return []
+
 
     def get_search_stats(self) -> Dict[str, Any]:
         """Get search performance statistics."""
@@ -274,9 +310,18 @@ class BM25OnlyEvaluator(SemanticSearchEvaluator):
         if not project_dir.exists():
             raise FileNotFoundError(f"Project directory not found: {project_path}")
 
-        # Find all supported files
+        # Use MerkleDAG for ignore patterns
+        merkle_dag = MerkleDAG(project_path)
+
+        # Find all supported files (with directory filtering)
         supported_files = []
         for file_path in project_dir.rglob("*"):
+            # Skip ignored directories and files
+            if any(merkle_dag.should_ignore(parent) for parent in file_path.parents):
+                continue
+            if merkle_dag.should_ignore(file_path):
+                continue
+
             if file_path.is_file() and self.chunker.is_supported(str(file_path)):
                 supported_files.append(file_path)
 
@@ -318,7 +363,52 @@ class BM25OnlyEvaluator(SemanticSearchEvaluator):
 
         # Save only BM25 index
         self.hybrid_searcher.bm25_index.save()
-        self.logger.info("BM25-only index building completed")
+        self.logger.info("BM25-only index building completed and saved")
+
+    def search(self, query: str, k: int) -> List[RetrievalResult]:
+        """Execute BM25-only search."""
+        if not self.hybrid_searcher:
+            raise RuntimeError("Index not built. Call build_index() first.")
+
+        self.logger.info(f"[BM25] Executing BM25-only search for: '{query}' (k={k})")
+
+        try:
+            # Execute BM25-only search (not hybrid)
+            search_results = self.hybrid_searcher.search(
+                query=query, k=k, search_mode="bm25", use_parallel=False
+            )
+
+            self.logger.info(f"[BM25] HybridSearcher returned {len(search_results)} raw results")
+
+            # Convert to RetrievalResult format
+            retrieval_results = []
+            for i, result in enumerate(search_results):
+                file_path = result.metadata.get("file_path", "unknown")
+                start_line = result.metadata.get("start_line", 0)
+                end_line = result.metadata.get("end_line", 0)
+                content = result.metadata.get("content", "")
+
+                self.logger.info(f"[BM25] Result {i+1}: file={file_path}, score={result.score:.3f}")
+
+                retrieval_result = RetrievalResult(
+                    file_path=file_path,
+                    chunk_id=result.doc_id,
+                    score=result.score,
+                    content=content,
+                    metadata=result.metadata,
+                    line_start=start_line,
+                    line_end=end_line,
+                )
+                retrieval_results.append(retrieval_result)
+
+            self.logger.info(f"[BM25] Converted to {len(retrieval_results)} RetrievalResults")
+            return retrieval_results
+
+        except Exception as e:
+            self.logger.error(f"[BM25] Search failed: {e}")
+            import traceback
+            self.logger.error(f"[BM25] Traceback: {traceback.format_exc()}")
+            return []
 
 
 class DenseOnlyEvaluator(SemanticSearchEvaluator):
@@ -328,3 +418,48 @@ class DenseOnlyEvaluator(SemanticSearchEvaluator):
         kwargs.update({"bm25_weight": 0.0, "dense_weight": 1.0})
         super().__init__(*args, **kwargs)
         self.logger = logging.getLogger(self.__class__.__name__)
+
+    def search(self, query: str, k: int) -> List[RetrievalResult]:
+        """Execute dense/semantic-only search."""
+        if not self.hybrid_searcher:
+            raise RuntimeError("Index not built. Call build_index() first.")
+
+        self.logger.info(f"[DENSE] Executing semantic-only search for: '{query}' (k={k})")
+
+        try:
+            # Execute semantic/dense-only search (not hybrid)
+            search_results = self.hybrid_searcher.search(
+                query=query, k=k, search_mode="semantic", use_parallel=False
+            )
+
+            self.logger.info(f"[DENSE] HybridSearcher returned {len(search_results)} raw results")
+
+            # Convert to RetrievalResult format
+            retrieval_results = []
+            for i, result in enumerate(search_results):
+                file_path = result.metadata.get("file_path", "unknown")
+                start_line = result.metadata.get("start_line", 0)
+                end_line = result.metadata.get("end_line", 0)
+                content = result.metadata.get("content", "")
+
+                self.logger.info(f"[DENSE] Result {i+1}: file={file_path}, score={result.score:.3f}")
+
+                retrieval_result = RetrievalResult(
+                    file_path=file_path,
+                    chunk_id=result.doc_id,
+                    score=result.score,
+                    content=content,
+                    metadata=result.metadata,
+                    line_start=start_line,
+                    line_end=end_line,
+                )
+                retrieval_results.append(retrieval_result)
+
+            self.logger.info(f"[DENSE] Converted to {len(retrieval_results)} RetrievalResults")
+            return retrieval_results
+
+        except Exception as e:
+            self.logger.error(f"[DENSE] Search failed: {e}")
+            import traceback
+            self.logger.error(f"[DENSE] Traceback: {traceback.format_exc()}")
+            return []
