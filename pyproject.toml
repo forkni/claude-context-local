@@ -9,10 +9,10 @@ description = "Local semantic code search for Claude Code (MCP) using EmbeddingG
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
-    { name = "Farhan Ali Raza" }
+    { name = "forkni" }
 ]
 maintainers = [
-    { name = "Farhan Ali Raza" }
+    { name = "forkni" }
 ]
 keywords = [
     "semantic-search",
