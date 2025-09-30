@@ -73,13 +73,18 @@ Claude’s code context is powerful, but sending your code to the cloud costs to
 
 ## Requirements
 
-- Python 3.11+ (tested with Python 3.11+)
-- Disk: 1–2 GB free (model + caches + index)
-- Optional: NVIDIA GPU (CUDA 11/12) for FAISS acceleration; Apple Silicon (MPS) for embedding acceleration. These also speed up running the embedding model with SentenceTransformer, but everything still works on CPU.
+- **Python 3.11+** (tested with Python 3.11 and 3.12)
+- **RAM**: 4GB minimum (8GB+ recommended for large codebases)
+- **Disk**: 2GB free space (model cache + embeddings + indexes)
+- **Windows**: Windows 10/11 with PowerShell
+- **Optional GPU**: NVIDIA GPU with CUDA 11.8/12.1 for accelerated indexing (8.6x faster)
+  - FAISS GPU acceleration for vector search
+  - CUDA acceleration for embedding generation
+  - Everything works on CPU if GPU unavailable
 
 ## Install & Update
 
-### Windows Installation (Recommended)
+### Windows Installation
 
 ```powershell
 # 1. Clone the repository
@@ -143,7 +148,7 @@ The Windows installer will:
 ### 1) Install and Setup
 
 ```powershell
-# Windows (Recommended) - One-click installation
+# Windows - One-click installation
 install-windows.bat
 
 # Verify everything is working
@@ -305,47 +310,6 @@ pytest tests/ --cov=. --cov-report=html
 
 📚 **Detailed testing documentation**: [View Test Suite Guide](tests/README.md)
 
-## Running Performance Benchmarks
-
-To validate the system's performance claims and test your hardware setup, you can run comprehensive benchmarks:
-
-### Quick Benchmark (Recommended)
-
-```bash
-# Windows - Interactive menu with 5 benchmark options
-run_benchmarks.bat
-
-# Select option 1: Token Efficiency Benchmark (~10 seconds)
-# Shows 98.6% token reduction vs traditional file reading
-```
-
-### Available Benchmarks
-
-| Benchmark | Description | Duration | Key Metrics |
-|-----------|-------------|----------|-------------|
-| **Token Efficiency** | Compares MCP semantic search vs vanilla file reading | ~10 seconds | 98.6% token reduction, 8.6x GPU speedup |
-| **Search Method Comparison** | Compares all 3 search methods (hybrid, BM25, semantic) | ~2-3 minutes | Precision, recall, F1-score, winner declaration |
-| **Complete Suite** | Runs both token efficiency and method comparison | ~3-4 minutes | Comprehensive performance profile |
-
-### Command Line Usage
-
-```bash
-# Token efficiency benchmark (measures token savings)
-.venv\Scripts\python.exe evaluation/run_evaluation.py token-efficiency
-
-# Search method comparison (evaluates all 3 methods)
-.venv\Scripts\python.exe evaluation/run_evaluation.py method-comparison --project "."
-```
-
-### Why Run Benchmarks?
-
-- **Validate Performance**: Confirm 98.6% token reduction on your hardware
-- **Test GPU Acceleration**: Verify CUDA performance (8.6x faster indexing)
-- **Quality Assurance**: Measure search accuracy on your specific codebase
-- **Hardware Optimization**: Compare CPU vs GPU performance
-
-📊 **Detailed results and methodology**: [View Complete Benchmarks](docs/BENCHMARKS.md)
-
 ## Search Modes & Performance
 
 ### Available Search Modes
@@ -377,32 +341,67 @@ claude-context-local/
 │   ├── searcher.py                   # Intelligent ranking & filters
 │   ├── incremental_indexer.py        # Merkle-driven incremental indexing
 │   ├── hybrid_searcher.py            # BM25 + semantic fusion
-│   └── bm25_index.py                 # BM25 text search implementation
+│   ├── bm25_index.py                 # BM25 text search implementation
+│   ├── reranker.py                   # RRF (Reciprocal Rank Fusion) reranking
+│   └── config.py                     # Search configuration management
 ├── merkle/
 │   ├── merkle_dag.py                 # Content-hash DAG of the workspace
 │   ├── change_detector.py            # Diffs snapshots to find changed files
 │   └── snapshot_manager.py           # Snapshot persistence & stats
 ├── mcp_server/
 │   └── server.py                     # MCP tools for Claude Code (stdio/HTTP)
-├── tools/                           # Development utilities
-│   ├── index_project.py             # Interactive project indexing
-│   └── search_helper.py             # Standalone search interface
+├── tools/                            # Development utilities
+│   ├── index_project.py              # Interactive project indexing
+│   ├── search_helper.py              # Standalone search interface
+│   └── auto_tune_search.py           # Parameter optimization tool
 ├── evaluation/                       # Comprehensive evaluation framework
-│   ├── semantic_evaluator.py         # Performance testing and benchmarking
+│   ├── base_evaluator.py             # Base evaluation framework
+│   ├── semantic_evaluator.py         # Search quality evaluation
+│   ├── token_efficiency_evaluator.py # Token usage measurement
+│   ├── swe_bench_evaluator.py        # SWE-bench evaluation
+│   ├── parameter_optimizer.py        # Search parameter optimization
+│   ├── run_evaluation.py             # Evaluation orchestrator
+│   ├── datasets/                     # Evaluation datasets
+│   │   ├── debug_scenarios.json      # Debug test scenarios
+│   │   └── token_efficiency_scenarios.json # Token efficiency tests
 │   └── README.md                     # Evaluation documentation
 ├── scripts/
-│   ├── batch/                       # Essential Windows batch scripts
-│   │   ├── install_pytorch_cuda.bat # PyTorch CUDA installation
-│   │   └── mcp_server_wrapper.bat  # MCP server wrapper script
-│   ├── powershell/                  # Windows PowerShell scripts
+│   ├── batch/                        # Windows batch scripts
+│   │   ├── install_pytorch_cuda.bat  # PyTorch CUDA installation
+│   │   ├── mcp_server_wrapper.bat    # MCP server wrapper script
+│   │   ├── start_mcp_debug.bat       # Debug mode launcher
+│   │   └── start_mcp_simple.bat      # Simple mode launcher
+│   ├── powershell/                   # Windows PowerShell scripts
 │   │   ├── configure_claude_code.ps1 # Claude Code MCP configuration
-│   │   ├── hf_auth.ps1              # Hugging Face authentication helper
-│   │   ├── install-windows.ps1     # Windows automated installer
-│   │   └── start_mcp_server.ps1     # PowerShell MCP server launcher
-│   └── verify_installation.py       # Python verification system
-├── start_mcp_server.bat             # Main launcher (Windows)
-├── install-windows.bat              # Primary installer (Windows)
-└── verify-installation.bat          # Installation verification
+│   │   ├── hf_auth.ps1               # HuggingFace authentication helper
+│   │   ├── install-windows.ps1       # Windows automated installer
+│   │   └── start_mcp_server.ps1      # PowerShell MCP server launcher
+│   ├── git/                          # Git workflow automation
+│   │   ├── commit.bat                # Privacy-protected commits
+│   │   ├── sync_branches.bat         # Branch synchronization
+│   │   └── restore_local.bat         # Local file recovery
+│   ├── verify_installation.py        # Python verification system
+│   └── verify_hf_auth.py             # HuggingFace auth verification
+├── docs/
+│   ├── BENCHMARKS.md                 # Performance benchmarks
+│   ├── GIT_WORKFLOW.md               # Git workflow documentation
+│   ├── HYBRID_SEARCH_CONFIGURATION_GUIDE.md # Search configuration
+│   ├── INSTALLATION_GUIDE.md         # Installation instructions
+│   ├── TESTING_GUIDE.md              # Test suite documentation
+│   └── claude_code_config.md         # Claude Code integration
+├── tests/
+│   ├── conftest.py                   # Pytest configuration
+│   ├── fixtures/                     # Test mocks and sample data
+│   ├── integration/                  # Integration tests
+│   ├── unit/                         # Unit tests
+│   ├── test_data/                    # Language-specific test projects
+│   └── README.md                     # Test suite guide
+├── CHANGELOG.md                      # Version history
+├── start_mcp_server.bat              # Main launcher (Windows)
+├── install-windows.bat               # Primary installer (Windows)
+├── verify-installation.bat           # Installation verification
+├── verify-hf-auth.bat                # HuggingFace auth verification
+└── run_benchmarks.bat                # Benchmark launcher
 ```
 
 ### Data flow
@@ -616,39 +615,134 @@ Tips:
 - With GPU FAISS, searches on large indexes are significantly faster.
 - Embeddings automatically use CUDA (NVIDIA) or MPS (Apple) if available.
 
-## Recent Improvements (2025-09-25)
-
-### 🎉 **Semantic Search Mode Restored**
-
-- **Fixed critical bug**: Restored semantic search functionality with simple one-line fix
-- **Root cause**: `HybridSearcher` was calling non-existent `embed_text()` instead of `embed_query()`
-- **Impact**: All three search modes (semantic, BM25, hybrid) now fully operational
-
-### ✅ **Hybrid Search System Complete**
-
-- **Production ready**: Hybrid search system is complete and ready for use
-- **Performance maintained**: 39.4% token reduction capability intact
-- **Windows-optimized**: Streamlined for Windows environments with comprehensive automation
-- **BM25 integration**: Successfully completed with proper index population
-
-### 🚀 **Enhanced Performance**
-
-- **Sub-second response times**: Fast search across all modes
-- **Memory optimization**: Efficient resource usage and cleanup
-- **Incremental indexing**: 5-10x faster updates with change detection
-
-This update completes the hybrid search implementation and provides a fully functional semantic code search system.
-
 ## Troubleshooting
 
-### Common Issues
+### Quick Diagnostics
 
-1. **Import errors**: Ensure all dependencies are installed with `uv sync`
-2. **Model download fails**: Check internet connection and disk space
-3. **Memory issues**: Reduce batch size in indexing script
-4. **No search results**: Verify the codebase was indexed successfully
-5. **FAISS GPU not used**: Ensure `nvidia-smi` is available and CUDA drivers are installed; re-run installer to pick `faiss-gpu-cu12`/`cu11`.
-6. **Force offline**: We auto-detect a local cache and prefer offline loads; you can also set `HF_HUB_OFFLINE=1`.
+Run automated verification to identify issues:
+
+```powershell
+# Comprehensive system check
+verify-installation.bat
+
+# HuggingFace authentication check
+verify-hf-auth.bat
+```
+
+### Installation Issues
+
+1. **Import errors**: Ensure all dependencies are installed
+   ```powershell
+   cd claude-context-local
+   uv sync
+   ```
+
+2. **UV not found**: Install UV package manager first
+   ```powershell
+   install-windows.bat  # Automatically installs UV
+   ```
+
+3. **PyTorch CUDA version mismatch**: Reinstall PyTorch with correct CUDA version
+   ```powershell
+   scripts\batch\install_pytorch_cuda.bat
+   ```
+
+### Model and Authentication Issues
+
+4. **Model download fails**: Check internet, disk space, and HuggingFace authentication
+   - Verify 2GB+ free disk space
+   - Run `verify-hf-auth.bat` to check authentication
+   - Get token at https://huggingface.co/settings/tokens
+   - Accept model terms at https://huggingface.co/google/embeddinggemma-300m
+
+5. **"401 Unauthorized" error**: HuggingFace authentication required
+   ```powershell
+   # Authenticate with HuggingFace
+   .venv\Scripts\python.exe -m huggingface_hub.commands.huggingface_cli login
+   ```
+
+6. **Force offline mode**: Use cached models without internet
+   ```powershell
+   $env:HF_HUB_OFFLINE="1"
+   ```
+
+### Search and Indexing Issues
+
+7. **No search results**: Verify the codebase was indexed successfully
+   - Check index status: `/get_index_status` in Claude Code
+   - Verify project path is correct
+   - Reindex with `/index_directory "C:\path\to\project"`
+
+8. **Memory issues during indexing**: System running out of RAM
+   - Close other applications to free memory
+   - Check available RAM: `/get_memory_status`
+   - For large codebases (10,000+ files), ensure 8GB+ RAM available
+
+9. **Indexing too slow**: First-time indexing takes time
+   - Expected: ~30-60 seconds for small projects (100 files)
+   - Expected: ~5-10 minutes for large projects (10,000+ files)
+   - GPU accelerates by 8.6x - verify CUDA available
+
+### GPU and Performance Issues
+
+10. **FAISS GPU not used**: Ensure CUDA drivers and nvidia-smi available
+    ```powershell
+    # Check GPU availability
+    nvidia-smi
+
+    # Reinstall PyTorch with GPU support
+    scripts\batch\install_pytorch_cuda.bat
+
+    # Verify GPU detection
+    .venv\Scripts\python.exe -c "import torch; print('CUDA:', torch.cuda.is_available())"
+    ```
+
+11. **"CUDA out of memory" error**: GPU memory exhausted
+    - Close other GPU applications
+    - System will automatically fall back to CPU
+    - Performance will be slower but functional
+
+### MCP Server Issues
+
+12. **MCP server won't start**: Check Python environment and dependencies
+    ```powershell
+    # Test MCP server manually
+    start_mcp_server.bat
+
+    # Check for errors in output
+    ```
+
+13. **Claude Code can't find MCP tools**: MCP server not registered
+    ```powershell
+    # Register MCP server with Claude Code
+    scripts\powershell\configure_claude_code.ps1 -Global
+    ```
+
+14. **MCP connection lost**: Restart Claude Code and MCP server
+    - Close Claude Code completely
+    - Run `start_mcp_server.bat` in new terminal
+    - Reopen Claude Code
+
+### Windows-Specific Issues
+
+15. **"cannot be loaded because running scripts is disabled"**: PowerShell execution policy
+    ```powershell
+    # Allow script execution (run as Administrator)
+    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+    ```
+
+16. **Path too long errors**: Windows path length limitation
+    - Move project closer to drive root (e.g., `C:\Projects\`)
+    - Enable long paths in Windows (requires admin):
+      ```powershell
+      New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+      ```
+
+### Still Having Issues?
+
+- Check [Installation Guide](docs/INSTALLATION_GUIDE.md) for detailed setup instructions
+- Review [Benchmarks](docs/BENCHMARKS.md) for performance expectations
+- Report issues at https://github.com/forkni/claude-context-local/issues
 
 ### Ignored directories (for speed and noise reduction)
 
