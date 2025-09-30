@@ -47,9 +47,9 @@ class ParameterOptimizer:
         if self.output_dir.exists():
             self.logger.info(f"Cleaning up old tuning results: {self.output_dir}")
             shutil.rmtree(self.output_dir)
-            print(f"[CLEANUP] Removed old tuning results")
+            print("[CLEANUP] Removed old tuning results")
         else:
-            print(f"[CLEANUP] No old results to clean")
+            print("[CLEANUP] No old results to clean")
 
     def build_index_once(
         self, bm25_weight: float = 0.4, dense_weight: float = 0.6, rrf_k: int = 60
@@ -63,7 +63,7 @@ class ParameterOptimizer:
             rrf_k: Initial RRF k parameter
         """
         self.logger.info(f"Building index for project: {self.project_path}")
-        print(f"\n[BUILD] Indexing project (one-time, ~90-100s)...")
+        print("\n[BUILD] Indexing project (one-time, ~90-100s)...")
 
         # Create evaluator with initial parameters
         eval_output_dir = self.output_dir / "shared_index"
@@ -221,14 +221,17 @@ class ParameterOptimizer:
         results = []
         total_configs = len(weight_pairs)
 
-        print(f"{'='*80}")
-        print(f"HYBRID SEARCH PARAMETER OPTIMIZATION")
-        print(f"{'='*80}")
+        print(f"{'=' * 80}")
+        print("HYBRID SEARCH PARAMETER OPTIMIZATION")
+        print(f"{'=' * 80}")
         print(f"Project: {self.project_path}")
         print(f"Testing {total_configs} configurations\n")
 
         for i, (bm25_w, dense_w) in enumerate(weight_pairs, 1):
-            print(f"[{i}/{total_configs}] Testing BM25={bm25_w}, Dense={dense_w}...", end=" ")
+            print(
+                f"[{i}/{total_configs}] Testing BM25={bm25_w}, Dense={dense_w}...",
+                end=" ",
+            )
 
             try:
                 result = self.test_configuration(bm25_w, dense_w, rrf_k)
@@ -314,7 +317,9 @@ class ParameterOptimizer:
         lines.append("-" * 80)
 
         best_f1 = best_metrics["f1_score"]
-        best_weights = f"{best_config['bm25_weight']:.1f}/{best_config['dense_weight']:.1f}"
+        best_weights = (
+            f"{best_config['bm25_weight']:.1f}/{best_config['dense_weight']:.1f}"
+        )
 
         # Check if there are tied F1 scores
         tied_configs = [
@@ -367,10 +372,16 @@ class ParameterOptimizer:
         if current_f1 is not None:
             lines.append("")
             if best_metrics["f1_score"] > current_f1:
-                improvement = ((best_metrics["f1_score"] - current_f1) / current_f1) * 100
-                lines.append(f"[OK] IMPROVEMENT: +{improvement:.1f}% over current settings")
+                improvement = (
+                    (best_metrics["f1_score"] - current_f1) / current_f1
+                ) * 100
+                lines.append(
+                    f"[OK] IMPROVEMENT: +{improvement:.1f}% over current settings"
+                )
                 lines.append("")
-                lines.append("ACTION: Update hybrid_searcher.py with recommended values")
+                lines.append(
+                    "ACTION: Update hybrid_searcher.py with recommended values"
+                )
             elif abs(best_metrics["f1_score"] - current_f1) < 0.001:
                 lines.append("[OK] Current settings are already optimal!")
             else:

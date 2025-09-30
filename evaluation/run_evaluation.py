@@ -48,11 +48,21 @@ def detect_gpu_availability() -> bool:
 
 
 def setup_logging(log_level: str = "INFO") -> None:
-    """Set up logging configuration."""
+    """Set up logging configuration with timestamped log file."""
+    from datetime import datetime
+
+    # Create logs directory if it doesn't exist
+    log_dir = Path("benchmark_results/logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate timestamped log filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = log_dir / f"evaluation_{timestamp}.log"
+
     logging.basicConfig(
         level=getattr(logging, log_level.upper()),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[logging.StreamHandler(), logging.FileHandler("evaluation.log")],
+        handlers=[logging.StreamHandler(), logging.FileHandler(log_file)],
     )
 
 
@@ -267,9 +277,9 @@ def run_method_comparison(
 
     for method in methods:
         logger.info(f"Running evaluation with {method} method...")
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"EVALUATING: {method.upper()} METHOD")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         # Create evaluator based on method
         if method == "hybrid":
@@ -301,7 +311,9 @@ def run_method_comparison(
             # Validate results have meaningful metrics
             if method_results and "metrics" in method_results:
                 metrics = method_results["metrics"]
-                logger.info(f"{method} results: P={metrics.get('precision', 0):.3f}, R={metrics.get('recall', 0):.3f}, F1={metrics.get('f1_score', 0):.3f}")
+                logger.info(
+                    f"{method} results: P={metrics.get('precision', 0):.3f}, R={metrics.get('recall', 0):.3f}, F1={metrics.get('f1_score', 0):.3f}"
+                )
             else:
                 logger.warning(f"{method} method returned no valid metrics")
 
@@ -314,13 +326,16 @@ def run_method_comparison(
         except Exception as e:
             logger.error(f"Error running {method} evaluation: {e}")
             import traceback
+
             logger.error(f"Traceback: {traceback.format_exc()}")
             results[method] = {"error": str(e)}
         finally:
             evaluator.cleanup()
 
     # Create comparison report
-    comparison_report = create_method_comparison_report(results, project_path, dataset_path)
+    comparison_report = create_method_comparison_report(
+        results, project_path, dataset_path
+    )
     print(f"\n{comparison_report}")
 
     # Save comparison report
@@ -329,19 +344,21 @@ def run_method_comparison(
         f.write(comparison_report)
 
     logger.info("Method comparison evaluation completed successfully")
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("METHOD COMPARISON COMPLETED")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Results saved to: {output_dir}")
     print(f"Comparison report: {comparison_file}")
 
 
-def create_method_comparison_report(results: dict, project_path: str, dataset_path: str) -> str:
+def create_method_comparison_report(
+    results: dict, project_path: str, dataset_path: str
+) -> str:
     """Create a comprehensive comparison report of all search methods."""
     report_lines = []
-    report_lines.append("="*80)
+    report_lines.append("=" * 80)
     report_lines.append("SEARCH METHOD COMPARISON REPORT")
-    report_lines.append("="*80)
+    report_lines.append("=" * 80)
     report_lines.append("")
     report_lines.append(f"Project: {project_path}")
     report_lines.append(f"Dataset: {dataset_path}")
@@ -369,16 +386,29 @@ def create_method_comparison_report(results: dict, project_path: str, dataset_pa
     report_lines.append("-" * 80)
 
     # Calculate column widths
-    col_widths = [max(len(str(row[i])) for row in [headers] + metrics_table) + 2 for i in range(len(headers))]
+    col_widths = [
+        max(len(str(row[i])) for row in [headers] + metrics_table) + 2
+        for i in range(len(headers))
+    ]
 
     # Header row
-    header_row = "| " + " | ".join(headers[i].ljust(col_widths[i]) for i in range(len(headers))) + " |"
+    header_row = (
+        "| "
+        + " | ".join(headers[i].ljust(col_widths[i]) for i in range(len(headers)))
+        + " |"
+    )
     report_lines.append(header_row)
-    report_lines.append("|" + "|".join("-" * (col_widths[i] + 2) for i in range(len(headers))) + "|")
+    report_lines.append(
+        "|" + "|".join("-" * (col_widths[i] + 2) for i in range(len(headers))) + "|"
+    )
 
     # Data rows
     for row in metrics_table:
-        data_row = "| " + " | ".join(str(row[i]).ljust(col_widths[i]) for i in range(len(row))) + " |"
+        data_row = (
+            "| "
+            + " | ".join(str(row[i]).ljust(col_widths[i]) for i in range(len(row)))
+            + " |"
+        )
         report_lines.append(data_row)
 
     report_lines.append("")
@@ -400,29 +430,41 @@ def create_method_comparison_report(results: dict, project_path: str, dataset_pa
         report_lines.append("-" * 80)
 
         if best_method and best_f1 > 0:
-            report_lines.append(f"[WINNER] BEST PERFORMING METHOD: {best_method.upper()}")
+            report_lines.append(
+                f"[WINNER] BEST PERFORMING METHOD: {best_method.upper()}"
+            )
             report_lines.append(f"   F1-Score: {best_f1:.3f}")
             report_lines.append("")
 
             # Method-specific recommendations
             if best_method == "hybrid":
                 report_lines.append("[RECOMMENDED] Use HYBRID search for best results")
-                report_lines.append("   - Combines semantic understanding with keyword matching")
+                report_lines.append(
+                    "   - Combines semantic understanding with keyword matching"
+                )
                 report_lines.append("   - Best balance of precision and recall")
                 report_lines.append("   - Optimal for most search scenarios")
             elif best_method == "bm25":
-                report_lines.append("[RECOMMENDED] Use BM25 for keyword-focused searches")
+                report_lines.append(
+                    "[RECOMMENDED] Use BM25 for keyword-focused searches"
+                )
                 report_lines.append("   - Excellent for exact term matching")
                 report_lines.append("   - Fast and resource-efficient")
                 report_lines.append("   - Best when you know specific keywords")
             elif best_method == "dense":
-                report_lines.append("[RECOMMENDED] Use SEMANTIC search for conceptual queries")
+                report_lines.append(
+                    "[RECOMMENDED] Use SEMANTIC search for conceptual queries"
+                )
                 report_lines.append("   - Best for understanding meaning and context")
                 report_lines.append("   - Finds semantically related code")
                 report_lines.append("   - Ideal for exploratory searches")
         else:
-            report_lines.append("[NOTE] NO CLEAR WINNER: All methods performed similarly")
-            report_lines.append("   Consider using HYBRID as the default balanced approach")
+            report_lines.append(
+                "[NOTE] NO CLEAR WINNER: All methods performed similarly"
+            )
+            report_lines.append(
+                "   Consider using HYBRID as the default balanced approach"
+            )
 
         report_lines.append("")
 
@@ -434,7 +476,11 @@ def create_method_comparison_report(results: dict, project_path: str, dataset_pa
         times = []
         for method, result in successful_results.items():
             if "error" not in result:
-                avg_time = result.get("aggregate_metrics", {}).get("query_time", {}).get("mean", 0)
+                avg_time = (
+                    result.get("aggregate_metrics", {})
+                    .get("query_time", {})
+                    .get("mean", 0)
+                )
                 times.append((method, avg_time))
 
         if times:
@@ -444,7 +490,9 @@ def create_method_comparison_report(results: dict, project_path: str, dataset_pa
 
             report_lines.append(f"[FASTEST] {fastest[0].upper()} ({fastest[1]:.3f}s)")
             if len(times) > 1:
-                report_lines.append(f"[SLOWEST] {slowest[0].upper()} ({slowest[1]:.3f}s)")
+                report_lines.append(
+                    f"[SLOWEST] {slowest[0].upper()} ({slowest[1]:.3f}s)"
+                )
                 speed_diff = slowest[1] / fastest[1] if fastest[1] > 0 else 1
                 report_lines.append(f"   Speed difference: {speed_diff:.1f}x")
     else:
@@ -452,7 +500,7 @@ def create_method_comparison_report(results: dict, project_path: str, dataset_pa
         report_lines.append("   All methods encountered errors during evaluation")
 
     report_lines.append("")
-    report_lines.append("="*80)
+    report_lines.append("=" * 80)
 
     return "\n".join(report_lines)
 

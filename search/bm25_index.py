@@ -278,11 +278,13 @@ class BM25Index:
                 continue
 
             doc_id = self._doc_ids[idx]
-            metadata = dict(self._metadata.get(doc_id, {}))  # Return a copy, not reference
+            metadata = dict(
+                self._metadata.get(doc_id, {})
+            )  # Return a copy, not reference
 
             # Ensure content field exists - add from document store if missing
-            if 'content' not in metadata and idx < len(self._documents):
-                metadata['content'] = self._documents[idx]
+            if "content" not in metadata and idx < len(self._documents):
+                metadata["content"] = self._documents[idx]
 
             results.append((doc_id, score, metadata))
 

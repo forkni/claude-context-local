@@ -33,7 +33,6 @@
 
 An intelligent code search system that uses Google's EmbeddingGemma model and advanced multi-language chunking to provide semantic search capabilities across 22 file extensions and 11 programming languages, integrated with Claude Code via MCP (Model Context Protocol).
 
-
 ## ✅ Production Ready
 
 - Core functionality fully operational
@@ -324,7 +323,6 @@ pytest tests/ --cov=. --cov-report=html
 For detailed configuration options, see [Hybrid Search Configuration Guide](docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md).
 
 📊 **Performance benchmarks and detailed metrics**: [View Benchmarks](docs/BENCHMARKS.md)
-
 
 ## Architecture
 
@@ -632,17 +630,20 @@ verify-hf-auth.bat
 ### Installation Issues
 
 1. **Import errors**: Ensure all dependencies are installed
+
    ```powershell
    cd claude-context-local
    uv sync
    ```
 
 2. **UV not found**: Install UV package manager first
+
    ```powershell
    install-windows.bat  # Automatically installs UV
    ```
 
 3. **PyTorch CUDA version mismatch**: Reinstall PyTorch with correct CUDA version
+
    ```powershell
    scripts\batch\install_pytorch_cuda.bat
    ```
@@ -652,16 +653,18 @@ verify-hf-auth.bat
 4. **Model download fails**: Check internet, disk space, and HuggingFace authentication
    - Verify 2GB+ free disk space
    - Run `verify-hf-auth.bat` to check authentication
-   - Get token at https://huggingface.co/settings/tokens
-   - Accept model terms at https://huggingface.co/google/embeddinggemma-300m
+   - Get token at <https://huggingface.co/settings/tokens>
+   - Accept model terms at <https://huggingface.co/google/embeddinggemma-300m>
 
 5. **"401 Unauthorized" error**: HuggingFace authentication required
+
    ```powershell
    # Authenticate with HuggingFace
    .venv\Scripts\python.exe -m huggingface_hub.commands.huggingface_cli login
    ```
 
 6. **Force offline mode**: Use cached models without internet
+
    ```powershell
    $env:HF_HUB_OFFLINE="1"
    ```
@@ -686,6 +689,7 @@ verify-hf-auth.bat
 ### GPU and Performance Issues
 
 10. **FAISS GPU not used**: Ensure CUDA drivers and nvidia-smi available
+
     ```powershell
     # Check GPU availability
     nvidia-smi
@@ -705,6 +709,7 @@ verify-hf-auth.bat
 ### MCP Server Issues
 
 12. **MCP server won't start**: Check Python environment and dependencies
+
     ```powershell
     # Test MCP server manually
     start_mcp_server.bat
@@ -713,6 +718,7 @@ verify-hf-auth.bat
     ```
 
 13. **Claude Code can't find MCP tools**: MCP server not registered
+
     ```powershell
     # Register MCP server with Claude Code
     scripts\powershell\configure_claude_code.ps1 -Global
@@ -726,6 +732,7 @@ verify-hf-auth.bat
 ### Windows-Specific Issues
 
 15. **"cannot be loaded because running scripts is disabled"**: PowerShell execution policy
+
     ```powershell
     # Allow script execution (run as Administrator)
     Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
@@ -734,6 +741,7 @@ verify-hf-auth.bat
 16. **Path too long errors**: Windows path length limitation
     - Move project closer to drive root (e.g., `C:\Projects\`)
     - Enable long paths in Windows (requires admin):
+
       ```powershell
       New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
       ```
@@ -742,7 +750,7 @@ verify-hf-auth.bat
 
 - Check [Installation Guide](docs/INSTALLATION_GUIDE.md) for detailed setup instructions
 - Review [Benchmarks](docs/BENCHMARKS.md) for performance expectations
-- Report issues at https://github.com/forkni/claude-context-local/issues
+- Report issues at <https://github.com/forkni/claude-context-local/issues>
 
 ### Ignored directories (for speed and noise reduction)
 

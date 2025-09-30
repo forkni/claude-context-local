@@ -271,27 +271,41 @@ class TokenEfficiencyEvaluator(BaseEvaluator):
         for i, r in enumerate(search_results):
             content_length = len(r.content) if r.content else 0
             tokens = self.token_counter.count_tokens(r.content) if r.content else 0
-            result_token_details.append(f"Result {i+1}: {tokens} tokens ({content_length} chars)")
+            result_token_details.append(
+                f"Result {i + 1}: {tokens} tokens ({content_length} chars)"
+            )
 
             # Debug: Check metadata fields (only in DEBUG mode)
             if self.logger.isEnabledFor(logging.DEBUG):
-                self.logger.debug(f"Result {i+1} metadata keys: {list(r.metadata.keys())}")
-                if 'content' in r.metadata:
-                    meta_content_len = len(r.metadata['content'])
-                    self.logger.debug(f"Result {i+1} metadata['content']: {meta_content_len} chars")
-                if 'content_preview' in r.metadata:
-                    meta_preview_len = len(r.metadata['content_preview'])
-                    self.logger.debug(f"Result {i+1} metadata['content_preview']: {meta_preview_len} chars")
+                self.logger.debug(
+                    f"Result {i + 1} metadata keys: {list(r.metadata.keys())}"
+                )
+                if "content" in r.metadata:
+                    meta_content_len = len(r.metadata["content"])
+                    self.logger.debug(
+                        f"Result {i + 1} metadata['content']: {meta_content_len} chars"
+                    )
+                if "content_preview" in r.metadata:
+                    meta_preview_len = len(r.metadata["content_preview"])
+                    self.logger.debug(
+                        f"Result {i + 1} metadata['content_preview']: {meta_preview_len} chars"
+                    )
 
-            self.logger.debug(f"Result {i+1} content preview: '{r.content[:100]}...' ({content_length} chars, {tokens} tokens)")
+            self.logger.debug(
+                f"Result {i + 1} content preview: '{r.content[:100]}...' ({content_length} chars, {tokens} tokens)"
+            )
 
         result_tokens = sum(
-            self.token_counter.count_tokens(r.content) for r in search_results if r.content
+            self.token_counter.count_tokens(r.content)
+            for r in search_results
+            if r.content
         )
         search_total_tokens = query_tokens + result_tokens
 
         # Debug: Log token breakdown
-        self.logger.info(f"Token breakdown - Query: {query_tokens}, Results: {result_tokens} (Total: {search_total_tokens})")
+        self.logger.info(
+            f"Token breakdown - Query: {query_tokens}, Results: {result_tokens} (Total: {search_total_tokens})"
+        )
         self.logger.info(f"Result details: {result_token_details}")
 
         # 2. Simulate vanilla file reading approach
@@ -344,7 +358,9 @@ class TokenEfficiencyEvaluator(BaseEvaluator):
         ndcg = self.calculate_ndcg(retrieved_files, instance.ground_truth_files, scores)
 
         # Log calculated metrics
-        self.logger.info(f"Search quality metrics - Precision: {precision:.3f}, Recall: {recall:.3f}, F1: {f1_score:.3f}")
+        self.logger.info(
+            f"Search quality metrics - Precision: {precision:.3f}, Recall: {recall:.3f}, F1: {f1_score:.3f}"
+        )
 
         search_metrics = SearchMetrics(
             query_time=search_time,
@@ -652,7 +668,9 @@ class TokenEfficiencyEvaluator(BaseEvaluator):
             self.logger.info(f"Ground truth files found: {found_files}")
 
         if missing_files:
-            self.logger.warning(f"Ground truth files NOT found in project: {missing_files}")
+            self.logger.warning(
+                f"Ground truth files NOT found in project: {missing_files}"
+            )
             self.logger.info(f"Project path: {project_root}")
             # List some actual files in the project for reference
             try:
