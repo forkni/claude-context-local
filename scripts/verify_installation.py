@@ -478,9 +478,7 @@ except Exception as e:
     raise
 """
 
-        success, output = self._run_python_test(
-            auth_code, "HuggingFace Authentication"
-        )
+        success, output = self._run_python_test(auth_code, "HuggingFace Authentication")
 
         if success:
             self._print_test_result(
@@ -676,6 +674,10 @@ if __name__ == "__main__":
     if sys.stdin.isatty():
         print("Press any key to exit...")
         try:
+            import msvcrt
+            msvcrt.getch()  # Windows: accepts any key
+        except (ImportError, AttributeError):
+            # Fallback for non-Windows or if msvcrt unavailable
             input()
         except (EOFError, KeyboardInterrupt):
             pass

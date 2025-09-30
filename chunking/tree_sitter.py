@@ -1088,7 +1088,9 @@ class TreeSitterChunker:
                 with open(file_path, "r", encoding="utf-8") as f:
                     content = f.read()
             except UnicodeDecodeError:
-                logger.warning(f"UTF-8 decode failed for {file_path}, trying with error handling")
+                logger.warning(
+                    f"UTF-8 decode failed for {file_path}, trying with error handling"
+                )
                 try:
                     with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                         content = f.read()

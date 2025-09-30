@@ -111,7 +111,9 @@ class SemanticSearchEvaluator(BaseEvaluator):
 
                 missing_paths = [p for p in required_paths if not p.exists()]
                 if missing_paths:
-                    self.logger.info(f"Missing index files: {[str(p) for p in missing_paths]}, rebuilding...")
+                    self.logger.info(
+                        f"Missing index files: {[str(p) for p in missing_paths]}, rebuilding..."
+                    )
                     return True
 
             # For now, always rebuild for fresh evaluation
@@ -268,7 +270,6 @@ class SemanticSearchEvaluator(BaseEvaluator):
             self.logger.error(f"Search failed: {e}")
             return []
 
-
     def get_search_stats(self) -> Dict[str, Any]:
         """Get search performance statistics."""
         if not self.hybrid_searcher:
@@ -378,7 +379,9 @@ class BM25OnlyEvaluator(SemanticSearchEvaluator):
                 query=query, k=k, search_mode="bm25", use_parallel=False
             )
 
-            self.logger.info(f"[BM25] HybridSearcher returned {len(search_results)} raw results")
+            self.logger.info(
+                f"[BM25] HybridSearcher returned {len(search_results)} raw results"
+            )
 
             # Convert to RetrievalResult format
             retrieval_results = []
@@ -388,7 +391,9 @@ class BM25OnlyEvaluator(SemanticSearchEvaluator):
                 end_line = result.metadata.get("end_line", 0)
                 content = result.metadata.get("content", "")
 
-                self.logger.info(f"[BM25] Result {i+1}: file={file_path}, score={result.score:.3f}")
+                self.logger.info(
+                    f"[BM25] Result {i + 1}: file={file_path}, score={result.score:.3f}"
+                )
 
                 retrieval_result = RetrievalResult(
                     file_path=file_path,
@@ -401,12 +406,15 @@ class BM25OnlyEvaluator(SemanticSearchEvaluator):
                 )
                 retrieval_results.append(retrieval_result)
 
-            self.logger.info(f"[BM25] Converted to {len(retrieval_results)} RetrievalResults")
+            self.logger.info(
+                f"[BM25] Converted to {len(retrieval_results)} RetrievalResults"
+            )
             return retrieval_results
 
         except Exception as e:
             self.logger.error(f"[BM25] Search failed: {e}")
             import traceback
+
             self.logger.error(f"[BM25] Traceback: {traceback.format_exc()}")
             return []
 
@@ -424,7 +432,9 @@ class DenseOnlyEvaluator(SemanticSearchEvaluator):
         if not self.hybrid_searcher:
             raise RuntimeError("Index not built. Call build_index() first.")
 
-        self.logger.info(f"[DENSE] Executing semantic-only search for: '{query}' (k={k})")
+        self.logger.info(
+            f"[DENSE] Executing semantic-only search for: '{query}' (k={k})"
+        )
 
         try:
             # Execute semantic/dense-only search (not hybrid)
@@ -432,7 +442,9 @@ class DenseOnlyEvaluator(SemanticSearchEvaluator):
                 query=query, k=k, search_mode="semantic", use_parallel=False
             )
 
-            self.logger.info(f"[DENSE] HybridSearcher returned {len(search_results)} raw results")
+            self.logger.info(
+                f"[DENSE] HybridSearcher returned {len(search_results)} raw results"
+            )
 
             # Convert to RetrievalResult format
             retrieval_results = []
@@ -442,7 +454,9 @@ class DenseOnlyEvaluator(SemanticSearchEvaluator):
                 end_line = result.metadata.get("end_line", 0)
                 content = result.metadata.get("content", "")
 
-                self.logger.info(f"[DENSE] Result {i+1}: file={file_path}, score={result.score:.3f}")
+                self.logger.info(
+                    f"[DENSE] Result {i + 1}: file={file_path}, score={result.score:.3f}"
+                )
 
                 retrieval_result = RetrievalResult(
                     file_path=file_path,
@@ -455,11 +469,14 @@ class DenseOnlyEvaluator(SemanticSearchEvaluator):
                 )
                 retrieval_results.append(retrieval_result)
 
-            self.logger.info(f"[DENSE] Converted to {len(retrieval_results)} RetrievalResults")
+            self.logger.info(
+                f"[DENSE] Converted to {len(retrieval_results)} RetrievalResults"
+            )
             return retrieval_results
 
         except Exception as e:
             self.logger.error(f"[DENSE] Search failed: {e}")
             import traceback
+
             self.logger.error(f"[DENSE] Traceback: {traceback.format_exc()}")
             return []

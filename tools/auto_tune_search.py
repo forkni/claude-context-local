@@ -243,14 +243,16 @@ Examples:
                 best_config["rrf_k"],
             )
             if success:
-                print("[OK] Parameters applied! Changes will take effect on next index build.")
+                print(
+                    "[OK] Parameters applied! Changes will take effect on next index build."
+                )
             else:
                 print(
                     "[WARN] Parameters not applied. Manually update search/hybrid_searcher.py"
                 )
         else:
             print(
-                f"\nTo apply parameters: python tools/auto_tune_search.py --project . --apply"
+                "\nTo apply parameters: python tools/auto_tune_search.py --project . --apply"
             )
 
         sys.exit(0)

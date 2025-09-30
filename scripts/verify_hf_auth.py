@@ -4,10 +4,9 @@ HuggingFace Authentication Verification Script
 Verifies HuggingFace authentication and EmbeddingGemma model access.
 """
 
-import os
 import sys
 from pathlib import Path
-import subprocess
+
 
 def check_huggingface_auth():
     """Check HuggingFace authentication status."""
@@ -15,6 +14,7 @@ def check_huggingface_auth():
 
     try:
         from huggingface_hub import whoami
+
         info = whoami()
         print(f"✅ [OK] Authenticated as: {info['name']}")
         print(f"📄 [INFO] Account type: {info.get('type', 'unknown')}")
@@ -24,14 +24,16 @@ def check_huggingface_auth():
         print("💡 [HELP] You need to authenticate with HuggingFace")
         return False
 
+
 def check_model_access():
     """Check access to the EmbeddingGemma model."""
     print("\n=== EmbeddingGemma Model Access ===\n")
 
     try:
         from huggingface_hub import model_info
+
         print("🔍 [INFO] Checking model info access...")
-        info = model_info('google/embeddinggemma-300m')
+        info = model_info("google/embeddinggemma-300m")
         print(f"✅ [OK] Model info accessible: {info.modelId}")
         print(f"🏷️  [INFO] Model tags: {info.tags[:3] if info.tags else 'none'}")
         return True
@@ -40,21 +42,23 @@ def check_model_access():
         print("💡 [HELP] You may need to accept the model license")
         return False
 
+
 def test_model_loading():
     """Test loading the EmbeddingGemma model."""
     print("\n=== Model Loading Test ===\n")
 
     try:
         from sentence_transformers import SentenceTransformer
+
         print("🔄 [INFO] Initializing SentenceTransformer...")
         print("⏳ [INFO] This may download the model (~1.3GB) if not cached...")
 
-        model = SentenceTransformer('google/embeddinggemma-300m')
+        model = SentenceTransformer("google/embeddinggemma-300m")
         print("✅ [OK] Model loaded successfully!")
 
         # Test encoding
         print("🧪 [INFO] Testing model encoding...")
-        test_text = 'def test_function(): return True'
+        test_text = "def test_function(): return True"
         embedding = model.encode(test_text)
         print(f"✅ [OK] Encoding successful! Embedding dimension: {len(embedding)}")
 
@@ -66,6 +70,7 @@ def test_model_loading():
         print("   2. Authentication issues")
         print("   3. Network connectivity problems")
         return False
+
 
 def print_help():
     """Print help information for authentication."""
@@ -79,23 +84,26 @@ def print_help():
     print("4. Create a token with 'Read' permissions")
     print("\n🔧 Authentication methods:")
     print("• Use the installer: install-windows.bat (includes auth step)")
-    print("• Manual authentication: scripts\\powershell\\hf_auth.ps1 -Token 'your_token'")
+    print(
+        "• Manual authentication: scripts\\powershell\\hf_auth.ps1 -Token 'your_token'"
+    )
     print("• Environment variable: set HF_TOKEN=hf_your_token_here")
     print("• CLI login: .venv\\Scripts\\uv.exe run huggingface-cli login")
+
 
 def main():
     """Main verification function."""
     print("🔬 HuggingFace Authentication & Model Access Verification\n")
 
     # Check if we're in the right directory
-    if not Path('.venv').exists():
+    if not Path(".venv").exists():
         print("❌ [ERROR] Virtual environment not found")
         print("💡 [HELP] Run this script from the project root directory")
         print("💡 [HELP] Make sure you've run install-windows.bat first")
         return False
 
     # Check Python environment
-    venv_python = Path('.venv/Scripts/python.exe')
+    venv_python = Path(".venv/Scripts/python.exe")
     if not venv_python.exists():
         print("❌ [ERROR] Virtual environment Python not found")
         print("💡 [HELP] Re-run install-windows.bat to fix the environment")
@@ -131,6 +139,7 @@ def main():
 
     print_help()
     return False
+
 
 if __name__ == "__main__":
     try:

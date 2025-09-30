@@ -143,21 +143,27 @@ Your HuggingFace token must:
 #### Common Issues
 
 1. **Token Format Error**
+
    ```
    Error: Token should start with 'hf_'
    ```
+
    - Solution: Ensure you're using a personal access token, not a different type
 
 2. **Model Access Denied**
+
    ```
    Error: Repository not found or access denied
    ```
+
    - Solution: Visit [https://huggingface.co/google/embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m) and accept terms
 
 3. **Authentication Failed**
+
    ```
    Error: Invalid token or insufficient permissions
    ```
+
    - Solution: Regenerate token with 'Read' permissions
 
 #### Verification Commands

@@ -54,6 +54,16 @@ if "%~1"=="" (
     set choice=
     set /p choice="Select option (1-7): "
 
+    REM Handle empty input or Ctrl+C gracefully
+    if not defined choice (
+        cls
+        goto start
+    )
+    if "!choice!"=="" (
+        cls
+        goto start
+    )
+
     if "!choice!"=="1" goto start_server
     if "!choice!"=="2" goto installation_menu
     if "!choice!"=="3" goto search_config_menu
@@ -66,6 +76,7 @@ if "%~1"=="" (
     echo.
     echo Press any key to try again...
     pause >nul
+    cls
     goto start
 )
 
@@ -115,23 +126,32 @@ echo.
 echo === Installation ^& Setup ===
 echo.
 echo   1. Run Full Installation ^(install-windows.bat^)
-echo   2. Update Dependencies
-echo   3. Verify Installation Status
-echo   4. Configure Claude Code Integration
-echo   5. Check CUDA/CPU Mode
-echo   6. Back to Main Menu
+echo   2. Verify Installation Status
+echo   3. Configure Claude Code Integration
+echo   4. Check CUDA/CPU Mode
+echo   5. Back to Main Menu
 echo.
-set /p inst_choice="Select option (1-6): "
+set /p inst_choice="Select option (1-5): "
+
+REM Handle empty input gracefully
+if not defined inst_choice (
+    cls
+    goto installation_menu
+)
+if "!inst_choice!"=="" (
+    cls
+    goto installation_menu
+)
 
 if "!inst_choice!"=="1" goto run_installer
-if "!inst_choice!"=="2" goto update_deps
-if "!inst_choice!"=="3" goto verify_install
-if "!inst_choice!"=="4" goto configure_claude
-if "!inst_choice!"=="5" goto check_system
-if "!inst_choice!"=="6" goto menu_restart
+if "!inst_choice!"=="2" goto verify_install
+if "!inst_choice!"=="3" goto configure_claude
+if "!inst_choice!"=="4" goto check_system
+if "!inst_choice!"=="5" goto menu_restart
 
-echo [ERROR] Invalid choice. Please select 1-6.
+echo [ERROR] Invalid choice. Please select 1-5.
 pause
+cls
 goto installation_menu
 
 :search_config_menu
@@ -141,21 +161,30 @@ echo.
 echo   1. View Current Configuration
 echo   2. Set Search Mode ^(Hybrid/Semantic/BM25/Auto^)
 echo   3. Configure Search Weights ^(BM25 vs Dense^)
-echo   4. Test Search Modes
-echo   5. Reset to Defaults
-echo   6. Back to Main Menu
+echo   4. Reset to Defaults
+echo   5. Back to Main Menu
 echo.
-set /p search_choice="Select option (1-6): "
+set /p search_choice="Select option (1-5): "
+
+REM Handle empty input gracefully
+if not defined search_choice (
+    cls
+    goto search_config_menu
+)
+if "!search_choice!"=="" (
+    cls
+    goto search_config_menu
+)
 
 if "!search_choice!"=="1" goto view_config
 if "!search_choice!"=="2" goto set_search_mode
 if "!search_choice!"=="3" goto set_weights
-if "!search_choice!"=="4" goto test_search
-if "!search_choice!"=="5" goto reset_config
-if "!search_choice!"=="6" goto menu_restart
+if "!search_choice!"=="4" goto reset_config
+if "!search_choice!"=="5" goto menu_restart
 
-echo [ERROR] Invalid choice. Please select 1-6.
+echo [ERROR] Invalid choice. Please select 1-5.
 pause
+cls
 goto search_config_menu
 
 :performance_menu
@@ -163,21 +192,30 @@ echo.
 echo === Performance Tools ===
 echo.
 echo   1. Open Benchmark Runner ^(Comprehensive^)
-echo   2. Quick Token Efficiency Test
-echo   3. Test Search Modes
-echo   4. Memory Usage Report
-echo   5. Back to Main Menu
+echo   2. Auto-Tune Search Parameters
+echo   3. Memory Usage Report
+echo   4. Back to Main Menu
 echo.
-set /p perf_choice="Select option (1-5): "
+set /p perf_choice="Select option (1-4): "
+
+REM Handle empty input gracefully
+if not defined perf_choice (
+    cls
+    goto performance_menu
+)
+if "!perf_choice!"=="" (
+    cls
+    goto performance_menu
+)
 
 if "!perf_choice!"=="1" goto run_full_benchmarks
-if "!perf_choice!"=="2" goto quick_token_test
-if "!perf_choice!"=="3" goto test_search_modes
-if "!perf_choice!"=="4" goto memory_report
-if "!perf_choice!"=="5" goto menu_restart
+if "!perf_choice!"=="2" goto auto_tune_direct
+if "!perf_choice!"=="3" goto memory_report
+if "!perf_choice!"=="4" goto menu_restart
 
-echo [ERROR] Invalid choice. Please select 1-5.
+echo [ERROR] Invalid choice. Please select 1-4.
 pause
+cls
 goto performance_menu
 
 :advanced_menu
@@ -195,6 +233,16 @@ echo   8. Back to Main Menu
 echo.
 set /p adv_choice="Select option (1-8): "
 
+REM Handle empty input gracefully
+if not defined adv_choice (
+    cls
+    goto advanced_menu
+)
+if "!adv_choice!"=="" (
+    cls
+    goto advanced_menu
+)
+
 if "!adv_choice!"=="1" goto simple_start
 if "!adv_choice!"=="2" goto debug_mode
 if "!adv_choice!"=="3" goto td_index
@@ -206,6 +254,7 @@ if "!adv_choice!"=="8" goto menu_restart
 
 echo [ERROR] Invalid choice. Please select 1-8.
 pause
+cls
 goto advanced_menu
 
 :simple_start
@@ -236,41 +285,12 @@ call install-windows.bat
 pause
 goto menu_restart
 
-:update_deps
-echo.
-echo [INFO] Updating dependencies...
-REM Check if UV is available
-if exist ".venv\Scripts\uv.exe" (
-    echo [INFO] Using UV package manager...
-    .\.venv\Scripts\uv.exe sync
-    if %ERRORLEVEL% neq 0 (
-        echo [WARNING] UV sync failed, trying pip fallback...
-        .\.venv\Scripts\pip.exe install -r requirements.txt
-        if %ERRORLEVEL% neq 0 (
-            echo [ERROR] Both UV and pip updates failed
-        ) else (
-            echo [OK] Dependencies updated with pip
-        )
-    ) else (
-        echo [OK] Dependencies updated with UV
-    )
-) else (
-    echo [INFO] UV not found, using pip...
-    .\.venv\Scripts\pip.exe install -r requirements.txt
-    if %ERRORLEVEL% neq 0 (
-        echo [ERROR] Pip update failed
-        echo [INFO] Try running install-windows.bat to reinstall
-    ) else (
-        echo [OK] Dependencies updated with pip
-    )
-)
-pause
-goto menu_restart
-
 :verify_install
 echo.
 echo [INFO] Running installation verification...
+set VERIFY_PERSISTENT_MODE=1
 call verify-installation.bat
+set VERIFY_PERSISTENT_MODE=
 goto menu_restart
 
 :configure_claude
@@ -297,12 +317,17 @@ REM Search Configuration Functions
 echo.
 echo [INFO] Current Search Configuration:
 if exist ".venv\Scripts\python.exe" (
-    .\.venv\Scripts\python.exe -c "try: from search.config import SearchConfig; config = SearchConfig(); print(f'Search Mode: {getattr(config, \"search_mode\", \"hybrid\")}'); print(f'BM25 Weight: {getattr(config, \"bm25_weight\", 0.4)}'); print(f'Dense Weight: {getattr(config, \"dense_weight\", 0.6)}'); print(f'GPU Enabled: {getattr(config, \"use_gpu\", \"auto\")}'); except Exception: print('Default configuration active'); print('Search Mode: hybrid'); print('BM25 Weight: 0.4'); print('Dense Weight: 0.6')" 2>nul
+    .\.venv\Scripts\python.exe -c "from search.config import get_search_config; config = get_search_config(); print('  Search Mode:', config.default_search_mode); print('  Hybrid Search:', 'Enabled' if config.enable_hybrid_search else 'Disabled'); print('  BM25 Weight:', config.bm25_weight); print('  Dense Weight:', config.dense_weight); print('  Prefer GPU:', config.prefer_gpu); print('  Parallel Search:', 'Enabled' if config.use_parallel_search else 'Disabled')"
+    if errorlevel 1 (
+        echo Error loading configuration
+        echo Using defaults: hybrid mode, BM25=0.4, Dense=0.6
+    )
 ) else (
-    echo Default configuration active
-    echo Search Mode: hybrid
-    echo BM25 Weight: 0.4
-    echo Dense Weight: 0.6
+    echo Python environment not available
+    echo Default configuration:
+    echo   Search Mode: hybrid
+    echo   BM25 Weight: 0.4
+    echo   Dense Weight: 0.6
 )
 pause
 goto search_config_menu
@@ -316,6 +341,10 @@ echo   3. BM25 Only ^(Text-based search^)
 echo   4. Auto ^(System chooses best^)
 echo.
 set /p mode_choice="Select mode (1-4): "
+
+REM Handle empty input gracefully
+if not defined mode_choice goto search_config_menu
+if "!mode_choice!"=="" goto search_config_menu
 
 set SEARCH_MODE=
 if "!mode_choice!"=="1" set SEARCH_MODE=hybrid
@@ -337,22 +366,14 @@ goto search_config_menu
 :set_weights
 echo.
 echo [INFO] Configure search weights ^(must sum to 1.0^):
-set /p bm25_weight="BM25 weight ^(0.0-1.0, default 0.4^): "
-set /p dense_weight="Dense weight ^(0.0-1.0, default 0.6^): "
+set /p bm25_weight="BM25 weight (0.0-1.0, default 0.4): "
+set /p dense_weight="Dense weight (0.0-1.0, default 0.6): "
 if not defined bm25_weight set bm25_weight=0.4
 if not defined dense_weight set dense_weight=0.6
 echo [INFO] Weights set - BM25: %bm25_weight%, Dense: %dense_weight%
 set CLAUDE_BM25_WEIGHT=%bm25_weight%
 set CLAUDE_DENSE_WEIGHT=%dense_weight%
 echo [OK] Configuration saved for current session
-pause
-goto search_config_menu
-
-:test_search
-echo.
-echo [INFO] Testing search modes on sample data...
-echo [NOTE] This requires an indexed project
-.\.venv\Scripts\python.exe -c "print('Search mode testing:'); print('- Hybrid mode: Combines BM25 + semantic for balanced results'); print('- Semantic mode: Best for conceptual queries'); print('- BM25 mode: Fastest for exact text matches'); print('Run /search_code in Claude Code to test with real data')"
 pause
 goto search_config_menu
 
@@ -379,29 +400,36 @@ echo [NOTE] This will open the full benchmark suite with multiple options
 call run_benchmarks.bat
 goto menu_restart
 
-:quick_token_test
+:auto_tune_direct
 echo.
-echo [INFO] Running quick token efficiency test...
-if exist "evaluation\datasets\token_efficiency_scenarios.json" (
-    .\.venv\Scripts\python.exe evaluation\run_evaluation.py token-efficiency --max-instances 1
-) else (
-    echo [WARNING] Token efficiency dataset not found
-    echo [INFO] Running basic test instead...
-    .\.venv\Scripts\python.exe -c "print('Quick Token Efficiency Test:\n'); print('Semantic search provides:'); print('- 90-99%% token reduction vs file reading'); print('- 5-10x faster code discovery'); print('- Precise targeting of relevant code\n'); print('Run full benchmarks for detailed metrics')"
-)
-pause
-goto performance_menu
+echo [INFO] Auto-Tune Search Parameters
+echo ================================================================
+echo This will optimize hybrid search weights for your codebase:
+echo   - Test 3 strategic configurations
+echo   - Build index once, test parameters quickly
+echo   - Provide recommended settings
+echo.
+echo Estimated time: ~2 minutes
+echo.
+set /p confirm="Continue with auto-tuning? (y/N): "
+REM Handle empty input - treat as "no"
+if not defined confirm goto performance_menu
+if "%confirm%"=="" goto performance_menu
+if /i not "%confirm%"=="y" goto performance_menu
 
-:test_search_modes
 echo.
-echo [INFO] Testing search modes on sample data...
-if exist "evaluation\datasets\token_efficiency_scenarios.json" (
-    echo [INFO] Running search mode comparison...
-    .\.venv\Scripts\python.exe evaluation\run_evaluation.py custom --dataset evaluation\datasets\token_efficiency_scenarios.json --project test_evaluation --method hybrid --output-dir benchmark_results\quick_test --max-instances 1
-    echo [INFO] Hybrid mode test completed. Check benchmark_results\quick_test\ for results.
+echo [INFO] Starting auto-tuning process...
+echo.
+.\.venv\Scripts\python.exe tools\auto_tune_search.py --project "." --dataset evaluation\datasets\debug_scenarios.json --current-f1 0.367
+if errorlevel 1 (
+    echo.
+    echo [ERROR] Auto-tuning failed!
+    echo Check that the project is indexed and datasets exist.
 ) else (
-    echo [INFO] Sample data not available. Showing search mode information:
-    .\.venv\Scripts\python.exe -c "print('Search Mode Information:\n'); print('HYBRID (Recommended):'); print('  - Combines BM25 text matching + semantic understanding'); print('  - Best overall accuracy and speed balance\n'); print('SEMANTIC:'); print('  - Pure vector similarity search'); print('  - Best for conceptual/meaning-based queries\n'); print('BM25:'); print('  - Text-based keyword matching'); print('  - Fastest for exact term searches\n'); print('Use /search_code in Claude Code to test with real projects')"
+    echo.
+    echo [OK] Auto-tuning completed successfully!
+    echo Results saved in benchmark_results\tuning\
+    echo Logs saved in benchmark_results\logs\
 )
 pause
 goto performance_menu
@@ -409,7 +437,11 @@ goto performance_menu
 :memory_report
 echo.
 echo [INFO] System memory usage report...
-.\.venv\Scripts\python.exe -c "try: import psutil; import torch; print(f'System RAM: {psutil.virtual_memory().total // (1024**3)} GB'); print(f'Available RAM: {psutil.virtual_memory().available // (1024**3)} GB'); print(f'RAM Usage: {psutil.virtual_memory().percent}%%'); cuda_mem = torch.cuda.get_device_properties(0).total_memory // (1024**3) if torch.cuda.is_available() else 0; print(f'GPU Memory: {cuda_mem} GB') if cuda_mem else print('GPU: Not available'); except ImportError as e: print(f'Missing dependency: {e}'); print('Install psutil: pip install psutil'); except Exception as e: print(f'Error getting system info: {e}')" 2>nul
+.\.venv\Scripts\python.exe -c "import psutil; import torch; print('  System RAM:', psutil.virtual_memory().total // (1024**3), 'GB'); print('  Available RAM:', psutil.virtual_memory().available // (1024**3), 'GB'); print('  RAM Usage:', str(psutil.virtual_memory().percent) + '%%'); gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'Not available'; print('  GPU:', gpu_name); gpu_mem = torch.cuda.get_device_properties(0).total_memory // (1024**3) if torch.cuda.is_available() else 0; print('  GPU Memory:', str(gpu_mem) + ' GB') if gpu_mem else print('  GPU Memory: N/A')"
+if errorlevel 1 (
+    echo Error: Unable to retrieve system information
+    echo Make sure psutil is installed: pip install psutil
+)
 pause
 goto performance_menu
 
@@ -502,26 +534,34 @@ echo This server enables hybrid semantic code search in Claude Code.
 echo.
 echo Key Features:
 echo   - Hybrid Search: BM25 + Semantic for optimal accuracy
-echo   - 40%% Token Reduction: Significantly fewer tokens needed
+echo   - 98.6%% Token Reduction: Validated benchmark results
 echo   - Multi-language Support: 11 languages, 22 extensions
 echo   - Local Processing: No API calls, complete privacy
 echo.
 echo Quick Start:
-echo   1. Run: install-windows.bat ^(first time only^)
-echo   2. Start: Choose option 1 from main menu
-echo   3. Configure: Claude Code with MCP integration
+echo   1. Run: install-windows.bat ^(first time setup^)
+echo   2. Verify: verify-installation.bat ^(test installation^)
+echo   3. Configure: scripts\powershell\configure_claude_code.ps1 -Global
 echo   4. Index: /index_directory "your-project-path"
 echo   5. Search: /search_code "your query"
 echo.
-echo Command Line Usage:
-echo   start_mcp_server.bat          - Interactive menu
+echo Interactive Menu Usage:
+echo   start_mcp_server.bat          - Launch interactive menu ^(7 options^)
 echo   start_mcp_server.bat --help   - Show this help
-echo   start_mcp_server.bat --debug  - Debug mode
+echo   start_mcp_server.bat --debug  - Start with debug logging
 echo.
 echo Documentation:
-echo   - README.md: Complete setup guide
-echo   - INSTALLATION_GUIDE.md: Detailed installation
-echo   - CLAUDE.md: Advanced usage and optimization
+echo   Root Directory:
+echo     - README.md: Complete setup guide and quick start
+echo     - CLAUDE.md: Development context and advanced usage
+echo.
+echo   docs/ Directory:
+echo     - INSTALLATION_GUIDE.md: Detailed installation steps
+echo     - BENCHMARKS.md: Performance metrics and validation
+echo     - HYBRID_SEARCH_CONFIGURATION_GUIDE.md: Search tuning
+echo     - claude_code_config.md: Claude Code integration
+echo     - TESTING_GUIDE.md: Test suite documentation
+echo     - GIT_WORKFLOW.md: Git automation scripts
 echo.
 echo The MCP server communicates via JSON-RPC with Claude Code.
 echo This is normal - the server waits for commands from Claude.

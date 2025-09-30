@@ -110,6 +110,7 @@ run_benchmarks.bat
 - Optional parameter application to hybrid_searcher.py
 
 **Key Features:**
+
 - Strategic parameter testing (0.3/0.7, 0.4/0.6, 0.6/0.4)
 - Index reuse for fast evaluation
 - Clear status reporting ([OK], [BEST], [FAILED])
@@ -256,6 +257,7 @@ RECOMMENDED CONFIGURATION:
 ```
 
 **Key Benefits:**
+
 - Codebase-specific optimization
 - Fast evaluation (~2 minutes with index reuse)
 - Statistical tie-breaking with query time
