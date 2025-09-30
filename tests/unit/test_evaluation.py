@@ -378,6 +378,43 @@ index 0000000..789
         finally:
             Path(output_path).unlink(missing_ok=True)
 
+    @patch('evaluation.swe_bench_evaluator.load_dataset')
+    def test_load_swe_bench_lite_without_datasets(self, mock_load_dataset):
+        """Test that evaluation handles missing datasets library gracefully."""
+        mock_load_dataset.side_effect = ImportError("No module named 'datasets'")
+
+        # Should use fallback dataset instead of failing
+        result_path = self.loader._download_swe_bench_lite()
+
+        # Should return path to fallback dataset
+        assert result_path.endswith('swe_bench_sample.json')
+        assert Path(result_path).exists()
+
+    @patch('evaluation.swe_bench_evaluator.load_dataset')
+    def test_load_swe_bench_lite_with_datasets(self, mock_load_dataset):
+        """Test normal SWE-bench loading with datasets library available."""
+        # Mock the datasets library response
+        mock_dataset = {
+            "test": [
+                {
+                    "instance_id": "test_001",
+                    "problem_statement": "Fix bug",
+                    "patch": "--- a/file.py\n+++ b/file.py",
+                    "repo": "test/repo"
+                }
+            ]
+        }
+        mock_load_dataset.return_value = mock_dataset
+
+        # Should use HuggingFace download path
+        with patch('tempfile.mkdtemp') as mock_temp:
+            mock_temp.return_value = self.temp_dir
+            result_path = self.loader._download_swe_bench_lite()
+
+            # Should create temp file with dataset
+            assert result_path.startswith(self.temp_dir)
+            assert result_path.endswith('.json')
+
 
 class TestSWEBenchEvaluationRunner:
     """Test SWE-bench evaluation runner."""

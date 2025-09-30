@@ -113,10 +113,19 @@ class SWEBenchDatasetLoader:
             return dataset_path
 
         except ImportError:
-            self.logger.error(
-                "datasets library not available. Please provide dataset_path manually."
+            self.logger.warning(
+                "datasets library not available. Using local sample dataset."
             )
-            raise
+            # Use local sample dataset as fallback
+            sample_path = Path(__file__).parent / "datasets" / "swe_bench_sample.json"
+            if sample_path.exists():
+                self.logger.info(f"Using fallback dataset: {sample_path}")
+                return str(sample_path)
+            else:
+                self.logger.error("No fallback dataset available.")
+                raise ImportError(
+                    "Install 'datasets' library for full SWE-bench support: pip install datasets"
+                )
 
     def _load_dataset_file(
         self, dataset_path: str, max_instances: Optional[int]

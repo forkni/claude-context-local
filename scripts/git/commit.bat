@@ -17,7 +17,7 @@ git reset HEAD benchmark_results/ 2>nul
 git reset HEAD local_only/ 2>nul
 
 echo Current staging area:
-git status --short --staged
+git diff --cached --name-status
 echo.
 
 if "%1"=="" (

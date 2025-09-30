@@ -96,6 +96,8 @@ verify-installation.bat
 scripts\powershell\configure_claude_code.ps1 -Global
 ```
 
+> **⚠️ Important**: The installer will prompt for HuggingFace authentication during setup. You'll need a HuggingFace token to access the EmbeddingGemma model. Get your token at [https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) and accept terms at [https://huggingface.co/google/embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m).
+
 **Windows Installer Features:**
 
 - **Smart CUDA Detection**: Automatically detects your CUDA version and installs appropriate PyTorch
@@ -223,6 +225,54 @@ claude mcp add code-search --scope user -- "F:\path\to\claude-context-MCP\.venv\
 
 **No manual configuration needed** - the system automatically uses the best search mode for your queries.
 
+## Running Benchmarks
+
+The project includes comprehensive benchmarking tools to validate performance:
+
+### Quick Start
+
+```bash
+# Windows - Interactive benchmark menu
+run_benchmarks.bat
+```
+
+**Available Options:**
+
+1. **Token Efficiency Benchmark** (~10 seconds)
+   - Validates 98.6% token reduction vs traditional file reading
+   - Results saved to: `benchmark_results/token_efficiency/`
+
+2. **Search Method Comparison** (~2-3 minutes)
+   - Automatically compares all 3 search methods (hybrid, BM25, semantic)
+   - Uses current project directory for realistic evaluation
+   - Results saved to: `benchmark_results/method_comparison/`
+   - Generates comparison report with winner declaration
+
+3. **Auto-Tune Search Parameters** (~2 minutes)
+   - Optimize BM25/Dense weights for your codebase
+   - Tests 3 strategic configurations
+   - Results saved to: `benchmark_results/tuning/`
+
+4. **Run All Benchmarks** (~4-5 minutes)
+   - Complete test suite including auto-tuning
+   - Comprehensive results across all metrics
+
+### Command Line Usage
+
+```bash
+# Method comparison (recommended)
+.venv\Scripts\python.exe evaluation/run_evaluation.py method-comparison --project "." --k 5
+
+# Token efficiency evaluation
+.venv\Scripts\python.exe evaluation/run_evaluation.py token-efficiency
+
+# Force CPU usage (if GPU issues)
+.venv\Scripts\python.exe evaluation/run_evaluation.py token-efficiency --cpu
+```
+
+Results are saved to `benchmark_results/` directory (gitignored for privacy).
+See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for detailed performance metrics.
+
 ## Test Suite
 
 The project includes a comprehensive test suite with 37 test files organized into professional categories:
@@ -266,17 +316,16 @@ To validate the system's performance claims and test your hardware setup, you ca
 run_benchmarks.bat
 
 # Select option 1: Token Efficiency Benchmark (~10 seconds)
-# Shows 99.9% token reduction vs traditional file reading
+# Shows 98.6% token reduction vs traditional file reading
 ```
 
 ### Available Benchmarks
 
 | Benchmark | Description | Duration | Key Metrics |
 |-----------|-------------|----------|-------------|
-| **Token Efficiency** | Compares MCP semantic search vs vanilla file reading | ~10 seconds | 99.9% token reduction, 8.6x GPU speedup |
-| **Custom Project** | Evaluates search quality on your codebase | ~30-60 seconds | Precision, recall, F1-score for your code |
-| **SWE-bench** | Industry-standard software engineering benchmark | Several minutes | Comparison with other tools |
-| **Complete Suite** | Runs multiple benchmarks together | 1-2 minutes | Comprehensive performance profile |
+| **Token Efficiency** | Compares MCP semantic search vs vanilla file reading | ~10 seconds | 98.6% token reduction, 8.6x GPU speedup |
+| **Search Method Comparison** | Compares all 3 search methods (hybrid, BM25, semantic) | ~2-3 minutes | Precision, recall, F1-score, winner declaration |
+| **Complete Suite** | Runs both token efficiency and method comparison | ~3-4 minutes | Comprehensive performance profile |
 
 ### Command Line Usage
 
@@ -284,16 +333,13 @@ run_benchmarks.bat
 # Token efficiency benchmark (measures token savings)
 .venv\Scripts\python.exe evaluation/run_evaluation.py token-efficiency
 
-# Custom project evaluation (test search quality)
-.venv\Scripts\python.exe evaluation/run_evaluation.py custom --project "path/to/your/project"
-
-# SWE-bench industry benchmark
-.venv\Scripts\python.exe evaluation/run_evaluation.py swe-bench --max-instances 10
+# Search method comparison (evaluates all 3 methods)
+.venv\Scripts\python.exe evaluation/run_evaluation.py method-comparison --project "."
 ```
 
 ### Why Run Benchmarks?
 
-- **Validate Performance**: Confirm 99.9% token reduction on your hardware
+- **Validate Performance**: Confirm 98.6% token reduction on your hardware
 - **Test GPU Acceleration**: Verify CUDA performance (8.6x faster indexing)
 - **Quality Assurance**: Measure search accuracy on your specific codebase
 - **Hardware Optimization**: Compare CPU vs GPU performance

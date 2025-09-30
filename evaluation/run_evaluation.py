@@ -239,6 +239,224 @@ def run_token_efficiency_evaluation(
         evaluator.cleanup()
 
 
+def run_method_comparison(
+    dataset_path: str,
+    project_path: str,
+    output_dir: str,
+    max_instances: Optional[int],
+    k: int,
+) -> None:
+    """
+    Run comparison of all search methods (hybrid, BM25, semantic) on a project.
+
+    Args:
+        dataset_path: Path to evaluation dataset
+        project_path: Path to project to evaluate on
+        output_dir: Output directory for results
+        max_instances: Maximum instances to evaluate
+        k: Number of top results to consider
+    """
+    logger = logging.getLogger("MethodComparison")
+    logger.info(f"Starting method comparison evaluation on {project_path}")
+
+    methods = ["hybrid", "bm25", "dense"]
+    results = {}
+
+    # Create output directory
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    for method in methods:
+        logger.info(f"Running evaluation with {method} method...")
+        print(f"\n{'='*60}")
+        print(f"EVALUATING: {method.upper()} METHOD")
+        print(f"{'='*60}")
+
+        # Create evaluator based on method
+        if method == "hybrid":
+            evaluator = SemanticSearchEvaluator(
+                output_dir=f"{output_dir}/{method}", max_instances=max_instances, k=k
+            )
+        elif method == "bm25":
+            evaluator = BM25OnlyEvaluator(
+                output_dir=f"{output_dir}/{method}", max_instances=max_instances, k=k
+            )
+        elif method == "dense":
+            evaluator = SemanticSearchEvaluator(
+                output_dir=f"{output_dir}/{method}",
+                max_instances=max_instances,
+                k=k,
+                bm25_weight=0.0,
+                dense_weight=1.0,
+            )
+
+        try:
+            # Load dataset for this method
+            instances = evaluator.load_dataset(dataset_path)
+            logger.info(f"Loaded {len(instances)} instances for {method} method")
+
+            # Run evaluation (build_index is called internally by run_evaluation)
+            logger.info(f"Running evaluation for {method} method...")
+            method_results = evaluator.run_evaluation(instances, project_path)
+
+            # Validate results have meaningful metrics
+            if method_results and "metrics" in method_results:
+                metrics = method_results["metrics"]
+                logger.info(f"{method} results: P={metrics.get('precision', 0):.3f}, R={metrics.get('recall', 0):.3f}, F1={metrics.get('f1_score', 0):.3f}")
+            else:
+                logger.warning(f"{method} method returned no valid metrics")
+
+            results[method] = method_results
+
+            # Print individual method results
+            report = evaluator.create_benchmark_report(method_results)
+            print(f"\n{report}")
+
+        except Exception as e:
+            logger.error(f"Error running {method} evaluation: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            results[method] = {"error": str(e)}
+        finally:
+            evaluator.cleanup()
+
+    # Create comparison report
+    comparison_report = create_method_comparison_report(results, project_path, dataset_path)
+    print(f"\n{comparison_report}")
+
+    # Save comparison report
+    comparison_file = Path(output_dir) / "method_comparison_report.txt"
+    with open(comparison_file, "w", encoding="utf-8") as f:
+        f.write(comparison_report)
+
+    logger.info("Method comparison evaluation completed successfully")
+    print(f"\n{'='*60}")
+    print("METHOD COMPARISON COMPLETED")
+    print(f"{'='*60}")
+    print(f"Results saved to: {output_dir}")
+    print(f"Comparison report: {comparison_file}")
+
+
+def create_method_comparison_report(results: dict, project_path: str, dataset_path: str) -> str:
+    """Create a comprehensive comparison report of all search methods."""
+    report_lines = []
+    report_lines.append("="*80)
+    report_lines.append("SEARCH METHOD COMPARISON REPORT")
+    report_lines.append("="*80)
+    report_lines.append("")
+    report_lines.append(f"Project: {project_path}")
+    report_lines.append(f"Dataset: {dataset_path}")
+    report_lines.append(f"Methods Evaluated: {', '.join(results.keys())}")
+    report_lines.append("")
+
+    # Extract metrics for comparison table
+    metrics_table = []
+    headers = ["Method", "Precision", "Recall", "F1-Score", "Avg Query Time", "Status"]
+
+    for method, result in results.items():
+        if "error" in result:
+            row = [method.upper(), "ERROR", "ERROR", "ERROR", "ERROR", result["error"]]
+        else:
+            aggregate = result.get("aggregate_metrics", {})
+            precision = f"{aggregate.get('precision', {}).get('mean', 0):.3f}"
+            recall = f"{aggregate.get('recall', {}).get('mean', 0):.3f}"
+            f1 = f"{aggregate.get('f1_score', {}).get('mean', 0):.3f}"
+            avg_time = f"{aggregate.get('query_time', {}).get('mean', 0):.3f}s"
+            row = [method.upper(), precision, recall, f1, avg_time, "SUCCESS"]
+        metrics_table.append(row)
+
+    # Create formatted table
+    report_lines.append("PERFORMANCE COMPARISON")
+    report_lines.append("-" * 80)
+
+    # Calculate column widths
+    col_widths = [max(len(str(row[i])) for row in [headers] + metrics_table) + 2 for i in range(len(headers))]
+
+    # Header row
+    header_row = "| " + " | ".join(headers[i].ljust(col_widths[i]) for i in range(len(headers))) + " |"
+    report_lines.append(header_row)
+    report_lines.append("|" + "|".join("-" * (col_widths[i] + 2) for i in range(len(headers))) + "|")
+
+    # Data rows
+    for row in metrics_table:
+        data_row = "| " + " | ".join(str(row[i]).ljust(col_widths[i]) for i in range(len(row))) + " |"
+        report_lines.append(data_row)
+
+    report_lines.append("")
+
+    # Determine winner and provide recommendations
+    successful_results = {k: v for k, v in results.items() if "error" not in v}
+    if successful_results:
+        # Find best performing method by F1 score
+        best_method = None
+        best_f1 = -1
+
+        for method, result in successful_results.items():
+            f1 = result.get("aggregate_metrics", {}).get("f1_score", {}).get("mean", 0)
+            if f1 > best_f1:
+                best_f1 = f1
+                best_method = method
+
+        report_lines.append("WINNER & RECOMMENDATIONS")
+        report_lines.append("-" * 80)
+
+        if best_method and best_f1 > 0:
+            report_lines.append(f"[WINNER] BEST PERFORMING METHOD: {best_method.upper()}")
+            report_lines.append(f"   F1-Score: {best_f1:.3f}")
+            report_lines.append("")
+
+            # Method-specific recommendations
+            if best_method == "hybrid":
+                report_lines.append("[RECOMMENDED] Use HYBRID search for best results")
+                report_lines.append("   - Combines semantic understanding with keyword matching")
+                report_lines.append("   - Best balance of precision and recall")
+                report_lines.append("   - Optimal for most search scenarios")
+            elif best_method == "bm25":
+                report_lines.append("[RECOMMENDED] Use BM25 for keyword-focused searches")
+                report_lines.append("   - Excellent for exact term matching")
+                report_lines.append("   - Fast and resource-efficient")
+                report_lines.append("   - Best when you know specific keywords")
+            elif best_method == "dense":
+                report_lines.append("[RECOMMENDED] Use SEMANTIC search for conceptual queries")
+                report_lines.append("   - Best for understanding meaning and context")
+                report_lines.append("   - Finds semantically related code")
+                report_lines.append("   - Ideal for exploratory searches")
+        else:
+            report_lines.append("[NOTE] NO CLEAR WINNER: All methods performed similarly")
+            report_lines.append("   Consider using HYBRID as the default balanced approach")
+
+        report_lines.append("")
+
+        # Performance insights
+        report_lines.append("PERFORMANCE INSIGHTS")
+        report_lines.append("-" * 80)
+
+        # Compare query times
+        times = []
+        for method, result in successful_results.items():
+            if "error" not in result:
+                avg_time = result.get("aggregate_metrics", {}).get("query_time", {}).get("mean", 0)
+                times.append((method, avg_time))
+
+        if times:
+            times.sort(key=lambda x: x[1])
+            fastest = times[0]
+            slowest = times[-1]
+
+            report_lines.append(f"[FASTEST] {fastest[0].upper()} ({fastest[1]:.3f}s)")
+            if len(times) > 1:
+                report_lines.append(f"[SLOWEST] {slowest[0].upper()} ({slowest[1]:.3f}s)")
+                speed_diff = slowest[1] / fastest[1] if fastest[1] > 0 else 1
+                report_lines.append(f"   Speed difference: {speed_diff:.1f}x")
+    else:
+        report_lines.append("[ERROR] NO SUCCESSFUL EVALUATIONS")
+        report_lines.append("   All methods encountered errors during evaluation")
+
+    report_lines.append("")
+    report_lines.append("="*80)
+
+    return "\n".join(report_lines)
+
+
 def create_sample_dataset(output_path: str) -> None:
     """Create a sample evaluation dataset for testing."""
     logger = logging.getLogger("SampleDataset")
@@ -368,7 +586,7 @@ def main():
     token_parser.add_argument(
         "--project",
         type=str,
-        default="test_evaluation",
+        default=".",
         help="Path to project to evaluate on",
     )
     token_parser.add_argument(
@@ -391,6 +609,38 @@ def main():
     )
     token_parser.add_argument(
         "--cpu", action="store_true", help="Force CPU usage (auto-detected by default)"
+    )
+
+    # Method comparison evaluation
+    comparison_parser = subparsers.add_parser(
+        "method-comparison", help="Compare all search methods (hybrid, BM25, semantic)"
+    )
+    comparison_parser.add_argument(
+        "--dataset",
+        type=str,
+        default="evaluation/datasets/token_efficiency_scenarios.json",
+        help="Path to evaluation dataset",
+    )
+    comparison_parser.add_argument(
+        "--project",
+        type=str,
+        default=".",
+        help="Path to project to evaluate on (default: current directory)",
+    )
+    comparison_parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="benchmark_results/method_comparison",
+        help="Output directory for results",
+    )
+    comparison_parser.add_argument(
+        "--max-instances",
+        type=int,
+        default=5,
+        help="Maximum number of instances to evaluate",
+    )
+    comparison_parser.add_argument(
+        "--k", type=int, default=5, help="Number of top results to consider"
     )
 
     # Create sample dataset
@@ -455,6 +705,14 @@ def main():
                 max_instances=args.max_instances,
                 k=args.k,
                 use_gpu=use_gpu,
+            )
+        elif args.command == "method-comparison":
+            run_method_comparison(
+                dataset_path=args.dataset,
+                project_path=args.project,
+                output_dir=args.output_dir,
+                max_instances=args.max_instances,
+                k=args.k,
             )
         elif args.command == "create-sample":
             create_sample_dataset(args.output)

@@ -445,6 +445,61 @@ print(f'Performance: {perf}')
 
         return success
 
+    def test_huggingface_auth(self) -> bool:
+        """Test HuggingFace authentication for EmbeddingGemma access."""
+        print()
+        print("=== HuggingFace Authentication Test ===")
+        print()
+
+        auth_code = """
+try:
+    from huggingface_hub import whoami, model_info
+
+    # Check authentication status
+    print('Checking HuggingFace authentication...')
+    info = whoami()
+    print(f'Authenticated as: {info["name"]}')
+    print(f'Account type: {info.get("type", "unknown")}')
+
+    # Check model access
+    print('Checking EmbeddingGemma model access...')
+    model_info_result = model_info('google/embeddinggemma-300m')
+    print(f'Model accessible: {model_info_result.modelId}')
+
+    print('HuggingFace authentication successful')
+
+except Exception as e:
+    print(f'HuggingFace authentication failed: {e}')
+    print('')
+    print('To fix this:')
+    print('1. Get token: https://huggingface.co/settings/tokens')
+    print('2. Accept terms: https://huggingface.co/google/embeddinggemma-300m')
+    print('3. Run: scripts\\powershell\\hf_auth.ps1 -Token "your_token"')
+    raise
+"""
+
+        success, output = self._run_python_test(
+            auth_code, "HuggingFace Authentication"
+        )
+
+        if success:
+            self._print_test_result(
+                "HuggingFace Authentication",
+                True,
+                details="Authentication and model access working",
+            )
+            for line in output.strip().split("\n"):
+                if line.strip():
+                    print(f"       {line.strip()}")
+        else:
+            self._print_warning(
+                "HuggingFace Authentication",
+                "Authentication failed or model not accessible",
+                "Use scripts\\powershell\\hf_auth.ps1 to authenticate",
+            )
+
+        return success
+
     def test_embedding_model(self) -> bool:
         """Test EmbeddingGemma model loading (optional)."""
         print()
@@ -579,6 +634,7 @@ else:
             self.test_mcp_server()
             self.test_tree_sitter_parsers()
             self.test_performance()
+            self.test_huggingface_auth()
             self.test_embedding_model()
 
         except KeyboardInterrupt:

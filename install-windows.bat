@@ -37,12 +37,12 @@ echo === System Detection Results ===
 echo Python Version: %PYTHON_VERSION% [OK]
 
 if "!CUDA_AVAILABLE!"=="1" (
-    echo CUDA Status: Toolkit !CUDA_VERSION! installed [OK]
-    if not "!CUDA_DRIVER_VERSION!"=="" if not "!CUDA_DRIVER_VERSION!"=="!CUDA_VERSION!" (
+    echo CUDA Status: Toolkit !CUDA_INSTALLED_VERSION! detected [OK]
+    if not "!CUDA_DRIVER_VERSION!"=="" if not "!CUDA_DRIVER_VERSION!"=="!CUDA_INSTALLED_VERSION!" (
         echo Driver Capability: Up to CUDA !CUDA_DRIVER_VERSION!
     )
     echo GPU: !GPU_NAME!
-    echo Recommended: CUDA Installation with PyTorch !CUDA_VERSION! support
+    echo Recommended: PyTorch with CUDA !CUDA_VERSION! support ^(compatible with CUDA !CUDA_INSTALLED_VERSION!^)
 ) else (
     if not "!GPU_NAME!"=="" (
         echo CUDA Status: GPU detected but no CUDA toolkit installed
@@ -243,7 +243,7 @@ if "!CUDA_MAJOR!"=="12" (
         set PYTORCH_INDEX=https://download.pytorch.org/whl/cu121
         set CUDA_AVAILABLE=1
     ) else (
-        echo [WARNING] CUDA 12.!CUDA_MINOR! detected. Using CUDA 12.1 build ^(usually compatible^)
+        echo [INFO] CUDA 12.!CUDA_MINOR! detected. Using PyTorch CUDA 12.1 build ^(fully compatible with CUDA 12.x^)
         set CUDA_VERSION=12.1
         set PYTORCH_INDEX=https://download.pytorch.org/whl/cu121
         set CUDA_AVAILABLE=1
@@ -456,6 +456,7 @@ if %ERRORLEVEL% neq 0 (
     echo [WARNING] NLTK data download failed - continuing
 )
 
+call :check_huggingface_auth
 call :verify_installation
 goto :eof
 
@@ -478,7 +479,11 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo [INFO] Testing EmbeddingGemma model loading...
-.venv\Scripts\python.exe -c "try:\n    from sentence_transformers import SentenceTransformer\n    model = SentenceTransformer('google/embeddinggemma-300m')\n    print('[OK] EmbeddingGemma loaded successfully')\n    print('[OK] Model device:', model.device)\nexcept Exception as e:\n    print('[WARNING] EmbeddingGemma test failed:', str(e))\n    print('[INFO] Model will be downloaded on first use')"
+.venv\Scripts\python.exe -c "from sentence_transformers import SentenceTransformer; model = SentenceTransformer('google/embeddinggemma-300m'); print('[OK] EmbeddingGemma loaded successfully'); print('[OK] Model device:', model.device)" 2>nul
+if %ERRORLEVEL% neq 0 (
+    echo [WARNING] EmbeddingGemma test failed - model will be downloaded on first use
+    echo [INFO] This is normal if the model hasn't been downloaded yet
+)
 
 echo [INFO] Testing hybrid search dependencies...
 .venv\Scripts\python.exe -c "import rank_bm25; import nltk; print('[OK] BM25 and NLTK available')"
@@ -507,32 +512,35 @@ echo =================================================
 
 if "!CUDA_AVAILABLE!"=="1" (
     echo Installed Components:
-    echo   - Python Environment: ✓
-    echo   - PyTorch with CUDA !CUDA_VERSION!: ✓
-    echo   - Hybrid Search ^(BM25 + Semantic^): ✓
-    echo   - MCP Integration: ✓
-    echo   - GPU Acceleration: ✓ !GPU_NAME!
+    echo   - Python Environment: [OK]
+    echo   - PyTorch with CUDA !CUDA_VERSION!: [OK]
+    echo   - Hybrid Search ^(BM25 + Semantic^): [OK]
+    echo   - MCP Integration: [OK]
+    echo   - GPU Acceleration: [OK] !GPU_NAME!
 ) else (
     echo Installed Components:
-    echo   - Python Environment: ✓
-    echo   - PyTorch CPU-Only: ✓
-    echo   - Hybrid Search ^(BM25 + Semantic^): ✓
-    echo   - MCP Integration: ✓
+    echo   - Python Environment: [OK]
+    echo   - PyTorch CPU-Only: [OK]
+    echo   - Hybrid Search ^(BM25 + Semantic^): [OK]
+    echo   - MCP Integration: [OK]
     echo   - Note: CPU-only mode ^(no GPU acceleration^)
 )
 
 echo.
 echo Next Steps:
-echo   1. Configure Claude Code integration:
+echo   1. Ensure HuggingFace authentication is configured ^(if not done during install^):
+echo      scripts\powershell\hf_auth.ps1 -Token "your_hf_token"
+echo.
+echo   2. Configure Claude Code integration:
 echo      scripts\powershell\configure_claude_code.ps1 -Global
 echo.
-echo   2. Start the MCP server:
+echo   3. Start the MCP server:
 echo      start_mcp_server.bat
 echo.
-echo   3. In Claude Code, index your project:
+echo   4. In Claude Code, index your project:
 echo      /index_directory "C:\path\to\your\project"
 echo.
-echo   4. Search your code:
+echo   5. Search your code:
 echo      /search_code "your search query"
 echo.
 echo Performance: Hybrid search provides ~40%% token reduction
@@ -548,6 +556,54 @@ if /i "!configure!"=="y" (
         echo [WARNING] Claude Code configuration failed - you can run it manually later
     )
 )
+
+:check_huggingface_auth
+echo.
+echo === HuggingFace Authentication Check ===
+
+echo [INFO] Checking HuggingFace authentication for EmbeddingGemma model...
+
+REM Test current authentication status
+.venv\Scripts\python.exe -c "from huggingface_hub import whoami; info = whoami(); print('[OK] Authenticated as:', info['name'])" 2>nul
+if %ERRORLEVEL% equ 0 (
+    echo [OK] HuggingFace authentication already configured
+    goto :eof
+)
+
+echo.
+echo [REQUIRED] HuggingFace Authentication Needed
+echo.
+echo The EmbeddingGemma model requires HuggingFace authentication.
+echo.
+echo Steps to authenticate:
+echo 1. Visit: https://huggingface.co/google/embeddinggemma-300m
+echo 2. Click "Agree and access repository" if prompted
+echo 3. Get your token: https://huggingface.co/settings/tokens
+echo 4. Create a token with 'Read' permissions
+echo.
+
+set /p "hf_token=Enter your HuggingFace token (starts with hf_): "
+
+if "!hf_token!"=="" (
+    echo [WARNING] No token provided. You can authenticate later using:
+    echo   scripts\powershell\hf_auth.ps1 -Token "your_token_here"
+    goto :eof
+)
+
+REM Validate and test the token
+echo [INFO] Testing provided token...
+set HF_TOKEN=!hf_token!
+.venv\Scripts\python.exe -c "import os; from huggingface_hub import login, whoami; login(token=os.environ.get('HF_TOKEN'), add_to_git_credential=False); info = whoami(); print('[OK] Authentication successful! User:', info['name'])"
+
+if %ERRORLEVEL% neq 0 (
+    echo [ERROR] Authentication failed. Please check your token and try again.
+    echo [INFO] You can authenticate later using: scripts\powershell\hf_auth.ps1 -Token "your_token"
+    echo [INFO] Make sure you've accepted terms at: https://huggingface.co/google/embeddinggemma-300m
+) else (
+    echo [OK] HuggingFace authentication configured successfully!
+)
+
+goto :eof
 
 :end
 echo.

@@ -72,6 +72,115 @@ scripts\powershell\configure_claude_code.ps1 -Global
 
 For macOS and Linux support, please use the cross-platform version at [FarhanAliRaza/claude-context-local](https://github.com/FarhanAliRaza/claude-context-local), which this project was forked from.
 
+## HuggingFace Authentication
+
+### Overview
+
+The EmbeddingGemma model (`google/embeddinggemma-300m`) requires HuggingFace authentication to download and use. This is a one-time setup that the installer will guide you through.
+
+### Prerequisites
+
+1. **HuggingFace Account**: Create a free account at [https://huggingface.co](https://huggingface.co)
+2. **Model Access**: Accept terms at [https://huggingface.co/google/embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m)
+3. **Access Token**: Create a token with 'Read' permissions at [https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+
+### Installation Integration
+
+The Windows installer (`install-windows.bat`) includes automatic HuggingFace authentication:
+
+1. **Automatic Detection**: Checks if you're already authenticated
+2. **Interactive Setup**: Prompts for your token if needed
+3. **Validation**: Tests token and model access
+4. **Error Guidance**: Provides clear steps if authentication fails
+
+### Manual Authentication
+
+If you need to authenticate manually after installation:
+
+#### Option 1: Using PowerShell Helper Script (Recommended)
+
+```powershell
+# Authenticate with your token
+scripts\powershell\hf_auth.ps1 -Token "hf_your_token_here"
+
+# Test authentication only
+scripts\powershell\hf_auth.ps1 -TestOnly
+
+# Clear cache and re-authenticate
+scripts\powershell\hf_auth.ps1 -Token "hf_your_token_here" -ClearCache
+```
+
+#### Option 2: Command Line
+
+```powershell
+# Set environment variable
+$env:HF_TOKEN = "hf_your_token_here"
+
+# Or use UV CLI login
+.venv\Scripts\uv.exe run huggingface-cli login
+```
+
+#### Option 3: Standalone Verification
+
+```powershell
+# Check HuggingFace authentication status
+verify-hf-auth.bat
+
+# Or run the Python script directly
+.venv\Scripts\python.exe scripts\verify_hf_auth.py
+```
+
+### Token Requirements
+
+Your HuggingFace token must:
+
+- **Start with `hf_`** (personal access tokens)
+- **Have 'Read' permissions** (minimum required)
+- **Be associated with an account** that has accepted the EmbeddingGemma model terms
+
+### Troubleshooting Authentication
+
+#### Common Issues
+
+1. **Token Format Error**
+   ```
+   Error: Token should start with 'hf_'
+   ```
+   - Solution: Ensure you're using a personal access token, not a different type
+
+2. **Model Access Denied**
+   ```
+   Error: Repository not found or access denied
+   ```
+   - Solution: Visit [https://huggingface.co/google/embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m) and accept terms
+
+3. **Authentication Failed**
+   ```
+   Error: Invalid token or insufficient permissions
+   ```
+   - Solution: Regenerate token with 'Read' permissions
+
+#### Verification Commands
+
+Test your authentication with these commands:
+
+```powershell
+# Quick authentication test
+.venv\Scripts\python.exe -c "from huggingface_hub import whoami; print(whoami())"
+
+# Model access test
+.venv\Scripts\python.exe -c "from huggingface_hub import model_info; print(model_info('google/embeddinggemma-300m').modelId)"
+
+# Full verification
+verify-installation.bat
+```
+
+### Security Notes
+
+- **Token Storage**: Tokens are stored locally in `~/.cache/huggingface/token`
+- **Environment Variables**: Set `HF_TOKEN` for session-based authentication
+- **No Transmission**: Your token is only used locally, never transmitted by our code
+
 ## Dependency Management
 
 ### Why UV is Recommended
@@ -284,7 +393,7 @@ Select **Option 1: Token Efficiency Benchmark** for a quick validation (~10 seco
 
 **Expected Results:**
 
-- ✅ **Token Savings**: 99.9% reduction vs traditional file reading
+- ✅ **Token Savings**: 98.6% reduction vs traditional file reading
 - ✅ **GPU Acceleration**: 8.6x faster indexing (with CUDA GPU)
 - ✅ **Search Quality**: High precision on test scenarios
 

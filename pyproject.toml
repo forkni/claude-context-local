@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-context-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local semantic code search for Claude Code (MCP) using EmbeddingGemma, FAISS, and AST/tree-sitter chunking. 100% local embeddings and indexing."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -27,6 +27,7 @@ keywords = [
 ]
 dependencies = [
     "click>=8.2.1",
+    "datasets>=2.14.0",
     "faiss-cpu>=1.12.0",
     "fastmcp>=2.12.2",
     "huggingface-hub>=0.34.4",
@@ -44,6 +45,7 @@ dependencies = [
     "rich>=14.1.0",
     "sentence-transformers>=5.1.0",
     "sqlitedict>=2.1.0",
+    "tiktoken>=0.5.0",
     "tree-sitter>=0.20.0",
     "tree-sitter-c>=0.24.1",
     "tree-sitter-c-sharp>=0.23.1",

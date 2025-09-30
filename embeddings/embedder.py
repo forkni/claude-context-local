@@ -199,6 +199,7 @@ class CodeEmbedder:
             "imports": chunk.imports,
             "complexity_score": chunk.complexity_score,
             "tags": chunk.tags,
+            "content": chunk.content,  # Full content for accurate token counting
             "content_preview": chunk.content[:200] + "..."
             if len(chunk.content) > 200
             else chunk.content,
@@ -248,6 +249,7 @@ class CodeEmbedder:
                     "imports": chunk.imports,
                     "complexity_score": chunk.complexity_score,
                     "tags": chunk.tags,
+                    "content": chunk.content,  # Full content for accurate token counting
                     "content_preview": chunk.content[:200] + "..."
                     if len(chunk.content) > 200
                     else chunk.content,

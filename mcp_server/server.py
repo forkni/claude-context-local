@@ -1363,7 +1363,7 @@ def run_benchmark(
 
     Args:
         benchmark_type: Type of benchmark to run
-                      - "token-efficiency": Measures 99.9% token reduction vs file reading
+                      - "token-efficiency": Measures 98.6% token reduction vs file reading
                       - "custom": Project-specific search quality evaluation
                       - "swe-bench": Industry-standard software engineering benchmark
         project_path: Path to project for evaluation (default: test_evaluation)
