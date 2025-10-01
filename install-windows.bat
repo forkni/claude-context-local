@@ -42,7 +42,7 @@ if "!CUDA_AVAILABLE!"=="1" (
         echo Driver Capability: Up to CUDA !CUDA_DRIVER_VERSION!
     )
     echo GPU: !GPU_NAME!
-    echo Recommended: PyTorch with CUDA !CUDA_VERSION! support ^(compatible with CUDA !CUDA_INSTALLED_VERSION!^)
+    echo Recommended: PyTorch CUDA !CUDA_VERSION! build ^(compatible with system CUDA !CUDA_INSTALLED_VERSION!^)
 ) else (
     if not "!GPU_NAME!"=="" (
         echo CUDA Status: GPU detected but no CUDA toolkit installed
@@ -69,7 +69,7 @@ REM Show installation menu
 :menu
 echo Installation Options:
 if "!CUDA_AVAILABLE!"=="1" (
-    echo [1] Auto-Install ^(Recommended - CUDA !CUDA_VERSION! support^)
+    echo [1] Auto-Install ^(Recommended - PyTorch CUDA !CUDA_VERSION!^)
 ) else (
     echo [1] Auto-Install ^(Recommended - CPU-Only^)
 )
@@ -100,7 +100,7 @@ goto menu
 echo.
 echo === Auto-Installation Mode ===
 if "!CUDA_AVAILABLE!"=="1" (
-    echo Installing with CUDA !CUDA_VERSION! support...
+    echo Installing PyTorch with CUDA !CUDA_VERSION! build...
     call :install_cuda_mode
 ) else (
     echo Installing in CPU-only mode...
@@ -517,7 +517,7 @@ echo =================================================
 if "!CUDA_AVAILABLE!"=="1" (
     echo Installed Components:
     echo   - Python Environment: [OK]
-    echo   - PyTorch with CUDA !CUDA_VERSION!: [OK]
+    echo   - PyTorch CUDA !CUDA_VERSION! build: [OK]
     echo   - Hybrid Search ^(BM25 + Semantic^): [OK]
     echo   - MCP Integration: [OK]
     echo   - GPU Acceleration: [OK] !GPU_NAME!

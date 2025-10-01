@@ -54,9 +54,30 @@ try {
         if ($CodeSearchConfig.args) {
             Write-Host "  Args: $($CodeSearchConfig.args -join ' ')" -ForegroundColor White
         }
+
+        # Verify the path actually exists
+        $CommandPath = $CodeSearchConfig.command
+        # If args exist and first arg looks like a path, use that instead
+        if ($CodeSearchConfig.args -and $CodeSearchConfig.args[0] -match '\.(bat|exe|ps1|py)$') {
+            $CommandPath = $CodeSearchConfig.args[0]
+        }
+
         Write-Host ""
-        Write-Host "[SUCCESS] Claude Code is properly configured for semantic code search!" -ForegroundColor Green
-        exit 0
+        Write-Host "Verifying MCP server path..." -ForegroundColor Cyan
+        if (Test-Path $CommandPath) {
+            Write-Host "[OK] MCP server path exists: $CommandPath" -ForegroundColor Green
+            Write-Host ""
+            Write-Host "[SUCCESS] Claude Code is properly configured for semantic code search!" -ForegroundColor Green
+            exit 0
+        } else {
+            Write-Host "[ERROR] MCP server path does not exist: $CommandPath" -ForegroundColor Red
+            Write-Host ""
+            Write-Host "[PROBLEM] The configured path is invalid or the file has been moved" -ForegroundColor Yellow
+            Write-Host "[SOLUTION] Reconfigure Claude Code integration:" -ForegroundColor Yellow
+            Write-Host "  .\scripts\powershell\configure_claude_code.ps1 -Global" -ForegroundColor White
+            Write-Host ""
+            exit 1
+        }
     } else {
         Write-Host "[WARNING] code-search MCP server not found in configuration" -ForegroundColor Yellow
         Write-Host "[INFO] Available MCP servers:" -ForegroundColor White

@@ -104,6 +104,46 @@ if ($UseWrapperMethod) {
     Write-Host "Method: Direct Python (requires working directory)" -ForegroundColor Yellow
 }
 
+# Check if code-search is already configured
+$ConfigPath = if ($Global) { "$env:USERPROFILE\.claude.json" } else { ".\.claude.json" }
+if (Test-Path $ConfigPath) {
+    try {
+        $ExistingConfig = Get-Content -Path $ConfigPath -Raw | ConvertFrom-Json
+        if ($ExistingConfig.mcpServers.PSObject.Properties.Name -contains "code-search") {
+            Write-Host ""
+            Write-Host "[WARNING] code-search MCP server is already configured" -ForegroundColor Yellow
+            $ExistingServer = $ExistingConfig.mcpServers."code-search"
+            Write-Host "Current configuration:" -ForegroundColor Gray
+            Write-Host "  Command: $($ExistingServer.command)" -ForegroundColor Gray
+            if ($ExistingServer.args) {
+                Write-Host "  Args: $($ExistingServer.args -join ' ')" -ForegroundColor Gray
+            }
+            Write-Host ""
+
+            $UpdateChoice = Read-Host "Update configuration? (y/N)"
+            if ($UpdateChoice -ne 'y' -and $UpdateChoice -ne 'Y') {
+                Write-Host "[INFO] Configuration unchanged" -ForegroundColor Yellow
+                Write-Host "[INFO] To verify: .\scripts\powershell\verify_claude_config.ps1" -ForegroundColor White
+                exit 0
+            }
+
+            Write-Host ""
+            Write-Host "[INFO] Removing existing configuration..." -ForegroundColor Yellow
+            try {
+                claude mcp remove code-search
+                Write-Host "[OK] Existing configuration removed" -ForegroundColor Green
+            }
+            catch {
+                Write-Host "[WARNING] Failed to remove existing configuration: $_" -ForegroundColor Yellow
+                Write-Host "[INFO] Will attempt to overwrite..." -ForegroundColor Yellow
+            }
+        }
+    }
+    catch {
+        # Ignore errors reading existing config
+    }
+}
+
 try {
     if ($UseWrapperMethod) {
         if ($Global) {
