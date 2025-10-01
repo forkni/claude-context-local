@@ -236,6 +236,121 @@ claude mcp add code-search --scope user -- "F:\path\to\claude-context-local\.ven
 
 **No manual configuration needed** - the system automatically uses the best search mode for your queries.
 
+### 4) Setting Up CLAUDE.md for Your Project (Optional but Recommended)
+
+To maximize efficiency when using Claude Code with this MCP server, create a `CLAUDE.md` file in your project root. This file instructs Claude to prioritize semantic search over traditional file reading, ensuring optimal token usage.
+
+#### Why CLAUDE.md?
+
+- **93% Token Reduction**: Enforces search-first workflow (400 tokens vs 5,600 tokens)
+- **10x Faster**: Semantic search (3-5s) vs traditional file reading (30-60s)
+- **Immediate Access**: MCP tools visible to Claude without explaining each time
+- **Project-Specific**: Customize instructions for your codebase
+
+#### Minimal CLAUDE.md Template
+
+Create a `CLAUDE.md` file in your project root with this content:
+
+```markdown
+# Project Instructions for Claude Code
+
+## 🔴 CRITICAL: Search-First Protocol
+
+**MANDATORY**: For ALL codebase tasks, ALWAYS use semantic search FIRST before reading files.
+
+### Workflow Sequence
+
+1. **Index**: `/index_directory "C:\path\to\your\project"` - One-time setup
+2. **Search**: `/search_code "natural language query"` - Find code instantly
+3. **Edit**: Use `Read` tool ONLY after search identifies exact file
+
+### Performance Impact
+
+| Method | Tokens | Speed | Result |
+|--------|--------|-------|--------|
+| Traditional file reading | 5,600 tokens | 30-60s | Limited context |
+| Semantic search | 400 tokens | 3-5s | Precision targeting |
+| **Token savings** | **93%** | **10x faster** | **Cross-file relationships** |
+
+### Critical Rules
+
+- ✅ **ALWAYS**: `search_code()` for exploration/understanding
+- ✅ **ALWAYS**: Index before searching: `index_directory(path)`
+- ❌ **NEVER**: Read files without searching first
+- ❌ **NEVER**: Use `Glob()` for code exploration
+- ❌ **NEVER**: Grep manually for code patterns
+
+**Every file read without search wastes 1,000+ tokens**
+
+---
+
+## Available MCP Tools (12)
+
+| Tool | Priority | Purpose |
+|------|----------|---------|
+| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language |
+| **index_directory** | 🔴 **SETUP** | Index project (one-time) |
+| find_similar_code | Secondary | Find alternative implementations |
+| configure_search_mode | Config | Set search mode (hybrid/semantic/BM25) |
+| get_search_config_status | Config | View current search configuration |
+| get_index_status | Status | Check index health |
+| get_memory_status | Monitor | Check RAM/VRAM usage |
+| list_projects | Management | Show indexed projects |
+| switch_project | Management | Change active project |
+| clear_index | Reset | Delete current index |
+| cleanup_resources | Cleanup | Free memory/caches |
+| run_benchmark | Testing | Validate search quality |
+
+### Quick Examples
+
+```bash
+# Essential workflow
+/index_directory "C:\Projects\MyApp"
+/search_code "authentication functions"
+/search_code "error handling patterns"
+
+# Advanced usage
+/find_similar_code "auth.py:15-42:function:login"
+/configure_search_mode "hybrid" 0.4 0.6
+/get_index_status
+```
+
+### Search Modes
+
+- **hybrid** (default) - BM25 + semantic fusion (best accuracy)
+- **semantic** - Dense vector search only (best for concepts)
+- **bm25** - Sparse keyword search only (best for exact terms)
+- **auto** - Adaptive mode selection
+
+---
+
+📚 **Full Tool Reference**: See [docs/MCP_TOOLS_REFERENCE.md](https://github.com/forkni/claude-context-local/blob/main/docs/MCP_TOOLS_REFERENCE.md) for complete documentation with all parameters and examples.
+```
+
+#### Customization Tips
+
+1. **Copy the Template**: Save the content above to `CLAUDE.md` in your project root
+2. **Adjust Paths**: Update the index_directory path to match your project
+3. **Add Project Rules**: Include project-specific coding conventions, architecture notes, or common patterns
+4. **Use Full Reference**: For complete tool documentation, copy content from `docs/MCP_TOOLS_REFERENCE.md`
+
+#### How It Works
+
+- Claude Code automatically reads `CLAUDE.md` from your project directory
+- Instructions apply to all Claude sessions in that project
+- MCP tools are immediately available without explanation
+- Search-first workflow becomes automatic
+
+#### Example Projects
+
+This repository's own `CLAUDE.md` demonstrates advanced usage with:
+- Comprehensive MCP tool documentation
+- Project-specific architecture notes
+- Model selection guidance
+- Testing and benchmarking instructions
+
+> **Note**: The `CLAUDE.md` in this repository is project-specific. Use the minimal template above for your own projects, then customize as needed.
+
 ## Running Benchmarks
 
 The project includes comprehensive benchmarking tools to validate performance:
