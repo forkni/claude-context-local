@@ -674,7 +674,18 @@ verify-installation.bat
 
 # HuggingFace authentication check
 verify-hf-auth.bat
+
+# Repair tool - Fix common issues
+scripts\batch\repair_installation.bat
 ```
+
+**Repair Tool Options:**
+1. Clear all Merkle snapshots (fixes stale change detection)
+2. Clear project indexes (reset search state)
+3. Reconfigure Claude Code integration
+4. Verify dependencies
+5. Full system reset (indexes + snapshots)
+6. Return to main menu
 
 ### Installation Issues
 
@@ -734,19 +745,25 @@ verify-hf-auth.bat
    - Verify project path is correct
    - Reindex with `/index_directory "C:\path\to\project"`
 
-8. **Memory issues during indexing**: System running out of RAM
+8. **"No changes detected" but files were modified**: Stale Merkle snapshot issue
+   - Use force reindex to bypass snapshot checking
+   - Via menu: `start_mcp_server.bat` → Option 2 (Force Reindex)
+   - Via tool: `.venv\Scripts\python.exe tools\index_project.py --force`
+   - Or use repair tool: `scripts\batch\repair_installation.bat` → Option 1
+
+9. **Memory issues during indexing**: System running out of RAM
    - Close other applications to free memory
    - Check available RAM: `/get_memory_status`
    - For large codebases (10,000+ files), ensure 8GB+ RAM available
 
-9. **Indexing too slow**: First-time indexing takes time
+10. **Indexing too slow**: First-time indexing takes time
    - Expected: ~30-60 seconds for small projects (100 files)
    - Expected: ~5-10 minutes for large projects (10,000+ files)
    - GPU accelerates by 8.6x - verify CUDA available
 
 ### GPU and Performance Issues
 
-10. **FAISS GPU not used**: Ensure CUDA drivers and nvidia-smi available
+11. **FAISS GPU not used**: Ensure CUDA drivers and nvidia-smi available
 
     ```powershell
     # Check GPU availability
@@ -759,14 +776,14 @@ verify-hf-auth.bat
     .venv\Scripts\python.exe -c "import torch; print('CUDA:', torch.cuda.is_available())"
     ```
 
-11. **"CUDA out of memory" error**: GPU memory exhausted
+12. **"CUDA out of memory" error**: GPU memory exhausted
     - Close other GPU applications
     - System will automatically fall back to CPU
     - Performance will be slower but functional
 
 ### MCP Server Issues
 
-12. **MCP server won't start**: Check Python environment and dependencies
+13. **MCP server won't start**: Check Python environment and dependencies
 
     ```powershell
     # Test MCP server manually
@@ -775,28 +792,36 @@ verify-hf-auth.bat
     # Check for errors in output
     ```
 
-13. **Claude Code can't find MCP tools**: MCP server not registered
+14. **Claude Code can't find MCP tools**: MCP server not registered
 
     ```powershell
     # Register MCP server with Claude Code
     scripts\powershell\configure_claude_code.ps1 -Global
+
+    # Verify configuration
+    scripts\powershell\verify_claude_config.ps1
     ```
 
-14. **MCP connection lost**: Restart Claude Code and MCP server
+15. **MCP server path verification fails**: Invalid path in .claude.json
+    - Verify configuration: `scripts\powershell\verify_claude_config.ps1`
+    - Reconfigure if needed: `scripts\powershell\configure_claude_code.ps1 -Global`
+    - Check that wrapper script exists at configured path
+
+16. **MCP connection lost**: Restart Claude Code and MCP server
     - Close Claude Code completely
     - Run `start_mcp_server.bat` in new terminal
     - Reopen Claude Code
 
 ### Windows-Specific Issues
 
-15. **"cannot be loaded because running scripts is disabled"**: PowerShell execution policy
+17. **"cannot be loaded because running scripts is disabled"**: PowerShell execution policy
 
     ```powershell
     # Allow script execution (run as Administrator)
     Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
     ```
 
-16. **Path too long errors**: Windows path length limitation
+18. **Path too long errors**: Windows path length limitation
     - Move project closer to drive root (e.g., `C:\Projects\`)
     - Enable long paths in Windows (requires admin):
 
