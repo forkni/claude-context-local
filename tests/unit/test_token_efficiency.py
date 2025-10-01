@@ -1,16 +1,19 @@
 """Unit tests for token efficiency evaluation."""
 
-import json
 import tempfile
-import pytest
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
-from evaluation.token_efficiency_evaluator import (
-    TokenCounter, VanillaReadSimulator, TokenEfficiencyEvaluator,
-    TokenEfficiencyMetrics, TokenEfficiencyResult
-)
+import pytest
+
 from evaluation.base_evaluator import EvaluationInstance, RetrievalResult, SearchMetrics
+from evaluation.token_efficiency_evaluator import (
+    TokenCounter,
+    TokenEfficiencyEvaluator,
+    TokenEfficiencyMetrics,
+    TokenEfficiencyResult,
+    VanillaReadSimulator,
+)
 
 
 class TestTokenCounter:
@@ -40,11 +43,11 @@ class TestTokenCounter:
 
     def test_count_tokens_code_snippet(self):
         """Test token counting for code."""
-        code = '''
+        code = """
 def hello_world():
     print("Hello, World!")
     return True
-'''
+"""
         token_count = self.token_counter.count_tokens(code)
 
         # Code typically has more tokens due to syntax
@@ -57,7 +60,7 @@ def hello_world():
             "Hello world",
             "def function(): pass",
             "",
-            "A longer text with multiple words and punctuation."
+            "A longer text with multiple words and punctuation.",
         ]
 
         token_counts = self.token_counter.count_tokens_batch(texts)
@@ -67,7 +70,7 @@ def hello_world():
         assert token_counts[2] == 0  # Empty text
         assert token_counts[3] > token_counts[0]  # Longer text has more tokens
 
-    @patch('evaluation.token_efficiency_evaluator.tiktoken.get_encoding')
+    @patch("evaluation.token_efficiency_evaluator.tiktoken.get_encoding")
     def test_token_counter_error_handling(self, mock_get_encoding):
         """Test token counter error handling."""
         # Mock encoding that raises an error
@@ -166,6 +169,7 @@ class TestVanillaReadSimulator:
     def teardown_method(self):
         """Clean up test fixtures."""
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
 
@@ -183,7 +187,7 @@ class TestTokenEfficiencyMetrics:
             search_time=0.5,
             read_time=2.0,
             time_savings=1.5,
-            files_avoided=3
+            files_avoided=3,
         )
 
         assert metrics.search_tokens == 100
@@ -211,7 +215,7 @@ class TestTokenEfficiencyResult:
             mrr=0.75,
             ndcg=0.82,
             token_usage=100,
-            tool_calls=1
+            tool_calls=1,
         )
 
         efficiency_metrics = TokenEfficiencyMetrics(
@@ -223,7 +227,7 @@ class TestTokenEfficiencyResult:
             search_time=0.5,
             read_time=2.0,
             time_savings=1.5,
-            files_avoided=3
+            files_avoided=3,
         )
 
         result = TokenEfficiencyResult(
@@ -233,7 +237,7 @@ class TestTokenEfficiencyResult:
             efficiency_metrics=efficiency_metrics,
             search_results=[],
             simulated_files=["file1.py", "file2.py"],
-            metadata={"test": True}
+            metadata={"test": True},
         )
 
         assert result.scenario_id == "test_001"
@@ -272,9 +276,7 @@ class TestTokenEfficiencyEvaluator:
         (self.project_dir / "utils.py").write_text("def helper(): pass")
 
         self.evaluator = TokenEfficiencyEvaluator(
-            output_dir=self.temp_dir,
-            k=5,
-            use_gpu=False
+            output_dir=self.temp_dir, k=5, use_gpu=False
         )
 
     def test_evaluator_initialization(self):
@@ -284,7 +286,7 @@ class TestTokenEfficiencyEvaluator:
         assert isinstance(self.evaluator.token_counter, TokenCounter)
         assert self.evaluator.searcher is None
 
-    @patch('evaluation.semantic_evaluator.SemanticSearchEvaluator')
+    @patch("evaluation.semantic_evaluator.SemanticSearchEvaluator")
     def test_build_index(self, mock_semantic_evaluator_class):
         """Test index building."""
         mock_evaluator = MockSemanticEvaluator()
@@ -295,7 +297,7 @@ class TestTokenEfficiencyEvaluator:
         assert self.evaluator.current_project_path == str(self.project_dir)
         assert mock_evaluator.built
 
-    @patch('evaluation.semantic_evaluator.SemanticSearchEvaluator')
+    @patch("evaluation.semantic_evaluator.SemanticSearchEvaluator")
     def test_search(self, mock_semantic_evaluator_class):
         """Test search functionality."""
         mock_evaluator = MockSemanticEvaluator()
@@ -305,7 +307,7 @@ class TestTokenEfficiencyEvaluator:
                 chunk_id="chunk1",
                 score=0.9,
                 content="def test(): pass",
-                metadata={}
+                metadata={},
             )
         ]
         mock_semantic_evaluator_class.return_value = mock_evaluator
@@ -321,7 +323,7 @@ class TestTokenEfficiencyEvaluator:
         with pytest.raises(ValueError, match="Index not built"):
             self.evaluator.search("test query", 5)
 
-    @patch('evaluation.semantic_evaluator.SemanticSearchEvaluator')
+    @patch("evaluation.semantic_evaluator.SemanticSearchEvaluator")
     def test_evaluate_token_efficiency(self, mock_semantic_evaluator_class):
         """Test token efficiency evaluation for single query."""
         # Set up mock evaluator
@@ -332,7 +334,7 @@ class TestTokenEfficiencyEvaluator:
                 chunk_id="chunk1",
                 score=0.9,
                 content="def main(): pass",
-                metadata={}
+                metadata={},
             )
         ]
         mock_semantic_evaluator_class.return_value = mock_evaluator
@@ -344,11 +346,13 @@ class TestTokenEfficiencyEvaluator:
         instance = EvaluationInstance(
             instance_id="test_001",
             query="main function",
-            ground_truth_files=["main.py"]
+            ground_truth_files=["main.py"],
         )
 
         # Evaluate
-        result = self.evaluator.evaluate_token_efficiency(instance, str(self.project_dir))
+        result = self.evaluator.evaluate_token_efficiency(
+            instance, str(self.project_dir)
+        )
 
         assert isinstance(result, TokenEfficiencyResult)
         assert result.scenario_id == "test_001"
@@ -363,39 +367,43 @@ class TestTokenEfficiencyEvaluator:
             TokenEfficiencyResult(
                 scenario_id="test_1",
                 query="query 1",
-                search_metrics=SearchMetrics(0.5, 2, 0.8, 0.6, 0.69, 0.75, 0.82, 100, 1),
+                search_metrics=SearchMetrics(
+                    0.5, 2, 0.8, 0.6, 0.69, 0.75, 0.82, 100, 1
+                ),
                 efficiency_metrics=TokenEfficiencyMetrics(
                     100, 500, 400, 0.2, 80.0, 0.5, 2.0, 1.5, 3
                 ),
                 search_results=[],
                 simulated_files=[],
-                metadata={}
+                metadata={},
             ),
             TokenEfficiencyResult(
                 scenario_id="test_2",
                 query="query 2",
-                search_metrics=SearchMetrics(0.3, 3, 0.9, 0.7, 0.79, 0.85, 0.88, 150, 1),
+                search_metrics=SearchMetrics(
+                    0.3, 3, 0.9, 0.7, 0.79, 0.85, 0.88, 150, 1
+                ),
                 efficiency_metrics=TokenEfficiencyMetrics(
                     150, 600, 450, 0.25, 75.0, 0.3, 1.8, 1.5, 2
                 ),
                 search_results=[],
                 simulated_files=[],
-                metadata={}
-            )
+                metadata={},
+            ),
         ]
 
         aggregates = self.evaluator._calculate_token_efficiency_aggregates(results)
 
-        assert aggregates['count'] == 2
-        assert 'token_efficiency' in aggregates
-        assert 'time_efficiency' in aggregates
-        assert 'file_efficiency' in aggregates
-        assert 'search_quality' in aggregates
+        assert aggregates["count"] == 2
+        assert "token_efficiency" in aggregates
+        assert "time_efficiency" in aggregates
+        assert "file_efficiency" in aggregates
+        assert "search_quality" in aggregates
 
         # Check specific calculations
-        token_eff = aggregates['token_efficiency']
-        assert token_eff['mean_percentage_savings'] == 77.5  # (80 + 75) / 2
-        assert token_eff['total_token_savings'] == 850  # 400 + 450
+        token_eff = aggregates["token_efficiency"]
+        assert token_eff["mean_percentage_savings"] == 77.5  # (80 + 75) / 2
+        assert token_eff["total_token_savings"] == 850  # 400 + 450
 
     def test_calculate_token_efficiency_aggregates_empty(self):
         """Test aggregate calculations with empty results."""
@@ -405,6 +413,7 @@ class TestTokenEfficiencyEvaluator:
     def teardown_method(self):
         """Clean up test fixtures."""
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
 
@@ -420,7 +429,7 @@ class TestTokenEfficiencyIntegration:
             "Simple text",
             "def function():\n    return True",
             "# This is a comment\nclass MyClass:\n    pass",
-            ""
+            "",
         ]
 
         for text in texts:
@@ -457,7 +466,6 @@ def helper_function():
 def another_helper():
     return True
 """)
-
 
             simulator = VanillaReadSimulator(str(project_path))
 

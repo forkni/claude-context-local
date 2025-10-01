@@ -35,6 +35,7 @@ An intelligent code search system that uses Google's EmbeddingGemma model and ad
 
 ## Status
 
+- **🚧 Active Development**: This project is under active development. Some functionality may change as we continue to improve the system.
 - Core functionality fully operational
 - Windows-optimized installation with automated setup
 - All search modes working (semantic, BM25, hybrid)
@@ -74,9 +75,13 @@ Claude’s code context is powerful, but sending your code to the cloud costs to
 
 - **Python 3.11+** (tested with Python 3.11 and 3.12)
 - **RAM**: 4GB minimum (8GB+ recommended for large codebases)
-- **Disk**: 2GB free space (model cache + embeddings + indexes)
+- **Disk**: 2-4GB free space (model cache + embeddings + indexes)
+  - EmbeddingGemma: ~1.2GB
+  - BGE-M3: ~2.2GB (optional upgrade)
 - **Windows**: Windows 10/11 with PowerShell
-- **PyTorch**: 2.6.0+ (automatically installed, required for BGE-M3 model support)
+- **PyTorch**: 2.6.0+ (automatically installed)
+  - Required for BGE-M3 model support
+  - Includes security fixes
 - **Optional GPU**: NVIDIA GPU with CUDA 11.8/12.4/12.6 for accelerated indexing (8.6x faster)
   - PyTorch 2.6.0+ with CUDA 11.8/12.4/12.6 support
   - FAISS GPU acceleration for vector search
@@ -117,7 +122,7 @@ Update by pulling latest changes:
 
 ```powershell
 # Navigate to your project directory
-cd claude-context-MCP
+cd claude-context-local
 git pull
 
 # Re-run the Windows installer to update dependencies
@@ -154,6 +159,7 @@ upgrade_pytorch_2.6.bat
 ```
 
 This script:
+
 - Safely uninstalls old PyTorch versions
 - Installs PyTorch 2.6.0 with CUDA 11.8 (compatible with CUDA 12.x systems)
 - Verifies installation and BGE-M3 compatibility
@@ -200,7 +206,7 @@ scripts\batch\start_mcp_simple.bat
 scripts\powershell\configure_claude_code.ps1 -Global
 
 # Manual registration (alternative)
-claude mcp add code-search --scope user -- "F:\path\to\claude-context-MCP\.venv\Scripts\python.exe" -m mcp_server.server
+claude mcp add code-search --scope user -- "F:\path\to\claude-context-local\.venv\Scripts\python.exe" -m mcp_server.server
 ```
 
 ### 3) Use in Claude Code
@@ -298,12 +304,12 @@ See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for detailed performance metrics.
 
 ## Test Suite
 
-The project includes a comprehensive test suite with 37 test files organized into professional categories:
+The project includes a comprehensive test suite with 39 test files organized into professional categories:
 
 ### Test Organization
 
-- **Unit Tests** (14 files): Component isolation testing in `tests/unit/`
-- **Integration Tests** (23 files): Workflow validation testing in `tests/integration/`
+- **Unit Tests** (15 files): Component isolation testing in `tests/unit/`
+- **Integration Tests** (24 files): Workflow validation testing in `tests/integration/`
 - **Test Fixtures**: Reusable mocks and sample data in `tests/fixtures/`
 - **Test Data**: Sample projects and datasets in `tests/test_data/`
 
@@ -375,7 +381,6 @@ claude-context-local/
 │   ├── base_evaluator.py             # Base evaluation framework
 │   ├── semantic_evaluator.py         # Search quality evaluation
 │   ├── token_efficiency_evaluator.py # Token usage measurement
-│   ├── swe_bench_evaluator.py        # SWE-bench evaluation
 │   ├── parameter_optimizer.py        # Search parameter optimization
 │   ├── run_evaluation.py             # Evaluation orchestrator
 │   ├── datasets/                     # Evaluation datasets
@@ -474,15 +479,48 @@ The system uses advanced parsing to create semantically meaningful chunks across
 
 - `CODE_SEARCH_STORAGE`: Custom storage directory (default: `~/.claude_code_search`)
 
+## Embedding Models
+
+The system supports multiple embedding models for different performance/accuracy trade-offs:
+
+### Available Models
+
+| Model | Dimensions | VRAM | Context | Best For |
+|-------|------------|------|---------|----------|
+| **EmbeddingGemma-300m** (default) | 768 | 4-8GB | 2048 tokens | Fast, efficient, smaller projects |
+| **BGE-M3** | 1024 | 8-16GB | 8192 tokens | Higher accuracy (+13.6% F1), production systems |
+
+### Switching Models
+
+**Via Interactive Menu:**
+
+```bash
+start_mcp_server.bat
+# Navigate: 3 (Search Configuration) → 4 (Select Embedding Model)
+```
+
+**Via Environment Variable:**
+
+```bash
+set CLAUDE_EMBEDDING_MODEL=BAAI/bge-m3  # Switch to BGE-M3
+set CLAUDE_EMBEDDING_MODEL=google/embeddinggemma-300m  # Switch to Gemma
+```
+
+See [Model Migration Guide](docs/MODEL_MIGRATION_GUIDE.md) for detailed comparison and migration steps.
+
 ### Model Configuration
 
-The system uses `google/embeddinggemma-300m` by default.
+The system supports two embedding models:
+
+- **Default**: `google/embeddinggemma-300m` (768 dimensions, 4-8GB VRAM)
+- **Upgrade**: `BAAI/bge-m3` (1024 dimensions, 8-16GB VRAM, +13.6% F1-score)
 
 Notes:
 
-- Download size: ~1.2–2 GB on disk depending on variant and caches
+- Download size: ~1.2GB (Gemma) or ~2.2GB (BGE-M3)
 - Device selection: auto (CUDA on NVIDIA, MPS on Apple Silicon, else CPU)
-- You can pre-download via installer or at first use
+- Models are cached after first download in `~/.cache/huggingface/hub`
+- Cache detection implemented - models load instantly on subsequent uses
 - FAISS backend: CPU by default. If an NVIDIA GPU is detected, the installer
   attempts to install `faiss-gpu-cu12` (or `faiss-gpu-cu11`) and the index will
   run on GPU automatically at runtime while saving as CPU for portability.
@@ -513,6 +551,16 @@ accepting terms and/or authentication to download.
 
 After the first successful download, we cache the model under `~/.claude_code_search/models`
 and prefer offline loads for speed and reliability.
+
+### Model Caching
+
+Once downloaded, models are cached locally for instant loading:
+
+- **Cache location**: `~/.cache/huggingface/hub/`
+- **Offline mode**: Automatically enabled when cached models detected
+- **Load time**: 2-5 seconds from cache (vs minutes for download)
+- **No internet required**: After initial download
+- **Cache detection**: Implemented in embedder for both Gemma and BGE-M3
 
 ### Hybrid Search Configuration
 
@@ -670,6 +718,7 @@ verify-hf-auth.bat
    ```
 
    Or reinstall manually:
+
    ```powershell
    .venv\Scripts\uv.exe pip install "torch==2.6.0" "torchvision==0.21.0" "torchaudio==2.6.0" --index-url https://download.pytorch.org/whl/cu118
    ```

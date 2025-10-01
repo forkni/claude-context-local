@@ -1,10 +1,9 @@
 """Tests for BM25 sparse index implementation."""
 
-import json
-import pytest
 import tempfile
-from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
+
+import pytest
 
 from search.bm25_index import BM25Index, TextPreprocessor
 
@@ -82,7 +81,7 @@ class TestBM25Index:
             "class UserManager: def __init__(self): pass",
             "function processData(data) { return data.map(x => x * 2); }",
             "SELECT * FROM users WHERE age > 18",
-            "def find_user(user_id): return database.get(user_id)"
+            "def find_user(user_id): return database.get(user_id)",
         ]
         self.doc_ids = ["doc1", "doc2", "doc3", "doc4", "doc5"]
 
@@ -167,7 +166,7 @@ class TestBM25Index:
         # Index documents
         metadata = {
             "doc1": {"type": "function", "language": "python"},
-            "doc2": {"type": "class", "language": "python"}
+            "doc2": {"type": "class", "language": "python"},
         }
         self.index.index_documents(self.documents, self.doc_ids, metadata)
 
@@ -192,7 +191,7 @@ class TestBM25Index:
         metadata = {
             "doc1": {"type": "function", "language": "python", "lines": 1},
             "doc2": {"type": "class", "language": "python", "lines": 2},
-            "doc3": {"type": "function", "language": "javascript", "lines": 1}
+            "doc3": {"type": "function", "language": "javascript", "lines": 1},
         }
 
         self.index.index_documents(self.documents, self.doc_ids, metadata)
@@ -269,7 +268,7 @@ class TestBM25Index:
         # All searches should return same number of results
         assert len(set(results_list)) <= 2  # Allow some variation
 
-    @patch('search.bm25_index.BM25Okapi', None)
+    @patch("search.bm25_index.BM25Okapi", None)
     def test_missing_dependencies(self):
         """Test handling of missing dependencies."""
         with pytest.raises(ImportError, match="rank-bm25 not found"):
@@ -311,4 +310,5 @@ class TestBM25Index:
     def teardown_method(self):
         """Clean up test fixtures."""
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)

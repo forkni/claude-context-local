@@ -3,17 +3,17 @@ Debug test script for BM25 index population issue.
 
 This script directly tests the HybridSearcher to see if BM25 indices are being populated correctly.
 """
-import os
-import sys
+
 import logging
-from pathlib import Path
-import tempfile
+import os
 import shutil
+import sys
+import tempfile
+from pathlib import Path
 
 # Set up debug logging
 logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 
 # Enable debug mode
@@ -22,6 +22,7 @@ os.environ["MCP_DEBUG"] = "1"
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
+
 
 def test_bm25_population():
     """Test BM25 index population directly."""
@@ -32,9 +33,10 @@ def test_bm25_population():
     print(f"[TEST] Using temporary storage: {temp_dir}")
 
     try:
-        from search.hybrid_searcher import HybridSearcher
-        from embeddings.embedder import EmbeddingResult
         import numpy as np
+
+        from embeddings.embedder import EmbeddingResult
+        from search.hybrid_searcher import HybridSearcher
 
         # Initialize HybridSearcher
         print("[TEST] Initializing HybridSearcher...")
@@ -48,11 +50,11 @@ def test_bm25_population():
                 embedding=np.random.rand(768).astype(np.float32),
                 chunk_id=f"test_chunk_{i}",
                 metadata={
-                    'content': f"Test content {i} with some code function test_{i}() return True",
-                    'file_path': f"test_{i}.py",
-                    'content_preview': f"function test_{i}() code sample",
-                    'raw_content': f"def test_{i}():\n    return True\n"
-                }
+                    "content": f"Test content {i} with some code function test_{i}() return True",
+                    "file_path": f"test_{i}.py",
+                    "content_preview": f"function test_{i}() code sample",
+                    "raw_content": f"def test_{i}():\n    return True\n",
+                },
             )
             test_results.append(result)
 
@@ -61,7 +63,9 @@ def test_bm25_population():
         # Check initial state
         print(f"[TEST] Initial BM25 ready: {not searcher.bm25_index.is_empty}")
         print(f"[TEST] Initial BM25 size: {searcher.bm25_index.size}")
-        print(f"[TEST] Initial dense ready: {searcher.dense_index.index is not None and searcher.dense_index.index.ntotal > 0}")
+        print(
+            f"[TEST] Initial dense ready: {searcher.dense_index.index is not None and searcher.dense_index.index.ntotal > 0}"
+        )
         print(f"[TEST] Initial searcher ready: {searcher.is_ready}")
 
         # Add embeddings
@@ -71,7 +75,9 @@ def test_bm25_population():
         # Check state after adding
         print(f"[TEST] After adding - BM25 ready: {not searcher.bm25_index.is_empty}")
         print(f"[TEST] After adding - BM25 size: {searcher.bm25_index.size}")
-        print(f"[TEST] After adding - dense ready: {searcher.dense_index.index is not None and searcher.dense_index.index.ntotal > 0}")
+        print(
+            f"[TEST] After adding - dense ready: {searcher.dense_index.index is not None and searcher.dense_index.index.ntotal > 0}"
+        )
         print(f"[TEST] After adding - searcher ready: {searcher.is_ready}")
 
         # Save indices
@@ -101,7 +107,9 @@ def test_bm25_population():
                 results = searcher.search("test function", k=3, search_mode="hybrid")
                 print(f"[TEST] Search returned {len(results)} results")
                 for i, result in enumerate(results):
-                    print(f"[TEST] Result {i+1}: {result.chunk_id} (score: {result.score:.4f})")
+                    print(
+                        f"[TEST] Result {i + 1}: {result.chunk_id} (score: {result.score:.4f})"
+                    )
             except Exception as e:
                 print(f"[TEST] Search failed: {e}")
         else:
@@ -112,7 +120,9 @@ def test_bm25_population():
         searcher2 = HybridSearcher(str(temp_dir))
         print(f"[TEST] New searcher - BM25 ready: {not searcher2.bm25_index.is_empty}")
         print(f"[TEST] New searcher - BM25 size: {searcher2.bm25_index.size}")
-        print(f"[TEST] New searcher - dense ready: {searcher2.dense_index.index is not None and searcher2.dense_index.index.ntotal > 0}")
+        print(
+            f"[TEST] New searcher - dense ready: {searcher2.dense_index.index is not None and searcher2.dense_index.index.ntotal > 0}"
+        )
         print(f"[TEST] New searcher ready: {searcher2.is_ready}")
 
         searcher.shutdown()
@@ -125,6 +135,7 @@ def test_bm25_population():
     except Exception as e:
         print(f"[TEST] Test failed with error: {e}")
         import traceback
+
         traceback.print_exc()
         assert False, f"Test failed with error: {e}"
     finally:
@@ -134,6 +145,7 @@ def test_bm25_population():
             print(f"[TEST] Cleaned up temporary directory: {temp_dir}")
         except Exception as e:
             print(f"[TEST] Failed to cleanup {temp_dir}: {e}")
+
 
 if __name__ == "__main__":
     success = test_bm25_population()

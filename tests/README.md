@@ -109,6 +109,7 @@ pytest tests/integration/test_glsl_*
 ## Test Categories
 
 ### Unit Tests
+
 Fast tests that validate individual components in isolation:
 
 - **Search Components**: BM25 indexing, hybrid search, reranking algorithms
@@ -118,6 +119,7 @@ Fast tests that validate individual components in isolation:
 - **MCP Integration**: Server tools, import validation
 
 ### Integration Tests
+
 Comprehensive tests that verify component interactions and full workflows:
 
 - **End-to-End Workflows**: Complete indexing and search flows
@@ -129,10 +131,12 @@ Comprehensive tests that verify component interactions and full workflows:
 ## Test Fixtures and Data
 
 ### fixtures/
+
 - **installation_mocks.py**: Mocks for installation testing
 - **sample_code.py**: Comprehensive sample codebase for testing
 
 ### test_data/
+
 - **python_project/**: Sample Python project with various patterns
 - **multi_language/**: Files in multiple programming languages
 - **glsl_project/**: GLSL shader files for graphics programming tests
@@ -140,7 +144,9 @@ Comprehensive tests that verify component interactions and full workflows:
 ## Configuration
 
 ### conftest.py
+
 Global pytest configuration including:
+
 - Test discovery patterns
 - Fixture definitions
 - Path configuration
@@ -149,14 +155,18 @@ Global pytest configuration including:
 ### Key Test Patterns
 
 #### Mocking Expensive Operations
+
 Tests mock expensive operations for speed:
+
 - EmbeddingGemma model loading
 - FAISS index operations
 - Hugging Face API calls
 - Large file processing
 
 #### Temporary Resources
+
 Tests use temporary directories for:
+
 - Mock project structures
 - Index storage during tests
 - Model cache simulation
@@ -165,6 +175,7 @@ Tests use temporary directories for:
 ## Development Workflow
 
 ### Quick Validation
+
 ```bash
 # Fast unit tests only
 pytest tests/unit/ -q
@@ -174,6 +185,7 @@ pytest tests/unit/test_bm25_index.py -v
 ```
 
 ### Pre-commit Testing
+
 ```bash
 # Full test suite with coverage
 pytest tests/ --cov=. --cov-report=term-missing
@@ -183,6 +195,7 @@ pytest tests/unit/ --cov=. --cov-fail-under=85
 ```
 
 ### Debugging Failed Tests
+
 ```bash
 # Run last failed tests first
 pytest tests/ --lf -v
@@ -194,6 +207,7 @@ pytest tests/ -x --tb=long
 ## Coverage Targets
 
 Target coverage areas:
+
 - **Core search logic**: >90%
 - **MCP server tools**: >85%
 - **Language parsing**: >85%
@@ -201,6 +215,7 @@ Target coverage areas:
 - **Error handling**: >75%
 
 Generate coverage reports:
+
 ```bash
 pytest tests/ --cov=. --cov-report=html
 # View: htmlcov/index.html
@@ -221,17 +236,20 @@ pytest tests/ --cov=. --cov-fail-under=75
 ## Adding New Tests
 
 ### Guidelines
+
 1. **Unit tests**: Test individual functions/classes in `tests/unit/`
 2. **Integration tests**: Test component interactions in `tests/integration/`
 3. **Fixtures**: Add reusable test data to `tests/fixtures/`
 4. **Sample data**: Add test projects to `tests/test_data/`
 
 ### Test Naming Convention
+
 - Test files: `test_<component>.py`
 - Test classes: `Test<ComponentName>`
 - Test methods: `test_<specific_behavior>`
 
 ### Example Test Structure
+
 ```python
 class TestNewComponent:
     """Test cases for NewComponent."""
@@ -252,12 +270,14 @@ class TestNewComponent:
 ## Test Environment
 
 ### Requirements
+
 - Python 3.11+
 - pytest
 - pytest-cov (for coverage)
 - All project dependencies in requirements.txt
 
 ### Virtual Environment Setup
+
 ```bash
 # Create and activate virtual environment
 python -m venv .venv
@@ -272,12 +292,14 @@ pip install pytest pytest-cov
 ## Troubleshooting
 
 ### Common Issues
+
 - **Import errors**: Ensure project root is in PYTHONPATH
 - **CUDA tests failing**: Install appropriate PyTorch version for your system
 - **Slow tests**: Use `-x` flag to stop on first failure for debugging
 - **Permission errors**: Check file permissions on test_data files
 
 ### Performance Tips
+
 - Run unit tests first for quick feedback
 - Use `-k` to run specific test patterns
 - Mock expensive operations in unit tests

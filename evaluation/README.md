@@ -41,9 +41,6 @@ run_benchmarks.bat
 # Custom project evaluation
 .venv\Scripts\python.exe evaluation/run_evaluation.py custom --project "path/to/project"
 
-# SWE-bench industry benchmark
-.venv\Scripts\python.exe evaluation/run_evaluation.py swe-bench --max-instances 10
-
 # GPU vs CPU comparison
 .venv\Scripts\python.exe evaluation/run_evaluation.py token-efficiency --gpu
 .venv\Scripts\python.exe evaluation/run_evaluation.py token-efficiency --cpu
@@ -82,25 +79,18 @@ run_benchmarks.bat
 - GPU vs CPU performance benchmarking
 - 98.6% token reduction validation
 
-#### 4. SWE-bench Integration (`swe_bench_evaluator.py`)
-
-- SWE-bench dataset loading and preprocessing
-- Repository cloning and management
-- Comparative evaluation runner
-- Custom subset creation tools
-
-#### 5. Evaluation Runner (`run_evaluation.py`)
+#### 4. Evaluation Runner (`run_evaluation.py`)
 
 - **ENHANCED**: Command-line interface with GPU auto-detection
 - Multiple evaluation modes:
   - `token-efficiency`: Token savings evaluation (NEW)
+  - `method-comparison`: Compare all search methods (hybrid, BM25, semantic)
   - `custom`: Project-specific search quality
-  - `swe-bench`: Industry benchmark comparison
   - `create-sample`: Generate test datasets
 - Automatic hardware detection and optimization
 - Logging and progress tracking
 
-#### 6. Parameter Optimizer (`parameter_optimizer.py`)
+#### 5. Parameter Optimizer (`parameter_optimizer.py`)
 
 - **NEW**: Auto-tune hybrid search parameters for your codebase
 - Tests multiple weight configurations (BM25/Dense)
@@ -177,15 +167,15 @@ python evaluation/run_evaluation.py custom \
     --max-instances 5
 ```
 
-### 2. SWE-bench Evaluation
+### 2. Method Comparison
 
-Run comprehensive SWE-bench evaluation:
+Compare all search methods on your project:
 
 ```bash
-# Run comparison evaluation (requires internet for dataset download)
-python evaluation/run_evaluation.py swe-bench \
-    --output-dir swe_bench_results \
-    --methods hybrid bm25 dense \
+# Compare hybrid, BM25, and semantic search methods
+python evaluation/run_evaluation.py method-comparison \
+    --project "." \
+    --output-dir method_comparison_results \
     --max-instances 10 \
     --k 10
 ```
@@ -397,20 +387,7 @@ class CustomEvaluator(BaseEvaluator):
 
 ### 2. Dataset Filtering
 
-Create focused evaluation subsets:
-
-```python
-loader = SWEBenchDatasetLoader()
-subset = loader.create_custom_subset(
-    instances,
-    "filtered_dataset.json",
-    criteria={
-        'max_files_modified': 2,
-        'difficulty': ['easy', 'medium'],
-        'languages': ['python', 'javascript']
-    }
-)
-```
+Create focused evaluation datasets tailored to your project's search patterns and code structure for testing relevance and accuracy.
 
 ### 3. Performance Profiling
 

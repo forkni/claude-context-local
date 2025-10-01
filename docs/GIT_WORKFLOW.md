@@ -61,6 +61,22 @@ Automatically blocks commits containing local-only files:
 - `CLAUDE.md.backup` and `MEMORY.md.backup`
 - Safe restoration after fresh clones
 
+### 4. Public Documentation Policy
+
+The following documentation files are tracked in Git (9 files total):
+
+- **docs/BENCHMARKS.md** - Benchmark methodology and results
+- **docs/claude_code_config.md** - Claude Code configuration guide
+- **docs/GIT_WORKFLOW.md** - This workflow documentation
+- **docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md** - Search system configuration
+- **docs/INSTALLATION_GUIDE.md** - Complete installation process
+- **docs/MCP_TOOLS_REFERENCE.md** - Modular MCP tools reference
+- **docs/MODEL_MIGRATION_GUIDE.md** - Model switching guide
+- **docs/PYTORCH_UPGRADE_GUIDE.md** - PyTorch upgrade instructions
+- **docs/TESTING_GUIDE.md** - Test suite documentation
+
+**All other docs/ files remain local-only** and are automatically excluded by .gitignore rules and blocked by the pre-commit hook.
+
 ## 🚀 Workflow Scripts
 
 ### commit.bat - Safe Committing

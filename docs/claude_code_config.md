@@ -62,7 +62,6 @@ Once configured, these tools will be available in Claude Code:
 ### Utility Tools
 
 - `clear_index()` - Clear current project index
-- `index_test_project()` - Index built-in test project for demo
 
 ## General Development Workflow
 

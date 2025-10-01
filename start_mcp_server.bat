@@ -45,14 +45,15 @@ if "%~1"=="" (
     echo   2. Installation ^& Setup
     echo   3. Search Configuration
     echo   4. Performance Tools
-    echo   5. Advanced Options
-    echo   6. Help ^& Documentation
-    echo   7. Exit
+    echo   5. Project Management
+    echo   6. Advanced Options
+    echo   7. Help ^& Documentation
+    echo   8. Exit
     echo.
 
     REM Ensure we have a valid choice
     set choice=
-    set /p choice="Select option (1-7): "
+    set /p choice="Select option (1-8): "
 
     REM Handle empty input or Ctrl+C gracefully
     if not defined choice (
@@ -68,11 +69,12 @@ if "%~1"=="" (
     if "!choice!"=="2" goto installation_menu
     if "!choice!"=="3" goto search_config_menu
     if "!choice!"=="4" goto performance_menu
-    if "!choice!"=="5" goto advanced_menu
-    if "!choice!"=="6" goto show_help
-    if "!choice!"=="7" goto exit_cleanly
+    if "!choice!"=="5" goto project_management_menu
+    if "!choice!"=="6" goto advanced_menu
+    if "!choice!"=="7" goto show_help
+    if "!choice!"=="8" goto exit_cleanly
 
-    echo [ERROR] Invalid choice: "%choice%". Please select 1-7.
+    echo [ERROR] Invalid choice: "%choice%". Please select 1-8.
     echo.
     echo Press any key to try again...
     pause >nul
@@ -120,6 +122,26 @@ echo.
 echo [INFO] Starting in Debug Mode...
 call scripts\batch\start_mcp_debug.bat
 goto end
+
+:run_integration_tests
+echo.
+echo === Run Integration Tests ===
+echo.
+echo [INFO] Running integration tests for MCP server and search functionality...
+echo [INFO] This will test core imports, search functionality, and MCP integration.
+echo.
+.\.venv\Scripts\python.exe -m pytest tests/integration/ -v --tb=short
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo [WARNING] Some tests failed. Check output above for details.
+    echo [INFO] This is normal during active development
+) else (
+    echo.
+    echo [OK] All integration tests passed!
+)
+echo.
+pause
+goto menu_restart
 
 :installation_menu
 echo.
@@ -220,20 +242,48 @@ pause
 cls
 goto performance_menu
 
+:project_management_menu
+echo.
+echo === Project Management ===
+echo.
+echo   1. Index New Project
+echo   2. List Indexed Projects
+echo   3. Clear Project Indexes
+echo   4. View Storage Statistics
+echo   5. Back to Main Menu
+echo.
+set /p pm_choice="Select option (1-5): "
+
+REM Handle empty input gracefully
+if not defined pm_choice (
+    cls
+    goto project_management_menu
+)
+if "!pm_choice!"=="" (
+    cls
+    goto project_management_menu
+)
+
+if "!pm_choice!"=="1" goto index_new_project
+if "!pm_choice!"=="2" goto list_projects_menu
+if "!pm_choice!"=="3" goto clear_project_indexes
+if "!pm_choice!"=="4" goto storage_stats
+if "!pm_choice!"=="5" goto menu_restart
+
+echo [ERROR] Invalid choice. Please select 1-5.
+pause
+cls
+goto project_management_menu
+
 :advanced_menu
 echo.
 echo === Advanced Options ===
 echo.
-echo   1. Simple MCP Server Start
-echo   2. Debug MCP Server
-echo   3. Index Project Tool
-echo   4. Search Code Tool
-echo   5. Install PyTorch CUDA Support
-echo   6. Force CPU-Only Mode
-echo   7. Test Installation
-echo   8. Back to Main Menu
+echo   1. Start Server in Debug Mode
+echo   2. Run Integration Tests
+echo   3. Back to Main Menu
 echo.
-set /p adv_choice="Select option (1-8): "
+set /p adv_choice="Select option (1-3): "
 
 REM Handle empty input gracefully
 if not defined adv_choice (
@@ -245,39 +295,143 @@ if "!adv_choice!"=="" (
     goto advanced_menu
 )
 
-if "!adv_choice!"=="1" goto simple_start
-if "!adv_choice!"=="2" goto debug_mode
-if "!adv_choice!"=="3" goto td_index
-if "!adv_choice!"=="4" goto td_search
-if "!adv_choice!"=="5" goto install_cuda
-if "!adv_choice!"=="6" goto force_cpu_mode
-if "!adv_choice!"=="7" goto test_install
-if "!adv_choice!"=="8" goto menu_restart
+if "!adv_choice!"=="1" goto debug_mode
+if "!adv_choice!"=="2" goto run_integration_tests
+if "!adv_choice!"=="3" goto menu_restart
 
-echo [ERROR] Invalid choice. Please select 1-8.
+echo [ERROR] Invalid choice. Please select 1-3.
 pause
 cls
 goto advanced_menu
 
-:simple_start
-echo.
-echo [INFO] Starting Simple MCP Server...
-call scripts\batch\start_mcp_simple.bat
-goto end
-
-:td_index
+REM Project Management Functions
+:index_new_project
 echo.
 echo [INFO] Starting Project Indexer...
+echo.
 .\.venv\Scripts\python.exe tools\index_project.py
 pause
-goto end
+goto menu_restart
 
-:td_search
+:list_projects_menu
 echo.
-echo [INFO] Starting Code Search Helper...
-.\.venv\Scripts\python.exe tools\search_helper.py
+echo === Indexed Projects ===
+echo.
+.\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; from pathlib import Path; import json; storage = get_storage_dir(); projects = list((storage / 'projects').glob('*/project_info.json')); print(f'Found {len(projects)} indexed projects:\n') if projects else print('No indexed projects found.\n'); [print(f'  {i+1}. {json.load(open(p))[\"project_name\"]}') or print(f'     Path: {json.load(open(p))[\"project_path\"]}') or print(f'     Hash: {p.parent.name}\n') for i, p in enumerate(projects)]" 2>nul
+if errorlevel 1 (
+    echo [ERROR] Could not retrieve project list
+    echo [INFO] Storage directory may not exist yet
+)
+echo.
 pause
-goto end
+goto project_management_menu
+
+:clear_project_indexes
+echo.
+echo === Clear Project Indexes ===
+echo.
+
+REM Get list of projects and store in temp file
+set TEMP_PROJECTS=%TEMP%\mcp_projects.txt
+.\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; from pathlib import Path; import json; storage = get_storage_dir(); projects = list((storage / 'projects').glob('*/project_info.json')); [print(f'{i+1}|{json.load(open(p))[\"project_name\"]}|{json.load(open(p))[\"project_path\"]}|{p.parent.name}') for i, p in enumerate(projects)]" > "%TEMP_PROJECTS%" 2>nul
+
+REM Check if any projects exist
+findstr /R "." "%TEMP_PROJECTS%" >nul 2>&1
+if errorlevel 1 (
+    echo [INFO] No indexed projects found.
+    del "%TEMP_PROJECTS%" 2>nul
+    echo.
+    pause
+    goto project_management_menu
+)
+
+REM Display projects
+echo Select project to clear index:
+echo.
+for /f "tokens=1,2,3 delims=|" %%a in (%TEMP_PROJECTS%) do (
+    echo   %%a. %%b
+    echo      Path: %%c
+    echo.
+)
+echo   0. Cancel
+
+echo.
+set /p project_choice="Select project number to clear (0 to cancel): "
+
+REM Handle cancel or empty input
+if not defined project_choice (
+    del "%TEMP_PROJECTS%" 2>nul
+    goto project_management_menu
+)
+if "%project_choice%"=="" (
+    del "%TEMP_PROJECTS%" 2>nul
+    goto project_management_menu
+)
+if "%project_choice%"=="0" (
+    del "%TEMP_PROJECTS%" 2>nul
+    goto project_management_menu
+)
+
+REM Find the selected project
+set PROJECT_HASH=
+set PROJECT_NAME=
+set PROJECT_PATH=
+for /f "tokens=1,2,3,4 delims=|" %%a in (%TEMP_PROJECTS%) do (
+    if "%%a"=="%project_choice%" (
+        set PROJECT_NAME=%%b
+        set PROJECT_PATH=%%c
+        set PROJECT_HASH=%%d
+    )
+)
+
+REM Clean up temp file
+del "%TEMP_PROJECTS%" 2>nul
+
+REM Validate selection
+if not defined PROJECT_HASH (
+    echo [ERROR] Invalid selection
+    pause
+    goto project_management_menu
+)
+
+REM Confirm deletion
+echo.
+echo [WARNING] You are about to delete the index for:
+echo   Project: %PROJECT_NAME%
+echo   Hash: %PROJECT_HASH%
+echo.
+set /p confirm_delete="Are you sure? (y/N): "
+
+if not defined confirm_delete goto project_management_menu
+if "%confirm_delete%"=="" goto project_management_menu
+if /i not "%confirm_delete%"=="y" goto project_management_menu
+
+REM Delete the specific project
+echo.
+echo [INFO] Clearing index for %PROJECT_NAME%...
+.\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; from merkle.snapshot_manager import SnapshotManager; import shutil; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; shutil.rmtree(project_dir) if project_dir.exists() else None; sm = SnapshotManager(); sm.delete_snapshot('%PROJECT_PATH%'); print('[OK] Index and snapshot cleared successfully')" 2>nul
+if errorlevel 1 (
+    echo [ERROR] Failed to clear index
+) else (
+    echo [OK] Project index cleared: %PROJECT_NAME%
+    echo [INFO] Merkle snapshot also cleared
+    echo [INFO] Re-index via: Project Management ^> Index New Project
+)
+echo.
+pause
+goto project_management_menu
+
+:storage_stats
+echo.
+echo === Storage Statistics ===
+echo.
+.\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; from pathlib import Path; import os; storage = get_storage_dir(); total_size = sum(f.stat().st_size for f in storage.rglob('*') if f.is_file()) // (1024**2); project_count = len(list((storage / 'projects').glob('*/project_info.json'))); index_count = len(list(storage.glob('projects/*/index/code.index'))); print(f'Storage Location: {storage}'); print(f'Total Size: {total_size} MB'); print(f'Indexed Projects: {project_count}'); print(f'Active Indexes: {index_count}'); models_size = sum(f.stat().st_size for f in (storage / 'models').rglob('*') if f.is_file()) // (1024**2) if (storage / 'models').exists() else 0; print(f'Model Cache: {models_size} MB')" 2>nul
+if errorlevel 1 (
+    echo [ERROR] Could not retrieve storage statistics
+)
+echo.
+pause
+goto project_management_menu
 
 REM Installation & Setup Functions
 :run_installer
@@ -417,9 +571,9 @@ if defined SELECTED_MODEL (
         echo.
         set /p reindex_now="Clear old indexes now? (y/N): "
         if /i "!reindex_now!"=="y" (
-            echo [INFO] Clearing old indexes...
-            .\.venv\Scripts\python.exe -c "from pathlib import Path; import shutil; storage = Path.home() / '.claude-context-mcp' / 'storage'; cleared = 0; [shutil.rmtree(p.parent) if p.exists() else None or (cleared := cleared + 1) for p in storage.glob('*/faiss_index/code.index') if p.exists()]; print(f'[OK] Cleared indexes for {cleared} projects')" 2>nul
-            echo [OK] Indexes cleared. Re-index projects via: /index_directory "path"
+            echo [INFO] Clearing old indexes and Merkle snapshots...
+            .\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; from merkle.snapshot_manager import SnapshotManager; import shutil; import json; storage = get_storage_dir(); sm = SnapshotManager(); cleared = 0; projects = list((storage / 'projects').glob('*/project_info.json')); [sm.delete_snapshot(json.load(open(p))['project_path']) or shutil.rmtree(p.parent) if p.exists() and (cleared := cleared + 1) else None for p in projects]; print(f'[OK] Cleared indexes and snapshots for {cleared} projects')" 2>nul
+            echo [OK] Indexes and Merkle snapshots cleared. Re-index projects via: /index_directory "path"
         )
     )
 ) else (

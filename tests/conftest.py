@@ -83,6 +83,7 @@ def reset_global_state():
     # Reset config manager cache to ensure clean state
     try:
         from search.config import get_config_manager
+
         config_manager = get_config_manager()
         config_manager._config = None
     except ImportError:

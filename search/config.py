@@ -3,9 +3,8 @@
 import json
 import logging
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, Optional
-
 
 # Model registry with specifications
 MODEL_REGISTRY = {
@@ -100,7 +99,7 @@ class SearchConfigManager:
         candidates = [
             "search_config.json",
             ".search_config.json",
-            os.path.expanduser("~/.claude-context-mcp/search_config.json"),
+            os.path.expanduser("~/.claude_code_search/search_config.json"),
         ]
 
         for candidate in candidates:
@@ -188,8 +187,10 @@ class SearchConfigManager:
             if model_config:
                 config.model_dimension = model_config["dimension"]
 
-            # Create directory if needed
-            os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
+            # Create directory if needed (only if not current directory)
+            config_dir = os.path.dirname(self.config_file)
+            if config_dir:  # Only create if not empty (not current directory)
+                os.makedirs(config_dir, exist_ok=True)
 
             # Save to file
             with open(self.config_file, "w") as f:

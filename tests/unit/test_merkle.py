@@ -276,6 +276,34 @@ class TestSnapshotManager(TestCase):
 
         assert self.manager.has_snapshot(str(self.test_path))
 
+    def test_delete_snapshot(self):
+        """Test deleting snapshots."""
+        # Create and save snapshot
+        dag = MerkleDAG(str(self.test_path))
+        dag.build()
+        self.manager.save_snapshot(dag, {"test": "metadata"})
+
+        # Verify snapshot exists
+        assert self.manager.has_snapshot(str(self.test_path))
+        snapshot_path = self.manager.get_snapshot_path(str(self.test_path))
+        metadata_path = self.manager.get_metadata_path(str(self.test_path))
+        assert snapshot_path.exists()
+        assert metadata_path.exists()
+
+        # Delete snapshot
+        self.manager.delete_snapshot(str(self.test_path))
+
+        # Verify snapshot is deleted
+        assert not self.manager.has_snapshot(str(self.test_path))
+        assert not snapshot_path.exists()
+        assert not metadata_path.exists()
+
+    def test_delete_nonexistent_snapshot(self):
+        """Test deleting non-existent snapshot doesn't raise error."""
+        # Should not raise exception
+        self.manager.delete_snapshot(str(self.test_path))
+        assert not self.manager.has_snapshot(str(self.test_path))
+
     def test_list_snapshots(self):
         """Test listing all snapshots."""
         # Create multiple project snapshots

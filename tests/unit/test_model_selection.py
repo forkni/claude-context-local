@@ -1,18 +1,16 @@
 """Unit tests for multi-model support and model selection."""
 
-import pytest
-from pathlib import Path
 import tempfile
-import json
+from pathlib import Path
+
+import pytest
 
 from embeddings.embedder import CodeEmbedder
 from search.config import (
     SearchConfig,
     SearchConfigManager,
-    get_search_config,
-    get_model_registry,
     get_model_config,
-    MODEL_REGISTRY,
+    get_model_registry,
 )
 
 
@@ -89,10 +87,16 @@ class TestSearchConfigManager:
 
     def test_config_manager_default_model(self):
         """Test that config manager loads default model."""
-        mgr = SearchConfigManager()
-        config = mgr.load_config()
-        # Should default to Gemma
-        assert "gemma" in config.embedding_model_name.lower()
+        import tempfile
+        from pathlib import Path
+
+        # Use temp config file to avoid loading user's real config
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = Path(tmpdir) / "test_config.json"
+            mgr = SearchConfigManager(config_file=str(config_file))
+            config = mgr.load_config()
+            # Should default to Gemma when no config exists
+            assert "gemma" in config.embedding_model_name.lower()
 
     def test_config_manager_save_and_load(self):
         """Test saving and loading model configuration."""

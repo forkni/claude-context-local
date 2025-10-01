@@ -10,8 +10,8 @@ import os
 import sys
 from pathlib import Path
 
-# Add parent directory to path for module imports
-sys.path.insert(0, str(Path(__file__).parent))
+# Add project root directory to path for module imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from mcp_server.server import index_directory
 
@@ -110,7 +110,7 @@ def index_project(project_path: str, include_subfolders: bool = True) -> dict:
         print(f"No specific project file found in {project_path}")
         print("Indexing as a general code directory.")
 
-    # Count code files
+    # Count code files (excluding common build/dependency directories)
     code_extensions = [
         "*.py",
         "*.js",
@@ -124,11 +124,25 @@ def index_project(project_path: str, include_subfolders: bool = True) -> dict:
         "*.cpp",
         "*.cs",
     ]
+
+    # Import ignored directories from chunker
+    from chunking.multi_language_chunker import MultiLanguageChunker
+
+    ignored_dirs = MultiLanguageChunker.DEFAULT_IGNORED_DIRS
+
     code_files = []
 
     for ext in code_extensions:
         if include_subfolders:
-            code_files.extend(list(project_path.rglob(ext)))
+            all_files = list(project_path.rglob(ext))
+            # Filter out files in ignored directories (.venv, node_modules, etc.)
+            code_files.extend(
+                [
+                    f
+                    for f in all_files
+                    if not any(part in ignored_dirs for part in f.parts)
+                ]
+            )
         else:
             code_files.extend(list(project_path.glob(ext)))
 

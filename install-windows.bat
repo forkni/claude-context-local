@@ -117,34 +117,25 @@ echo === Manual CUDA Version Selection ===
 echo.
 echo Your system has CUDA !CUDA_VERSION! installed
 echo.
-echo Available PyTorch CUDA Versions:
-echo [1] CUDA 12.1 ^(Recommended for CUDA 12.x^)
-echo [2] CUDA 11.8 ^(For CUDA 11.8.x^)
-echo [3] CUDA 11.7 ^(For CUDA 11.7.x^)
-echo [4] CPU Only ^(No CUDA^)
-echo [5] Back to main menu
+echo Available PyTorch CUDA Versions ^(PyTorch 2.6.0+^):
+echo [1] CUDA 11.8 ^(Recommended for CUDA 11.8+ and 12.x^)
+echo [2] CPU Only ^(No CUDA^)
+echo [3] Back to main menu
 echo.
-set /p cuda_choice="Select CUDA version (1-5): "
+echo Note: PyTorch 2.6.0 only supports CUDA 11.8 build
+echo       This build is fully compatible with CUDA 12.x systems
+echo.
+set /p cuda_choice="Select option (1-3): "
 
 if "!cuda_choice!"=="1" (
-    set PYTORCH_INDEX=https://download.pytorch.org/whl/cu121
-    set SELECTED_CUDA=12.1
-    goto manual_cuda_install
-)
-if "!cuda_choice!"=="2" (
     set PYTORCH_INDEX=https://download.pytorch.org/whl/cu118
     set SELECTED_CUDA=11.8
     goto manual_cuda_install
 )
-if "!cuda_choice!"=="3" (
-    set PYTORCH_INDEX=https://download.pytorch.org/whl/cu117
-    set SELECTED_CUDA=11.7
-    goto manual_cuda_install
-)
-if "!cuda_choice!"=="4" goto cpu_install
-if "!cuda_choice!"=="5" goto menu
+if "!cuda_choice!"=="2" goto cpu_install
+if "!cuda_choice!"=="3" goto main_menu
 
-echo [ERROR] Invalid choice. Please select 1-5.
+echo [ERROR] Invalid choice. Please select 1-3.
 pause
 goto manual_cuda
 
@@ -236,31 +227,28 @@ for /f "tokens=2 delims=." %%i in ("!CUDA_FULL!") do set CUDA_MINOR=%%i
 
 echo [OK] CUDA !CUDA_FULL! detected with !GPU_NAME!
 
-REM Map CUDA version to PyTorch index
+REM Map CUDA version to PyTorch index (PyTorch 2.6.0+ compatibility)
 if "!CUDA_MAJOR!"=="12" (
-    if !CUDA_MINOR! GEQ 0 if !CUDA_MINOR! LEQ 4 (
-        set CUDA_VERSION=12.1
-        set PYTORCH_INDEX=https://download.pytorch.org/whl/cu121
-        set CUDA_AVAILABLE=1
-    ) else (
-        echo [INFO] CUDA 12.!CUDA_MINOR! detected. Using PyTorch CUDA 12.1 build ^(fully compatible with CUDA 12.x^)
-        set CUDA_VERSION=12.1
-        set PYTORCH_INDEX=https://download.pytorch.org/whl/cu121
-        set CUDA_AVAILABLE=1
-    )
+    REM PyTorch 2.6.0 doesn't have cu121, use cu118 (fully backward compatible)
+    echo [INFO] CUDA 12.!CUDA_MINOR! detected. Using PyTorch CUDA 11.8 build ^(compatible with CUDA 12.x^)
+    set CUDA_VERSION=11.8
+    set PYTORCH_INDEX=https://download.pytorch.org/whl/cu118
+    set CUDA_AVAILABLE=1
 ) else if "!CUDA_MAJOR!"=="11" (
     if "!CUDA_MINOR!"=="8" (
         set CUDA_VERSION=11.8
         set PYTORCH_INDEX=https://download.pytorch.org/whl/cu118
         set CUDA_AVAILABLE=1
     ) else if "!CUDA_MINOR!"=="7" (
-        set CUDA_VERSION=11.7
-        set PYTORCH_INDEX=https://download.pytorch.org/whl/cu117
+        echo [WARNING] CUDA 11.7 detected. PyTorch 2.6.0 requires 11.8+
+        echo [INFO] Using CUDA 11.8 build for compatibility
+        set CUDA_VERSION=11.8
+        set PYTORCH_INDEX=https://download.pytorch.org/whl/cu118
         set CUDA_AVAILABLE=1
     ) else (
         echo [WARNING] CUDA 11.!CUDA_MINOR! detected. Limited PyTorch support.
-        echo [INFO] Will offer manual version selection.
-        set CUDA_VERSION=11.!CUDA_MINOR!
+        echo [INFO] Using CUDA 11.8 build for compatibility
+        set CUDA_VERSION=11.8
         set PYTORCH_INDEX=https://download.pytorch.org/whl/cu118
         set CUDA_AVAILABLE=1
     )

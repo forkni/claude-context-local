@@ -1,12 +1,8 @@
 """Tests for incremental indexing functionality."""
 
-import json
 import tempfile
-import time
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
-
-import pytest
+from unittest.mock import Mock, patch
 
 from search.incremental_indexer import IncrementalIndexer, IncrementalIndexResult
 
@@ -23,7 +19,7 @@ class TestIncrementalIndexResult:
             chunks_added=50,
             chunks_removed=20,
             time_taken=1.5,
-            success=True
+            success=True,
         )
 
         assert result.files_added == 5
@@ -45,7 +41,7 @@ class TestIncrementalIndexResult:
             chunks_removed=20,
             time_taken=1.5,
             success=True,
-            error="Test error"
+            error="Test error",
         )
 
         result_dict = result.to_dict()
@@ -58,7 +54,7 @@ class TestIncrementalIndexResult:
             "chunks_removed": 20,
             "time_taken": 1.5,
             "success": True,
-            "error": "Test error"
+            "error": "Test error",
         }
 
         assert result_dict == expected
@@ -73,7 +69,7 @@ class TestIncrementalIndexResult:
             chunks_removed=0,
             time_taken=0.1,
             success=False,
-            error="Test error message"
+            error="Test error message",
         )
 
         assert result.success is False
@@ -93,7 +89,7 @@ class TestIncrementalIndexer:
         self.test_files = {
             "main.py": "def main(): print('Hello, World!')",
             "utils.py": "def utility_function(): return True",
-            "config.py": "CONFIG = {'debug': True}"
+            "config.py": "CONFIG = {'debug': True}",
         }
 
         for filename, content in self.test_files.items():
@@ -111,7 +107,7 @@ class TestIncrementalIndexer:
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
-            snapshot_manager=self.mock_snapshot_manager
+            snapshot_manager=self.mock_snapshot_manager,
         )
 
         assert indexer.indexer == self.mock_indexer
@@ -122,11 +118,14 @@ class TestIncrementalIndexer:
 
     def test_initialization_with_defaults(self):
         """Test initialization with default components."""
-        with patch('search.incremental_indexer.Indexer') as mock_indexer_class, \
-             patch('search.incremental_indexer.CodeEmbedder') as mock_embedder_class, \
-             patch('search.incremental_indexer.MultiLanguageChunker') as mock_chunker_class, \
-             patch('search.incremental_indexer.SnapshotManager') as mock_snapshot_class:
-
+        with (
+            patch("search.incremental_indexer.Indexer") as mock_indexer_class,
+            patch("search.incremental_indexer.CodeEmbedder") as mock_embedder_class,
+            patch(
+                "search.incremental_indexer.MultiLanguageChunker"
+            ) as mock_chunker_class,
+            patch("search.incremental_indexer.SnapshotManager") as mock_snapshot_class,
+        ):
             indexer = IncrementalIndexer()
 
             mock_indexer_class.assert_called_once()
@@ -140,7 +139,7 @@ class TestIncrementalIndexer:
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
-            snapshot_manager=self.mock_snapshot_manager
+            snapshot_manager=self.mock_snapshot_manager,
         )
 
         # Mock change detector
@@ -164,14 +163,14 @@ class TestIncrementalIndexer:
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
-            snapshot_manager=self.mock_snapshot_manager
+            snapshot_manager=self.mock_snapshot_manager,
         )
 
         # Mock no snapshot exists
         self.mock_snapshot_manager.has_snapshot.return_value = False
 
         # Mock components for full index
-        with patch('search.incremental_indexer.MerkleDAG') as mock_dag_class:
+        with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["main.py", "utils.py", "config.py"]
             mock_dag_class.return_value = mock_dag
@@ -191,7 +190,9 @@ class TestIncrementalIndexer:
 
             assert result.success is True
             assert result.files_added == 3
-            assert result.chunks_added == 1  # embed_chunks returns 1 result for all chunks
+            assert (
+                result.chunks_added == 1
+            )  # embed_chunks returns 1 result for all chunks
             assert result.files_removed == 0
             assert result.files_modified == 0
 
@@ -207,7 +208,7 @@ class TestIncrementalIndexer:
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
-            snapshot_manager=self.mock_snapshot_manager
+            snapshot_manager=self.mock_snapshot_manager,
         )
 
         # Mock snapshot exists
@@ -236,7 +237,7 @@ class TestIncrementalIndexer:
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
-            snapshot_manager=self.mock_snapshot_manager
+            snapshot_manager=self.mock_snapshot_manager,
         )
 
         # Mock snapshot exists
@@ -271,7 +272,10 @@ class TestIncrementalIndexer:
 
         mock_embedding_result = Mock()
         mock_embedding_result.metadata = {}
-        self.mock_embedder.embed_chunks.return_value = [mock_embedding_result, mock_embedding_result]
+        self.mock_embedder.embed_chunks.return_value = [
+            mock_embedding_result,
+            mock_embedding_result,
+        ]
 
         result = indexer.incremental_index(str(self.project_path), "test_project")
 
@@ -288,14 +292,14 @@ class TestIncrementalIndexer:
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
-            snapshot_manager=self.mock_snapshot_manager
+            snapshot_manager=self.mock_snapshot_manager,
         )
 
         # Mock no snapshot exists
         self.mock_snapshot_manager.has_snapshot.return_value = False
 
         # Mock error during DAG building
-        with patch('search.incremental_indexer.MerkleDAG') as mock_dag_class:
+        with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
             mock_dag_class.side_effect = Exception("DAG build failed")
 
             result = indexer.incremental_index(str(self.project_path), "test_project")
@@ -310,7 +314,7 @@ class TestIncrementalIndexer:
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
-            snapshot_manager=self.mock_snapshot_manager
+            snapshot_manager=self.mock_snapshot_manager,
         )
 
         # Mock snapshot exists
@@ -332,14 +336,11 @@ class TestIncrementalIndexer:
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
-            snapshot_manager=self.mock_snapshot_manager
+            snapshot_manager=self.mock_snapshot_manager,
         )
 
         # Mock metadata
-        mock_metadata = {
-            "project_name": "test_project",
-            "chunks_indexed": 100
-        }
+        mock_metadata = {"project_name": "test_project", "chunks_indexed": 100}
         self.mock_snapshot_manager.load_metadata.return_value = mock_metadata
         self.mock_snapshot_manager.get_snapshot_age.return_value = 300  # 5 minutes
         self.mock_indexer.get_index_size.return_value = 95
@@ -357,7 +358,7 @@ class TestIncrementalIndexer:
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
-            snapshot_manager=self.mock_snapshot_manager
+            snapshot_manager=self.mock_snapshot_manager,
         )
 
         self.mock_snapshot_manager.load_metadata.return_value = None
@@ -371,7 +372,7 @@ class TestIncrementalIndexer:
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
-            snapshot_manager=self.mock_snapshot_manager
+            snapshot_manager=self.mock_snapshot_manager,
         )
 
         self.mock_snapshot_manager.has_snapshot.return_value = False
@@ -384,7 +385,7 @@ class TestIncrementalIndexer:
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
-            snapshot_manager=self.mock_snapshot_manager
+            snapshot_manager=self.mock_snapshot_manager,
         )
 
         self.mock_snapshot_manager.has_snapshot.return_value = True
@@ -398,7 +399,7 @@ class TestIncrementalIndexer:
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
-            snapshot_manager=self.mock_snapshot_manager
+            snapshot_manager=self.mock_snapshot_manager,
         )
 
         self.mock_snapshot_manager.has_snapshot.return_value = True
@@ -413,7 +414,7 @@ class TestIncrementalIndexer:
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
-            snapshot_manager=self.mock_snapshot_manager
+            snapshot_manager=self.mock_snapshot_manager,
         )
 
         self.mock_snapshot_manager.has_snapshot.return_value = True
@@ -428,7 +429,7 @@ class TestIncrementalIndexer:
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
-            snapshot_manager=self.mock_snapshot_manager
+            snapshot_manager=self.mock_snapshot_manager,
         )
 
         # Mock needs reindex
@@ -436,9 +437,13 @@ class TestIncrementalIndexer:
 
         # Mock successful incremental index
         mock_result = IncrementalIndexResult(
-            files_added=5, files_removed=0, files_modified=0,
-            chunks_added=50, chunks_removed=0,
-            time_taken=1.0, success=True
+            files_added=5,
+            files_removed=0,
+            files_modified=0,
+            chunks_added=50,
+            chunks_removed=0,
+            time_taken=1.0,
+            success=True,
         )
         indexer.incremental_index = Mock(return_value=mock_result)
 
@@ -454,7 +459,7 @@ class TestIncrementalIndexer:
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
-            snapshot_manager=self.mock_snapshot_manager
+            snapshot_manager=self.mock_snapshot_manager,
         )
 
         # Mock no reindex needed
@@ -473,11 +478,11 @@ class TestIncrementalIndexer:
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
-            snapshot_manager=self.mock_snapshot_manager
+            snapshot_manager=self.mock_snapshot_manager,
         )
 
         # Mock components for full index
-        with patch('search.incremental_indexer.MerkleDAG') as mock_dag_class:
+        with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["main.py"]
             mock_dag_class.return_value = mock_dag
@@ -504,13 +509,13 @@ class TestIncrementalIndexer:
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
-            snapshot_manager=self.mock_snapshot_manager
+            snapshot_manager=self.mock_snapshot_manager,
         )
 
         # Mock no snapshot exists (triggers full index)
         self.mock_snapshot_manager.has_snapshot.return_value = False
 
-        with patch('search.incremental_indexer.MerkleDAG') as mock_dag_class:
+        with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["error_file.py", "good_file.py"]
             mock_dag_class.return_value = mock_dag
@@ -543,13 +548,13 @@ class TestIncrementalIndexer:
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
-            snapshot_manager=self.mock_snapshot_manager
+            snapshot_manager=self.mock_snapshot_manager,
         )
 
         # Mock no snapshot exists
         self.mock_snapshot_manager.has_snapshot.return_value = False
 
-        with patch('search.incremental_indexer.MerkleDAG') as mock_dag_class:
+        with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["test_file.py"]
             mock_dag_class.return_value = mock_dag
@@ -571,4 +576,5 @@ class TestIncrementalIndexer:
     def teardown_method(self):
         """Clean up test fixtures."""
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)

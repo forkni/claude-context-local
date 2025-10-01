@@ -2,7 +2,8 @@
 """Quick authentication test"""
 
 import sys
-from huggingface_hub import login, whoami, HfFolder
+
+from huggingface_hub import HfFolder, whoami
 
 # Get existing token or skip test
 token = HfFolder.get_token()
@@ -21,7 +22,9 @@ try:
     print("SUCCESS: Authentication successful!")
     print(f"   User: {info['name']}")
     print(f"   Type: {info.get('type', 'unknown')}")
-    print(f"   Token: {'claude-context-local' if 'claude-context-local' in str(info) else 'Valid'}")
+    print(
+        f"   Token: {'claude-context-local' if 'claude-context-local' in str(info) else 'Valid'}"
+    )
 
     print("SUCCESS: Authentication verified!")
 

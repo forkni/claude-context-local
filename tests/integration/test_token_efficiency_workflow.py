@@ -2,13 +2,14 @@
 
 import json
 import tempfile
-import pytest
 from pathlib import Path
 from typing import List
 from unittest.mock import patch
 
-from evaluation.token_efficiency_evaluator import TokenEfficiencyEvaluator
+import pytest
+
 from evaluation.base_evaluator import EvaluationInstance
+from evaluation.token_efficiency_evaluator import TokenEfficiencyEvaluator
 
 
 class TestTokenEfficiencyWorkflow:
@@ -30,7 +31,7 @@ class TestTokenEfficiencyWorkflow:
             output_dir=str(self.output_dir),
             k=5,
             use_gpu=False,
-            max_instances=3  # Limit for testing
+            max_instances=3,  # Limit for testing
         )
 
     def _create_test_project(self):
@@ -480,35 +481,39 @@ def test_authentication_integration(mock_login_manager):
                 instance_id="auth_test",
                 query="authentication login functions",
                 ground_truth_files=["auth/login.py"],
-                metadata={"category": "authentication"}
+                metadata={"category": "authentication"},
             ),
             EvaluationInstance(
                 instance_id="db_test",
                 query="database connection setup",
                 ground_truth_files=["database/connection.py"],
-                metadata={"category": "database"}
+                metadata={"category": "database"},
             ),
             EvaluationInstance(
                 instance_id="api_test",
                 query="API endpoint handlers HTTP",
                 ground_truth_files=["api/handlers.py"],
-                metadata={"category": "api"}
+                metadata={"category": "api"},
             ),
             EvaluationInstance(
                 instance_id="config_test",
                 query="configuration loading settings",
                 ground_truth_files=["utils/helpers.py"],
-                metadata={"category": "configuration"}
+                metadata={"category": "configuration"},
             ),
             EvaluationInstance(
                 instance_id="error_test",
                 query="error handling exception try catch",
-                ground_truth_files=["main.py", "database/connection.py", "api/handlers.py"],
-                metadata={"category": "error_handling"}
-            )
+                ground_truth_files=[
+                    "main.py",
+                    "database/connection.py",
+                    "api/handlers.py",
+                ],
+                metadata={"category": "error_handling"},
+            ),
         ]
 
-    @patch('evaluation.semantic_evaluator.SemanticSearchEvaluator')
+    @patch("evaluation.semantic_evaluator.SemanticSearchEvaluator")
     def test_full_workflow_with_mock_search(self, mock_semantic_evaluator_class):
         """Test complete token efficiency evaluation workflow with mocked search."""
         from evaluation.base_evaluator import RetrievalResult
@@ -521,15 +526,15 @@ def test_authentication_integration(mock_login_manager):
                 chunk_id="chunk1",
                 score=0.9,
                 content="def authenticate(username, password): ...",
-                metadata={"language": "python"}
+                metadata={"language": "python"},
             ),
             RetrievalResult(
                 file_path="database/connection.py",
                 chunk_id="chunk2",
                 score=0.8,
                 content="class DatabaseConnection: ...",
-                metadata={"language": "python"}
-            )
+                metadata={"language": "python"},
+            ),
         ]
         mock_semantic_evaluator_class.return_value = mock_evaluator
 
@@ -542,14 +547,14 @@ def test_authentication_integration(mock_login_manager):
         )
 
         # Verify results structure
-        assert 'metadata' in results
-        assert 'aggregate_metrics' in results
-        assert 'results_by_instance' in results
+        assert "metadata" in results
+        assert "aggregate_metrics" in results
+        assert "results_by_instance" in results
 
-        metadata = results['metadata']
-        assert metadata['total_instances'] == 2
-        assert metadata['successful_evaluations'] >= 0
-        assert str(self.project_dir) in metadata['project_path']
+        metadata = results["metadata"]
+        assert metadata["total_instances"] == 2
+        assert metadata["successful_evaluations"] >= 0
+        assert str(self.project_dir) in metadata["project_path"]
 
         # Verify output files were created
         assert (self.output_dir / "token_efficiency_results.json").exists()
@@ -558,7 +563,10 @@ def test_authentication_integration(mock_login_manager):
 
     def test_token_efficiency_calculation_accuracy(self):
         """Test accuracy of token efficiency calculations."""
-        from evaluation.token_efficiency_evaluator import TokenCounter, VanillaReadSimulator
+        from evaluation.token_efficiency_evaluator import (
+            TokenCounter,
+            VanillaReadSimulator,
+        )
 
         # Test token counting accuracy
         counter = TokenCounter()
@@ -596,16 +604,17 @@ def hello():
         """Test error handling and recovery in evaluation workflow."""
         # Test with invalid project path
         invalid_evaluator = TokenEfficiencyEvaluator(
-            output_dir=str(self.output_dir),
-            use_gpu=False
+            output_dir=str(self.output_dir), use_gpu=False
         )
 
         # This should handle the error gracefully
-        instances = [EvaluationInstance(
-            instance_id="error_test",
-            query="test query",
-            ground_truth_files=["nonexistent.py"]
-        )]
+        instances = [
+            EvaluationInstance(
+                instance_id="error_test",
+                query="test query",
+                ground_truth_files=["nonexistent.py"],
+            )
+        ]
 
         # Should not crash, but handle errors gracefully
         try:
@@ -613,15 +622,18 @@ def hello():
                 instances, "/nonexistent/path"
             )
             # Should still return a result structure, even if evaluation failed
-            assert 'metadata' in results
+            assert "metadata" in results
         except Exception as e:
             # Some exceptions are expected for invalid paths
             assert "Index not built" in str(e) or "No such file" in str(e)
 
     def test_output_file_generation(self):
         """Test that all expected output files are generated."""
-        from evaluation.token_efficiency_evaluator import TokenEfficiencyMetrics, TokenEfficiencyResult
         from evaluation.base_evaluator import SearchMetrics
+        from evaluation.token_efficiency_evaluator import (
+            TokenEfficiencyMetrics,
+            TokenEfficiencyResult,
+        )
 
         # Create mock results
         mock_result = TokenEfficiencyResult(
@@ -633,30 +645,32 @@ def hello():
             ),
             search_results=[],
             simulated_files=["file1.py", "file2.py"],
-            metadata={"test": True}
+            metadata={"test": True},
         )
 
         mock_results = {
-            'metadata': {
-                'total_instances': 1,
-                'successful_evaluations': 1,
-                'project_path': str(self.project_dir),
-                'k': 5,
-                'build_time': 1.0,
-                'evaluation_timestamp': 1234567890.0,
-                'encoding_name': 'cl100k_base'
+            "metadata": {
+                "total_instances": 1,
+                "successful_evaluations": 1,
+                "project_path": str(self.project_dir),
+                "k": 5,
+                "build_time": 1.0,
+                "evaluation_timestamp": 1234567890.0,
+                "encoding_name": "cl100k_base",
             },
-            'aggregate_metrics': self.evaluator._calculate_token_efficiency_aggregates([mock_result]),
-            'results_by_instance': {
-                'test_001': {
-                    'scenario_id': 'test_001',
-                    'query': 'test query',
-                    'search_metrics': mock_result.search_metrics.to_dict(),
-                    'efficiency_metrics': mock_result.efficiency_metrics.__dict__,
-                    'metadata': {'test': True},
-                    'timestamp': 1234567890.0
+            "aggregate_metrics": self.evaluator._calculate_token_efficiency_aggregates(
+                [mock_result]
+            ),
+            "results_by_instance": {
+                "test_001": {
+                    "scenario_id": "test_001",
+                    "query": "test query",
+                    "search_metrics": mock_result.search_metrics.to_dict(),
+                    "efficiency_metrics": mock_result.efficiency_metrics.__dict__,
+                    "metadata": {"test": True},
+                    "timestamp": 1234567890.0,
                 }
-            }
+            },
         }
 
         # Test file saving
@@ -672,12 +686,12 @@ def hello():
         # Verify file contents
         with open(results_file) as f:
             saved_results = json.load(f)
-            assert saved_results['metadata']['total_instances'] == 1
+            assert saved_results["metadata"]["total_instances"] == 1
 
         with open(summary_file) as f:
             saved_summary = json.load(f)
-            assert 'metadata' in saved_summary
-            assert 'aggregate_metrics' in saved_summary
+            assert "metadata" in saved_summary
+            assert "aggregate_metrics" in saved_summary
 
         # Test report generation
         report = self.evaluator.create_efficiency_report(mock_results)
@@ -690,7 +704,12 @@ def hello():
     def test_dataset_loading_integration(self):
         """Test loading and using the token efficiency scenarios dataset."""
         # Load the actual scenarios file
-        scenarios_file = Path(__file__).parent.parent.parent / "evaluation" / "datasets" / "token_efficiency_scenarios.json"
+        scenarios_file = (
+            Path(__file__).parent.parent.parent
+            / "evaluation"
+            / "datasets"
+            / "token_efficiency_scenarios.json"
+        )
 
         if scenarios_file.exists():
             instances = self.evaluator.load_dataset(str(scenarios_file))
@@ -698,11 +717,14 @@ def hello():
             assert len(instances) > 0
             assert all(isinstance(instance.instance_id, str) for instance in instances)
             assert all(isinstance(instance.query, str) for instance in instances)
-            assert all(isinstance(instance.ground_truth_files, list) for instance in instances)
+            assert all(
+                isinstance(instance.ground_truth_files, list) for instance in instances
+            )
 
     def teardown_method(self):
         """Clean up test fixtures."""
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
 
@@ -715,16 +737,16 @@ class TestTokenEfficiencyRegression:
             evaluator = TokenEfficiencyEvaluator(output_dir=temp_dir, use_gpu=False)
 
             # Test that all required abstract methods are implemented
-            assert hasattr(evaluator, 'build_index')
-            assert hasattr(evaluator, 'search')
+            assert hasattr(evaluator, "build_index")
+            assert hasattr(evaluator, "search")
             assert callable(evaluator.build_index)
             assert callable(evaluator.search)
 
             # Test that base methods are inherited
-            assert hasattr(evaluator, 'calculate_precision_recall')
-            assert hasattr(evaluator, 'calculate_f1_score')
-            assert hasattr(evaluator, 'calculate_mrr')
-            assert hasattr(evaluator, 'calculate_ndcg')
+            assert hasattr(evaluator, "calculate_precision_recall")
+            assert hasattr(evaluator, "calculate_f1_score")
+            assert hasattr(evaluator, "calculate_mrr")
+            assert hasattr(evaluator, "calculate_ndcg")
 
     def test_search_metrics_integration(self):
         """Test that SearchMetrics token_usage field is properly utilized."""
@@ -740,15 +762,15 @@ class TestTokenEfficiencyRegression:
             mrr=0.75,
             ndcg=0.82,
             token_usage=150,  # This should be populated by token efficiency evaluator
-            tool_calls=1
+            tool_calls=1,
         )
 
         assert metrics.token_usage == 150
 
         # Test conversion to dict
         metrics_dict = metrics.to_dict()
-        assert 'token_usage' in metrics_dict
-        assert metrics_dict['token_usage'] == 150
+        assert "token_usage" in metrics_dict
+        assert metrics_dict["token_usage"] == 150
 
     def test_no_regression_in_existing_tests(self):
         """Ensure that adding token efficiency doesn't break existing functionality."""
@@ -756,7 +778,11 @@ class TestTokenEfficiencyRegression:
         # For now, just verify that imports work correctly
 
         try:
-            from evaluation.base_evaluator import BaseEvaluator, SearchMetrics, EvaluationInstance
+            from evaluation.base_evaluator import (
+                BaseEvaluator,
+                EvaluationInstance,
+                SearchMetrics,
+            )
             from evaluation.semantic_evaluator import SemanticSearchEvaluator
             from evaluation.token_efficiency_evaluator import TokenEfficiencyEvaluator
 

@@ -49,7 +49,7 @@ class CodeEmbedder:
         device: str = "auto",
     ):
         self.model_name = model_name
-        self.cache_dir = cache_dir
+        self.cache_dir = cache_dir or os.path.expanduser("~/.cache/huggingface/hub")
         self.device = device
         self._model = None
         self._logger = logging.getLogger(__name__)
@@ -62,6 +62,7 @@ class CodeEmbedder:
     def get_supported_models(cls) -> Dict[str, Dict[str, Any]]:
         """Get dictionary of supported models and their configurations."""
         from search.config import get_model_registry
+
         return get_model_registry()
 
     def _get_model_config(self) -> Dict[str, Any]:

@@ -1,14 +1,11 @@
 """Tests for hybrid search orchestrator."""
 
-import numpy as np
-import pytest
 import tempfile
-import time
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
-from search.hybrid_searcher import HybridSearcher, GPUMemoryMonitor
-from search.reranker import SearchResult
+import numpy as np
+
+from search.hybrid_searcher import GPUMemoryMonitor, HybridSearcher
 
 
 class TestGPUMemoryMonitor:
@@ -16,7 +13,7 @@ class TestGPUMemoryMonitor:
 
     def test_memory_info_without_gpu(self):
         """Test memory info when GPU is not available."""
-        with patch('search.hybrid_searcher.torch', None):
+        with patch("search.hybrid_searcher.torch", None):
             monitor = GPUMemoryMonitor()
             info = monitor.get_available_memory()
 
@@ -24,12 +21,15 @@ class TestGPUMemoryMonitor:
             assert info["gpu_total"] == 0
             assert info["gpu_utilization"] == 0.0
 
-    @patch('search.hybrid_searcher.torch')
+    @patch("search.hybrid_searcher.torch")
     def test_memory_info_with_gpu(self, mock_torch):
         """Test memory info when GPU is available."""
         mock_torch.cuda.is_available.return_value = True
         mock_torch.cuda.current_device.return_value = 0
-        mock_torch.cuda.mem_get_info.return_value = (4 * 1024**3, 8 * 1024**3)  # 4GB free, 8GB total
+        mock_torch.cuda.mem_get_info.return_value = (
+            4 * 1024**3,
+            8 * 1024**3,
+        )  # 4GB free, 8GB total
 
         monitor = GPUMemoryMonitor()
         info = monitor.get_available_memory()
@@ -38,11 +38,14 @@ class TestGPUMemoryMonitor:
         assert info["gpu_total"] == 8 * 1024**3
         assert info["gpu_utilization"] == 0.5  # 50% utilized
 
-    @patch('search.hybrid_searcher.torch')
+    @patch("search.hybrid_searcher.torch")
     def test_can_use_gpu(self, mock_torch):
         """Test GPU availability checking."""
         mock_torch.cuda.is_available.return_value = True
-        mock_torch.cuda.mem_get_info.return_value = (2 * 1024**3, 8 * 1024**3)  # 2GB available
+        mock_torch.cuda.mem_get_info.return_value = (
+            2 * 1024**3,
+            8 * 1024**3,
+        )  # 2GB available
 
         monitor = GPUMemoryMonitor()
 
@@ -72,23 +75,25 @@ class TestHybridSearcher:
             "class UserManager: def get_user(self, user_id): return users[user_id]",
             "function processData(data) { return data.filter(x => x.valid); }",
             "SELECT name, email FROM users WHERE active = true",
-            "async def fetch_data(): return await api_client.get('/data')"
+            "async def fetch_data(): return await api_client.get('/data')",
         ]
         self.doc_ids = ["doc1", "doc2", "doc3", "doc4", "doc5"]
-        self.embeddings = [
-            np.random.rand(768).tolist() for _ in self.documents
-        ]
+        self.embeddings = [np.random.rand(768).tolist() for _ in self.documents]
         self.metadata = {
             doc_id: {
-                "language": "python" if i < 2 or i == 4 else "javascript" if i == 2 else "sql",
+                "language": "python"
+                if i < 2 or i == 4
+                else "javascript"
+                if i == 2
+                else "sql",
                 "type": "function" if i in [0, 4] else "class" if i == 1 else "query",
-                "lines": i + 1
+                "lines": i + 1,
             }
             for i, doc_id in enumerate(self.doc_ids)
         }
 
-    @patch('search.hybrid_searcher.CodeIndexManager')
-    @patch('search.hybrid_searcher.BM25Index')
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
     def test_initialization(self, mock_bm25, mock_dense):
         """Test hybrid searcher initialization."""
         # Setup mock for dense index
@@ -100,8 +105,8 @@ class TestHybridSearcher:
         assert searcher.max_workers == 2
         assert not searcher._is_shutdown
 
-    @patch('search.hybrid_searcher.CodeIndexManager')
-    @patch('search.hybrid_searcher.BM25Index')
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
     def test_context_manager(self, mock_bm25, mock_dense):
         """Test context manager functionality."""
         # Setup mock for dense index
@@ -111,8 +116,8 @@ class TestHybridSearcher:
 
         assert searcher._is_shutdown
 
-    @patch('search.hybrid_searcher.CodeIndexManager')
-    @patch('search.hybrid_searcher.BM25Index')
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
     def test_is_ready_property(self, mock_bm25, mock_dense):
         """Test is_ready property."""
         # Setup mock for dense index
@@ -133,8 +138,8 @@ class TestHybridSearcher:
 
         assert searcher.is_ready
 
-    @patch('search.hybrid_searcher.CodeIndexManager')
-    @patch('search.hybrid_searcher.BM25Index')
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
     def test_index_documents(self, mock_bm25, mock_dense):
         """Test document indexing."""
         # Setup mock for dense index
@@ -158,8 +163,8 @@ class TestHybridSearcher:
         # Verify dense indexing
         dense_mock.add_embeddings.assert_called_once()
 
-    @patch('search.hybrid_searcher.CodeIndexManager')
-    @patch('search.hybrid_searcher.BM25Index')
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
     def test_search_not_ready(self, mock_bm25, mock_dense):
         """Test search when indices are not ready."""
         # Setup mock for dense index
@@ -173,8 +178,8 @@ class TestHybridSearcher:
         results = searcher.search("test query")
         assert results == []
 
-    @patch('search.hybrid_searcher.CodeIndexManager')
-    @patch('search.hybrid_searcher.BM25Index')
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
     def test_sequential_search(self, mock_bm25, mock_dense):
         """Test sequential search execution."""
         # Setup mock for dense index
@@ -192,7 +197,7 @@ class TestHybridSearcher:
         dense_mock.search.return_value = [("doc2", 0.9, {"type": "class"})]
 
         # Mock embedder
-        with patch('embeddings.embedder.CodeEmbedder') as mock_embedder:
+        with patch("embeddings.embedder.CodeEmbedder") as mock_embedder:
             embedder_mock = mock_embedder.return_value
             embedder_mock.embed_text.return_value = np.random.rand(768)
 
@@ -203,8 +208,8 @@ class TestHybridSearcher:
             bm25_mock.search.assert_called_once()
             dense_mock.search.assert_called_once()
 
-    @patch('search.hybrid_searcher.CodeIndexManager')
-    @patch('search.hybrid_searcher.BM25Index')
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
     def test_parallel_search(self, mock_bm25, mock_dense):
         """Test parallel search execution."""
         # Setup mock for dense index
@@ -222,7 +227,7 @@ class TestHybridSearcher:
         dense_mock.search.return_value = [("doc2", 0.9, {"type": "class"})]
 
         # Mock embedder
-        with patch('embeddings.embedder.CodeEmbedder') as mock_embedder:
+        with patch("embeddings.embedder.CodeEmbedder") as mock_embedder:
             embedder_mock = mock_embedder.return_value
             embedder_mock.embed_text.return_value = np.random.rand(768)
 
@@ -233,8 +238,8 @@ class TestHybridSearcher:
             bm25_mock.search.assert_called_once()
             dense_mock.search.assert_called_once()
 
-    @patch('search.hybrid_searcher.CodeIndexManager')
-    @patch('search.hybrid_searcher.BM25Index')
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
     def test_search_with_filters(self, mock_bm25, mock_dense):
         """Test search with filters."""
         # Setup mock for dense index
@@ -252,7 +257,7 @@ class TestHybridSearcher:
         dense_mock.search.return_value = [("doc1", 0.9, {"language": "python"})]
 
         # Mock embedder
-        with patch('embeddings.embedder.CodeEmbedder') as mock_embedder:
+        with patch("embeddings.embedder.CodeEmbedder") as mock_embedder:
             embedder_mock = mock_embedder.return_value
             embedder_mock.embed_text.return_value = np.random.rand(768)
 
@@ -267,10 +272,10 @@ class TestHybridSearcher:
             if len(args) >= 3:
                 assert args[2] == filters
             else:
-                assert kwargs.get('filters') == filters
+                assert kwargs.get("filters") == filters
 
-    @patch('search.hybrid_searcher.CodeIndexManager')
-    @patch('search.hybrid_searcher.BM25Index')
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
     def test_search_error_handling(self, mock_bm25, mock_dense):
         """Test search error handling."""
         # Setup mock for dense index
@@ -292,8 +297,8 @@ class TestHybridSearcher:
         # Should return empty results when both searches fail
         assert results == []
 
-    @patch('search.hybrid_searcher.CodeIndexManager')
-    @patch('search.hybrid_searcher.BM25Index')
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
     def test_stats_collection(self, mock_bm25, mock_dense):
         """Test statistics collection."""
         # Setup mock for dense index
@@ -315,8 +320,8 @@ class TestHybridSearcher:
         assert "gpu_memory" in stats
         assert stats["dense_stats"]["total_vectors"] == 100
 
-    @patch('search.hybrid_searcher.CodeIndexManager')
-    @patch('search.hybrid_searcher.BM25Index')
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
     def test_weight_optimization(self, mock_bm25, mock_dense):
         """Test weight optimization."""
         # Setup mock for dense index
@@ -334,7 +339,7 @@ class TestHybridSearcher:
         dense_mock.search.return_value = [("doc2", 0.9, {"type": "class"})]
 
         # Mock embedder
-        with patch('embeddings.embedder.CodeEmbedder') as mock_embedder:
+        with patch("embeddings.embedder.CodeEmbedder") as mock_embedder:
             embedder_mock = mock_embedder.return_value
             embedder_mock.embed_text.return_value = np.random.rand(768)
 
@@ -352,8 +357,8 @@ class TestHybridSearcher:
             assert result["tested_combinations"] > 0
             assert isinstance(result["optimization_score"], (int, float))
 
-    @patch('search.hybrid_searcher.CodeIndexManager')
-    @patch('search.hybrid_searcher.BM25Index')
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
     def test_save_and_load_indices(self, mock_bm25, mock_dense):
         """Test saving and loading indices."""
         # Setup mock for dense index
@@ -384,8 +389,8 @@ class TestHybridSearcher:
         assert bm25_mock.load.call_count >= 1
         assert dense_mock.load.call_count >= 1
 
-    @patch('search.hybrid_searcher.CodeIndexManager')
-    @patch('search.hybrid_searcher.BM25Index')
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
     def test_search_mode_stats(self, mock_bm25, mock_dense):
         """Test search mode statistics."""
         # Setup mock for dense index
@@ -410,8 +415,8 @@ class TestHybridSearcher:
         assert stats["average_times"]["dense"] == 0.2
         assert stats["average_times"]["reranking"] == 0.05
 
-    @patch('search.hybrid_searcher.CodeIndexManager')
-    @patch('search.hybrid_searcher.BM25Index')
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
     def test_performance_tracking(self, mock_bm25, mock_dense):
         """Test performance tracking during searches."""
         # Setup mock for dense index
@@ -429,7 +434,7 @@ class TestHybridSearcher:
         dense_mock.search.return_value = [("doc2", 0.9, {"type": "class"})]
 
         # Mock embedder
-        with patch('embeddings.embedder.CodeEmbedder') as mock_embedder:
+        with patch("embeddings.embedder.CodeEmbedder") as mock_embedder:
             embedder_mock = mock_embedder.return_value
             embedder_mock.embed_text.return_value = np.random.rand(768)
 
@@ -451,4 +456,5 @@ class TestHybridSearcher:
     def teardown_method(self):
         """Clean up test fixtures."""
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)

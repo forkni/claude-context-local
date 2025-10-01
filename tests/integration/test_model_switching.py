@@ -1,14 +1,15 @@
 """Integration tests for model switching and multi-model embedding generation."""
 
-import pytest
-from pathlib import Path
 import tempfile
-import numpy as np
+from pathlib import Path
 
-from embeddings.embedder import CodeEmbedder
+import numpy as np
+import pytest
+
 from chunking.python_ast_chunker import CodeChunk
-from search.indexer import CodeIndexManager
+from embeddings.embedder import CodeEmbedder
 from mcp_server.server import get_embedder
+from search.indexer import CodeIndexManager
 
 
 @pytest.fixture
@@ -223,6 +224,7 @@ class TestIndexManagerWithDifferentModels:
 
             # Verify contents
             import json
+
             with open(model_info_path) as f:
                 model_info = json.load(f)
 
@@ -240,6 +242,7 @@ class TestMCPServerModelIntegration:
 
         # Clear any cached embedder
         import mcp_server.server as server_module
+
         server_module._embedder = None
 
         embedder = get_embedder()
@@ -251,11 +254,21 @@ class TestMCPServerModelIntegration:
     def test_mcp_server_fallback_to_gemma(self):
         """Test that MCP server falls back to Gemma on config error."""
         import os
+        import shutil
+        from pathlib import Path
+
         import mcp_server.server as server_module
         from search.config import get_config_manager
 
         # Save current environment
-        old_model = os.environ.get('CLAUDE_EMBEDDING_MODEL')
+        old_model = os.environ.get("CLAUDE_EMBEDDING_MODEL")
+
+        # Backup saved config file if it exists
+        config_path = Path.home() / ".claude_code_search" / "search_config.json"
+        backup_path = config_path.with_suffix(".json.backup")
+        config_existed = config_path.exists()
+        if config_existed:
+            shutil.move(str(config_path), str(backup_path))
 
         # Clear all state - embedder cache, config cache, and env var
         server_module._embedder = None
@@ -263,8 +276,8 @@ class TestMCPServerModelIntegration:
         config_manager._config = None
 
         # Remove env var override to test default fallback
-        if 'CLAUDE_EMBEDDING_MODEL' in os.environ:
-            del os.environ['CLAUDE_EMBEDDING_MODEL']
+        if "CLAUDE_EMBEDDING_MODEL" in os.environ:
+            del os.environ["CLAUDE_EMBEDDING_MODEL"]
 
         try:
             embedder = get_embedder()
@@ -274,7 +287,13 @@ class TestMCPServerModelIntegration:
             # Cleanup
             server_module._embedder = None
             if old_model is not None:
-                os.environ['CLAUDE_EMBEDDING_MODEL'] = old_model
+                os.environ["CLAUDE_EMBEDDING_MODEL"] = old_model
+
+            # Restore backed up config
+            if config_existed and backup_path.exists():
+                shutil.move(str(backup_path), str(config_path))
+            # Clear config cache to reload the restored config
+            config_manager._config = None
 
 
 class TestEmbeddingQuality:
@@ -377,6 +396,102 @@ class TestEmbeddingQuality:
 
         # Very different code should have lower similarity (< 0.8)
         assert similarity < 0.8
+
+
+class TestModelSelectionWorkflow:
+    """Test complete model selection workflow (simulates batch script behavior)."""
+
+    def test_model_selection_via_config_manager(self):
+        """Test model selection workflow: select → save → load → verify."""
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Simulate what batch script does - use explicit storage path
+            config_file = Path(tmpdir) / "search_config.json"
+
+            # Step 1: Select model and save (simulates menu selection)
+            from search.config import SearchConfigManager
+
+            mgr = SearchConfigManager(config_file=str(config_file))
+            cfg = mgr.load_config()
+
+            # Initially should be Gemma
+            assert "gemma" in cfg.embedding_model_name.lower()
+            assert cfg.model_dimension == 768
+
+            # Change to BGE-M3 (simulates user selection)
+            cfg.embedding_model_name = "BAAI/bge-m3"
+            mgr.save_config(cfg)
+
+            # Step 2: Clear config manager cache (simulates new session)
+            mgr._config = None
+
+            # Step 3: Load config again (simulates restart/reload)
+            cfg2 = mgr.load_config()
+
+            # Step 4: Verify model persisted
+            assert cfg2.embedding_model_name == "BAAI/bge-m3"
+            assert cfg2.model_dimension == 1024  # Auto-synced from registry
+
+    def test_model_workflow_with_default_path(self):
+        """Test that model selection works without explicit config path."""
+        from pathlib import Path
+
+        # Use actual storage location for this test
+        storage_path = Path.home() / ".claude_code_search" / "test_workflow_config.json"
+
+        try:
+            from search.config import SearchConfigManager
+
+            # Create manager with explicit path to avoid interfering with real config
+            mgr = SearchConfigManager(config_file=str(storage_path))
+            cfg = mgr.load_config()
+
+            # Change model
+            original_model = cfg.embedding_model_name
+            cfg.embedding_model_name = "BAAI/bge-m3"
+            mgr.save_config(cfg)
+
+            # Verify file was created in correct location
+            assert storage_path.exists()
+            assert ".claude_code_search" in str(storage_path)
+
+            # Load in new instance
+            mgr2 = SearchConfigManager(config_file=str(storage_path))
+            cfg2 = mgr2.load_config()
+            assert cfg2.embedding_model_name == "BAAI/bge-m3"
+
+        finally:
+            # Cleanup test config
+            if storage_path.exists():
+                storage_path.unlink()
+
+    def test_environment_variable_overrides_saved_config(self, monkeypatch):
+        """Test that environment variable takes precedence over saved config."""
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = Path(tmpdir) / "search_config.json"
+
+            # Save Gemma to config file
+            from search.config import SearchConfigManager
+
+            mgr = SearchConfigManager(config_file=str(config_file))
+            cfg = mgr.load_config()
+            cfg.embedding_model_name = "google/embeddinggemma-300m"
+            mgr.save_config(cfg)
+
+            # Set environment variable to BGE-M3
+            monkeypatch.setenv("CLAUDE_EMBEDDING_MODEL", "BAAI/bge-m3")
+
+            # Load should use env var, not file
+            mgr2 = SearchConfigManager(config_file=str(config_file))
+            cfg2 = mgr2.load_config()
+
+            # Environment variable should override
+            assert cfg2.embedding_model_name == "BAAI/bge-m3"
 
 
 if __name__ == "__main__":

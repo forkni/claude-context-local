@@ -154,6 +154,81 @@ class TestSearchConfigManager:
         assert mode == "bm25"
 
 
+class TestDefaultConfigPath:
+    """Test default config path discovery."""
+
+    def test_default_path_uses_claude_code_search(self):
+        """Test that default path uses .claude_code_search directory."""
+        # Create manager without explicit config_file
+        mgr = SearchConfigManager()
+
+        # Should use .claude_code_search, not .claude-context-mcp
+        assert ".claude_code_search" in mgr.config_file or "search_config.json" in mgr.config_file
+        assert ".claude-context-mcp" not in mgr.config_file
+
+    def test_config_path_fallback_order(self):
+        """Test config path discovery fallback order."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Change to temp directory
+            original_dir = os.getcwd()
+            os.chdir(tmpdir)
+
+            try:
+                # Reset global config manager to ensure clean state
+                from search.config import get_config_manager
+                import search.config as config_module
+                config_module._config_manager = None
+
+                # No config files exist - should return first candidate
+                mgr = SearchConfigManager()
+                # Should return first candidate which is current directory search_config.json
+                # or the storage location if that exists
+                assert "search_config.json" in mgr.config_file
+
+                # Create local config - should be preferred
+                with open("search_config.json", "w") as f:
+                    json.dump({"default_search_mode": "bm25"}, f)
+
+                # Reset manager to pick up new file
+                config_module._config_manager = None
+                mgr2 = SearchConfigManager()
+                assert mgr2.config_file == "search_config.json"
+
+            finally:
+                os.chdir(original_dir)
+                # Reset global state
+                import search.config as config_module
+                config_module._config_manager = None
+
+    def test_config_persistence_to_storage_location(self):
+        """Test saving config to .claude_code_search directory."""
+        from pathlib import Path
+
+        # Use explicit storage path
+        storage_path = Path.home() / ".claude_code_search" / "test_search_config.json"
+
+        try:
+            mgr = SearchConfigManager(config_file=str(storage_path))
+            cfg = mgr.load_config()
+            cfg.embedding_model_name = "BAAI/bge-m3"
+            cfg.default_search_mode = "semantic"
+            mgr.save_config(cfg)
+
+            # Verify file exists
+            assert storage_path.exists()
+
+            # Load in new manager
+            mgr2 = SearchConfigManager(config_file=str(storage_path))
+            cfg2 = mgr2.load_config()
+            assert cfg2.embedding_model_name == "BAAI/bge-m3"
+            assert cfg2.default_search_mode == "semantic"
+
+        finally:
+            # Cleanup
+            if storage_path.exists():
+                storage_path.unlink()
+
+
 def test_global_config_functions():
     """Test global configuration functions."""
     config = get_search_config()

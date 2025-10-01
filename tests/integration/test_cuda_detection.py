@@ -120,7 +120,11 @@ class TestHardwareCompatibility:
             cuda_info = CUDA_VERSIONS.get(cuda_version, {})
             pytorch_index = cuda_info.get("pytorch_index")
             # Return CPU fallback for unsupported versions (None pytorch_index)
-            return pytorch_index if pytorch_index is not None else "https://pypi.org/simple"
+            return (
+                pytorch_index
+                if pytorch_index is not None
+                else "https://pypi.org/simple"
+            )
 
         assert get_pytorch_index("12.1") == "https://download.pytorch.org/whl/cu121"
         assert get_pytorch_index("11.8") == "https://download.pytorch.org/whl/cu118"

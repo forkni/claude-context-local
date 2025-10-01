@@ -136,7 +136,9 @@ class CodeIndexManager:
             if self.embedder is not None:
                 try:
                     stored_dim = self._index.d
-                    current_model_dim = self.embedder.get_model_info()["embedding_dimension"]
+                    current_model_dim = self.embedder.get_model_info()[
+                        "embedding_dimension"
+                    ]
 
                     if stored_dim != current_model_dim:
                         self._logger.warning(
@@ -480,10 +482,15 @@ class CodeIndexManager:
             model_info_path = self.index_path.parent / "model_info.json"
             try:
                 import json
+
                 model_info = {
                     "model_name": self.embedder.model_name,
-                    "embedding_dimension": self.embedder.get_model_info()["embedding_dimension"],
-                    "created_at": str(self.index_path.stat().st_mtime) if self.index_path.exists() else None,
+                    "embedding_dimension": self.embedder.get_model_info()[
+                        "embedding_dimension"
+                    ],
+                    "created_at": str(self.index_path.stat().st_mtime)
+                    if self.index_path.exists()
+                    else None,
                 }
                 with open(model_info_path, "w") as f:
                     json.dump(model_info, f, indent=2)
