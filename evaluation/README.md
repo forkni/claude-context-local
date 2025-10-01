@@ -272,6 +272,7 @@ python evaluation/run_bge_m3_benchmark.py
 ```
 
 This script will:
+
 1. Set the embedding model to BGE-M3 (BAAI/bge-m3)
 2. Run token efficiency benchmark with BGE-M3
 3. Run method comparison benchmark with BGE-M3

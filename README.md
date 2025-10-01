@@ -149,7 +149,6 @@ The Windows installer will:
 - Configures `faiss-gpu` if an NVIDIA GPU is detected
 - **Preserves all your indexed projects and embeddings** across updates
 
-
 ## Quick Start
 
 ### 1) Install and Setup

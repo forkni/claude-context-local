@@ -160,12 +160,14 @@ This modular reference can be embedded in any project instructions for Claude Co
 ## Token Efficiency Example
 
 **Traditional approach** (reading 3 files):
+
 - auth.py (2,000 tokens)
 - login.py (1,800 tokens)
 - session.py (1,800 tokens)
 - **Total**: 5,600 tokens
 
 **Semantic search approach**:
+
 - Query: "authentication login functions"
 - Results: 3 relevant chunks (400 tokens)
 - **Total**: 400 tokens
