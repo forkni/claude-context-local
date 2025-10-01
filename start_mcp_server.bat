@@ -739,7 +739,7 @@ echo This server enables hybrid semantic code search in Claude Code.
 echo.
 echo Key Features:
 echo   - Hybrid Search: BM25 + Semantic for optimal accuracy
-echo   - 98.6%% Token Reduction: Validated benchmark results
+echo   - 93-97%% Token Reduction: Validated benchmark results
 echo   - Multi-language Support: 11 languages, 22 extensions
 echo   - Local Processing: No API calls, complete privacy
 echo.
@@ -751,7 +751,7 @@ echo   4. Index: /index_directory "your-project-path"
 echo   5. Search: /search_code "your query"
 echo.
 echo Interactive Menu Usage:
-echo   start_mcp_server.bat          - Launch interactive menu ^(7 options^)
+echo   start_mcp_server.bat          - Launch interactive menu ^(8 options^)
 echo   start_mcp_server.bat --help   - Show this help
 echo   start_mcp_server.bat --debug  - Start with debug logging
 echo.
@@ -764,6 +764,8 @@ echo   docs/ Directory:
 echo     - INSTALLATION_GUIDE.md: Detailed installation steps
 echo     - BENCHMARKS.md: Performance metrics and validation
 echo     - HYBRID_SEARCH_CONFIGURATION_GUIDE.md: Search tuning
+echo     - MODEL_MIGRATION_GUIDE.md: Model switching guide
+echo     - MCP_TOOLS_REFERENCE.md: MCP tools documentation
 echo     - claude_code_config.md: Claude Code integration
 echo     - TESTING_GUIDE.md: Test suite documentation
 echo     - GIT_WORKFLOW.md: Git automation scripts
