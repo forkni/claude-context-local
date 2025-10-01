@@ -223,7 +223,6 @@ _archive/
 benchmark_results/
 CLAUDE.md
 MEMORY.md
-local_only/
 
 # Documentation - only specific files are public
 docs/*
@@ -234,7 +233,6 @@ docs/*
 !docs/INSTALLATION_GUIDE.md
 !docs/MCP_TOOLS_REFERENCE.md
 !docs/MODEL_MIGRATION_GUIDE.md
-!docs/PYTORCH_UPGRADE_GUIDE.md
 !docs/TESTING_GUIDE.md
 
 # Evaluation and test results (temporary/generated files)

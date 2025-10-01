@@ -6,12 +6,12 @@ This directory contains the comprehensive evaluation framework for the Claude Co
 
 The evaluation framework provides:
 
-- **Token Efficiency Evaluation**: Measures 98.6% token savings vs traditional file reading
+- **Token Efficiency Evaluation**: Measures 93-97% token savings vs traditional file reading
 - **Multi-metric Search Quality**: Precision, Recall, F1-score, MRR, NDCG
 - **GPU Acceleration Testing**: Automatic hardware detection and performance comparison
 - **Comparative Analysis**: Compare different search methods (Hybrid, BM25-only, Dense-only)
-- **SWE-bench Integration**: Industry-standard software engineering benchmarks
-- **Interactive Benchmarks**: User-friendly `run_benchmarks.bat` interface
+- **Model Comparison**: BGE-M3 vs Gemma benchmarking capabilities
+- **Interactive Benchmarks**: User-friendly `run_benchmarks.bat` interface in root directory
 - **Comprehensive Reporting**: Detailed performance reports and visualizations
 - **Extensible Architecture**: Easy to add new evaluation methods and metrics
 
@@ -20,23 +20,25 @@ The evaluation framework provides:
 ### Interactive Benchmarks (Recommended)
 
 ```bash
-# Windows - User-friendly menu interface
+# Windows - User-friendly menu interface (run from project root)
 run_benchmarks.bat
 ```
 
 **Available Options:**
 
-1. **Token Efficiency Benchmark** (~10 seconds) - Validates 98.6% token reduction
-2. **Custom Project Evaluation** (~30-60 seconds) - Tests search quality on your code
+1. **Token Efficiency Benchmark** (~10 seconds) - Validates 93-97% token reduction
+2. **Search Method Comparison** (~2-3 minutes) - Compare Hybrid, BM25, and Semantic methods
 3. **Auto-Tune Search Parameters** (~2 minutes) - Optimize BM25/Dense weights for your codebase
-4. **SWE-bench Evaluation** (several minutes) - Industry-standard comparison
-5. **Complete Suite** (2-3 minutes) - Comprehensive performance profile
+4. **Complete Suite** (~5 minutes) - Comprehensive performance profile including all benchmarks
 
 ### Command Line Interface
 
 ```bash
 # Token efficiency evaluation (recommended first test)
 .venv\Scripts\python.exe evaluation/run_evaluation.py token-efficiency
+
+# Method comparison (Hybrid vs BM25 vs Semantic)
+.venv\Scripts\python.exe evaluation/run_evaluation.py method-comparison --project "."
 
 # Custom project evaluation
 .venv\Scripts\python.exe evaluation/run_evaluation.py custom --project "path/to/project"
@@ -50,6 +52,9 @@ run_benchmarks.bat
 
 # Apply optimized parameters automatically
 .venv\Scripts\python.exe tools/auto_tune_search.py --project "." --apply
+
+# BGE-M3 model benchmarking
+.venv\Scripts\python.exe evaluation/run_bge_m3_benchmark.py
 ```
 
 ## Framework Architecture
@@ -73,17 +78,17 @@ run_benchmarks.bat
 
 #### 3. Token Efficiency Evaluator (`token_efficiency_evaluator.py`)
 
-- **NEW**: Measures token savings vs traditional file reading approaches
+- Measures token savings vs traditional file reading approaches
 - Token counting using tiktoken (cl100k_base encoding for GPT-4/Claude compatibility)
 - Vanilla file reading simulation for comparison
 - GPU vs CPU performance benchmarking
-- 98.6% token reduction validation
+- 93-97% token reduction validation
 
 #### 4. Evaluation Runner (`run_evaluation.py`)
 
-- **ENHANCED**: Command-line interface with GPU auto-detection
+- Command-line interface with GPU auto-detection
 - Multiple evaluation modes:
-  - `token-efficiency`: Token savings evaluation (NEW)
+  - `token-efficiency`: Token savings evaluation
   - `method-comparison`: Compare all search methods (hybrid, BM25, semantic)
   - `custom`: Project-specific search quality
   - `create-sample`: Generate test datasets
@@ -92,7 +97,7 @@ run_benchmarks.bat
 
 #### 5. Parameter Optimizer (`parameter_optimizer.py`)
 
-- **NEW**: Auto-tune hybrid search parameters for your codebase
+- Auto-tune hybrid search parameters for your codebase
 - Tests multiple weight configurations (BM25/Dense)
 - Builds index once, tests parameters quickly (~2 minutes)
 - Uses tie-breaking logic (F1-score primary, query time secondary)
@@ -106,6 +111,16 @@ run_benchmarks.bat
 - Clear status reporting ([OK], [BEST], [FAILED])
 - Query time comparison for tie-breaking
 - Automatic or manual parameter application
+
+#### 6. BGE-M3 Benchmark Runner (`run_bge_m3_benchmark.py`)
+
+- Wrapper script for running benchmarks with BGE-M3 model
+- Sets `CLAUDE_EMBEDDING_MODEL=BAAI/bge-m3` environment variable
+- Executes comprehensive benchmark suite:
+  - Token efficiency benchmark with BGE-M3
+  - Method comparison benchmark with BGE-M3
+- Saves results to `benchmark_results/` for comparison
+- Useful for evaluating BGE-M3 performance vs Gemma baseline
 
 ## Key Features Ported from Zilliz
 
@@ -134,14 +149,7 @@ class SearchMetrics:
 - **Dense-Only**: Pure semantic vector search
 - **Efficiency Analysis**: Token usage and tool call reduction metrics
 
-### 3. **SWE-bench Dataset Support**
-
-- Automatic dataset loading from Hugging Face
-- Git patch parsing for ground truth extraction
-- Repository cloning and management
-- Custom subset creation with filtering criteria
-
-### 4. **Statistical Analysis**
+### 3. **Statistical Analysis**
 
 - Aggregate metrics across multiple queries
 - Standard deviation calculations
@@ -253,6 +261,23 @@ RECOMMENDED CONFIGURATION:
 - Statistical tie-breaking with query time
 - Optional automatic parameter application
 - Detailed performance reporting
+
+### 5. BGE-M3 Model Benchmarking
+
+Run comprehensive benchmarks with the BGE-M3 model:
+
+```bash
+# Run BGE-M3 benchmark suite
+python evaluation/run_bge_m3_benchmark.py
+```
+
+This script will:
+1. Set the embedding model to BGE-M3 (BAAI/bge-m3)
+2. Run token efficiency benchmark with BGE-M3
+3. Run method comparison benchmark with BGE-M3
+4. Save results to `benchmark_results/token_efficiency_bge/` and `benchmark_results/method_comparison_bge/`
+
+**Use Case:** Compare BGE-M3 performance (1024 dimensions, higher accuracy) against the Gemma baseline (768 dimensions, faster).
 
 ## Expected Results
 
@@ -428,30 +453,36 @@ Comprehensive test suite covering all components:
 
 ```bash
 # Run evaluation framework tests
-python -m pytest tests/test_evaluation.py -v
+python -m pytest tests/unit/test_evaluation.py -v
 
-# Expected output: 25 tests passing
-# Tests cover: base evaluator, metrics calculation,
-# SWE-bench integration, dataset loading, etc.
+# Run token efficiency tests
+python -m pytest tests/unit/test_token_efficiency.py -v
+
+# Run all evaluation-related tests
+python -m pytest tests/unit/test_evaluation.py tests/unit/test_token_efficiency.py -v
+
+# Tests cover: base evaluator, metrics calculation, token efficiency,
+# dataset loading, parameter optimization, and more
 ```
 
 ## Limitations and Future Work
 
 ### Current Limitations
 
-- **Mock Repositories**: SWE-bench evaluation uses mock repos for demonstration
 - **Limited Dataset Size**: Optimized for datasets up to 1000 instances
-- **Python Focus**: Primarily tested on Python codebases
+- **Multi-Language Testing**: While the system supports 22 file extensions (11 languages), evaluation datasets primarily cover Python codebases
+- **Manual Dataset Creation**: Custom evaluation datasets require manual preparation
 
 ### Planned Enhancements
 
-- **Real Repository Cloning**: Full SWE-bench repository management
-- **Multi-language Datasets**: Expanded language support
-- **Interactive Evaluation**: Web-based evaluation dashboard
-- **Continuous Evaluation**: Integration with CI/CD pipelines
+- **SWE-bench Integration**: Industry-standard software engineering benchmark support with full repository management
+- **Automated Dataset Generation**: Create evaluation datasets from existing codebases
+- **Multi-language Evaluation Datasets**: Expanded test coverage for Java, TypeScript, Go, Rust, and other supported languages
+- **Interactive Evaluation Dashboard**: Web-based interface for benchmark visualization
+- **Continuous Evaluation**: Integration with CI/CD pipelines for automated quality tracking
 
 ## Conclusion
 
-This evaluation framework provides a robust foundation for measuring and improving semantic code search systems. Based on proven methodologies from the Zilliz implementation, it offers comprehensive metrics, comparative analysis, and integration with standard benchmarks like SWE-bench.
+This evaluation framework provides a robust foundation for measuring and improving semantic code search systems. Based on proven methodologies from the Zilliz implementation, it offers comprehensive metrics, comparative analysis, and extensible architecture for adding new evaluation methods.
 
-The framework demonstrates the effectiveness of hybrid search approaches, showing significant efficiency gains while maintaining or improving search quality. This makes it an essential tool for developing and optimizing semantic code search systems.
+The framework demonstrates the effectiveness of hybrid search approaches, showing 93-97% token efficiency gains and superior search quality compared to individual methods. With support for both Gemma and BGE-M3 embedding models, it enables data-driven optimization decisions for your specific codebase. This makes it an essential tool for developing and optimizing semantic code search systems.

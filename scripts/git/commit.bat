@@ -14,7 +14,6 @@ git reset HEAD CLAUDE.md 2>nul
 git reset HEAD MEMORY.md 2>nul
 git reset HEAD _archive/ 2>nul
 git reset HEAD benchmark_results/ 2>nul
-git reset HEAD local_only/ 2>nul
 
 echo Current staging area:
 git diff --cached --name-status

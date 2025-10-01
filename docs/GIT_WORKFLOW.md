@@ -12,7 +12,6 @@ This repository uses a **Local-First Privacy Model** where certain development f
 | **MEMORY.md** | ~5KB | Session memory and notes | 🔴 Local Only |
 | **_archive/** | 7.3MB (764 files) | Historical TouchDesigner documentation | 🔴 Local Only |
 | **benchmark_results/** | Variable | Generated test data and results | 🔴 Local Only |
-| **local_only/** | ~55KB | Backup copies of local files | 🔴 Local Only |
 
 **Total saved from repository: ~7.4MB + 764 files**
 
@@ -44,7 +43,6 @@ _archive/
 benchmark_results/
 CLAUDE.md
 MEMORY.md
-local_only/
 ```
 
 ### 2. Pre-commit Hook
@@ -55,13 +53,7 @@ Automatically blocks commits containing local-only files:
 - Scans staging area for protected files
 - Prevents accidental exposure
 
-### 3. Backup System
-
-- `local_only/` directory contains backups
-- `CLAUDE.md.backup` and `MEMORY.md.backup`
-- Safe restoration after fresh clones
-
-### 4. Public Documentation Policy
+### 3. Public Documentation Policy
 
 The following documentation files are tracked in Git (9 files total):
 
@@ -72,7 +64,6 @@ The following documentation files are tracked in Git (9 files total):
 - **docs/INSTALLATION_GUIDE.md** - Complete installation process
 - **docs/MCP_TOOLS_REFERENCE.md** - Modular MCP tools reference
 - **docs/MODEL_MIGRATION_GUIDE.md** - Model switching guide
-- **docs/PYTORCH_UPGRADE_GUIDE.md** - PyTorch upgrade instructions
 - **docs/TESTING_GUIDE.md** - Test suite documentation
 
 **All other docs/ files remain local-only** and are automatically excluded by .gitignore rules and blocked by the pre-commit hook.
@@ -100,16 +91,6 @@ sync_branches.bat
 - **Pushes to remote**
 - **Returns to development branch**
 - **Ensures both branches are identical**
-
-### restore_local.bat - File Restoration
-
-```batch
-scripts\git\restore_local.bat
-```
-
-- **Restores CLAUDE.md and MEMORY.md** after fresh clone
-- **Checks for _archive/ directory**
-- **Validates local environment**
 
 ## 📋 Daily Workflow
 
@@ -140,10 +121,8 @@ sync_branches.bat
 git clone <repo-url>
 cd claude-context-local
 
-# Restore local development files:
-scripts\git\restore_local.bat
-
-# Note: You'll need to restore _archive/ from backup
+# Note: CLAUDE.md, MEMORY.md, and _archive/ are not tracked in git
+# These files remain on your portable drive
 ```
 
 ## 🔄 File Lifecycle
@@ -166,7 +145,6 @@ scripts\git\restore_local.bat
 |------|---------|---------|
 | **Safe commit** | `commit.bat "message"` | Commits without local files |
 | **Sync to main** | `sync_branches.bat` | Development → Main → Remote |
-| **Restore locals** | `scripts\git\restore_local.bat` | Restores after clone |
 | **Check status** | `git status` | Shows staged changes |
 | **View branches** | `git branch -a` | Lists all branches |
 
@@ -184,7 +162,6 @@ scripts\git\restore_local.bat
 - Manually add local files to git: `git add CLAUDE.md` ❌
 - Commit without using commit.bat ❌
 - Push local files to any branch ❌
-- Delete local_only/ backup directory ❌
 
 ## 🔧 Troubleshooting
 
@@ -196,16 +173,15 @@ git reset HEAD CLAUDE.md MEMORY.md
 git reset HEAD _archive/ benchmark_results/
 ```
 
-### Missing Local Files After Clone
+### Missing Local Files
 
 ```bash
-# Restore from backups:
-scripts\git\restore_local.bat
-
-# If backups missing, recreate minimal versions:
+# If working from a fresh clone, recreate minimal versions:
 echo "# Development context" > CLAUDE.md
 echo "# Session memory" > MEMORY.md
 ```
+
+Note: If working from a portable drive, local files remain with the repository.
 
 ### Pre-commit Hook Not Working
 

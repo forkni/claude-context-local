@@ -46,28 +46,32 @@
 
 ## 🚀 Migration Steps
 
-### Step 0: Upgrade PyTorch to 2.6.0+ (Required for BGE-M3)
+### Step 0: Verify PyTorch 2.6.0+ (Required for BGE-M3)
 
 BGE-M3 requires PyTorch 2.6.0+ due to torch.load security improvements.
 
-```bash
-# Close all Python processes first
-upgrade_pytorch_2.6.bat
-```
-
-**Why?** PyTorch 2.6.0 fixes critical security vulnerabilities in model loading that BGE-M3 depends on.
-
-**Supported CUDA versions:** 11.8, 12.4, 12.6
-
-- CUDA 12.1 systems: Use PyTorch with CUDA 11.8 build (fully compatible)
-- Installation time: ~2-5 minutes depending on connection
+**Note:** New installations via `install-windows.bat` automatically include PyTorch 2.6.0+. This step is only needed for older installations.
 
 **Verification:**
 
 ```bash
 .venv\Scripts\python.exe -c "import torch; print('PyTorch:', torch.__version__)"
-# Should show: PyTorch: 2.6.0+cu118
+# Should show: PyTorch: 2.6.0+cu118 or higher
 ```
+
+**If upgrade needed:**
+
+```bash
+# Option 1: Reinstall (recommended)
+install-windows.bat
+
+# Option 2: Manual upgrade
+.venv\Scripts\uv.exe pip install "torch==2.6.0" "torchvision==0.21.0" "torchaudio==2.6.0" --index-url https://download.pytorch.org/whl/cu118
+```
+
+**Why?** PyTorch 2.6.0 fixes critical security vulnerabilities in model loading that BGE-M3 depends on.
+
+**Supported CUDA versions:** 11.8, 12.4, 12.6 (CUDA 12.1 systems use CUDA 11.8 build, fully compatible)
 
 ### Step 1: Check Hardware Requirements
 

@@ -149,23 +149,6 @@ The Windows installer will:
 - Configures `faiss-gpu` if an NVIDIA GPU is detected
 - **Preserves all your indexed projects and embeddings** across updates
 
-### PyTorch Upgrade for BGE-M3 Support
-
-If you're upgrading to BGE-M3 or need PyTorch 2.6.0+:
-
-```powershell
-# Standalone PyTorch upgrade script
-upgrade_pytorch_2.6.bat
-```
-
-This script:
-
-- Safely uninstalls old PyTorch versions
-- Installs PyTorch 2.6.0 with CUDA 11.8 (compatible with CUDA 12.x systems)
-- Verifies installation and BGE-M3 compatibility
-- Provides clear instructions for model switching
-
-**When to use:** Upgrading from earlier versions, or enabling BGE-M3 model support
 
 ## Quick Start
 
@@ -711,13 +694,14 @@ verify-hf-auth.bat
 
 3. **PyTorch CUDA version mismatch or BGE-M3 errors**:
 
-   BGE-M3 requires PyTorch 2.6.0+ due to security improvements. Upgrade using:
+   BGE-M3 requires PyTorch 2.6.0+ due to security improvements. If you have an older installation, reinstall using:
 
    ```powershell
-   upgrade_pytorch_2.6.bat
+   # Reinstall entire environment with correct PyTorch version
+   install-windows.bat
    ```
 
-   Or reinstall manually:
+   Or manually upgrade PyTorch only:
 
    ```powershell
    .venv\Scripts\uv.exe pip install "torch==2.6.0" "torchvision==0.21.0" "torchaudio==2.6.0" --index-url https://download.pytorch.org/whl/cu118

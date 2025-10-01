@@ -26,12 +26,13 @@ tests/
 │   ├── test_incremental_indexer.py # Incremental indexing
 │   ├── test_mcp_server.py    # MCP server tools
 │   ├── test_merkle.py        # Merkle tree functionality
+│   ├── test_model_selection.py # Multi-model support (Gemma/BGE-M3)
 │   ├── test_multi_language.py # Multi-language parsing
 │   ├── test_reranker.py      # RRF reranking algorithm
 │   ├── test_search_config.py # Search configuration
 │   ├── test_token_efficiency.py # Token efficiency evaluation
 │   └── test_tree_sitter.py   # Tree-sitter parsing
-└── integration/              # Integration tests (23 files)
+└── integration/              # Integration tests (22 files)
     ├── quick_auth_test.py    # Quick authentication test
     ├── run_hybrid_tests.py   # Hybrid search runner
     ├── test_auto_reindex.py  # Auto-reindexing functionality
@@ -47,6 +48,7 @@ tests/
     ├── test_installation.py  # Installation verification
     ├── test_installation_flow.py # Installation workflow
     ├── test_mcp_*.py         # MCP server integration tests
+    ├── test_model_switching.py # Model switching (Gemma/BGE-M3)
     ├── test_semantic_search.py # End-to-end semantic search
     ├── test_system.py        # System-level tests
     └── test_token_efficiency_workflow.py # Token efficiency workflow
@@ -102,6 +104,9 @@ pytest tests/integration/test_installation.py tests/integration/test_installatio
 # Multi-language support
 pytest tests/unit/test_multi_language.py tests/unit/test_tree_sitter.py
 
+# Model support (Gemma/BGE-M3)
+pytest tests/unit/test_model_selection.py tests/integration/test_model_switching.py
+
 # GLSL support
 pytest tests/integration/test_glsl_*
 ```
@@ -114,6 +119,7 @@ Fast tests that validate individual components in isolation:
 
 - **Search Components**: BM25 indexing, hybrid search, reranking algorithms
 - **Language Support**: Tree-sitter parsing, multi-language chunking
+- **Model Support**: Multi-model configuration (Gemma/BGE-M3), model selection
 - **Core Infrastructure**: Merkle trees, incremental indexing, search configuration
 - **Evaluation**: Token efficiency measurement, evaluation framework
 - **MCP Integration**: Server tools, import validation
@@ -125,6 +131,7 @@ Comprehensive tests that verify component interactions and full workflows:
 - **End-to-End Workflows**: Complete indexing and search flows
 - **System Integration**: Installation, CUDA detection, encoding validation
 - **MCP Server**: Full server functionality, project storage, indexing workflows
+- **Model Switching**: Embedding generation with Gemma and BGE-M3, model switching workflows
 - **Language-Specific**: GLSL shader processing, multi-language projects
 - **Performance**: Token efficiency workflows, benchmark validation
 
@@ -274,7 +281,7 @@ class TestNewComponent:
 - Python 3.11+
 - pytest
 - pytest-cov (for coverage)
-- All project dependencies in requirements.txt
+- All project dependencies (managed via pyproject.toml)
 
 ### Virtual Environment Setup
 
@@ -284,9 +291,10 @@ python -m venv .venv
 source .venv/bin/activate  # Linux/Mac
 .venv\Scripts\activate     # Windows
 
-# Install dependencies
-pip install -r requirements.txt
-pip install pytest pytest-cov
+# Install project and dependencies (editable mode)
+pip install -e .
+
+# pytest and pytest-cov are included in project dependencies
 ```
 
 ## Troubleshooting
