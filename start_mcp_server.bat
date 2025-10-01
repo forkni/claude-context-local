@@ -247,12 +247,13 @@ echo.
 echo === Project Management ===
 echo.
 echo   1. Index New Project
-echo   2. List Indexed Projects
-echo   3. Clear Project Indexes
-echo   4. View Storage Statistics
-echo   5. Back to Main Menu
+echo   2. Force Reindex Project ^(bypass snapshot^)
+echo   3. List Indexed Projects
+echo   4. Clear Project Indexes
+echo   5. View Storage Statistics
+echo   6. Back to Main Menu
 echo.
-set /p pm_choice="Select option (1-5): "
+set /p pm_choice="Select option (1-6): "
 
 REM Handle empty input gracefully
 if not defined pm_choice (
@@ -265,12 +266,13 @@ if "!pm_choice!"=="" (
 )
 
 if "!pm_choice!"=="1" goto index_new_project
-if "!pm_choice!"=="2" goto list_projects_menu
-if "!pm_choice!"=="3" goto clear_project_indexes
-if "!pm_choice!"=="4" goto storage_stats
-if "!pm_choice!"=="5" goto menu_restart
+if "!pm_choice!"=="2" goto force_reindex_project
+if "!pm_choice!"=="3" goto list_projects_menu
+if "!pm_choice!"=="4" goto clear_project_indexes
+if "!pm_choice!"=="5" goto storage_stats
+if "!pm_choice!"=="6" goto menu_restart
 
-echo [ERROR] Invalid choice. Please select 1-5.
+echo [ERROR] Invalid choice. Please select 1-6.
 pause
 cls
 goto project_management_menu
@@ -310,6 +312,15 @@ echo.
 echo [INFO] Starting Project Indexer...
 echo.
 .\.venv\Scripts\python.exe tools\index_project.py
+pause
+goto menu_restart
+
+:force_reindex_project
+echo.
+echo [INFO] Starting Force Reindex (bypasses Merkle snapshot)...
+echo [INFO] Use this if you see "No changes detected" but files should be indexed
+echo.
+.\.venv\Scripts\python.exe tools\index_project.py --force
 pause
 goto menu_restart
 
@@ -408,14 +419,67 @@ if /i not "%confirm_delete%"=="y" goto project_management_menu
 
 REM Delete the specific project
 echo.
+echo [WARNING] Make sure the MCP server is NOT running
+echo [WARNING] Close Claude Code or any processes using this project
+echo.
+pause
+
+echo.
 echo [INFO] Clearing index for %PROJECT_NAME%...
-.\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; from merkle.snapshot_manager import SnapshotManager; import shutil; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; shutil.rmtree(project_dir) if project_dir.exists() else None; sm = SnapshotManager(); sm.delete_snapshot('%PROJECT_PATH%'); print('[OK] Index and snapshot cleared successfully')" 2>nul
-if errorlevel 1 (
-    echo [ERROR] Failed to clear index
-) else (
-    echo [OK] Project index cleared: %PROJECT_NAME%
-    echo [INFO] Merkle snapshot also cleared
+echo.
+
+REM Clear the index directory with DB cleanup
+.\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; import shutil, time, gc; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; gc.collect(); time.sleep(0.5); shutil.rmtree(project_dir, ignore_errors=False) if project_dir.exists() else None; print('Index: cleared')"
+set INDEX_RESULT=%ERRORLEVEL%
+
+REM Handle locked files
+if %INDEX_RESULT% neq 0 (
+    echo.
+    echo [ERROR] Index is locked by another process
+    echo.
+    set /p retry="Try force cleanup? (Will close Python processes) (y/N): "
+    if /i "!retry!"=="y" (
+        echo [INFO] Attempting force cleanup...
+        timeout /t 2 /nobreak >nul
+        .\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; import shutil, time; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; time.sleep(1); shutil.rmtree(project_dir, ignore_errors=True)"
+
+        if exist "%USERPROFILE%\.claude_code_search\projects\%PROJECT_HASH%" (
+            echo [WARNING] Force cleanup partially successful
+            set INDEX_RESULT=1
+        ) else (
+            echo [OK] Force cleanup successful
+            set INDEX_RESULT=0
+        )
+    )
+)
+
+REM Clear the Merkle snapshot
+.\.venv\Scripts\python.exe -c "from merkle.snapshot_manager import SnapshotManager; sm = SnapshotManager(); sm.delete_snapshot(r'%PROJECT_PATH%'); print('Snapshot: cleared')" 2>&1
+set SNAPSHOT_RESULT=%ERRORLEVEL%
+
+echo.
+REM Report results
+if %INDEX_RESULT% equ 0 (
+    if %SNAPSHOT_RESULT% equ 0 (
+        echo [OK] Project index cleared: %PROJECT_NAME%
+        echo [OK] Merkle snapshot cleared
+    ) else (
+        echo [OK] Index cleared but snapshot clearing failed
+        echo [INFO] This is usually not critical
+    )
     echo [INFO] Re-index via: Project Management ^> Index New Project
+) else (
+    echo.
+    echo [ERROR] Failed to clear index for %PROJECT_NAME%
+    echo.
+    echo [SOLUTION] Steps to fix:
+    echo   1. Close Claude Code completely
+    echo   2. Close this window and any terminal windows
+    echo   3. Wait 5 seconds for processes to release files
+    echo   4. Restart and try again, or use repair tool
+    echo.
+    echo Repair tool: scripts\batch\repair_installation.bat
+    echo Manual delete: %USERPROFILE%\.claude_code_search\projects\%PROJECT_HASH%
 )
 echo.
 pause

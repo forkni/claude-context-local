@@ -233,6 +233,7 @@ docs/*
 !docs/INSTALLATION_GUIDE.md
 !docs/MCP_TOOLS_REFERENCE.md
 !docs/MODEL_MIGRATION_GUIDE.md
+!docs/PYTORCH_COMPATIBILITY.md
 !docs/TESTING_GUIDE.md
 
 # Evaluation and test results (temporary/generated files)

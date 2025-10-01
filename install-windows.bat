@@ -58,6 +58,13 @@ if "!CUDA_AVAILABLE!"=="1" (
 )
 echo.
 
+REM Check for existing installation
+if exist ".venv" (
+    echo [INFO] Existing installation detected
+    echo [INFO] If experiencing issues, consider clearing stale snapshots/indexes
+    echo.
+)
+
 REM Show installation menu
 :menu
 echo Installation Options:
@@ -71,19 +78,21 @@ if "!CUDA_AVAILABLE!"=="1" (
     echo [3] Manual CUDA Version Selection
 )
 echo [4] Update/Repair Existing Installation
-echo [5] Verify Installation Status
-echo [6] Exit
+echo [5] Clear Stale Snapshots/Indexes ^(Repair Tool^)
+echo [6] Verify Installation Status
+echo [7] Exit
 echo.
-set /p choice="Select option (1-6): "
+set /p choice="Select option (1-7): "
 
 if "!choice!"=="1" goto auto_install
 if "!choice!"=="2" goto cpu_install
 if "!choice!"=="3" goto manual_cuda
 if "!choice!"=="4" goto update_install
-if "!choice!"=="5" goto verify_install
-if "!choice!"=="6" exit /b 0
+if "!choice!"=="5" goto run_repair_tool
+if "!choice!"=="6" goto verify_install
+if "!choice!"=="7" exit /b 0
 
-echo [ERROR] Invalid choice. Please select 1-6.
+echo [ERROR] Invalid choice. Please select 1-7.
 pause
 goto menu
 
@@ -165,6 +174,13 @@ echo.
 echo === Installation Verification ===
 call :verify_installation
 pause
+goto menu
+
+:run_repair_tool
+echo.
+echo === Launching Repair Tool ===
+echo.
+call scripts\batch\repair_installation.bat
 goto menu
 
 REM Functions
@@ -534,14 +550,41 @@ echo.
 echo Performance: Hybrid search provides ~40%% token reduction
 echo Documentation: See README.md for detailed usage guide
 echo =================================================
-
-set /p configure="Would you like to configure Claude Code integration now? (y/N): "
-if /i "!configure!"=="y" (
+echo.
+echo === Claude Code Integration ===
+echo.
+echo Automatically configuring Claude Code MCP integration...
+powershell -ExecutionPolicy Bypass -File "scripts\powershell\configure_claude_code.ps1" -Global
+if %ERRORLEVEL% neq 0 (
     echo.
-    echo Configuring Claude Code integration...
-    powershell -ExecutionPolicy Bypass -File "scripts\powershell\configure_claude_code.ps1" -Global
+    echo [WARNING] Claude Code configuration failed
+    echo [INFO] Common causes:
+    echo   - Claude Code not installed or not in PATH
+    echo   - 'claude' command not available
+    echo.
+    set /p retry_config="Would you like to try again after fixing the issue? (y/N): "
+    if /i "!retry_config!"=="y" (
+        echo [INFO] Please ensure Claude Code is installed and in PATH, then press any key...
+        pause >nul
+        powershell -ExecutionPolicy Bypass -File "scripts\powershell\configure_claude_code.ps1" -Global
+        if %ERRORLEVEL% neq 0 (
+            echo [WARNING] Configuration still failed. You can configure manually later using:
+            echo   scripts\powershell\configure_claude_code.ps1 -Global
+        ) else (
+            REM Verify configuration was successful
+            powershell -ExecutionPolicy Bypass -File "scripts\powershell\verify_claude_config.ps1" >nul 2>&1
+        )
+    ) else (
+        echo [INFO] You can configure Claude Code integration manually later using:
+        echo   scripts\powershell\configure_claude_code.ps1 -Global
+    )
+) else (
+    echo [OK] Claude Code integration configured successfully!
+    echo [INFO] Verifying configuration...
+    powershell -ExecutionPolicy Bypass -File "scripts\powershell\verify_claude_config.ps1"
     if %ERRORLEVEL% neq 0 (
-        echo [WARNING] Claude Code configuration failed - you can run it manually later
+        echo [WARNING] Verification failed - please check .claude.json manually
+        echo [INFO] Config should be in: %USERPROFILE%\.claude.json
     )
 )
 
@@ -555,7 +598,7 @@ REM Test current authentication status
 .venv\Scripts\python.exe -c "from huggingface_hub import whoami; info = whoami(); print('[OK] Authenticated as:', info['name'])" 2>nul
 if %ERRORLEVEL% equ 0 (
     echo [OK] HuggingFace authentication already configured
-    goto :eof
+    goto end
 )
 
 echo.
@@ -575,7 +618,7 @@ set /p "hf_token=Enter your HuggingFace token (starts with hf_): "
 if "!hf_token!"=="" (
     echo [WARNING] No token provided. You can authenticate later using:
     echo   scripts\powershell\hf_auth.ps1 -Token "your_token_here"
-    goto :eof
+    goto end
 )
 
 REM Validate and test the token
@@ -591,10 +634,15 @@ if %ERRORLEVEL% neq 0 (
     echo [OK] HuggingFace authentication configured successfully!
 )
 
-goto :eof
+goto end
 
 :end
 echo.
-echo Installation completed! Press any key to exit.
+echo =================================================
+echo Installation process completed!
+echo.
+echo Review the logs above for any warnings or errors.
+echo =================================================
+echo.
 pause
 exit /b 0

@@ -80,13 +80,14 @@ def find_projects(search_path: str = "C:\\Projects") -> list:
     return projects
 
 
-def index_project(project_path: str, include_subfolders: bool = True) -> dict:
+def index_project(project_path: str, include_subfolders: bool = True, force_full: bool = False) -> dict:
     """
     Index a project focusing on code files.
 
     Args:
         project_path: Path to project directory
         include_subfolders: Whether to include code files in subfolders
+        force_full: Force full reindex, bypassing Merkle snapshot change detection
 
     Returns:
         Dictionary with indexing results
@@ -163,10 +164,12 @@ def index_project(project_path: str, include_subfolders: bool = True) -> dict:
         print(f"  ... and {len(code_files) - 10} more files")
 
     print(f"\nIndexing project: {project_path.name}")
+    if force_full:
+        print("[INFO] Forcing full reindex (bypassing Merkle snapshot)")
 
     # Use the MCP server's index_directory function
     result = index_directory(
-        str(project_path), project_name=f"Proj_{project_path.name}"
+        str(project_path), project_name=f"Proj_{project_path.name}", incremental=not force_full
     )
 
     try:
@@ -205,6 +208,11 @@ def main():
         action="store_true",
         help="Don't include code files in subfolders",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force full reindex, bypassing Merkle snapshot change detection (use if 'No changes detected' occurs)",
+    )
 
     args = parser.parse_args()
 
@@ -235,7 +243,7 @@ def main():
                         project = projects[idx]
                         print(f"\nIndexing project: {project['name']}")
                         result = index_project(
-                            project["project_dir"], not args.no_subfolders
+                            project["project_dir"], not args.no_subfolders, args.force
                         )
                     else:
                         print("Invalid project number.")
@@ -252,7 +260,7 @@ def main():
         )
 
     # Index the specified project
-    result = index_project(args.project_path, not args.no_subfolders)
+    result = index_project(args.project_path, not args.no_subfolders, args.force)
 
 
 if __name__ == "__main__":

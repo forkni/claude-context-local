@@ -911,6 +911,7 @@ def switch_project(project_path: str) -> str:
 def clear_index() -> str:
     """
     Clear the entire search index and metadata for the current project.
+    Also deletes associated Merkle snapshot to prevent stale state issues.
 
     Returns:
         JSON string confirming the operation
@@ -927,7 +928,16 @@ def clear_index() -> str:
         index_manager = get_index_manager()
         index_manager.clear_index()
 
-        response = {"success": True, "message": "Search index cleared successfully"}
+        # Also clear Merkle snapshot to prevent "No changes detected" issues
+        from merkle.snapshot_manager import SnapshotManager
+        snapshot_manager = SnapshotManager()
+        try:
+            snapshot_manager.delete_snapshot(_current_project)
+            logger.info(f"Merkle snapshot deleted for {_current_project}")
+        except Exception as snapshot_error:
+            logger.warning(f"Failed to delete snapshot (non-critical): {snapshot_error}")
+
+        response = {"success": True, "message": "Search index and snapshot cleared successfully"}
 
         logger.info("Search index cleared")
         return json.dumps(response, indent=2)
