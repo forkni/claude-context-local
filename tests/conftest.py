@@ -80,6 +80,14 @@ def reset_global_state():
     except ImportError:
         pass  # Module might not be available in some tests
 
+    # Reset config manager cache to ensure clean state
+    try:
+        from search.config import get_config_manager
+        config_manager = get_config_manager()
+        config_manager._config = None
+    except ImportError:
+        pass  # Module might not be available in some tests
+
     yield
 
     # Cleanup after test if needed

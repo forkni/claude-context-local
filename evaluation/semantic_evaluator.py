@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from chunking.multi_language_chunker import MultiLanguageChunker
 from embeddings.embedder import CodeEmbedder
 from merkle.merkle_dag import MerkleDAG
+from search.config import get_search_config
 from search.hybrid_searcher import HybridSearcher
 
 from .base_evaluator import BaseEvaluator, RetrievalResult
@@ -48,13 +49,21 @@ class SemanticSearchEvaluator(BaseEvaluator):
         self.dense_weight = dense_weight
         self.rrf_k = rrf_k
 
+        # Initialize logger first
+        self.logger = logging.getLogger(self.__class__.__name__)
+
         # Initialize components
         self.hybrid_searcher: Optional[HybridSearcher] = None
         self.chunker = MultiLanguageChunker()
         device = "auto" if use_gpu else "cpu"
-        self.embedder = CodeEmbedder(device=device)
 
-        self.logger = logging.getLogger(self.__class__.__name__)
+        # Read model from configuration (respects CLAUDE_EMBEDDING_MODEL environment variable)
+        config = get_search_config()
+        model_name = config.embedding_model_name
+        self.logger.info(
+            f"Creating embedder with model: {model_name} ({config.model_dimension} dimensions)"
+        )
+        self.embedder = CodeEmbedder(model_name=model_name, device=device)
 
     def build_index(self, project_path: str) -> None:
         """

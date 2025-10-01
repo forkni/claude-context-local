@@ -38,7 +38,7 @@ echo   UV provides superior dependency resolution for ML packages...
 .venv\Scripts\uv.exe sync
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] UV sync failed, trying manual PyTorch installation...
-    .venv\Scripts\uv.exe pip install torch>=2.5.1 torchvision>=0.20.1 torchaudio>=2.5.1 --python .venv\Scripts\python.exe --index-url https://download.pytorch.org/whl/cu121
+    .venv\Scripts\uv.exe pip install torch>=2.6.0 torchvision>=0.21.0 torchaudio>=2.6.0 --python .venv\Scripts\python.exe --index-url https://download.pytorch.org/whl/cu121
     if %ERRORLEVEL% neq 0 (
         echo [ERROR] Manual installation also failed
         echo [INFO] Check pyproject.toml UV configuration and internet connection

@@ -130,13 +130,28 @@ def ensure_project_indexed(project_path: str) -> bool:
 
 
 def get_embedder() -> CodeEmbedder:
-    """Lazy initialization of embedder."""
+    """Lazy initialization of embedder with configurable model."""
     global _embedder
     if _embedder is None:
         cache_dir = get_storage_dir() / "models"
         cache_dir.mkdir(exist_ok=True)
-        _embedder = CodeEmbedder(cache_dir=str(cache_dir))
-        logger.info("Embedder initialized")
+
+        # Get model from config (defaults to Gemma for backward compatibility)
+        try:
+            from search.config import get_search_config
+            config = get_search_config()
+            model_name = config.embedding_model_name
+            logger.info(f"Using embedding model: {model_name}")
+        except Exception as e:
+            logger.warning(f"Failed to load model from config: {e}")
+            model_name = "google/embeddinggemma-300m"  # Fallback to default
+            logger.info(f"Falling back to default model: {model_name}")
+
+        _embedder = CodeEmbedder(
+            model_name=model_name,
+            cache_dir=str(cache_dir)
+        )
+        logger.info("Embedder initialized successfully")
     return _embedder
 
 

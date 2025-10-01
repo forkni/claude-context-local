@@ -161,10 +161,11 @@ echo.
 echo   1. View Current Configuration
 echo   2. Set Search Mode ^(Hybrid/Semantic/BM25/Auto^)
 echo   3. Configure Search Weights ^(BM25 vs Dense^)
-echo   4. Reset to Defaults
-echo   5. Back to Main Menu
+echo   4. Select Embedding Model
+echo   5. Reset to Defaults
+echo   6. Back to Main Menu
 echo.
-set /p search_choice="Select option (1-5): "
+set /p search_choice="Select option (1-6): "
 
 REM Handle empty input gracefully
 if not defined search_choice (
@@ -179,10 +180,11 @@ if "!search_choice!"=="" (
 if "!search_choice!"=="1" goto view_config
 if "!search_choice!"=="2" goto set_search_mode
 if "!search_choice!"=="3" goto set_weights
-if "!search_choice!"=="4" goto reset_config
-if "!search_choice!"=="5" goto menu_restart
+if "!search_choice!"=="4" goto select_embedding_model
+if "!search_choice!"=="5" goto reset_config
+if "!search_choice!"=="6" goto menu_restart
 
-echo [ERROR] Invalid choice. Please select 1-5.
+echo [ERROR] Invalid choice. Please select 1-6.
 pause
 cls
 goto search_config_menu
@@ -377,6 +379,55 @@ echo [OK] Configuration saved for current session
 pause
 goto search_config_menu
 
+:select_embedding_model
+echo.
+echo === Select Embedding Model ===
+echo.
+echo Current Model:
+.\.venv\Scripts\python.exe -c "from search.config import get_search_config; print('  ', get_search_config().embedding_model_name)" 2>nul
+if errorlevel 1 echo   google/embeddinggemma-300m ^(default^)
+echo.
+echo Available Models:
+echo   1. EmbeddingGemma-300m ^(Default, 768 dim, 4-8GB VRAM^)
+echo   2. BGE-M3 ^(Recommended, 1024 dim, 8-16GB VRAM, +3-6%% accuracy^)
+echo   3. Custom model path
+echo.
+set /p model_choice="Select model (1-3): "
+
+if not defined model_choice goto search_config_menu
+if "!model_choice!"=="" goto search_config_menu
+
+set SELECTED_MODEL=
+if "!model_choice!"=="1" set SELECTED_MODEL=google/embeddinggemma-300m
+if "!model_choice!"=="2" set SELECTED_MODEL=BAAI/bge-m3
+if "!model_choice!"=="3" (
+    set /p SELECTED_MODEL="Enter model name or path: "
+)
+
+if defined SELECTED_MODEL (
+    echo.
+    echo [INFO] Configuring model: !SELECTED_MODEL!
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding_model_name = '!SELECTED_MODEL!'; mgr.save_config(cfg); print('[OK] Model configuration saved')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo.
+        echo [WARNING] Existing indexes need to be rebuilt for the new model
+        echo [INFO] Next time you index a project, it will use: !SELECTED_MODEL!
+        echo.
+        set /p reindex_now="Clear old indexes now? (y/N): "
+        if /i "!reindex_now!"=="y" (
+            echo [INFO] Clearing old indexes...
+            .\.venv\Scripts\python.exe -c "from pathlib import Path; import shutil; storage = Path.home() / '.claude-context-mcp' / 'storage'; cleared = 0; [shutil.rmtree(p.parent) if p.exists() else None or (cleared := cleared + 1) for p in storage.glob('*/faiss_index/code.index') if p.exists()]; print(f'[OK] Cleared indexes for {cleared} projects')" 2>nul
+            echo [OK] Indexes cleared. Re-index projects via: /index_directory "path"
+        )
+    )
+) else (
+    echo [ERROR] Invalid choice
+)
+pause
+goto search_config_menu
+
 :reset_config
 echo.
 echo [INFO] Resetting to default configuration:
@@ -504,7 +555,7 @@ REM System Status Functions
 :show_system_status
 echo [Runtime Status]
 if exist ".venv\Scripts\python.exe" (
-    .\.venv\Scripts\python.exe -c "try: import torch; cuda_available = torch.cuda.is_available(); gpu_name = torch.cuda.get_device_name(0) if cuda_available else 'N/A'; pytorch_version = torch.__version__; print(f'Runtime: PyTorch {pytorch_version} | GPU: {gpu_name}') if cuda_available else print(f'Runtime: PyTorch {pytorch_version} | CPU-Only Mode'); except Exception: print('Runtime: Python | Status: Checking...')" 2>nul
+    .\.venv\Scripts\python.exe -c "try: import torch; from search.config import get_search_config; cfg = get_search_config(); model_short = cfg.embedding_model_name.split('/')[-1]; cuda_available = torch.cuda.is_available(); gpu_name = torch.cuda.get_device_name(0) if cuda_available else 'N/A'; pytorch_version = torch.__version__; print(f'Model: {model_short} | GPU: {gpu_name}') if cuda_available else print(f'Model: {model_short} | CPU-Only'); except Exception: print('Runtime: Python | Status: Checking...')" 2>nul
 ) else (
     echo Runtime: Python | Status: Not installed
 )

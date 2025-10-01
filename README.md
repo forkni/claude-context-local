@@ -33,7 +33,7 @@
 
 An intelligent code search system that uses Google's EmbeddingGemma model and advanced multi-language chunking to provide semantic search capabilities across 22 file extensions and 11 programming languages, integrated with Claude Code via MCP (Model Context Protocol).
 
-## ✅ Production Ready
+## Status
 
 - Core functionality fully operational
 - Windows-optimized installation with automated setup
@@ -76,7 +76,9 @@ Claude’s code context is powerful, but sending your code to the cloud costs to
 - **RAM**: 4GB minimum (8GB+ recommended for large codebases)
 - **Disk**: 2GB free space (model cache + embeddings + indexes)
 - **Windows**: Windows 10/11 with PowerShell
-- **Optional GPU**: NVIDIA GPU with CUDA 11.8/12.1 for accelerated indexing (8.6x faster)
+- **PyTorch**: 2.6.0+ (automatically installed, required for BGE-M3 model support)
+- **Optional GPU**: NVIDIA GPU with CUDA 11.8/12.4/12.6 for accelerated indexing (8.6x faster)
+  - PyTorch 2.6.0+ with CUDA 11.8/12.4/12.6 support
   - FAISS GPU acceleration for vector search
   - CUDA acceleration for embedding generation
   - Everything works on CPU if GPU unavailable
@@ -138,9 +140,26 @@ The Windows installer will:
 - Creates and manages the project virtual environment
 - Installs Python dependencies with optimized resolution using `uv sync`
 - Downloads the EmbeddingGemma model (~1.2–1.3 GB) if not already cached
-- Automatically detects CUDA and installs appropriate PyTorch version
+- Automatically detects CUDA and installs PyTorch 2.6.0+ with appropriate CUDA version
 - Configures `faiss-gpu` if an NVIDIA GPU is detected
 - **Preserves all your indexed projects and embeddings** across updates
+
+### PyTorch Upgrade for BGE-M3 Support
+
+If you're upgrading to BGE-M3 or need PyTorch 2.6.0+:
+
+```powershell
+# Standalone PyTorch upgrade script
+upgrade_pytorch_2.6.bat
+```
+
+This script:
+- Safely uninstalls old PyTorch versions
+- Installs PyTorch 2.6.0 with CUDA 11.8 (compatible with CUDA 12.x systems)
+- Verifies installation and BGE-M3 compatibility
+- Provides clear instructions for model switching
+
+**When to use:** Upgrading from earlier versions, or enabling BGE-M3 model support
 
 ## Quick Start
 
@@ -642,10 +661,17 @@ verify-hf-auth.bat
    install-windows.bat  # Automatically installs UV
    ```
 
-3. **PyTorch CUDA version mismatch**: Reinstall PyTorch with correct CUDA version
+3. **PyTorch CUDA version mismatch or BGE-M3 errors**:
+
+   BGE-M3 requires PyTorch 2.6.0+ due to security improvements. Upgrade using:
 
    ```powershell
-   scripts\batch\install_pytorch_cuda.bat
+   upgrade_pytorch_2.6.bat
+   ```
+
+   Or reinstall manually:
+   ```powershell
+   .venv\Scripts\uv.exe pip install "torch==2.6.0" "torchvision==0.21.0" "torchaudio==2.6.0" --index-url https://download.pytorch.org/whl/cu118
    ```
 
 ### Model and Authentication Issues

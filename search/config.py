@@ -3,13 +3,36 @@
 import json
 import logging
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, Optional
+
+
+# Model registry with specifications
+MODEL_REGISTRY = {
+    "google/embeddinggemma-300m": {
+        "dimension": 768,
+        "max_context": 2048,
+        "prompt_name": "Retrieval-document",
+        "description": "Default model, fast and efficient",
+        "vram_gb": "4-8",
+    },
+    "BAAI/bge-m3": {
+        "dimension": 1024,
+        "max_context": 8192,
+        "prompt_name": None,  # BGE-M3 doesn't use prompt names
+        "description": "Recommended upgrade, hybrid search support",
+        "vram_gb": "8-16",
+    },
+}
 
 
 @dataclass
 class SearchConfig:
     """Configuration for search behavior."""
+
+    # Embedding Model Configuration
+    embedding_model_name: str = "google/embeddinggemma-300m"
+    model_dimension: int = 768
 
     # Search Mode Configuration
     default_search_mode: str = "hybrid"  # hybrid, semantic, bm25, auto
@@ -51,6 +74,12 @@ class SearchConfig:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SearchConfig":
         """Create from dictionary."""
+        # Auto-update dimension if model is in registry
+        if "embedding_model_name" in data:
+            model_config = get_model_config(data["embedding_model_name"])
+            if model_config:
+                data["model_dimension"] = model_config["dimension"]
+
         # Filter only known fields to avoid TypeError
         valid_fields = {f.name for f in cls.__dataclass_fields__.values()}
         filtered_data = {k: v for k, v in data.items() if k in valid_fields}
@@ -117,6 +146,7 @@ class SearchConfigManager:
     def _load_from_environment(self) -> Dict[str, Any]:
         """Load configuration from environment variables."""
         env_mapping = {
+            "CLAUDE_EMBEDDING_MODEL": ("embedding_model_name", str),
             "CLAUDE_SEARCH_MODE": ("default_search_mode", str),
             "CLAUDE_ENABLE_HYBRID": ("enable_hybrid_search", self._bool_from_env),
             "CLAUDE_BM25_WEIGHT": ("bm25_weight", float),
@@ -153,6 +183,11 @@ class SearchConfigManager:
     def save_config(self, config: SearchConfig) -> None:
         """Save configuration to file."""
         try:
+            # Auto-sync dimension from model registry before saving
+            model_config = get_model_config(config.embedding_model_name)
+            if model_config:
+                config.model_dimension = model_config["dimension"]
+
             # Create directory if needed
             os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
 
@@ -228,3 +263,13 @@ def get_default_search_mode() -> str:
     """Get default search mode."""
     config = get_search_config()
     return config.default_search_mode
+
+
+def get_model_registry() -> Dict[str, Dict[str, Any]]:
+    """Get the model registry with all supported models."""
+    return MODEL_REGISTRY
+
+
+def get_model_config(model_name: str) -> Optional[Dict[str, Any]]:
+    """Get configuration for a specific model."""
+    return MODEL_REGISTRY.get(model_name)
