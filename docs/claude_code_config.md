@@ -117,6 +117,28 @@ When the Claude CLI fails (common error: "missing required argument 'commandOrUr
 4. Validates the configuration after writing
 5. Reports success or detailed error information
 
+#### Easy Alternative: Batch File Wrapper
+
+For the simplest experience, especially if PowerShell scripts fail, use the batch file wrapper:
+
+```batch
+# Run the interactive configuration helper
+.\scripts\batch\manual_configure.bat
+```
+
+**This batch file:**
+- Provides an interactive menu for scope selection (global/project)
+- Validates all paths before attempting configuration
+- Runs the Python script with correct arguments
+- Shows clear success or error messages
+- Works without PowerShell complications
+
+**When to use this:**
+- PowerShell script fails with parameter errors
+- You prefer a simple interactive interface
+- PowerShell execution policy issues
+- Quick one-click configuration needed
+
 ### Verification
 
 After adding the MCP server, verify it's available in Claude Code:
@@ -227,24 +249,34 @@ With MCP integration, you get:
 
 **Root Cause**: Claude CLI has known argument parsing issues (reported in 2025) that affect the `claude mcp add` command when using options like `--scope` and `-e` flags.
 
-**Solutions**:
+**Solutions** (in order of ease):
 
-1. **Use the Automated Fallback** (Recommended):
-   - The PowerShell configuration script automatically detects CLI failures and falls back to the Python manual configuration method
-   - Simply run: `.\scripts\powershell\configure_claude_code.ps1 -Global`
-   - The script will try CLI first, then automatically use Python method if it fails
+1. **Use the Batch File Wrapper** (Easiest):
+   ```batch
+   .\scripts\batch\manual_configure.bat
+   ```
+   - Interactive menu, no PowerShell needed
+   - Works even when PowerShell scripts fail
+   - Automatically validates paths and handles errors
 
-2. **Use Python Manual Configuration Directly**:
+2. **Use the PowerShell Script with Automatic Fallback**:
+   - Run: `.\scripts\powershell\configure_claude_code.ps1 -Global`
+   - Tries CLI first, automatically falls back to Python method if it fails
+   - Now includes Python path validation before fallback
+
+3. **Use Python Manual Configuration Directly**:
    ```powershell
    .\.venv\Scripts\python.exe .\scripts\manual_configure.py --global --force
    ```
+   - Direct Python script execution
+   - Bypasses both Claude CLI and PowerShell
 
-3. **Direct JSON Editing**:
+4. **Direct JSON Editing**:
    - Open `%USERPROFILE%\.claude.json` in a text editor
    - Add the MCP server configuration manually (see Method 3 above)
    - Ensure proper JSON syntax with double backslashes for Windows paths
 
-4. **Verify PowerShell Execution**:
+5. **Verify PowerShell Execution**:
    - Always use `.\` prefix when running PowerShell scripts: `.\scripts\powershell\configure_claude_code.ps1`
    - Not just: `configure_claude_code.ps1` (will fail with "not recognized")
    - This is Windows PowerShell security behavior

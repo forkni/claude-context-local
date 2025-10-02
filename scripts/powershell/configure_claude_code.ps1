@@ -193,13 +193,36 @@ try {
         # Fall back to Python manual configuration script
         $manualScriptPath = Join-Path $PROJECT_DIR "scripts" "manual_configure.py"
 
+        # Validate Python path exists
+        if (-not (Test-Path $PYTHON_PATH)) {
+            Write-Host "[ERROR] Python executable not found: $PYTHON_PATH" -ForegroundColor Red
+            Write-Host "[INFO] The virtual environment may not be set up correctly" -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "Please try one of these options:" -ForegroundColor Yellow
+            Write-Host "1. Run the installer: install-windows.bat" -ForegroundColor White
+            Write-Host "2. Or edit JSON manually:" -ForegroundColor White
+            Write-Host "   - Open: $ConfigPath" -ForegroundColor Gray
+            Write-Host "   - Add code-search server configuration to mcpServers section" -ForegroundColor Gray
+            Write-Host ""
+            throw "Python executable not available for manual configuration"
+        }
+
         if (Test-Path $manualScriptPath) {
             try {
-                $globalFlag = if ($Global) { "--global" } else { "--project" }
-                $manualCmd = "& `"$PYTHON_PATH`" `"$manualScriptPath`" $globalFlag --force"
-
                 Write-Host "Running manual configuration script..." -ForegroundColor Cyan
-                Invoke-Expression $manualCmd
+                Write-Host "  Python: $PYTHON_PATH" -ForegroundColor Gray
+                Write-Host "  Script: $manualScriptPath" -ForegroundColor Gray
+
+                # Use direct invocation instead of Invoke-Expression
+                if ($Global) {
+                    & $PYTHON_PATH $manualScriptPath --global --force
+                } else {
+                    & $PYTHON_PATH $manualScriptPath --project --force
+                }
+
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Python script returned error code: $LASTEXITCODE"
+                }
 
                 # Check if manual configuration succeeded
                 Start-Sleep -Milliseconds 500
@@ -213,28 +236,40 @@ try {
                 }
 
             } catch {
+                Write-Host ""
                 Write-Host "[ERROR] Manual configuration also failed: $_" -ForegroundColor Red
                 Write-Host ""
-                Write-Host "Please try manual JSON editing:" -ForegroundColor Yellow
-                Write-Host "1. Open: $ConfigPath" -ForegroundColor White
-                Write-Host "2. Add the following to 'mcpServers' section:" -ForegroundColor White
+                Write-Host "Last resort - Manual JSON editing:" -ForegroundColor Yellow
+                Write-Host ""
+                Write-Host "1. Open this file in a text editor:" -ForegroundColor White
+                Write-Host "   $ConfigPath" -ForegroundColor Gray
+                Write-Host ""
+                Write-Host "2. Find the 'mcpServers' section (or add it if missing)" -ForegroundColor White
+                Write-Host ""
+                Write-Host "3. Add this configuration:" -ForegroundColor White
                 Write-Host @"
 {
-  "code-search": {
-    "type": "stdio",
-    "command": "$WRAPPER_SCRIPT",
-    "args": [],
-    "env": {
-      "PYTHONPATH": "$PROJECT_DIR",
-      "PYTHONUNBUFFERED": "1"
+  "mcpServers": {
+    "code-search": {
+      "type": "stdio",
+      "command": "$($WRAPPER_SCRIPT -replace '\\', '\\\\')",
+      "args": [],
+      "env": {
+        "PYTHONPATH": "$($PROJECT_DIR -replace '\\', '\\\\')",
+        "PYTHONUNBUFFERED": "1"
+      }
     }
   }
 }
 "@ -ForegroundColor Gray
+                Write-Host ""
+                Write-Host "4. Save the file and restart Claude Code" -ForegroundColor White
+                Write-Host ""
                 throw $_
             }
         } else {
             Write-Host "[ERROR] Manual configuration script not found: $manualScriptPath" -ForegroundColor Red
+            Write-Host "[INFO] The repository may be incomplete or corrupted" -ForegroundColor Yellow
             throw "Manual configuration unavailable"
         }
     }
