@@ -87,9 +87,13 @@ class ClaudeConfigManager:
             "command": command
         }
 
-        if args:
+        # Always include args field, even if empty (required by Claude Code)
+        if args is not None:
             config["args"] = args
+        else:
+            config["args"] = []
 
+        # Always include env field if provided (recommended by Claude Code)
         if env:
             config["env"] = env
 
