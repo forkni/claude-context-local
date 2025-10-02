@@ -116,12 +116,13 @@ def test_all_files():
         "mcp_server/server.py",
         "tests/integration/test_complete_workflow.py",
         "tests/integration/test_system.py",
-        # PowerShell files
-        "scripts/powershell/install-windows.ps1",
-        "scripts/powershell/configure_claude_code.ps1",
-        "scripts/powershell/hf_auth.ps1",
+        # PowerShell files - NOTE: configure_claude_code.ps1 and verify_claude_config.ps1 moved to _archive
+        # "scripts/powershell/install-windows.ps1",  # Removed - functionality in install-windows.bat
+        # "scripts/powershell/configure_claude_code.ps1",  # Moved to _archive/powershell_scripts/
+        "scripts/powershell/hf_auth.ps1",  # Still in use
         # Batch files
         "start_mcp_server.bat",
+        "scripts/batch/manual_configure.bat",  # New: Python-based configuration wrapper
         # "td_tools.bat", # Removed - functionality integrated into main launcher
     ]
 

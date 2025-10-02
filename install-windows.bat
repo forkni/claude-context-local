@@ -536,7 +536,7 @@ echo   1. Ensure HuggingFace authentication is configured ^(if not done during i
 echo      scripts\powershell\hf_auth.ps1 -Token "your_hf_token"
 echo.
 echo   2. Configure Claude Code integration:
-echo      scripts\powershell\configure_claude_code.ps1 -Global
+echo      scripts\batch\manual_configure.bat
 echo.
 echo   3. Start the MCP server:
 echo      start_mcp_server.bat
@@ -554,38 +554,42 @@ echo.
 echo === Claude Code Integration ===
 echo.
 echo Automatically configuring Claude Code MCP integration...
-powershell -ExecutionPolicy Bypass -File "scripts\powershell\configure_claude_code.ps1" -Global
-if %ERRORLEVEL% neq 0 (
+echo.
+
+REM Use the reliable Python script directly (no Claude CLI dependency)
+if exist ".venv\Scripts\python.exe" (
+    echo [INFO] Using Python configuration script (reliable method)
     echo.
-    echo [WARNING] Claude Code configuration failed
-    echo [INFO] Common causes:
-    echo   - Claude Code not installed or not in PATH
-    echo   - 'claude' command not available
-    echo.
-    set /p retry_config="Would you like to try again after fixing the issue? (y/N): "
-    if /i "!retry_config!"=="y" (
-        echo [INFO] Please ensure Claude Code is installed and in PATH, then press any key...
-        pause >nul
-        powershell -ExecutionPolicy Bypass -File "scripts\powershell\configure_claude_code.ps1" -Global
-        if %ERRORLEVEL% neq 0 (
-            echo [WARNING] Configuration still failed. You can configure manually later using:
-            echo   scripts\powershell\configure_claude_code.ps1 -Global
-        ) else (
-            REM Verify configuration was successful
-            powershell -ExecutionPolicy Bypass -File "scripts\powershell\verify_claude_config.ps1" >nul 2>&1
-        )
+    .venv\Scripts\python.exe scripts\manual_configure.py --global --force
+
+    if %ERRORLEVEL% equ 0 (
+        echo.
+        echo [OK] Claude Code integration configured successfully!
+        echo [INFO] Configuration file: %USERPROFILE%\.claude.json
+        echo.
+        echo IMPORTANT: Please restart Claude Code completely to apply changes
+        echo.
     ) else (
-        echo [INFO] You can configure Claude Code integration manually later using:
-        echo   scripts\powershell\configure_claude_code.ps1 -Global
+        echo.
+        echo [WARNING] Automatic configuration failed
+        echo.
+        echo Manual configuration options:
+        echo   1. Run: scripts\batch\manual_configure.bat
+        echo   2. Edit: %USERPROFILE%\.claude.json manually
+        echo   3. See: docs\claude_code_config.md for configuration examples
+        echo.
+        set /p retry_config="Would you like to run manual configuration now? (y/N): "
+        if /i "!retry_config!"=="y" (
+            echo.
+            call scripts\batch\manual_configure.bat
+        )
     )
 ) else (
-    echo [OK] Claude Code integration configured successfully!
-    echo [INFO] Verifying configuration...
-    powershell -ExecutionPolicy Bypass -File "scripts\powershell\verify_claude_config.ps1"
-    if %ERRORLEVEL% neq 0 (
-        echo [WARNING] Verification failed - please check .claude.json manually
-        echo [INFO] Config should be in: %USERPROFILE%\.claude.json
-    )
+    echo [WARNING] Virtual environment not ready, skipping MCP configuration
+    echo [INFO] You can configure Claude Code later using:
+    echo   1. Run: scripts\batch\manual_configure.bat
+    echo   2. Or: .venv\Scripts\python.exe scripts\manual_configure.py --global
+    echo.
 )
 
 :check_huggingface_auth

@@ -70,8 +70,9 @@ tests/
 │   ├── test_semantic_search.py # End-to-end semantic search
 │   ├── test_system.py        # System-level tests
 │   └── test_token_efficiency_workflow.py # Token efficiency workflow
-└── regression/               # Regression tests (PowerShell/Bash scripts)
+└── regression/               # Regression tests (PowerShell scripts)
     └── test_mcp_configuration.ps1 # MCP config validation (15 checks)
+                                    # Note: Uses Python/batch configuration scripts
 ```
 
 ## Running Tests
@@ -123,9 +124,10 @@ start_mcp_server.bat
 ### Running Regression Tests
 
 ```powershell
-# MCP configuration validation
+# MCP configuration validation (verifies .claude.json structure)
 .\tests\regression\test_mcp_configuration.ps1
 
+# Note: This test validates MCP server configuration using Python/batch scripts
 # Or via interactive menu: Advanced Options → Run Regression Tests
 ```
 
@@ -187,9 +189,12 @@ Standalone validation scripts that ensure configurations and system state remain
   - Validates PYTHONPATH and PYTHONUNBUFFERED environment variables
   - Ensures correct Python executable paths
   - Verifies working directory configuration
-- **Script Validation**: Ensures PowerShell/Bash scripts work correctly
+  - References Python/batch configuration scripts (not deprecated PowerShell scripts)
+- **Script Validation**: Ensures Python and batch scripts work correctly
 - **Configuration Integrity**: Checks environment variables and paths
 - **Deployment Validation**: Pre-deployment configuration checks
+
+**Note**: PowerShell configuration scripts (`configure_claude_code.ps1`, `verify_claude_config.ps1`) have been deprecated and moved to `_archive/powershell_scripts/`. The test suite now references the Python-based `manual_configure.py` script and its batch wrapper.
 
 #### Running Regression Tests
 

@@ -176,7 +176,7 @@ powershell -ExecutionPolicy Bypass -File "tests\regression\test_mcp_configuratio
 if %ERRORLEVEL% neq 0 (
     echo.
     echo [WARNING] Configuration validation failed. Check output above for details.
-    echo [INFO] Run: .\scripts\powershell\configure_claude_code.ps1 -Global to fix
+    echo [INFO] Run: .\scripts\batch\manual_configure.bat to fix
 ) else (
     echo.
     echo [OK] All regression tests passed!
@@ -562,7 +562,7 @@ goto menu_restart
 :configure_claude
 echo.
 echo [INFO] Configuring Claude Code integration...
-powershell -ExecutionPolicy Bypass -File "scripts\powershell\configure_claude_code.ps1" -Global
+powershell -ExecutionPolicy Bypass -File "scripts\batch\manual_configure.bat" -Global
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Configuration failed
 ) else (
@@ -856,7 +856,7 @@ echo.
 echo Quick Start:
 echo   1. Run: install-windows.bat ^(first time setup^)
 echo   2. Verify: verify-installation.bat ^(test installation^)
-echo   3. Configure: scripts\powershell\configure_claude_code.ps1 -Global
+echo   3. Configure: scripts\batch\manual_configure.bat
 echo   4. Index: /index_directory "your-project-path"
 echo   5. Search: /search_code "your query"
 echo.

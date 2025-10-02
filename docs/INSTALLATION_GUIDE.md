@@ -60,10 +60,10 @@ verify-installation.bat
 
 # 4. Automatic Claude Code configuration (included in installation)
 # If configuration fails, run manually:
-.\scripts\powershell\configure_claude_code.ps1 -Global
+.\scripts\batch\manual_configure.bat
 
 # 5. Verify Claude Code configuration
-scripts\powershell\verify_claude_config.ps1
+.venv\Scripts\python.exe scripts\manual_configure.py --validate-only
 ```
 
 **What this provides:**
@@ -211,16 +211,16 @@ If automatic configuration fails or you need to reconfigure:
 
 ```powershell
 # Configure globally (recommended - works from any directory)
-.\scripts\powershell\configure_claude_code.ps1 -Global
+.\scripts\batch\manual_configure.bat
 
 # Configure for current project only
-.\scripts\powershell\configure_claude_code.ps1
+.\scripts\batch\manual_configure.bat
 
 # Remove existing configuration
-.\scripts\powershell\configure_claude_code.ps1 -Remove
+.\scripts\batch\manual_configure.bat -Remove
 
 # Test MCP server before configuration
-.\scripts\powershell\configure_claude_code.ps1 -Test
+.\scripts\batch\manual_configure.bat -Test
 ```
 
 ### Configuration Features
@@ -249,7 +249,7 @@ After configuration, verify that the MCP server path is valid:
 
 ```powershell
 # Verify Claude Code configuration
-scripts\powershell\verify_claude_config.ps1
+.venv\Scripts\python.exe scripts\manual_configure.py --validate-only
 ```
 
 **Verification Checks:**
@@ -274,7 +274,7 @@ Configuration details:
 
 [PROBLEM] The configured path is invalid or the file has been moved
 [SOLUTION] Reconfigure Claude Code integration:
-  .\.\scripts\powershell\configure_claude_code.ps1 -Global
+  .\.\scripts\batch\manual_configure.bat
 ```
 
 ### Configuration Modes
@@ -286,10 +286,10 @@ Configuration details:
 
 ```powershell
 # Use wrapper script (default)
-.\scripts\powershell\configure_claude_code.ps1 -Global
+.\scripts\batch\manual_configure.bat
 
 # Explicit wrapper mode
-.\scripts\powershell\configure_claude_code.ps1 -UseWrapper -Global
+.\scripts\batch\manual_configure.bat -UseWrapper -Global
 ```
 
 **Direct Python Mode:**
@@ -299,7 +299,7 @@ Configuration details:
 
 ```powershell
 # Direct Python mode
-.\scripts\powershell\configure_claude_code.ps1 -DirectPython -Global
+.\scripts\batch\manual_configure.bat -DirectPython -Global
 ```
 
 ### Troubleshooting Configuration
@@ -325,10 +325,10 @@ If the configured path becomes invalid (moved files, changed drives):
 
 ```powershell
 # Check current configuration
-scripts\powershell\verify_claude_config.ps1
+.venv\Scripts\python.exe scripts\manual_configure.py --validate-only
 
 # Reconfigure with correct path
-.\scripts\powershell\configure_claude_code.ps1 -Global
+.\scripts\batch\manual_configure.bat
 
 # Or use repair tool
 scripts\batch\repair_installation.bat

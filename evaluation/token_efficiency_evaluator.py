@@ -473,6 +473,9 @@ class TokenEfficiencyEvaluator(BaseEvaluator):
         # Save results
         self._save_token_efficiency_results(evaluation_results)
 
+        # Generate and save human-readable report
+        self.create_efficiency_report(evaluation_results)
+
         self.logger.info("Token efficiency evaluation completed successfully")
         return evaluation_results
 

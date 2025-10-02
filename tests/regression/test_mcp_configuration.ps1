@@ -45,7 +45,8 @@ Test-ConfigField "Configuration file exists" `
 if (-not (Test-Path $ConfigPath)) {
     Write-Host ""
     Write-Host "[CRITICAL] Cannot proceed without configuration file" -ForegroundColor Red
-    Write-Host "Run: .\scripts\powershell\configure_claude_code.ps1 -Global" -ForegroundColor White
+    Write-Host "Run: .\scripts\batch\manual_configure.bat" -ForegroundColor White
+    Write-Host "  or: .\.venv\Scripts\python.exe scripts\manual_configure.py --global" -ForegroundColor Gray
     exit 1
 }
 
@@ -81,7 +82,8 @@ Test-ConfigField "code-search server is configured" `
 if (-not $hasCodeSearch) {
     Write-Host ""
     Write-Host "[CRITICAL] code-search server not configured" -ForegroundColor Red
-    Write-Host "Run: .\scripts\powershell\configure_claude_code.ps1 -Global" -ForegroundColor White
+    Write-Host "Run: .\scripts\batch\manual_configure.bat" -ForegroundColor White
+    Write-Host "  or: .\.venv\Scripts\python.exe scripts\manual_configure.py --global" -ForegroundColor Gray
     exit 1
 }
 
@@ -188,14 +190,16 @@ if ($criticalFailures.Count -gt 0) {
     Write-Host "These issues can prevent the MCP server from starting!" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "To fix, run:" -ForegroundColor Yellow
-    Write-Host "  .\scripts\powershell\configure_claude_code.ps1 -Global" -ForegroundColor White
+    Write-Host "  .\scripts\batch\manual_configure.bat" -ForegroundColor White
+    Write-Host "  or: .\.venv\Scripts\python.exe scripts\manual_configure.py --global" -ForegroundColor Gray
     Write-Host ""
     exit 1
 }
 
 if ($TestsFailed -gt 0) {
     Write-Host "Some tests failed. Review the output above for details." -ForegroundColor Yellow
-    Write-Host "Consider reconfiguring: .\scripts\powershell\configure_claude_code.ps1 -Global" -ForegroundColor White
+    Write-Host "Consider reconfiguring: .\scripts\batch\manual_configure.bat" -ForegroundColor White
+    Write-Host "  or: .\.venv\Scripts\python.exe scripts\manual_configure.py --global" -ForegroundColor Gray
     exit 1
 }
 

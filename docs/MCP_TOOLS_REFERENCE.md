@@ -116,7 +116,7 @@ This modular reference can be embedded in any project instructions for Claude Co
 .\install-windows.bat
 
 # 2. Configure Claude Code
-.\scripts\powershell\configure_claude_code.ps1 -Global
+.\scripts\batch\manual_configure.bat
 
 # 3. Start using
 /index_directory "C:\Projects\MyProject"

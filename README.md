@@ -104,7 +104,7 @@ install-windows.bat
 verify-installation.bat
 
 # 4. (Optional) Configure Claude Code MCP integration
-.\scripts\powershell\configure_claude_code.ps1 -Global
+.\scripts\batch\manual_configure.bat
 ```
 
 > **⚠️ Important**: The installer will prompt for HuggingFace authentication during setup. You'll need a HuggingFace token to access the EmbeddingGemma model. Get your token at [https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) and accept terms at [https://huggingface.co/google/embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m).
@@ -185,7 +185,7 @@ scripts\batch\start_mcp_simple.bat
 
 ```powershell
 # One-time setup to register MCP server with Claude Code
-.\scripts\powershell\configure_claude_code.ps1 -Global
+.\scripts\batch\manual_configure.bat
 
 # Manual registration (alternative)
 claude mcp add code-search --scope user -- "F:\path\to\claude-context-local\.venv\Scripts\python.exe" -m mcp_server.server
@@ -325,6 +325,7 @@ Create a `CLAUDE.md` file in your project root with this content:
 ---
 
 📚 **Full Tool Reference**: See [docs/MCP_TOOLS_REFERENCE.md](https://github.com/forkni/claude-context-local/blob/main/docs/MCP_TOOLS_REFERENCE.md) for complete documentation with all parameters and examples.
+
 ```
 
 #### Customization Tips
@@ -406,6 +407,7 @@ The project includes a comprehensive test suite with 352 passing tests across 40
 ### Test Status
 
 ✅ **All tests passing** (as of 2025-01-10):
+
 - **Unit Tests**: 204 tests passing
 - **Integration Tests**: 147 tests passing
 - **Regression Tests**: 1 test (15 checks) passing
@@ -815,6 +817,7 @@ scripts\batch\repair_installation.bat
 ```
 
 **Repair Tool Options:**
+
 1. Clear all Merkle snapshots (fixes stale change detection)
 2. Clear project indexes (reset search state)
 3. Reconfigure Claude Code integration
@@ -892,9 +895,10 @@ scripts\batch\repair_installation.bat
    - For large codebases (10,000+ files), ensure 8GB+ RAM available
 
 10. **Indexing too slow**: First-time indexing takes time
-   - Expected: ~30-60 seconds for small projects (100 files)
-   - Expected: ~5-10 minutes for large projects (10,000+ files)
-   - GPU accelerates by 8.6x - verify CUDA available
+
+- Expected: ~30-60 seconds for small projects (100 files)
+- Expected: ~5-10 minutes for large projects (10,000+ files)
+- GPU accelerates by 8.6x - verify CUDA available
 
 ### GPU and Performance Issues
 
@@ -931,18 +935,18 @@ scripts\batch\repair_installation.bat
 
     ```powershell
     # Register MCP server with Claude Code
-    .\scripts\powershell\configure_claude_code.ps1 -Global
+    .\scripts\batch\manual_configure.bat
 
     # Verify configuration
-    .\scripts\powershell\verify_claude_config.ps1
+    .\.venv\Scripts\python.exe scripts\manual_configure.py --validate-only
 
     # Run comprehensive MCP configuration validation (15 checks)
     .\tests\regression\test_mcp_configuration.ps1
     ```
 
 15. **MCP server path verification fails**: Invalid path in .claude.json
-    - Verify configuration: `.\scripts\powershell\verify_claude_config.ps1`
-    - Reconfigure if needed: `.\scripts\powershell\configure_claude_code.ps1 -Global`
+    - Verify configuration: `.\.venv\Scripts\python.exe scripts\manual_configure.py --validate-only`
+    - Reconfigure if needed: `.\scripts\batch\manual_configure.bat`
     - Check that wrapper script exists at configured path
 
 16. **MCP connection lost**: Restart Claude Code and MCP server

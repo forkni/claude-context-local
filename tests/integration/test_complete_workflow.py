@@ -186,7 +186,8 @@ def test_complete_workflow():
         print()
         print("Next steps:")
         print("1. Configure Claude Code MCP integration:")
-        print("   Run: configure_claude_code.ps1 -Global")
+        print("   Run: scripts\\batch\\manual_configure.bat")
+        print("   Or: .venv\\Scripts\\python.exe scripts\\manual_configure.py --global")
         print("2. Open Claude Code and test with your real TouchDesigner projects")
         print("3. Use semantic search to optimize your development workflow")
         return True

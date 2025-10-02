@@ -14,10 +14,9 @@ Options:
 """
 
 import json
-import os
 import sys
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 
 class ClaudeConfigManager:
@@ -46,14 +45,14 @@ class ClaudeConfigManager:
             return {}
 
         try:
-            with open(config_path, 'r', encoding='utf-8') as f:
+            with open(config_path, "r", encoding="utf-8") as f:
                 config = json.load(f)
             print(f"[OK] Loaded existing configuration from {config_path}")
             return config
         except json.JSONDecodeError as e:
             print(f"[ERROR] Failed to parse config file: {e}")
             print("[WARNING] Creating backup and starting fresh...")
-            backup_path = config_path.with_suffix('.json.backup')
+            backup_path = config_path.with_suffix(".json.backup")
             if config_path.exists():
                 config_path.rename(backup_path)
                 print(f"[OK] Backup created: {backup_path}")
@@ -69,7 +68,7 @@ class ClaudeConfigManager:
             config_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Write with proper formatting
-            with open(config_path, 'w', encoding='utf-8') as f:
+            with open(config_path, "w", encoding="utf-8") as f:
                 json.dump(config, f, indent=2, ensure_ascii=False)
 
             print(f"[OK] Configuration saved to {config_path}")
@@ -82,10 +81,7 @@ class ClaudeConfigManager:
         self, command: str, args: list = None, env: Dict[str, str] = None
     ) -> Dict[str, Any]:
         """Create MCP server configuration structure."""
-        config = {
-            "type": "stdio",
-            "command": command
-        }
+        config = {"type": "stdio", "command": command}
 
         # Always include args field, even if empty (required by Claude Code)
         if args is not None:
@@ -106,13 +102,14 @@ class ClaudeConfigManager:
         args: list = None,
         env: Dict[str, str] = None,
         global_scope: bool = True,
-        force: bool = False
+        force: bool = False,
+        verbose: bool = False,
     ) -> bool:
         """Add or update MCP server configuration."""
         config_path = self.get_config_path(global_scope)
         self.config_path = config_path
 
-        print(f"\n=== Claude Code MCP Manual Configuration ===")
+        print("\n=== Claude Code MCP Manual Configuration ===")
         print(f"Server Name: {name}")
         print(f"Command: {command}")
         if args:
@@ -124,7 +121,9 @@ class ClaudeConfigManager:
                 display_value = value if len(value) < 60 else f"{value[:57]}..."
                 print(f"  {key}: {display_value}")
         print(f"Config File: {config_path}")
-        print(f"Scope: {'Global (all projects)' if global_scope else 'Project-specific'}")
+        print(
+            f"Scope: {'Global (all projects)' if global_scope else 'Project-specific'}"
+        )
         print()
 
         # Load existing config
@@ -140,19 +139,25 @@ class ClaudeConfigManager:
             print("Current configuration:")
             current = config["mcpServers"][name]
             print(f"  Command: {current.get('command', 'N/A')}")
-            if current.get('args'):
+            if current.get("args"):
                 print(f"  Args: {' '.join(current['args'])}")
-            if current.get('env'):
+            if current.get("env"):
                 print(f"  Environment variables: {len(current['env'])} set")
             print()
 
             response = input("Update configuration? (y/N): ").strip().lower()
-            if response != 'y':
+            if response != "y":
                 print("[INFO] Configuration unchanged")
                 return False
 
         # Create server config
         server_config = self.create_mcp_server_config(command, args, env)
+
+        # Show configuration details if verbose mode
+        if verbose:
+            print("[VERBOSE] Server configuration to be saved:")
+            print(json.dumps(server_config, indent=2))
+            print()
 
         # Add/update server
         config["mcpServers"][name] = server_config
@@ -163,8 +168,8 @@ class ClaudeConfigManager:
             print()
             print("Next steps:")
             print("  1. Restart Claude Code")
-            print(f"  2. Verify with: /mcp")
-            print(f"  3. Test with: /search_code \"test query\"")
+            print("  2. Verify with: /mcp")
+            print('  3. Test with: /search_code "test query"')
             print()
             return True
         else:
@@ -201,6 +206,17 @@ class ClaudeConfigManager:
         else:
             print(f"[OK] Command: {server['command']}")
 
+        # Check for args field (should always be present, even if empty)
+        if "args" not in server:
+            print(
+                "[WARNING] Missing 'args' field (should be present, even if empty array)"
+            )
+        else:
+            if server["args"]:
+                print(f"[OK] Args: {' '.join(server['args'])}")
+            else:
+                print("[OK] Args: [] (empty)")
+
         if not server.get("env"):
             print("[WARNING] Missing 'env' field - environment variables not set")
         else:
@@ -235,23 +251,24 @@ def main():
         dest="global_scope",
         action="store_true",
         default=True,
-        help="Configure globally for all projects (default)"
+        help="Configure globally for all projects (default)",
     )
     parser.add_argument(
         "--project",
         dest="project_scope",
         action="store_true",
-        help="Configure for current project only"
+        help="Configure for current project only",
     )
     parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Force update without confirmation"
+        "--force", action="store_true", help="Force update without confirmation"
     )
     parser.add_argument(
         "--validate-only",
         action="store_true",
-        help="Only validate existing configuration"
+        help="Only validate existing configuration",
+    )
+    parser.add_argument(
+        "--verbose", action="store_true", help="Show detailed configuration information"
     )
 
     args = parser.parse_args()
@@ -292,11 +309,9 @@ def main():
 
     # Setup configuration
     command = str(wrapper_script)
-    args_list = []
-    env_vars = {
-        "PYTHONPATH": str(project_dir),
-        "PYTHONUNBUFFERED": "1"
-    }
+    # MCP servers typically need transport specification
+    args_list = ["--transport", "stdio"]
+    env_vars = {"PYTHONPATH": str(project_dir), "PYTHONUNBUFFERED": "1"}
 
     # Add server
     success = manager.add_mcp_server(
@@ -305,7 +320,8 @@ def main():
         args=args_list,
         env=env_vars,
         global_scope=global_scope,
-        force=args.force
+        force=args.force,
+        verbose=args.verbose,
     )
 
     if success:

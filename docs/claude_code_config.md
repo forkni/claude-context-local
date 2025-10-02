@@ -8,10 +8,10 @@ Use the PowerShell configuration script for automatic setup:
 
 ```powershell
 # Global configuration (available in all projects)
-.\scripts\powershell\configure_claude_code.ps1 -Global
+.\scripts\batch\manual_configure.bat
 
 # Project-specific configuration
-.\scripts\powershell\configure_claude_code.ps1
+.\scripts\batch\manual_configure.bat
 ```
 
 This script automatically:
@@ -104,6 +104,7 @@ When the Claude CLI fails (common error: "missing required argument 'commandOrUr
 ```
 
 **Advantages of the Python Script**:
+
 - More reliable than the Claude CLI (known argument parsing issues)
 - Automatically validates configuration structure
 - Backs up existing configuration before modifying
@@ -111,6 +112,7 @@ When the Claude CLI fails (common error: "missing required argument 'commandOrUr
 - Direct JSON manipulation without CLI dependencies
 
 **How the Fallback Works**:
+
 1. PowerShell script attempts Claude CLI configuration first
 2. If CLI fails (detected by error patterns), automatically switches to Python script
 3. Python script directly edits `.claude.json` file
@@ -127,6 +129,7 @@ For the simplest experience, especially if PowerShell scripts fail, use the batc
 ```
 
 **This batch file:**
+
 - Provides an interactive menu for scope selection (global/project)
 - Validates all paths before attempting configuration
 - Runs the Python script with correct arguments
@@ -134,6 +137,7 @@ For the simplest experience, especially if PowerShell scripts fail, use the batc
 - Works without PowerShell complications
 
 **When to use this:**
+
 - PowerShell script fails with parameter errors
 - You prefer a simple interactive interface
 - PowerShell execution policy issues
@@ -243,6 +247,7 @@ With MCP integration, you get:
 ### Claude CLI Configuration Errors
 
 **Symptoms**: `claude mcp add` command fails with errors like:
+
 - "missing required argument 'commandOrUrl'"
 - "error: missing required argument 'name'"
 - Configuration shows success but `.claude.json` remains empty
@@ -252,22 +257,26 @@ With MCP integration, you get:
 **Solutions** (in order of ease):
 
 1. **Use the Batch File Wrapper** (Easiest):
+
    ```batch
    .\scripts\batch\manual_configure.bat
    ```
+
    - Interactive menu, no PowerShell needed
    - Works even when PowerShell scripts fail
    - Automatically validates paths and handles errors
 
 2. **Use the PowerShell Script with Automatic Fallback**:
-   - Run: `.\scripts\powershell\configure_claude_code.ps1 -Global`
+   - Run: `.\scripts\batch\manual_configure.bat`
    - Tries CLI first, automatically falls back to Python method if it fails
    - Now includes Python path validation before fallback
 
 3. **Use Python Manual Configuration Directly**:
+
    ```powershell
    .\.venv\Scripts\python.exe .\scripts\manual_configure.py --global --force
    ```
+
    - Direct Python script execution
    - Bypasses both Claude CLI and PowerShell
 
@@ -277,11 +286,12 @@ With MCP integration, you get:
    - Ensure proper JSON syntax with double backslashes for Windows paths
 
 5. **Verify PowerShell Execution**:
-   - Always use `.\` prefix when running PowerShell scripts: `.\scripts\powershell\configure_claude_code.ps1`
+   - Always use `.\` prefix when running PowerShell scripts: `.\scripts\batch\manual_configure.bat`
    - Not just: `configure_claude_code.ps1` (will fail with "not recognized")
    - This is Windows PowerShell security behavior
 
 **Related Known Issues**:
+
 - GitHub Issue #2341: `claude mcp add` command fails when options are placed before required arguments
 - GitHub Issue #4795: Claude Code unable to provide required argument for MCP command
 - Affects Claude Code versions throughout 2025
@@ -295,7 +305,7 @@ With MCP integration, you get:
 1. Verify configuration structure using the verification script:
 
    ```powershell
-   .\scripts\powershell\verify_claude_config.ps1
+   .\.venv\Scripts\python.exe scripts\manual_configure.py --validate-only
    ```
 
 2. Check for missing `args` or `env` fields in `.claude.json`:
@@ -306,7 +316,7 @@ With MCP integration, you get:
 3. Reconfigure using the automated script:
 
    ```powershell
-   .\scripts\powershell\configure_claude_code.ps1 -Global
+   .\scripts\batch\manual_configure.bat
    ```
 
 4. Test the server manually:
@@ -335,7 +345,7 @@ With MCP integration, you get:
 If missing, reconfigure using:
 
 ```powershell
-.\scripts\powershell\configure_claude_code.ps1 -Global
+.\scripts\batch\manual_configure.bat
 ```
 
 ### MCP Server Not Found

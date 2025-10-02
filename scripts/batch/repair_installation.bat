@@ -130,11 +130,11 @@ echo [INFO] Removing old configuration...
 .\.venv\Scripts\python.exe -c "import subprocess; subprocess.run(['claude', 'mcp', 'remove', 'code-search'], capture_output=True)" 2>nul
 
 echo [INFO] Adding new configuration...
-powershell -ExecutionPolicy Bypass -File "scripts\powershell\configure_claude_code.ps1" -Global
+powershell -ExecutionPolicy Bypass -File "scripts\batch\manual_configure.bat" -Global
 
 if %ERRORLEVEL% equ 0 (
     echo [INFO] Verifying configuration...
-    powershell -ExecutionPolicy Bypass -File "scripts\powershell\verify_claude_config.ps1"
+    powershell -ExecutionPolicy Bypass -File ".venv\Scripts\python.exe scripts\manual_configure.py --validate-only"
     if %ERRORLEVEL% equ 0 (
         echo [OK] Claude Code integration repaired successfully!
     ) else (

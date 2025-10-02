@@ -632,7 +632,7 @@ tests\regression\test_mcp_configuration.ps1
 tests\regression\test_mcp_configuration.ps1 -ConfigPath "C:\path\to\.claude.json"
 
 # Check Claude Code configuration
-scripts\powershell\verify_claude_config.ps1
+.venv\Scripts\python.exe scripts\manual_configure.py --validate-only
 ```
 
 **Common regression test failures:**

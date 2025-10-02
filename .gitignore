@@ -246,6 +246,12 @@ sample_dataset.json
 nul
 *.bat.bak
 
+# Maintenance and cleanup scripts (local-only)
+scripts/cleanup_powershell_refs_apply.py
+scripts/cleanup_powershell_refs_preview.py
+scripts/batch/cleanup_powershell_references.bat
+scripts/batch/cleanup_powershell_references_DRYRUN.bat
+
 # Claude Code search indices and user data
 .claude_indices/
 ~/.claude_code_search/

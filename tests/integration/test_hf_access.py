@@ -26,7 +26,7 @@ def test_basic_authentication():
     except Exception as e:
         print(f"[ERROR] Authentication failed: {e}")
         print("\n[INFO] Troubleshooting suggestions:")
-        print("   1. Run: hf_auth.ps1 -Token 'your_token_here'")
+        print("   1. Configure HuggingFace authentication (see INSTALLATION_GUIDE.md)")
         print("   2. Ensure token starts with 'hf_'")
         print("   3. Verify token has 'Read' permissions")
         assert False, f"Authentication failed: {e}"
@@ -312,8 +312,8 @@ def main():
         print("   • TouchDesigner code indexing")
         print("   • Semantic search functionality")
         print("\n🚀 Next steps:")
-        print("   1. Run: .\\start_mcp_server.ps1")
-        print("   2. Run: .\\configure_claude_code.ps1 -Global")
+        print("   1. Run: start_mcp_server.bat")
+        print("   2. Run: scripts\\batch\\manual_configure.bat")
         print("   3. Start using semantic search in Claude Code!")
     else:
         print("\n⚠️  Some tests failed. Please address the issues above.")
