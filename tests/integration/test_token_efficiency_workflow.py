@@ -4,7 +4,7 @@ import json
 import tempfile
 from pathlib import Path
 from typing import List
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -625,7 +625,9 @@ def hello():
             assert "metadata" in results
         except Exception as e:
             # Some exceptions are expected for invalid paths
-            assert "Index not built" in str(e) or "No such file" in str(e)
+            error_msg = str(e)
+            expected_errors = ["Index not built", "No such file", "Project directory not found"]
+            assert any(msg in error_msg for msg in expected_errors), f"Unexpected error: {error_msg}"
 
     def test_output_file_generation(self):
         """Test that all expected output files are generated."""

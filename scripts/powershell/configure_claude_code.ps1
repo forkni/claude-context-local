@@ -145,21 +145,93 @@ if (Test-Path $ConfigPath) {
 }
 
 try {
+    # Build environment variable flags
+    $envFlags = "-e PYTHONPATH=`"$PROJECT_DIR`" -e PYTHONUNBUFFERED=1"
+
     if ($UseWrapperMethod) {
         if ($Global) {
-            Invoke-Expression "claude mcp add code-search --scope user -- `"$WRAPPER_SCRIPT`""
+            Invoke-Expression "claude mcp add code-search --scope user $envFlags -- `"$WRAPPER_SCRIPT`""
         } else {
-            Invoke-Expression "claude mcp add code-search -- `"$WRAPPER_SCRIPT`""
+            Invoke-Expression "claude mcp add code-search $envFlags -- `"$WRAPPER_SCRIPT`""
         }
     } else {
         if ($Global) {
-            Invoke-Expression "claude mcp add code-search --scope user -- `"$PYTHON_PATH`" -m $SERVER_MODULE"
+            Invoke-Expression "claude mcp add code-search --scope user $envFlags -- `"$PYTHON_PATH`" -m $SERVER_MODULE"
         } else {
-            Invoke-Expression "claude mcp add code-search -- `"$PYTHON_PATH`" -m $SERVER_MODULE"
+            Invoke-Expression "claude mcp add code-search $envFlags -- `"$PYTHON_PATH`" -m $SERVER_MODULE"
         }
     }
 
     Write-Host "[SUCCESS] Successfully added claude-context-local to Claude Code!" -ForegroundColor Green
+
+    # Validate configuration
+    Write-Host ""
+    Write-Host "Validating configuration..." -ForegroundColor Cyan
+    Start-Sleep -Milliseconds 500  # Give Claude CLI time to write config
+
+    if (Test-Path $ConfigPath) {
+        try {
+            $Config = Get-Content -Path $ConfigPath -Raw | ConvertFrom-Json
+            if ($Config.mcpServers.PSObject.Properties.Name -contains "code-search") {
+                $Server = $Config.mcpServers."code-search"
+
+                # Validate required fields
+                $validationPassed = $true
+                $validationMessages = @()
+
+                if (-not $Server.command) {
+                    $validationMessages += "[ERROR] Missing 'command' field"
+                    $validationPassed = $false
+                }
+
+                if (-not $Server.args) {
+                    $validationMessages += "[WARNING] Missing 'args' field (should be array)"
+                }
+
+                if (-not $Server.env) {
+                    $validationMessages += "[ERROR] Missing 'env' field - environment variables not set!"
+                    $validationPassed = $false
+                } else {
+                    # Check for required environment variables
+                    if (-not $Server.env.PYTHONPATH) {
+                        $validationMessages += "[WARNING] PYTHONPATH not set in env"
+                    }
+                    if (-not $Server.env.PYTHONUNBUFFERED) {
+                        $validationMessages += "[WARNING] PYTHONUNBUFFERED not set in env"
+                    }
+                }
+
+                if ($validationMessages.Count -gt 0) {
+                    foreach ($msg in $validationMessages) {
+                        if ($msg -match "\[ERROR\]") {
+                            Write-Host $msg -ForegroundColor Red
+                        } else {
+                            Write-Host $msg -ForegroundColor Yellow
+                        }
+                    }
+                }
+
+                if ($validationPassed) {
+                    Write-Host "[OK] Configuration structure is valid" -ForegroundColor Green
+                    Write-Host "  Command: $($Server.command)" -ForegroundColor Gray
+                    if ($Server.args) {
+                        Write-Host "  Args: $($Server.args -join ' ')" -ForegroundColor Gray
+                    }
+                    if ($Server.env -and $Server.env.PYTHONPATH) {
+                        Write-Host "  PYTHONPATH: $($Server.env.PYTHONPATH)" -ForegroundColor Gray
+                    }
+                } else {
+                    Write-Host "[ERROR] Configuration validation failed!" -ForegroundColor Red
+                    Write-Host "The MCP server was added but may not work correctly." -ForegroundColor Yellow
+                    Write-Host "Try running: .\scripts\powershell\configure_claude_code.ps1 -Global" -ForegroundColor White
+                }
+            }
+        }
+        catch {
+            Write-Host "[WARNING] Could not validate configuration: $_" -ForegroundColor Yellow
+        }
+    }
+
     Write-Host ""
     Write-Host "Available commands in Claude Code:" -ForegroundColor Cyan
     Write-Host "  /search_code          - Search code semantically" -ForegroundColor White

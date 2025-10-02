@@ -202,7 +202,11 @@ class TestBM25Index:
         for doc_id, score, meta in results:
             if doc_id in metadata:
                 expected = metadata[doc_id]
-                assert meta == expected
+                # Check that all expected metadata fields are present and match
+                # (BM25 index may add additional fields like 'content')
+                for key, value in expected.items():
+                    assert key in meta, f"Expected key '{key}' not found in metadata"
+                    assert meta[key] == value, f"Metadata mismatch for '{key}': {meta[key]} != {value}"
 
     def test_index_statistics(self):
         """Test index statistics."""

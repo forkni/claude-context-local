@@ -123,6 +123,26 @@ echo [INFO] Starting in Debug Mode...
 call scripts\batch\start_mcp_debug.bat
 goto end
 
+:run_unit_tests
+echo.
+echo === Run Unit Tests ===
+echo.
+echo [INFO] Running unit tests for core components...
+echo [INFO] This will test chunking, indexing, search, and utility modules.
+echo.
+.\.venv\Scripts\python.exe -m pytest tests/unit/ -v --tb=short
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo [WARNING] Some tests failed. Check output above for details.
+    echo [INFO] This is normal during active development
+) else (
+    echo.
+    echo [OK] All unit tests passed!
+)
+echo.
+pause
+goto menu_restart
+
 :run_integration_tests
 echo.
 echo === Run Integration Tests ===
@@ -138,6 +158,28 @@ if %ERRORLEVEL% neq 0 (
 ) else (
     echo.
     echo [OK] All integration tests passed!
+)
+echo.
+pause
+goto menu_restart
+
+:run_regression_tests
+echo.
+echo === Run Regression Tests ===
+echo.
+echo [INFO] Running regression tests for configuration validation and scripts...
+echo [INFO] This will validate MCP configuration structure and system setup.
+echo.
+echo Running MCP Configuration Test...
+echo.
+powershell -ExecutionPolicy Bypass -File "tests\regression\test_mcp_configuration.ps1"
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo [WARNING] Configuration validation failed. Check output above for details.
+    echo [INFO] Run: .\scripts\powershell\configure_claude_code.ps1 -Global to fix
+) else (
+    echo.
+    echo [OK] All regression tests passed!
 )
 echo.
 pause
@@ -282,10 +324,12 @@ echo.
 echo === Advanced Options ===
 echo.
 echo   1. Start Server in Debug Mode
-echo   2. Run Integration Tests
-echo   3. Back to Main Menu
+echo   2. Run Unit Tests
+echo   3. Run Integration Tests
+echo   4. Run Regression Tests
+echo   5. Back to Main Menu
 echo.
-set /p adv_choice="Select option (1-3): "
+set /p adv_choice="Select option (1-5): "
 
 REM Handle empty input gracefully
 if not defined adv_choice (
@@ -298,10 +342,12 @@ if "!adv_choice!"=="" (
 )
 
 if "!adv_choice!"=="1" goto debug_mode
-if "!adv_choice!"=="2" goto run_integration_tests
-if "!adv_choice!"=="3" goto menu_restart
+if "!adv_choice!"=="2" goto run_unit_tests
+if "!adv_choice!"=="3" goto run_integration_tests
+if "!adv_choice!"=="4" goto run_regression_tests
+if "!adv_choice!"=="5" goto menu_restart
 
-echo [ERROR] Invalid choice. Please select 1-3.
+echo [ERROR] Invalid choice. Please select 1-5.
 pause
 cls
 goto advanced_menu

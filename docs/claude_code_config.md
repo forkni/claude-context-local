@@ -2,31 +2,84 @@
 
 ## Adding Claude-context-MCP to Claude Code
 
-### Method 1: Global Configuration (Recommended)
+### Method 1: Automated Configuration (Recommended)
 
-Add the MCP server globally so it's available in all projects:
+Use the PowerShell configuration script for automatic setup:
 
-```bash
-# Windows Command (run in Command Prompt or PowerShell)
-claude mcp add code-search --scope user -- "C:\path\to\claude-context-local\.venv\Scripts\python.exe" -m mcp_server.server
+```powershell
+# Global configuration (available in all projects)
+.\scripts\powershell\configure_claude_code.ps1 -Global
 
-# Alternative with full paths
-claude mcp add code-search --scope user -- "C:\path\to\claude-context-local\.venv\Scripts\python.exe" "C:\path\to\claude-context-local\mcp_server\server.py"
+# Project-specific configuration
+.\scripts\powershell\configure_claude_code.ps1
 ```
 
-### Method 2: Project-Specific Configuration
+This script automatically:
 
-For project-specific configuration, create a `.claude-code.json` file in the project root:
+- Adds the MCP server with correct paths
+- Sets required environment variables (PYTHONPATH, PYTHONUNBUFFERED)
+- Validates the configuration structure
+- Detects and updates existing configurations
+
+### Method 2: Manual Configuration (Advanced)
+
+If you prefer to configure manually, use the `claude mcp add` command with environment variables:
+
+```bash
+# Windows Command (run in PowerShell)
+claude mcp add code-search --scope user -e PYTHONPATH="C:\path\to\claude-context-local" -e PYTHONUNBUFFERED=1 -- "C:\path\to\claude-context-local\scripts\batch\mcp_server_wrapper.bat"
+
+# Alternative: Direct Python method (requires proper working directory)
+claude mcp add code-search --scope user -e PYTHONPATH="C:\path\to\claude-context-local" -e PYTHONUNBUFFERED=1 -- "C:\path\to\claude-context-local\.venv\Scripts\python.exe" -m mcp_server.server
+```
+
+### Method 3: Manual JSON Configuration
+
+For manual configuration, create or edit `.claude.json` in your user profile directory:
+
+**Location**: `%USERPROFILE%\.claude.json` (Global) or `.\.claude.json` (Project-specific)
+
+**Required Structure**:
 
 ```json
 {
-  "mcp": {
-    "servers": {
-      "code-search": {
-        "command": "C:\\path\\to\\claude-context-local\\.venv\\Scripts\\python.exe",
-        "args": ["-m", "mcp_server.server"],
-        "cwd": "C:\\path\\to\\claude-context-local"
+  "mcpServers": {
+    "code-search": {
+      "type": "stdio",
+      "command": "C:\\path\\to\\claude-context-local\\scripts\\batch\\mcp_server_wrapper.bat",
+      "args": ["--transport", "stdio"],
+      "env": {
+        "PYTHONPATH": "C:\\path\\to\\claude-context-local",
+        "PYTHONUNBUFFERED": "1"
       }
+    }
+  }
+}
+```
+
+**Important Notes**:
+
+- The `args` field must be present (can be empty array `[]` for wrapper method)
+- The `env` field is **required** and must contain:
+  - `PYTHONPATH`: Path to the claude-context-local project directory
+  - `PYTHONUNBUFFERED`: Set to `"1"` for immediate output buffering
+- Use double backslashes (`\\`) in Windows paths for JSON
+- The wrapper method (`mcp_server_wrapper.bat`) is recommended for cross-directory compatibility
+
+**Alternative Direct Python Configuration**:
+
+```json
+{
+  "mcpServers": {
+    "code-search": {
+      "type": "stdio",
+      "command": "C:\\path\\to\\claude-context-local\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "mcp_server.server"],
+      "env": {
+        "PYTHONPATH": "C:\\path\\to\\claude-context-local",
+        "PYTHONUNBUFFERED": "1"
+      },
+      "cwd": "C:\\path\\to\\claude-context-local"
     }
   }
 }
@@ -133,23 +186,82 @@ With MCP integration, you get:
 
 ## Troubleshooting
 
+### MCP Server Not Found or Connection Failed
+
+**Symptoms**: MCP server doesn't appear in Claude Code, or connection errors occur
+
+**Solutions**:
+
+1. Verify configuration structure using the verification script:
+
+   ```powershell
+   .\scripts\powershell\verify_claude_config.ps1
+   ```
+
+2. Check for missing `args` or `env` fields in `.claude.json`:
+   - Open `%USERPROFILE%\.claude.json`
+   - Ensure `args` field exists (should be an array, even if empty)
+   - Ensure `env` field exists with PYTHONPATH and PYTHONUNBUFFERED
+
+3. Reconfigure using the automated script:
+
+   ```powershell
+   .\scripts\powershell\configure_claude_code.ps1 -Global
+   ```
+
+4. Test the server manually:
+
+   ```bash
+   # Test wrapper method
+   .\scripts\batch\mcp_server_wrapper.bat
+
+   # Test direct Python method
+   .venv\Scripts\python.exe -m mcp_server.server --help
+   ```
+
+### Missing Environment Variables
+
+**Symptoms**: Server starts but can't find modules or crashes
+
+**Solution**: Ensure `.claude.json` contains proper `env` field:
+
+```json
+"env": {
+  "PYTHONPATH": "C:\\path\\to\\claude-context-local",
+  "PYTHONUNBUFFERED": "1"
+}
+```
+
+If missing, reconfigure using:
+
+```powershell
+.\scripts\powershell\configure_claude_code.ps1 -Global
+```
+
 ### MCP Server Not Found
 
 - Verify the Python path is correct
 - Check that the virtual environment is activated
-- Test the server manually: `python -m mcp_server.server --help`
+- Verify paths exist:
+
+  ```powershell
+  Test-Path "C:\path\to\claude-context-local\.venv\Scripts\python.exe"
+  Test-Path "C:\path\to\claude-context-local\scripts\batch\mcp_server_wrapper.bat"
+  ```
 
 ### No Search Results
 
 - Make sure the project is indexed first with `/index_directory`
 - Check index status with `/get_index_status`
 - Try more general search terms
+- Verify the project path contains supported file types
 
 ### Performance Issues
 
 - Use incremental indexing (enabled by default)
 - Index only specific source folders (src/, lib/, app/) if the project is large
 - Check available disk space for the index
+- Monitor memory usage with `/get_memory_status`
 
 ## Storage Location
 

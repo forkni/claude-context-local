@@ -500,6 +500,28 @@ class CodeIndexManager:
 
         self._update_stats()
 
+    def load(self) -> bool:
+        """
+        Public method to load index (for compatibility with other index classes).
+
+        Returns:
+            bool: True if index was loaded successfully or already exists, False otherwise
+        """
+        # Index is already loaded in __init__, so just check if it exists
+        if self._index is not None and len(self._chunk_ids) > 0:
+            return True
+
+        # Try to reload if index file exists but index is None
+        if self.index_path.exists():
+            try:
+                self._load_index()
+                return self._index is not None
+            except Exception as e:
+                self._logger.error(f"Failed to reload index: {e}")
+                return False
+
+        return False
+
     def _update_stats(self):
         """Update index statistics."""
         stats = {

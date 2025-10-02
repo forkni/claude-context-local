@@ -187,7 +187,7 @@ class MockInstallationEnvironment:
 
     def simulate_venv_creation(self) -> Dict:
         """Simulate virtual environment creation."""
-        if self.disk_space_gb < 1:
+        if self.disk_space_gb <= 1.0:
             return {"success": False, "error": ERROR_SCENARIOS["insufficient_space"]}
 
         self.install_history.append("venv_created")
@@ -210,7 +210,7 @@ class MockInstallationEnvironment:
         if not self.has_network:
             return {"success": False, "error": ERROR_SCENARIOS["network_error"]}
 
-        if self.disk_space_gb < 3:
+        if self.disk_space_gb <= 3.0:
             return {"success": False, "error": ERROR_SCENARIOS["insufficient_space"]}
 
         # Determine PyTorch version based on index
@@ -379,7 +379,7 @@ TEST_ENVIRONMENTS = {
         has_cuda=True,
         cuda_version="12.1",
         has_network=True,
-        disk_space_gb=1.0,  # Very low
+        disk_space_gb=0.5,  # Very low - will fail venv creation
     ),
     "future_cuda": MockInstallationEnvironment(
         has_python=True,

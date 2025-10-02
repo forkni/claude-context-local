@@ -200,7 +200,7 @@ class TestInstallationEnvironments:
 
         # Test low disk space
         env = get_mock_environment("low_disk_space")
-        assert env.disk_space_gb == 1.0
+        assert env.disk_space_gb == 0.5  # Very low disk space that fails venv creation
 
     def test_future_cuda_environment(self):
         """Test environment with unsupported future CUDA version."""

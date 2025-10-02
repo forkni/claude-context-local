@@ -4,6 +4,8 @@
 import sys
 import time
 from pathlib import Path
+from unittest.mock import Mock, patch
+import numpy as np
 
 # Add parent directory to path to import our modules
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -15,8 +17,15 @@ from search.indexer import CodeIndexManager
 from search.searcher import IntelligentSearcher
 
 
-def test_auto_reindex():
+@patch('embeddings.embedder.SentenceTransformer')
+def test_auto_reindex(mock_sentence_transformer):
     """Test the auto-reindex feature."""
+
+    # Mock the SentenceTransformer to avoid downloading models
+    mock_model = Mock()
+    mock_model.encode.return_value = np.random.randn(768).astype('float32')  # Return random embedding
+    mock_model.get_sentence_embedding_dimension.return_value = 768
+    mock_sentence_transformer.return_value = mock_model
 
     # Use the test project
     test_project = Path(__file__).parent.parent / "test_data" / "python_project"

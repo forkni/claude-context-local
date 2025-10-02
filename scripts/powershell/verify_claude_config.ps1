@@ -55,6 +55,48 @@ try {
             Write-Host "  Args: $($CodeSearchConfig.args -join ' ')" -ForegroundColor White
         }
 
+        # Validate configuration structure
+        $configValid = $true
+        $warnings = @()
+
+        # Check for required fields
+        if (-not $CodeSearchConfig.command) {
+            Write-Host "[ERROR] Missing 'command' field" -ForegroundColor Red
+            $configValid = $false
+        }
+
+        if (-not $CodeSearchConfig.args) {
+            $warnings += "Missing 'args' field (should be an array, even if empty)"
+        }
+
+        if (-not $CodeSearchConfig.env) {
+            Write-Host "[ERROR] Missing 'env' field - environment variables not configured!" -ForegroundColor Red
+            $configValid = $false
+        } else {
+            Write-Host "  Environment Variables:" -ForegroundColor White
+            # Check for recommended environment variables
+            if ($CodeSearchConfig.env.PYTHONPATH) {
+                Write-Host "    PYTHONPATH: $($CodeSearchConfig.env.PYTHONPATH)" -ForegroundColor Gray
+            } else {
+                $warnings += "PYTHONPATH not set in environment variables"
+            }
+
+            if ($CodeSearchConfig.env.PYTHONUNBUFFERED) {
+                Write-Host "    PYTHONUNBUFFERED: $($CodeSearchConfig.env.PYTHONUNBUFFERED)" -ForegroundColor Gray
+            } else {
+                $warnings += "PYTHONUNBUFFERED not set in environment variables"
+            }
+        }
+
+        # Display warnings
+        if ($warnings.Count -gt 0) {
+            Write-Host ""
+            Write-Host "Warnings:" -ForegroundColor Yellow
+            foreach ($warning in $warnings) {
+                Write-Host "  [WARNING] $warning" -ForegroundColor Yellow
+            }
+        }
+
         # Verify the path actually exists
         $CommandPath = $CodeSearchConfig.command
         # If args exist and first arg looks like a path, use that instead
@@ -67,8 +109,23 @@ try {
         if (Test-Path $CommandPath) {
             Write-Host "[OK] MCP server path exists: $CommandPath" -ForegroundColor Green
             Write-Host ""
-            Write-Host "[SUCCESS] Claude Code is properly configured for semantic code search!" -ForegroundColor Green
-            exit 0
+
+            if ($configValid -and $warnings.Count -eq 0) {
+                Write-Host "[SUCCESS] Claude Code is properly configured for semantic code search!" -ForegroundColor Green
+                exit 0
+            } elseif ($configValid) {
+                Write-Host "[SUCCESS] Configuration is functional but has warnings" -ForegroundColor Yellow
+                Write-Host "[RECOMMENDATION] Reconfigure for optimal setup:" -ForegroundColor Yellow
+                Write-Host "  .\scripts\powershell\configure_claude_code.ps1 -Global" -ForegroundColor White
+                Write-Host ""
+                exit 0
+            } else {
+                Write-Host "[ERROR] Configuration has critical issues" -ForegroundColor Red
+                Write-Host "[SOLUTION] Reconfigure Claude Code integration:" -ForegroundColor Yellow
+                Write-Host "  .\scripts\powershell\configure_claude_code.ps1 -Global" -ForegroundColor White
+                Write-Host ""
+                exit 1
+            }
         } else {
             Write-Host "[ERROR] MCP server path does not exist: $CommandPath" -ForegroundColor Red
             Write-Host ""
