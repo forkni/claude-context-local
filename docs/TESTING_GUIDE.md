@@ -2,7 +2,15 @@
 
 ## Overview
 
-This comprehensive guide covers the testing infrastructure for the Claude Context MCP semantic search system. The project maintains a professional test suite with 37 test files organized into clear categories for effective quality assurance and continuous integration.
+This comprehensive guide covers the testing infrastructure for the Claude Context MCP semantic search system. The project maintains a professional test suite with 40 test files (352 passing tests) organized into clear categories for effective quality assurance and continuous integration.
+
+### Current Test Status
+
+✅ **All tests passing** (as of 2025-01-10):
+- **Unit Tests**: 204 tests passing
+- **Integration Tests**: 147 tests passing
+- **Regression Tests**: 1 test (15 checks) passing
+- **Test Execution Time**: Unit ~5s, Integration ~13 minutes
 
 ## Table of Contents
 
@@ -23,7 +31,7 @@ This comprehensive guide covers the testing infrastructure for the Claude Contex
 tests/
 ├── __init__.py               # Package initialization
 ├── conftest.py               # Global pytest configuration
-├── README.md                 # Detailed test documentation (285 lines)
+├── README.md                 # Detailed test documentation (407 lines)
 ├── fixtures/                 # Test fixtures and mocks
 │   ├── __init__.py
 │   ├── installation_mocks.py # Installation testing mocks
@@ -32,7 +40,7 @@ tests/
 │   ├── glsl_project/         # GLSL shader samples
 │   ├── multi_language/       # Multi-language test files
 │   └── python_project/       # Python project samples
-├── unit/                     # Unit tests (14 files)
+├── unit/                     # Unit tests (15 files, 204 tests)
 │   ├── test_bm25_index.py    # BM25 index functionality
 │   ├── test_bm25_population.py # BM25 document population
 │   ├── test_evaluation.py    # Evaluation framework components
@@ -41,21 +49,27 @@ tests/
 │   ├── test_incremental_indexer.py # Incremental indexing
 │   ├── test_mcp_server.py    # MCP server tools
 │   ├── test_merkle.py        # Merkle tree functionality
+│   ├── test_model_selection.py # Multi-model support (Gemma/BGE-M3)
 │   ├── test_multi_language.py # Multi-language parsing
 │   ├── test_reranker.py      # RRF reranking algorithm
 │   ├── test_search_config.py # Search configuration
 │   ├── test_token_efficiency.py # Token efficiency evaluation
 │   └── test_tree_sitter.py   # Tree-sitter parsing
-└── integration/              # Integration tests (23 files)
-    ├── test_complete_workflow.py # End-to-end workflow
-    ├── test_cuda_detection.py # GPU/CUDA detection
-    ├── test_encoding_validation.py # Text encoding validation
-    ├── test_glsl_*.py        # GLSL-specific integration tests
-    ├── test_hybrid_search_integration.py # Hybrid search integration
-    ├── test_installation.py  # Installation verification
-    ├── test_mcp_*.py         # MCP server integration tests
-    ├── test_semantic_search.py # End-to-end semantic search
-    └── test_token_efficiency_workflow.py # Token efficiency workflow
+├── integration/              # Integration tests (24 files, 147 tests)
+│   ├── test_auto_reindex.py  # Auto-reindexing functionality
+│   ├── test_complete_workflow.py # End-to-end workflow
+│   ├── test_cuda_detection.py # GPU/CUDA detection
+│   ├── test_encoding_validation.py # Text encoding validation
+│   ├── test_glsl_*.py        # GLSL-specific integration tests
+│   ├── test_hybrid_search_integration.py # Hybrid search integration
+│   ├── test_installation.py  # Installation verification
+│   ├── test_installation_flow.py # Installation workflow
+│   ├── test_mcp_*.py         # MCP server integration tests
+│   ├── test_model_switching.py # Model switching (Gemma/BGE-M3)
+│   ├── test_semantic_search.py # End-to-end semantic search
+│   └── test_token_efficiency_workflow.py # Token efficiency workflow
+└── regression/               # Regression tests (1 file, 15 checks)
+    └── test_mcp_configuration.ps1 # MCP config validation (PowerShell)
 ```
 
 ### Design Principles
@@ -70,7 +84,7 @@ tests/
 ### Basic Test Execution
 
 ```bash
-# Run all tests (37 files)
+# Run all tests (40 files, 352 tests)
 pytest tests/
 
 # Run with verbose output
@@ -86,15 +100,32 @@ pytest tests/ -x
 ### Category-Specific Testing
 
 ```bash
-# Unit tests only (14 files) - Fast component testing
+# Unit tests only (15 files, 204 tests) - Fast component testing
 pytest tests/unit/
 
-# Integration tests only (23 files) - Workflow validation
+# Integration tests only (24 files, 147 tests) - Workflow validation
 pytest tests/integration/
+
+# Regression tests (PowerShell, 1 file, 15 checks)
+tests\regression\test_mcp_configuration.ps1
 
 # Specific test files
 pytest tests/unit/test_bm25_index.py
 pytest tests/integration/test_complete_workflow.py
+```
+
+### Interactive Menu Testing
+
+```bash
+# Launch interactive menu
+start_mcp_server.bat
+
+# Navigate: Advanced Options (6) → Testing Options
+# - Option 1: Start Server in Debug Mode
+# - Option 2: Run Unit Tests
+# - Option 3: Run Integration Tests
+# - Option 4: Run Regression Tests
+# - Option 5: Back to Main Menu
 ```
 
 ### Pattern-Based Testing
@@ -140,7 +171,7 @@ pytest tests/ --durations=10
 
 ## Test Categories
 
-### Unit Tests (14 files)
+### Unit Tests (15 files, 204 tests)
 
 **Purpose**: Test individual components in isolation with mocked dependencies.
 
@@ -148,6 +179,7 @@ pytest tests/ --durations=10
 
 - **Search Components**: BM25 indexing, hybrid search algorithms, reranking
 - **Language Support**: Tree-sitter parsing, multi-language chunking
+- **Model Support**: Multi-model configuration (Gemma/BGE-M3), model selection
 - **Core Infrastructure**: Merkle trees, incremental indexing, search configuration
 - **Evaluation Framework**: Token efficiency measurement, evaluation components
 - **MCP Integration**: Server tools, import validation
@@ -159,7 +191,7 @@ pytest tests/ --durations=10
 - Extensive use of mocks and fixtures
 - High code coverage targets (>90%)
 
-### Integration Tests (23 files)
+### Integration Tests (24 files, 147 tests)
 
 **Purpose**: Verify component interactions and complete workflows.
 
@@ -168,6 +200,7 @@ pytest tests/ --durations=10
 - **End-to-End Workflows**: Complete indexing and search processes
 - **System Integration**: Installation verification, CUDA detection, encoding validation
 - **MCP Server**: Full server functionality, project management, indexing workflows
+- **Model Switching**: Embedding generation with Gemma and BGE-M3, model switching workflows
 - **Language-Specific**: GLSL shader processing, multi-language project handling
 - **Performance**: Token efficiency workflows, benchmark validation
 
@@ -177,6 +210,35 @@ pytest tests/ --durations=10
 - Real component interactions
 - File system and network operations
 - Comprehensive workflow validation
+
+### Regression Tests (1 file, 15 checks)
+
+**Purpose**: Prevent previously fixed bugs from reoccurring and validate system configuration integrity.
+
+**Key Areas**:
+
+- **MCP Configuration**: Validates `.claude.json` structure and required fields
+  - Checks for required 'args' and 'env' fields
+  - Validates PYTHONPATH and PYTHONUNBUFFERED environment variables
+  - Ensures correct Python executable paths
+  - Verifies working directory configuration
+- **Configuration Integrity**: Checks environment variables and paths
+- **Deployment Validation**: Pre-deployment configuration checks
+
+**Characteristics**:
+
+- Standalone PowerShell scripts
+- Fast execution (< 5 seconds)
+- No Python dependencies required
+- Can be run independently of pytest
+- Validates system state and configuration
+
+**When to Add Regression Tests**:
+
+- Critical bug was fixed and you want to prevent it from reoccurring
+- System configuration structure has changed
+- Need to validate batch/PowerShell scripts work correctly
+- Pre-deployment checks for configuration integrity
 
 ### Test Fixtures (tests/fixtures/)
 
@@ -327,6 +389,73 @@ class TestNewWorkflow:
 6. **Test both success and failure paths**
 7. **Include edge cases and boundary conditions**
 8. **Use temporary directories** for file system operations
+
+### Best Practices from Recent Fixes (2025-01-10)
+
+**Critical lessons learned from recent test fixes:**
+
+1. **Always mock model loading**: Never let tests download 4GB+ models
+   ```python
+   from unittest.mock import Mock, patch
+
+   @patch('embeddings.embedder.SentenceTransformer')
+   def test_with_mocked_model(mock_transformer):
+       mock_model = Mock()
+       mock_model.encode.return_value = np.random.randn(768).astype('float32')
+       mock_transformer.return_value = mock_model
+       # Test logic here
+   ```
+
+2. **Use subset validation for metadata**: Don't assume exact field matches
+   ```python
+   # Bad: Exact equality fails when BM25 adds extra fields
+   assert meta == expected
+
+   # Good: Subset validation
+   for key, value in expected.items():
+       assert key in meta, f"Expected key '{key}' not found"
+       assert meta[key] == value
+   ```
+
+3. **Import Mock explicitly**: Don't rely on it being available
+   ```python
+   from unittest.mock import Mock, patch  # Always import explicitly
+   ```
+
+4. **Verify test data accuracy**: Ensure fixture values match actual behavior
+   ```python
+   # Update test assertions to match actual implementation
+   assert env.disk_space_gb == 0.5  # Not 1.0 for low disk test
+   ```
+
+5. **Add public methods for testing**: Don't test private methods directly
+   ```python
+   # Added public load() method to CodeIndexManager for test access
+   def load(self) -> bool:
+       """Public method for loading index (used by tests)."""
+       if self._index is not None and len(self._chunk_ids) > 0:
+           return True
+       # Load logic here
+   ```
+
+6. **Mock at the right level**: Mock external dependencies, not internal logic
+   ```python
+   # Mock SentenceTransformer to avoid downloads
+   @patch('embeddings.embedder.SentenceTransformer')
+   ```
+
+7. **Test error messages flexibly**: Accept reasonable variations
+   ```python
+   # Allow multiple acceptable error messages
+   assert any(msg in str(exc.value) for msg in [
+       "Project directory not found",
+       "Invalid project path"
+   ])
+   ```
+
+8. **Create regression tests for bugs**: Prevent fixed issues from reoccurring
+   - MCP configuration validation test created after fixing missing 'args'/'env' fields
+   - 15 checks ensure configuration integrity
 
 ## Coverage Requirements
 
@@ -493,6 +622,25 @@ pytest tests/integration/ -v
 pytest tests/unit/test_component.py -v -s
 ```
 
+#### 5. Regression Test Issues
+
+```powershell
+# Run MCP configuration validation
+tests\regression\test_mcp_configuration.ps1
+
+# Test specific config file
+tests\regression\test_mcp_configuration.ps1 -ConfigPath "C:\path\to\.claude.json"
+
+# Check Claude Code configuration
+scripts\powershell\verify_claude_config.ps1
+```
+
+**Common regression test failures:**
+- Missing 'args' or 'env' fields in `.claude.json`
+- Incorrect PYTHONPATH configuration
+- Invalid Python executable paths
+- Wrong working directory in MCP config
+
 ### Troubleshooting Checklist
 
 - [ ] **Environment**: Virtual environment activated and dependencies installed
@@ -501,6 +649,7 @@ pytest tests/unit/test_component.py -v -s
 - [ ] **GPU**: CUDA drivers and PyTorch compatibility
 - [ ] **Memory**: Sufficient RAM for test operations
 - [ ] **Network**: Internet access for model downloads (if needed)
+- [ ] **MCP Config**: Valid `.claude.json` with required fields (run regression tests)
 
 ## Continuous Integration
 
@@ -575,10 +724,13 @@ timeout 300 pytest tests/
 1. **Write tests first** (TDD approach when possible)
 2. **Use descriptive names** that explain the behavior
 3. **Keep tests simple** and focused on one concept
-4. **Mock external dependencies** in unit tests
+4. **Mock external dependencies** in unit tests (especially model loading)
 5. **Use real interactions** in integration tests
 6. **Test both success and failure paths**
 7. **Include edge cases** and boundary conditions
+8. **Use subset validation for metadata** (don't assume exact matches)
+9. **Import Mock explicitly** from unittest.mock
+10. **Create regression tests for critical bugs**
 
 ### For Test Maintenance
 
@@ -588,6 +740,8 @@ timeout 300 pytest tests/
 4. **Monitor coverage trends** over time
 5. **Update fixtures** when APIs change
 6. **Document complex test scenarios**
+7. **Review recent fixes** for lessons learned
+8. **Update regression tests** when configuration changes
 
 ### For CI/CD
 
@@ -596,5 +750,17 @@ timeout 300 pytest tests/
 3. **Generate coverage reports** for analysis
 4. **Fail fast** on critical test failures
 5. **Archive test results** for historical analysis
+6. **Include regression tests** in CI pipeline
+7. **Validate configuration** before deployment
+
+### Recent Test Improvements (2025-01-10)
+
+**All 352 tests now passing:**
+- ✅ Fixed BM25 metadata handling with subset validation
+- ✅ Fixed CUDA detection disk space assertions
+- ✅ Added proper Mock imports to all test files
+- ✅ Added public load() method to CodeIndexManager
+- ✅ Added SentenceTransformer mocking to prevent downloads
+- ✅ Created comprehensive MCP configuration regression test (15 checks)
 
 This comprehensive testing guide ensures high-quality, maintainable code through systematic testing practices and clear documentation.

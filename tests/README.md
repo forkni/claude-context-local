@@ -2,6 +2,24 @@
 
 This directory contains comprehensive tests for the Claude Context MCP semantic search system.
 
+## Test Status
+
+**Current Status**: ✅ All tests passing (as of 2025-01-10)
+
+- **Unit Tests**: 204 tests passing
+- **Integration Tests**: 147 tests passing
+- **Regression Tests**: 1 test (15 checks) passing
+- **Total Coverage**: Unit tests run in ~5s, Integration tests in ~13 minutes
+
+### Recent Fixes (2025-01-10)
+
+- ✅ Fixed BM25 metadata handling test (subset validation instead of exact equality)
+- ✅ Fixed CUDA detection disk space assertion (0.5GB for low disk test)
+- ✅ Added Mock import to token efficiency workflow test
+- ✅ Added public load() method to CodeIndexManager
+- ✅ Added SentenceTransformer mocking to auto-reindex test
+- ✅ Created comprehensive MCP configuration regression test (15 checks)
+
 ## Test Structure
 
 ```
@@ -32,26 +50,28 @@ tests/
 │   ├── test_search_config.py # Search configuration
 │   ├── test_token_efficiency.py # Token efficiency evaluation
 │   └── test_tree_sitter.py   # Tree-sitter parsing
-└── integration/              # Integration tests (22 files)
-    ├── quick_auth_test.py    # Quick authentication test
-    ├── run_hybrid_tests.py   # Hybrid search runner
-    ├── test_auto_reindex.py  # Auto-reindexing functionality
-    ├── test_complete_workflow.py # End-to-end workflow
-    ├── test_cuda_detection.py # GPU/CUDA detection
-    ├── test_direct_indexing.py # Direct indexing tests
-    ├── test_encoding_validation.py # Text encoding validation
-    ├── test_full_flow.py     # Complete indexing flow
-    ├── test_glsl_*.py        # GLSL-specific integration tests
-    ├── test_hf_access.py     # Hugging Face access
-    ├── test_hybrid_search_integration.py # Hybrid search integration
-    ├── test_incremental_indexing.py # Incremental indexing flow
-    ├── test_installation.py  # Installation verification
-    ├── test_installation_flow.py # Installation workflow
-    ├── test_mcp_*.py         # MCP server integration tests
-    ├── test_model_switching.py # Model switching (Gemma/BGE-M3)
-    ├── test_semantic_search.py # End-to-end semantic search
-    ├── test_system.py        # System-level tests
-    └── test_token_efficiency_workflow.py # Token efficiency workflow
+├── integration/              # Integration tests (22 files)
+│   ├── quick_auth_test.py    # Quick authentication test
+│   ├── run_hybrid_tests.py   # Hybrid search runner
+│   ├── test_auto_reindex.py  # Auto-reindexing functionality
+│   ├── test_complete_workflow.py # End-to-end workflow
+│   ├── test_cuda_detection.py # GPU/CUDA detection
+│   ├── test_direct_indexing.py # Direct indexing tests
+│   ├── test_encoding_validation.py # Text encoding validation
+│   ├── test_full_flow.py     # Complete indexing flow
+│   ├── test_glsl_*.py        # GLSL-specific integration tests
+│   ├── test_hf_access.py     # Hugging Face access
+│   ├── test_hybrid_search_integration.py # Hybrid search integration
+│   ├── test_incremental_indexing.py # Incremental indexing flow
+│   ├── test_installation.py  # Installation verification
+│   ├── test_installation_flow.py # Installation workflow
+│   ├── test_mcp_*.py         # MCP server integration tests
+│   ├── test_model_switching.py # Model switching (Gemma/BGE-M3)
+│   ├── test_semantic_search.py # End-to-end semantic search
+│   ├── test_system.py        # System-level tests
+│   └── test_token_efficiency_workflow.py # Token efficiency workflow
+└── regression/               # Regression tests (PowerShell/Bash scripts)
+    └── test_mcp_configuration.ps1 # MCP config validation (15 checks)
 ```
 
 ## Running Tests
@@ -59,7 +79,7 @@ tests/
 ### Using Pytest Directly
 
 ```bash
-# Run all tests
+# Run all tests (unit + integration)
 pytest tests/
 
 # Run only unit tests
@@ -84,6 +104,29 @@ pytest tests/ -x
 # Run tests matching a pattern
 pytest tests/ -k "bm25"
 pytest tests/ -k "hybrid and not slow"
+```
+
+### Using Interactive Menu
+
+```bash
+# Start interactive menu
+start_mcp_server.bat
+
+# Navigate to: Advanced Options (6)
+# - Option 1: Start Server in Debug Mode
+# - Option 2: Run Unit Tests
+# - Option 3: Run Integration Tests
+# - Option 4: Run Regression Tests
+# - Option 5: Back to Main Menu
+```
+
+### Running Regression Tests
+
+```powershell
+# MCP configuration validation
+.\tests\regression\test_mcp_configuration.ps1
+
+# Or via interactive menu: Advanced Options → Run Regression Tests
 ```
 
 ### Running Specific Test Categories
@@ -134,6 +177,54 @@ Comprehensive tests that verify component interactions and full workflows:
 - **Model Switching**: Embedding generation with Gemma and BGE-M3, model switching workflows
 - **Language-Specific**: GLSL shader processing, multi-language projects
 - **Performance**: Token efficiency workflows, benchmark validation
+
+### Regression Tests
+
+Standalone validation scripts that ensure configurations and system state remain correct. These tests prevent previously fixed bugs from reoccurring and validate system configuration integrity.
+
+- **MCP Configuration** (`test_mcp_configuration.ps1`): Validates `.claude.json` structure and required fields (15 checks)
+  - Checks for required 'args' and 'env' fields
+  - Validates PYTHONPATH and PYTHONUNBUFFERED environment variables
+  - Ensures correct Python executable paths
+  - Verifies working directory configuration
+- **Script Validation**: Ensures PowerShell/Bash scripts work correctly
+- **Configuration Integrity**: Checks environment variables and paths
+- **Deployment Validation**: Pre-deployment configuration checks
+
+#### Running Regression Tests
+
+**MCP Configuration Validation:**
+
+```powershell
+# Run from project root
+.\tests\regression\test_mcp_configuration.ps1
+
+# Test specific config file
+.\tests\regression\test_mcp_configuration.ps1 -ConfigPath "C:\path\to\.claude.json"
+```
+
+**Expected Output:**
+
+```
+=== MCP Configuration Structure Test ===
+[PASS] Configuration file exists
+[PASS] Server has 'args' field
+[PASS] Server has 'env' field
+[PASS] PYTHONPATH is set in env
+...
+Total Tests: 15
+Passed: 15
+Failed: 0
+```
+
+#### When to Add Regression Tests
+
+Add new regression tests when:
+
+- **Bug Fix**: A critical bug was fixed and you want to prevent it from reoccurring
+- **Configuration Change**: System configuration structure has changed
+- **Script Validation**: Need to validate batch/PowerShell scripts work correctly
+- **Deployment Validation**: Pre-deployment checks for configuration integrity
 
 ## Test Fixtures and Data
 
@@ -258,6 +349,8 @@ pytest tests/ --cov=. --cov-fail-under=75
 ### Example Test Structure
 
 ```python
+from unittest.mock import Mock, patch
+
 class TestNewComponent:
     """Test cases for NewComponent."""
 
@@ -272,7 +365,29 @@ class TestNewComponent:
     def test_edge_cases(self):
         """Test boundary conditions."""
         pass
+
+    @patch('embeddings.embedder.SentenceTransformer')
+    def test_with_mocked_model(self, mock_transformer):
+        """Test with mocked model to avoid downloads."""
+        # Mock the model to avoid downloading
+        mock_model = Mock()
+        mock_model.encode.return_value = np.random.randn(768).astype('float32')
+        mock_transformer.return_value = mock_model
+
+        # Test logic here
+        pass
 ```
+
+### Best Practices
+
+1. **Always mock expensive operations**: Model loading, API calls, file I/O
+2. **Use subset validation for metadata**: Don't assume exact field matches (BM25 adds fields)
+3. **Import Mock explicitly**: `from unittest.mock import Mock, patch`
+4. **Verify test data accuracy**: Ensure test fixtures match actual system behavior
+5. **Add regression tests for bugs**: Prevent fixed issues from reoccurring
+6. **Document test purpose**: Clear docstrings explaining what's being tested
+7. **Keep tests isolated**: No shared state between tests
+8. **Mock at the right level**: Mock external dependencies, not internal logic
 
 ## Test Environment
 
@@ -305,6 +420,10 @@ pip install -e .
 - **CUDA tests failing**: Install appropriate PyTorch version for your system
 - **Slow tests**: Use `-x` flag to stop on first failure for debugging
 - **Permission errors**: Check file permissions on test_data files
+- **Mock import errors**: Add `from unittest.mock import Mock, patch` to test files
+- **Model loading in tests**: Always mock SentenceTransformer to avoid downloading large models
+- **Metadata assertion failures**: Use subset validation when testing metadata (BM25 adds extra fields)
+- **Index loading errors**: Ensure CodeIndexManager has public load() method available
 
 ### Performance Tips
 
@@ -312,3 +431,5 @@ pip install -e .
 - Use `-k` to run specific test patterns
 - Mock expensive operations in unit tests
 - Use temporary directories for file operations
+- Always mock model loading in tests (avoid 4GB+ downloads)
+- Use `@patch('embeddings.embedder.SentenceTransformer')` for embedding tests

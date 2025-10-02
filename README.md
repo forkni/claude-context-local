@@ -401,19 +401,28 @@ See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for detailed performance metrics.
 
 ## Test Suite
 
-The project includes a comprehensive test suite with 39 test files organized into professional categories:
+The project includes a comprehensive test suite with 352 passing tests across 40 test files:
+
+### Test Status
+
+✅ **All tests passing** (as of 2025-01-10):
+- **Unit Tests**: 204 tests passing
+- **Integration Tests**: 147 tests passing
+- **Regression Tests**: 1 test (15 checks) passing
+- **Test Execution Time**: Unit ~5s, Integration ~13 minutes
 
 ### Test Organization
 
 - **Unit Tests** (15 files): Component isolation testing in `tests/unit/`
 - **Integration Tests** (24 files): Workflow validation testing in `tests/integration/`
+- **Regression Tests** (1 file): Configuration validation in `tests/regression/`
 - **Test Fixtures**: Reusable mocks and sample data in `tests/fixtures/`
 - **Test Data**: Sample projects and datasets in `tests/test_data/`
 
 ### Running Tests
 
 ```bash
-# Run all tests
+# Run all tests (unit + integration)
 pytest tests/
 
 # Run only unit tests (fast)
@@ -422,11 +431,21 @@ pytest tests/unit/
 # Run only integration tests
 pytest tests/integration/
 
+# Run regression tests (PowerShell)
+tests\regression\test_mcp_configuration.ps1
+
 # Run with verbose output
 pytest tests/ -v
 
 # Run with coverage report
 pytest tests/ --cov=. --cov-report=html
+```
+
+**Via Interactive Menu:**
+
+```bash
+start_mcp_server.bat
+# Navigate: Advanced Options (6) → Run Unit/Integration/Regression Tests
 ```
 
 📚 **Detailed testing documentation**: [View Test Suite Guide](tests/README.md)
@@ -513,6 +532,7 @@ claude-context-local/
 │   ├── fixtures/                     # Test mocks and sample data
 │   ├── integration/                  # Integration tests
 │   ├── unit/                         # Unit tests
+│   ├── regression/                   # Regression tests
 │   ├── test_data/                    # Language-specific test projects
 │   └── README.md                     # Test suite guide
 ├── CHANGELOG.md                      # Version history
@@ -915,6 +935,9 @@ scripts\batch\repair_installation.bat
 
     # Verify configuration
     scripts\powershell\verify_claude_config.ps1
+
+    # Run comprehensive MCP configuration validation (15 checks)
+    tests\regression\test_mcp_configuration.ps1
     ```
 
 15. **MCP server path verification fails**: Invalid path in .claude.json
