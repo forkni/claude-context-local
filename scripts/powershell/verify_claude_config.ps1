@@ -36,19 +36,35 @@ if (Test-Path $GlobalConfigPath) {
 try {
     $Config = Get-Content -Path $ConfigPath -Raw | ConvertFrom-Json
 
-    # Check if mcpServers section exists
-    if (-not $Config.mcpServers) {
+    # Check if mcpServers section exists (check both potential locations)
+    $McpServers = $null
+    $ConfigLocation = $null
+
+    if ($Config.mcpServers -and ($Config.mcpServers.PSObject.Properties.Name.Count -gt 0)) {
+        $McpServers = $Config.mcpServers
+        $ConfigLocation = "root level (mcpServers)"
+    } elseif ($Config.claudeCodeConfig -and $Config.claudeCodeConfig.mcpServers -and ($Config.claudeCodeConfig.mcpServers.PSObject.Properties.Name.Count -gt 0)) {
+        $McpServers = $Config.claudeCodeConfig.mcpServers
+        $ConfigLocation = "claudeCodeConfig.mcpServers"
+    }
+
+    if (-not $McpServers) {
         Write-Host "[WARNING] No MCP servers configured in $ConfigPath" -ForegroundColor Yellow
+        Write-Host "[INFO] Checked locations:" -ForegroundColor Gray
+        Write-Host "  - mcpServers (root level)" -ForegroundColor Gray
+        Write-Host "  - claudeCodeConfig.mcpServers" -ForegroundColor Gray
+        Write-Host ""
         Write-Host "[INFO] Please run: .\scripts\powershell\configure_claude_code.ps1 -Global" -ForegroundColor White
         exit 1
     }
 
     # Check if code-search server exists
-    if ($Config.mcpServers.PSObject.Properties.Name -contains "code-search") {
+    if ($McpServers.PSObject.Properties.Name -contains "code-search") {
         Write-Host "[OK] code-search MCP server is configured!" -ForegroundColor Green
+        Write-Host "  Location: $ConfigLocation" -ForegroundColor Gray
         Write-Host ""
 
-        $CodeSearchConfig = $Config.mcpServers."code-search"
+        $CodeSearchConfig = $McpServers."code-search"
         Write-Host "Configuration details:" -ForegroundColor Cyan
         Write-Host "  Command: $($CodeSearchConfig.command)" -ForegroundColor White
         if ($CodeSearchConfig.args) {
@@ -137,9 +153,13 @@ try {
         }
     } else {
         Write-Host "[WARNING] code-search MCP server not found in configuration" -ForegroundColor Yellow
-        Write-Host "[INFO] Available MCP servers:" -ForegroundColor White
-        $Config.mcpServers.PSObject.Properties.Name | ForEach-Object {
-            Write-Host "  - $_" -ForegroundColor Gray
+        Write-Host "[INFO] Available MCP servers" -ForegroundColor White
+        if ($McpServers.PSObject.Properties.Name.Count -gt 0) {
+            $McpServers.PSObject.Properties.Name | ForEach-Object {
+                Write-Host "  - $_" -ForegroundColor Gray
+            }
+        } else {
+            Write-Host "  - (none configured)" -ForegroundColor Gray
         }
         Write-Host ""
         Write-Host "Please run: .\scripts\powershell\configure_claude_code.ps1 -Global" -ForegroundColor White

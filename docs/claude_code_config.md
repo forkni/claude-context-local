@@ -85,6 +85,38 @@ For manual configuration, create or edit `.claude.json` in your user profile dir
 }
 ```
 
+### Method 4: Python Manual Configuration Script (Automated Fallback)
+
+When the Claude CLI fails (common error: "missing required argument 'commandOrUrl'"), the PowerShell configuration script automatically falls back to a Python-based manual configuration method. You can also run this directly:
+
+```powershell
+# Global configuration
+.\.venv\Scripts\python.exe .\scripts\manual_configure.py --global
+
+# Project-specific configuration
+.\.venv\Scripts\python.exe .\scripts\manual_configure.py --project
+
+# Force update without confirmation
+.\.venv\Scripts\python.exe .\scripts\manual_configure.py --global --force
+
+# Validate existing configuration only
+.\.venv\Scripts\python.exe .\scripts\manual_configure.py --validate-only
+```
+
+**Advantages of the Python Script**:
+- More reliable than the Claude CLI (known argument parsing issues)
+- Automatically validates configuration structure
+- Backs up existing configuration before modifying
+- Works consistently across Claude Code versions
+- Direct JSON manipulation without CLI dependencies
+
+**How the Fallback Works**:
+1. PowerShell script attempts Claude CLI configuration first
+2. If CLI fails (detected by error patterns), automatically switches to Python script
+3. Python script directly edits `.claude.json` file
+4. Validates the configuration after writing
+5. Reports success or detailed error information
+
 ### Verification
 
 After adding the MCP server, verify it's available in Claude Code:
@@ -185,6 +217,42 @@ With MCP integration, you get:
 ```
 
 ## Troubleshooting
+
+### Claude CLI Configuration Errors
+
+**Symptoms**: `claude mcp add` command fails with errors like:
+- "missing required argument 'commandOrUrl'"
+- "error: missing required argument 'name'"
+- Configuration shows success but `.claude.json` remains empty
+
+**Root Cause**: Claude CLI has known argument parsing issues (reported in 2025) that affect the `claude mcp add` command when using options like `--scope` and `-e` flags.
+
+**Solutions**:
+
+1. **Use the Automated Fallback** (Recommended):
+   - The PowerShell configuration script automatically detects CLI failures and falls back to the Python manual configuration method
+   - Simply run: `.\scripts\powershell\configure_claude_code.ps1 -Global`
+   - The script will try CLI first, then automatically use Python method if it fails
+
+2. **Use Python Manual Configuration Directly**:
+   ```powershell
+   .\.venv\Scripts\python.exe .\scripts\manual_configure.py --global --force
+   ```
+
+3. **Direct JSON Editing**:
+   - Open `%USERPROFILE%\.claude.json` in a text editor
+   - Add the MCP server configuration manually (see Method 3 above)
+   - Ensure proper JSON syntax with double backslashes for Windows paths
+
+4. **Verify PowerShell Execution**:
+   - Always use `.\` prefix when running PowerShell scripts: `.\scripts\powershell\configure_claude_code.ps1`
+   - Not just: `configure_claude_code.ps1` (will fail with "not recognized")
+   - This is Windows PowerShell security behavior
+
+**Related Known Issues**:
+- GitHub Issue #2341: `claude mcp add` command fails when options are placed before required arguments
+- GitHub Issue #4795: Claude Code unable to provide required argument for MCP command
+- Affects Claude Code versions throughout 2025
 
 ### MCP Server Not Found or Connection Failed
 

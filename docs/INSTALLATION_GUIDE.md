@@ -60,7 +60,7 @@ verify-installation.bat
 
 # 4. Automatic Claude Code configuration (included in installation)
 # If configuration fails, run manually:
-scripts\powershell\configure_claude_code.ps1 -Global
+.\scripts\powershell\configure_claude_code.ps1 -Global
 
 # 5. Verify Claude Code configuration
 scripts\powershell\verify_claude_config.ps1
@@ -211,16 +211,16 @@ If automatic configuration fails or you need to reconfigure:
 
 ```powershell
 # Configure globally (recommended - works from any directory)
-scripts\powershell\configure_claude_code.ps1 -Global
+.\scripts\powershell\configure_claude_code.ps1 -Global
 
 # Configure for current project only
-scripts\powershell\configure_claude_code.ps1
+.\scripts\powershell\configure_claude_code.ps1
 
 # Remove existing configuration
-scripts\powershell\configure_claude_code.ps1 -Remove
+.\scripts\powershell\configure_claude_code.ps1 -Remove
 
 # Test MCP server before configuration
-scripts\powershell\configure_claude_code.ps1 -Test
+.\scripts\powershell\configure_claude_code.ps1 -Test
 ```
 
 ### Configuration Features
@@ -274,7 +274,7 @@ Configuration details:
 
 [PROBLEM] The configured path is invalid or the file has been moved
 [SOLUTION] Reconfigure Claude Code integration:
-  .\scripts\powershell\configure_claude_code.ps1 -Global
+  .\.\scripts\powershell\configure_claude_code.ps1 -Global
 ```
 
 ### Configuration Modes
@@ -286,10 +286,10 @@ Configuration details:
 
 ```powershell
 # Use wrapper script (default)
-scripts\powershell\configure_claude_code.ps1 -Global
+.\scripts\powershell\configure_claude_code.ps1 -Global
 
 # Explicit wrapper mode
-scripts\powershell\configure_claude_code.ps1 -UseWrapper -Global
+.\scripts\powershell\configure_claude_code.ps1 -UseWrapper -Global
 ```
 
 **Direct Python Mode:**
@@ -299,7 +299,7 @@ scripts\powershell\configure_claude_code.ps1 -UseWrapper -Global
 
 ```powershell
 # Direct Python mode
-scripts\powershell\configure_claude_code.ps1 -DirectPython -Global
+.\scripts\powershell\configure_claude_code.ps1 -DirectPython -Global
 ```
 
 ### Troubleshooting Configuration
@@ -328,7 +328,7 @@ If the configured path becomes invalid (moved files, changed drives):
 scripts\powershell\verify_claude_config.ps1
 
 # Reconfigure with correct path
-scripts\powershell\configure_claude_code.ps1 -Global
+.\scripts\powershell\configure_claude_code.ps1 -Global
 
 # Or use repair tool
 scripts\batch\repair_installation.bat

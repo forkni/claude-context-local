@@ -104,7 +104,7 @@ install-windows.bat
 verify-installation.bat
 
 # 4. (Optional) Configure Claude Code MCP integration
-scripts\powershell\configure_claude_code.ps1 -Global
+.\scripts\powershell\configure_claude_code.ps1 -Global
 ```
 
 > **⚠️ Important**: The installer will prompt for HuggingFace authentication during setup. You'll need a HuggingFace token to access the EmbeddingGemma model. Get your token at [https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) and accept terms at [https://huggingface.co/google/embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m).
@@ -185,7 +185,7 @@ scripts\batch\start_mcp_simple.bat
 
 ```powershell
 # One-time setup to register MCP server with Claude Code
-scripts\powershell\configure_claude_code.ps1 -Global
+.\scripts\powershell\configure_claude_code.ps1 -Global
 
 # Manual registration (alternative)
 claude mcp add code-search --scope user -- "F:\path\to\claude-context-local\.venv\Scripts\python.exe" -m mcp_server.server
@@ -931,18 +931,18 @@ scripts\batch\repair_installation.bat
 
     ```powershell
     # Register MCP server with Claude Code
-    scripts\powershell\configure_claude_code.ps1 -Global
+    .\scripts\powershell\configure_claude_code.ps1 -Global
 
     # Verify configuration
-    scripts\powershell\verify_claude_config.ps1
+    .\scripts\powershell\verify_claude_config.ps1
 
     # Run comprehensive MCP configuration validation (15 checks)
-    tests\regression\test_mcp_configuration.ps1
+    .\tests\regression\test_mcp_configuration.ps1
     ```
 
 15. **MCP server path verification fails**: Invalid path in .claude.json
-    - Verify configuration: `scripts\powershell\verify_claude_config.ps1`
-    - Reconfigure if needed: `scripts\powershell\configure_claude_code.ps1 -Global`
+    - Verify configuration: `.\scripts\powershell\verify_claude_config.ps1`
+    - Reconfigure if needed: `.\scripts\powershell\configure_claude_code.ps1 -Global`
     - Check that wrapper script exists at configured path
 
 16. **MCP connection lost**: Restart Claude Code and MCP server

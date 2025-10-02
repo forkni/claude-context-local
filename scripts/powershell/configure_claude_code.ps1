@@ -93,13 +93,13 @@ if ($Global) {
     $scopeFlag = ""
 }
 
-# Construct command based on method
+# Construct command based on method (for display purposes)
 if ($UseWrapperMethod) {
-    $mcpCommand = "claude mcp add code-search $scopeFlag -- `"$WRAPPER_SCRIPT`""
+    $mcpCommand = "claude mcp add code-search $scopeFlag -e PYTHONPATH=`"`$PROJECT_DIR`" -e PYTHONUNBUFFERED=1 -- `"$WRAPPER_SCRIPT`""
     Write-Host "Command: $mcpCommand" -ForegroundColor Gray
     Write-Host "Method: Wrapper Script (cross-directory compatible)" -ForegroundColor Green
 } else {
-    $mcpCommand = "claude mcp add code-search $scopeFlag -- `"$PYTHON_PATH`" -m $SERVER_MODULE"
+    $mcpCommand = "claude mcp add code-search $scopeFlag -e PYTHONPATH=`"`$PROJECT_DIR`" -e PYTHONUNBUFFERED=1 -- `"$PYTHON_PATH`" -m $SERVER_MODULE"
     Write-Host "Command: $mcpCommand" -ForegroundColor Gray
     Write-Host "Method: Direct Python (requires working directory)" -ForegroundColor Yellow
 }
@@ -148,21 +148,100 @@ try {
     # Build environment variable flags
     $envFlags = "-e PYTHONPATH=`"$PROJECT_DIR`" -e PYTHONUNBUFFERED=1"
 
-    if ($UseWrapperMethod) {
-        if ($Global) {
-            Invoke-Expression "claude mcp add code-search --scope user $envFlags -- `"$WRAPPER_SCRIPT`""
+    Write-Host ""
+    Write-Host "Attempting configuration via Claude CLI..." -ForegroundColor Cyan
+
+    $cliSuccess = $false
+    $errorOutput = ""
+
+    try {
+        if ($UseWrapperMethod) {
+            if ($Global) {
+                $result = Invoke-Expression "claude mcp add code-search --scope user $envFlags -- `"$WRAPPER_SCRIPT`" 2>&1"
+            } else {
+                $result = Invoke-Expression "claude mcp add code-search $envFlags -- `"$WRAPPER_SCRIPT`" 2>&1"
+            }
         } else {
-            Invoke-Expression "claude mcp add code-search $envFlags -- `"$WRAPPER_SCRIPT`""
+            if ($Global) {
+                $result = Invoke-Expression "claude mcp add code-search --scope user $envFlags -- `"$PYTHON_PATH`" -m $SERVER_MODULE 2>&1"
+            } else {
+                $result = Invoke-Expression "claude mcp add code-search $envFlags -- `"$PYTHON_PATH`" -m $SERVER_MODULE 2>&1"
+            }
         }
-    } else {
-        if ($Global) {
-            Invoke-Expression "claude mcp add code-search --scope user $envFlags -- `"$PYTHON_PATH`" -m $SERVER_MODULE"
+
+        # Check for common error patterns
+        $errorOutput = $result | Out-String
+        if ($errorOutput -match "error:|missing required argument|not recognized") {
+            throw "Claude CLI command failed"
+        }
+
+        $cliSuccess = $true
+        Write-Host "[OK] Claude CLI configuration successful" -ForegroundColor Green
+
+    } catch {
+        $cliSuccess = $false
+        Write-Host ""
+        Write-Host "[WARNING] Claude CLI configuration failed!" -ForegroundColor Yellow
+        if ($errorOutput) {
+            Write-Host "Error: $errorOutput" -ForegroundColor Gray
+        }
+        Write-Host ""
+        Write-Host "Falling back to manual configuration method..." -ForegroundColor Cyan
+        Write-Host "This is often more reliable than the Claude CLI." -ForegroundColor Gray
+        Write-Host ""
+
+        # Fall back to Python manual configuration script
+        $manualScriptPath = Join-Path $PROJECT_DIR "scripts" "manual_configure.py"
+
+        if (Test-Path $manualScriptPath) {
+            try {
+                $globalFlag = if ($Global) { "--global" } else { "--project" }
+                $manualCmd = "& `"$PYTHON_PATH`" `"$manualScriptPath`" $globalFlag --force"
+
+                Write-Host "Running manual configuration script..." -ForegroundColor Cyan
+                Invoke-Expression $manualCmd
+
+                # Check if manual configuration succeeded
+                Start-Sleep -Milliseconds 500
+                $Config = Get-Content -Path $ConfigPath -Raw | ConvertFrom-Json
+                if ($Config.mcpServers.PSObject.Properties.Name -contains "code-search") {
+                    Write-Host ""
+                    Write-Host "[SUCCESS] Manual configuration successful!" -ForegroundColor Green
+                    $cliSuccess = $true
+                } else {
+                    throw "Manual configuration did not add server"
+                }
+
+            } catch {
+                Write-Host "[ERROR] Manual configuration also failed: $_" -ForegroundColor Red
+                Write-Host ""
+                Write-Host "Please try manual JSON editing:" -ForegroundColor Yellow
+                Write-Host "1. Open: $ConfigPath" -ForegroundColor White
+                Write-Host "2. Add the following to 'mcpServers' section:" -ForegroundColor White
+                Write-Host @"
+{
+  "code-search": {
+    "type": "stdio",
+    "command": "$WRAPPER_SCRIPT",
+    "args": [],
+    "env": {
+      "PYTHONPATH": "$PROJECT_DIR",
+      "PYTHONUNBUFFERED": "1"
+    }
+  }
+}
+"@ -ForegroundColor Gray
+                throw $_
+            }
         } else {
-            Invoke-Expression "claude mcp add code-search $envFlags -- `"$PYTHON_PATH`" -m $SERVER_MODULE"
+            Write-Host "[ERROR] Manual configuration script not found: $manualScriptPath" -ForegroundColor Red
+            throw "Manual configuration unavailable"
         }
     }
 
-    Write-Host "[SUCCESS] Successfully added claude-context-local to Claude Code!" -ForegroundColor Green
+    if ($cliSuccess) {
+        Write-Host "[SUCCESS] Claude Code MCP server configured!" -ForegroundColor Green
+    }
 
     # Validate configuration
     Write-Host ""
