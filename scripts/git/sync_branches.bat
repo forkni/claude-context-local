@@ -56,6 +56,38 @@ if %ERRORLEVEL% NEQ 0 (
 echo ✓ Merge successful!
 echo.
 
+REM Remove tests/ folder, pytest.ini, and testing docs from main branch (development-only)
+echo Removing development-only content (tests/, pytest.ini, testing docs)...
+if exist tests\ (
+    git rm -rf tests/
+    if %ERRORLEVEL% EQU 0 (
+        echo ✓ Removed tests/ folder
+    )
+)
+if exist pytest.ini (
+    git rm pytest.ini
+    if %ERRORLEVEL% EQU 0 (
+        echo ✓ Removed pytest.ini
+    )
+)
+if exist docs\TESTING_GUIDE.md (
+    git rm docs\TESTING_GUIDE.md
+    if %ERRORLEVEL% EQU 0 (
+        echo ✓ Removed docs\TESTING_GUIDE.md
+    )
+)
+
+REM Commit the removals if any files were removed
+git diff-index --quiet HEAD --
+if %ERRORLEVEL% NEQ 0 (
+    echo Committing removals...
+    git commit -m "Remove development-only content (tests/, pytest.ini, testing docs) from main branch"
+    if %ERRORLEVEL% EQU 0 (
+        echo ✓ Development-only content removed
+    )
+)
+echo.
+
 REM Push to remote
 echo Pushing main branch to remote...
 git push origin main
@@ -75,7 +107,8 @@ git checkout development
 echo.
 echo === Sync Complete ===
 echo ✓ Development → Main sync successful
-echo ✓ Both branches now have identical public content
+echo ✓ Main branch updated with public content only
+echo ✓ Tests and pytest.ini excluded from main branch
 echo ✓ Local files (CLAUDE.md, MEMORY.md, _archive/) remain private
 echo.
 pause
