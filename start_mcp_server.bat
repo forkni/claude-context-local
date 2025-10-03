@@ -605,12 +605,14 @@ echo   1. Hybrid ^(BM25 + Semantic, Recommended^)
 echo   2. Semantic Only ^(Dense vector search^)
 echo   3. BM25 Only ^(Text-based search^)
 echo   4. Auto ^(System chooses best^)
+echo   0. Back to Search Configuration
 echo.
-set /p mode_choice="Select mode (1-4): "
+set /p mode_choice="Select mode (0-4): "
 
-REM Handle empty input gracefully
+REM Handle empty input or back option
 if not defined mode_choice goto search_config_menu
 if "!mode_choice!"=="" goto search_config_menu
+if "!mode_choice!"=="0" goto search_config_menu
 
 set SEARCH_MODE=
 if "!mode_choice!"=="1" set SEARCH_MODE=hybrid
@@ -631,11 +633,22 @@ goto search_config_menu
 
 :set_weights
 echo.
-echo [INFO] Configure search weights ^(must sum to 1.0^):
-set /p bm25_weight="BM25 weight (0.0-1.0, default 0.4): "
-set /p dense_weight="Dense weight (0.0-1.0, default 0.6): "
-if not defined bm25_weight set bm25_weight=0.4
-if not defined dense_weight set dense_weight=0.6
+echo [INFO] Configure search weights ^(must sum to 1.0^)
+echo.
+echo   Current: BM25=0.4, Dense=0.6 ^(default^)
+echo.
+set /p bm25_weight="Enter BM25 weight (0.0-1.0, or press Enter to cancel): "
+
+REM Handle empty input - cancel and go back
+if not defined bm25_weight goto search_config_menu
+if "!bm25_weight!"=="" goto search_config_menu
+
+set /p dense_weight="Enter Dense weight (0.0-1.0, or press Enter to cancel): "
+
+REM Handle empty input - cancel and go back
+if not defined dense_weight goto search_config_menu
+if "!dense_weight!"=="" goto search_config_menu
+
 echo [INFO] Weights set - BM25: %bm25_weight%, Dense: %dense_weight%
 set CLAUDE_BM25_WEIGHT=%bm25_weight%
 set CLAUDE_DENSE_WEIGHT=%dense_weight%
@@ -655,11 +668,13 @@ echo Available Models:
 echo   1. EmbeddingGemma-300m ^(Default, 768 dim, 4-8GB VRAM^)
 echo   2. BGE-M3 ^(Recommended, 1024 dim, 8-16GB VRAM, +3-6%% accuracy^)
 echo   3. Custom model path
+echo   0. Back to Search Configuration
 echo.
-set /p model_choice="Select model (1-3): "
+set /p model_choice="Select model (0-3): "
 
 if not defined model_choice goto search_config_menu
 if "!model_choice!"=="" goto search_config_menu
+if "!model_choice!"=="0" goto search_config_menu
 
 set SELECTED_MODEL=
 if "!model_choice!"=="1" set SELECTED_MODEL=google/embeddinggemma-300m
