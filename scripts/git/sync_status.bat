@@ -67,14 +67,14 @@ if not defined LOCAL_MAIN (
         for /f %%i in ('git rev-list --count main..origin/main') do set BEHIND=%%i
 
         if !AHEAD! GTR 0 (
-            echo ⚠ main is !AHEAD! commit(s) ahead of origin/main
+            echo ⚠ main is !AHEAD! commit^(s^) ahead of origin/main
             echo.
             echo   Commits to push:
             git log origin/main..main --oneline
         )
 
         if !BEHIND! GTR 0 (
-            echo ⚠ main is !BEHIND! commit(s) behind origin/main
+            echo ⚠ main is !BEHIND! commit^(s^) behind origin/main
             echo.
             echo   Commits to pull:
             git log main..origin/main --oneline
@@ -110,14 +110,14 @@ if not defined LOCAL_DEV (
         for /f %%i in ('git rev-list --count development..origin/development') do set DEV_BEHIND=%%i
 
         if !DEV_AHEAD! GTR 0 (
-            echo ⚠ development is !DEV_AHEAD! commit(s) ahead of origin/development
+            echo ⚠ development is !DEV_AHEAD! commit^(s^) ahead of origin/development
             echo.
             echo   Commits to push:
             git log origin/development..development --oneline
         )
 
         if !DEV_BEHIND! GTR 0 (
-            echo ⚠ development is !DEV_BEHIND! commit(s) behind origin/development
+            echo ⚠ development is !DEV_BEHIND! commit^(s^) behind origin/development
             echo.
             echo   Commits to pull:
             git log development..origin/development --oneline
@@ -141,7 +141,7 @@ if defined LOCAL_MAIN (
         for /f %%i in ('git rev-list --count development..main') do set MAIN_AHEAD_OF_DEV=%%i
 
         if !DEV_AHEAD_OF_MAIN! GTR 0 (
-            echo development is !DEV_AHEAD_OF_MAIN! commit(s) ahead of main
+            echo development is !DEV_AHEAD_OF_MAIN! commit^(s^) ahead of main
             echo.
             echo   New commits on development:
             git log main..development --oneline | head -5
@@ -152,7 +152,7 @@ if defined LOCAL_MAIN (
 
         if !MAIN_AHEAD_OF_DEV! GTR 0 (
             echo.
-            echo ⚠ main is !MAIN_AHEAD_OF_DEV! commit(s) ahead of development
+            echo ⚠ main is !MAIN_AHEAD_OF_DEV! commit^(s^) ahead of development
             echo   This is unusual - development should be ahead of main
             echo.
             echo   Commits on main not in development:
@@ -173,34 +173,24 @@ echo ====================================
 echo Recommendations
 echo ====================================
 
-if defined AHEAD (
-    if !AHEAD! GTR 0 (
-        echo • Push main to remote: git push origin main
-    )
+if !AHEAD! GTR 0 (
+    echo • Push main to remote: git push origin main
 )
 
-if defined BEHIND (
-    if !BEHIND! GTR 0 (
-        echo • Pull main from remote: git pull origin main
-    )
+if !BEHIND! GTR 0 (
+    echo • Pull main from remote: git pull origin main
 )
 
-if defined DEV_AHEAD (
-    if !DEV_AHEAD! GTR 0 (
-        echo • Push development to remote: git push origin development
-    )
+if !DEV_AHEAD! GTR 0 (
+    echo • Push development to remote: git push origin development
 )
 
-if defined DEV_BEHIND (
-    if !DEV_BEHIND! GTR 0 (
-        echo • Pull development from remote: git pull origin development
-    )
+if !DEV_BEHIND! GTR 0 (
+    echo • Pull development from remote: git pull origin development
 )
 
-if defined DEV_AHEAD_OF_MAIN (
-    if !DEV_AHEAD_OF_MAIN! GTR 0 (
-        echo • Merge development to main: scripts\git\merge_with_validation.bat
-    )
+if !DEV_AHEAD_OF_MAIN! GTR 0 (
+    echo • Merge development to main: scripts\git\merge_with_validation.bat
 )
 
 echo.
