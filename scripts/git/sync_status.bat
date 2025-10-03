@@ -44,6 +44,10 @@ REM [3/5] Main branch status
 echo [3/5] Main Branch Status
 echo ====================================
 
+REM Initialize variables
+set AHEAD=0
+set BEHIND=0
+
 REM Get commit hashes
 for /f "tokens=*" %%i in ('git rev-parse main 2^>nul') do set LOCAL_MAIN=%%i
 for /f "tokens=*" %%i in ('git rev-parse origin/main 2^>nul') do set REMOTE_MAIN=%%i
@@ -83,6 +87,10 @@ REM [4/5] Development branch status
 echo [4/5] Development Branch Status
 echo ====================================
 
+REM Initialize variables
+set DEV_AHEAD=0
+set DEV_BEHIND=0
+
 REM Get commit hashes
 for /f "tokens=*" %%i in ('git rev-parse development 2^>nul') do set LOCAL_DEV=%%i
 for /f "tokens=*" %%i in ('git rev-parse origin/development 2^>nul') do set REMOTE_DEV=%%i
@@ -121,6 +129,10 @@ echo.
 REM [5/5] Branch divergence
 echo [5/5] Branch Divergence
 echo ====================================
+
+REM Initialize variables
+set DEV_AHEAD_OF_MAIN=0
+set MAIN_AHEAD_OF_DEV=0
 
 if defined LOCAL_MAIN (
     if defined LOCAL_DEV (
