@@ -225,6 +225,10 @@ CLAUDE.md
 MEMORY.md
 local_only/
 
+# Development-only content (excluded from main branch)
+tests/
+pytest.ini
+
 # Documentation - only specific files are public
 docs/*
 !docs/BENCHMARKS.md
