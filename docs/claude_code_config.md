@@ -174,6 +174,56 @@ Once configured, these tools will be available in Claude Code:
 
 - `clear_index()` - Clear current project index
 
+## GitHub Actions Integration
+
+### Interactive @claude Mentions
+
+This repository includes GitHub Actions integration for interactive Claude Code assistance in issues and pull requests.
+
+**Workflow File**: `.github/workflows/claude.yml`
+
+**Trigger Events**:
+- Issue comments
+- Pull request review comments
+- Pull request reviews
+- New issues (in title or body)
+
+**Usage Examples**:
+
+```markdown
+# In GitHub Issues
+@claude can you review this error message and suggest a fix?
+[error log here]
+
+# In Pull Requests
+@claude please review these changes for potential issues
+
+# In PR Comments
+@claude what's the best way to implement caching for this function?
+```
+
+**Setup Requirements**:
+- Add `ANTHROPIC_API_KEY` to repository secrets (Settings → Secrets and variables → Actions)
+- Workflow automatically triggers on @claude mentions
+- Claude Code responds with context-aware assistance
+
+### Custom Commands
+
+The `.claude/commands/` directory contains reusable workflow templates:
+
+- **`create-pr.md`** - Automated PR creation with clean formatting
+- **`run-merge.md`** - Guided merge workflow with validation
+- **`validate-changes.md`** - Pre-commit validation checklist
+
+These commands standardize common tasks and enforce project guidelines.
+
+**CI/CD Workflows** (complementary to interactive AI):
+- `branch-protection.yml` - Automated validation, testing, linting
+- `merge-development-to-main.yml` - Manual merge workflow with .gitattributes support
+- `docs-validation.yml` - Documentation quality checks
+
+📚 **Complete workflow documentation**: See [docs/GIT_WORKFLOW.md](GIT_WORKFLOW.md) for full Git workflow and Claude Code integration guide.
+
 ## General Development Workflow
 
 ### Step 1: Index Your Software Project

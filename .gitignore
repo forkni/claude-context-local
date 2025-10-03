@@ -1,4 +1,7 @@
-.claude/
+# Claude Code user settings (local-only)
+.claude/*
+# But allow shared custom commands
+!.claude/commands/
 
 ignore/
 # Byte-compiled / optimized / DLL files
@@ -239,6 +242,12 @@ docs/*
 !docs/MODEL_MIGRATION_GUIDE.md
 !docs/PYTORCH_COMPATIBILITY.md
 !docs/TESTING_GUIDE.md
+
+# Development-only documentation (intermediate/technical)
+docs/GIT_WORKFLOW_CRITICAL_REVIEW.md
+docs/GIT_WORKFLOW_ENHANCEMENT_PLAN.md
+docs/GPU_MEMORY_LEAK_FIX.md
+docs/PER_MODEL_INDICES_IMPLEMENTATION.md
 
 # Evaluation and test results (temporary/generated files)
 custom_evaluation_results/

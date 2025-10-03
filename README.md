@@ -474,15 +474,33 @@ claude-context-local/
 │   │   ├── hf_auth.ps1               # HuggingFace authentication helper
 │   │   ├── install-windows.ps1       # Windows automated installer
 │   │   └── start_mcp_server.ps1      # PowerShell MCP server launcher
-│   ├── git/                          # Git workflow automation
+│   ├── git/                          # Git workflow automation (10 scripts)
 │   │   ├── commit.bat                # Privacy-protected commits
 │   │   ├── sync_branches.bat         # Branch synchronization
-│   │   └── restore_local.bat         # Local file recovery
+│   │   ├── restore_local.bat         # Local file recovery
+│   │   ├── merge_docs.bat            # Documentation-only merge
+│   │   ├── cherry_pick_commits.bat   # Selective commit merging
+│   │   ├── commit_enhanced.bat       # Enhanced commit with validations
+│   │   ├── merge_with_validation.bat # Full merge with .gitattributes support
+│   │   ├── validate_branches.bat     # Branch state validation
+│   │   ├── sync_status.bat           # Check synchronization status
+│   │   └── rollback_merge.bat        # Rollback failed merges
 │   ├── verify_installation.py        # Python verification system
 │   └── verify_hf_auth.py             # HuggingFace auth verification
+├── .claude/
+│   └── commands/                     # Custom Claude Code commands
+│       ├── create-pr.md              # Automated PR creation
+│       ├── run-merge.md              # Guided merge workflow
+│       └── validate-changes.md       # Pre-commit validation
+├── .github/
+│   └── workflows/                    # GitHub Actions automation
+│       ├── branch-protection.yml     # Validation, testing, linting
+│       ├── claude.yml                # Interactive @claude mentions
+│       ├── docs-validation.yml       # Documentation quality checks
+│       └── merge-development-to-main.yml # Manual merge workflow
 ├── docs/
 │   ├── BENCHMARKS.md                 # Performance benchmarks
-│   ├── GIT_WORKFLOW.md               # Git workflow documentation
+│   ├── GIT_WORKFLOW.md               # Git workflow documentation (single source of truth)
 │   ├── HYBRID_SEARCH_CONFIGURATION_GUIDE.md # Search configuration
 │   ├── INSTALLATION_GUIDE.md         # Installation instructions
 │   └── claude_code_config.md         # Claude Code integration

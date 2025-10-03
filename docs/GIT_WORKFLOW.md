@@ -92,6 +92,192 @@ sync_branches.bat
 - **Returns to development branch**
 - **Ensures both branches are identical**
 
+## 🤖 Claude Code GitHub Integration
+
+### Overview
+
+This repository includes GitHub Actions integration for Claude Code, enabling interactive AI assistance through `@claude` mentions in issues and pull requests. This is **complementary** to the CI/CD automation workflows.
+
+### Interactive AI Features
+
+**GitHub Actions Workflow**: `.github/workflows/claude.yml`
+
+Responds to `@claude` mentions in:
+- Issue comments
+- Pull request review comments
+- Pull request reviews
+- New issues (in title or body)
+
+**Permissions Required**:
+- Read: contents, pull requests, issues
+- Write: id-token (for authentication)
+
+**Setup Requirement**: Add `ANTHROPIC_API_KEY` to repository secrets
+
+### Custom Commands
+
+Located in `.claude/commands/` directory, these are reusable command templates:
+
+#### 1. `/create-pr` - Automated PR Creation
+
+**Purpose**: Create pull requests with clean, professional descriptions
+
+**Features**:
+- Creates feature branch from current changes
+- Commits staged changes with conventional format
+- Pushes to remote and creates PR via GitHub CLI
+- **Never includes Claude Code attribution** in PR descriptions
+
+**Usage**:
+```bash
+# Stage your changes first
+git add <files>
+
+# Run command (optional: specify branch suffix)
+/create-pr feature-name
+# or
+/create-pr  # Uses timestamp as branch suffix
+```
+
+**Good PR Examples**:
+- `feat: Add semantic search caching for 93% token reduction`
+- `fix: Escape parentheses in sync_status.bat echo statements`
+- `docs: Update installation guide with PyTorch 2.6.0 requirements`
+
+#### 2. `/run-merge` - Guided Merge Workflow
+
+**Purpose**: Safe merge workflow with .gitattributes support and validation
+
+**Merge Types**:
+- `full` - Full merge from development to main (default)
+- `docs` - Documentation-only merge
+- `status` - Check branch synchronization status
+
+**Usage**:
+```bash
+# Full merge workflow
+/run-merge full
+
+# Documentation-only merge
+/run-merge docs
+
+# Status check only
+/run-merge status
+```
+
+**Safety Features**:
+- Pre-merge validation via `validate_branches.bat`
+- Automatic backup tags created
+- .gitattributes enforcement (tests/ excluded from main)
+- Post-merge verification
+- Rollback script available (`rollback_merge.bat`)
+
+#### 3. `/validate-changes` - Pre-Commit Validation
+
+**Purpose**: Comprehensive pre-commit checklist to catch issues early
+
+**Checks Performed**:
+1. Verifies changes are staged
+2. Blocks local-only files (CLAUDE.md, MEMORY.md, _archive/, benchmark_results/)
+3. Branch-specific validations (no tests/ on main)
+4. File count warnings (>50 files = large changeset)
+5. Commit message format validation (conventional commits)
+6. AI attribution detection (blocks commits with Claude/Generated/Co-Authored references)
+7. .gitattributes consistency check
+
+**Usage**:
+```bash
+# After staging changes, before committing
+/validate-changes
+```
+
+**Prevents Common Mistakes**:
+- ❌ Committing CLAUDE.md or MEMORY.md (local-only)
+- ❌ Adding tests/ to main branch (development-only)
+- ❌ Using AI attribution in commit messages
+- ❌ Non-conventional commit message format
+
+**Quick Fixes**:
+```bash
+# Unstage local files
+git reset HEAD CLAUDE.md MEMORY.md _archive/ benchmark_results/
+
+# Conventional commit format examples
+feat: Add hybrid search with BM25 + semantic fusion
+fix: Escape parentheses in batch file echo statements
+docs: Update installation guide with PyTorch requirements
+chore: Add GitHub Actions workflows for CI/CD
+test: Add integration tests for incremental indexing
+```
+
+### CI/CD Workflows vs Claude Code Integration
+
+**They are COMPLEMENTARY, not mutually exclusive:**
+
+#### CI/CD Workflows (Automated)
+- **branch-protection.yml** - Validates every push (test files, linting, local-only file checks)
+- **merge-development-to-main.yml** - Manual merge workflow with .gitattributes support
+- **docs-validation.yml** - Documentation quality checks (markdown lint, link checking)
+
+**Purpose**: Automatic validation and quality assurance
+
+#### Claude Code Integration (Interactive)
+- **claude.yml** - Responds to @claude mentions in issues/PRs
+- **Custom commands** - Reusable workflow templates
+
+**Purpose**: Interactive AI assistance for development tasks
+
+### Using @claude in GitHub
+
+**In Issues**:
+```markdown
+@claude can you review this error message and suggest a fix?
+
+[error log here]
+```
+
+**In Pull Requests**:
+```markdown
+@claude please review these changes for potential issues
+```
+
+**In PR Comments**:
+```markdown
+@claude what's the best way to implement caching for this function?
+```
+
+### Configuration Files
+
+#### .gitignore Rules
+```gitignore
+# Claude Code user settings (local-only)
+.claude/*
+# But allow shared custom commands
+!.claude/commands/
+```
+
+**This ensures**:
+- User-specific settings remain private (`.claude/*`)
+- Shared custom commands are version controlled (`.claude/commands/`)
+
+#### Required Secrets
+
+Add to repository settings → Secrets and variables → Actions:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+### Integration Benefits
+
+| Benefit | Description |
+|---------|-------------|
+| **Interactive Help** | @claude mentions provide context-aware assistance |
+| **Workflow Automation** | Custom commands standardize common tasks |
+| **Quality Enforcement** | Validation prevents common mistakes |
+| **Clean Commits** | Automatic checks ensure professional commit messages |
+| **Safe Merging** | Guided workflows with rollback support |
+
 ## 📋 Daily Workflow
 
 ### 1. Normal Development
@@ -100,21 +286,40 @@ sync_branches.bat
 # Work with full context (CLAUDE.md, MEMORY.md, _archive/)
 # Edit code, run tests, develop features
 
+# Validate changes before committing
+/validate-changes
+
 # When ready to commit:
 commit.bat "feat: Add new search functionality"
 ```
 
-### 2. Public Release
+### 2. Creating Pull Requests
 
 ```batch
-# Sync development to main branch:
+# Stage your changes
+git add <files>
+
+# Use custom command for clean PR creation
+/create-pr feature-name
+
+# Or create manually with gh CLI
+gh pr create --title "feat: ..." --body "..."
+```
+
+### 3. Public Release
+
+```batch
+# Option 1: Use guided merge workflow
+/run-merge full
+
+# Option 2: Use traditional script
 sync_branches.bat
 
 # Both branches now have identical public content
 # Local files remain private
 ```
 
-### 3. Fresh Clone Setup
+### 4. Fresh Clone Setup
 
 ```batch
 # After cloning repository:
