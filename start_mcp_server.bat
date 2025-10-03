@@ -560,7 +560,6 @@ echo     - INSTALLATION_GUIDE.md: Detailed installation steps
 echo     - BENCHMARKS.md: Performance metrics and validation
 echo     - HYBRID_SEARCH_CONFIGURATION_GUIDE.md: Search tuning
 echo     - claude_code_config.md: Claude Code integration
-echo     - TESTING_GUIDE.md: Test suite documentation
 echo     - GIT_WORKFLOW.md: Git automation scripts
 echo.
 echo The MCP server communicates via JSON-RPC with Claude Code.
