@@ -1,0 +1,166 @@
+# .github/workflows/merge-development-to-main.yml
+name: Merge Development to Main
+
+on:
+  workflow_dispatch:
+    inputs:
+      create_backup:
+        description: 'Create backup tag before merge'
+        required: true
+        type: boolean
+        default: true
+      dry_run:
+        description: 'Dry run (preview only, no actual merge)'
+        required: true
+        type: boolean
+        default: false
+
+jobs:
+  merge:
+    name: Merge development → main
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Configure merge driver
+        run: |
+          git config --global merge.ours.driver true
+          git config --global merge.ours.name "Keep ours merge driver"
+
+      - name: Verify .gitattributes exists
+        run: |
+          if [ ! -f .gitattributes ]; then
+            echo "❌ ERROR: .gitattributes not found"
+            echo "Cannot proceed with merge - missing merge strategy configuration"
+            exit 1
+          fi
+          echo "✅ .gitattributes found"
+          echo "Contents:"
+          cat .gitattributes
+
+      - name: Update branches from remote
+        run: |
+          git fetch origin development:development
+          git fetch origin main:main
+
+      - name: Create backup tag
+        if: ${{ inputs.create_backup == true && inputs.dry_run == false }}
+        run: |
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          BACKUP_TAG="backup-main-before-merge-$TIMESTAMP"
+
+          git checkout main
+          git tag "$BACKUP_TAG"
+          git push origin "$BACKUP_TAG"
+
+          echo "✅ Backup tag created: $BACKUP_TAG"
+          echo "BACKUP_TAG=$BACKUP_TAG" >> $GITHUB_ENV
+
+      - name: Preview merge (Dry Run)
+        if: ${{ inputs.dry_run == true }}
+        run: |
+          git checkout main
+
+          echo "=== DRY RUN: Files that would change ==="
+          git diff --name-status main development | grep -v "^M.*tests/" || true
+
+          echo ""
+          echo "=== Commits to be merged ==="
+          git log main..development --oneline
+
+          echo ""
+          echo "=== Excluded files (via .gitattributes) ==="
+          echo "- tests/**"
+          echo "- pytest.ini"
+          echo "- docs/TESTING_GUIDE.md"
+          echo "- docs/*_IMPLEMENTATION.md"
+
+      - name: Perform merge
+        if: ${{ inputs.dry_run == false }}
+        run: |
+          git checkout main
+
+          echo "Merging development into main..."
+          git merge --no-ff development -m "chore: Merge development to main
+
+- Applied .gitattributes merge strategies
+- Excluded development-only files
+- Automated merge via GitHub Actions"
+
+          if [ $? -ne 0 ]; then
+            echo "❌ Merge failed - conflicts detected"
+            git merge --abort
+            exit 1
+          fi
+
+          echo "✅ Merge completed successfully"
+
+      - name: Verify merge exclusions
+        if: ${{ inputs.dry_run == false }}
+        run: |
+          VERIFICATION_FAILED=0
+
+          # Check if tests/ exists (should NOT in main branch)
+          if [ -d "tests" ]; then
+            echo "❌ ERROR: tests/ directory found in main branch"
+            echo "gitattributes merge strategy failed!"
+            VERIFICATION_FAILED=1
+          else
+            echo "✅ tests/ directory excluded (as expected)"
+          fi
+
+          # Check if pytest.ini exists (should NOT in main branch)
+          if [ -f "pytest.ini" ]; then
+            echo "❌ ERROR: pytest.ini found in main branch"
+            VERIFICATION_FAILED=1
+          else
+            echo "✅ pytest.ini excluded (as expected)"
+          fi
+
+          if [ $VERIFICATION_FAILED -eq 1 ]; then
+            echo ""
+            echo "Merge verification failed - rolling back"
+            git reset --hard HEAD~1
+            exit 1
+          fi
+
+          echo "✅ All merge exclusions verified"
+
+      - name: Push to main
+        if: ${{ inputs.dry_run == false }}
+        run: |
+          git push origin main
+          echo "✅ Main branch updated successfully"
+
+      - name: Create merge summary
+        if: ${{ inputs.dry_run == false }}
+        run: |
+          echo "=== MERGE SUMMARY ==="
+          echo "✅ Development → Main merge successful"
+          echo "✅ Method: Git merge with .gitattributes"
+          echo "✅ Excluded files NOT merged:"
+          echo "   - tests/ (all test files)"
+          echo "   - pytest.ini"
+          echo "   - Development-only documentation"
+
+          if [ -n "$BACKUP_TAG" ]; then
+            echo "✅ Backup tag: $BACKUP_TAG"
+            echo ""
+            echo "To rollback: git reset --hard $BACKUP_TAG"
+          fi
+
+          echo ""
+          echo "Changes merged:"
+          git diff --stat HEAD~1
