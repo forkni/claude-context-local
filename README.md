@@ -277,38 +277,6 @@ run_benchmarks.bat
 Results are saved to `benchmark_results/` directory (gitignored for privacy).
 See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for detailed performance metrics.
 
-## Test Suite
-
-The project includes a comprehensive test suite with 37 test files organized into professional categories:
-
-### Test Organization
-
-- **Unit Tests** (14 files): Component isolation testing in `tests/unit/`
-- **Integration Tests** (23 files): Workflow validation testing in `tests/integration/`
-- **Test Fixtures**: Reusable mocks and sample data in `tests/fixtures/`
-- **Test Data**: Sample projects and datasets in `tests/test_data/`
-
-### Running Tests
-
-```bash
-# Run all tests
-pytest tests/
-
-# Run only unit tests (fast)
-pytest tests/unit/
-
-# Run only integration tests
-pytest tests/integration/
-
-# Run with verbose output
-pytest tests/ -v
-
-# Run with coverage report
-pytest tests/ --cov=. --cov-report=html
-```
-
-📚 **Detailed testing documentation**: [View Test Suite Guide](tests/README.md)
-
 ## Search Modes & Performance
 
 ### Available Search Modes
@@ -387,13 +355,6 @@ claude-context-local/
 │   ├── INSTALLATION_GUIDE.md         # Installation instructions
 │   ├── TESTING_GUIDE.md              # Test suite documentation
 │   └── claude_code_config.md         # Claude Code integration
-├── tests/
-│   ├── conftest.py                   # Pytest configuration
-│   ├── fixtures/                     # Test mocks and sample data
-│   ├── integration/                  # Integration tests
-│   ├── unit/                         # Unit tests
-│   ├── test_data/                    # Language-specific test projects
-│   └── README.md                     # Test suite guide
 ├── CHANGELOG.md                      # Version history
 ├── start_mcp_server.bat              # Main launcher (Windows)
 ├── install-windows.bat               # Primary installer (Windows)
