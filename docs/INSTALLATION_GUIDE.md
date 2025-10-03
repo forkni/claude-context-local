@@ -10,11 +10,13 @@ This guide covers the complete installation process for the Claude Context MCP s
 
 1. [Prerequisites](#prerequisites)
 2. [Installation Methods](#installation-methods)
-3. [Dependency Management](#dependency-management)
-4. [PyTorch Installation](#pytorch-installation)
-5. [Verification & Testing](#verification--testing)
-6. [Troubleshooting](#troubleshooting)
-7. [Performance Optimization](#performance-optimization)
+3. [HuggingFace Authentication](#huggingface-authentication)
+4. [Claude Code MCP Configuration](#claude-code-mcp-configuration)
+5. [Dependency Management](#dependency-management)
+6. [PyTorch Installation](#pytorch-installation)
+7. [Verification & Testing](#verification--testing)
+8. [Troubleshooting](#troubleshooting)
+9. [Performance Optimization](#performance-optimization)
 
 ## Prerequisites
 
@@ -27,7 +29,7 @@ This guide covers the complete installation process for the Claude Context MCP s
   - PyTorch with CUDA: ~2.4 GB
   - Dependencies and cache: ~500 MB
 - **Memory**: 4GB RAM minimum, 8GB+ recommended
-- **GPU** (optional): NVIDIA GPU with CUDA 12.1 support
+- **GPU** (optional): NVIDIA GPU with CUDA 11.8+ or 12.x support
 
 > **Windows Focus**: This system is optimized for Windows environments with automated installers and comprehensive verification tools.
 
@@ -56,15 +58,20 @@ install-windows.bat
 # 3. Verify installation
 verify-installation.bat
 
-# 4. (Optional) Configure Claude Code MCP integration
-scripts\powershell\configure_claude_code.ps1 -Global
+# 4. Automatic Claude Code configuration (included in installation)
+# If configuration fails, run manually:
+.\scripts\batch\manual_configure.bat
+
+# 5. Verify Claude Code configuration
+.venv\Scripts\python.exe scripts\manual_configure.py --validate-only
 ```
 
 **What this provides:**
 
 - ✅ **Smart CUDA Detection**: Automatically detects and installs appropriate PyTorch version
 - ✅ **Complete Setup**: All dependencies including hybrid search components
-- ✅ **Professional Organization**: Clean, streamlined script structure
+- ✅ **Automatic MCP Configuration**: Claude Code integration configured during installation
+- ✅ **Path Verification**: Validates MCP server paths and detects configuration errors
 - ✅ **Comprehensive Verification**: Built-in testing with verify-installation.bat
 - ✅ **Windows Optimized**: Specifically designed for Windows environments
 
@@ -187,6 +194,147 @@ verify-installation.bat
 - **Environment Variables**: Set `HF_TOKEN` for session-based authentication
 - **No Transmission**: Your token is only used locally, never transmitted by our code
 
+## Claude Code MCP Configuration
+
+### Automatic Configuration
+
+The Windows installer (`install-windows.bat`) automatically configures Claude Code MCP integration during installation:
+
+1. **Automatic Detection**: Checks if Claude Code is installed and accessible
+2. **MCP Server Registration**: Registers the code-search MCP server with Claude Code
+3. **Configuration Verification**: Tests the configuration after setup
+4. **Error Recovery**: Offers retry option if configuration fails
+
+### Manual Configuration
+
+If automatic configuration fails or you need to reconfigure:
+
+```powershell
+# Configure globally (recommended - works from any directory)
+.\scripts\batch\manual_configure.bat
+
+# Configure for current project only
+.\scripts\batch\manual_configure.bat
+
+# Remove existing configuration
+.\scripts\batch\manual_configure.bat -Remove
+
+# Test MCP server before configuration
+.\scripts\batch\manual_configure.bat -Test
+```
+
+### Configuration Features
+
+#### Smart Update Detection
+
+The configuration script detects existing MCP server configurations:
+
+1. **Checks for Existing Configuration**: Reads `.claude.json` to detect code-search server
+2. **Shows Current Settings**: Displays command and args of existing configuration
+3. **Prompts Before Overwriting**: Asks user permission before updating
+4. **Safe Removal**: Removes old configuration before adding new one
+
+**Example:**
+```
+[WARNING] code-search MCP server is already configured
+Current configuration:
+  Command: C:\old\path\wrapper.bat
+
+Update configuration? (y/N)
+```
+
+#### Path Verification
+
+After configuration, verify that the MCP server path is valid:
+
+```powershell
+# Verify Claude Code configuration
+.venv\Scripts\python.exe scripts\manual_configure.py --validate-only
+```
+
+**Verification Checks:**
+- ✅ Finds `.claude.json` configuration file (global or project-specific)
+- ✅ Confirms code-search MCP server exists in configuration
+- ✅ **Validates MCP server path exists on disk**
+- ✅ Reports configuration status and provides troubleshooting guidance
+
+**Example Output:**
+```
+[OK] code-search MCP server is configured!
+Configuration details:
+  Command: F:\path\to\wrapper.bat
+
+[OK] MCP server path exists: F:\path\to\wrapper.bat
+[SUCCESS] Claude Code is properly configured for semantic code search!
+```
+
+**If Path is Invalid:**
+```
+[ERROR] MCP server path does not exist: E:\invalid\path\wrapper.bat
+
+[PROBLEM] The configured path is invalid or the file has been moved
+[SOLUTION] Reconfigure Claude Code integration:
+  .\.\scripts\batch\manual_configure.bat
+```
+
+### Configuration Modes
+
+**Wrapper Script (Default):**
+- Uses `mcp_server_wrapper.bat` for cross-directory compatibility
+- Works from any location (VS Code, different folders, command prompt)
+- Automatically sets correct working directory
+
+```powershell
+# Use wrapper script (default)
+.\scripts\batch\manual_configure.bat
+
+# Explicit wrapper mode
+.\scripts\batch\manual_configure.bat -UseWrapper -Global
+```
+
+**Direct Python Mode:**
+- Uses Python interpreter directly
+- Requires correct working directory
+- Advanced users only
+
+```powershell
+# Direct Python mode
+.\scripts\batch\manual_configure.bat -DirectPython -Global
+```
+
+### Troubleshooting Configuration
+
+#### Claude Code Not Found
+
+```
+[WARNING] Claude Code configuration failed
+[INFO] Common causes:
+  - Claude Code not installed or not in PATH
+  - 'claude' command not available
+```
+
+**Solution:**
+1. Ensure Claude Code is installed
+2. Verify `claude` command is in PATH
+3. Restart terminal after installation
+4. Run configuration manually after fixing
+
+#### Configuration Path Errors
+
+If the configured path becomes invalid (moved files, changed drives):
+
+```powershell
+# Check current configuration
+.venv\Scripts\python.exe scripts\manual_configure.py --validate-only
+
+# Reconfigure with correct path
+.\scripts\batch\manual_configure.bat
+
+# Or use repair tool
+scripts\batch\repair_installation.bat
+# Select: Option 3 - Reconfigure Claude Code integration
+```
+
 ## Dependency Management
 
 ### Why UV is Recommended
@@ -220,12 +368,15 @@ verify-installation.bat
 
 ### Version Requirements
 
-- **Minimum PyTorch**: 2.4.0
-- **Reason**: gemma3_text architecture support requires transformers >= 4.51.3, which needs PyTorch >= 2.4.0
-- **CUDA Version**: 12.1 (cu121 builds)
+- **Minimum PyTorch**: 2.6.0+
+- **Reason**:
+  - BGE-M3 model requires PyTorch 2.6.0+ for security fixes and stability
+  - EmbeddingGemma requires transformers >= 4.51.3, which needs PyTorch >= 2.4.0
+  - PyTorch 2.6.0 only provides cu118 builds (no cu121 available)
+- **CUDA Compatibility**: cu118 builds work with CUDA 11.8, 12.x systems
 - **Compatible Versions**:
-  - PyTorch: 2.4.0+ to 2.5.1+cu121
-  - transformers: 4.51.3+
+  - PyTorch: 2.6.0+
+  - transformers: 4.51.3+ (4.56.0-Embedding-Gemma-preview for EmbeddingGemma)
   - sentence-transformers: 5.1.0+
 
 ### Installation Commands
@@ -233,22 +384,24 @@ verify-installation.bat
 #### UV Method (Recommended)
 
 ```bash
-# Windows
-uv pip install torch>=2.4.0 torchvision torchaudio --python .venv\Scripts\python.exe --index-url https://download.pytorch.org/whl/cu121
+# Windows - CUDA 11.8 build (compatible with CUDA 12.x)
+uv pip install torch>=2.6.0 torchvision torchaudio --python .venv\Scripts\python.exe --index-url https://download.pytorch.org/whl/cu118
 
 ```
 
 #### pip Method (Fallback)
 
 ```bash
-pip install torch>=2.4.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# CUDA 11.8 build (compatible with CUDA 12.x)
+pip install torch>=2.6.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 ```
 
 ### CUDA Index URLs
 
-- **CUDA 12.1**: `https://download.pytorch.org/whl/cu121`
-- **CUDA 11.8**: `https://download.pytorch.org/whl/cu118` (backward compatible)
+- **CUDA 11.8**: `https://download.pytorch.org/whl/cu118` (recommended, works with CUDA 11.8+ and 12.x)
 - **CPU only**: `https://download.pytorch.org/whl/cpu`
+
+> **Note**: PyTorch 2.6.0 only provides cu118 builds. The cu118 build is fully compatible with CUDA 12.x systems due to backward compatibility.
 
 ## Verification & Testing
 
@@ -430,6 +583,55 @@ Select **Option 1: Token Efficiency Benchmark** for a quick validation (~10 seco
 
 ## Troubleshooting
 
+### Repair Tools
+
+The system includes comprehensive repair tools for common issues:
+
+#### Automated Repair Tool
+
+```powershell
+# Launch the repair tool with interactive menu
+scripts\batch\repair_installation.bat
+```
+
+**Available Repair Options:**
+
+1. **Clear all Merkle snapshots** - Fixes stale change detection causing "No changes detected" errors
+2. **Clear project indexes** - Resets search state and FAISS indexes
+3. **Reconfigure Claude Code integration** - Re-registers MCP server with Claude Code
+4. **Verify dependencies** - Checks all Python packages and versions
+5. **Full system reset** - Clears both indexes and snapshots (fresh start)
+6. **Return to main menu** - Exit without changes
+
+**When to Use:**
+- "No changes detected" despite file modifications
+- Search results are stale or incorrect
+- MCP server not showing up in Claude Code
+- After major system updates or model changes
+
+#### Force Reindex
+
+If incremental indexing fails to detect changes:
+
+```powershell
+# Option 1: Via interactive menu
+start_mcp_server.bat
+# Select: Option 2 - Force Reindex Project
+
+# Option 2: Via command line
+.venv\Scripts\python.exe tools\index_project.py --force
+
+# Option 3: Via repair tool
+scripts\batch\repair_installation.bat
+# Select: Option 1 - Clear all Merkle snapshots
+```
+
+**Force Reindex Features:**
+- Bypasses Merkle tree snapshot checking
+- Performs full reindex of all files
+- Automatically deletes stale snapshots
+- Useful after git operations or file system changes
+
 ### Common Issues
 
 #### 1. DLL Loading Errors
@@ -452,8 +654,8 @@ Select **Option 1: Token Efficiency Benchmark** for a quick validation (~10 seco
 **Solution**:
 
 ```bash
-# Ensure PyTorch >= 2.4.0
-uv pip install --upgrade torch>=2.4.0 --index-url https://download.pytorch.org/whl/cu121
+# Ensure PyTorch >= 2.6.0
+uv pip install --upgrade torch>=2.6.0 --index-url https://download.pytorch.org/whl/cu118
 ```
 
 **Cause**: Old PyTorch version incompatible with newer transformers
@@ -503,8 +705,8 @@ python -c "import torch; print('GPU memory:', torch.cuda.get_device_properties(0
 
 1. **CUDA Setup**
    - Install NVIDIA drivers (latest)
-   - Verify CUDA toolkit compatibility
-   - Use cu121 PyTorch builds for CUDA 12.1
+   - Verify CUDA toolkit compatibility (11.8+ or 12.x)
+   - Use cu118 PyTorch builds (compatible with CUDA 11.8+ and 12.x)
 
 2. **Memory Management**
    - Monitor GPU memory usage during indexing

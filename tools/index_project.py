@@ -10,8 +10,8 @@ import os
 import sys
 from pathlib import Path
 
-# Add parent directory to path for module imports
-sys.path.insert(0, str(Path(__file__).parent))
+# Add project root directory to path for module imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from mcp_server.server import index_directory
 
@@ -80,13 +80,14 @@ def find_projects(search_path: str = "C:\\Projects") -> list:
     return projects
 
 
-def index_project(project_path: str, include_subfolders: bool = True) -> dict:
+def index_project(project_path: str, include_subfolders: bool = True, force_full: bool = False) -> dict:
     """
     Index a project focusing on code files.
 
     Args:
         project_path: Path to project directory
         include_subfolders: Whether to include code files in subfolders
+        force_full: Force full reindex, bypassing Merkle snapshot change detection
 
     Returns:
         Dictionary with indexing results
@@ -110,7 +111,7 @@ def index_project(project_path: str, include_subfolders: bool = True) -> dict:
         print(f"No specific project file found in {project_path}")
         print("Indexing as a general code directory.")
 
-    # Count code files
+    # Count code files (excluding common build/dependency directories)
     code_extensions = [
         "*.py",
         "*.js",
@@ -124,11 +125,25 @@ def index_project(project_path: str, include_subfolders: bool = True) -> dict:
         "*.cpp",
         "*.cs",
     ]
+
+    # Import ignored directories from chunker
+    from chunking.multi_language_chunker import MultiLanguageChunker
+
+    ignored_dirs = MultiLanguageChunker.DEFAULT_IGNORED_DIRS
+
     code_files = []
 
     for ext in code_extensions:
         if include_subfolders:
-            code_files.extend(list(project_path.rglob(ext)))
+            all_files = list(project_path.rglob(ext))
+            # Filter out files in ignored directories (.venv, node_modules, etc.)
+            code_files.extend(
+                [
+                    f
+                    for f in all_files
+                    if not any(part in ignored_dirs for part in f.parts)
+                ]
+            )
         else:
             code_files.extend(list(project_path.glob(ext)))
 
@@ -149,10 +164,12 @@ def index_project(project_path: str, include_subfolders: bool = True) -> dict:
         print(f"  ... and {len(code_files) - 10} more files")
 
     print(f"\nIndexing project: {project_path.name}")
+    if force_full:
+        print("[INFO] Forcing full reindex (bypassing Merkle snapshot)")
 
     # Use the MCP server's index_directory function
     result = index_directory(
-        str(project_path), project_name=f"Proj_{project_path.name}"
+        str(project_path), project_name=f"Proj_{project_path.name}", incremental=not force_full
     )
 
     try:
@@ -191,6 +208,11 @@ def main():
         action="store_true",
         help="Don't include code files in subfolders",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force full reindex, bypassing Merkle snapshot change detection (use if 'No changes detected' occurs)",
+    )
 
     args = parser.parse_args()
 
@@ -221,7 +243,7 @@ def main():
                         project = projects[idx]
                         print(f"\nIndexing project: {project['name']}")
                         result = index_project(
-                            project["project_dir"], not args.no_subfolders
+                            project["project_dir"], not args.no_subfolders, args.force
                         )
                     else:
                         print("Invalid project number.")
@@ -238,7 +260,7 @@ def main():
         )
 
     # Index the specified project
-    result = index_project(args.project_path, not args.no_subfolders)
+    result = index_project(args.project_path, not args.no_subfolders, args.force)
 
 
 if __name__ == "__main__":

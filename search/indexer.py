@@ -77,7 +77,7 @@ def estimate_index_memory_usage(
 class CodeIndexManager:
     """Manages FAISS vector index and metadata storage for code chunks."""
 
-    def __init__(self, storage_dir: str):
+    def __init__(self, storage_dir: str, embedder=None):
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
@@ -93,6 +93,7 @@ class CodeIndexManager:
         self._chunk_ids = []
         self._logger = logging.getLogger(__name__)
         self._on_gpu = False
+        self.embedder = embedder  # Optional embedder for dimension validation
 
         # Check dependencies
         self._check_dependencies()
@@ -130,6 +131,31 @@ class CodeIndexManager:
         if self.index_path.exists():
             self._logger.info(f"Loading existing index from {self.index_path}")
             self._index = faiss.read_index(str(self.index_path))
+
+            # Validate index dimension matches current model (if embedder provided)
+            if self.embedder is not None:
+                try:
+                    stored_dim = self._index.d
+                    current_model_dim = self.embedder.get_model_info()[
+                        "embedding_dimension"
+                    ]
+
+                    if stored_dim != current_model_dim:
+                        self._logger.warning(
+                            f"Index dimension mismatch detected!\n"
+                            f"  Stored index: {stored_dim} dimensions\n"
+                            f"  Current model: {current_model_dim} dimensions\n"
+                            f"  Model: {self.embedder.model_name}\n"
+                            f"This index was created with a different embedding model.\n"
+                            f"Creating new index for current model..."
+                        )
+                        # Clear the incompatible index
+                        self._index = None
+                        self._chunk_ids = []
+                        return  # Will create new index when embeddings are added
+                except Exception as e:
+                    self._logger.debug(f"Could not validate index dimension: {e}")
+
             # If GPU support is available, optionally move to GPU for runtime speed
             self._maybe_move_index_to_gpu()
 
@@ -451,7 +477,50 @@ class CodeIndexManager:
         with open(self.chunk_id_path, "wb") as f:
             pickle.dump(self._chunk_ids, f)
 
+        # Save model metadata for dimension validation (if embedder available)
+        if self.embedder is not None:
+            model_info_path = self.index_path.parent / "model_info.json"
+            try:
+                import json
+
+                model_info = {
+                    "model_name": self.embedder.model_name,
+                    "embedding_dimension": self.embedder.get_model_info()[
+                        "embedding_dimension"
+                    ],
+                    "created_at": str(self.index_path.stat().st_mtime)
+                    if self.index_path.exists()
+                    else None,
+                }
+                with open(model_info_path, "w") as f:
+                    json.dump(model_info, f, indent=2)
+                self._logger.debug(f"Saved model info to {model_info_path}")
+            except Exception as e:
+                self._logger.debug(f"Failed to save model info (non-critical): {e}")
+
         self._update_stats()
+
+    def load(self) -> bool:
+        """
+        Public method to load index (for compatibility with other index classes).
+
+        Returns:
+            bool: True if index was loaded successfully or already exists, False otherwise
+        """
+        # Index is already loaded in __init__, so just check if it exists
+        if self._index is not None and len(self._chunk_ids) > 0:
+            return True
+
+        # Try to reload if index file exists but index is None
+        if self.index_path.exists():
+            try:
+                self._load_index()
+                return self._index is not None
+            except Exception as e:
+                self._logger.error(f"Failed to reload index: {e}")
+                return False
+
+        return False
 
     def _update_stats(self):
         """Update index statistics."""

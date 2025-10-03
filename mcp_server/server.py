@@ -130,13 +130,26 @@ def ensure_project_indexed(project_path: str) -> bool:
 
 
 def get_embedder() -> CodeEmbedder:
-    """Lazy initialization of embedder."""
+    """Lazy initialization of embedder with configurable model."""
     global _embedder
     if _embedder is None:
         cache_dir = get_storage_dir() / "models"
         cache_dir.mkdir(exist_ok=True)
-        _embedder = CodeEmbedder(cache_dir=str(cache_dir))
-        logger.info("Embedder initialized")
+
+        # Get model from config (defaults to Gemma for backward compatibility)
+        try:
+            from search.config import get_search_config
+
+            config = get_search_config()
+            model_name = config.embedding_model_name
+            logger.info(f"Using embedding model: {model_name}")
+        except Exception as e:
+            logger.warning(f"Failed to load model from config: {e}")
+            model_name = "google/embeddinggemma-300m"  # Fallback to default
+            logger.info(f"Falling back to default model: {model_name}")
+
+        _embedder = CodeEmbedder(model_name=model_name, cache_dir=str(cache_dir))
+        logger.info("Embedder initialized successfully")
     return _embedder
 
 
@@ -431,8 +444,7 @@ def search_code(
                 "error": "No indexed project found",
                 "message": "You must index a project before searching",
                 "suggestions": [
-                    "Index a TouchDesigner project: index_directory('/path/to/your/td/project')",
-                    "Try the demo project: index_test_project()",
+                    "Index your project: index_directory('/path/to/your/project')",
                     "List available projects: list_projects()",
                 ],
                 "current_project": _current_project or "None",
@@ -896,65 +908,10 @@ def switch_project(project_path: str) -> str:
 
 
 @mcp.tool()
-def index_test_project() -> str:
-    """
-    Index the built-in Python test project for demonstration purposes.
-
-    This indexes a sample Python project with authentication, database, API, and utility modules
-    to demonstrate the code search capabilities. Useful for trying out the system.
-
-    Returns:
-        JSON string with indexing results and statistics
-    """
-    try:
-        logger.info("Indexing built-in test project")
-
-        # Get the test project path
-        server_dir = Path(__file__).parent
-        test_project_path = server_dir.parent / "tests" / "test_data" / "python_project"
-
-        if not test_project_path.exists():
-            return json.dumps(
-                {
-                    "success": False,
-                    "error": "Test project not found. The sample project may not be available.",
-                }
-            )
-
-        # Use the regular index_directory function
-        result = index_directory(str(test_project_path))
-        result_data = json.loads(result)
-
-        # Add demo information
-        if "error" not in result_data:
-            result_data["demo_info"] = {
-                "project_type": "Sample Python Project",
-                "includes": [
-                    "Authentication module (user login, password hashing)",
-                    "Database module (connections, queries, transactions)",
-                    "API module (HTTP handlers, request validation)",
-                    "Utilities (helpers, validation, configuration)",
-                ],
-                "sample_searches": [
-                    "user authentication functions",
-                    "database connection code",
-                    "HTTP API handlers",
-                    "input validation",
-                    "error handling patterns",
-                ],
-            }
-
-        return json.dumps(result_data, indent=2)
-
-    except (OSError, IOError, ValueError, RuntimeError, ImportError) as e:
-        logger.error(f"Error indexing test project: {e}")
-        return json.dumps({"success": False, "error": str(e)})
-
-
-@mcp.tool()
 def clear_index() -> str:
     """
     Clear the entire search index and metadata for the current project.
+    Also deletes associated Merkle snapshot to prevent stale state issues.
 
     Returns:
         JSON string confirming the operation
@@ -971,7 +928,16 @@ def clear_index() -> str:
         index_manager = get_index_manager()
         index_manager.clear_index()
 
-        response = {"success": True, "message": "Search index cleared successfully"}
+        # Also clear Merkle snapshot to prevent "No changes detected" issues
+        from merkle.snapshot_manager import SnapshotManager
+        snapshot_manager = SnapshotManager()
+        try:
+            snapshot_manager.delete_snapshot(_current_project)
+            logger.info(f"Merkle snapshot deleted for {_current_project}")
+        except Exception as snapshot_error:
+            logger.warning(f"Failed to delete snapshot (non-critical): {snapshot_error}")
+
+        response = {"success": True, "message": "Search index and snapshot cleared successfully"}
 
         logger.info("Search index cleared")
         return json.dumps(response, indent=2)
@@ -1363,9 +1329,9 @@ def run_benchmark(
 
     Args:
         benchmark_type: Type of benchmark to run
-                      - "token-efficiency": Measures 98.6% token reduction vs file reading
+                      - "token-efficiency": Measures token reduction vs file reading
+                      - "method-comparison": Compare hybrid vs BM25 vs semantic search
                       - "custom": Project-specific search quality evaluation
-                      - "swe-bench": Industry-standard software engineering benchmark
         project_path: Path to project for evaluation (default: test_evaluation)
         max_instances: Maximum test instances to evaluate (default: 3)
         use_gpu: Force GPU usage (True), CPU usage (False), or auto-detect (None)
@@ -1375,6 +1341,7 @@ def run_benchmark(
 
     Examples:
         /run_benchmark "token-efficiency"
+        /run_benchmark "method-comparison" "."
         /run_benchmark "custom" "path/to/your/project"
         /run_benchmark "token-efficiency" "test_evaluation" 1 false
     """
@@ -1383,7 +1350,7 @@ def run_benchmark(
         import sys
 
         # Validate benchmark type
-        valid_types = ["token-efficiency", "custom", "swe-bench"]
+        valid_types = ["token-efficiency", "method-comparison", "custom"]
         if benchmark_type not in valid_types:
             return json.dumps(
                 {
@@ -1408,11 +1375,8 @@ def run_benchmark(
         # Build command arguments
         cmd = [python_exe, str(script_path), benchmark_type]
 
-        if benchmark_type in ["custom", "token-efficiency"]:
+        if benchmark_type in ["custom", "token-efficiency", "method-comparison"]:
             cmd.extend(["--project", project_path])
-            cmd.extend(["--max-instances", str(max_instances)])
-
-        if benchmark_type == "swe-bench":
             cmd.extend(["--max-instances", str(max_instances)])
 
         # Handle GPU/CPU flags for token-efficiency

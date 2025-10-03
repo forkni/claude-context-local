@@ -195,11 +195,16 @@ class IncrementalIndexer:
             dag.build()
             all_files = dag.get_all_files()
 
-            # Filter supported files
+            # Filter supported files and exclude ignored directories
+            from chunking.multi_language_chunker import MultiLanguageChunker
+
+            ignored_dirs = MultiLanguageChunker.DEFAULT_IGNORED_DIRS
+
             supported_files = [
                 f
                 for f in all_files
                 if self.chunker.is_supported(str(Path(project_path) / f))
+                and not any(part in ignored_dirs for part in Path(f).parts)
             ]
             logger.info(
                 f"Found {len(supported_files)} supported files out of {len(all_files)} total files"
@@ -330,8 +335,17 @@ class IncrementalIndexer:
         """
         files_to_index = self.change_detector.get_files_to_reindex(changes)
 
-        # Filter supported files
-        supported_files = [f for f in files_to_index if self.chunker.is_supported(f)]
+        # Filter supported files and exclude ignored directories
+        from chunking.multi_language_chunker import MultiLanguageChunker
+
+        ignored_dirs = MultiLanguageChunker.DEFAULT_IGNORED_DIRS
+
+        supported_files = [
+            f
+            for f in files_to_index
+            if self.chunker.is_supported(f)
+            and not any(part in ignored_dirs for part in Path(f).parts)
+        ]
 
         # Collect all chunks first, then embed in a single pass
         chunks_to_embed = []

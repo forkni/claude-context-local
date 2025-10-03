@@ -675,6 +675,7 @@ if __name__ == "__main__":
         print("Press any key to exit...")
         try:
             import msvcrt
+
             msvcrt.getch()  # Windows: accepts any key
         except (ImportError, AttributeError):
             # Fallback for non-Windows or if msvcrt unavailable

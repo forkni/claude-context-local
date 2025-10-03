@@ -86,6 +86,7 @@ class MultiLanguageChunker:
         "target",
         "bin",
         "obj",
+        "_archive",
     }
 
     def __init__(self, root_path: Optional[str] = None):

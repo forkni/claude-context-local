@@ -6,16 +6,12 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent))
 
 from evaluation.semantic_evaluator import BM25OnlyEvaluator, SemanticSearchEvaluator
-from evaluation.swe_bench_evaluator import (
-    SWEBenchDatasetLoader,
-    SWEBenchEvaluationRunner,
-)
 from evaluation.token_efficiency_evaluator import TokenEfficiencyEvaluator
 
 
@@ -64,66 +60,6 @@ def setup_logging(log_level: str = "INFO") -> None:
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         handlers=[logging.StreamHandler(), logging.FileHandler(log_file)],
     )
-
-
-def run_swe_bench_evaluation(
-    dataset_path: Optional[str],
-    output_dir: str,
-    max_instances: Optional[int],
-    k: int,
-    methods: List[str],
-) -> None:
-    """
-    Run SWE-bench evaluation.
-
-    Args:
-        dataset_path: Path to dataset file
-        output_dir: Output directory for results
-        max_instances: Maximum instances to evaluate
-        k: Number of top results to consider
-        methods: List of methods to evaluate
-    """
-    logger = logging.getLogger("SWEBenchEvaluation")
-    logger.info("Starting SWE-bench evaluation")
-
-    # Load dataset
-    dataset_loader = SWEBenchDatasetLoader()
-
-    if dataset_path and Path(dataset_path).exists():
-        logger.info(f"Loading dataset from {dataset_path}")
-        instances = dataset_loader.load_dataset_file(dataset_path, max_instances)
-    else:
-        logger.info("Loading SWE-bench Lite dataset")
-        instances = dataset_loader.load_swe_bench_lite(max_instances=max_instances)
-
-    if not instances:
-        logger.error("No evaluation instances loaded")
-        return
-
-    logger.info(f"Loaded {len(instances)} instances for evaluation")
-
-    # Create evaluation runner
-    runner = SWEBenchEvaluationRunner(output_dir)
-
-    try:
-        # Run comparison evaluation
-        results = runner.run_comparison_evaluation(
-            instances=instances, k=k, max_instances=max_instances
-        )
-
-        logger.info("SWE-bench evaluation completed successfully")
-        print(f"\n{'=' * 60}")
-        print("EVALUATION COMPLETED SUCCESSFULLY")
-        print(f"{'=' * 60}")
-        print(f"Results saved to: {output_dir}")
-        print(f"Total instances evaluated: {results['metadata']['total_instances']}")
-        print(f"Methods compared: {', '.join(results['metadata']['evaluators'])}")
-
-    except Exception as e:
-        logger.error(f"Evaluation failed: {e}")
-        raise
-    finally:
-        runner.cleanup()
 
 
 def run_custom_evaluation(
@@ -566,33 +502,6 @@ def main():
     # Subcommands
     subparsers = parser.add_subparsers(dest="command", help="Evaluation commands")
 
-    # SWE-bench evaluation
-    swe_parser = subparsers.add_parser("swe-bench", help="Run SWE-bench evaluation")
-    swe_parser.add_argument(
-        "--dataset",
-        type=str,
-        help="Path to SWE-bench dataset file (downloads if not provided)",
-    )
-    swe_parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="evaluation_results",
-        help="Output directory for results",
-    )
-    swe_parser.add_argument(
-        "--max-instances", type=int, help="Maximum number of instances to evaluate"
-    )
-    swe_parser.add_argument(
-        "--k", type=int, default=10, help="Number of top results to consider"
-    )
-    swe_parser.add_argument(
-        "--methods",
-        nargs="+",
-        default=["hybrid", "bm25", "dense"],
-        choices=["hybrid", "bm25", "dense"],
-        help="Evaluation methods to compare",
-    )
-
     # Custom evaluation
     custom_parser = subparsers.add_parser("custom", help="Run custom evaluation")
     custom_parser.add_argument(
@@ -717,15 +626,7 @@ def main():
     setup_logging(args.log_level)
 
     try:
-        if args.command == "swe-bench":
-            run_swe_bench_evaluation(
-                dataset_path=args.dataset,
-                output_dir=args.output_dir,
-                max_instances=args.max_instances,
-                k=args.k,
-                methods=args.methods,
-            )
-        elif args.command == "custom":
+        if args.command == "custom":
             run_custom_evaluation(
                 dataset_path=args.dataset,
                 project_path=args.project,

@@ -38,7 +38,7 @@ echo   UV provides superior dependency resolution for ML packages...
 .venv\Scripts\uv.exe sync
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] UV sync failed, trying manual PyTorch installation...
-    .venv\Scripts\uv.exe pip install torch>=2.5.1 torchvision>=0.20.1 torchaudio>=2.5.1 --python .venv\Scripts\python.exe --index-url https://download.pytorch.org/whl/cu121
+    .venv\Scripts\uv.exe pip install torch>=2.6.0 torchvision>=0.21.0 torchaudio>=2.6.0 --python .venv\Scripts\python.exe --index-url https://download.pytorch.org/whl/cu118
     if %ERRORLEVEL% neq 0 (
         echo [ERROR] Manual installation also failed
         echo [INFO] Check pyproject.toml UV configuration and internet connection
@@ -86,9 +86,9 @@ echo [SUCCESS] All Dependency Issues RESOLVED!
 echo =================================================
 echo Resolved Issues:
 echo   - PyTorch version detection (importlib.metadata returning None)
-echo   - transformers compatibility with PyTorch 2.5.1+cu121
+echo   - transformers compatibility with PyTorch 2.6.0+cu118
 echo   - EmbeddingGemma gemma3_text architecture support
-echo   - CUDA 12.1 acceleration working properly
+echo   - CUDA 11.8/12.x acceleration working properly
 echo   - MCP server operational with semantic search
 echo =================================================
 echo Next Steps:

@@ -1,4 +1,9 @@
-"""EmbeddingGemma wrapper for generating code embeddings."""
+"""Multi-model embedder for generating code embeddings.
+
+Supports multiple embedding models including:
+- EmbeddingGemma (google/embeddinggemma-300m)
+- BGE-M3 (BAAI/bge-m3)
+"""
 
 import logging
 import os
@@ -31,7 +36,11 @@ class EmbeddingResult:
 
 
 class CodeEmbedder:
-    """Wrapper for EmbeddingGemma model to generate code embeddings."""
+    """Multi-model embedder for generating code embeddings.
+
+    Supports multiple embedding models with automatic configuration detection.
+    Default model is google/embeddinggemma-300m for backward compatibility.
+    """
 
     def __init__(
         self,
@@ -40,13 +49,66 @@ class CodeEmbedder:
         device: str = "auto",
     ):
         self.model_name = model_name
-        self.cache_dir = cache_dir
+        self.cache_dir = cache_dir or os.path.expanduser("~/.cache/huggingface/hub")
         self.device = device
         self._model = None
         self._logger = logging.getLogger(__name__)
+        self._model_config = None
 
         # Setup logging
         logging.basicConfig(level=logging.INFO)
+
+    @classmethod
+    def get_supported_models(cls) -> Dict[str, Dict[str, Any]]:
+        """Get dictionary of supported models and their configurations."""
+        from search.config import get_model_registry
+
+        return get_model_registry()
+
+    def _get_model_config(self) -> Dict[str, Any]:
+        """Get configuration for the current model.
+
+        Returns model-specific config including dimension, prompt_name, etc.
+        Falls back to sensible defaults for unknown models.
+        """
+        if self._model_config is not None:
+            return self._model_config
+
+        from search.config import get_model_config
+
+        # Try to get from registry
+        config = get_model_config(self.model_name)
+        if config:
+            self._model_config = config
+            return config
+
+        # Auto-detect based on model name for unknown models
+        model_lower = self.model_name.lower()
+
+        if "gemma" in model_lower:
+            self._model_config = {
+                "dimension": 768,
+                "prompt_name": "Retrieval-document",
+                "description": "EmbeddingGemma model",
+            }
+        elif "bge-m3" in model_lower or "bge_m3" in model_lower:
+            self._model_config = {
+                "dimension": 1024,
+                "prompt_name": None,  # BGE-M3 doesn't use prompts
+                "description": "BGE-M3 model",
+            }
+        else:
+            # Default fallback
+            self._logger.warning(
+                f"Unknown model {self.model_name}, using default config"
+            )
+            self._model_config = {
+                "dimension": 768,
+                "prompt_name": None,
+                "description": "Unknown model",
+            }
+
+        return self._model_config
 
     @property
     def model(self):
@@ -173,11 +235,18 @@ class CodeEmbedder:
         """Generate embedding for a single code chunk."""
         content = self.create_embedding_content(chunk)
 
-        # Use encode with proper prompt_name for code retrieval
-        # EmbeddingGemma uses "Retrieval-document" for document/code content
-        embedding = self.model.encode(
-            [content], prompt_name="Retrieval-document", show_progress_bar=False
-        )[0]
+        # Get model-specific configuration
+        model_config = self._get_model_config()
+        prompt_name = model_config.get("prompt_name")
+
+        # Use encode with model-specific prompt_name (if supported)
+        # EmbeddingGemma uses "Retrieval-document", BGE-M3 doesn't use prompts
+        if prompt_name:
+            embedding = self.model.encode(
+                [content], prompt_name=prompt_name, show_progress_bar=False
+            )[0]
+        else:
+            embedding = self.model.encode([content], show_progress_bar=False)[0]
 
         # Create unique chunk ID
         chunk_id = f"{chunk.relative_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
@@ -217,17 +286,27 @@ class CodeEmbedder:
 
         self._logger.info(f"Generating embeddings for {len(chunks)} chunks")
 
+        # Get model-specific configuration
+        model_config = self._get_model_config()
+        prompt_name = model_config.get("prompt_name")
+
         # Process in batches for efficiency
         for i in range(0, len(chunks), batch_size):
             batch = chunks[i : i + batch_size]
             batch_contents = [self.create_embedding_content(chunk) for chunk in batch]
 
-            # Generate embeddings for batch using proper prompt_name
-            batch_embeddings = self.model.encode(
-                batch_contents,
-                prompt_name="Retrieval-document",
-                show_progress_bar=False,
-            )
+            # Generate embeddings for batch using model-specific prompt_name
+            if prompt_name:
+                batch_embeddings = self.model.encode(
+                    batch_contents,
+                    prompt_name=prompt_name,
+                    show_progress_bar=False,
+                )
+            else:
+                batch_embeddings = self.model.encode(
+                    batch_contents,
+                    show_progress_bar=False,
+                )
 
             # Create results
             for j, (chunk, embedding) in enumerate(zip(batch, batch_embeddings)):
@@ -269,11 +348,27 @@ class CodeEmbedder:
 
     def embed_query(self, query: str) -> np.ndarray:
         """Generate embedding for a search query."""
-        # Use encode with proper prompt_name for code retrieval queries
-        # EmbeddingGemma uses "InstructionRetrieval" for code retrieval tasks
-        embedding = self.model.encode(
-            [query], prompt_name="InstructionRetrieval", show_progress_bar=False
-        )[0]
+        # Get model-specific configuration
+        model_config = self._get_model_config()
+        prompt_name = model_config.get("prompt_name")
+
+        # Use encode with model-specific prompt_name for queries
+        # EmbeddingGemma uses "InstructionRetrieval" for queries
+        # BGE-M3 doesn't use prompts
+        if prompt_name and "gemma" in self.model_name.lower():
+            # For Gemma, use InstructionRetrieval for queries
+            embedding = self.model.encode(
+                [query], prompt_name="InstructionRetrieval", show_progress_bar=False
+            )[0]
+        elif prompt_name:
+            # For other models with prompts, use the document prompt
+            embedding = self.model.encode(
+                [query], prompt_name=prompt_name, show_progress_bar=False
+            )[0]
+        else:
+            # For models without prompts (like BGE-M3)
+            embedding = self.model.encode([query], show_progress_bar=False)[0]
+
         return embedding
 
     def get_model_info(self) -> Dict[str, Any]:

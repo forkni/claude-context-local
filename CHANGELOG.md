@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.0] - 2025-09-29
 
 ### Added
+
 - **CHANGELOG.md**: Comprehensive change tracking following Keep a Changelog format
 - **GIT_WORKFLOW.md**: Complete Git workflow documentation with versioning guidance
   - Semantic versioning strategy (MAJOR.MINOR.PATCH)
@@ -15,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - CHANGELOG maintenance guidelines
 
 ### Changed
+
 - **Documentation Accuracy**: Corrected token efficiency metrics across all documentation
   - Token reduction: 99.9% → 98.6% (accurate measured value)
   - Tokens saved: 20,667 → 89,531 (actual benchmark results)
@@ -29,10 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Version Bump**: 0.2.0 → 0.3.0
 
 ### Fixed
+
 - **Evaluation Consistency**: Verified all evaluators use identical calculation methods from `BaseEvaluator`
 - **Documentation Conflicts**: Removed outdated `Git_Workflow_Strategy.md` to eliminate contradictions
 
 ### Removed
+
 - **Outdated Documentation**: Deleted `docs/Git_Workflow_Strategy.md` (contradicted current .gitignore setup)
 
 ---
@@ -40,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0] - 2025-09-28
 
 ### Added
+
 - **Auto-Tuning System**: Parameter optimization tool for hybrid search weights (`tools/auto_tune_search.py`)
   - Tests multiple BM25/Dense weight configurations (0.3/0.7, 0.4/0.6, 0.6/0.4)
   - Uses F1-score as primary metric with query time as tie-breaker
@@ -49,11 +54,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Parameter Optimizer Module**: Core auto-tuning logic (`evaluation/parameter_optimizer.py`)
 
 ### Changed
+
 - **Benchmark System**: Enhanced run_benchmarks.bat with auto-tuning option
 - **Evaluation Framework**: Added method-comparison mode for testing all search methods
 - **Version Bump**: 0.1.0 → 0.2.0
 
 ### Fixed
+
 - **Model Loading Overhead**: Fixed first query timing issue in auto-tuning by passing pre-created embedder
 - **Search Method Comparison**: Improved benchmark comparison reporting
 
@@ -62,6 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2025-01-27
 
 ### Added
+
 - **Multi-Language Support**: 22 file extensions across 11 programming languages
   - Python (AST-based parsing)
   - JavaScript, TypeScript, JSX, TSX (tree-sitter)
@@ -97,12 +105,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `scripts/git/sync_branches.bat` - Branch synchronization
 
 ### Changed
+
 - **Project Rename**: Claude-context-MCP → claude-context-local
 - **Test Organization**: Reorganized from root to unit/integration subdirectories
 - **Branch Strategy**: Dual-branch workflow (development for internal, main for public)
 - **Documentation Structure**: Professional organization with comprehensive guides
 
 ### Fixed
+
 - **Hybrid Search Integration**: Fixed BM25 + semantic search fusion
 - **Semantic Search Mode**: Corrected method name issues
 - **Branch Synchronization**: Resolved development/main branch conflicts
@@ -114,6 +124,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Planned Features
+
 - Real-world usage pattern analysis
 - Expanded language support
 - Interactive evaluation dashboard
@@ -132,6 +143,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Links
 
-- **Repository**: https://github.com/forkni/claude-context-local
+- **Repository**: <https://github.com/forkni/claude-context-local>
 - **Documentation**: See `docs/` directory
-- **Issue Tracker**: https://github.com/forkni/claude-context-local/issues
+- **Issue Tracker**: <https://github.com/forkni/claude-context-local/issues>

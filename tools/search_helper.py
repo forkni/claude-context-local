@@ -9,8 +9,8 @@ import json
 import sys
 from pathlib import Path
 
-# Add parent directory to path for module imports
-sys.path.insert(0, str(Path(__file__).parent))
+# Add project root directory to path for module imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from mcp_server.server import (
     find_similar_code,

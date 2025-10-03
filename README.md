@@ -33,8 +33,9 @@
 
 An intelligent code search system that uses Google's EmbeddingGemma model and advanced multi-language chunking to provide semantic search capabilities across 22 file extensions and 11 programming languages, integrated with Claude Code via MCP (Model Context Protocol).
 
-## ✅ Production Ready
+## Status
 
+- **🚧 Active Development**: This project is under active development. Some functionality may change as we continue to improve the system.
 - Core functionality fully operational
 - Windows-optimized installation with automated setup
 - All search modes working (semantic, BM25, hybrid)
@@ -74,9 +75,15 @@ Claude’s code context is powerful, but sending your code to the cloud costs to
 
 - **Python 3.11+** (tested with Python 3.11 and 3.12)
 - **RAM**: 4GB minimum (8GB+ recommended for large codebases)
-- **Disk**: 2GB free space (model cache + embeddings + indexes)
+- **Disk**: 2-4GB free space (model cache + embeddings + indexes)
+  - EmbeddingGemma: ~1.2GB
+  - BGE-M3: ~2.2GB (optional upgrade)
 - **Windows**: Windows 10/11 with PowerShell
-- **Optional GPU**: NVIDIA GPU with CUDA 11.8/12.1 for accelerated indexing (8.6x faster)
+- **PyTorch**: 2.6.0+ (automatically installed)
+  - Required for BGE-M3 model support
+  - Includes security fixes
+- **Optional GPU**: NVIDIA GPU with CUDA 11.8/12.4/12.6 for accelerated indexing (8.6x faster)
+  - PyTorch 2.6.0+ with CUDA 11.8/12.4/12.6 support
   - FAISS GPU acceleration for vector search
   - CUDA acceleration for embedding generation
   - Everything works on CPU if GPU unavailable
@@ -97,7 +104,7 @@ install-windows.bat
 verify-installation.bat
 
 # 4. (Optional) Configure Claude Code MCP integration
-scripts\powershell\configure_claude_code.ps1 -Global
+.\scripts\batch\manual_configure.bat
 ```
 
 > **⚠️ Important**: The installer will prompt for HuggingFace authentication during setup. You'll need a HuggingFace token to access the EmbeddingGemma model. Get your token at [https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) and accept terms at [https://huggingface.co/google/embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m).
@@ -115,7 +122,7 @@ Update by pulling latest changes:
 
 ```powershell
 # Navigate to your project directory
-cd claude-context-MCP
+cd claude-context-local
 git pull
 
 # Re-run the Windows installer to update dependencies
@@ -138,7 +145,7 @@ The Windows installer will:
 - Creates and manages the project virtual environment
 - Installs Python dependencies with optimized resolution using `uv sync`
 - Downloads the EmbeddingGemma model (~1.2–1.3 GB) if not already cached
-- Automatically detects CUDA and installs appropriate PyTorch version
+- Automatically detects CUDA and installs PyTorch 2.6.0+ with appropriate CUDA version
 - Configures `faiss-gpu` if an NVIDIA GPU is detected
 - **Preserves all your indexed projects and embeddings** across updates
 
@@ -178,10 +185,10 @@ scripts\batch\start_mcp_simple.bat
 
 ```powershell
 # One-time setup to register MCP server with Claude Code
-scripts\powershell\configure_claude_code.ps1 -Global
+.\scripts\batch\manual_configure.bat
 
 # Manual registration (alternative)
-claude mcp add code-search --scope user -- "F:\path\to\claude-context-MCP\.venv\Scripts\python.exe" -m mcp_server.server
+claude mcp add code-search --scope user -- "F:\path\to\claude-context-local\.venv\Scripts\python.exe" -m mcp_server.server
 ```
 
 ### 3) Use in Claude Code
@@ -228,6 +235,122 @@ claude mcp add code-search --scope user -- "F:\path\to\claude-context-MCP\.venv\
 - **Clean up**: Use `/cleanup_resources` when switching between large projects
 
 **No manual configuration needed** - the system automatically uses the best search mode for your queries.
+
+### 4) Setting Up CLAUDE.md for Your Project (Optional but Recommended)
+
+To maximize efficiency when using Claude Code with this MCP server, create a `CLAUDE.md` file in your project root. This file instructs Claude to prioritize semantic search over traditional file reading, ensuring optimal token usage.
+
+#### Why CLAUDE.md?
+
+- **93% Token Reduction**: Enforces search-first workflow (400 tokens vs 5,600 tokens)
+- **10x Faster**: Semantic search (3-5s) vs traditional file reading (30-60s)
+- **Immediate Access**: MCP tools visible to Claude without explaining each time
+- **Project-Specific**: Customize instructions for your codebase
+
+#### Minimal CLAUDE.md Template
+
+Create a `CLAUDE.md` file in your project root with this content:
+
+```markdown
+# Project Instructions for Claude Code
+
+## 🔴 CRITICAL: Search-First Protocol
+
+**MANDATORY**: For ALL codebase tasks, ALWAYS use semantic search FIRST before reading files.
+
+### Workflow Sequence
+
+1. **Index**: `/index_directory "C:\path\to\your\project"` - One-time setup
+2. **Search**: `/search_code "natural language query"` - Find code instantly
+3. **Edit**: Use `Read` tool ONLY after search identifies exact file
+
+### Performance Impact
+
+| Method | Tokens | Speed | Result |
+|--------|--------|-------|--------|
+| Traditional file reading | 5,600 tokens | 30-60s | Limited context |
+| Semantic search | 400 tokens | 3-5s | Precision targeting |
+| **Token savings** | **93%** | **10x faster** | **Cross-file relationships** |
+
+### Critical Rules
+
+- ✅ **ALWAYS**: `search_code()` for exploration/understanding
+- ✅ **ALWAYS**: Index before searching: `index_directory(path)`
+- ❌ **NEVER**: Read files without searching first
+- ❌ **NEVER**: Use `Glob()` for code exploration
+- ❌ **NEVER**: Grep manually for code patterns
+
+**Every file read without search wastes 1,000+ tokens**
+
+---
+
+## Available MCP Tools (12)
+
+| Tool | Priority | Purpose |
+|------|----------|---------|
+| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language |
+| **index_directory** | 🔴 **SETUP** | Index project (one-time) |
+| find_similar_code | Secondary | Find alternative implementations |
+| configure_search_mode | Config | Set search mode (hybrid/semantic/BM25) |
+| get_search_config_status | Config | View current search configuration |
+| get_index_status | Status | Check index health |
+| get_memory_status | Monitor | Check RAM/VRAM usage |
+| list_projects | Management | Show indexed projects |
+| switch_project | Management | Change active project |
+| clear_index | Reset | Delete current index |
+| cleanup_resources | Cleanup | Free memory/caches |
+| run_benchmark | Testing | Validate search quality |
+
+### Quick Examples
+
+```bash
+# Essential workflow
+/index_directory "C:\Projects\MyApp"
+/search_code "authentication functions"
+/search_code "error handling patterns"
+
+# Advanced usage
+/find_similar_code "auth.py:15-42:function:login"
+/configure_search_mode "hybrid" 0.4 0.6
+/get_index_status
+```
+
+### Search Modes
+
+- **hybrid** (default) - BM25 + semantic fusion (best accuracy)
+- **semantic** - Dense vector search only (best for concepts)
+- **bm25** - Sparse keyword search only (best for exact terms)
+- **auto** - Adaptive mode selection
+
+---
+
+📚 **Full Tool Reference**: See [docs/MCP_TOOLS_REFERENCE.md](https://github.com/forkni/claude-context-local/blob/main/docs/MCP_TOOLS_REFERENCE.md) for complete documentation with all parameters and examples.
+
+```
+
+#### Customization Tips
+
+1. **Copy the Template**: Save the content above to `CLAUDE.md` in your project root
+2. **Adjust Paths**: Update the index_directory path to match your project
+3. **Add Project Rules**: Include project-specific coding conventions, architecture notes, or common patterns
+4. **Use Full Reference**: For complete tool documentation, copy content from `docs/MCP_TOOLS_REFERENCE.md`
+
+#### How It Works
+
+- Claude Code automatically reads `CLAUDE.md` from your project directory
+- Instructions apply to all Claude sessions in that project
+- MCP tools are immediately available without explanation
+- Search-first workflow becomes automatic
+
+#### Example Projects
+
+This repository's own `CLAUDE.md` demonstrates advanced usage with:
+- Comprehensive MCP tool documentation
+- Project-specific architecture notes
+- Model selection guidance
+- Testing and benchmarking instructions
+
+> **Note**: The `CLAUDE.md` in this repository is project-specific. Use the minimal template above for your own projects, then customize as needed.
 
 ## Running Benchmarks
 
@@ -277,6 +400,16 @@ run_benchmarks.bat
 Results are saved to `benchmark_results/` directory (gitignored for privacy).
 See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for detailed performance metrics.
 
+**Via Interactive Menu:**
+
+```bash
+start_mcp_server.bat
+# Navigate: Advanced Options (6) → Run Unit/Integration/Regression Tests
+```
+
+📚 **Detailed testing documentation**: [View Test Suite Guide](tests/README.md)
+
+>>>>>>> development
 ## Search Modes & Performance
 
 ### Available Search Modes
@@ -324,7 +457,6 @@ claude-context-local/
 │   ├── base_evaluator.py             # Base evaluation framework
 │   ├── semantic_evaluator.py         # Search quality evaluation
 │   ├── token_efficiency_evaluator.py # Token usage measurement
-│   ├── swe_bench_evaluator.py        # SWE-bench evaluation
 │   ├── parameter_optimizer.py        # Search parameter optimization
 │   ├── run_evaluation.py             # Evaluation orchestrator
 │   ├── datasets/                     # Evaluation datasets
@@ -353,7 +485,6 @@ claude-context-local/
 │   ├── GIT_WORKFLOW.md               # Git workflow documentation
 │   ├── HYBRID_SEARCH_CONFIGURATION_GUIDE.md # Search configuration
 │   ├── INSTALLATION_GUIDE.md         # Installation instructions
-│   ├── TESTING_GUIDE.md              # Test suite documentation
 │   └── claude_code_config.md         # Claude Code integration
 ├── CHANGELOG.md                      # Version history
 ├── start_mcp_server.bat              # Main launcher (Windows)
@@ -416,15 +547,48 @@ The system uses advanced parsing to create semantically meaningful chunks across
 
 - `CODE_SEARCH_STORAGE`: Custom storage directory (default: `~/.claude_code_search`)
 
+## Embedding Models
+
+The system supports multiple embedding models for different performance/accuracy trade-offs:
+
+### Available Models
+
+| Model | Dimensions | VRAM | Context | Best For |
+|-------|------------|------|---------|----------|
+| **EmbeddingGemma-300m** (default) | 768 | 4-8GB | 2048 tokens | Fast, efficient, smaller projects |
+| **BGE-M3** | 1024 | 8-16GB | 8192 tokens | Higher accuracy (+13.6% F1), production systems |
+
+### Switching Models
+
+**Via Interactive Menu:**
+
+```bash
+start_mcp_server.bat
+# Navigate: 3 (Search Configuration) → 4 (Select Embedding Model)
+```
+
+**Via Environment Variable:**
+
+```bash
+set CLAUDE_EMBEDDING_MODEL=BAAI/bge-m3  # Switch to BGE-M3
+set CLAUDE_EMBEDDING_MODEL=google/embeddinggemma-300m  # Switch to Gemma
+```
+
+See [Model Migration Guide](docs/MODEL_MIGRATION_GUIDE.md) for detailed comparison and migration steps.
+
 ### Model Configuration
 
-The system uses `google/embeddinggemma-300m` by default.
+The system supports two embedding models:
+
+- **Default**: `google/embeddinggemma-300m` (768 dimensions, 4-8GB VRAM)
+- **Upgrade**: `BAAI/bge-m3` (1024 dimensions, 8-16GB VRAM, +13.6% F1-score)
 
 Notes:
 
-- Download size: ~1.2–2 GB on disk depending on variant and caches
+- Download size: ~1.2GB (Gemma) or ~2.2GB (BGE-M3)
 - Device selection: auto (CUDA on NVIDIA, MPS on Apple Silicon, else CPU)
-- You can pre-download via installer or at first use
+- Models are cached after first download in `~/.cache/huggingface/hub`
+- Cache detection implemented - models load instantly on subsequent uses
 - FAISS backend: CPU by default. If an NVIDIA GPU is detected, the installer
   attempts to install `faiss-gpu-cu12` (or `faiss-gpu-cu11`) and the index will
   run on GPU automatically at runtime while saving as CPU for portability.
@@ -455,6 +619,16 @@ accepting terms and/or authentication to download.
 
 After the first successful download, we cache the model under `~/.claude_code_search/models`
 and prefer offline loads for speed and reliability.
+
+### Model Caching
+
+Once downloaded, models are cached locally for instant loading:
+
+- **Cache location**: `~/.cache/huggingface/hub/`
+- **Offline mode**: Automatically enabled when cached models detected
+- **Load time**: 2-5 seconds from cache (vs minutes for download)
+- **No internet required**: After initial download
+- **Cache detection**: Implemented in embedder for both Gemma and BGE-M3
 
 ### Hybrid Search Configuration
 
@@ -586,7 +760,19 @@ verify-installation.bat
 
 # HuggingFace authentication check
 verify-hf-auth.bat
+
+# Repair tool - Fix common issues
+scripts\batch\repair_installation.bat
 ```
+
+**Repair Tool Options:**
+
+1. Clear all Merkle snapshots (fixes stale change detection)
+2. Clear project indexes (reset search state)
+3. Reconfigure Claude Code integration
+4. Verify dependencies
+5. Full system reset (indexes + snapshots)
+6. Return to main menu
 
 ### Installation Issues
 
@@ -603,10 +789,19 @@ verify-hf-auth.bat
    install-windows.bat  # Automatically installs UV
    ```
 
-3. **PyTorch CUDA version mismatch**: Reinstall PyTorch with correct CUDA version
+3. **PyTorch CUDA version mismatch or BGE-M3 errors**:
+
+   BGE-M3 requires PyTorch 2.6.0+ due to security improvements. If you have an older installation, reinstall using:
 
    ```powershell
-   scripts\batch\install_pytorch_cuda.bat
+   # Reinstall entire environment with correct PyTorch version
+   install-windows.bat
+   ```
+
+   Or manually upgrade PyTorch only:
+
+   ```powershell
+   .venv\Scripts\uv.exe pip install "torch==2.6.0" "torchvision==0.21.0" "torchaudio==2.6.0" --index-url https://download.pytorch.org/whl/cu118
    ```
 
 ### Model and Authentication Issues
@@ -637,19 +832,26 @@ verify-hf-auth.bat
    - Verify project path is correct
    - Reindex with `/index_directory "C:\path\to\project"`
 
-8. **Memory issues during indexing**: System running out of RAM
+8. **"No changes detected" but files were modified**: Stale Merkle snapshot issue
+   - Use force reindex to bypass snapshot checking
+   - Via menu: `start_mcp_server.bat` → Option 2 (Force Reindex)
+   - Via tool: `.venv\Scripts\python.exe tools\index_project.py --force`
+   - Or use repair tool: `scripts\batch\repair_installation.bat` → Option 1
+
+9. **Memory issues during indexing**: System running out of RAM
    - Close other applications to free memory
    - Check available RAM: `/get_memory_status`
    - For large codebases (10,000+ files), ensure 8GB+ RAM available
 
-9. **Indexing too slow**: First-time indexing takes time
-   - Expected: ~30-60 seconds for small projects (100 files)
-   - Expected: ~5-10 minutes for large projects (10,000+ files)
-   - GPU accelerates by 8.6x - verify CUDA available
+10. **Indexing too slow**: First-time indexing takes time
+
+- Expected: ~30-60 seconds for small projects (100 files)
+- Expected: ~5-10 minutes for large projects (10,000+ files)
+- GPU accelerates by 8.6x - verify CUDA available
 
 ### GPU and Performance Issues
 
-10. **FAISS GPU not used**: Ensure CUDA drivers and nvidia-smi available
+11. **FAISS GPU not used**: Ensure CUDA drivers and nvidia-smi available
 
     ```powershell
     # Check GPU availability
@@ -662,14 +864,14 @@ verify-hf-auth.bat
     .venv\Scripts\python.exe -c "import torch; print('CUDA:', torch.cuda.is_available())"
     ```
 
-11. **"CUDA out of memory" error**: GPU memory exhausted
+12. **"CUDA out of memory" error**: GPU memory exhausted
     - Close other GPU applications
     - System will automatically fall back to CPU
     - Performance will be slower but functional
 
 ### MCP Server Issues
 
-12. **MCP server won't start**: Check Python environment and dependencies
+13. **MCP server won't start**: Check Python environment and dependencies
 
     ```powershell
     # Test MCP server manually
@@ -678,28 +880,39 @@ verify-hf-auth.bat
     # Check for errors in output
     ```
 
-13. **Claude Code can't find MCP tools**: MCP server not registered
+14. **Claude Code can't find MCP tools**: MCP server not registered
 
     ```powershell
     # Register MCP server with Claude Code
-    scripts\powershell\configure_claude_code.ps1 -Global
+    .\scripts\batch\manual_configure.bat
+
+    # Verify configuration
+    .\.venv\Scripts\python.exe scripts\manual_configure.py --validate-only
+
+    # Run comprehensive MCP configuration validation (15 checks)
+    .\tests\regression\test_mcp_configuration.ps1
     ```
 
-14. **MCP connection lost**: Restart Claude Code and MCP server
+15. **MCP server path verification fails**: Invalid path in .claude.json
+    - Verify configuration: `.\.venv\Scripts\python.exe scripts\manual_configure.py --validate-only`
+    - Reconfigure if needed: `.\scripts\batch\manual_configure.bat`
+    - Check that wrapper script exists at configured path
+
+16. **MCP connection lost**: Restart Claude Code and MCP server
     - Close Claude Code completely
     - Run `start_mcp_server.bat` in new terminal
     - Reopen Claude Code
 
 ### Windows-Specific Issues
 
-15. **"cannot be loaded because running scripts is disabled"**: PowerShell execution policy
+17. **"cannot be loaded because running scripts is disabled"**: PowerShell execution policy
 
     ```powershell
     # Allow script execution (run as Administrator)
     Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
     ```
 
-16. **Path too long errors**: Windows path length limitation
+18. **Path too long errors**: Windows path length limitation
     - Move project closer to drive root (e.g., `C:\Projects\`)
     - Enable long paths in Windows (requires admin):
 

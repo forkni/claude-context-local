@@ -3,8 +3,8 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "claude-context-mcp"
-version = "0.3.0"
+name = "claude-context-local"
+version = "0.4.0"
 description = "Local semantic code search for Claude Code (MCP) using EmbeddingGemma, FAISS, and AST/tree-sitter chunking. 100% local embeddings and indexing."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -30,14 +30,15 @@ dependencies = [
     "datasets>=2.14.0",
     "faiss-cpu>=1.12.0",
     "fastmcp>=2.12.2",
+    "FlagEmbedding>=1.3.0",
     "huggingface-hub>=0.34.4",
     "mcp>=1.13.1",
     "nltk>=3.8",
     "psutil>=6.0.0",
     "rank-bm25>=0.2.2",
-    "torch>=2.5.1",
-    "torchvision>=0.20.1",
-    "torchaudio>=2.5.1",
+    "torch>=2.6.0",
+    "torchvision>=0.21.0",
+    "torchaudio>=2.6.0",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.1.0",
     "pytest-cov>=6.2.1",
@@ -78,23 +79,23 @@ Documentation = "https://github.com/forkni/claude-context-local#readme"
 Issues = "https://github.com/forkni/claude-context-local/issues"
 
 [tool.setuptools.packages.find]
-include = ["claude_embedding_search*"]
+include = ["chunking*", "embeddings*", "mcp_server*", "search*", "merkle*"]
 
 [tool.uv]
 index-url = "https://pypi.org/simple"
 
 [[tool.uv.index]]
-name = "pytorch-cu121"
-url = "https://download.pytorch.org/whl/cu121"
+name = "pytorch-cu118"
+url = "https://download.pytorch.org/whl/cu118"
 explicit = true
 
 [tool.uv.sources]
 torch = [
-    { index = "pytorch-cu121", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { index = "pytorch-cu118", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 torchvision = [
-    { index = "pytorch-cu121", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { index = "pytorch-cu118", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 torchaudio = [
-    { index = "pytorch-cu121", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { index = "pytorch-cu118", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]

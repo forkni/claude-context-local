@@ -42,7 +42,7 @@ if "!CUDA_AVAILABLE!"=="1" (
         echo Driver Capability: Up to CUDA !CUDA_DRIVER_VERSION!
     )
     echo GPU: !GPU_NAME!
-    echo Recommended: PyTorch with CUDA !CUDA_VERSION! support ^(compatible with CUDA !CUDA_INSTALLED_VERSION!^)
+    echo Recommended: PyTorch CUDA !CUDA_VERSION! build ^(compatible with system CUDA !CUDA_INSTALLED_VERSION!^)
 ) else (
     if not "!GPU_NAME!"=="" (
         echo CUDA Status: GPU detected but no CUDA toolkit installed
@@ -58,11 +58,18 @@ if "!CUDA_AVAILABLE!"=="1" (
 )
 echo.
 
+REM Check for existing installation
+if exist ".venv" (
+    echo [INFO] Existing installation detected
+    echo [INFO] If experiencing issues, consider clearing stale snapshots/indexes
+    echo.
+)
+
 REM Show installation menu
 :menu
 echo Installation Options:
 if "!CUDA_AVAILABLE!"=="1" (
-    echo [1] Auto-Install ^(Recommended - CUDA !CUDA_VERSION! support^)
+    echo [1] Auto-Install ^(Recommended - PyTorch CUDA !CUDA_VERSION!^)
 ) else (
     echo [1] Auto-Install ^(Recommended - CPU-Only^)
 )
@@ -71,19 +78,21 @@ if "!CUDA_AVAILABLE!"=="1" (
     echo [3] Manual CUDA Version Selection
 )
 echo [4] Update/Repair Existing Installation
-echo [5] Verify Installation Status
-echo [6] Exit
+echo [5] Clear Stale Snapshots/Indexes ^(Repair Tool^)
+echo [6] Verify Installation Status
+echo [7] Exit
 echo.
-set /p choice="Select option (1-6): "
+set /p choice="Select option (1-7): "
 
 if "!choice!"=="1" goto auto_install
 if "!choice!"=="2" goto cpu_install
 if "!choice!"=="3" goto manual_cuda
 if "!choice!"=="4" goto update_install
-if "!choice!"=="5" goto verify_install
-if "!choice!"=="6" exit /b 0
+if "!choice!"=="5" goto run_repair_tool
+if "!choice!"=="6" goto verify_install
+if "!choice!"=="7" exit /b 0
 
-echo [ERROR] Invalid choice. Please select 1-6.
+echo [ERROR] Invalid choice. Please select 1-7.
 pause
 goto menu
 
@@ -91,7 +100,7 @@ goto menu
 echo.
 echo === Auto-Installation Mode ===
 if "!CUDA_AVAILABLE!"=="1" (
-    echo Installing with CUDA !CUDA_VERSION! support...
+    echo Installing PyTorch with CUDA !CUDA_VERSION! build...
     call :install_cuda_mode
 ) else (
     echo Installing in CPU-only mode...
@@ -117,34 +126,25 @@ echo === Manual CUDA Version Selection ===
 echo.
 echo Your system has CUDA !CUDA_VERSION! installed
 echo.
-echo Available PyTorch CUDA Versions:
-echo [1] CUDA 12.1 ^(Recommended for CUDA 12.x^)
-echo [2] CUDA 11.8 ^(For CUDA 11.8.x^)
-echo [3] CUDA 11.7 ^(For CUDA 11.7.x^)
-echo [4] CPU Only ^(No CUDA^)
-echo [5] Back to main menu
+echo Available PyTorch CUDA Versions ^(PyTorch 2.6.0+^):
+echo [1] CUDA 11.8 ^(Recommended for CUDA 11.8+ and 12.x^)
+echo [2] CPU Only ^(No CUDA^)
+echo [3] Back to main menu
 echo.
-set /p cuda_choice="Select CUDA version (1-5): "
+echo Note: PyTorch 2.6.0 only supports CUDA 11.8 build
+echo       This build is fully compatible with CUDA 12.x systems
+echo.
+set /p cuda_choice="Select option (1-3): "
 
 if "!cuda_choice!"=="1" (
-    set PYTORCH_INDEX=https://download.pytorch.org/whl/cu121
-    set SELECTED_CUDA=12.1
-    goto manual_cuda_install
-)
-if "!cuda_choice!"=="2" (
     set PYTORCH_INDEX=https://download.pytorch.org/whl/cu118
     set SELECTED_CUDA=11.8
     goto manual_cuda_install
 )
-if "!cuda_choice!"=="3" (
-    set PYTORCH_INDEX=https://download.pytorch.org/whl/cu117
-    set SELECTED_CUDA=11.7
-    goto manual_cuda_install
-)
-if "!cuda_choice!"=="4" goto cpu_install
-if "!cuda_choice!"=="5" goto menu
+if "!cuda_choice!"=="2" goto cpu_install
+if "!cuda_choice!"=="3" goto main_menu
 
-echo [ERROR] Invalid choice. Please select 1-5.
+echo [ERROR] Invalid choice. Please select 1-3.
 pause
 goto manual_cuda
 
@@ -174,6 +174,13 @@ echo.
 echo === Installation Verification ===
 call :verify_installation
 pause
+goto menu
+
+:run_repair_tool
+echo.
+echo === Launching Repair Tool ===
+echo.
+call scripts\batch\repair_installation.bat
 goto menu
 
 REM Functions
@@ -236,31 +243,28 @@ for /f "tokens=2 delims=." %%i in ("!CUDA_FULL!") do set CUDA_MINOR=%%i
 
 echo [OK] CUDA !CUDA_FULL! detected with !GPU_NAME!
 
-REM Map CUDA version to PyTorch index
+REM Map CUDA version to PyTorch index (PyTorch 2.6.0+ compatibility)
 if "!CUDA_MAJOR!"=="12" (
-    if !CUDA_MINOR! GEQ 0 if !CUDA_MINOR! LEQ 4 (
-        set CUDA_VERSION=12.1
-        set PYTORCH_INDEX=https://download.pytorch.org/whl/cu121
-        set CUDA_AVAILABLE=1
-    ) else (
-        echo [INFO] CUDA 12.!CUDA_MINOR! detected. Using PyTorch CUDA 12.1 build ^(fully compatible with CUDA 12.x^)
-        set CUDA_VERSION=12.1
-        set PYTORCH_INDEX=https://download.pytorch.org/whl/cu121
-        set CUDA_AVAILABLE=1
-    )
+    REM PyTorch 2.6.0 doesn't have cu121, use cu118 (fully backward compatible)
+    echo [INFO] CUDA 12.!CUDA_MINOR! detected. Using PyTorch CUDA 11.8 build ^(compatible with CUDA 12.x^)
+    set CUDA_VERSION=11.8
+    set PYTORCH_INDEX=https://download.pytorch.org/whl/cu118
+    set CUDA_AVAILABLE=1
 ) else if "!CUDA_MAJOR!"=="11" (
     if "!CUDA_MINOR!"=="8" (
         set CUDA_VERSION=11.8
         set PYTORCH_INDEX=https://download.pytorch.org/whl/cu118
         set CUDA_AVAILABLE=1
     ) else if "!CUDA_MINOR!"=="7" (
-        set CUDA_VERSION=11.7
-        set PYTORCH_INDEX=https://download.pytorch.org/whl/cu117
+        echo [WARNING] CUDA 11.7 detected. PyTorch 2.6.0 requires 11.8+
+        echo [INFO] Using CUDA 11.8 build for compatibility
+        set CUDA_VERSION=11.8
+        set PYTORCH_INDEX=https://download.pytorch.org/whl/cu118
         set CUDA_AVAILABLE=1
     ) else (
         echo [WARNING] CUDA 11.!CUDA_MINOR! detected. Limited PyTorch support.
-        echo [INFO] Will offer manual version selection.
-        set CUDA_VERSION=11.!CUDA_MINOR!
+        echo [INFO] Using CUDA 11.8 build for compatibility
+        set CUDA_VERSION=11.8
         set PYTORCH_INDEX=https://download.pytorch.org/whl/cu118
         set CUDA_AVAILABLE=1
     )
@@ -513,7 +517,7 @@ echo =================================================
 if "!CUDA_AVAILABLE!"=="1" (
     echo Installed Components:
     echo   - Python Environment: [OK]
-    echo   - PyTorch with CUDA !CUDA_VERSION!: [OK]
+    echo   - PyTorch CUDA !CUDA_VERSION! build: [OK]
     echo   - Hybrid Search ^(BM25 + Semantic^): [OK]
     echo   - MCP Integration: [OK]
     echo   - GPU Acceleration: [OK] !GPU_NAME!
@@ -532,7 +536,7 @@ echo   1. Ensure HuggingFace authentication is configured ^(if not done during i
 echo      scripts\powershell\hf_auth.ps1 -Token "your_hf_token"
 echo.
 echo   2. Configure Claude Code integration:
-echo      scripts\powershell\configure_claude_code.ps1 -Global
+echo      scripts\batch\manual_configure.bat
 echo.
 echo   3. Start the MCP server:
 echo      start_mcp_server.bat
@@ -546,15 +550,46 @@ echo.
 echo Performance: Hybrid search provides ~40%% token reduction
 echo Documentation: See README.md for detailed usage guide
 echo =================================================
+echo.
+echo === Claude Code Integration ===
+echo.
+echo Automatically configuring Claude Code MCP integration...
+echo.
 
-set /p configure="Would you like to configure Claude Code integration now? (y/N): "
-if /i "!configure!"=="y" (
+REM Use the reliable Python script directly (no Claude CLI dependency)
+if exist ".venv\Scripts\python.exe" (
+    echo [INFO] Using Python configuration script (reliable method)
     echo.
-    echo Configuring Claude Code integration...
-    powershell -ExecutionPolicy Bypass -File "scripts\powershell\configure_claude_code.ps1" -Global
-    if %ERRORLEVEL% neq 0 (
-        echo [WARNING] Claude Code configuration failed - you can run it manually later
+    .venv\Scripts\python.exe scripts\manual_configure.py --global --force
+
+    if %ERRORLEVEL% equ 0 (
+        echo.
+        echo [OK] Claude Code integration configured successfully!
+        echo [INFO] Configuration file: %USERPROFILE%\.claude.json
+        echo.
+        echo IMPORTANT: Please restart Claude Code completely to apply changes
+        echo.
+    ) else (
+        echo.
+        echo [WARNING] Automatic configuration failed
+        echo.
+        echo Manual configuration options:
+        echo   1. Run: scripts\batch\manual_configure.bat
+        echo   2. Edit: %USERPROFILE%\.claude.json manually
+        echo   3. See: docs\claude_code_config.md for configuration examples
+        echo.
+        set /p retry_config="Would you like to run manual configuration now? (y/N): "
+        if /i "!retry_config!"=="y" (
+            echo.
+            call scripts\batch\manual_configure.bat
+        )
     )
+) else (
+    echo [WARNING] Virtual environment not ready, skipping MCP configuration
+    echo [INFO] You can configure Claude Code later using:
+    echo   1. Run: scripts\batch\manual_configure.bat
+    echo   2. Or: .venv\Scripts\python.exe scripts\manual_configure.py --global
+    echo.
 )
 
 :check_huggingface_auth
@@ -567,7 +602,7 @@ REM Test current authentication status
 .venv\Scripts\python.exe -c "from huggingface_hub import whoami; info = whoami(); print('[OK] Authenticated as:', info['name'])" 2>nul
 if %ERRORLEVEL% equ 0 (
     echo [OK] HuggingFace authentication already configured
-    goto :eof
+    goto end
 )
 
 echo.
@@ -587,7 +622,7 @@ set /p "hf_token=Enter your HuggingFace token (starts with hf_): "
 if "!hf_token!"=="" (
     echo [WARNING] No token provided. You can authenticate later using:
     echo   scripts\powershell\hf_auth.ps1 -Token "your_token_here"
-    goto :eof
+    goto end
 )
 
 REM Validate and test the token
@@ -603,10 +638,15 @@ if %ERRORLEVEL% neq 0 (
     echo [OK] HuggingFace authentication configured successfully!
 )
 
-goto :eof
+goto end
 
 :end
 echo.
-echo Installation completed! Press any key to exit.
+echo =================================================
+echo Installation process completed!
+echo.
+echo Review the logs above for any warnings or errors.
+echo =================================================
+echo.
 pause
 exit /b 0
