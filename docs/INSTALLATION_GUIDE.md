@@ -302,6 +302,22 @@ Configuration details:
 .\scripts\batch\manual_configure.bat -DirectPython -Global
 ```
 
+### GitHub Actions Integration (Optional)
+
+For interactive Claude Code assistance in GitHub issues and pull requests:
+
+**Setup Steps**:
+1. Add `ANTHROPIC_API_KEY` to repository secrets (Settings → Secrets and variables → Actions)
+2. Workflow `.github/workflows/claude.yml` enables @claude mentions
+3. Use @claude in issues, PRs, and comments for AI assistance
+
+**Features**:
+- Interactive code review via @claude mentions
+- Automated assistance in pull requests
+- Custom commands in `.claude/commands/` directory
+
+📚 **Complete integration guide**: [docs/GIT_WORKFLOW.md](GIT_WORKFLOW.md#-claude-code-github-integration)
+
 ### Troubleshooting Configuration
 
 #### Claude Code Not Found
