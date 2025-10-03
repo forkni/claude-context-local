@@ -1,4 +1,7 @@
-.claude/
+# Claude Code user settings (local-only)
+.claude/*
+# But allow shared custom commands
+!.claude/commands/
 
 ignore/
 # Byte-compiled / optimized / DLL files
