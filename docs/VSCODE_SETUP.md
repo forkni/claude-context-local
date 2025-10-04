@@ -28,7 +28,7 @@ Complete guide for configuring Visual Studio Code with Ruff linting and auto-for
 
 The project includes `.vscode/settings.json` with optimal configuration:
 
-### Key Features:
+### Key Features
 
 - ✅ **Auto-fix on save**: Ruff automatically fixes linting issues when you save
 - ✅ **Auto-format on save**: Code formatted with Ruff (Black-compatible)
@@ -36,7 +36,7 @@ The project includes `.vscode/settings.json` with optimal configuration:
 - ✅ **Project .venv**: Uses project's virtual environment, not system Python
 - ✅ **pyproject.toml**: Respects project's Ruff configuration
 
-### What Happens on Save:
+### What Happens on Save
 
 1. **Import organizing**: isort-compatible import sorting
 2. **Code formatting**: Black-compatible formatting (88 char line length)
@@ -86,18 +86,21 @@ To enable Ruff across **all Python projects**, add these settings to your global
 ### What These Settings Do
 
 **Python File Behavior:**
+
 - **`[python]` section**: Enables auto-formatting and auto-fix on save for all Python files
   - `editor.defaultFormatter: "charliermarsh.ruff"` - Use Ruff as formatter
   - `editor.formatOnSave: true` - Auto-format on save
   - `editor.codeActionsOnSave` - Auto-fix and organize imports on save
 
 **Core Ruff Settings:**
+
 - **`ruff.enable`**: Activates Ruff extension globally
 - **`ruff.organizeImports`**: Enables import sorting feature
 - **`ruff.fixAll`**: Enables auto-fix for all fixable issues
 - **`ruff.importStrategy: "fromEnvironment"`**: Automatically finds Ruff in your project's virtual environment or system Python
 
 **Advanced Settings:**
+
 - **`ruff.configurationPreference: "filesystemFirst"`**: **CRITICAL** - Ensures project `pyproject.toml` files override global settings (respects project-specific rules)
 - **`ruff.nativeServer: "on"`**: Forces use of modern Rust-based language server (faster, more features)
 - **`ruff.showSyntaxErrors: true`**: Displays syntax errors in real-time
@@ -109,6 +112,7 @@ To enable Ruff across **all Python projects**, add these settings to your global
 The `ruff.configurationPreference` setting controls how VSCode and project configuration files interact:
 
 **Options:**
+
 1. **`"editorFirst"`** (default) - VSCode settings override `pyproject.toml`
 2. **`"filesystemFirst"`** (recommended) - `pyproject.toml` overrides VSCode settings
 3. **`"editorOnly"`** - Ignore `pyproject.toml` completely
@@ -126,6 +130,7 @@ Benefit: Projects control their own rules, global acts as fallback
 ```
 
 **Example Scenario:**
+
 - Global settings: `ruff.lint.select = ["E", "F"]` (hypothetical)
 - Project `pyproject.toml`: `select = ["E", "F", "B", "C4"]`
 
@@ -149,6 +154,7 @@ ruff --version  # Should show: ruff 0.13.3 or later
 ```
 
 **Benefits:**
+
 - ✅ Consistent Ruff version across projects without `.venv`
 - ✅ Works immediately in new Python projects
 - ✅ Fallback when project-specific Ruff not found
@@ -162,6 +168,7 @@ Understanding how VSCode settings interact is crucial for managing Ruff across m
 ### Settings Priority Order
 
 **Highest to Lowest Priority:**
+
 ```
 Workspace Settings (.vscode/settings.json)
     ↓
@@ -177,14 +184,17 @@ Default Settings
 #### **Scenario 1: Project WITH Workspace Settings** (This Project)
 
 **Settings Source:**
+
 - Workspace: `.vscode/settings.json` (project-specific)
 - User: Global settings (ignored for overridden values)
 
 **Ruff Executable:**
+
 - Explicitly defined: `${workspaceFolder}/.venv/Scripts/ruff.exe`
 - Uses project's Ruff version from `.venv`
 
 **Configuration:**
+
 - Project's `pyproject.toml` (explicit path in settings)
 - Full control over Ruff rules
 
@@ -195,15 +205,18 @@ Default Settings
 #### **Scenario 2: Project WITH .venv, NO Workspace Settings**
 
 **Settings Source:**
+
 - User: Global settings only
 
 **Ruff Executable:**
+
 - Auto-detected via `importStrategy: "fromEnvironment"`
 - VSCode detects `.venv` and looks for Ruff there
 - If found in `.venv/Scripts/ruff.exe` → uses it
 - If not found → falls back to system Python or bundled Ruff
 
 **Configuration:**
+
 - ❌ No explicit `pyproject.toml` reference (global settings can't use `${workspaceFolder}`)
 - ⚠️ Ruff will search for `pyproject.toml` in project root automatically
 - ✅ Will use project config if `pyproject.toml` exists
@@ -215,13 +228,16 @@ Default Settings
 #### **Scenario 3: Project WITHOUT .venv, NO Workspace Settings**
 
 **Settings Source:**
+
 - User: Global settings only
 
 **Ruff Executable:**
+
 - System Python's Ruff (if installed globally: `pip install ruff`)
 - OR bundled Ruff (comes with VSCode extension)
 
 **Configuration:**
+
 - ❌ No project-specific configuration
 - Uses Ruff's default rules
 
@@ -290,37 +306,42 @@ Default Settings
 ### Common Questions
 
 **Q: Do I need Ruff in system Python?**
+
 - **A:** No, but recommended for consistency. The extension has a bundled Ruff as fallback.
 
 **Q: Will workspace settings break global settings?**
+
 - **A:** No, they only override conflicting values. Non-conflicting global settings still apply.
 
 **Q: Can I use `${workspaceFolder}` in global settings?**
+
 - **A:** No, workspace variables only work in workspace settings. Use absolute paths in global settings.
 
 **Q: What if my project has a different Ruff version than system Python?**
+
 - **A:** Use workspace settings with explicit `ruff.path` pointing to project's `.venv`. Workspace settings override global.
 
 **Q: How do I ensure team members get the same setup?**
+
 - **A:** Commit `.vscode/settings.json` to git. Each developer gets identical workspace settings.
 
 ---
 
 ## Extensions
 
-### Required:
+### Required
 
 - **charliermarsh.ruff** (v2024.x or later)
   - Linting + formatting in one extension
   - Replaces: black, isort, flake8, pylint
 
-### Recommended:
+### Recommended
 
 - **ms-python.python** - Python language support
 - **ms-python.vscode-pylance** - Fast Python language server
 - **slevesque.shader** - GLSL syntax highlighting (for this project)
 
-### Not Needed (Ruff replaces these):
+### Not Needed (Ruff replaces these)
 
 - ❌ ms-python.black-formatter
 - ❌ ms-python.isort
@@ -337,11 +358,13 @@ Default Settings
 **Solution**: The legacy `ruff-lsp` server has been replaced by the native Rust-based server.
 
 **Migration steps**:
+
 1. Remove deprecated settings from `.vscode/settings.json`:
    - `"ruff.lint.run": "onSave"` (no longer needed; native server runs on every keystroke)
    - `"ruff.lint.args": ["--unsafe-fixes"]` (move to `pyproject.toml`)
 
 2. Add to `pyproject.toml` under `[tool.ruff.lint]`:
+
    ```toml
    unsafe-fixes = true
    ```
@@ -353,23 +376,27 @@ Default Settings
 ### Ruff Not Auto-Fixing on Save
 
 **Check 1**: Verify Ruff extension is installed
+
 ```
 Extensions sidebar → Search "Ruff" → Install charliermarsh.ruff
 ```
 
 **Check 2**: Verify Ruff path is correct
+
 ```
 Ctrl+Shift+P → "Preferences: Open Workspace Settings (JSON)"
 Verify: "ruff.path": ["${workspaceFolder}/.venv/Scripts/ruff.exe"]
 ```
 
 **Check 3**: Check Ruff is installed in .venv
+
 ```batch
 .venv\Scripts\ruff.exe --version
 # Should show: ruff 0.13.3 or later
 ```
 
 **Check 4**: Reload VSCode window
+
 ```
 Ctrl+Shift+P → "Developer: Reload Window"
 ```
@@ -379,6 +406,7 @@ Ctrl+Shift+P → "Developer: Reload Window"
 **Issue**: Imports not being organized on save
 
 **Solution**: Ensure both settings are enabled:
+
 ```json
 "ruff.organizeImports": true,
 "editor.codeActionsOnSave": {
@@ -391,6 +419,7 @@ Ctrl+Shift+P → "Developer: Reload Window"
 **Issue**: Ruff not respecting `pyproject.toml` rules
 
 **Solution**: Point Ruff to config file explicitly:
+
 ```json
 "ruff.configuration": "${workspaceFolder}/pyproject.toml"
 ```
@@ -398,11 +427,13 @@ Ctrl+Shift+P → "Developer: Reload Window"
 ### Format on Save Not Working
 
 **Check settings priority**:
+
 1. Workspace settings (`.vscode/settings.json`) override global
 2. User settings (`settings.json`) override defaults
 3. Check for conflicting extensions (Black, isort, etc.)
 
 **Verify**:
+
 ```json
 "[python]": {
   "editor.formatOnSave": true,
@@ -415,11 +446,13 @@ Ctrl+Shift+P → "Developer: Reload Window"
 **Issue**: Red squiggles visible but not fixed on save
 
 **Possible causes**:
+
 1. **Unsafe fixes disabled**: Check `pyproject.toml` has `unsafe-fixes = true` under `[tool.ruff.lint]`
 2. **Manual fix required**: Some errors need manual intervention
 3. **Syntax errors**: Ruff can't fix code that doesn't parse
 
 **Check VSCode Output**:
+
 ```
 View → Output → Select "Ruff" from dropdown
 ```
@@ -483,6 +516,7 @@ VSCode automatically reads this file when using the workspace settings.
 ## Summary
 
 **Workflow**:
+
 1. Edit Python file
 2. Save (`Ctrl+S`)
 3. Ruff automatically:
@@ -492,11 +526,13 @@ VSCode automatically reads this file when using the workspace settings.
 4. Ready to commit!
 
 **Consistency**:
+
 - ✅ Same rules as `scripts/git/check_lint.bat`
 - ✅ Same rules as GitHub Actions CI
 - ✅ Same rules as team members
 
 **Performance**:
+
 - 🚀 Instant formatting (<100ms)
 - 🚀 Real-time error highlighting
 - 🚀 No manual linting needed

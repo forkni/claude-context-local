@@ -212,6 +212,21 @@ echo.
 
 REM [7/7] Create commit
 echo [7/7] Creating commit...
+echo.
+echo ⚠ BRANCH VERIFICATION
+echo You are about to commit to: !CURRENT_BRANCH!
+echo.
+set /p CORRECT_BRANCH="Is this the correct branch? (yes/no): "
+if /i not "!CORRECT_BRANCH!" == "yes" (
+    echo.
+    echo Available branches:
+    git branch
+    echo.
+    echo Switch to the correct branch first, then run this script again
+    echo Command: git checkout ^<branch-name^>
+    exit /b 0
+)
+echo.
 set /p CONFIRM="Proceed with commit? (yes/no): "
 if /i not "!CONFIRM!" == "yes" (
     echo Commit cancelled

@@ -19,6 +19,7 @@ Automated code quality and validation checks that run before every commit.
 Pre-commit hooks automatically validate your changes before creating a commit, catching issues early and preventing CI failures.
 
 **Benefits:**
+
 - ✅ Catches local-only file leaks
 - ✅ Validates documentation structure
 - ✅ Enforces code quality (Python)
@@ -27,6 +28,7 @@ Pre-commit hooks automatically validate your changes before creating a commit, c
 - ✅ Faster feedback than waiting for GitHub Actions
 
 **Hook Location:**
+
 - Template: `.githooks/pre-commit` (tracked in Git)
 - Active hook: `.git/hooks/pre-commit` (local, not tracked)
 
@@ -62,6 +64,7 @@ Auto-fix lint issues? (yes/no/skip):
 ```
 
 **Choices:**
+
 - `yes` - Auto-fix errors, restage files, continue commit
 - `no` - Abort commit, fix manually
 - `skip` - Proceed with warning (not recommended)
@@ -73,12 +76,14 @@ Auto-fix lint issues? (yes/no/skip):
 ### 1. File Privacy Validation
 
 **Prevents committing local-only files:**
+
 - `CLAUDE.md` - Development context
 - `MEMORY.md` - Session memory
 - `_archive/` - Historical content (738+ files)
 - `benchmark_results/` - Generated test data
 
 **Behavior:**
+
 - ❌ Blocks additions and modifications
 - ✅ Allows deletions (removing from Git tracking)
 
@@ -87,6 +92,7 @@ Auto-fix lint issues? (yes/no/skip):
 **Ensures only authorized docs are public:**
 
 **Allowed public docs** (10 files):
+
 - `BENCHMARKS.md`
 - `claude_code_config.md`
 - `HYBRID_SEARCH_CONFIGURATION_GUIDE.md`
@@ -105,17 +111,20 @@ Auto-fix lint issues? (yes/no/skip):
 **Runs on staged `.py` files:**
 
 **Tools used:**
+
 1. **Ruff** - Linting (E, W, F, I, B, C4 rules)
 2. **Black** - Formatting (88 char line length)
 3. **isort** - Import sorting (Black-compatible)
 
 **Same rules as:**
+
 - `scripts/git/check_lint.bat`
 - `scripts/git/fix_lint.bat`
 - VSCode Ruff extension
 - GitHub Actions CI
 
 **What gets auto-fixed:**
+
 - ✅ Unused imports
 - ✅ Whitespace issues
 - ✅ Import sorting
@@ -133,6 +142,7 @@ scripts\git\install_hooks.bat
 ```
 
 **What it does:**
+
 1. Copies `.githooks/pre-commit` to `.git/hooks/pre-commit`
 2. Verifies installation
 3. Shows what the hook does
@@ -171,6 +181,7 @@ git commit -m "feat: Add feature"
 ```
 
 **Hook output:**
+
 ```
 Checking for local-only files...
 ✓ No problematic local-only files detected
@@ -188,6 +199,7 @@ git commit -m "fix: Update logic"
 ```
 
 **Hook output:**
+
 ```
 Checking code quality...
 ⚠ Lint errors detected in Python files
@@ -210,6 +222,7 @@ git commit -n -m "message"
 ```
 
 **⚠ Warning:** Only bypass hooks if:
+
 - Emergency hotfix needed
 - You'll fix lint errors in next commit
 - You know CI will fail (planned)
@@ -346,15 +359,18 @@ To fix this, reset the problematic files:
 **Solutions:**
 
 1. **Check if hook is installed:**
+
    ```batch
    dir .git\hooks\pre-commit
    ```
+
    If missing, run: `scripts\git\install_hooks.bat`
 
 2. **Check hook is executable:**
    Git hooks must be executable on Unix systems (not an issue on Windows)
 
 3. **Verify you're in repo root:**
+
    ```batch
    cd /d F:\RD_PROJECTS\COMPONENTS\claude-context-local
    ```
@@ -366,6 +382,7 @@ To fix this, reset the problematic files:
 **Solutions:**
 
 1. **Run fix manually to see errors:**
+
    ```batch
    scripts\git\fix_lint.bat
    ```
@@ -384,6 +401,7 @@ To fix this, reset the problematic files:
 **Symptoms:** Commit waits 10-30 seconds
 
 **Causes:**
+
 - Large number of Python files staged
 - Slow disk I/O
 - Antivirus scanning `.bat` files
@@ -391,12 +409,14 @@ To fix this, reset the problematic files:
 **Solutions:**
 
 1. **Stage files incrementally:**
+
    ```batch
    git add specific_file.py
    git commit -m "message"
    ```
 
 2. **Skip hook for WIP commits:**
+
    ```batch
    git commit --no-verify -m "wip: Quick save"
    ```
@@ -411,6 +431,7 @@ To fix this, reset the problematic files:
 **Cause:** Typo in response
 
 **Solution:** Type exactly:
+
 - `yes` or `y` or `Y`
 - `no` or `n` or `N`
 - `skip` or `s` or `S`
@@ -420,6 +441,7 @@ To fix this, reset the problematic files:
 **Symptoms:** Hook says "No Python files to check" but you changed `.py` files
 
 **Causes:**
+
 1. Files not staged (still in working directory)
 2. Only deleted Python files (hook skips deleted files)
 3. Files in `_archive/` or `tests/test_data/` (excluded)
@@ -427,11 +449,13 @@ To fix this, reset the problematic files:
 **Solutions:**
 
 1. **Verify files are staged:**
+
    ```batch
    git status
    ```
 
 2. **Stage Python files:**
+
    ```batch
    git add *.py
    ```
@@ -470,16 +494,19 @@ mkdir .git\hooks
 When the hook template (`.githooks/pre-commit`) is updated:
 
 1. **Pull latest changes:**
+
    ```batch
    git pull origin development
    ```
 
 2. **Reinstall hook:**
+
    ```batch
    scripts\git\install_hooks.bat
    ```
 
 3. **Verify new version:**
+
    ```batch
    type .git\hooks\pre-commit | head -5
    ```
@@ -489,6 +516,7 @@ When the hook template (`.githooks/pre-commit`) is updated:
 ## Summary
 
 **Pre-commit hooks provide:**
+
 - 🛡️ Privacy protection (local-only files)
 - 📚 Documentation validation
 - 🎨 Code quality enforcement
@@ -497,6 +525,7 @@ When the hook template (`.githooks/pre-commit`) is updated:
 - ✅ CI failure prevention
 
 **Consistency across:**
+
 - Pre-commit hooks (this)
 - `scripts/git/check_lint.bat`
 - `scripts/git/fix_lint.bat`
