@@ -1,0 +1,16 @@
+// markdownlint-cli2 configuration
+// See: https://github.com/DavidAnson/markdownlint-cli2
+
+{
+  // Rule MD013: Line length
+  // Disabled - Code blocks and long links often exceed this
+  "MD013": false,
+
+  // Rule MD033: Inline HTML
+  // Disabled - We use HTML for tables and formatting
+  "MD033": false,
+
+  // Rule MD041: First line in file should be a top level heading
+  // Disabled - Some files start with front matter or explanations
+  "MD041": false
+}
