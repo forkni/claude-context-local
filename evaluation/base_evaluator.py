@@ -464,9 +464,9 @@ class BaseEvaluator(ABC):
             "total_results": {
                 "mean": statistics.mean(total_results),
                 "median": statistics.median(total_results),
-                "stdev": statistics.stdev(total_results)
-                if len(total_results) > 1
-                else 0.0,
+                "stdev": (
+                    statistics.stdev(total_results) if len(total_results) > 1 else 0.0
+                ),
             },
         }
 

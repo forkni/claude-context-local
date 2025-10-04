@@ -6,13 +6,14 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from evaluation.base_evaluator import (EvaluationInstance, RetrievalResult,
-                                       SearchMetrics)
-from evaluation.token_efficiency_evaluator import (TokenCounter,
-                                                   TokenEfficiencyEvaluator,
-                                                   TokenEfficiencyMetrics,
-                                                   TokenEfficiencyResult,
-                                                   VanillaReadSimulator)
+from evaluation.base_evaluator import EvaluationInstance, RetrievalResult, SearchMetrics
+from evaluation.token_efficiency_evaluator import (
+    TokenCounter,
+    TokenEfficiencyEvaluator,
+    TokenEfficiencyMetrics,
+    TokenEfficiencyResult,
+    VanillaReadSimulator,
+)
 
 
 class TestTokenCounter:
@@ -447,24 +448,28 @@ class TestTokenEfficiencyIntegration:
             project_path = Path(temp_dir)
 
             # Create realistic project structure
-            (project_path / "main.py").write_text("""
+            (project_path / "main.py").write_text(
+                """
 def main():
     print("Hello World")
     return 0
 
 if __name__ == "__main__":
     main()
-""")
+"""
+            )
 
             # Create utils directory first
             (project_path / "utils").mkdir(exist_ok=True)
-            (project_path / "utils" / "helpers.py").write_text("""
+            (project_path / "utils" / "helpers.py").write_text(
+                """
 def helper_function():
     return "helper"
 
 def another_helper():
     return True
-""")
+"""
+            )
 
             simulator = VanillaReadSimulator(str(project_path))
 

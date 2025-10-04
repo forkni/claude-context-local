@@ -240,9 +240,11 @@ class MultiLanguageChunker:
             # Create CodeChunk
             chunk = CodeChunk(
                 file_path=str(path),
-                relative_path=str(path.relative_to(self.root_path))
-                if self.root_path
-                else str(path),
+                relative_path=(
+                    str(path.relative_to(self.root_path))
+                    if self.root_path
+                    else str(path)
+                ),
                 folder_structure=folder_parts,
                 chunk_type=chunk_type,
                 content=tchunk.content,

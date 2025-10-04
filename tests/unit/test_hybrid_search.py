@@ -81,11 +81,9 @@ class TestHybridSearcher:
         self.embeddings = [np.random.rand(768).tolist() for _ in self.documents]
         self.metadata = {
             doc_id: {
-                "language": "python"
-                if i < 2 or i == 4
-                else "javascript"
-                if i == 2
-                else "sql",
+                "language": (
+                    "python" if i < 2 or i == 4 else "javascript" if i == 2 else "sql"
+                ),
                 "type": "function" if i in [0, 4] else "class" if i == 1 else "query",
                 "lines": i + 1,
             }
@@ -262,9 +260,7 @@ class TestHybridSearcher:
             embedder_mock.embed_text.return_value = np.random.rand(768)
 
             filters = {"language": "python"}
-            searcher.search(
-                "test query", k=5, use_parallel=False, filters=filters
-            )
+            searcher.search("test query", k=5, use_parallel=False, filters=filters)
 
             # Dense search should be called with filters
             dense_mock.search.assert_called_once()

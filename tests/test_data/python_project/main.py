@@ -11,7 +11,7 @@ def setup_logging():
     """Configure application logging."""
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
 
@@ -19,19 +19,19 @@ def main():
     """Main application function."""
     setup_logging()
     logger = logging.getLogger(__name__)
-    
+
     logger.info("Starting application")
-    
+
     # Initialize configuration
-    config = ConfigManager('config.json')
-    
+    config = ConfigManager("config.json")
+
     # Setup database
-    db = DatabaseConnection(config.get('database_path', 'app.db'))
+    db = DatabaseConnection(config.get("database_path", "app.db"))
     db.connect()
-    
+
     # Create services
     UserHandler(None)  # Would inject real service
-    
+
     logger.info("Application initialized successfully")
 
 

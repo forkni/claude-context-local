@@ -44,7 +44,8 @@ class TestIncrementalIndexing(TestCase):
     def create_initial_codebase(self):
         """Create initial Python codebase."""
         # Main module
-        (self.test_path / "main.py").write_text('''
+        (self.test_path / "main.py").write_text(
+            '''
 def main():
     """Main function."""
     print("Hello World")
@@ -52,10 +53,12 @@ def main():
 
 if __name__ == "__main__":
     main()
-''')
+'''
+        )
 
         # Utils module
-        (self.test_path / "utils.py").write_text('''
+        (self.test_path / "utils.py").write_text(
+            '''
 def helper(x, y):
     """Helper function."""
     return x + y
@@ -68,11 +71,13 @@ class Calculator:
     
     def subtract(self, a, b):
         return a - b
-''')
+'''
+        )
 
         # Create subdirectory
         (self.test_path / "lib").mkdir()
-        (self.test_path / "lib" / "database.py").write_text('''
+        (self.test_path / "lib" / "database.py").write_text(
+            '''
 class Database:
     """Database connection."""
     
@@ -83,7 +88,8 @@ class Database:
     def query(self, sql):
         """Execute query."""
         return []
-''')
+'''
+        )
 
     def test_full_index(self):
         """Test full indexing of a codebase."""
@@ -156,13 +162,11 @@ class Database:
         )
 
         # Initial index
-        incremental_indexer.incremental_index(
-            str(self.test_path), "test_project"
-        )
-
+        incremental_indexer.incremental_index(str(self.test_path), "test_project")
 
         # Modify a file
-        (self.test_path / "utils.py").write_text('''
+        (self.test_path / "utils.py").write_text(
+            '''
 def helper(x, y):
     """Updated helper function."""
     return x * y  # Changed from addition to multiplication
@@ -179,7 +183,8 @@ class Calculator:
     
     def subtract(self, a, b):
         return a - b
-''')
+'''
+        )
 
         # Incremental index
         result2 = incremental_indexer.incremental_index(
@@ -208,12 +213,11 @@ class Calculator:
         )
 
         # Initial index
-        incremental_indexer.incremental_index(
-            str(self.test_path), "test_project"
-        )
+        incremental_indexer.incremental_index(str(self.test_path), "test_project")
 
         # Add a new file
-        (self.test_path / "new_module.py").write_text('''
+        (self.test_path / "new_module.py").write_text(
+            '''
 def new_function():
     """A new function."""
     return "new"
@@ -221,7 +225,8 @@ def new_function():
 class NewClass:
     """A new class."""
     pass
-''')
+'''
+        )
 
         # Incremental index
         result2 = incremental_indexer.incremental_index(
@@ -248,9 +253,7 @@ class NewClass:
         )
 
         # Initial index
-        incremental_indexer.incremental_index(
-            str(self.test_path), "test_project"
-        )
+        incremental_indexer.incremental_index(str(self.test_path), "test_project")
 
         # Delete a file
         (self.test_path / "utils.py").unlink()
@@ -308,9 +311,7 @@ class NewClass:
         assert incremental_indexer.needs_reindex(str(self.test_path))
 
         # Index the project
-        incremental_indexer.incremental_index(
-            str(self.test_path), "test_project"
-        )
+        incremental_indexer.incremental_index(str(self.test_path), "test_project")
 
         # Should not need reindex immediately
         assert not incremental_indexer.needs_reindex(
@@ -341,9 +342,7 @@ class NewClass:
         assert stats is None
 
         # Index the project
-        incremental_indexer.incremental_index(
-            str(self.test_path), "test_project"
-        )
+        incremental_indexer.incremental_index(str(self.test_path), "test_project")
 
         # Get stats
         stats = incremental_indexer.get_indexing_stats(str(self.test_path))

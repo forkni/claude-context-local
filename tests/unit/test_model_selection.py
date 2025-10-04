@@ -6,8 +6,12 @@ from pathlib import Path
 import pytest
 
 from embeddings.embedder import CodeEmbedder
-from search.config import (SearchConfig, SearchConfigManager, get_model_config,
-                           get_model_registry)
+from search.config import (
+    SearchConfig,
+    SearchConfigManager,
+    get_model_config,
+    get_model_registry,
+)
 
 
 class TestModelRegistry:

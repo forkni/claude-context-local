@@ -238,16 +238,18 @@ def test_embedder_integration():
         print("   Testing embedder with code chunks...")
         # Create proper CodeChunk objects for testing
         from chunking.python_ast_chunker import CodeChunk
+
         chunks = [
             CodeChunk(
                 content=content,
                 chunk_type="function" if "def" in content else "class",
                 start_line=1,
-                end_line=content.count('\n') + 1,
+                end_line=content.count("\n") + 1,
                 file_path="test.py",
                 relative_path="test.py",
-                folder_structure=[]
-            ) for content in test_chunks
+                folder_structure=[],
+            )
+            for content in test_chunks
         ]
 
         # Use embed_chunks which is the correct method

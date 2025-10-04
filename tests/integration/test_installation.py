@@ -11,8 +11,10 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from tests.fixtures.installation_mocks import (MOCK_NVIDIA_SMI_OUTPUTS,
-                                               MockInstallationEnvironment)
+from tests.fixtures.installation_mocks import (
+    MOCK_NVIDIA_SMI_OUTPUTS,
+    MockInstallationEnvironment,
+)
 
 
 class TestSystemDetection:
@@ -441,12 +443,12 @@ class TestInstallationVerification:
 
             return {
                 "cuda_available": torch.cuda.is_available(),
-                "device_count": torch.cuda.device_count()
-                if torch.cuda.is_available()
-                else 0,
-                "gpu_name": torch.cuda.get_device_name(0)
-                if torch.cuda.is_available()
-                else None,
+                "device_count": (
+                    torch.cuda.device_count() if torch.cuda.is_available() else 0
+                ),
+                "gpu_name": (
+                    torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
+                ),
                 "cpu_mode": not torch.cuda.is_available(),
             }
         except ImportError:
@@ -554,9 +556,11 @@ class TestErrorHandling:
         # Simplified compatibility check
         return {
             "compatible": "Version: 12.1, Driver Version: 11.8" not in cuda_info,
-            "issue": "driver version mismatch"
-            if "Version: 12.1, Driver Version: 11.8" in cuda_info
-            else None,
+            "issue": (
+                "driver version mismatch"
+                if "Version: 12.1, Driver Version: 11.8" in cuda_info
+                else None
+            ),
         }
 
 

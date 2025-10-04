@@ -11,8 +11,10 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from tests.fixtures.installation_mocks import (MockInstallationEnvironment,
-                                               get_mock_environment)
+from tests.fixtures.installation_mocks import (
+    MockInstallationEnvironment,
+    get_mock_environment,
+)
 
 
 class TestCompleteInstallationFlow:
@@ -198,9 +200,9 @@ class TestBatchScriptIntegration:
 
             # Basic syntax checks
             assert content.strip(), f"Script {script} is empty"
-            assert "@echo off" in content.lower() or "echo" in content.lower(), (
-                f"Script {script} might have syntax issues"
-            )
+            assert (
+                "@echo off" in content.lower() or "echo" in content.lower()
+            ), f"Script {script} might have syntax issues"
 
     @patch("subprocess.run")
     def test_verify_installation_mock(self, mock_run):

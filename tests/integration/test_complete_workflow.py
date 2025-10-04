@@ -12,8 +12,12 @@ from pathlib import Path
 # Add parent directory to path for module imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-from mcp_server.server import (get_index_status, index_directory,
-                               list_projects, search_code)
+from mcp_server.server import (
+    get_index_status,
+    index_directory,
+    list_projects,
+    search_code,
+)
 
 
 def test_complete_workflow():

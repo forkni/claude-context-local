@@ -37,7 +37,8 @@ class TestTokenEfficiencyWorkflow:
     def _create_test_project(self):
         """Create a realistic test project for evaluation."""
         # Main application file
-        (self.project_dir / "main.py").write_text("""
+        (self.project_dir / "main.py").write_text(
+            """
 #!/usr/bin/env python3
 \"\"\"Main application entry point.\"\"\"
 
@@ -74,13 +75,15 @@ def process_data():
 
 if __name__ == "__main__":
     sys.exit(main())
-""")
+"""
+        )
 
         # Authentication module
         auth_dir = self.project_dir / "auth"
         auth_dir.mkdir()
         (auth_dir / "__init__.py").write_text("")
-        (auth_dir / "login.py").write_text("""
+        (auth_dir / "login.py").write_text(
+            """
 \"\"\"User authentication and login functionality.\"\"\"
 
 import hashlib
@@ -131,13 +134,15 @@ class LoginManager:
     def logout(self, session_token: str) -> bool:
         \"\"\"Logout user by invalidating session.\"\"\"
         return self.sessions.pop(session_token, None) is not None
-""")
+"""
+        )
 
         # Database utilities
         db_dir = self.project_dir / "database"
         db_dir.mkdir()
         (db_dir / "__init__.py").write_text("")
-        (db_dir / "connection.py").write_text("""
+        (db_dir / "connection.py").write_text(
+            """
 \"\"\"Database connection and configuration.\"\"\"
 
 import sqlite3
@@ -210,13 +215,15 @@ class DatabaseConnection:
         except sqlite3.Error as e:
             self.logger.error(f"Query execution error: {e}")
             raise DatabaseError(f"Query failed: {e}")
-""")
+"""
+        )
 
         # API handlers
         api_dir = self.project_dir / "api"
         api_dir.mkdir()
         (api_dir / "__init__.py").write_text("")
-        (api_dir / "handlers.py").write_text("""
+        (api_dir / "handlers.py").write_text(
+            """
 \"\"\"API endpoint handlers.\"\"\"
 
 import json
@@ -298,13 +305,15 @@ class APIHandler(BaseHTTPRequestHandler):
             'timestamp': 1234567890,
             'version': '1.0.0'
         }
-""")
+"""
+        )
 
         # Utilities
         utils_dir = self.project_dir / "utils"
         utils_dir.mkdir()
         (utils_dir / "__init__.py").write_text("")
-        (utils_dir / "helpers.py").write_text("""
+        (utils_dir / "helpers.py").write_text(
+            """
 \"\"\"Utility helper functions.\"\"\"
 
 import logging
@@ -400,13 +409,15 @@ def process_file_batch(file_paths: List[str], processor_func) -> Dict[str, Any]:
         'success_count': len(results),
         'error_count': len(errors)
     }
-""")
+"""
+        )
 
         # Test files
         tests_dir = self.project_dir / "tests"
         tests_dir.mkdir()
         (tests_dir / "__init__.py").write_text("")
-        (tests_dir / "test_auth.py").write_text("""
+        (tests_dir / "test_auth.py").write_text(
+            """
 \"\"\"Tests for authentication module.\"\"\"
 
 import pytest
@@ -472,7 +483,8 @@ def test_authentication_integration(mock_login_manager):
 
     logout_result = mock_login_manager.logout(token)
     assert logout_result == True
-""")
+"""
+        )
 
     def _create_test_instances(self) -> List[EvaluationInstance]:
         """Create test evaluation instances."""
@@ -564,7 +576,9 @@ def test_authentication_integration(mock_login_manager):
     def test_token_efficiency_calculation_accuracy(self):
         """Test accuracy of token efficiency calculations."""
         from evaluation.token_efficiency_evaluator import (
-            TokenCounter, VanillaReadSimulator)
+            TokenCounter,
+            VanillaReadSimulator,
+        )
 
         # Test token counting accuracy
         counter = TokenCounter()
@@ -629,15 +643,17 @@ def hello():
                 "No such file",
                 "Project directory not found",
             ]
-            assert any(msg in error_msg for msg in expected_errors), (
-                f"Unexpected error: {error_msg}"
-            )
+            assert any(
+                msg in error_msg for msg in expected_errors
+            ), f"Unexpected error: {error_msg}"
 
     def test_output_file_generation(self):
         """Test that all expected output files are generated."""
         from evaluation.base_evaluator import SearchMetrics
         from evaluation.token_efficiency_evaluator import (
-            TokenEfficiencyMetrics, TokenEfficiencyResult)
+            TokenEfficiencyMetrics,
+            TokenEfficiencyResult,
+        )
 
         # Create mock results
         mock_result = TokenEfficiencyResult(
@@ -782,12 +798,15 @@ class TestTokenEfficiencyRegression:
         # For now, just verify that imports work correctly
 
         try:
-            from evaluation.base_evaluator import (BaseEvaluator,  # noqa: F401
-                                                   EvaluationInstance,  # noqa: F401
-                                                   SearchMetrics)  # noqa: F401
-            from evaluation.semantic_evaluator import SemanticSearchEvaluator  # noqa: F401
-            from evaluation.token_efficiency_evaluator import \
-                TokenEfficiencyEvaluator  # noqa: F401
+            from evaluation.base_evaluator import BaseEvaluator  # noqa: F401
+            from evaluation.base_evaluator import EvaluationInstance  # noqa: F401
+            from evaluation.base_evaluator import SearchMetrics  # noqa: F401
+            from evaluation.semantic_evaluator import (
+                SemanticSearchEvaluator,
+            )  # noqa: F401
+            from evaluation.token_efficiency_evaluator import (
+                TokenEfficiencyEvaluator,
+            )  # noqa: F401
 
             # All imports should work without errors
             assert True

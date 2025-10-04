@@ -1062,9 +1062,9 @@ def get_memory_status() -> str:
         embedder = get_embedder()
         model_status = {
             "model_loaded": embedder._model is not None,
-            "model_device": str(embedder.device)
-            if hasattr(embedder, "device")
-            else "unknown",
+            "model_device": (
+                str(embedder.device) if hasattr(embedder, "device") else "unknown"
+            ),
         }
 
         # Format memory sizes for readability
@@ -1085,15 +1085,19 @@ def get_memory_status() -> str:
                 "available": format_bytes(available["system_available"]),
                 "utilization": f"{(1 - available['system_available'] / available['system_total']) * 100:.1f}%",
             },
-            "gpu_memory": {
-                "total": format_bytes(available["gpu_total"]),
-                "available": format_bytes(available["gpu_available"]),
-                "utilization": f"{(1 - available['gpu_available'] / available['gpu_total']) * 100:.1f}%"
+            "gpu_memory": (
+                {
+                    "total": format_bytes(available["gpu_total"]),
+                    "available": format_bytes(available["gpu_available"]),
+                    "utilization": (
+                        f"{(1 - available['gpu_available'] / available['gpu_total']) * 100:.1f}%"
+                        if available["gpu_total"] > 0
+                        else "N/A"
+                    ),
+                }
                 if available["gpu_total"] > 0
-                else "N/A",
-            }
-            if available["gpu_total"] > 0
-            else None,
+                else None
+            ),
             "index_status": {
                 "size": memory_status["current_index_size"],
                 "gpu_enabled": memory_status["is_gpu_enabled"],

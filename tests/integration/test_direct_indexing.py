@@ -25,9 +25,7 @@ def test_direct_indexing():
     try:
         # Initialize components
         print("\n1. INITIALIZING COMPONENTS")
-        CodeIndexManager(
-            storage_dir="C:/Users/Inter/.claude_code_search"
-        )
+        CodeIndexManager(storage_dir="C:/Users/Inter/.claude_code_search")
         print("   Index manager initialized")
 
         # Skip embedder for now to avoid dependency issues

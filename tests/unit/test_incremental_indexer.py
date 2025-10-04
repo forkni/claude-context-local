@@ -4,8 +4,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from search.incremental_indexer import (IncrementalIndexer,
-                                        IncrementalIndexResult)
+from search.incremental_indexer import IncrementalIndexer, IncrementalIndexResult
 
 
 class TestIncrementalIndexResult:

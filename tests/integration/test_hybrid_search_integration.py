@@ -194,9 +194,9 @@ class DatabaseConnection:
         self.initialize_components()
 
         # This should not fail
-        assert hasattr(self.hybrid_searcher, "add_embeddings"), (
-            "HybridSearcher missing add_embeddings method required by incremental indexer"
-        )
+        assert hasattr(
+            self.hybrid_searcher, "add_embeddings"
+        ), "HybridSearcher missing add_embeddings method required by incremental indexer"
 
     @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_incremental_indexing_with_hybrid_search(self):
@@ -231,22 +231,22 @@ class DatabaseConnection:
         assert result.success, "Indexing must succeed for this test"
 
         # Check that HybridSearcher is ready (both indices populated)
-        assert self.hybrid_searcher.is_ready, (
-            "HybridSearcher should be ready after indexing (both BM25 and dense indices populated)"
-        )
+        assert (
+            self.hybrid_searcher.is_ready
+        ), "HybridSearcher should be ready after indexing (both BM25 and dense indices populated)"
 
         # Check BM25 index specifically
-        assert not self.hybrid_searcher.bm25_index.is_empty, (
-            "BM25 index should not be empty after indexing"
-        )
+        assert (
+            not self.hybrid_searcher.bm25_index.is_empty
+        ), "BM25 index should not be empty after indexing"
 
         # Check dense index specifically
-        assert self.hybrid_searcher.dense_index.index is not None, (
-            "Dense index should exist after indexing"
-        )
-        assert self.hybrid_searcher.dense_index.index.ntotal > 0, (
-            "Dense index should contain vectors after indexing"
-        )
+        assert (
+            self.hybrid_searcher.dense_index.index is not None
+        ), "Dense index should exist after indexing"
+        assert (
+            self.hybrid_searcher.dense_index.index.ntotal > 0
+        ), "Dense index should contain vectors after indexing"
 
     @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_hybrid_search_returns_results(self):
@@ -282,9 +282,9 @@ class DatabaseConnection:
                 assert hasattr(result, "doc_id"), "Result missing doc_id"
                 assert hasattr(result, "score"), "Result missing score"
                 assert hasattr(result, "metadata"), "Result missing metadata"
-                assert result.score > 0, (
-                    f"Result score should be positive: {result.score}"
-                )
+                assert (
+                    result.score > 0
+                ), f"Result score should be positive: {result.score}"
 
     @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_bm25_vs_dense_results_differ(self):
@@ -316,9 +316,9 @@ class DatabaseConnection:
 
         # The results should be different (different ranking/selection)
         # This tests that both indices are contributing to the search
-        assert bm25_doc_ids != dense_doc_ids, (
-            "BM25 and dense search should return different results for semantic queries"
-        )
+        assert (
+            bm25_doc_ids != dense_doc_ids
+        ), "BM25 and dense search should return different results for semantic queries"
 
     @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_hybrid_reranking_combines_results(self):
@@ -381,9 +381,9 @@ class DatabaseConnection:
 
         # Allow for some differences due to threading, but expect significant overlap
         overlap = len(set(parallel_doc_ids) & set(sequential_doc_ids))
-        assert overlap >= len(parallel_results) // 2, (
-            "Parallel and sequential search should have significant overlap in results"
-        )
+        assert (
+            overlap >= len(parallel_results) // 2
+        ), "Parallel and sequential search should have significant overlap in results"
 
     @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_index_persistence(self):
@@ -409,9 +409,9 @@ class DatabaseConnection:
         assert load_success, "Loading indices should succeed"
 
         # Verify the new searcher is ready
-        assert new_searcher.is_ready, (
-            "New searcher should be ready after loading indices"
-        )
+        assert (
+            new_searcher.is_ready
+        ), "New searcher should be ready after loading indices"
 
         # Test that search works with loaded indices
         query = "calculate sum"
@@ -431,7 +431,8 @@ class DatabaseConnection:
 
         # Add a new file
         new_file = self.project_dir / "new_module.py"
-        new_file.write_text('''
+        new_file.write_text(
+            '''
 def process_data(data_list):
     """Process a list of data items."""
     processed = []
@@ -443,7 +444,8 @@ def process_data(data_list):
 def validate_item(item):
     """Validate a single data item."""
     return item is not None and len(str(item)) > 0
-''')
+'''
+        )
 
         # Incremental update
         update_result = self.incremental_indexer.incremental_index(
@@ -535,9 +537,9 @@ def validate_item(item):
 
         # Get search mode stats
         search_stats = self.hybrid_searcher.get_search_mode_stats()
-        assert search_stats["total_searches"] == len(queries), (
-            "Should track search count"
-        )
+        assert search_stats["total_searches"] == len(
+            queries
+        ), "Should track search count"
         assert "average_times" in search_stats, "Should include timing information"
 
     def teardown_method(self):

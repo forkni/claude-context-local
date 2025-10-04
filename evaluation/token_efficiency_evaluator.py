@@ -10,8 +10,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import tiktoken
 
-from .base_evaluator import (BaseEvaluator, EvaluationInstance,
-                             RetrievalResult, SearchMetrics)
+from .base_evaluator import (
+    BaseEvaluator,
+    EvaluationInstance,
+    RetrievalResult,
+    SearchMetrics,
+)
 
 
 @dataclass
@@ -677,7 +681,9 @@ class TokenEfficiencyEvaluator(BaseEvaluator):
                     str(f.relative_to(project_root))
                     for f in project_root.rglob("*.py")
                     if f.is_file()
-                ][:10]  # Show first 10 Python files
+                ][
+                    :10
+                ]  # Show first 10 Python files
                 if actual_files:
                     self.logger.info(f"Sample files in project: {actual_files}")
             except Exception:

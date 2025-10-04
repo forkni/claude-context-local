@@ -20,10 +20,12 @@ except ImportError:
     CodeEmbedder = None
 
 try:
-    from tests.fixtures.sample_code import (SAMPLE_API_MODULE,
-                                            SAMPLE_AUTH_MODULE,
-                                            SAMPLE_DATABASE_MODULE,
-                                            SAMPLE_UTILS_MODULE)
+    from tests.fixtures.sample_code import (
+        SAMPLE_API_MODULE,
+        SAMPLE_AUTH_MODULE,
+        SAMPLE_DATABASE_MODULE,
+        SAMPLE_UTILS_MODULE,
+    )
 except ImportError:
     SAMPLE_AUTH_MODULE = SAMPLE_DATABASE_MODULE = SAMPLE_API_MODULE = (
         SAMPLE_UTILS_MODULE

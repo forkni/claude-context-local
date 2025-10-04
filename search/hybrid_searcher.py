@@ -200,9 +200,9 @@ class HybridSearcher:
             {
                 "bm25_stats": self.bm25_index.get_stats(),
                 "dense_stats": {
-                    "total_vectors": self.dense_index.index.ntotal
-                    if self.dense_index.index
-                    else 0,
+                    "total_vectors": (
+                        self.dense_index.index.ntotal if self.dense_index.index else 0
+                    ),
                     "on_gpu": getattr(self.dense_index, "_on_gpu", False),
                 },
                 "gpu_memory": self.gpu_monitor.get_available_memory(),
