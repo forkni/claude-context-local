@@ -28,12 +28,12 @@ DEFAULT_TIMEOUT = 30
 
 class DatabaseManager:
     """Manages database connections and operations."""
-    
+
     def __init__(self, connection_string: str):
         """Initialize database manager."""
         self.connection_string = connection_string
         self.connection = None
-    
+
     def connect(self) -> bool:
         """Establish database connection."""
         try:
@@ -43,12 +43,12 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Database connection failed: {e}")
             return False
-    
+
     def execute_query(self, query: str, params: Dict = None) -> List[Dict]:
         """Execute SQL query with parameters."""
         if not self.connection:
             raise ConnectionError("Not connected to database")
-        
+
         try:
             cursor = self.connection.cursor()
             cursor.execute(query, params or {})
@@ -61,18 +61,18 @@ def authenticate_user(username: str, password: str) -> Optional[Dict]:
     """Authenticate user with username and password."""
     if not username or not password:
         raise ValueError("Username and password required")
-    
+
     # Hash password for comparison
     password_hash = hash_password(password)
-    
+
     # Database lookup
     db = DatabaseManager(DATABASE_URL)
     if not db.connect():
         raise ConnectionError("Database unavailable")
-    
+
     query = "SELECT * FROM users WHERE username = ? AND password_hash = ?"
     results = db.execute_query(query, {"username": username, "password_hash": password_hash})
-    
+
     if results:
         return results[0]
     return None
@@ -82,13 +82,13 @@ def get_user_profile(user_id: int) -> Dict:
     """Get user profile data."""
     db = DatabaseManager(DATABASE_URL)
     db.connect()
-    
+
     query = "SELECT * FROM user_profiles WHERE user_id = ?"
     profiles = db.execute_query(query, {"user_id": user_id})
-    
+
     if not profiles:
         raise ValueError(f"Profile not found for user {user_id}")
-    
+
     return profiles[0]
 '''
 
@@ -151,23 +151,23 @@ class AuthenticationError(Exception):
 
 class UserAuthenticator:
     """Handles user authentication and authorization."""
-    
+
     def __init__(self, secret_key: str):
         """Initialize authenticator with secret key."""
         self.secret_key = secret_key
         self.failed_attempts = {}
-    
+
     @property
     def max_attempts(self) -> int:
         """Maximum login attempts allowed."""
         return 3
-    
+
     def authenticate(self, username: str, password: str) -> bool:
         """Authenticate user credentials."""
         try:
             if self._is_account_locked(username):
                 raise AuthenticationError("Account locked due to too many failed attempts")
-            
+
             # Verify credentials
             if self._verify_password(username, password):
                 self._reset_failed_attempts(username)
@@ -176,7 +176,7 @@ class UserAuthenticator:
             else:
                 self._record_failed_attempt(username)
                 return False
-                
+
         except Exception as e:
             logger.error(f"Authentication error: {e}")
             raise

@@ -350,7 +350,7 @@ class TestFullSearchFlow:
         )
 
         exception_names = []
-        for chunk_id, similarity, metadata in exception_results:
+        for _chunk_id, _similarity, metadata in exception_results:
             if "Error" in metadata.get("name", ""):
                 exception_names.append(metadata["name"])
 
@@ -374,7 +374,7 @@ class TestFullSearchFlow:
         )
 
         validation_functions = []
-        for chunk_id, similarity, metadata in validation_results:
+        for _chunk_id, _similarity, metadata in validation_results:
             name = metadata.get("name", "")
             if "validate" in name.lower() or "check" in name.lower():
                 validation_functions.append(name)
@@ -686,7 +686,7 @@ class TestFullSearchFlow:
         )
 
         # Verify all results match the complex filters
-        for chunk_id, _, metadata in filtered_results:
+        for _chunk_id, _, metadata in filtered_results:
             # Should be a function
             assert metadata["chunk_type"] == "function"
 

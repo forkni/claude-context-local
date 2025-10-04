@@ -79,7 +79,9 @@ class RRFReranker:
             {}
         )  # Track which lists contain each doc
 
-        for list_idx, (results, weight) in enumerate(zip(results_lists, weights)):
+        for list_idx, (results, weight) in enumerate(
+            zip(results_lists, weights, strict=False)
+        ):
             for rank, result in enumerate(results, 1):  # Rank starts from 1
                 doc_id = result.doc_id
 

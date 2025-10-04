@@ -137,7 +137,7 @@ def test_bm25_population():
         import traceback
 
         traceback.print_exc()
-        assert False, f"Test failed with error: {e}"
+        raise AssertionError(f"Test failed with error: {e}")
     finally:
         # Cleanup
         try:

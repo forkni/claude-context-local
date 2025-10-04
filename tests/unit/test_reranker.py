@@ -115,7 +115,7 @@ class TestRRFReranker:
 
         # Results should be the same (within floating point precision)
         assert len(results1) == len(results2)
-        for r1, r2 in zip(results1, results2):
+        for r1, r2 in zip(results1, results2, strict=False):
             assert r1.doc_id == r2.doc_id
             assert abs(r1.metadata["rrf_score"] - r2.metadata["rrf_score"]) < 1e-6
 

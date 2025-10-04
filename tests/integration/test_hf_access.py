@@ -38,7 +38,7 @@ def test_basic_authentication():
         print("   1. Configure HuggingFace authentication (see INSTALLATION_GUIDE.md)")
         print("   2. Ensure token starts with 'hf_'")
         print("   3. Verify token has 'Read' permissions")
-        assert False, f"Authentication failed: {e}"
+        raise AssertionError(f"Authentication failed: {e}")
         return False
 
 
@@ -77,7 +77,7 @@ def test_model_info_access():
             print("   1. Ensure you've accepted the model license")
             print("   2. Your token may need additional permissions")
 
-        assert False, f"Model info access failed: {e}"
+        raise AssertionError(f"Model info access failed: {e}")
         return False
 
 
@@ -117,7 +117,7 @@ def test_sentence_transformers_loading():
             print("   1. Regenerate your Hugging Face token")
             print("   2. Ensure it has 'Read' permissions")
 
-        assert False, f"Model loading failed: {e}"
+        raise AssertionError(f"Model loading failed: {e}")
         return None
 
 
@@ -130,7 +130,7 @@ def test_model_encoding(model=None):
     if model is None:
         model = test_sentence_transformers_loading()
         if model is None:
-            assert False, "Could not load model for encoding test"
+            raise AssertionError("Could not load model for encoding test")
 
     try:
         # Test with TouchDesigner-style code
@@ -170,7 +170,7 @@ def test_model_encoding(model=None):
 
     except Exception as e:
         print(f"[ERROR] Encoding test failed: {e}")
-        assert False, f"Model encoding test failed: {e}"
+        raise AssertionError(f"Model encoding test failed: {e}")
         return False
 
 
@@ -268,7 +268,7 @@ def test_embedder_integration():
     except Exception as e:
         print(f"[ERROR] Project embedder test failed: {e}")
         print("   This may be normal if project components aren't initialized")
-        assert False, f"Project embedder test failed: {e}"
+        raise AssertionError(f"Project embedder test failed: {e}")
         return False
 
 

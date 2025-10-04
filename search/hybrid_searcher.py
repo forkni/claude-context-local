@@ -281,7 +281,7 @@ class HybridSearcher:
         from embeddings.embedder import EmbeddingResult
 
         embedding_results = []
-        for i, (doc_id, embedding) in enumerate(zip(doc_ids, embeddings)):
+        for _i, (doc_id, embedding) in enumerate(zip(doc_ids, embeddings, strict=False)):
             result = EmbeddingResult(
                 embedding=np.array(embedding, dtype=np.float32),
                 chunk_id=doc_id,
@@ -610,7 +610,7 @@ class HybridSearcher:
             self.bm25_weight, self.dense_weight = bm25_w, dense_w
 
             total_score = 0.0
-            for i, query in enumerate(test_queries):
+            for _i, query in enumerate(test_queries):
                 results = self.search(query, k=10, use_parallel=False)
 
                 # Score based on result quality metrics

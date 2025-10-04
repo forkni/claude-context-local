@@ -291,7 +291,7 @@ class TestInstallationValidation:
             "faiss": "1.12.0",
         }
 
-        for pkg, expected_version in expected_versions.items():
+        for pkg, _expected_version in expected_versions.items():
             if pkg in result["packages"]:
                 # This would normally check actual version compatibility
                 assert isinstance(result["packages"][pkg], str)

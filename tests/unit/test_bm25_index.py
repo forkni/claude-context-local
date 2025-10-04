@@ -199,7 +199,7 @@ class TestBM25Index:
         # Search and check metadata
         results = self.index.search("function", k=5)
 
-        for doc_id, score, meta in results:
+        for doc_id, _score, meta in results:
             if doc_id in metadata:
                 expected = metadata[doc_id]
                 # Check that all expected metadata fields are present and match

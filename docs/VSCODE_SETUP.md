@@ -7,6 +7,7 @@ Complete guide for configuring Visual Studio Code with Ruff linting and auto-for
 - [Quick Start](#quick-start)
 - [Workspace Settings](#workspace-settings)
 - [Global Settings Updates](#global-settings-updates)
+- [Global vs Workspace Settings](#global-vs-workspace-settings)
 - [Extensions](#extensions)
 - [Troubleshooting](#troubleshooting)
 
@@ -48,15 +49,9 @@ The project includes `.vscode/settings.json` with optimal configuration:
 
 **Location**: `C:\Users\Inter\AppData\Roaming\Code\User\settings.json`
 
-### Current Issues:
+### Recommended Global Configuration
 
-1. **Duplicate `codeActionsOnSave`**: Present in both `[python]` and global scope
-2. **Per-file ignores**: Should be in `pyproject.toml`, not VSCode settings
-3. **Missing Ruff path**: Extension may not find project's Ruff installation
-
-### Recommended Changes:
-
-Replace your Python-specific settings with:
+To enable Ruff across **all Python projects**, add these settings to your global configuration:
 
 ```json
 {
@@ -70,66 +65,244 @@ Replace your Python-specific settings with:
     }
   },
 
+  // Ruff global configuration (works across all Python projects)
+  "ruff.enable": true,
+  "ruff.organizeImports": true,
+  "ruff.fixAll": true,
+  "ruff.importStrategy": "fromEnvironment",  // Auto-detect Ruff from active Python environment
+  "ruff.configurationPreference": "filesystemFirst",  // Projects override global settings
+  "ruff.nativeServer": "on",  // Use native Rust-based server
+  "ruff.showSyntaxErrors": true,  // Display syntax errors
+  "ruff.codeAction.disableRuleComment.enable": true,  // Quick Fix: Add noqa comments
+  "ruff.codeAction.fixViolation.enable": true,  // Quick Fix: Auto-fix violations
+
   // Global code actions (for non-Python files)
   "editor.codeActionsOnSave": {
     "source.fixAll.markdownlint": "explicit"
-  },
-
-  // Remove this section entirely (handled by pyproject.toml):
-  // "ruff.configuration": { ... }
-}
-```
-
-### Before & After Comparison:
-
-**Before** (Your current global settings):
-```json
-{
-  "[python]": {
-    "editor.defaultFormatter": "charliermarsh.ruff",
-    "editor.formatOnSave": true,
-    "editor.codeActionsOnSave": {
-      "source.fixAll.ruff": "explicit",
-      "source.organizeImports": "explicit"
-    }
-  },
-  "ruff.configuration": {
-    "lint": {
-      "per-file-ignores": {
-        "*.py": ["F821"]
-      }
-    }
-  },
-  "editor.codeActionsOnSave": {  // DUPLICATE!
-    "source.fixAll.ruff": "explicit",
-    "source.fixAll.markdownlint": "explicit",
-    "source.organizeImports": "explicit"
   }
 }
 ```
 
-**After** (Recommended):
+### What These Settings Do
+
+**Python File Behavior:**
+- **`[python]` section**: Enables auto-formatting and auto-fix on save for all Python files
+  - `editor.defaultFormatter: "charliermarsh.ruff"` - Use Ruff as formatter
+  - `editor.formatOnSave: true` - Auto-format on save
+  - `editor.codeActionsOnSave` - Auto-fix and organize imports on save
+
+**Core Ruff Settings:**
+- **`ruff.enable`**: Activates Ruff extension globally
+- **`ruff.organizeImports`**: Enables import sorting feature
+- **`ruff.fixAll`**: Enables auto-fix for all fixable issues
+- **`ruff.importStrategy: "fromEnvironment"`**: Automatically finds Ruff in your project's virtual environment or system Python
+
+**Advanced Settings:**
+- **`ruff.configurationPreference: "filesystemFirst"`**: **CRITICAL** - Ensures project `pyproject.toml` files override global settings (respects project-specific rules)
+- **`ruff.nativeServer: "on"`**: Forces use of modern Rust-based language server (faster, more features)
+- **`ruff.showSyntaxErrors: true`**: Displays syntax errors in real-time
+- **`ruff.codeAction.disableRuleComment.enable`**: Enables Quick Fix to add `# noqa: E501` comments to suppress specific rules
+- **`ruff.codeAction.fixViolation.enable`**: Enables Quick Fix menu to manually fix individual violations via right-click
+
+### Understanding `configurationPreference` (Critical Setting)
+
+The `ruff.configurationPreference` setting controls how VSCode and project configuration files interact:
+
+**Options:**
+1. **`"editorFirst"`** (default) - VSCode settings override `pyproject.toml`
+2. **`"filesystemFirst"`** (recommended) - `pyproject.toml` overrides VSCode settings
+3. **`"editorOnly"`** - Ignore `pyproject.toml` completely
+
+**Why `"filesystemFirst"` is Recommended:**
+
+```
+❌ "editorFirst" (Default Behavior):
+Global settings.json → OVERRIDES → Project pyproject.toml
+Problem: Global rules override project-specific configuration!
+
+✅ "filesystemFirst" (Recommended):
+Project pyproject.toml → OVERRIDES → Global settings.json
+Benefit: Projects control their own rules, global acts as fallback
+```
+
+**Example Scenario:**
+- Global settings: `ruff.lint.select = ["E", "F"]` (hypothetical)
+- Project `pyproject.toml`: `select = ["E", "F", "B", "C4"]`
+
+With `"editorFirst"`: Project gets only `["E", "F"]` ❌
+With `"filesystemFirst"`: Project gets `["E", "F", "B", "C4"]` ✅
+
+**Recommendation:** Always use `"filesystemFirst"` to respect project-specific configuration.
+
+---
+
+### System Python Installation (Recommended)
+
+For consistent Ruff behavior across all projects, install Ruff in your system Python:
+
+```bash
+# Install in system Python (provides fallback when project has no .venv)
+pip install ruff
+
+# Verify installation
+ruff --version  # Should show: ruff 0.13.3 or later
+```
+
+**Benefits:**
+- ✅ Consistent Ruff version across projects without `.venv`
+- ✅ Works immediately in new Python projects
+- ✅ Fallback when project-specific Ruff not found
+
+---
+
+## Global vs Workspace Settings
+
+Understanding how VSCode settings interact is crucial for managing Ruff across multiple projects.
+
+### Settings Priority Order
+
+**Highest to Lowest Priority:**
+```
+Workspace Settings (.vscode/settings.json)
+    ↓
+User Settings (global: AppData/Roaming/Code/User/settings.json)
+    ↓
+Default Settings
+```
+
+**Key Rule:** Workspace settings completely override user settings for primitives and arrays. Objects are merged.
+
+### Behavior in Different Scenarios
+
+#### **Scenario 1: Project WITH Workspace Settings** (This Project)
+
+**Settings Source:**
+- Workspace: `.vscode/settings.json` (project-specific)
+- User: Global settings (ignored for overridden values)
+
+**Ruff Executable:**
+- Explicitly defined: `${workspaceFolder}/.venv/Scripts/ruff.exe`
+- Uses project's Ruff version from `.venv`
+
+**Configuration:**
+- Project's `pyproject.toml` (explicit path in settings)
+- Full control over Ruff rules
+
+**Result:** ✅ Perfect isolation, project-specific configuration
+
+---
+
+#### **Scenario 2: Project WITH .venv, NO Workspace Settings**
+
+**Settings Source:**
+- User: Global settings only
+
+**Ruff Executable:**
+- Auto-detected via `importStrategy: "fromEnvironment"`
+- VSCode detects `.venv` and looks for Ruff there
+- If found in `.venv/Scripts/ruff.exe` → uses it
+- If not found → falls back to system Python or bundled Ruff
+
+**Configuration:**
+- ❌ No explicit `pyproject.toml` reference (global settings can't use `${workspaceFolder}`)
+- ⚠️ Ruff will search for `pyproject.toml` in project root automatically
+- ✅ Will use project config if `pyproject.toml` exists
+
+**Result:** ⚠️ Works well if project has `pyproject.toml` in root and Ruff in `.venv`
+
+---
+
+#### **Scenario 3: Project WITHOUT .venv, NO Workspace Settings**
+
+**Settings Source:**
+- User: Global settings only
+
+**Ruff Executable:**
+- System Python's Ruff (if installed globally: `pip install ruff`)
+- OR bundled Ruff (comes with VSCode extension)
+
+**Configuration:**
+- ❌ No project-specific configuration
+- Uses Ruff's default rules
+
+**Result:** ⚠️ Works but no project customization
+
+---
+
+### How Ruff Extension Finds the Executable
+
+**Detection Order:**
+
+1. **Explicit `ruff.path`** (highest priority)
+   - Workspace setting: `"ruff.path": ["${workspaceFolder}/.venv/Scripts/ruff.exe"]`
+   - Global setting: `"ruff.path": ["C:\\Python311\\Scripts\\ruff.exe"]`
+
+2. **`importStrategy: "fromEnvironment"`** (default)
+   - Checks active Python interpreter's environment
+   - If VSCode detects `.venv` → looks in `.venv/Scripts/` or `.venv/bin/`
+   - If found → uses project's Ruff
+   - If not found → next step
+
+3. **System Python**
+   - Checks system Python's `Scripts` directory
+   - If `ruff.exe` found → uses it
+
+4. **Bundled Ruff** (final fallback)
+   - Extension ships with Ruff binary
+   - Always available as last resort
+   - Version may differ from project requirements
+
+### Recommendations by Project Type
+
+#### **Python Projects with Virtual Environments** (Best Practice)
+
 ```json
+// .vscode/settings.json (workspace)
 {
-  "[python]": {
-    "editor.defaultFormatter": "charliermarsh.ruff",
-    "editor.formatOnSave": true,
-    "editor.codeActionsOnSave": {
-      "source.fixAll": "explicit",
-      "source.organizeImports": "explicit"
-    }
-  },
-  "editor.codeActionsOnSave": {
-    "source.fixAll.markdownlint": "explicit"
-  }
+  "ruff.enable": true,
+  "ruff.path": ["${workspaceFolder}/.venv/Scripts/ruff.exe"],
+  "ruff.configuration": "${workspaceFolder}/pyproject.toml",
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe"
 }
 ```
 
-**Changes Explained**:
-- ✅ Removed duplicate `codeActionsOnSave`
-- ✅ Changed `source.fixAll.ruff` → `source.fixAll` (workspace handles Ruff-specific)
-- ✅ Removed `ruff.configuration` (now in `pyproject.toml`)
-- ✅ Kept Markdown linting in global scope
+**Why:** Full control, isolated dependencies, reproducible across team.
+
+---
+
+#### **Quick Python Scripts** (No .venv)
+
+- Rely on global settings + system Python Ruff
+- No workspace settings needed
+- Works immediately with minimal setup
+
+---
+
+#### **New Python Projects** (Template Approach)
+
+1. Create project directory
+2. Copy `.vscode/settings.json` template
+3. Create `.venv` and install dependencies
+4. Customize `pyproject.toml`
+
+---
+
+### Common Questions
+
+**Q: Do I need Ruff in system Python?**
+- **A:** No, but recommended for consistency. The extension has a bundled Ruff as fallback.
+
+**Q: Will workspace settings break global settings?**
+- **A:** No, they only override conflicting values. Non-conflicting global settings still apply.
+
+**Q: Can I use `${workspaceFolder}` in global settings?**
+- **A:** No, workspace variables only work in workspace settings. Use absolute paths in global settings.
+
+**Q: What if my project has a different Ruff version than system Python?**
+- **A:** Use workspace settings with explicit `ruff.path` pointing to project's `.venv`. Workspace settings override global.
+
+**Q: How do I ensure team members get the same setup?**
+- **A:** Commit `.vscode/settings.json` to git. Each developer gets identical workspace settings.
 
 ---
 
@@ -156,6 +329,26 @@ Replace your Python-specific settings with:
 ---
 
 ## Troubleshooting
+
+### Legacy Ruff Settings (Deprecated)
+
+**Issue**: VSCode shows warnings about deprecated `ruff.lint.run` or `ruff.lint.args`
+
+**Solution**: The legacy `ruff-lsp` server has been replaced by the native Rust-based server.
+
+**Migration steps**:
+1. Remove deprecated settings from `.vscode/settings.json`:
+   - `"ruff.lint.run": "onSave"` (no longer needed; native server runs on every keystroke)
+   - `"ruff.lint.args": ["--unsafe-fixes"]` (move to `pyproject.toml`)
+
+2. Add to `pyproject.toml` under `[tool.ruff.lint]`:
+   ```toml
+   unsafe-fixes = true
+   ```
+
+3. Reload VSCode: `Ctrl+Shift+P` → "Developer: Reload Window"
+
+**Reference**: [Migration Guide](https://docs.astral.sh/ruff/editors/migration/)
 
 ### Ruff Not Auto-Fixing on Save
 
@@ -222,7 +415,7 @@ Ctrl+Shift+P → "Developer: Reload Window"
 **Issue**: Red squiggles visible but not fixed on save
 
 **Possible causes**:
-1. **Unsafe fixes disabled**: Add `"ruff.lint.args": ["--unsafe-fixes"]`
+1. **Unsafe fixes disabled**: Check `pyproject.toml` has `unsafe-fixes = true` under `[tool.ruff.lint]`
 2. **Manual fix required**: Some errors need manual intervention
 3. **Syntax errors**: Ruff can't fix code that doesn't parse
 
@@ -278,9 +471,12 @@ exclude = ["_archive", "tests/test_data"]
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "C4"]
 ignore = ["E501"]  # Line too long (handled by formatter)
+unsafe-fixes = true  # Enable unsafe fixes (e.g., unused variable removal)
 ```
 
 VSCode automatically reads this file when using the workspace settings.
+
+**Note**: `unsafe-fixes` enables more aggressive automatic fixes that are safe in most cases but might occasionally need review.
 
 ---
 

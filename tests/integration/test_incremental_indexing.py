@@ -71,10 +71,10 @@ def helper(x, y):
 
 class Calculator:
     """Simple calculator."""
-    
+
     def add(self, a, b):
         return a + b
-    
+
     def subtract(self, a, b):
         return a - b
 '''
@@ -86,11 +86,11 @@ class Calculator:
             '''
 class Database:
     """Database connection."""
-    
+
     def connect(self):
         """Connect to database."""
         pass
-    
+
     def query(self, sql):
         """Execute query."""
         return []
@@ -181,14 +181,14 @@ def helper(x, y):
 
 class Calculator:
     """Enhanced calculator."""
-    
+
     def add(self, a, b):
         return a + b
-    
+
     def multiply(self, a, b):
         """New method."""
         return a * b
-    
+
     def subtract(self, a, b):
         return a - b
 '''

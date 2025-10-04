@@ -473,7 +473,7 @@ class BM25Index:
                 else 0
             ),
             "vocabulary_size": (
-                len(set(token for tokens in self._tokenized_docs for token in tokens))
+                len({token for tokens in self._tokenized_docs for token in tokens})
                 if self._tokenized_docs
                 else 0
             ),

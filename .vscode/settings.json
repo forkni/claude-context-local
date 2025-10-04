@@ -1,16 +1,14 @@
 {
   // Python interpreter - use project's virtual environment
   "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
-
   // Ruff extension configuration
   "ruff.enable": true,
-  "ruff.path": ["${workspaceFolder}/.venv/Scripts/ruff.exe"],
-  "ruff.lint.run": "onSave",
+  "ruff.path": [
+    "${workspaceFolder}/.venv/Scripts/ruff.exe"
+  ],
   "ruff.organizeImports": true,
   "ruff.fixAll": true,
-  "ruff.lint.args": ["--unsafe-fixes"],
   "ruff.configuration": "${workspaceFolder}/pyproject.toml",
-
   // Python file formatting and linting
   "[python]": {
     "editor.defaultFormatter": "charliermarsh.ruff",
@@ -20,7 +18,6 @@
       "source.organizeImports": "explicit"
     }
   },
-
   // File associations
   "files.associations": {
     "*.tox": "ini",
@@ -29,7 +26,6 @@
     "*.vert": "glsl",
     "*.comp": "glsl"
   },
-
   // Files to exclude from file explorer
   "files.exclude": {
     "**/__pycache__": true,
@@ -39,7 +35,6 @@
     "**/.mypy_cache": true,
     "**/*.egg-info": true
   },
-
   // Search exclusions
   "search.exclude": {
     "**/__pycache__": true,
@@ -49,7 +44,6 @@
     "**/.pytest_cache": true,
     "**/.ruff_cache": true
   },
-
   // Terminal configuration for this project
   "terminal.integrated.env.windows": {
     "PYTHONPATH": "${workspaceFolder}"

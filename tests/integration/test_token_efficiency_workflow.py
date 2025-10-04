@@ -366,7 +366,7 @@ def calculate_hash(data: str, algorithm: str = "sha256") -> str:
 def validate_email(email: str) -> bool:
     \"\"\"Basic email validation.\"\"\"
     import re
-    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$'
     return re.match(pattern, email) is not None
 
 def paginate_results(items: List[Any], page: int = 1, per_page: int = 10) -> Dict[str, Any]:
@@ -798,9 +798,11 @@ class TestTokenEfficiencyRegression:
         # For now, just verify that imports work correctly
 
         try:
-            from evaluation.base_evaluator import BaseEvaluator  # noqa: F401
-            from evaluation.base_evaluator import EvaluationInstance  # noqa: F401
-            from evaluation.base_evaluator import SearchMetrics  # noqa: F401
+            from evaluation.base_evaluator import (
+                BaseEvaluator,  # noqa: F401
+                EvaluationInstance,  # noqa: F401
+                SearchMetrics,  # noqa: F401
+            )
             from evaluation.semantic_evaluator import (  # noqa: F401
                 SemanticSearchEvaluator,
             )

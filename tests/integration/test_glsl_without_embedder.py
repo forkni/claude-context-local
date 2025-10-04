@@ -90,9 +90,9 @@ def test_glsl_indexing_without_embedder():
                 return {
                     "total_chunks": len(self.indexed_chunks),
                     "chunk_types": list(
-                        set(c["chunk_type"] for c in self.indexed_chunks)
+                        {c["chunk_type"] for c in self.indexed_chunks}
                     ),
-                    "files": list(set(c["file_path"] for c in self.indexed_chunks)),
+                    "files": list({c["file_path"] for c in self.indexed_chunks}),
                 }
 
         mock_indexer = MockIndexer()
@@ -136,7 +136,7 @@ def test_glsl_indexing_without_embedder():
 
         traceback.print_exc()
         # Convert to assertion failure for pytest compatibility
-        assert False, f"GLSL indexing test failed: {e}"
+        raise AssertionError(f"GLSL indexing test failed: {e}")
 
 
 if __name__ == "__main__":

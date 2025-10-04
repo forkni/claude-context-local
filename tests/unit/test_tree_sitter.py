@@ -29,7 +29,7 @@ def async_function():
     """An async function."""
     import asyncio
     await asyncio.sleep(1)
-    
+
 class MyClass:
     def method(self):
         return "method"
@@ -50,10 +50,10 @@ class MyClass:
         code = '''
 class SimpleClass:
     """A simple class."""
-    
+
     def __init__(self):
         self.value = 0
-    
+
     def method(self):
         return self.value
 
