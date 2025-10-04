@@ -33,7 +33,7 @@ def test_imports():
 
     for module_name in modules_to_test:
         try:
-            module = importlib.import_module(module_name)
+            importlib.import_module(module_name)
             results.append(f"OK {module_name}")
             success_count += 1
         except Exception as e:

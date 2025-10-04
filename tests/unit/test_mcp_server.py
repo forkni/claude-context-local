@@ -15,7 +15,7 @@ class TestMCPServerImport:
     def test_mcp_server_can_import(self):
         """Test that MCP server module can be imported without errors."""
         try:
-            import mcp_server.server
+            import mcp_server.server  # noqa: F401
 
             assert True  # If we get here, import succeeded
         except ImportError as e:

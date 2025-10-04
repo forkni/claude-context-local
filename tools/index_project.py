@@ -80,7 +80,9 @@ def find_projects(search_path: str = "C:\\Projects") -> list:
     return projects
 
 
-def index_project(project_path: str, include_subfolders: bool = True, force_full: bool = False) -> dict:
+def index_project(
+    project_path: str, include_subfolders: bool = True, force_full: bool = False
+) -> dict:
     """
     Index a project focusing on code files.
 
@@ -169,7 +171,9 @@ def index_project(project_path: str, include_subfolders: bool = True, force_full
 
     # Use the MCP server's index_directory function
     result = index_directory(
-        str(project_path), project_name=f"Proj_{project_path.name}", incremental=not force_full
+        str(project_path),
+        project_name=f"Proj_{project_path.name}",
+        incremental=not force_full,
     )
 
     try:
@@ -242,7 +246,7 @@ def main():
                     if 0 <= idx < len(projects):
                         project = projects[idx]
                         print(f"\nIndexing project: {project['name']}")
-                        result = index_project(
+                        index_project(
                             project["project_dir"], not args.no_subfolders, args.force
                         )
                     else:
@@ -260,7 +264,7 @@ def main():
         )
 
     # Index the specified project
-    result = index_project(args.project_path, not args.no_subfolders, args.force)
+    index_project(args.project_path, not args.no_subfolders, args.force)
 
 
 if __name__ == "__main__":

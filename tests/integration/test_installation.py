@@ -90,14 +90,13 @@ class TestCUDADetection:
     def test_cuda_version_detection_118(self):
         """Test CUDA 11.8 detection and mapping."""
         # Skip this test if we're running on a system with different CUDA version
-        actual_output = None
         try:
             import subprocess
 
             result = subprocess.run(["nvidia-smi"], capture_output=True, text=True)
             if result.returncode == 0:
-                actual_output = result.stdout
-        except:
+                pass
+        except Exception:
             pass
 
         mock_output = MOCK_NVIDIA_SMI_OUTPUTS["cuda_11_8"]
@@ -466,9 +465,9 @@ class TestInstallationVerification:
     def _verify_hybrid_search(self):
         """Verify hybrid search components."""
         try:
-            import nltk
-            from nltk.corpus import stopwords
-            from rank_bm25 import BM25Okapi
+            import nltk  # noqa: F401
+            from nltk.corpus import stopwords  # noqa: F401
+            from rank_bm25 import BM25Okapi  # noqa: F401
 
             return {"bm25_available": True, "nltk_available": True}
         except ImportError as e:

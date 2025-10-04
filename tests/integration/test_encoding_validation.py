@@ -27,7 +27,7 @@ def _test_file_encoding_detailed(file_path: Path) -> dict:
         # Test ASCII compatibility
         try:
             with open(file_path, "r", encoding="ascii") as f:
-                content = f.read()
+                f.read()
             result["ascii_compatible"] = True
         except UnicodeDecodeError as e:
             result["ascii_compatible"] = False
@@ -60,11 +60,11 @@ def _test_file_encoding_detailed(file_path: Path) -> dict:
                 "\u26a0": "warning",  # ⚠
                 "\ufe0f": "variation sel",  # ️
                 "\u2139": "info",  # ℹ
-                "\ud83d\udccb": "clipboard",  # 📋
-                "\ud83d\ude80": "rocket",  # 🚀
-                "\ud83d\udd27": "wrench",  # 🔧
-                "\ud83d\udd0d": "magnifier",  # 🔍
-                "\ud83d\udee1": "stop",  # 🛑
+                "📋": "clipboard",
+                "🚀": "rocket",
+                "🔧": "wrench",
+                "🔍": "magnifier",
+                "🛑": "stop",
             }
 
             for i, char in enumerate(text_content):

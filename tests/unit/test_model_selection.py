@@ -102,7 +102,6 @@ class TestSearchConfigManager:
 
             # Load default
             config = mgr.load_config()
-            original_model = config.embedding_model_name
 
             # Change to BGE-M3
             config.embedding_model_name = "BAAI/bge-m3"

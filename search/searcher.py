@@ -239,7 +239,6 @@ class IntelligentSearcher:
 
     def _count_chunks_in_file(self, relative_path: str) -> int:
         """Count total chunks in a specific file."""
-        count = 0
         stats = self.index_manager.get_stats()
 
         # This is a simplified implementation

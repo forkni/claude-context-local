@@ -449,7 +449,6 @@ class TestModelSelectionWorkflow:
             cfg = mgr.load_config()
 
             # Change model
-            original_model = cfg.embedding_model_name
             cfg.embedding_model_name = "BAAI/bge-m3"
             mgr.save_config(cfg)
 

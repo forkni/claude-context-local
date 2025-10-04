@@ -14,9 +14,9 @@ def test_mcp_imports():
     print("Testing MCP server imports...")
 
     try:
-        from mcp_server.server import (find_similar_code, get_index_status,
-                                       index_directory, list_projects,
-                                       search_code, switch_project)
+        from mcp_server.server import (find_similar_code, get_index_status,  # noqa: F401
+                                       index_directory, list_projects,  # noqa: F401
+                                       search_code, switch_project)  # noqa: F401
 
         print("[OK] MCP server functions imported successfully")
         return True

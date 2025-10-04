@@ -414,7 +414,7 @@ class CodeEmbedder:
         """Ensure cleanup when object is destroyed."""
         try:
             self.cleanup()
-        except:
+        except Exception:
             pass
 
     def _is_model_cached(self) -> bool:

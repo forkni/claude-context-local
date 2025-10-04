@@ -103,12 +103,14 @@ This repository includes GitHub Actions integration for Claude Code, enabling in
 **GitHub Actions Workflow**: `.github/workflows/claude.yml`
 
 Responds to `@claude` mentions in:
+
 - Issue comments
 - Pull request review comments
 - Pull request reviews
 - New issues (in title or body)
 
 **Permissions Required**:
+
 - Read: contents, pull requests, issues
 - Write: id-token (for authentication)
 
@@ -123,12 +125,14 @@ Located in `.claude/commands/` directory, these are reusable command templates:
 **Purpose**: Create pull requests with clean, professional descriptions
 
 **Features**:
+
 - Creates feature branch from current changes
 - Commits staged changes with conventional format
 - Pushes to remote and creates PR via GitHub CLI
 - **Never includes Claude Code attribution** in PR descriptions
 
 **Usage**:
+
 ```bash
 # Stage your changes first
 git add <files>
@@ -140,6 +144,7 @@ git add <files>
 ```
 
 **Good PR Examples**:
+
 - `feat: Add semantic search caching for 93% token reduction`
 - `fix: Escape parentheses in sync_status.bat echo statements`
 - `docs: Update installation guide with PyTorch 2.6.0 requirements`
@@ -149,11 +154,13 @@ git add <files>
 **Purpose**: Safe merge workflow with .gitattributes support and validation
 
 **Merge Types**:
+
 - `full` - Full merge from development to main (default)
 - `docs` - Documentation-only merge
 - `status` - Check branch synchronization status
 
 **Usage**:
+
 ```bash
 # Full merge workflow
 /run-merge full
@@ -166,6 +173,7 @@ git add <files>
 ```
 
 **Safety Features**:
+
 - Pre-merge validation via `validate_branches.bat`
 - Automatic backup tags created
 - .gitattributes enforcement (tests/ excluded from main)
@@ -177,6 +185,7 @@ git add <files>
 **Purpose**: Comprehensive pre-commit checklist to catch issues early
 
 **Checks Performed**:
+
 1. Verifies changes are staged
 2. Blocks local-only files (CLAUDE.md, MEMORY.md, _archive/, benchmark_results/)
 3. Branch-specific validations (no tests/ on main)
@@ -186,18 +195,21 @@ git add <files>
 7. .gitattributes consistency check
 
 **Usage**:
+
 ```bash
 # After staging changes, before committing
 /validate-changes
 ```
 
 **Prevents Common Mistakes**:
+
 - ❌ Committing CLAUDE.md or MEMORY.md (local-only)
 - ❌ Adding tests/ to main branch (development-only)
 - ❌ Using AI attribution in commit messages
 - ❌ Non-conventional commit message format
 
 **Quick Fixes**:
+
 ```bash
 # Unstage local files
 git reset HEAD CLAUDE.md MEMORY.md _archive/ benchmark_results/
@@ -215,6 +227,7 @@ test: Add integration tests for incremental indexing
 **They are COMPLEMENTARY, not mutually exclusive:**
 
 #### CI/CD Workflows (Automated)
+
 - **branch-protection.yml** - Validates every push (test files, linting, local-only file checks)
 - **merge-development-to-main.yml** - Manual merge workflow with .gitattributes support
 - **docs-validation.yml** - Documentation quality checks (markdown lint, link checking)
@@ -222,6 +235,7 @@ test: Add integration tests for incremental indexing
 **Purpose**: Automatic validation and quality assurance
 
 #### Claude Code Integration (Interactive)
+
 - **claude.yml** - Responds to @claude mentions in issues/PRs
 - **Custom commands** - Reusable workflow templates
 
@@ -230,6 +244,7 @@ test: Add integration tests for incremental indexing
 ### Using @claude in GitHub
 
 **In Issues**:
+
 ```markdown
 @claude can you review this error message and suggest a fix?
 
@@ -237,11 +252,13 @@ test: Add integration tests for incremental indexing
 ```
 
 **In Pull Requests**:
+
 ```markdown
 @claude please review these changes for potential issues
 ```
 
 **In PR Comments**:
+
 ```markdown
 @claude what's the best way to implement caching for this function?
 ```
@@ -249,6 +266,7 @@ test: Add integration tests for incremental indexing
 ### Configuration Files
 
 #### .gitignore Rules
+
 ```gitignore
 # Claude Code user settings (local-only)
 .claude/*
@@ -257,6 +275,7 @@ test: Add integration tests for incremental indexing
 ```
 
 **This ensures**:
+
 - User-specific settings remain private (`.claude/*`)
 - Shared custom commands are version controlled (`.claude/commands/`)
 

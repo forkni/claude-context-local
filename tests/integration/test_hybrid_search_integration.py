@@ -413,7 +413,6 @@ class DatabaseConnection:
             str(self.project_dir), project_name="test_project", force_full=True
         )
         assert result.success, "Initial indexing must succeed"
-        initial_chunks = result.chunks_added
 
         # Add a new file
         new_file = self.project_dir / "new_module.py"
@@ -528,12 +527,12 @@ def validate_item(item):
         try:
             if hasattr(self, "hybrid_searcher") and self.hybrid_searcher:
                 self.hybrid_searcher.shutdown()
-        except:
+        except Exception:
             pass
 
         try:
             shutil.rmtree(self.temp_dir, ignore_errors=True)
-        except:
+        except Exception:
             pass
 
 
@@ -564,10 +563,10 @@ class TestHybridSearchConfigIntegration:
         config = config_manager.load_config()
 
         assert config.default_search_mode == "hybrid"
-        assert config.enable_hybrid_search == True
+        assert config.enable_hybrid_search
         assert config.bm25_weight == 0.3
         assert config.dense_weight == 0.7
-        assert config.use_parallel_search == True
+        assert config.use_parallel_search
 
     def test_hybrid_searcher_uses_config(self):
         """Test that HybridSearcher respects configuration."""

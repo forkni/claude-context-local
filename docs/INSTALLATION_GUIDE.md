@@ -235,6 +235,7 @@ The configuration script detects existing MCP server configurations:
 4. **Safe Removal**: Removes old configuration before adding new one
 
 **Example:**
+
 ```
 [WARNING] code-search MCP server is already configured
 Current configuration:
@@ -253,12 +254,14 @@ After configuration, verify that the MCP server path is valid:
 ```
 
 **Verification Checks:**
+
 - ✅ Finds `.claude.json` configuration file (global or project-specific)
 - ✅ Confirms code-search MCP server exists in configuration
 - ✅ **Validates MCP server path exists on disk**
 - ✅ Reports configuration status and provides troubleshooting guidance
 
 **Example Output:**
+
 ```
 [OK] code-search MCP server is configured!
 Configuration details:
@@ -269,6 +272,7 @@ Configuration details:
 ```
 
 **If Path is Invalid:**
+
 ```
 [ERROR] MCP server path does not exist: E:\invalid\path\wrapper.bat
 
@@ -280,6 +284,7 @@ Configuration details:
 ### Configuration Modes
 
 **Wrapper Script (Default):**
+
 - Uses `mcp_server_wrapper.bat` for cross-directory compatibility
 - Works from any location (VS Code, different folders, command prompt)
 - Automatically sets correct working directory
@@ -293,6 +298,7 @@ Configuration details:
 ```
 
 **Direct Python Mode:**
+
 - Uses Python interpreter directly
 - Requires correct working directory
 - Advanced users only
@@ -307,11 +313,13 @@ Configuration details:
 For interactive Claude Code assistance in GitHub issues and pull requests:
 
 **Setup Steps**:
+
 1. Add `ANTHROPIC_API_KEY` to repository secrets (Settings → Secrets and variables → Actions)
 2. Workflow `.github/workflows/claude.yml` enables @claude mentions
 3. Use @claude in issues, PRs, and comments for AI assistance
 
 **Features**:
+
 - Interactive code review via @claude mentions
 - Automated assistance in pull requests
 - Custom commands in `.claude/commands/` directory
@@ -330,6 +338,7 @@ For interactive Claude Code assistance in GitHub issues and pull requests:
 ```
 
 **Solution:**
+
 1. Ensure Claude Code is installed
 2. Verify `claude` command is in PATH
 3. Restart terminal after installation
@@ -620,6 +629,7 @@ scripts\batch\repair_installation.bat
 6. **Return to main menu** - Exit without changes
 
 **When to Use:**
+
 - "No changes detected" despite file modifications
 - Search results are stale or incorrect
 - MCP server not showing up in Claude Code
@@ -643,6 +653,7 @@ scripts\batch\repair_installation.bat
 ```
 
 **Force Reindex Features:**
+
 - Bypasses Merkle tree snapshot checking
 - Performs full reindex of all files
 - Automatically deletes stale snapshots

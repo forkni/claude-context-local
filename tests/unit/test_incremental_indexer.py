@@ -127,7 +127,7 @@ class TestIncrementalIndexer:
             ) as mock_chunker_class,
             patch("search.incremental_indexer.SnapshotManager") as mock_snapshot_class,
         ):
-            indexer = IncrementalIndexer()
+            IncrementalIndexer()
 
             mock_indexer_class.assert_called_once()
             mock_embedder_class.assert_called_once()

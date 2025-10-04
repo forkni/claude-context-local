@@ -782,12 +782,12 @@ class TestTokenEfficiencyRegression:
         # For now, just verify that imports work correctly
 
         try:
-            from evaluation.base_evaluator import (BaseEvaluator,
-                                                   EvaluationInstance,
-                                                   SearchMetrics)
-            from evaluation.semantic_evaluator import SemanticSearchEvaluator
+            from evaluation.base_evaluator import (BaseEvaluator,  # noqa: F401
+                                                   EvaluationInstance,  # noqa: F401
+                                                   SearchMetrics)  # noqa: F401
+            from evaluation.semantic_evaluator import SemanticSearchEvaluator  # noqa: F401
             from evaluation.token_efficiency_evaluator import \
-                TokenEfficiencyEvaluator
+                TokenEfficiencyEvaluator  # noqa: F401
 
             # All imports should work without errors
             assert True

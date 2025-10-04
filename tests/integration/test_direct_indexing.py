@@ -25,7 +25,7 @@ def test_direct_indexing():
     try:
         # Initialize components
         print("\n1. INITIALIZING COMPONENTS")
-        index_manager = CodeIndexManager(
+        CodeIndexManager(
             storage_dir="C:/Users/Inter/.claude_code_search"
         )
         print("   Index manager initialized")

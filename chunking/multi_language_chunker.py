@@ -125,7 +125,7 @@ class MultiLanguageChunker:
             logger.debug(f"File type not supported: {file_path}")
             return []
 
-        suffix = Path(file_path).suffix.lower()
+        Path(file_path).suffix.lower()
 
         # Use tree-sitter for all  languages
         try:

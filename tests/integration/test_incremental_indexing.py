@@ -156,11 +156,10 @@ class Database:
         )
 
         # Initial index
-        result1 = incremental_indexer.incremental_index(
+        incremental_indexer.incremental_index(
             str(self.test_path), "test_project"
         )
 
-        initial_chunks = result1.chunks_added
 
         # Modify a file
         (self.test_path / "utils.py").write_text('''
@@ -209,7 +208,7 @@ class Calculator:
         )
 
         # Initial index
-        result1 = incremental_indexer.incremental_index(
+        incremental_indexer.incremental_index(
             str(self.test_path), "test_project"
         )
 
@@ -249,7 +248,7 @@ class NewClass:
         )
 
         # Initial index
-        result1 = incremental_indexer.incremental_index(
+        incremental_indexer.incremental_index(
             str(self.test_path), "test_project"
         )
 
@@ -309,7 +308,7 @@ class NewClass:
         assert incremental_indexer.needs_reindex(str(self.test_path))
 
         # Index the project
-        result = incremental_indexer.incremental_index(
+        incremental_indexer.incremental_index(
             str(self.test_path), "test_project"
         )
 
@@ -342,7 +341,7 @@ class NewClass:
         assert stats is None
 
         # Index the project
-        result = incremental_indexer.incremental_index(
+        incremental_indexer.incremental_index(
             str(self.test_path), "test_project"
         )
 

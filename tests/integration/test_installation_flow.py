@@ -163,7 +163,7 @@ class TestCompleteInstallationFlow:
         assert "Future CUDA version not supported" in cuda_result.get("warning", "")
 
         # Should fallback to CPU installation
-        auto_result = env.simulate_auto_install()
+        env.simulate_auto_install()
         # With unsupported CUDA, might fallback to CPU
         # (Depends on actual implementation logic)
 

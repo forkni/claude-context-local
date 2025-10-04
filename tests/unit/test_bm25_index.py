@@ -310,7 +310,7 @@ class TestBM25Index:
         self.index.index_documents(special_docs, special_ids)
 
         # Should be able to search
-        results = self.index.search("123", k=5)
+        self.index.search("123", k=5)
         # Results depend on preprocessing, but shouldn't crash
 
     def teardown_method(self):

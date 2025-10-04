@@ -262,7 +262,7 @@ class TestHybridSearcher:
             embedder_mock.embed_text.return_value = np.random.rand(768)
 
             filters = {"language": "python"}
-            results = searcher.search(
+            searcher.search(
                 "test query", k=5, use_parallel=False, filters=filters
             )
 

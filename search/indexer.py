@@ -625,7 +625,7 @@ class CodeIndexManager:
         available = get_available_memory()
 
         # Estimate memory needed for new vectors
-        estimated = estimate_index_memory_usage(num_new_vectors, dimension)
+        estimate_index_memory_usage(num_new_vectors, dimension)
 
         # Check current index size
         current_size = self.get_index_size()

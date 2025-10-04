@@ -7,6 +7,7 @@ This comprehensive guide covers the testing infrastructure for the Claude Contex
 ### Current Test Status
 
 ✅ **All tests passing** (as of 2025-01-10):
+
 - **Unit Tests**: 204 tests passing
 - **Integration Tests**: 147 tests passing
 - **Regression Tests**: 1 test (15 checks) passing
@@ -395,6 +396,7 @@ class TestNewWorkflow:
 **Critical lessons learned from recent test fixes:**
 
 1. **Always mock model loading**: Never let tests download 4GB+ models
+
    ```python
    from unittest.mock import Mock, patch
 
@@ -407,6 +409,7 @@ class TestNewWorkflow:
    ```
 
 2. **Use subset validation for metadata**: Don't assume exact field matches
+
    ```python
    # Bad: Exact equality fails when BM25 adds extra fields
    assert meta == expected
@@ -418,17 +421,20 @@ class TestNewWorkflow:
    ```
 
 3. **Import Mock explicitly**: Don't rely on it being available
+
    ```python
    from unittest.mock import Mock, patch  # Always import explicitly
    ```
 
 4. **Verify test data accuracy**: Ensure fixture values match actual behavior
+
    ```python
    # Update test assertions to match actual implementation
    assert env.disk_space_gb == 0.5  # Not 1.0 for low disk test
    ```
 
 5. **Add public methods for testing**: Don't test private methods directly
+
    ```python
    # Added public load() method to CodeIndexManager for test access
    def load(self) -> bool:
@@ -439,12 +445,14 @@ class TestNewWorkflow:
    ```
 
 6. **Mock at the right level**: Mock external dependencies, not internal logic
+
    ```python
    # Mock SentenceTransformer to avoid downloads
    @patch('embeddings.embedder.SentenceTransformer')
    ```
 
 7. **Test error messages flexibly**: Accept reasonable variations
+
    ```python
    # Allow multiple acceptable error messages
    assert any(msg in str(exc.value) for msg in [
@@ -636,6 +644,7 @@ tests\regression\test_mcp_configuration.ps1 -ConfigPath "C:\path\to\.claude.json
 ```
 
 **Common regression test failures:**
+
 - Missing 'args' or 'env' fields in `.claude.json`
 - Incorrect PYTHONPATH configuration
 - Invalid Python executable paths
@@ -756,6 +765,7 @@ timeout 300 pytest tests/
 ### Recent Test Improvements (2025-01-10)
 
 **All 352 tests now passing:**
+
 - ✅ Fixed BM25 metadata handling with subset validation
 - ✅ Fixed CUDA detection disk space assertions
 - ✅ Added proper Mock imports to all test files
