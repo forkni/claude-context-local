@@ -70,27 +70,119 @@ The following documentation files are tracked in Git (9 files total):
 
 ## 🚀 Workflow Scripts
 
-### commit.bat - Safe Committing
+All workflow scripts are located in `scripts/git/` directory.
+
+### Core Workflow Scripts (6)
+
+#### commit_enhanced.bat - Enhanced Commit Workflow
 
 ```batch
-commit.bat "Your commit message"
+commit_enhanced.bat "Your commit message"
 ```
 
-- **Automatically excludes** local-only files
-- **Double-checks** staging area
-- **Shows preview** before committing
-- **Confirms success** with local file privacy
+**Features:**
+- Automatically excludes local-only files
+- Code quality checks (lint validation)
+- Branch-specific validations (no tests/ on main)
+- Conventional commit format checking
+- Interactive staging prompts
+- Shows preview before committing
 
-### sync_branches.bat - Branch Synchronization
+#### check_lint.bat - Code Quality Validation
 
 ```batch
-sync_branches.bat
+scripts\git\check_lint.bat
 ```
 
-- **Merges development → main**
-- **Pushes to remote**
-- **Returns to development branch**
-- **Ensures both branches are identical**
+**Checks:**
+- Ruff linting (Python code style)
+- Black formatting (code consistency)
+- isort import sorting
+
+#### fix_lint.bat - Auto-fix Linting Issues
+
+```batch
+scripts\git\fix_lint.bat
+```
+
+**Fixes:**
+- Runs isort → black → ruff --fix
+- Verifies fixes with check_lint.bat
+
+#### merge_with_validation.bat - Safe Merge Workflow
+
+```batch
+scripts\git\merge_with_validation.bat
+```
+
+**Features:**
+- Pre-merge validation (via validate_branches.bat)
+- Creates backup tags before merge
+- Automatic conflict resolution for modify/delete conflicts
+- Handles development-only file exclusion
+- Returns to original branch on error
+
+#### validate_branches.bat - Pre-merge Validation
+
+```batch
+scripts\git\validate_branches.bat
+```
+
+**Checks:**
+- Both branches exist
+- No uncommitted changes
+- .gitattributes exists
+- merge.ours driver configured
+- Branches in sync with remote
+
+#### install_hooks.bat - Hook Installation
+
+```batch
+scripts\git\install_hooks.bat
+```
+
+**Installs:**
+- Pre-commit hook from `.githooks/pre-commit`
+- Linting validation
+- Privacy protection checks
+
+### Advanced/Safety Scripts (3)
+
+#### rollback_merge.bat - Emergency Merge Rollback
+
+```batch
+scripts\git\rollback_merge.bat
+```
+
+**Options:**
+- Rollback to latest backup tag
+- Rollback to HEAD~1
+- Rollback to specific commit hash
+- Interactive confirmation required
+
+#### cherry_pick_commits.bat - Hotfix Workflow
+
+```batch
+scripts\git\cherry_pick_commits.bat
+```
+
+**Features:**
+- Cherry-pick specific commits from development → main
+- Validates development-only file exclusions
+- Creates backup tags
+- Interactive commit selection
+
+#### merge_docs.bat - Documentation-Only Merge
+
+```batch
+scripts\git\merge_docs.bat
+```
+
+**Features:**
+- Merges ONLY docs/ directory changes
+- Excludes development-only docs
+- Creates backup tags
+- Useful for documentation updates
 
 ## 🤖 Claude Code GitHub Integration
 
@@ -151,32 +243,30 @@ git add <files>
 
 #### 2. `/run-merge` - Guided Merge Workflow
 
-**Purpose**: Safe merge workflow with .gitattributes support and validation
+**Purpose**: Safe merge workflow with validation and backup support
 
 **Merge Types**:
 
 - `full` - Full merge from development to main (default)
 - `docs` - Documentation-only merge
-- `status` - Check branch synchronization status
 
 **Usage**:
 
 ```bash
 # Full merge workflow
 /run-merge full
+# Runs: scripts\git\merge_with_validation.bat
 
 # Documentation-only merge
 /run-merge docs
-
-# Status check only
-/run-merge status
+# Runs: scripts\git\merge_docs.bat
 ```
 
 **Safety Features**:
 
 - Pre-merge validation via `validate_branches.bat`
 - Automatic backup tags created
-- .gitattributes enforcement (tests/ excluded from main)
+- Conflict resolution handling
 - Post-merge verification
 - Rollback script available (`rollback_merge.bat`)
 
@@ -309,7 +399,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 /validate-changes
 
 # When ready to commit:
-commit.bat "feat: Add new search functionality"
+scripts\git\commit_enhanced.bat "feat: Add new search functionality"
 ```
 
 ### 2. Creating Pull Requests
@@ -328,11 +418,10 @@ gh pr create --title "feat: ..." --body "..."
 ### 3. Public Release
 
 ```batch
-# Option 1: Use guided merge workflow
+# Use guided merge workflow
 /run-merge full
-
-# Option 2: Use traditional script
-sync_branches.bat
+# Or run directly:
+scripts\git\merge_with_validation.bat
 
 # Both branches now have identical public content
 # Local files remain private
@@ -367,25 +456,31 @@ cd claude-context-local
 
 | Task | Command | Result |
 |------|---------|---------|
-| **Safe commit** | `commit.bat "message"` | Commits without local files |
-| **Sync to main** | `sync_branches.bat` | Development → Main → Remote |
+| **Safe commit** | `scripts\git\commit_enhanced.bat "message"` | Commits with lint checks and validations |
+| **Check code quality** | `scripts\git\check_lint.bat` | Validates code with ruff/black/isort |
+| **Fix linting** | `scripts\git\fix_lint.bat` | Auto-fixes linting issues |
+| **Merge to main** | `scripts\git\merge_with_validation.bat` | Safe merge: development → main |
+| **Docs-only merge** | `scripts\git\merge_docs.bat` | Merge only documentation changes |
 | **Check status** | `git status` | Shows staged changes |
 | **View branches** | `git branch -a` | Lists all branches |
+| **Emergency rollback** | `scripts\git\rollback_merge.bat` | Rollback last merge |
 
 ## 🚨 Critical Rules
 
 ### ✅ DO
 
-- Use `commit.bat` for all commits
+- Use `commit_enhanced.bat` for all commits (includes lint checks)
 - Keep CLAUDE.md and MEMORY.md updated locally
-- Use `sync_branches.bat` for releases
+- Use `merge_with_validation.bat` for releases
 - Backup local files before major changes
+- Run `check_lint.bat` before committing
 
 ### ❌ NEVER
 
 - Manually add local files to git: `git add CLAUDE.md` ❌
-- Commit without using commit.bat ❌
+- Skip lint checks when committing ❌
 - Push local files to any branch ❌
+- Force merge without validation ❌
 
 ## 🔧 Troubleshooting
 
@@ -437,21 +532,23 @@ Local Machine:
 ├── _archive/ (764 historical files)
 └── Public code files
 
-           ↓ commit.bat
+           ↓ commit_enhanced.bat (with lint checks)
 
 Development Branch:
 ├── Core application code
-├── Test suites
-├── Documentation (public)
+├── Test suites (all tests)
+├── Documentation (public + TESTING_GUIDE.md)
 ├── Scripts and tools
+├── pytest.ini
 └── Configuration files
 
-           ↓ sync_branches.bat
+           ↓ merge_with_validation.bat (removes tests/, pytest.ini, TESTING_GUIDE.md)
 
 Main Branch:
-├── Identical to development
+├── Core application code (no tests)
+├── Documentation (public only)
+├── Scripts and tools
 ├── Clean public release
-├── No development context
 └── User-ready repository
 ```
 
