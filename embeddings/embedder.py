@@ -195,7 +195,7 @@ class CodeEmbedder:
                 current_length = docstring_len
 
                 # Add head lines (function signature, early logic)
-                for i, line in enumerate(lines[: min(len(lines) // 2, 20)]):
+                for _i, line in enumerate(lines[: min(len(lines) // 2, 20)]):
                     if current_length + len(line) + 1 > remaining_budget * 0.7:
                         break
                     head_lines.append(line)
@@ -311,7 +311,9 @@ class CodeEmbedder:
                 )
 
             # Create results
-            for j, (chunk, embedding) in enumerate(zip(batch, batch_embeddings)):
+            for _j, (chunk, embedding) in enumerate(
+                zip(batch, batch_embeddings, strict=False)
+            ):
                 chunk_id = f"{chunk.relative_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
                 if chunk.name:
                     chunk_id += f":{chunk.name}"

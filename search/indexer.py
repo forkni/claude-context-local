@@ -317,7 +317,9 @@ class CodeIndexManager:
         similarities, indices = index.search(query_embedding, search_k)
 
         results = []
-        for i, (similarity, index_id) in enumerate(zip(similarities[0], indices[0])):
+        for _i, (similarity, index_id) in enumerate(
+            zip(similarities[0], indices[0], strict=False)
+        ):
             if index_id == -1:  # No more results
                 break
 

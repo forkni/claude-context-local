@@ -239,7 +239,7 @@ class IncrementalIndexer:
                     )
                     # Update metadata
                     for chunk, embedding_result in zip(
-                        all_chunks, all_embedding_results
+                        all_chunks, all_embedding_results, strict=False
                     ):
                         embedding_result.metadata["project_name"] = project_name
                         embedding_result.metadata["content"] = chunk.content
@@ -364,7 +364,7 @@ class IncrementalIndexer:
                 all_embedding_results = self.embedder.embed_chunks(chunks_to_embed)
                 # Update metadata
                 for chunk, embedding_result in zip(
-                    chunks_to_embed, all_embedding_results
+                    chunks_to_embed, all_embedding_results, strict=False
                 ):
                     embedding_result.metadata["project_name"] = project_name
                     embedding_result.metadata["content"] = chunk.content

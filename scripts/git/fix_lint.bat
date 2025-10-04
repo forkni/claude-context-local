@@ -31,7 +31,7 @@ echo.
 
 REM [3/3] Fix issues with Ruff
 echo [3/3] Fixing code issues with ruff...
-call .venv\Scripts\ruff.exe check . --fix
+call .venv\Scripts\ruff.exe check . --fix --unsafe-fixes
 if %ERRORLEVEL% EQU 0 (
     echo ✓ ruff completed
 ) else (

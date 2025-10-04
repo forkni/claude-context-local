@@ -70,8 +70,8 @@ class ChangeDetector:
         new_paths = set(new_files.keys())
 
         # Find added and removed files
-        added = sorted(list(new_paths - old_paths))
-        removed = sorted(list(old_paths - new_paths))
+        added = sorted(new_paths - old_paths)
+        removed = sorted(old_paths - new_paths)
 
         # Find modified files (same path, different hash)
         common_paths = old_paths & new_paths

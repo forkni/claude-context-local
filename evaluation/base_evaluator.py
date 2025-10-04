@@ -138,10 +138,10 @@ class BaseEvaluator(ABC):
             return 0.0, 0.0
 
         # Normalize paths for consistent comparison
-        normalized_retrieved = set(self._normalize_path(f) for f in retrieved_files)
-        normalized_ground_truth = set(
+        normalized_retrieved = {self._normalize_path(f) for f in retrieved_files}
+        normalized_ground_truth = {
             self._normalize_path(f) for f in ground_truth_files
-        )
+        }
 
         # Enhanced logging for debugging path matching issues
         if hasattr(self, "logger"):
