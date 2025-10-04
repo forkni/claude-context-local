@@ -100,6 +100,13 @@ if %MERGE_EXIT_CODE% NEQ 0 (
         echo.
         echo ✓ Auto-resolved modify/delete conflicts
         echo   (Kept main's version - excluded development-only files)
+
+        REM Check if merge commit was already created by auto-resolution
+        git rev-parse -q --verify MERGE_HEAD >nul 2>&1
+        if %ERRORLEVEL% NEQ 0 (
+            echo ✓ Merge commit automatically completed during auto-resolution
+            goto :merge_success
+        )
     )
 
     REM Check for actual content conflicts
@@ -229,6 +236,7 @@ if %MERGE_EXIT_CODE% NEQ 0 (
     echo ✓ Documentation validation passed
 )
 
+:merge_success
 echo.
 echo ====================================
 echo ✓ MERGE SUCCESSFUL

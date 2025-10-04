@@ -588,11 +588,13 @@ See [Model Migration Guide](docs/MODEL_MIGRATION_GUIDE.md) for detailed comparis
 **Zero re-indexing overhead** when switching between models - switch in <150ms:
 
 **Performance:**
+
 - **First use**: ~30-60s (indexing required)
 - **Return to previous model**: <150ms (instant!)
 - **Time savings**: 98% reduction (50-90s → <1s)
 
 **How It Works:**
+
 - Per-dimension storage: `{project}_{hash}_{768d|1024d}/`
   - Gemma (768d): `project_abc123_768d/`
   - BGE-M3 (1024d): `project_abc123_1024d/`
@@ -600,6 +602,7 @@ See [Model Migration Guide](docs/MODEL_MIGRATION_GUIDE.md) for detailed comparis
 - Instant activation of existing indices when switching back
 
 **Example Workflow:**
+
 ```bash
 # Index with BGE-M3 (~30s first time)
 /switch_embedding_model "BAAI/bge-m3"

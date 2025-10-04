@@ -183,6 +183,7 @@ This repository includes GitHub Actions integration for interactive Claude Code 
 **Workflow File**: `.github/workflows/claude.yml`
 
 **Trigger Events**:
+
 - Issue comments
 - Pull request review comments
 - Pull request reviews
@@ -203,6 +204,7 @@ This repository includes GitHub Actions integration for interactive Claude Code 
 ```
 
 **Setup Requirements**:
+
 - Add `ANTHROPIC_API_KEY` to repository secrets (Settings → Secrets and variables → Actions)
 - Workflow automatically triggers on @claude mentions
 - Claude Code responds with context-aware assistance
@@ -218,6 +220,7 @@ The `.claude/commands/` directory contains reusable workflow templates:
 These commands standardize common tasks and enforce project guidelines.
 
 **CI/CD Workflows** (complementary to interactive AI):
+
 - `branch-protection.yml` - Automated validation, testing, linting
 - `merge-development-to-main.yml` - Manual merge workflow with .gitattributes support
 - `docs-validation.yml` - Documentation quality checks

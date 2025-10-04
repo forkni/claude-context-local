@@ -12,8 +12,8 @@ REM Initialize validation state
 set VALIDATION_PASSED=1
 set ERROR_COUNT=0
 
-REM [1/8] Check if we're in a git repository
-echo [1/8] Checking git repository...
+REM [1/9] Check if we're in a git repository
+echo [1/9] Checking git repository...
 git rev-parse --git-dir >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo ✗ FAIL: Not in a git repository
@@ -24,8 +24,8 @@ if %ERRORLEVEL% NEQ 0 (
 )
 echo.
 
-REM [2/8] Check if main branch exists
-echo [2/8] Checking main branch exists...
+REM [2/9] Check if main branch exists
+echo [2/9] Checking main branch exists...
 git show-ref --verify --quiet refs/heads/main
 if %ERRORLEVEL% NEQ 0 (
     echo ✗ FAIL: main branch does not exist
@@ -36,8 +36,8 @@ if %ERRORLEVEL% NEQ 0 (
 )
 echo.
 
-REM [3/8] Check if development branch exists
-echo [3/8] Checking development branch exists...
+REM [3/9] Check if development branch exists
+echo [3/9] Checking development branch exists...
 git show-ref --verify --quiet refs/heads/development
 if %ERRORLEVEL% NEQ 0 (
     echo ✗ FAIL: development branch does not exist
@@ -48,8 +48,8 @@ if %ERRORLEVEL% NEQ 0 (
 )
 echo.
 
-REM [4/8] Check for uncommitted changes on current branch
-echo [4/8] Checking for uncommitted changes...
+REM [4/9] Check for uncommitted changes on current branch
+echo [4/9] Checking for uncommitted changes...
 git diff-index --quiet HEAD --
 if %ERRORLEVEL% NEQ 0 (
     echo ✗ FAIL: Uncommitted changes detected
@@ -64,8 +64,8 @@ if %ERRORLEVEL% NEQ 0 (
 )
 echo.
 
-REM [5/8] Check if .gitattributes exists
-echo [5/8] Checking .gitattributes exists...
+REM [5/9] Check if .gitattributes exists
+echo [5/9] Checking .gitattributes exists...
 if not exist ".gitattributes" (
     echo ✗ FAIL: .gitattributes file missing
     echo Please create .gitattributes with merge strategies
@@ -76,8 +76,8 @@ if not exist ".gitattributes" (
 )
 echo.
 
-REM [6/8] Check if merge.ours driver is configured
-echo [6/8] Checking merge.ours driver configuration...
+REM [6/9] Check if merge.ours driver is configured
+echo [6/9] Checking merge.ours driver configuration...
 git config --get merge.ours.driver >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo ✗ FAIL: merge.ours driver not configured
@@ -90,8 +90,8 @@ if %ERRORLEVEL% NEQ 0 (
 )
 echo.
 
-REM [7/8] Check if branches are up to date with remote
-echo [7/8] Checking remote sync status...
+REM [7/9] Check if branches are up to date with remote
+echo [7/9] Checking remote sync status...
 git fetch origin --quiet 2>nul
 if %ERRORLEVEL% NEQ 0 (
     echo ⚠ WARNING: Could not fetch from remote

@@ -104,6 +104,7 @@ commit_enhanced.bat "Your commit message"
 ```
 
 **Features:**
+
 - Automatically excludes local-only files
 - Code quality checks (lint validation)
 - Branch-specific validations (no tests/ on main)
@@ -118,6 +119,7 @@ scripts\git\check_lint.bat
 ```
 
 **Checks:**
+
 - Ruff linting (Python code style)
 - Black formatting (code consistency)
 - isort import sorting
@@ -129,6 +131,7 @@ scripts\git\fix_lint.bat
 ```
 
 **Fixes:**
+
 - Runs isort → black → ruff --fix
 - Verifies fixes with check_lint.bat
 
@@ -139,6 +142,7 @@ scripts\git\merge_with_validation.bat
 ```
 
 **Features:**
+
 - Pre-merge validation (via validate_branches.bat)
 - Creates backup tags before merge
 - Automatic conflict resolution for modify/delete conflicts
@@ -152,6 +156,7 @@ scripts\git\validate_branches.bat
 ```
 
 **Checks:**
+
 - Both branches exist
 - No uncommitted changes
 - .gitattributes exists
@@ -165,6 +170,7 @@ scripts\git\install_hooks.bat
 ```
 
 **Installs:**
+
 - Pre-commit hook from `.githooks/pre-commit`
 - Linting validation
 - Privacy protection checks
@@ -178,6 +184,7 @@ scripts\git\rollback_merge.bat
 ```
 
 **Options:**
+
 - Rollback to latest backup tag
 - Rollback to HEAD~1
 - Rollback to specific commit hash
@@ -190,6 +197,7 @@ scripts\git\cherry_pick_commits.bat
 ```
 
 **Features:**
+
 - Cherry-pick specific commits from development → main
 - Validates development-only file exclusions
 - Creates backup tags
@@ -202,6 +210,7 @@ scripts\git\merge_docs.bat
 ```
 
 **Features:**
+
 - Merges ONLY docs/ directory changes
 - Excludes development-only docs
 - Creates backup tags
@@ -677,6 +686,7 @@ Check `pyproject.toml` for the current version number.
 **Symptom**: Ruff fails to parse pyproject.toml with error about unknown field
 
 **Example Error**:
+
 ```
 unknown field `unsafe-fixes`, expected one of [allowed fields list]
 ```
@@ -684,6 +694,7 @@ unknown field `unsafe-fixes`, expected one of [allowed fields list]
 **Root Cause**: Invalid configuration field added to pyproject.toml (e.g., `unsafe-fixes = true`)
 
 **Solution**:
+
 1. Remove the invalid field from pyproject.toml
 2. Use `--unsafe-fixes` as CLI flag only: `ruff check . --fix --unsafe-fixes`
 3. Or enable in VSCode settings: `"ruff.codeAction.fixViolation.enable": true`
@@ -697,16 +708,19 @@ unknown field `unsafe-fixes`, expected one of [allowed fields list]
 **Symptom**: merge_with_validation.bat fails at backup tag creation
 
 **Example Error**:
+
 ```
 'wmic' is not recognized as an internal or external command
 fatal: 'pre-merge-backup-~0,8datetime:~8,6' is not a valid tag name
 ```
 
 **Root Cause**:
+
 - wmic deprecated in Windows 11
 - Not available in Git Bash environment
 
 **Solution**: Script has been updated to use PowerShell instead
+
 ```batch
 REM NEW (FIXED):
 for /f "usebackq" %%i in (`powershell -Command "Get-Date -Format 'yyyyMMdd_HHmmss'"`) do set datetime=%%i
@@ -721,6 +735,7 @@ for /f "usebackq" %%i in (`powershell -Command "Get-Date -Format 'yyyyMMdd_HHmms
 **Symptom**: GitHub Actions fails with unauthorized documentation message
 
 **Example Error**:
+
 ```
 ❌ ERROR: Unauthorized documentation files found on main branch:
 docs/VSCODE_SETUP.md
@@ -731,7 +746,9 @@ Only these 8 docs are allowed in main branch: [list]
 **Root Cause**: Development-only doc file merged to main branch (violates CI policy)
 
 **Solution**:
+
 1. Remove unauthorized doc from main:
+
    ```bash
    git checkout main
    git rm docs/VSCODE_SETUP.md
@@ -740,11 +757,13 @@ Only these 8 docs are allowed in main branch: [list]
    ```
 
 2. Add to .gitattributes if it's development-only:
+
    ```gitattributes
    docs/VSCODE_SETUP.md merge=ours
    ```
 
 **Prevention**:
+
 - validate_branches.bat now checks CI policy pre-merge ([9/9] check)
 - merge_with_validation.bat validates docs before completing merge ([6/7] check)
 
@@ -755,6 +774,7 @@ Only these 8 docs are allowed in main branch: [list]
 **Symptom**: Script reports conflicts but doesn't resolve them automatically
 
 **Example**:
+
 ```
 ⚠ Merge conflicts detected - analyzing...
 Found modify/delete conflicts for excluded files
@@ -764,7 +784,9 @@ Found modify/delete conflicts for excluded files
 **Root Cause**: Conflict resolution loop error handling issue in older script version
 
 **Solution**:
+
 1. Manual resolution:
+
    ```bash
    # For test files (exclude from main)
    git rm tests/fixtures/sample_code.py tests/integration/*.py tests/unit/*.py
@@ -789,10 +811,12 @@ Found modify/delete conflicts for excluded files
 ### Error: Missing --unsafe-fixes Flag
 
 **Symptom**:
+
 - Lint errors remain after running fix_lint.bat
 - Ruff reports "hidden fixes can be enabled with --unsafe-fixes"
 
 **Example**:
+
 ```
 144 hidden fixes can be enabled with the `--unsafe-fixes` option
 ```
@@ -800,6 +824,7 @@ Found modify/delete conflicts for excluded files
 **Root Cause**: fix_lint.bat missing --unsafe-fixes flag
 
 **Solution**: Script has been updated:
+
 ```batch
 REM NEW (FIXED):
 call .venv\Scripts\ruff.exe check . --fix --unsafe-fixes
@@ -816,22 +841,131 @@ call .venv\Scripts\ruff.exe check . --fix --unsafe-fixes
 **Root Cause**: File not listed in .gitattributes or git config missing
 
 **Solution**:
+
 1. Check .gitattributes contains the file:
+
    ```gitattributes
    docs/VSCODE_SETUP.md merge=ours
    tests/** merge=ours
    ```
 
 2. Verify git config:
+
    ```bash
    git config --get merge.ours.driver
    # Should return: true
    ```
 
 3. If not configured:
+
    ```bash
    git config --global merge.ours.driver true
    ```
+
+**Prevention**: validate_branches.bat checks merge.ours driver configuration ([6/9] check)
+
+---
+
+### Error: Committed to Wrong Branch
+
+**Symptom**: Accidentally committed changes to main instead of development branch
+
+**Example**:
+
+```bash
+$ git branch --show-current
+main
+# Expected: development
+```
+
+**Root Cause**: User didn't verify current branch before running commit script
+
+**Impact**:
+- Changes committed to wrong branch
+- Need to undo commit and re-commit to correct branch
+
+**Solution**:
+
+1. If commit not yet pushed, undo and recommit:
+
+   ```bash
+   # Undo commit on wrong branch (keep changes)
+   git reset --soft HEAD~1
+
+   # Switch to correct branch
+   git checkout development
+
+   # Re-commit with same message
+   git commit -m "Your commit message"
+   ```
+
+2. If already pushed to remote:
+
+   ```bash
+   # Revert the commit on wrong branch
+   git checkout main
+   git revert HEAD
+   git push origin main
+
+   # Cherry-pick to correct branch
+   git checkout development
+   git cherry-pick <commit-hash>
+   git push origin development
+   ```
+
+**Prevention**: commit_enhanced.bat now includes branch verification:
+- Shows current branch before commit
+- Requires user confirmation: "Is this the correct branch?"
+- Lists all available branches if user says no
+- Exits cleanly to allow branch switching
+
+---
+
+### Error: False "Merge Failed" Message
+
+**Symptom**: Script reports "Failed to complete merge commit" but merge actually succeeded
+
+**Example**:
+
+```
+✓ Auto-resolved modify/delete conflicts
+[6/7] Validating documentation files against CI policy...
+✓ Documentation validation passed
+[7/7] Completing merge commit...
+✗ Failed to complete merge commit    ← FALSE ERROR
+
+# But checking git log shows:
+$ git log -1
+commit 12649c2 (HEAD -> main)    ← Merge actually worked!
+Merge development into main
+```
+
+**Root Cause**: Script logic issue
+- Merge command at [4/7] creates commit when auto-resolution succeeds
+- Script tries to commit again at [7/7] using `git commit --no-edit`
+- Second commit fails with "nothing to commit" → false error message
+- Merge was already complete, error message is misleading
+
+**Impact**: Confusing output but no actual failure
+
+**Solution**: Script has been fixed with merge completion detection:
+
+```batch
+REM After auto-resolution, check if merge already complete
+git rev-parse -q --verify MERGE_HEAD >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo ✓ Merge commit automatically completed during auto-resolution
+    goto :merge_success
+)
+```
+
+**Prevention**:
+- Script now detects when merge commit already exists
+- Skips redundant commit attempt
+- Prevents false error messages
+- Goes directly to success message when merge complete
+
+---
 
 **Prevention**: validate_branches.bat checks merge.ours driver configuration ([6/9] check)
 
@@ -840,18 +974,21 @@ call .venv\Scripts\ruff.exe check . --fix --unsafe-fixes
 ### When to Run check_lint.bat vs fix_lint.bat
 
 **check_lint.bat** (Read-only validation):
+
 - Before committing changes
 - During code review
 - To check current code quality
 - **Does NOT modify files**
 
 **fix_lint.bat** (Auto-fix issues):
+
 - After making changes
 - When you want to clean up code
 - Before final commit
 - **Modifies files in place**
 
 **Recommended workflow**:
+
 ```batch
 # 1. Make your changes
 # 2. Auto-fix issues
@@ -870,22 +1007,26 @@ scripts\git\commit_enhanced.bat "fix: Your commit message"
 ### Understanding --unsafe-fixes
 
 **What it does**:
+
 - Enables comprehensive automatic code corrections
 - Fixes 90%+ of lint errors automatically
 - Includes transformations that change code semantics
 
 **How to use**:
+
 - ✅ **CLI flag**: `ruff check . --fix --unsafe-fixes`
 - ✅ **VSCode setting**: `"ruff.codeAction.fixViolation.enable": true`
 - ❌ **NOT a pyproject.toml field** - will cause parse errors
 
 **Examples of unsafe fixes**:
+
 - Removing unused imports
 - Converting generators to comprehensions
 - Removing unused variables
 - Simplifying boolean expressions
 
 **Safety**:
+
 - Always review changes with `git diff`
 - Run tests after auto-fixes
 - Unsafe != dangerous (just means "changes semantics")
@@ -895,6 +1036,7 @@ scripts\git\commit_enhanced.bat "fix: Your commit message"
 Some warnings are expected and can be safely ignored or committed:
 
 **B904: Exception handling without chaining**
+
 ```python
 # Ruff suggests this pattern:
 try:
@@ -915,6 +1057,7 @@ except ValueError:
 - **Fix**: Optional - add exception chaining if desired
 
 **Other safe-to-ignore warnings**:
+
 - E501 (line too long) - if breaking would harm readability
 - W293 (blank line with whitespace) - auto-fixed by black
 - Formatting warnings when using specialized formatting
@@ -933,24 +1076,28 @@ except ValueError:
 ### Lint Workflow Troubleshooting
 
 **Problem**: "Ruff not found"
+
 ```batch
 Solution: Activate virtual environment first
 call .venv\Scripts\activate.bat
 ```
 
 **Problem**: "Black would reformat X files"
+
 ```batch
 Solution: Let black reformat them
 .venv\Scripts\black.exe .
 ```
 
 **Problem**: "isort would reorder imports"
+
 ```batch
 Solution: Let isort fix them
 .venv\Scripts\isort.exe .
 ```
 
 **Problem**: Lint passes locally but fails in CI
+
 ```batch
 Possible causes:
 1. Different Python versions (CI uses 3.11)
