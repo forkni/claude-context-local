@@ -238,6 +238,7 @@ docs/*
 !docs/PYTORCH_COMPATIBILITY.md
 !docs/TESTING_GUIDE.md
 !docs/VSCODE_SETUP.md
+!docs/PRE_COMMIT_HOOKS.md
 
 # Development-only documentation (intermediate/technical/internal)
 docs/GIT_WORKFLOW.md
