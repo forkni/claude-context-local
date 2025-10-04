@@ -51,7 +51,7 @@ tests/
 │   ├── test_token_efficiency.py # Token efficiency evaluation
 │   └── test_tree_sitter.py   # Tree-sitter parsing
 ├── integration/              # Integration tests (22 files)
-│   ├── quick_auth_test.py    # Quick authentication test
+│   ├── check_auth.py         # Authentication checker script
 │   ├── run_hybrid_tests.py   # Hybrid search runner
 │   ├── test_auto_reindex.py  # Auto-reindexing functionality
 │   ├── test_complete_workflow.py # End-to-end workflow
