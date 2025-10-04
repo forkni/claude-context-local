@@ -1,7 +1,7 @@
 """Input validation utilities."""
 
 import re
-from typing import Any, List, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 class ValidationError(Exception):

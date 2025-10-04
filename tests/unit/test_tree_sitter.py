@@ -6,7 +6,8 @@ from unittest import TestCase
 
 import pytest
 
-from chunking.tree_sitter import JavaScriptChunker, PythonChunker, TreeSitterChunker
+from chunking.tree_sitter import (JavaScriptChunker, PythonChunker,
+                                  TreeSitterChunker)
 
 
 class TestPythonChunker(TestCase):

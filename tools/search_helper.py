@@ -12,12 +12,8 @@ from pathlib import Path
 # Add project root directory to path for module imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from mcp_server.server import (
-    find_similar_code,
-    get_index_status,
-    list_projects,
-    search_code,
-)
+from mcp_server.server import (find_similar_code, get_index_status,
+                               list_projects, search_code)
 
 
 class CodeSearchHelper:

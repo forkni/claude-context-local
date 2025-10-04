@@ -10,12 +10,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import tiktoken
 
-from .base_evaluator import (
-    BaseEvaluator,
-    EvaluationInstance,
-    RetrievalResult,
-    SearchMetrics,
-)
+from .base_evaluator import (BaseEvaluator, EvaluationInstance,
+                             RetrievalResult, SearchMetrics)
 
 
 @dataclass

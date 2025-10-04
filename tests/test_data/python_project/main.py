@@ -1,9 +1,10 @@
 """Main application entry point."""
 
 import logging
+
+from src.api.handlers import UserHandler
 from src.auth.authenticator import User, authenticate_user
 from src.database.connection import DatabaseConnection
-from src.api.handlers import UserHandler
 from src.utils.helpers import ConfigManager
 
 

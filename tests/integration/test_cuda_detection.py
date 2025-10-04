@@ -9,11 +9,9 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from tests.fixtures.installation_mocks import (
-    CUDA_VERSIONS,
-    MOCK_NVIDIA_SMI_OUTPUTS,
-    get_mock_environment,
-)
+from tests.fixtures.installation_mocks import (CUDA_VERSIONS,
+                                               MOCK_NVIDIA_SMI_OUTPUTS,
+                                               get_mock_environment)
 
 
 class TestCUDADetection:

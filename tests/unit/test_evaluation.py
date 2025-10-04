@@ -7,12 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
-from evaluation.base_evaluator import (
-    BaseEvaluator,
-    EvaluationInstance,
-    RetrievalResult,
-    SearchMetrics,
-)
+from evaluation.base_evaluator import (BaseEvaluator, EvaluationInstance,
+                                       RetrievalResult, SearchMetrics)
 from evaluation.semantic_evaluator import SemanticSearchEvaluator
 
 

@@ -564,9 +564,7 @@ def test_authentication_integration(mock_login_manager):
     def test_token_efficiency_calculation_accuracy(self):
         """Test accuracy of token efficiency calculations."""
         from evaluation.token_efficiency_evaluator import (
-            TokenCounter,
-            VanillaReadSimulator,
-        )
+            TokenCounter, VanillaReadSimulator)
 
         # Test token counting accuracy
         counter = TokenCounter()
@@ -626,16 +624,20 @@ def hello():
         except Exception as e:
             # Some exceptions are expected for invalid paths
             error_msg = str(e)
-            expected_errors = ["Index not built", "No such file", "Project directory not found"]
-            assert any(msg in error_msg for msg in expected_errors), f"Unexpected error: {error_msg}"
+            expected_errors = [
+                "Index not built",
+                "No such file",
+                "Project directory not found",
+            ]
+            assert any(msg in error_msg for msg in expected_errors), (
+                f"Unexpected error: {error_msg}"
+            )
 
     def test_output_file_generation(self):
         """Test that all expected output files are generated."""
         from evaluation.base_evaluator import SearchMetrics
         from evaluation.token_efficiency_evaluator import (
-            TokenEfficiencyMetrics,
-            TokenEfficiencyResult,
-        )
+            TokenEfficiencyMetrics, TokenEfficiencyResult)
 
         # Create mock results
         mock_result = TokenEfficiencyResult(
@@ -780,13 +782,12 @@ class TestTokenEfficiencyRegression:
         # For now, just verify that imports work correctly
 
         try:
-            from evaluation.base_evaluator import (
-                BaseEvaluator,
-                EvaluationInstance,
-                SearchMetrics,
-            )
+            from evaluation.base_evaluator import (BaseEvaluator,
+                                                   EvaluationInstance,
+                                                   SearchMetrics)
             from evaluation.semantic_evaluator import SemanticSearchEvaluator
-            from evaluation.token_efficiency_evaluator import TokenEfficiencyEvaluator
+            from evaluation.token_efficiency_evaluator import \
+                TokenEfficiencyEvaluator
 
             # All imports should work without errors
             assert True

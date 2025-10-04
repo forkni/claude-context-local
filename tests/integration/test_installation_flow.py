@@ -11,10 +11,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from tests.fixtures.installation_mocks import (
-    MockInstallationEnvironment,
-    get_mock_environment,
-)
+from tests.fixtures.installation_mocks import (MockInstallationEnvironment,
+                                               get_mock_environment)
 
 
 class TestCompleteInstallationFlow:

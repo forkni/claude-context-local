@@ -1,6 +1,7 @@
 """Tests for RRF (Reciprocal Rank Fusion) reranker."""
 
 import pytest
+
 from search.reranker import RRFReranker, SearchResult
 
 
@@ -14,7 +15,7 @@ class TestSearchResult:
             score=0.8,
             metadata={"type": "function"},
             source="bm25",
-            rank=1
+            rank=1,
         )
 
         assert result.doc_id == "doc1"
@@ -25,11 +26,7 @@ class TestSearchResult:
 
     def test_search_result_defaults(self):
         """Test SearchResult default values."""
-        result = SearchResult(
-            doc_id="doc1",
-            score=0.8,
-            metadata={}
-        )
+        result = SearchResult(doc_id="doc1", score=0.8, metadata={})
 
         assert result.source == "unknown"
         assert result.rank == 0
@@ -73,9 +70,7 @@ class TestRRFReranker:
     def test_single_list_reranking(self):
         """Test reranking with a single result list."""
         results = self.reranker.rerank(
-            [self.bm25_results],
-            weights=[1.0],
-            max_results=10
+            [self.bm25_results], weights=[1.0], max_results=10
         )
 
         assert len(results) == len(self.bm25_results)
@@ -88,9 +83,7 @@ class TestRRFReranker:
     def test_multiple_lists_reranking(self):
         """Test reranking with multiple result lists."""
         results = self.reranker.rerank(
-            [self.bm25_results, self.dense_results],
-            weights=[0.6, 0.4],
-            max_results=10
+            [self.bm25_results, self.dense_results], weights=[0.6, 0.4], max_results=10
         )
 
         # Should get unique documents
@@ -111,13 +104,13 @@ class TestRRFReranker:
         results1 = self.reranker.rerank(
             [self.bm25_results, self.dense_results],
             weights=[2.0, 2.0],  # Should be normalized to [0.5, 0.5]
-            max_results=10
+            max_results=10,
         )
 
         results2 = self.reranker.rerank(
             [self.bm25_results, self.dense_results],
             weights=[1.0, 1.0],  # Already normalized
-            max_results=10
+            max_results=10,
         )
 
         # Results should be the same (within floating point precision)
@@ -129,8 +122,7 @@ class TestRRFReranker:
     def test_max_results_limiting(self):
         """Test that max_results parameter works."""
         results = self.reranker.rerank(
-            [self.bm25_results, self.dense_results],
-            max_results=2
+            [self.bm25_results, self.dense_results], max_results=2
         )
 
         assert len(results) <= 2
@@ -138,8 +130,7 @@ class TestRRFReranker:
     def test_document_overlap_handling(self):
         """Test handling of documents that appear in multiple lists."""
         results = self.reranker.rerank(
-            [self.bm25_results, self.dense_results],
-            max_results=10
+            [self.bm25_results, self.dense_results], max_results=10
         )
 
         # doc1 and doc2 appear in both lists
@@ -175,7 +166,7 @@ class TestRRFReranker:
             dense_results=dense_tuples,
             max_results=10,
             bm25_weight=0.4,
-            dense_weight=0.6
+            dense_weight=0.6,
         )
 
         assert isinstance(results, list)
@@ -189,9 +180,7 @@ class TestRRFReranker:
         list2 = [SearchResult("doc1", 0.5, {}, "list2", 1)]
 
         results = self.reranker.rerank(
-            [list1, list2],
-            weights=[0.5, 0.5],
-            max_results=1
+            [list1, list2], weights=[0.5, 0.5], max_results=1
         )
 
         # RRF score should be: 0.5 * (1/(100+1)) + 0.5 * (1/(100+1))
@@ -203,8 +192,7 @@ class TestRRFReranker:
     def test_analyze_fusion_quality(self):
         """Test fusion quality analysis."""
         results = self.reranker.rerank(
-            [self.bm25_results, self.dense_results],
-            max_results=10
+            [self.bm25_results, self.dense_results], max_results=10
         )
 
         analysis = self.reranker.analyze_fusion_quality(results)
@@ -236,7 +224,7 @@ class TestRRFReranker:
         tuning_result = self.reranker.tune_parameters(
             results_lists,
             k_values=[50, 100],
-            weight_combinations=[[0.5, 0.5], [0.7, 0.3]]
+            weight_combinations=[[0.5, 0.5], [0.7, 0.3]],
         )
 
         assert "best_params" in tuning_result
@@ -245,7 +233,9 @@ class TestRRFReranker:
 
         assert "k" in tuning_result["best_params"]
         assert "weights" in tuning_result["best_params"]
-        assert tuning_result["tested_configurations"] == 4  # 2 k_values * 2 weight combinations
+        assert (
+            tuning_result["tested_configurations"] == 4
+        )  # 2 k_values * 2 weight combinations
 
     def test_different_k_values(self):
         """Test reranking with different k values."""
@@ -253,13 +243,11 @@ class TestRRFReranker:
         reranker_high_k = RRFReranker(k=1000)  # Very high k
 
         results_low = reranker_low_k.rerank(
-            [self.bm25_results, self.dense_results],
-            max_results=10
+            [self.bm25_results, self.dense_results], max_results=10
         )
 
         results_high = reranker_high_k.rerank(
-            [self.bm25_results, self.dense_results],
-            max_results=10
+            [self.bm25_results, self.dense_results], max_results=10
         )
 
         # Different k values should produce different RRF scores
@@ -272,17 +260,18 @@ class TestRRFReranker:
 
         # The test should just verify that reranking works with different k values
         # The exact score differences may be very small, so just check that reranking completed
-        assert all(isinstance(score, (int, float)) for score in low_scores), "Low scores should be numeric"
-        assert all(isinstance(score, (int, float)) for score in high_scores), "High scores should be numeric"
+        assert all(isinstance(score, (int, float)) for score in low_scores), (
+            "Low scores should be numeric"
+        )
+        assert all(isinstance(score, (int, float)) for score in high_scores), (
+            "High scores should be numeric"
+        )
 
     def test_edge_case_single_document(self):
         """Test with single document in results."""
         single_result = [SearchResult("doc1", 1.0, {}, "source1")]
 
-        results = self.reranker.rerank(
-            [single_result],
-            max_results=10
-        )
+        results = self.reranker.rerank([single_result], max_results=10)
 
         assert len(results) == 1
         assert results[0].doc_id == "doc1"
@@ -307,16 +296,14 @@ class TestRRFReranker:
             self.reranker.rerank(
                 [self.bm25_results, self.dense_results],
                 weights=[0.5],  # Only one weight for two lists
-                max_results=10
+                max_results=10,
             )
 
     def test_zero_weights_handling(self):
         """Test handling of zero weights."""
         # All weights zero
         results = self.reranker.rerank(
-            [self.bm25_results, self.dense_results],
-            weights=[0.0, 0.0],
-            max_results=10
+            [self.bm25_results, self.dense_results], weights=[0.0, 0.0], max_results=10
         )
 
         # Should default to equal weights
@@ -334,8 +321,8 @@ class TestRRFReranker:
         std_dev = analysis["rrf_score_std"]
 
         # Manual calculation: scores = [0.1, 0.2, 0.3], mean = 0.2
-        expected_std = ((0.1 - 0.2)**2 + (0.2 - 0.2)**2 + (0.3 - 0.2)**2) / 3
-        expected_std = expected_std ** 0.5
+        expected_std = ((0.1 - 0.2) ** 2 + (0.2 - 0.2) ** 2 + (0.3 - 0.2) ** 2) / 3
+        expected_std = expected_std**0.5
 
         assert abs(std_dev - expected_std) < 1e-6
 
@@ -345,19 +332,16 @@ class TestRRFReranker:
 
         # Create larger result lists
         large_list1 = [
-            SearchResult(f"doc{i}", 1.0 - i*0.01, {}, "source1", i+1)
+            SearchResult(f"doc{i}", 1.0 - i * 0.01, {}, "source1", i + 1)
             for i in range(100)
         ]
         large_list2 = [
-            SearchResult(f"doc{i}", 0.9 - i*0.01, {}, "source2", i+1)
+            SearchResult(f"doc{i}", 0.9 - i * 0.01, {}, "source2", i + 1)
             for i in range(50, 150)
         ]
 
         start_time = time.time()
-        results = self.reranker.rerank(
-            [large_list1, large_list2],
-            max_results=50
-        )
+        results = self.reranker.rerank([large_list1, large_list2], max_results=50)
         end_time = time.time()
 
         # Should complete reasonably quickly (less than 1 second)

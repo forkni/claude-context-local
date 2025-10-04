@@ -1,9 +1,9 @@
 """Database connection and management utilities."""
 
-import sqlite3
 import logging
+import sqlite3
 from contextlib import contextmanager
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict, List, Optional
 
 
 class DatabaseError(Exception):

@@ -6,14 +6,13 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from evaluation.base_evaluator import EvaluationInstance, RetrievalResult, SearchMetrics
-from evaluation.token_efficiency_evaluator import (
-    TokenCounter,
-    TokenEfficiencyEvaluator,
-    TokenEfficiencyMetrics,
-    TokenEfficiencyResult,
-    VanillaReadSimulator,
-)
+from evaluation.base_evaluator import (EvaluationInstance, RetrievalResult,
+                                       SearchMetrics)
+from evaluation.token_efficiency_evaluator import (TokenCounter,
+                                                   TokenEfficiencyEvaluator,
+                                                   TokenEfficiencyMetrics,
+                                                   TokenEfficiencyResult,
+                                                   VanillaReadSimulator)
 
 
 class TestTokenCounter:

@@ -11,10 +11,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from tests.fixtures.installation_mocks import (
-    MOCK_NVIDIA_SMI_OUTPUTS,
-    MockInstallationEnvironment,
-)
+from tests.fixtures.installation_mocks import (MOCK_NVIDIA_SMI_OUTPUTS,
+                                               MockInstallationEnvironment)
 
 
 class TestSystemDetection:
@@ -95,6 +93,7 @@ class TestCUDADetection:
         actual_output = None
         try:
             import subprocess
+
             result = subprocess.run(["nvidia-smi"], capture_output=True, text=True)
             if result.returncode == 0:
                 actual_output = result.stdout

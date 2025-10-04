@@ -206,7 +206,9 @@ class TestBM25Index:
                 # (BM25 index may add additional fields like 'content')
                 for key, value in expected.items():
                     assert key in meta, f"Expected key '{key}' not found in metadata"
-                    assert meta[key] == value, f"Metadata mismatch for '{key}': {meta[key]} != {value}"
+                    assert meta[key] == value, (
+                        f"Metadata mismatch for '{key}': {meta[key]} != {value}"
+                    )
 
     def test_index_statistics(self):
         """Test index statistics."""

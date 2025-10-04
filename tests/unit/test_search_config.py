@@ -1,9 +1,8 @@
 """Tests for search configuration system."""
 
-import os
 import json
+import os
 import tempfile
-import pytest
 from unittest.mock import patch
 
 from search.config import SearchConfig, SearchConfigManager, get_search_config
@@ -28,15 +27,15 @@ class TestSearchConfig:
         config_dict = config.to_dict()
 
         assert isinstance(config_dict, dict)
-        assert config_dict['default_search_mode'] == "hybrid"
-        assert config_dict['enable_hybrid_search'] is True
+        assert config_dict["default_search_mode"] == "hybrid"
+        assert config_dict["enable_hybrid_search"] is True
 
     def test_from_dict_creation(self):
         """Test creation from dictionary."""
         data = {
             "default_search_mode": "semantic",
             "bm25_weight": 0.3,
-            "dense_weight": 0.7
+            "dense_weight": 0.7,
         }
 
         config = SearchConfig.from_dict(data)
@@ -68,10 +67,10 @@ class TestSearchConfigManager:
         test_config = {
             "default_search_mode": "bm25",
             "bm25_weight": 0.5,
-            "enable_hybrid_search": False
+            "enable_hybrid_search": False,
         }
 
-        with open(self.config_file, 'w') as f:
+        with open(self.config_file, "w") as f:
             json.dump(test_config, f)
 
         # Load config
@@ -84,11 +83,14 @@ class TestSearchConfigManager:
 
     def test_environment_overrides(self):
         """Test environment variable overrides."""
-        with patch.dict(os.environ, {
-            'CLAUDE_SEARCH_MODE': 'semantic',
-            'CLAUDE_ENABLE_HYBRID': 'false',
-            'CLAUDE_BM25_WEIGHT': '0.8'
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "CLAUDE_SEARCH_MODE": "semantic",
+                "CLAUDE_ENABLE_HYBRID": "false",
+                "CLAUDE_BM25_WEIGHT": "0.8",
+            },
+        ):
             manager = SearchConfigManager(self.config_file)
             config = manager.load_config()
 
@@ -109,17 +111,17 @@ class TestSearchConfigManager:
         assert os.path.exists(self.config_file)
 
         # Verify content
-        with open(self.config_file, 'r') as f:
+        with open(self.config_file, "r") as f:
             saved_data = json.load(f)
 
-        assert saved_data['default_search_mode'] == "bm25"
-        assert saved_data['bm25_weight'] == 0.7
+        assert saved_data["default_search_mode"] == "bm25"
+        assert saved_data["bm25_weight"] == 0.7
 
     def test_auto_mode_detection(self):
         """Test automatic search mode detection."""
         # Create config with auto mode
         test_config = {"default_search_mode": "auto"}
-        with open(self.config_file, 'w') as f:
+        with open(self.config_file, "w") as f:
             json.dump(test_config, f)
 
         manager = SearchConfigManager(self.config_file)
@@ -140,17 +142,21 @@ class TestSearchConfigManager:
         """Test explicit mode override."""
         # Create config with auto mode
         test_config = {"default_search_mode": "auto"}
-        with open(self.config_file, 'w') as f:
+        with open(self.config_file, "w") as f:
             json.dump(test_config, f)
 
         manager = SearchConfigManager(self.config_file)
 
         # Explicit mode should override auto-detection
-        mode = manager.get_search_mode_for_query("find error message", explicit_mode="semantic")
+        mode = manager.get_search_mode_for_query(
+            "find error message", explicit_mode="semantic"
+        )
         assert mode == "semantic"
 
         # Auto mode should fall back to detection
-        mode = manager.get_search_mode_for_query("find error message", explicit_mode="auto")
+        mode = manager.get_search_mode_for_query(
+            "find error message", explicit_mode="auto"
+        )
         assert mode == "bm25"
 
 
@@ -163,7 +169,10 @@ class TestDefaultConfigPath:
         mgr = SearchConfigManager()
 
         # Should use .claude_code_search, not .claude-context-mcp
-        assert ".claude_code_search" in mgr.config_file or "search_config.json" in mgr.config_file
+        assert (
+            ".claude_code_search" in mgr.config_file
+            or "search_config.json" in mgr.config_file
+        )
         assert ".claude-context-mcp" not in mgr.config_file
 
     def test_config_path_fallback_order(self):
@@ -175,8 +184,8 @@ class TestDefaultConfigPath:
 
             try:
                 # Reset global config manager to ensure clean state
-                from search.config import get_config_manager
                 import search.config as config_module
+
                 config_module._config_manager = None
 
                 # No config files exist - should return first candidate
@@ -198,6 +207,7 @@ class TestDefaultConfigPath:
                 os.chdir(original_dir)
                 # Reset global state
                 import search.config as config_module
+
                 config_module._config_manager = None
 
     def test_config_persistence_to_storage_location(self):
@@ -235,7 +245,7 @@ def test_global_config_functions():
     assert isinstance(config, SearchConfig)
 
     # Test helper functions
-    from search.config import is_hybrid_search_enabled, get_default_search_mode
+    from search.config import get_default_search_mode, is_hybrid_search_enabled
 
     assert isinstance(is_hybrid_search_enabled(), bool)
     assert get_default_search_mode() in ["hybrid", "semantic", "bm25", "auto"]
