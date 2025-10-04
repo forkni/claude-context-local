@@ -400,15 +400,6 @@ run_benchmarks.bat
 Results are saved to `benchmark_results/` directory (gitignored for privacy).
 See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for detailed performance metrics.
 
-**Via Interactive Menu:**
-
-```bash
-start_mcp_server.bat
-# Navigate: Advanced Options (6) → Run Unit/Integration/Regression Tests
-```
-
-📚 **Detailed testing documentation**: [View Test Suite Guide](tests/README.md)
-
 ## Search Modes & Performance
 
 ### Available Search Modes
@@ -499,7 +490,6 @@ claude-context-local/
 │       └── merge-development-to-main.yml # Manual merge workflow
 ├── docs/
 │   ├── BENCHMARKS.md                 # Performance benchmarks
-│   ├── GIT_WORKFLOW.md               # Git workflow documentation (single source of truth)
 │   ├── HYBRID_SEARCH_CONFIGURATION_GUIDE.md # Search configuration
 │   ├── INSTALLATION_GUIDE.md         # Installation instructions
 │   └── claude_code_config.md         # Claude Code integration
