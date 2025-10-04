@@ -409,7 +409,6 @@ start_mcp_server.bat
 
 📚 **Detailed testing documentation**: [View Test Suite Guide](tests/README.md)
 
->>>>>>> development
 ## Search Modes & Performance
 
 ### Available Search Modes
