@@ -8,7 +8,16 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+from huggingface_hub import HfFolder
 
+
+def _has_hf_token():
+    """Check if HuggingFace token is available."""
+    return HfFolder.get_token() is not None
+
+
+@pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
 def test_basic_authentication():
     """Test basic Hugging Face authentication."""
     print("🔐 Testing Hugging Face Authentication...")
@@ -72,6 +81,7 @@ def test_model_info_access():
         return False
 
 
+@pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
 def test_sentence_transformers_loading():
     """Test loading the model with SentenceTransformers."""
     print("\n[TEST] Testing SentenceTransformers Model Loading...")
@@ -111,6 +121,7 @@ def test_sentence_transformers_loading():
         return None
 
 
+@pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
 def test_model_encoding(model=None):
     """Test model encoding functionality."""
     print("\n[TEST] Testing Model Encoding...")
@@ -201,6 +212,7 @@ def check_cache_status():
         return False
 
 
+@pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
 def test_embedder_integration():
     """Test integration with project's embedder."""
     print("\n[TEST] Testing Project Embedder Integration...")
