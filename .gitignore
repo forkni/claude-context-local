@@ -235,7 +235,6 @@ pytest.ini
 docs/*
 !docs/BENCHMARKS.md
 !docs/claude_code_config.md
-!docs/GIT_WORKFLOW.md
 !docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md
 !docs/INSTALLATION_GUIDE.md
 !docs/MCP_TOOLS_REFERENCE.md
@@ -243,7 +242,8 @@ docs/*
 !docs/PYTORCH_COMPATIBILITY.md
 !docs/TESTING_GUIDE.md
 
-# Development-only documentation (intermediate/technical)
+# Development-only documentation (intermediate/technical/internal)
+docs/GIT_WORKFLOW.md
 docs/GIT_WORKFLOW_CRITICAL_REVIEW.md
 docs/GIT_WORKFLOW_ENHANCEMENT_PLAN.md
 docs/GPU_MEMORY_LEAK_FIX.md

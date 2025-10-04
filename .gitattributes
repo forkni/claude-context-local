@@ -45,6 +45,7 @@ tests/** merge=ours
 pytest.ini merge=ours
 
 # Development-only documentation (implementation details) - OVERRIDES *.md pattern
+docs/GIT_WORKFLOW.md merge=ours
 docs/TESTING_GUIDE.md merge=ours
 docs/GPU_MEMORY_LEAK_FIX.md merge=ours
 docs/PER_MODEL_INDICES_IMPLEMENTATION.md merge=ours

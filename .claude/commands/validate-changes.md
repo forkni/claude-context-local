@@ -86,7 +86,7 @@ if [ "$CURRENT_BRANCH" = "main" ]; then
   fi
 
   # Check for development-only docs
-  DEV_DOCS="TESTING_GUIDE.md|GPU_MEMORY_LEAK_FIX.md|PER_MODEL_INDICES_IMPLEMENTATION.md|GIT_WORKFLOW_CRITICAL_REVIEW.md|GIT_WORKFLOW_ENHANCEMENT_PLAN.md"
+  DEV_DOCS="GIT_WORKFLOW.md|TESTING_GUIDE.md|GPU_MEMORY_LEAK_FIX.md|PER_MODEL_INDICES_IMPLEMENTATION.md|GIT_WORKFLOW_CRITICAL_REVIEW.md|GIT_WORKFLOW_ENHANCEMENT_PLAN.md"
   if git diff --cached --name-only | grep -E "docs/($DEV_DOCS)"; then
     echo "❌ ERROR: Development-only docs staged on main branch"
     echo "   These docs should remain on development branch only"
