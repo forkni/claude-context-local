@@ -5,6 +5,62 @@ All notable changes to the Claude Context Local (MCP) semantic code search syste
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2025-10-03
+
+### Added
+
+- **Git Workflow Automation System** (10 scripts total)
+  - `.gitattributes` with merge strategies (ours, union, diff3) for dual-branch workflow
+  - Phase 1 Core Scripts: `merge_with_validation.bat`, `validate_branches.bat`, `sync_status.bat`, `rollback_merge.bat`
+  - Phase 2 Helper Scripts: `merge_docs.bat`, `cherry_pick_commits.bat`, `commit_enhanced.bat`
+  - Test utilities: `test_merge_behavior.bat`
+  - Automated branch synchronization with .gitattributes support
+  - Pre-merge validation and rollback capabilities
+
+- **GitHub Actions Workflows** (4 workflows)
+  - `branch-protection.yml` - Automated CI/CD validation, testing, linting on every push
+  - `merge-development-to-main.yml` - Manual merge workflow with .gitattributes support
+  - `docs-validation.yml` - Documentation quality checks (markdown lint, link checking, spelling)
+  - `claude.yml` - Interactive @claude mentions in GitHub issues/PRs (OAuth-based authentication)
+
+- **Claude Code GitHub Integration**
+  - Custom command templates in `.claude/commands/` directory
+  - `create-pr.md` - Automated PR creation with clean, professional formatting
+  - `run-merge.md` - Guided merge workflow with validation and rollback support
+  - `validate-changes.md` - Pre-commit validation checklist (blocks local-only files, validates conventional commits)
+  - Interactive AI assistance via @claude mentions in GitHub issues and pull requests
+
+- **Per-Model Index Storage** (0.4.0 major feature)
+  - Instant model switching (<150ms) with 98% time reduction (50-90s → <1s)
+  - Dimension-based storage isolation (768d for Gemma, 1024d for BGE-M3)
+  - Independent Merkle snapshots per model dimension
+  - Zero re-indexing overhead when switching back to previously used models
+  - Storage format: `{project}_{hash}_{dimension}d/` directories
+
+- **Enhanced MCP Configuration**
+  - Python-based manual configuration fallback for improved reliability
+  - Automatic detection and handling of Claude CLI failures
+  - Path verification and validation system
+  - Cross-directory compatibility with wrapper scripts
+
+### Changed
+
+- **Documentation Structure**: `docs/GIT_WORKFLOW.md` moved to development-only (internal workflow guide)
+- **Configuration Scripts**: Migrated from PowerShell to Python for better cross-platform reliability
+- **MCP Server Setup**: Added automatic fallback mechanisms when Claude CLI fails
+- **README.md**: Updated architecture section with Git scripts and GitHub Actions workflows
+- **Installation Guide**: Added GitHub Actions integration section
+- **Development-Only File Protection**: Expanded .gitignore and .gitattributes rules
+
+### Fixed
+
+- **Batch File Escaping**: Fixed parentheses escaping in sync_status.bat echo statements
+- **MCP Configuration**: Enhanced path validation and error handling
+- **Branch Synchronization**: Improved status reporting in sync_status.bat
+- **Variable Initialization**: Fixed variable scoping issues in batch scripts
+
+---
+
 ## [0.3.0] - 2025-09-29
 
 ### Added
@@ -135,6 +191,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **v0.4.0** - Git automation, GitHub Actions, instant model switching (2025-10-03)
 - **v0.3.0** - Documentation accuracy & workflow consolidation (2025-09-29)
 - **v0.2.0** - Auto-tuning parameter optimization (2025-09-28)
 - **v0.1.0** - Initial release with hybrid search (2025-01-27)
