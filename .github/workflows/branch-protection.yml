@@ -1,4 +1,3 @@
-# .github/workflows/branch-protection.yml
 name: Branch Protection
 
 on:

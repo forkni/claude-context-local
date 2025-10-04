@@ -1,0 +1,14 @@
+# Typos spell-checker configuration
+# See: https://github.com/crate-ci/typos
+
+[default]
+extend-ignore-re = [
+    # GLSL shader file extensions (OpenGL Shading Language)
+    '\\.tese',  # Tessellation evaluation shader
+    '\\.tesc',  # Tessellation control shader
+]
+
+[default.extend-words]
+# Technical terms and valid words that typos flags as errors
+tese = "tese"  # GLSL tessellation evaluation shader extension
+tesc = "tesc"  # GLSL tessellation control shader extension

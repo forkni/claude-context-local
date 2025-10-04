@@ -269,9 +269,11 @@ class CodeEmbedder:
             "complexity_score": chunk.complexity_score,
             "tags": chunk.tags,
             "content": chunk.content,  # Full content for accurate token counting
-            "content_preview": chunk.content[:200] + "..."
-            if len(chunk.content) > 200
-            else chunk.content,
+            "content_preview": (
+                chunk.content[:200] + "..."
+                if len(chunk.content) > 200
+                else chunk.content
+            ),
         }
 
         return EmbeddingResult(
@@ -329,9 +331,11 @@ class CodeEmbedder:
                     "complexity_score": chunk.complexity_score,
                     "tags": chunk.tags,
                     "content": chunk.content,  # Full content for accurate token counting
-                    "content_preview": chunk.content[:200] + "..."
-                    if len(chunk.content) > 200
-                    else chunk.content,
+                    "content_preview": (
+                        chunk.content[:200] + "..."
+                        if len(chunk.content) > 200
+                        else chunk.content
+                    ),
                 }
 
                 results.append(
@@ -414,7 +418,7 @@ class CodeEmbedder:
         """Ensure cleanup when object is destroyed."""
         try:
             self.cleanup()
-        except:
+        except Exception:
             pass
 
     def _is_model_cached(self) -> bool:

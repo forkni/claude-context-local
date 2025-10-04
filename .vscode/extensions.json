@@ -1,0 +1,31 @@
+{
+  "recommendations": [
+    // Python development
+    "charliermarsh.ruff",                    // Ruff linter and formatter
+    "ms-python.python",                      // Python language support
+    "ms-python.vscode-pylance",              // Python language server
+
+    // GLSL shader development
+    "slevesque.shader",                      // GLSL syntax highlighting
+    "dtoplak.vscode-glsllint",               // GLSL linting
+
+    // Git and version control
+    "eamodio.gitlens",                       // Enhanced Git features
+
+    // Markdown
+    "yzhang.markdown-all-in-one",            // Markdown tools
+    "DavidAnson.vscode-markdownlint",        // Markdown linting
+
+    // Code quality
+    "usernamehw.errorlens",                  // Inline error highlighting
+
+    // Utilities
+    "ms-vscode.live-server",                 // Live preview
+    "shd101wyy.markdown-preview-enhanced"    // Enhanced Markdown preview
+  ],
+  "unwantedRecommendations": [
+    "ms-python.black-formatter",             // Using Ruff instead
+    "ms-python.isort",                       // Using Ruff instead
+    "ms-python.flake8"                       // Using Ruff instead
+  ]
+}

@@ -488,9 +488,11 @@ class CodeIndexManager:
                     "embedding_dimension": self.embedder.get_model_info()[
                         "embedding_dimension"
                     ],
-                    "created_at": str(self.index_path.stat().st_mtime)
-                    if self.index_path.exists()
-                    else None,
+                    "created_at": (
+                        str(self.index_path.stat().st_mtime)
+                        if self.index_path.exists()
+                        else None
+                    ),
                 }
                 with open(model_info_path, "w") as f:
                     json.dump(model_info, f, indent=2)
@@ -625,7 +627,7 @@ class CodeIndexManager:
         available = get_available_memory()
 
         # Estimate memory needed for new vectors
-        estimated = estimate_index_memory_usage(num_new_vectors, dimension)
+        estimate_index_memory_usage(num_new_vectors, dimension)
 
         # Check current index size
         current_size = self.get_index_size()
@@ -653,9 +655,9 @@ class CodeIndexManager:
             "total_vectors_after": total_vectors_after,
             "prefer_gpu": prefer_gpu,
             "sufficient_memory": target_memory >= required_memory,
-            "memory_utilization": required_memory / target_memory
-            if target_memory > 0
-            else float("inf"),
+            "memory_utilization": (
+                required_memory / target_memory if target_memory > 0 else float("inf")
+            ),
         }
 
         # Log warning if memory is tight

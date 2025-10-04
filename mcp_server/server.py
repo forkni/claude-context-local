@@ -14,18 +14,20 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Get the project root directory (where the MCP server is installed)
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
+# Import project modules (after sys.path modification)
+from chunking.multi_language_chunker import MultiLanguageChunker  # noqa: E402
+from embeddings.embedder import CodeEmbedder  # noqa: E402
+from search.config import get_config_manager, get_search_config  # noqa: E402
+from search.hybrid_searcher import HybridSearcher  # noqa: E402
+from search.indexer import CodeIndexManager  # noqa: E402
+from search.searcher import IntelligentSearcher  # noqa: E402
+
+# Check for FastMCP after project imports
 try:
     from mcp.server.fastmcp import FastMCP
 except ImportError:
     print("FastMCP not found. Install with: uv add mcp fastmcp")
     sys.exit(1)
-
-from chunking.multi_language_chunker import MultiLanguageChunker
-from embeddings.embedder import CodeEmbedder
-from search.config import get_config_manager, get_search_config
-from search.hybrid_searcher import HybridSearcher
-from search.indexer import CodeIndexManager
-from search.searcher import IntelligentSearcher
 
 # Initialize logging - check for debug mode from environment
 debug_mode = os.getenv("MCP_DEBUG", "").lower() in ("1", "true", "yes")
@@ -930,14 +932,20 @@ def clear_index() -> str:
 
         # Also clear Merkle snapshot to prevent "No changes detected" issues
         from merkle.snapshot_manager import SnapshotManager
+
         snapshot_manager = SnapshotManager()
         try:
             snapshot_manager.delete_snapshot(_current_project)
             logger.info(f"Merkle snapshot deleted for {_current_project}")
         except Exception as snapshot_error:
-            logger.warning(f"Failed to delete snapshot (non-critical): {snapshot_error}")
+            logger.warning(
+                f"Failed to delete snapshot (non-critical): {snapshot_error}"
+            )
 
-        response = {"success": True, "message": "Search index and snapshot cleared successfully"}
+        response = {
+            "success": True,
+            "message": "Search index and snapshot cleared successfully",
+        }
 
         logger.info("Search index cleared")
         return json.dumps(response, indent=2)
@@ -1054,9 +1062,9 @@ def get_memory_status() -> str:
         embedder = get_embedder()
         model_status = {
             "model_loaded": embedder._model is not None,
-            "model_device": str(embedder.device)
-            if hasattr(embedder, "device")
-            else "unknown",
+            "model_device": (
+                str(embedder.device) if hasattr(embedder, "device") else "unknown"
+            ),
         }
 
         # Format memory sizes for readability
@@ -1077,15 +1085,19 @@ def get_memory_status() -> str:
                 "available": format_bytes(available["system_available"]),
                 "utilization": f"{(1 - available['system_available'] / available['system_total']) * 100:.1f}%",
             },
-            "gpu_memory": {
-                "total": format_bytes(available["gpu_total"]),
-                "available": format_bytes(available["gpu_available"]),
-                "utilization": f"{(1 - available['gpu_available'] / available['gpu_total']) * 100:.1f}%"
+            "gpu_memory": (
+                {
+                    "total": format_bytes(available["gpu_total"]),
+                    "available": format_bytes(available["gpu_available"]),
+                    "utilization": (
+                        f"{(1 - available['gpu_available'] / available['gpu_total']) * 100:.1f}%"
+                        if available["gpu_total"] > 0
+                        else "N/A"
+                    ),
+                }
                 if available["gpu_total"] > 0
-                else "N/A",
-            }
-            if available["gpu_total"] > 0
-            else None,
+                else None
+            ),
             "index_status": {
                 "size": memory_status["current_index_size"],
                 "gpu_enabled": memory_status["is_gpu_enabled"],

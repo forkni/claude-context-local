@@ -75,9 +75,9 @@ class RRFReranker:
         # Calculate RRF scores for each document
         rrf_scores: Dict[str, float] = {}
         doc_results: Dict[str, SearchResult] = {}
-        list_appearances: Dict[
-            str, List[int]
-        ] = {}  # Track which lists contain each doc
+        list_appearances: Dict[str, List[int]] = (
+            {}
+        )  # Track which lists contain each doc
 
         for list_idx, (results, weight) in enumerate(zip(results_lists, weights)):
             for rank, result in enumerate(results, 1):  # Rank starts from 1

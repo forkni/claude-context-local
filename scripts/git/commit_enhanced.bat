@@ -125,8 +125,42 @@ if "!CURRENT_BRANCH!" == "main" (
 echo ✓ Staged files validated
 echo.
 
-REM [4/6] Show staged changes
-echo [4/6] Staged changes:
+REM [4/7] Code quality check
+echo [4/7] Checking code quality...
+call scripts\git\check_lint.bat >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo ⚠ Lint errors detected
+    echo.
+    set /p FIX_LINT="Auto-fix lint issues? (yes/no): "
+    if /i "!FIX_LINT!" == "yes" (
+        echo.
+        call scripts\git\fix_lint.bat
+        if %ERRORLEVEL% NEQ 0 (
+            echo.
+            echo ✗ Some issues could not be fixed automatically
+            echo Please fix manually and run this script again
+            exit /b 1
+        )
+        echo.
+        echo Restaging fixed files...
+        git add .
+        echo ✓ Fixed files staged
+    ) else (
+        echo.
+        echo To see lint errors, run: scripts\git\check_lint.bat
+        set /p CONTINUE_ANYWAY="Continue commit with lint errors? (yes/no): "
+        if /i not "!CONTINUE_ANYWAY!" == "yes" (
+            echo Commit cancelled - fix lint errors first
+            exit /b 1
+        )
+    )
+) else (
+    echo ✓ Code quality checks passed
+)
+echo.
+
+REM [5/7] Show staged changes
+echo [5/7] Staged changes:
 echo ====================================
 git diff --cached --name-status
 echo ====================================
@@ -137,8 +171,8 @@ for /f %%i in ('git diff --cached --name-only ^| find /c /v ""') do set STAGED_C
 echo Files to commit: !STAGED_COUNT!
 echo.
 
-REM [5/6] Get commit message
-echo [5/6] Commit message...
+REM [6/7] Get commit message
+echo [6/7] Commit message...
 
 if "%~1"=="" (
     echo.
@@ -176,8 +210,8 @@ echo.
 echo Commit message: !COMMIT_MSG!
 echo.
 
-REM [6/6] Create commit
-echo [6/6] Creating commit...
+REM [7/7] Create commit
+echo [7/7] Creating commit...
 set /p CONFIRM="Proceed with commit? (yes/no): "
 if /i not "!CONFIRM!" == "yes" (
     echo Commit cancelled

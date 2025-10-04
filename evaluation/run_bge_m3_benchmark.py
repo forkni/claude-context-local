@@ -22,7 +22,7 @@ print(
 )
 
 # Import and verify configuration
-from search.config import get_search_config
+from search.config import get_search_config  # noqa: E402
 
 config = get_search_config()
 print(f"[OK] Current model: {config.embedding_model_name}")

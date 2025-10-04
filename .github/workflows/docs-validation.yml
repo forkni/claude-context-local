@@ -1,4 +1,3 @@
-# .github/workflows/docs-validation.yml
 name: Documentation Validation
 
 on:
@@ -30,12 +29,6 @@ jobs:
             **/*.md
             !node_modules
             !.venv
-          config: |
-            {
-              "MD013": false,
-              "MD033": false,
-              "MD041": false
-            }
         continue-on-error: true
 
   link-check:
