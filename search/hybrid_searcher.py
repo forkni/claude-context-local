@@ -281,7 +281,9 @@ class HybridSearcher:
         from embeddings.embedder import EmbeddingResult
 
         embedding_results = []
-        for _i, (doc_id, embedding) in enumerate(zip(doc_ids, embeddings, strict=False)):
+        for _i, (doc_id, embedding) in enumerate(
+            zip(doc_ids, embeddings, strict=False)
+        ):
             result = EmbeddingResult(
                 embedding=np.array(embedding, dtype=np.float32),
                 chunk_id=doc_id,

@@ -125,8 +125,8 @@ if %ERRORLEVEL% NEQ 0 (
 )
 echo.
 
-REM [8/8] Verify merge attribute detection
-echo [8/8] Verifying merge attributes...
+REM [8/9] Verify merge attribute detection
+echo [8/9] Verifying merge attributes...
 git check-attr merge tests/conftest.py >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo ⚠ WARNING: Could not check merge attributes
@@ -142,6 +142,60 @@ if %ERRORLEVEL% NEQ 0 (
         set VALIDATION_PASSED=0
         set /a ERROR_COUNT+=1
     )
+)
+echo.
+
+REM [9/9] Validate CI documentation policy compliance
+echo [9/9] Checking CI documentation policy compliance...
+
+REM Get current branch
+for /f "tokens=*" %%i in ('git branch --show-current') do set CURRENT_BRANCH=%%i
+
+REM Allowed docs list from .github/workflows/branch-protection.yml
+set ALLOWED_DOCS=BENCHMARKS.md claude_code_config.md GIT_WORKFLOW.md HYBRID_SEARCH_CONFIGURATION_GUIDE.md INSTALLATION_GUIDE.md MCP_TOOLS_REFERENCE.md MODEL_MIGRATION_GUIDE.md PYTORCH_COMPATIBILITY.md
+
+REM Only check if we're validating FROM development (about to merge TO main)
+if "!CURRENT_BRANCH!" == "development" (
+    REM Check for docs that would be added to main during merge
+    git fetch origin main --quiet 2>nul
+    if %ERRORLEVEL% NEQ 0 (
+        echo ⚠ WARNING: Could not fetch origin/main
+        echo Skipping CI policy check
+    ) else (
+        set CI_VIOLATION_FOUND=0
+
+        REM Get docs that exist in development but not in main
+        for /f %%f in ('git diff --name-only origin/main...HEAD ^| findstr /C:"docs/" 2^>nul') do (
+            REM Check if file would be added (not just modified)
+            git ls-tree origin/main %%f >nul 2>&1
+            if %ERRORLEVEL% NEQ 0 (
+                REM File doesn't exist on main - would be added during merge
+                set DOC_FILE=%%~nxf
+
+                REM Check if doc is in allowed list
+                echo !ALLOWED_DOCS! | findstr /C:"!DOC_FILE!" >nul
+                if %ERRORLEVEL% NEQ 0 (
+                    echo ✗ FAIL: %%f would violate CI policy
+                    echo    This doc is not in the allowed list for main branch
+                    echo    Add to .gitattributes with merge=ours strategy
+                    set CI_VIOLATION_FOUND=1
+                    set VALIDATION_PASSED=0
+                    set /a ERROR_COUNT+=1
+                )
+            )
+        )
+
+        if !CI_VIOLATION_FOUND! EQU 0 (
+            echo ✓ PASS: No CI policy violations detected
+        ) else (
+            echo.
+            echo Allowed docs on main: !ALLOWED_DOCS!
+        )
+    )
+) else (
+    echo ⚠ INFO: Running from !CURRENT_BRANCH! branch
+    echo CI policy check only runs when validating from development branch
+    echo ✓ PASS: CI policy check skipped
 )
 echo.
 

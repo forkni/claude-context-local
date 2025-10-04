@@ -53,20 +53,43 @@ Automatically blocks commits containing local-only files:
 - Scans staging area for protected files
 - Prevents accidental exposure
 
-### 3. Public Documentation Policy
+## 📋 Authorized Documentation on Main Branch
 
-The following documentation files are tracked in Git (9 files total):
+**CRITICAL**: Only these 8 documentation files are allowed on main branch:
 
-- **docs/BENCHMARKS.md** - Benchmark methodology and results
-- **docs/claude_code_config.md** - Claude Code configuration guide
-- **docs/GIT_WORKFLOW.md** - This workflow documentation
-- **docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md** - Search system configuration
-- **docs/INSTALLATION_GUIDE.md** - Complete installation process
-- **docs/MCP_TOOLS_REFERENCE.md** - Modular MCP tools reference
-- **docs/MODEL_MIGRATION_GUIDE.md** - Model switching guide
+1. **BENCHMARKS.md** - Benchmark methodology and results
+2. **claude_code_config.md** - Claude Code configuration guide
+3. **GIT_WORKFLOW.md** - This workflow documentation (you're reading it)
+4. **HYBRID_SEARCH_CONFIGURATION_GUIDE.md** - Search system configuration
+5. **INSTALLATION_GUIDE.md** - Complete installation process
+6. **MCP_TOOLS_REFERENCE.md** - Modular MCP tools reference
+7. **MODEL_MIGRATION_GUIDE.md** - Model switching guide
+8. **PYTORCH_COMPATIBILITY.md** - PyTorch compatibility guide
+
+**All other docs/ files** (VSCODE_SETUP.md, TESTING_GUIDE.md, PRE_COMMIT_HOOKS.md, etc.) are **development-only** and must remain on development branch only.
+
+### Why This Matters
+
+- **CI Enforcement**: GitHub Actions validates this policy on every push to main
+- **Automated Checks**: Unauthorized docs will fail CI/CD automatically
+- **Prevention**: Development-only docs are listed in `.gitattributes` with `merge=ours` strategy
+- **Validation**: Both `validate_branches.bat` and `merge_with_validation.bat` check this policy
+
+### Development-Only Documentation
+
+These files exist only on the development branch:
+
+- **docs/VSCODE_SETUP.md** - VSCode configuration and Ruff setup
 - **docs/TESTING_GUIDE.md** - Test suite documentation
+- **docs/PRE_COMMIT_HOOKS.md** - Pre-commit hook documentation
+- **docs/GPU_MEMORY_LEAK_FIX.md** - GPU memory optimization details
+- **docs/PER_MODEL_INDICES_IMPLEMENTATION.md** - Per-model index technical details
+- **docs/PER_MODEL_INDICES_PLAN.md** - Per-model index planning document
+- **docs/Current_State.md** - Current development state tracking
+- **docs/GIT_WORKFLOW_ENHANCEMENT_PLAN.md** - Workflow enhancement planning
+- **docs/GIT_WORKFLOW_CRITICAL_REVIEW.md** - Critical workflow review
 
-**All other docs/ files remain local-only** and are automatically excluded by .gitignore rules and blocked by the pre-commit hook.
+These are automatically excluded from main branch via `.gitattributes` merge strategy.
 
 ## 🚀 Workflow Scripts
 
@@ -646,5 +669,295 @@ Check `pyproject.toml` for the current version number.
 - **Keep**: test_evaluation/ (required for benchmarks)
 - **Ignore**: benchmark_results/ (generated output)
 - **Ignore**: custom_evaluation_results/ (temporary results)
+
+## ⚠️ Common Errors and Solutions
+
+### Error: Invalid pyproject.toml Configuration
+
+**Symptom**: Ruff fails to parse pyproject.toml with error about unknown field
+
+**Example Error**:
+```
+unknown field `unsafe-fixes`, expected one of [allowed fields list]
+```
+
+**Root Cause**: Invalid configuration field added to pyproject.toml (e.g., `unsafe-fixes = true`)
+
+**Solution**:
+1. Remove the invalid field from pyproject.toml
+2. Use `--unsafe-fixes` as CLI flag only: `ruff check . --fix --unsafe-fixes`
+3. Or enable in VSCode settings: `"ruff.codeAction.fixViolation.enable": true`
+
+**Prevention**: Validate config fields against [Ruff documentation](https://docs.astral.sh/ruff/configuration/) before adding
+
+---
+
+### Error: wmic Command Not Found
+
+**Symptom**: merge_with_validation.bat fails at backup tag creation
+
+**Example Error**:
+```
+'wmic' is not recognized as an internal or external command
+fatal: 'pre-merge-backup-~0,8datetime:~8,6' is not a valid tag name
+```
+
+**Root Cause**:
+- wmic deprecated in Windows 11
+- Not available in Git Bash environment
+
+**Solution**: Script has been updated to use PowerShell instead
+```batch
+REM NEW (FIXED):
+for /f "usebackq" %%i in (`powershell -Command "Get-Date -Format 'yyyyMMdd_HHmmss'"`) do set datetime=%%i
+```
+
+**Prevention**: Use PowerShell for cross-platform Windows compatibility
+
+---
+
+### Error: CI/CD Failure - Unauthorized Docs
+
+**Symptom**: GitHub Actions fails with unauthorized documentation message
+
+**Example Error**:
+```
+❌ ERROR: Unauthorized documentation files found on main branch:
+docs/VSCODE_SETUP.md
+
+Only these 8 docs are allowed in main branch: [list]
+```
+
+**Root Cause**: Development-only doc file merged to main branch (violates CI policy)
+
+**Solution**:
+1. Remove unauthorized doc from main:
+   ```bash
+   git checkout main
+   git rm docs/VSCODE_SETUP.md
+   git commit -m "fix: Remove unauthorized doc from main"
+   git push origin main
+   ```
+
+2. Add to .gitattributes if it's development-only:
+   ```gitattributes
+   docs/VSCODE_SETUP.md merge=ours
+   ```
+
+**Prevention**:
+- validate_branches.bat now checks CI policy pre-merge ([9/9] check)
+- merge_with_validation.bat validates docs before completing merge ([6/7] check)
+
+---
+
+### Error: Merge Conflicts Not Auto-Resolved
+
+**Symptom**: Script reports conflicts but doesn't resolve them automatically
+
+**Example**:
+```
+⚠ Merge conflicts detected - analyzing...
+Found modify/delete conflicts for excluded files
+[Lists files but doesn't resolve them]
+```
+
+**Root Cause**: Conflict resolution loop error handling issue in older script version
+
+**Solution**:
+1. Manual resolution:
+   ```bash
+   # For test files (exclude from main)
+   git rm tests/fixtures/sample_code.py tests/integration/*.py tests/unit/*.py
+
+   # For docs (check if allowed on main)
+   git add docs/ALLOWED_FILE.md  # If in CI policy
+   git rm docs/DEV_ONLY_FILE.md  # If NOT in CI policy
+
+   # Complete merge
+   git commit --no-edit
+   ```
+
+2. Script has been improved with:
+   - Temp file approach for better parsing
+   - Error checking for each file
+   - Verification after resolution
+
+**Prevention**: Updated script with enhanced error handling and validation
+
+---
+
+### Error: Missing --unsafe-fixes Flag
+
+**Symptom**:
+- Lint errors remain after running fix_lint.bat
+- Ruff reports "hidden fixes can be enabled with --unsafe-fixes"
+
+**Example**:
+```
+144 hidden fixes can be enabled with the `--unsafe-fixes` option
+```
+
+**Root Cause**: fix_lint.bat missing --unsafe-fixes flag
+
+**Solution**: Script has been updated:
+```batch
+REM NEW (FIXED):
+call .venv\Scripts\ruff.exe check . --fix --unsafe-fixes
+```
+
+**Prevention**: Script now includes --unsafe-fixes by default (91% auto-fix success rate)
+
+---
+
+### Error: Merge Strategy Not Working
+
+**Symptom**: Files that should be excluded from main still appear in merge conflicts
+
+**Root Cause**: File not listed in .gitattributes or git config missing
+
+**Solution**:
+1. Check .gitattributes contains the file:
+   ```gitattributes
+   docs/VSCODE_SETUP.md merge=ours
+   tests/** merge=ours
+   ```
+
+2. Verify git config:
+   ```bash
+   git config --get merge.ours.driver
+   # Should return: true
+   ```
+
+3. If not configured:
+   ```bash
+   git config --global merge.ours.driver true
+   ```
+
+**Prevention**: validate_branches.bat checks merge.ours driver configuration ([6/9] check)
+
+## 🔍 Lint Workflow Best Practices
+
+### When to Run check_lint.bat vs fix_lint.bat
+
+**check_lint.bat** (Read-only validation):
+- Before committing changes
+- During code review
+- To check current code quality
+- **Does NOT modify files**
+
+**fix_lint.bat** (Auto-fix issues):
+- After making changes
+- When you want to clean up code
+- Before final commit
+- **Modifies files in place**
+
+**Recommended workflow**:
+```batch
+# 1. Make your changes
+# 2. Auto-fix issues
+scripts\git\fix_lint.bat
+
+# 3. Review what was fixed
+git diff
+
+# 4. Final validation
+scripts\git\check_lint.bat
+
+# 5. Commit if all checks pass
+scripts\git\commit_enhanced.bat "fix: Your commit message"
+```
+
+### Understanding --unsafe-fixes
+
+**What it does**:
+- Enables comprehensive automatic code corrections
+- Fixes 90%+ of lint errors automatically
+- Includes transformations that change code semantics
+
+**How to use**:
+- ✅ **CLI flag**: `ruff check . --fix --unsafe-fixes`
+- ✅ **VSCode setting**: `"ruff.codeAction.fixViolation.enable": true`
+- ❌ **NOT a pyproject.toml field** - will cause parse errors
+
+**Examples of unsafe fixes**:
+- Removing unused imports
+- Converting generators to comprehensions
+- Removing unused variables
+- Simplifying boolean expressions
+
+**Safety**:
+- Always review changes with `git diff`
+- Run tests after auto-fixes
+- Unsafe != dangerous (just means "changes semantics")
+
+### Expected Warnings
+
+Some warnings are expected and can be safely ignored or committed:
+
+**B904: Exception handling without chaining**
+```python
+# Ruff suggests this pattern:
+try:
+    something()
+except ValueError as e:
+    raise TypeError("message") from e  # Chaining with 'from e'
+
+# Or explicit suppression:
+try:
+    something()
+except ValueError:
+    raise TypeError("message") from None  # Explicit 'from None'
+```
+
+- **Impact**: Stylistic preference, not a critical error
+- **Location**: Primarily in tests/ directory
+- **Action**: Safe to proceed with commit
+- **Fix**: Optional - add exception chaining if desired
+
+**Other safe-to-ignore warnings**:
+- E501 (line too long) - if breaking would harm readability
+- W293 (blank line with whitespace) - auto-fixed by black
+- Formatting warnings when using specialized formatting
+
+### Error Code Categories
+
+| Category | Examples | Auto-fixable | Severity |
+|----------|----------|--------------|----------|
+| **Imports** | F401, F811, I001 | ✅ Yes (isort) | Low |
+| **Formatting** | W293, E501 | ✅ Yes (black) | Low |
+| **Code Style** | C401, C414, B007 | ✅ Yes (--unsafe-fixes) | Low |
+| **Logic Errors** | F821, F841 | ⚠️ Partial | High |
+| **Exception Handling** | B904 | ❌ Manual recommended | Medium |
+| **Security** | S608, S307 | ❌ Manual required | Critical |
+
+### Lint Workflow Troubleshooting
+
+**Problem**: "Ruff not found"
+```batch
+Solution: Activate virtual environment first
+call .venv\Scripts\activate.bat
+```
+
+**Problem**: "Black would reformat X files"
+```batch
+Solution: Let black reformat them
+.venv\Scripts\black.exe .
+```
+
+**Problem**: "isort would reorder imports"
+```batch
+Solution: Let isort fix them
+.venv\Scripts\isort.exe .
+```
+
+**Problem**: Lint passes locally but fails in CI
+```batch
+Possible causes:
+1. Different Python versions (CI uses 3.11)
+2. Different tool versions (CI uses latest)
+3. Files not committed (check git status)
+
+Solution: Check .github/workflows/branch-protection.yml for CI config
+```
 
 This workflow ensures your development context remains completely private while maintaining a clean, professional public repository suitable for users and collaborators.

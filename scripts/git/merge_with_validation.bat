@@ -8,8 +8,8 @@ setlocal enabledelayedexpansion
 echo === Safe Merge: development ^→ main ===
 echo.
 
-REM [1/6] Run validation
-echo [1/6] Running pre-merge validation...
+REM [1/7] Run validation
+echo [1/7] Running pre-merge validation...
 call scripts\git\validate_branches.bat
 if %ERRORLEVEL% NEQ 0 (
     echo.
@@ -19,8 +19,8 @@ if %ERRORLEVEL% NEQ 0 (
 )
 echo.
 
-REM [2/6] Store current branch and checkout main
-echo [2/6] Switching to main branch...
+REM [2/7] Store current branch and checkout main
+echo [2/7] Switching to main branch...
 for /f "tokens=*" %%i in ('git branch --show-current') do set ORIGINAL_BRANCH=%%i
 echo Current branch: !ORIGINAL_BRANCH!
 
@@ -32,10 +32,10 @@ if %ERRORLEVEL% NEQ 0 (
 echo ✓ Switched to main branch
 echo.
 
-REM [3/6] Create pre-merge backup tag
-echo [3/6] Creating pre-merge backup tag...
-for /f "tokens=2 delims==" %%i in ('wmic OS Get localdatetime /value') do set datetime=%%i
-set BACKUP_TAG=pre-merge-backup-%datetime:~0,8%-%datetime:~8,6%
+REM [3/7] Create pre-merge backup tag
+echo [3/7] Creating pre-merge backup tag...
+for /f "usebackq" %%i in (`powershell -Command "Get-Date -Format 'yyyyMMdd_HHmmss'"`) do set datetime=%%i
+set BACKUP_TAG=pre-merge-backup-%datetime%
 git tag %BACKUP_TAG%
 if %ERRORLEVEL% EQU 0 (
     echo ✓ Created backup tag: %BACKUP_TAG%
@@ -44,8 +44,8 @@ if %ERRORLEVEL% EQU 0 (
 )
 echo.
 
-REM [4/6] Perform merge
-echo [4/6] Merging development into main...
+REM [4/7] Perform merge
+echo [4/7] Merging development into main...
 echo Running: git merge development --no-ff
 echo.
 
@@ -58,7 +58,7 @@ git merge development --no-ff -m "Merge development into main
 
 set MERGE_EXIT_CODE=%ERRORLEVEL%
 
-REM [5/6] Handle merge conflicts
+REM [5/7] Handle merge conflicts
 if %MERGE_EXIT_CODE% NEQ 0 (
     echo.
     echo ⚠ Merge conflicts detected - analyzing...
@@ -71,10 +71,30 @@ if %MERGE_EXIT_CODE% NEQ 0 (
         echo These are expected and will be auto-resolved...
         echo.
 
-        REM List all "deleted by us" files
-        for /f "tokens=4*" %%a in ('git status --short ^| findstr /C:"DU "') do (
-            echo   Removing: %%a %%b
-            git rm "%%a %%b" >nul 2>&1
+        REM Create temp file with conflicts
+        git status --short | findstr /C:"DU " > "%TEMP%\merge_conflicts.txt"
+
+        REM Process each conflict with error checking
+        set RESOLUTION_FAILED=0
+        for /f "tokens=2*" %%a in (%TEMP%\merge_conflicts.txt) do (
+            echo   Resolving: %%a %%b
+            git rm "%%a %%b"
+            if %ERRORLEVEL% NEQ 0 (
+                echo   ✗ ERROR: Failed to remove %%a %%b
+                set RESOLUTION_FAILED=1
+            )
+        )
+        del "%TEMP%\merge_conflicts.txt"
+
+        REM Verify all conflicts resolved
+        if !RESOLUTION_FAILED! EQU 1 (
+            echo.
+            echo ✗ Auto-resolution failed for some files
+            echo Current status:
+            git status --short
+            echo.
+            echo Please resolve manually or abort merge
+            exit /b 1
         )
 
         echo.
@@ -101,9 +121,54 @@ if %MERGE_EXIT_CODE% NEQ 0 (
         exit /b 1
     )
 
+    REM [6/7] Validate docs/ against CI policy
+    echo.
+    echo [6/7] Validating documentation files against CI policy...
+
+    REM Allowed docs list from .github/workflows/branch-protection.yml
+    set ALLOWED_DOCS_REGEX=BENCHMARKS.md claude_code_config.md GIT_WORKFLOW.md HYBRID_SEARCH_CONFIGURATION_GUIDE.md INSTALLATION_GUIDE.md MCP_TOOLS_REFERENCE.md MODEL_MIGRATION_GUIDE.md PYTORCH_COMPATIBILITY.md
+
+    REM Check docs being added to main
+    set DOCS_VALIDATION_FAILED=0
+    for /f %%f in ('git diff --cached --name-only --diff-filter=A ^| findstr /C:"docs/"') do (
+        set DOC_FILE=%%~nxf
+
+        REM Check if doc is in allowed list
+        echo !ALLOWED_DOCS_REGEX! | findstr /C:"!DOC_FILE!" >nul
+        if %ERRORLEVEL% NEQ 0 (
+            echo ✗ ERROR: Unauthorized doc file: %%f
+            echo    This file is not in the CI allowed docs list
+            set DOCS_VALIDATION_FAILED=1
+        )
+    )
+
+    if !DOCS_VALIDATION_FAILED! EQU 1 (
+        echo.
+        echo ✗ CI POLICY VIOLATION: Unauthorized documentation detected
+        echo.
+        echo Only these 8 docs are allowed on main branch:
+        echo   - BENCHMARKS.md
+        echo   - claude_code_config.md
+        echo   - GIT_WORKFLOW.md
+        echo   - HYBRID_SEARCH_CONFIGURATION_GUIDE.md
+        echo   - INSTALLATION_GUIDE.md
+        echo   - MCP_TOOLS_REFERENCE.md
+        echo   - MODEL_MIGRATION_GUIDE.md
+        echo   - PYTORCH_COMPATIBILITY.md
+        echo.
+        echo Development-only docs should be in .gitattributes with merge=ours
+        echo.
+        echo Aborting merge to prevent CI failure...
+        git merge --abort
+        git checkout !ORIGINAL_BRANCH!
+        exit /b 1
+    )
+    echo ✓ Documentation validation passed
+    echo.
+
     REM Complete the merge
     echo.
-    echo [6/6] Completing merge commit...
+    echo [7/7] Completing merge commit...
     git commit --no-edit
     if %ERRORLEVEL% NEQ 0 (
         echo ✗ Failed to complete merge commit
@@ -114,6 +179,54 @@ if %MERGE_EXIT_CODE% NEQ 0 (
 ) else (
     echo.
     echo ✓ Merge completed without conflicts
+
+    REM [6/7] Validate docs/ against CI policy (no-conflict case)
+    echo.
+    echo [6/7] Validating documentation files against CI policy...
+
+    REM Allowed docs list from .github/workflows/branch-protection.yml
+    set ALLOWED_DOCS_REGEX=BENCHMARKS.md claude_code_config.md GIT_WORKFLOW.md HYBRID_SEARCH_CONFIGURATION_GUIDE.md INSTALLATION_GUIDE.md MCP_TOOLS_REFERENCE.md MODEL_MIGRATION_GUIDE.md PYTORCH_COMPATIBILITY.md
+
+    REM Check docs being added to main
+    set DOCS_VALIDATION_FAILED=0
+    for /f %%f in ('git diff --name-only HEAD~1 HEAD ^| findstr /C:"docs/"') do (
+        set DOC_FILE=%%~nxf
+
+        REM Check if doc is in allowed list
+        echo !ALLOWED_DOCS_REGEX! | findstr /C:"!DOC_FILE!" >nul
+        if %ERRORLEVEL% NEQ 0 (
+            REM Check if file was added (not just modified)
+            git diff --diff-filter=A HEAD~1 HEAD -- %%f >nul 2>&1
+            if %ERRORLEVEL% EQU 0 (
+                echo ✗ ERROR: Unauthorized doc file: %%f
+                echo    This file is not in the CI allowed docs list
+                set DOCS_VALIDATION_FAILED=1
+            )
+        )
+    )
+
+    if !DOCS_VALIDATION_FAILED! EQU 1 (
+        echo.
+        echo ✗ CI POLICY VIOLATION: Unauthorized documentation detected
+        echo.
+        echo Only these 8 docs are allowed on main branch:
+        echo   - BENCHMARKS.md
+        echo   - claude_code_config.md
+        echo   - GIT_WORKFLOW.md
+        echo   - HYBRID_SEARCH_CONFIGURATION_GUIDE.md
+        echo   - INSTALLATION_GUIDE.md
+        echo   - MCP_TOOLS_REFERENCE.md
+        echo   - MODEL_MIGRATION_GUIDE.md
+        echo   - PYTORCH_COMPATIBILITY.md
+        echo.
+        echo Development-only docs should be in .gitattributes with merge=ours
+        echo.
+        echo Rolling back merge...
+        git reset --hard HEAD~1
+        git checkout !ORIGINAL_BRANCH!
+        exit /b 1
+    )
+    echo ✓ Documentation validation passed
 )
 
 echo.
