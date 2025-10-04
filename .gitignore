@@ -237,6 +237,7 @@ docs/*
 !docs/MODEL_MIGRATION_GUIDE.md
 !docs/PYTORCH_COMPATIBILITY.md
 !docs/TESTING_GUIDE.md
+!docs/VSCODE_SETUP.md
 
 # Development-only documentation (intermediate/technical/internal)
 docs/GIT_WORKFLOW.md
@@ -266,7 +267,13 @@ scripts/batch/cleanup_powershell_references_DRYRUN.bat
 ~/.claude_code_search/
 
 # IDE and editor files
-.vscode/
+# VSCode - share workspace settings but ignore user-specific files
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/README.md
+!.vscode/GLOBAL_SETTINGS_UPDATE.md
+
 .idea/
 *.swp
 *.swo
