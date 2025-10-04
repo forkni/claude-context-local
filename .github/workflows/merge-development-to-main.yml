@@ -1,4 +1,3 @@
-# .github/workflows/merge-development-to-main.yml
 name: Merge Development to Main
 
 on:
