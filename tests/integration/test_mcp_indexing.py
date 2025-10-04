@@ -6,11 +6,17 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from huggingface_hub import HfFolder
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from embeddings.embedder import CodeEmbedder
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
+
+
+def _has_hf_token():
+    """Check if HuggingFace token is available."""
+    return HfFolder.get_token() is not None
 
 
 class TestMCPIndexing:
@@ -27,6 +33,7 @@ class TestMCPIndexing:
         with tempfile.TemporaryDirectory() as temp_dir:
             yield Path(temp_dir) / "test_storage"
 
+    @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_mcp_index_directory_path(self, test_project_path, mock_storage_dir):
         """Test indexing following the exact MCP tool implementation path."""
 

@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest import TestCase
 
 import pytest
+from huggingface_hub import HfFolder
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from embeddings.embedder import CodeEmbedder
@@ -14,6 +15,11 @@ from merkle.merkle_dag import MerkleDAG
 from merkle.snapshot_manager import SnapshotManager
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager as Indexer
+
+
+def _has_hf_token():
+    """Check if HuggingFace token is available."""
+    return HfFolder.get_token() is not None
 
 
 class TestIncrementalIndexing(TestCase):
@@ -91,6 +97,7 @@ class Database:
 '''
         )
 
+    @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_full_index(self):
         """Test full indexing of a codebase."""
         indexer = Indexer(storage_dir=str(self.index_dir))
@@ -148,6 +155,7 @@ class Database:
         assert result2.files_removed == 0
         assert result2.files_modified == 0
 
+    @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_file_modification(self):
         """Test incremental indexing when files are modified."""
         indexer = Indexer(storage_dir=str(self.index_dir))
@@ -199,6 +207,7 @@ class Calculator:
         assert result2.chunks_removed > 0
         assert result2.chunks_added > 0
 
+    @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_file_addition(self):
         """Test incremental indexing when files are added."""
         indexer = Indexer(storage_dir=str(self.index_dir))
@@ -239,6 +248,7 @@ class NewClass:
         assert result2.files_modified == 0
         assert result2.chunks_added > 0
 
+    @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_file_deletion(self):
         """Test incremental indexing when files are deleted."""
         indexer = Indexer(storage_dir=str(self.index_dir))
