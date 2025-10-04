@@ -618,8 +618,6 @@ See [Model Migration Guide](docs/MODEL_MIGRATION_GUIDE.md) for detailed comparis
 /search_code "authentication"  # Gemma results
 ```
 
-📚 **Technical details**: See [docs/PER_MODEL_INDICES_IMPLEMENTATION.md](docs/PER_MODEL_INDICES_IMPLEMENTATION.md) (development branch)
-
 ### Model Configuration
 
 The system supports two embedding models:
