@@ -92,11 +92,14 @@ jobs:
           git checkout main
 
           echo "Merging development into main..."
-          git merge --no-ff development -m "chore: Merge development to main
+          git merge --no-ff development -m "$(cat <<'EOF'
+          chore: Merge development to main
 
-- Applied .gitattributes merge strategies
-- Excluded development-only files
-- Automated merge via GitHub Actions"
+          - Applied .gitattributes merge strategies
+          - Excluded development-only files
+          - Automated merge via GitHub Actions
+          EOF
+          )"
 
           if [ $? -ne 0 ]; then
             echo "❌ Merge failed - conflicts detected"
