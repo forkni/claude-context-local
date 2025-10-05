@@ -268,5 +268,5 @@ A: Yes! Select option 3 (Custom model path) in the menu and enter any HuggingFac
 
 ---
 
-*Last Updated: 2025-01-30*
-*Version: 0.4.0*
+*Last Updated: 2025-10-05*
+*Version: 0.4.1*

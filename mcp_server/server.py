@@ -88,7 +88,7 @@ def get_project_storage_dir(project_path: str) -> Path:
     project_hash = hashlib.md5(str(project_path).encode()).hexdigest()[:8]
 
     # Detect embedding dimension from current config for per-model index storage
-    from search.config import get_search_config, MODEL_REGISTRY
+    from search.config import MODEL_REGISTRY, get_search_config
 
     config = get_search_config()
     model_name = config.embedding_model_name
@@ -700,7 +700,9 @@ def index_directory(
         # Update current project tracker (CRITICAL for multi-project isolation - Bug #2 fix)
         global _current_project
         _current_project = str(directory_path)
-        logger.info(f"[PER_MODEL_INDICES] Updated _current_project to: {_current_project}")
+        logger.info(
+            f"[PER_MODEL_INDICES] Updated _current_project to: {_current_project}"
+        )
 
         # Perform indexing
         result = incremental_indexer.incremental_index(
@@ -970,7 +972,9 @@ def clear_index() -> str:
                     try:
                         shutil.rmtree(project_dir)
                         deleted_dirs.append(project_dir.name)
-                        logger.info(f"[PER_MODEL_INDICES] Deleted directory: {project_dir.name}")
+                        logger.info(
+                            f"[PER_MODEL_INDICES] Deleted directory: {project_dir.name}"
+                        )
                     except Exception as e:
                         logger.warning(f"Failed to delete {project_dir.name}: {e}")
 
@@ -980,7 +984,9 @@ def clear_index() -> str:
                 try:
                     shutil.rmtree(old_format_dir)
                     deleted_dirs.append(old_format_dir.name)
-                    logger.info(f"[PER_MODEL_INDICES] Deleted old format directory: {old_format_dir.name}")
+                    logger.info(
+                        f"[PER_MODEL_INDICES] Deleted old format directory: {old_format_dir.name}"
+                    )
                 except Exception as e:
                     logger.warning(f"Failed to delete old format directory: {e}")
 
@@ -991,7 +997,9 @@ def clear_index() -> str:
         snapshots_deleted = 0
         try:
             snapshots_deleted = snapshot_manager.delete_all_snapshots(_current_project)
-            logger.info(f"[PER_MODEL_INDICES] Deleted {snapshots_deleted} snapshot files (all dimensions)")
+            logger.info(
+                f"[PER_MODEL_INDICES] Deleted {snapshots_deleted} snapshot files (all dimensions)"
+            )
         except Exception as snapshot_error:
             logger.warning(
                 f"Failed to delete snapshots (non-critical): {snapshot_error}"
@@ -1008,7 +1016,9 @@ def clear_index() -> str:
             "note": "All model dimensions (768d, 1024d, etc.) have been removed",
         }
 
-        logger.info(f"Search index cleared - {len(deleted_dirs)} directories, {snapshots_deleted} snapshots deleted")
+        logger.info(
+            f"Search index cleared - {len(deleted_dirs)} directories, {snapshots_deleted} snapshots deleted"
+        )
         return json.dumps(response, indent=2)
 
     except (OSError, IOError, AttributeError, RuntimeError) as e:
@@ -1480,7 +1490,9 @@ def switch_embedding_model(model_name: str) -> str:
         if projects_dir.exists():
             # Find all project directories with the new dimension suffix
             for project_dir in projects_dir.iterdir():
-                if project_dir.is_dir() and project_dir.name.endswith(f"_{new_dimension}d"):
+                if project_dir.is_dir() and project_dir.name.endswith(
+                    f"_{new_dimension}d"
+                ):
                     existing_projects.append(project_dir.name)
 
         response = {
@@ -1527,121 +1539,10 @@ def switch_embedding_model(model_name: str) -> str:
         return json.dumps({"error": str(e)})
 
 
-@mcp.tool()
-def run_benchmark(
-    benchmark_type: str = "token-efficiency",
-    project_path: str = "test_evaluation",
-    max_instances: int = 3,
-    use_gpu: bool = None,
-) -> str:
-    """
-    Run performance benchmarks to validate system efficiency and search quality.
-
-    This tool provides access to the comprehensive evaluation framework for measuring
-    token efficiency, search quality, and performance characteristics.
-
-    Args:
-        benchmark_type: Type of benchmark to run
-                      - "token-efficiency": Measures token reduction vs file reading
-                      - "method-comparison": Compare hybrid vs BM25 vs semantic search
-                      - "custom": Project-specific search quality evaluation
-        project_path: Path to project for evaluation (default: test_evaluation)
-        max_instances: Maximum test instances to evaluate (default: 3)
-        use_gpu: Force GPU usage (True), CPU usage (False), or auto-detect (None)
-
-    Returns:
-        JSON string with benchmark results and performance metrics
-
-    Examples:
-        /run_benchmark "token-efficiency"
-        /run_benchmark "method-comparison" "."
-        /run_benchmark "custom" "path/to/your/project"
-        /run_benchmark "token-efficiency" "test_evaluation" 1 false
-    """
-    try:
-        import subprocess
-        import sys
-
-        # Validate benchmark type
-        valid_types = ["token-efficiency", "method-comparison", "custom"]
-        if benchmark_type not in valid_types:
-            return json.dumps(
-                {
-                    "error": f"Invalid benchmark type: {benchmark_type}",
-                    "valid_types": valid_types,
-                }
-            )
-
-        # Construct command
-        python_exe = sys.executable
-        script_path = PROJECT_ROOT / "evaluation" / "run_evaluation.py"
-
-        if not script_path.exists():
-            return json.dumps(
-                {
-                    "error": "Evaluation script not found",
-                    "path": str(script_path),
-                    "suggestion": "Run from project root directory",
-                }
-            )
-
-        # Build command arguments
-        cmd = [python_exe, str(script_path), benchmark_type]
-
-        if benchmark_type in ["custom", "token-efficiency", "method-comparison"]:
-            cmd.extend(["--project", project_path])
-            cmd.extend(["--max-instances", str(max_instances)])
-
-        # Handle GPU/CPU flags for token-efficiency
-        if benchmark_type == "token-efficiency" and use_gpu is not None:
-            if use_gpu:
-                cmd.append("--gpu")
-            else:
-                cmd.append("--cpu")
-
-        logger.info(f"Running benchmark: {' '.join(cmd)}")
-
-        # Execute benchmark
-        result = subprocess.run(
-            cmd,
-            cwd=PROJECT_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=300,  # 5 minute timeout
-        )
-
-        if result.returncode == 0:
-            return json.dumps(
-                {
-                    "success": True,
-                    "benchmark_type": benchmark_type,
-                    "project_path": project_path,
-                    "max_instances": max_instances,
-                    "gpu_used": use_gpu if use_gpu is not None else "auto-detected",
-                    "output": result.stdout,
-                    "message": f"Benchmark '{benchmark_type}' completed successfully",
-                }
-            )
-        else:
-            return json.dumps(
-                {
-                    "success": False,
-                    "error": f"Benchmark failed with return code {result.returncode}",
-                    "stderr": result.stderr,
-                    "stdout": result.stdout,
-                }
-            )
-
-    except subprocess.TimeoutExpired:
-        return json.dumps(
-            {
-                "error": "Benchmark timed out (5 minutes)",
-                "suggestion": "Try reducing max_instances or use a smaller project",
-            }
-        )
-    except Exception as e:
-        logger.error(f"Error running benchmark: {e}")
-        return json.dumps({"error": str(e)})
+# NOTE: run_benchmark removed from MCP tools - for development purposes only
+# Use evaluation/run_evaluation.py directly for benchmarking
+# @mcp.tool()
+# def run_benchmark(...): ...
 
 
 if __name__ == "__main__":

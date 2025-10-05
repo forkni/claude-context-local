@@ -425,6 +425,45 @@ class HybridSearcher:
 
         return final_results
 
+    def find_similar_to_chunk(self, chunk_id: str, k: int = 5) -> List:
+        """
+        Find chunks similar to a given chunk using dense semantic search.
+
+        Args:
+            chunk_id: The ID of the reference chunk
+            k: Number of similar chunks to return
+
+        Returns:
+            List of SearchResult objects with similar chunks
+        """
+        from .searcher import SearchResult
+
+        # Use dense index for semantic similarity
+        similar_chunks = self.dense_index.get_similar_chunks(chunk_id, k)
+
+        # Convert to SearchResult format expected by MCP tool
+        results = []
+        for cid, similarity, metadata in similar_chunks:
+            result = SearchResult(
+                chunk_id=cid,
+                similarity_score=similarity,
+                content_preview=metadata.get("content_preview", ""),
+                file_path=metadata.get("file_path", ""),
+                relative_path=metadata.get("relative_path", ""),
+                folder_structure=metadata.get("folder_structure", []),
+                chunk_type=metadata.get("chunk_type", "unknown"),
+                name=metadata.get("name"),
+                parent_name=metadata.get("parent_name"),
+                start_line=metadata.get("start_line", 0),
+                end_line=metadata.get("end_line", 0),
+                docstring=metadata.get("docstring"),
+                tags=metadata.get("tags", []),
+                context_info={},
+            )
+            results.append(result)
+
+        return results
+
     def _parallel_search(
         self,
         query: str,
