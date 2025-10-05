@@ -35,7 +35,9 @@ class SnapshotManager:
         normalized_path = str(Path(project_path).resolve())
         return hashlib.md5(normalized_path.encode()).hexdigest()
 
-    def get_snapshot_path(self, project_path: str, dimension: Optional[int] = None) -> Path:
+    def get_snapshot_path(
+        self, project_path: str, dimension: Optional[int] = None
+    ) -> Path:
         """Get the snapshot file path for a project with per-model dimension suffix.
 
         Args:
@@ -61,6 +63,7 @@ class SnapshotManager:
                     sys.path.insert(0, str(parent_dir))
 
                 from search.config import get_search_config
+
                 config = get_search_config()
                 dimension = config.model_dimension
             except Exception:
@@ -69,7 +72,9 @@ class SnapshotManager:
 
         return self.storage_dir / f"{project_id}_{dimension}d_snapshot.json"
 
-    def get_metadata_path(self, project_path: str, dimension: Optional[int] = None) -> Path:
+    def get_metadata_path(
+        self, project_path: str, dimension: Optional[int] = None
+    ) -> Path:
         """Get the metadata file path for a project with per-model dimension suffix.
 
         Args:
@@ -95,6 +100,7 @@ class SnapshotManager:
                     sys.path.insert(0, str(parent_dir))
 
                 from search.config import get_search_config
+
                 config = get_search_config()
                 dimension = config.model_dimension
             except Exception:

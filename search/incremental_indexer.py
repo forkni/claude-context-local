@@ -153,6 +153,7 @@ class IncrementalIndexer:
             # Clear GPU cache to free intermediate tensors from embedding batches
             try:
                 import gc
+
                 import torch
 
                 gc.collect()  # Free Python wrapper objects first
@@ -292,6 +293,7 @@ class IncrementalIndexer:
             # Clear GPU cache to free intermediate tensors from embedding batches
             try:
                 import gc
+
                 import torch
 
                 gc.collect()  # Free Python wrapper objects first

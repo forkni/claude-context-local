@@ -89,9 +89,7 @@ def test_glsl_indexing_without_embedder():
             def get_stats(self):
                 return {
                     "total_chunks": len(self.indexed_chunks),
-                    "chunk_types": list(
-                        {c["chunk_type"] for c in self.indexed_chunks}
-                    ),
+                    "chunk_types": list({c["chunk_type"] for c in self.indexed_chunks}),
                     "files": list({c["file_path"] for c in self.indexed_chunks}),
                 }
 

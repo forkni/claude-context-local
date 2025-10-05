@@ -50,7 +50,9 @@ def test_imports():
         assert True
     else:
         print("Some dependencies failed to import")
-        raise AssertionError(f"Only {success_count}/{len(modules_to_test)} modules imported successfully")
+        raise AssertionError(
+            f"Only {success_count}/{len(modules_to_test)} modules imported successfully"
+        )
 
 
 if __name__ == "__main__":

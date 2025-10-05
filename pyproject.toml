@@ -146,3 +146,8 @@ select = [
 ignore = [
     "E501",  # line too long (handled by black)
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Imports inside try-except blocks cause conflicts between ruff and isort
+"tests/integration/test_mcp_functionality.py" = ["I001"]
+"tests/integration/test_token_efficiency_workflow.py" = ["I001"]

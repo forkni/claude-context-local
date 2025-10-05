@@ -237,7 +237,9 @@ class BM25Index:
                 )
                 # Reset the BM25 index to None on failure
                 self._bm25 = None
-                raise ValueError(f"BM25 index creation failed: {bm25_error}") from bm25_error
+                raise ValueError(
+                    f"BM25 index creation failed: {bm25_error}"
+                ) from bm25_error
 
             self._logger.info(
                 f"[BM25_INDEX] Successfully indexed {len(documents)} new documents (total: {self.size})"

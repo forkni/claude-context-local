@@ -95,7 +95,11 @@ These are automatically excluded from main branch via `.gitattributes` merge str
 
 All workflow scripts are located in `scripts/git/` directory.
 
-### Core Workflow Scripts (6)
+**Environment Compatibility**: Scripts are available in two formats:
+- **Windows cmd.exe**: Use `.bat` files (6 scripts)
+- **Git Bash / Linux / macOS**: Use `.sh` files (3 scripts: check_lint, fix_lint, validate_branches)
+
+### Core Workflow Scripts (9 total: 6 .bat + 3 .sh)
 
 #### commit_enhanced.bat - Enhanced Commit Workflow
 
@@ -112,10 +116,16 @@ commit_enhanced.bat "Your commit message"
 - Interactive staging prompts
 - Shows preview before committing
 
-#### check_lint.bat - Code Quality Validation
+#### check_lint - Code Quality Validation
 
+**Windows cmd.exe**:
 ```batch
 scripts\git\check_lint.bat
+```
+
+**Git Bash / Linux / macOS**:
+```bash
+./scripts/git/check_lint.sh
 ```
 
 **Checks:**
@@ -124,16 +134,25 @@ scripts\git\check_lint.bat
 - Black formatting (code consistency)
 - isort import sorting
 
-#### fix_lint.bat - Auto-fix Linting Issues
+**Configuration**: Uses pyproject.toml settings (automatically excludes .venv, _archive, all gitignored directories)
 
+#### fix_lint - Auto-fix Linting Issues
+
+**Windows cmd.exe**:
 ```batch
 scripts\git\fix_lint.bat
 ```
 
+**Git Bash / Linux / macOS**:
+```bash
+./scripts/git/fix_lint.sh
+```
+
 **Fixes:**
 
-- Runs isort → black → ruff --fix
-- Verifies fixes with check_lint.bat
+- Runs ruff --fix → black → isort
+- Auto-fixes ~90% of lint errors
+- Suggests running check_lint to verify all issues resolved
 
 #### merge_with_validation.bat - Safe Merge Workflow
 
@@ -149,19 +168,25 @@ scripts\git\merge_with_validation.bat
 - Handles development-only file exclusion
 - Returns to original branch on error
 
-#### validate_branches.bat - Pre-merge Validation
+#### validate_branches - Pre-merge Validation
 
+**Windows cmd.exe**:
 ```batch
 scripts\git\validate_branches.bat
+```
+
+**Git Bash / Linux / macOS**:
+```bash
+./scripts/git/validate_branches.sh
 ```
 
 **Checks:**
 
 - Both branches exist
+- Current branch is development or main
 - No uncommitted changes
-- .gitattributes exists
-- merge.ours driver configured
-- Branches in sync with remote
+- Branch relationship (development ahead of main by X commits)
+- Provides warnings if branches are out of sync
 
 #### install_hooks.bat - Hook Installation
 
@@ -486,6 +511,8 @@ cd claude-context-local
 
 ## ⚡ Quick Commands Reference
 
+### Windows cmd.exe
+
 | Task | Command | Result |
 |------|---------|---------|
 | **Safe commit** | `scripts\git\commit_enhanced.bat "message"` | Commits with lint checks and validations |
@@ -493,9 +520,19 @@ cd claude-context-local
 | **Fix linting** | `scripts\git\fix_lint.bat` | Auto-fixes linting issues |
 | **Merge to main** | `scripts\git\merge_with_validation.bat` | Safe merge: development → main |
 | **Docs-only merge** | `scripts\git\merge_docs.bat` | Merge only documentation changes |
+| **Emergency rollback** | `scripts\git\rollback_merge.bat` | Rollback last merge |
+
+### Git Bash / Linux / macOS
+
+| Task | Command | Result |
+|------|---------|---------|
+| **Check code quality** | `./scripts/git/check_lint.sh` | Validates code with ruff/black/isort |
+| **Fix linting** | `./scripts/git/fix_lint.sh` | Auto-fixes linting issues |
+| **Validate branches** | `./scripts/git/validate_branches.sh` | Check branch status before merge |
 | **Check status** | `git status` | Shows staged changes |
 | **View branches** | `git branch -a` | Lists all branches |
-| **Emergency rollback** | `scripts\git\rollback_merge.bat` | Rollback last merge |
+
+**Note**: commit_enhanced.bat, merge_with_validation.bat, and other advanced scripts (.bat only) can be called from Git Bash using: `cmd.exe /c "scripts\git\script_name.bat"`
 
 ## 🚨 Critical Rules
 
@@ -664,6 +701,113 @@ This project follows [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PAT
 
 Check `pyproject.toml` for the current version number.
 
+## 📊 Workflow Logging (MANDATORY)
+
+### Purpose
+
+ALL significant Git operations (commits, merges, releases) MUST be logged for:
+- Complete audit trail
+- Troubleshooting failed operations
+- Historical reference
+- Process improvement
+
+### Log Location
+
+**Directory**: `logs/` (project root)
+**Full Path**: `F:\RD_PROJECTS\COMPONENTS\claude-context-local\logs\`
+**Git Status**: ✅ Gitignored (local-only, never committed)
+
+### Log File Format
+
+**Execution Log**: `{workflow_type}_YYYYMMDD_HHMMSS.log`
+- Real-time command outputs
+- Timestamps for each phase
+- Error messages and warnings
+- Verification results
+
+**Analysis Report**: `{workflow_type}_analysis_YYYYMMDD_HHMMSS.md`
+- Executive summary
+- Timeline with durations
+- Files modified (with line counts)
+- Issues encountered and resolutions
+- Final status (SUCCESS/FAILED)
+
+### Examples
+
+**Release Workflow**:
+- Log: `logs/git_workflow_v0.4.2_release_20251005_190000.log`
+- Report: `logs/git_workflow_analysis_v0.4.2_20251005_190000.md`
+
+**Bash Scripts Creation**:
+- Log: `logs/bash_scripts_verification_20251005_182523.log`
+- Report: `logs/bash_scripts_analysis_20251005_182523.md`
+
+### Mandatory Workflow Steps
+
+#### Before Starting Any Workflow:
+
+1. Create timestamped log file in `logs/`
+2. Initialize with workflow metadata (type, start time, objectives)
+
+#### During Workflow:
+
+3. Redirect all command outputs to log file (`>> logs/workflow.log`)
+4. Document each phase with timestamps
+5. Capture all verification checks
+
+#### After Workflow Completion:
+
+6. Generate comprehensive analysis report
+7. Document final status (success/failure)
+8. Include lessons learned and improvements
+
+### Integration Examples
+
+**Bash Script Logging** (check_lint.sh example):
+
+```bash
+# At start of workflow
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+LOGFILE="logs/lint_validation_${TIMESTAMP}.log"
+
+echo "=== Lint Validation Log ===" > "$LOGFILE"
+echo "Start Time: $(date)" >> "$LOGFILE"
+
+# During execution
+./scripts/git/check_lint.sh 2>&1 | tee -a "$LOGFILE"
+
+# At end
+echo "End Time: $(date)" >> "$LOGFILE"
+echo "Status: SUCCESS" >> "$LOGFILE"
+```
+
+**Batch Script Logging** (merge_with_validation.bat):
+
+```batch
+REM Initialize log
+set TIMESTAMP=%date:~10,4%%date:~4,2%%date:~7,2%_%time:~0,2%%time:~3,2%%time:~6,2%
+set LOGFILE=logs\merge_workflow_%TIMESTAMP%.log
+
+echo === Merge Workflow Log === > "%LOGFILE%"
+echo Start Time: %date% %time% >> "%LOGFILE%"
+
+REM Execute with logging
+[workflow steps] >> "%LOGFILE%" 2>&1
+
+REM Generate analysis report
+set REPORTFILE=logs\merge_analysis_%TIMESTAMP%.md
+[create markdown report]
+```
+
+### Previous Examples
+
+See existing logs in `logs/` directory (created during workflow execution):
+- v0.4.1 release logs (execution + analysis)
+- Bash scripts verification logs
+- Commit workflow logs
+
+All follow the same structure and format.
+
 ## 📦 Test Data Management
 
 ### test_evaluation/ Folder
@@ -680,6 +824,70 @@ Check `pyproject.toml` for the current version number.
 - **Ignore**: custom_evaluation_results/ (temporary results)
 
 ## ⚠️ Common Errors and Solutions
+
+### Error: Batch Scripts Not Working in Git Bash
+
+**Symptom**: Windows .bat files fail to execute in Git Bash with "command not found" errors
+
+**Example Error**:
+
+```bash
+$ scripts\git\check_lint.bat
+bash: scripts\git\check_lint.bat: command not found
+```
+
+**Root Cause**:
+- Git Bash (MINGW64) cannot execute Windows batch files directly
+- Batch files require cmd.exe interpreter
+- cmd.exe wrapper (`cmd.exe /c`) doesn't capture output properly in bash
+
+**Solution**: Use bash-compatible .sh scripts (v0.4.1+)
+
+```bash
+# Instead of .bat files, use .sh equivalents:
+./scripts/git/check_lint.sh      # Lint validation
+./scripts/git/fix_lint.sh         # Auto-fix lint issues
+./scripts/git/validate_branches.sh  # Branch validation
+
+# All 3 scripts:
+# ✅ Execute natively in Git Bash
+# ✅ Use forward-slash paths (compatible with Windows executables)
+# ✅ Respect pyproject.toml configuration
+# ✅ Proper exit codes for automation
+```
+
+**Key Differences**:
+
+| Aspect | .bat Files | .sh Files |
+|--------|-----------|-----------|
+| **Environment** | Windows cmd.exe only | Git Bash, Linux, macOS |
+| **Path Style** | Backslashes (\\) | Forward slashes (/) |
+| **Execution** | `scripts\git\script.bat` | `./scripts/git/script.sh` |
+| **Output Capture** | ✅ Works in cmd.exe | ✅ Works in bash |
+
+**Configuration Notes**:
+
+The .sh scripts rely on pyproject.toml for exclusions (no manual --exclude flags):
+
+```toml
+[tool.ruff]
+exclude = [".venv", "_archive", "build", "dist", "__pycache__", "tests/test_data"]
+
+[tool.black]
+exclude = ".venv|_archive"
+
+[tool.isort]
+skip_glob = ["_archive/*", ".venv/*"]
+```
+
+**Verification**:
+- All 3 bash scripts verified operational (2025-10-05)
+- Logs: `bash_scripts_verification_20251005_182523.log`, `bash_scripts_analysis_20251005_182523.md`
+- Location: `F:\RD_PROJECTS\COMPONENTS\claude-context-local_backup\logs\`
+
+**Prevention**: Always use .sh scripts when working in Git Bash environment
+
+---
 
 ### 📅 Recent Fixes Chronology
 
