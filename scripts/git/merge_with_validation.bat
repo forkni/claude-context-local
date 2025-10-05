@@ -49,12 +49,9 @@ echo [4/7] Merging development into main...
 echo Running: git merge development --no-ff
 echo.
 
-git merge development --no-ff -m "Merge development into main
-
-- Applied .gitattributes merge strategies
-- Excluded development-only files (tests/, docs/)
-- Combined CHANGELOG.md changes
-- Used diff3 for better conflict resolution"
+REM FIX ERROR #8: Use proper batch syntax for multi-line commit message
+REM Cannot use literal newlines in batch - they get interpreted as separate commands
+git merge development --no-ff -m "Merge development into main" -m "Applied .gitattributes merge strategies" -m "Excluded development-only files" -m "Combined CHANGELOG changes"
 
 set MERGE_EXIT_CODE=%ERRORLEVEL%
 
