@@ -5,17 +5,22 @@ This directory contains VSCode-specific configuration for optimal development ex
 ## Files
 
 ### `settings.json`
+
 Workspace-specific settings that override global VSCode configuration:
+
 - Python interpreter: Project's `.venv`
 - Ruff linter/formatter: Auto-fix on save
 - File exclusions: `__pycache__`, `_archive`, etc.
 
 ### `extensions.json`
+
 Recommended extensions for this project:
+
 - **Required**: Ruff (charliermarsh.ruff)
 - **Recommended**: Python, Pylance, GLSL shader support
 
 ### `GLOBAL_SETTINGS_UPDATE.md`
+
 Instructions for updating your global VSCode settings to work optimally with this project.
 
 ## Quick Setup
@@ -33,6 +38,7 @@ When you save a Python file (`Ctrl+S`):
 3. **Linting issues fixed** (Ruff auto-fix)
 
 All using the same rules as:
+
 - `scripts/git/check_lint.bat`
 - `scripts/git/fix_lint.bat`
 - GitHub Actions CI

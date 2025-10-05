@@ -1,7 +1,7 @@
 @echo off
 REM check_lint.bat
 REM Quick code quality checker - runs all linting tools without making changes
-REM Checks: ruff, black, isort (same as GitHub Actions CI)
+REM Checks: ruff, black, isort, markdownlint (same as GitHub Actions CI)
 
 setlocal enabledelayedexpansion
 
@@ -12,8 +12,8 @@ echo.
 REM Track overall status
 set ERRORS_FOUND=0
 
-REM [1/3] Check with Ruff
-echo [1/3] Running ruff...
+REM [1/4] Check with Ruff
+echo [1/4] Running ruff...
 call .venv\Scripts\ruff.exe check .
 if %ERRORLEVEL% NEQ 0 (
     echo ✗ Ruff found issues
@@ -23,8 +23,8 @@ if %ERRORLEVEL% NEQ 0 (
 )
 echo.
 
-REM [2/3] Check with Black
-echo [2/3] Running black...
+REM [2/4] Check with Black
+echo [2/4] Running black...
 call .venv\Scripts\black.exe --check .
 if %ERRORLEVEL% NEQ 0 (
     echo ✗ Black found formatting issues
@@ -34,14 +34,26 @@ if %ERRORLEVEL% NEQ 0 (
 )
 echo.
 
-REM [3/3] Check with isort
-echo [3/3] Running isort...
+REM [3/4] Check with isort
+echo [3/4] Running isort...
 call .venv\Scripts\isort.exe --check-only .
 if %ERRORLEVEL% NEQ 0 (
     echo ✗ isort found import sorting issues
     set ERRORS_FOUND=1
 ) else (
     echo ✓ isort passed
+)
+echo.
+
+REM [4/4] Check with markdownlint
+echo [4/4] Running markdownlint...
+REM Note: Scanning specific directories since negation patterns don't work in batch
+call markdownlint-cli2 "*.md" ".claude/**/*.md" ".github/**/*.md" ".githooks/**/*.md" ".vscode/**/*.md" "docs/**/*.md" "tests/**/*.md"
+if %ERRORLEVEL% NEQ 0 (
+    echo ✗ Markdownlint found issues
+    set ERRORS_FOUND=1
+) else (
+    echo ✓ Markdownlint passed
 )
 echo.
 

@@ -5,6 +5,7 @@ Pre-commit validation checklist to ensure changes follow project standards and w
 ## Overview
 
 This command runs comprehensive checks before committing:
+
 1. Verifies no local-only files are staged
 2. Checks branch-specific requirements
 3. Validates commit message format
@@ -167,6 +168,7 @@ echo ""
 ## Usage
 
 **Basic validation:**
+
 ```bash
 /validate-changes
 ```
@@ -174,6 +176,7 @@ echo ""
 ## Common Issues Caught
 
 This validation prevents:
+
 - ❌ Committing CLAUDE.md or MEMORY.md (local-only)
 - ❌ Committing _archive/ or benchmark_results/ (local-only)
 - ❌ Adding tests/ to main branch (development-only)
@@ -185,6 +188,7 @@ This validation prevents:
 ## Integration with Scripts
 
 This command complements:
+
 - `scripts/git/commit_enhanced.bat` - Enhanced commit workflow
 - `scripts/git/validate_branches.bat` - Branch state validation
 - `.git/hooks/pre-commit` - Automatic pre-commit hook
@@ -192,6 +196,7 @@ This command complements:
 ## Quick Fixes
 
 **Unstage local files:**
+
 ```bash
 git reset HEAD CLAUDE.md MEMORY.md
 git reset HEAD _archive/
@@ -199,6 +204,7 @@ git reset HEAD benchmark_results/
 ```
 
 **Fix commit message format:**
+
 ```bash
 # Good examples:
 feat: Add hybrid search with BM25 + semantic fusion

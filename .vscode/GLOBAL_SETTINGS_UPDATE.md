@@ -16,6 +16,7 @@
 ### 1. Update Python Section
 
 **Find this** (around lines 6-14):
+
 ```json
 "[python]": {
   "editor.defaultFormatter": "charliermarsh.ruff",
@@ -28,6 +29,7 @@
 ```
 
 **Replace with**:
+
 ```json
 "[python]": {
   "editor.defaultFormatter": "charliermarsh.ruff",
@@ -46,6 +48,7 @@
 ### 2. Remove Ruff Configuration Section
 
 **Find and DELETE** (around lines 58-66):
+
 ```json
 "ruff.configuration": {
   "lint": {
@@ -65,6 +68,7 @@
 ### 3. Update Global Code Actions
 
 **Find this** (around lines 108-112):
+
 ```json
 "editor.codeActionsOnSave": {
   "source.fixAll.ruff": "explicit",
@@ -74,6 +78,7 @@
 ```
 
 **Replace with**:
+
 ```json
 "editor.codeActionsOnSave": {
   "source.fixAll.markdownlint": "explicit"
@@ -81,6 +86,7 @@
 ```
 
 **Changes**:
+
 - Removed `source.fixAll.ruff` (handled by Python-specific section)
 - Removed `source.organizeImports` (handled by Python-specific section)
 - Kept `source.fixAll.markdownlint` for Markdown files
