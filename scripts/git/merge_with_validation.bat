@@ -49,12 +49,8 @@ echo [4/7] Merging development into main...
 echo Running: git merge development --no-ff
 echo.
 
-git merge development --no-ff -m "Merge development into main
-
-- Applied .gitattributes merge strategies
-- Excluded development-only files (tests/, docs/)
-- Combined CHANGELOG.md changes
-- Used diff3 for better conflict resolution"
+REM FIX ERROR #8: Simple single-line commit message to avoid batch parsing issues
+git merge development --no-ff -m "Merge development into main"
 
 set MERGE_EXIT_CODE=%ERRORLEVEL%
 
@@ -62,29 +58,36 @@ REM [5/7] Handle merge conflicts
 if %MERGE_EXIT_CODE% NEQ 0 (
     echo.
     echo ⚠ Merge conflicts detected - analyzing...
+    echo   Analyzing conflict types and preparing auto-resolution...
     echo.
 
     REM Check for modify/delete conflicts (expected for excluded files)
     git status | findstr /C:"deleted by us" >nul
     if %ERRORLEVEL% EQU 0 (
-        echo Found modify/delete conflicts for excluded files
-        echo These are expected and will be auto-resolved...
+        echo   Found modify/delete conflicts for excluded files
+        echo   These are expected and will be auto-resolved...
+        echo.
+        echo   Files to be removed from main branch:
+        git status --short | findstr /C:"DU "
         echo.
 
         REM Create temp file with conflicts
         git status --short | findstr /C:"DU " > "%TEMP%\merge_conflicts.txt"
 
-        REM Process each conflict with error checking
+        REM Process each conflict with error checking (FIX ERROR #8)
         set RESOLUTION_FAILED=0
-        for /f "tokens=2*" %%a in (%TEMP%\merge_conflicts.txt) do (
-            echo   Resolving: %%a %%b
-            git rm "%%a %%b"
-            if %ERRORLEVEL% NEQ 0 (
-                echo   ✗ ERROR: Failed to remove %%a %%b
+        for /f "usebackq tokens=2*" %%a in ("%TEMP%\merge_conflicts.txt") do (
+            set "CONFLICT_FILE=%%a %%b"
+            echo   Resolving: !CONFLICT_FILE!
+            git rm "!CONFLICT_FILE!" >nul 2>&1
+            if !ERRORLEVEL! NEQ 0 (
+                echo   ✗ ERROR: Failed to remove !CONFLICT_FILE!
                 set RESOLUTION_FAILED=1
+            ) else (
+                echo   ✓ Removed: !CONFLICT_FILE!
             )
         )
-        del "%TEMP%\merge_conflicts.txt"
+        del "%TEMP%\merge_conflicts.txt" 2>nul
 
         REM Verify all conflicts resolved
         if !RESOLUTION_FAILED! EQU 1 (
@@ -101,11 +104,32 @@ if %MERGE_EXIT_CODE% NEQ 0 (
         echo ✓ Auto-resolved modify/delete conflicts
         echo   (Kept main's version - excluded development-only files)
 
-        REM Check if merge commit was already created by auto-resolution
-        git rev-parse -q --verify MERGE_HEAD >nul 2>&1
-        if %ERRORLEVEL% NEQ 0 (
-            echo ✓ Merge commit automatically completed during auto-resolution
-            goto :merge_success
+        REM FIX ERROR #7: Check if all conflicts are actually resolved
+        REM Method 1: Check for unmerged files in index
+        git diff --name-only --diff-filter=U >nul 2>&1
+        if %ERRORLEVEL% EQU 0 (
+            REM Unmerged files still exist
+            echo.
+            echo ⚠ Some conflicts remain unresolved
+            echo   Continuing to validation and manual commit...
+        ) else (
+            REM No unmerged files - check merge state
+            git diff --cached --quiet >nul 2>&1
+            if %ERRORLEVEL% EQU 0 (
+                REM Nothing staged - merge might be incomplete
+                echo.
+                echo ⚠ No changes staged after auto-resolution
+                echo   Continuing to validation...
+            ) else (
+                REM Changes are staged - check if MERGE_HEAD is gone
+                git rev-parse -q --verify MERGE_HEAD >nul 2>&1
+                if %ERRORLEVEL% NEQ 0 (
+                    REM MERGE_HEAD is gone and changes staged - truly complete
+                    echo.
+                    echo ✓ Merge commit automatically completed during auto-resolution
+                    goto :merge_success
+                )
+            )
         )
     )
 
