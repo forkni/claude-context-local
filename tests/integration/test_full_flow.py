@@ -159,14 +159,14 @@ class TestFullSearchFlow:
         function_results = index_manager.search(
             query_embedding, k=10, filters={"chunk_type": "function"}
         )
-        for chunk_id, similarity, metadata in function_results:
+        for _chunk_id, _similarity, metadata in function_results:
             assert metadata["chunk_type"] == "function"
 
         # Test filtering by file pattern
         auth_results = index_manager.search(
             query_embedding, k=10, filters={"file_pattern": ["auth"]}
         )
-        for chunk_id, similarity, metadata in auth_results:
+        for _chunk_id, _similarity, metadata in auth_results:
             assert "auth" in metadata.get("file_path", "") or "auth" in metadata.get(
                 "relative_path", ""
             )

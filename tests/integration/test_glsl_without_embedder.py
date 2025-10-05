@@ -136,7 +136,7 @@ def test_glsl_indexing_without_embedder():
 
         traceback.print_exc()
         # Convert to assertion failure for pytest compatibility
-        raise AssertionError(f"GLSL indexing test failed: {e}")
+        raise AssertionError(f"GLSL indexing test failed: {e}") from e
 
 
 if __name__ == "__main__":
