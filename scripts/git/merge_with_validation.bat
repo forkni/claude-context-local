@@ -161,7 +161,7 @@ if %MERGE_EXIT_CODE% NEQ 0 (
 
     REM Check docs being added to main
     set DOCS_VALIDATION_FAILED=0
-    for /f %%f in ('git diff --cached --name-only --diff-filter=A ^| findstr /C:"docs/"') do (
+    for /f "delims=" %%f in ('git diff --cached --name-only --diff-filter=A 2^>nul ^| findstr /C:"docs/" 2^>nul') do (
         set DOC_FILE=%%~nxf
 
         REM Check if doc is in allowed list
@@ -220,7 +220,7 @@ if %MERGE_EXIT_CODE% NEQ 0 (
 
     REM Check docs being added to main
     set DOCS_VALIDATION_FAILED=0
-    for /f %%f in ('git diff --name-only HEAD~1 HEAD ^| findstr /C:"docs/"') do (
+    for /f "delims=" %%f in ('git diff --name-only HEAD~1 HEAD 2^>nul ^| findstr /C:"docs/" 2^>nul') do (
         set DOC_FILE=%%~nxf
 
         REM Check if doc is in allowed list
