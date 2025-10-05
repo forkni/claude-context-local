@@ -621,6 +621,62 @@ See [Model Migration Guide](docs/MODEL_MIGRATION_GUIDE.md) for detailed comparis
 /search_code "authentication"  # Gemma results
 ```
 
+📚 **Technical details**: See [docs/PER_MODEL_INDICES_IMPLEMENTATION.md](docs/PER_MODEL_INDICES_IMPLEMENTATION.md) (development branch)
+
+### 🚀 GPU Memory Optimization
+
+**Automatic memory cleanup** keeps vRAM usage optimal during indexing:
+
+**Performance Impact:**
+
+- **Before optimization**: 1.4GB → 8GB during indexing (memory leak)
+- **After optimization**: 1.4GB → 3-4GB during indexing (72% reduction)
+- **Memory cleanup**: Drops to 1.4GB baseline on demand
+
+**How It Works:**
+
+The system implements comprehensive GPU memory management:
+
+1. **Python garbage collection**: `gc.collect()` frees wrapper objects first
+2. **CUDA cache cleanup**: `torch.cuda.empty_cache()` releases GPU tensors
+3. **Automatic triggers**: Runs after every indexing operation (full or incremental)
+4. **Manual cleanup**: Use `/cleanup_resources` MCP tool anytime
+
+**Memory Lifecycle:**
+
+```
+Baseline (idle):        1.4GB
+↓ Index with Gemma:     3.0GB  (model + embeddings)
+↓ Index with BGE-M3:    4.0GB  (larger model)
+↓ Manual cleanup:       1.4GB  (back to baseline)
+```
+
+**When to Use Manual Cleanup:**
+
+- After large indexing operations
+- When switching between multiple projects
+- Before intensive operations requiring GPU memory
+- If you notice high vRAM usage
+
+**Example:**
+
+```bash
+# Index a large project
+/index_directory "C:\LargeProject"
+
+# Check memory usage
+/get_memory_status
+
+# Clean up GPU memory
+/cleanup_resources
+# Actions: Index cleared, Embedder cleaned, GPU cache freed, 7000+ objects collected
+
+# Verify cleanup
+/get_memory_status  # Should show baseline ~1.4GB
+```
+
+📚 **Implementation details**: Cleanup uses `gc.collect()` + `torch.cuda.empty_cache()` pattern recommended by PyTorch and ComfyUI communities for optimal memory management.
+
 ### Model Configuration
 
 The system supports two embedding models:

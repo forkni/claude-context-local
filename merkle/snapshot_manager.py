@@ -35,29 +35,73 @@ class SnapshotManager:
         normalized_path = str(Path(project_path).resolve())
         return hashlib.md5(normalized_path.encode()).hexdigest()
 
-    def get_snapshot_path(self, project_path: str) -> Path:
-        """Get the snapshot file path for a project.
+    def get_snapshot_path(self, project_path: str, dimension: Optional[int] = None) -> Path:
+        """Get the snapshot file path for a project with per-model dimension suffix.
 
         Args:
             project_path: Path to project
+            dimension: Model dimension (768 for Gemma, 1024 for BGE-M3).
+                      If None, auto-detects from current config.
 
         Returns:
-            Path to snapshot file
+            Path to snapshot file with dimension suffix
         """
         project_id = self.get_project_id(project_path)
-        return self.storage_dir / f"{project_id}_snapshot.json"
 
-    def get_metadata_path(self, project_path: str) -> Path:
-        """Get the metadata file path for a project.
+        # Auto-detect dimension from current config if not provided
+        if dimension is None:
+            try:
+                # Import here to avoid circular dependency
+                import sys
+                from pathlib import Path as PathLib
+
+                # Add parent directory to path for imports
+                parent_dir = PathLib(__file__).parent.parent
+                if str(parent_dir) not in sys.path:
+                    sys.path.insert(0, str(parent_dir))
+
+                from search.config import get_search_config
+                config = get_search_config()
+                dimension = config.model_dimension
+            except Exception:
+                # Fallback to default if config unavailable
+                dimension = 768
+
+        return self.storage_dir / f"{project_id}_{dimension}d_snapshot.json"
+
+    def get_metadata_path(self, project_path: str, dimension: Optional[int] = None) -> Path:
+        """Get the metadata file path for a project with per-model dimension suffix.
 
         Args:
             project_path: Path to project
+            dimension: Model dimension (768 for Gemma, 1024 for BGE-M3).
+                      If None, auto-detects from current config.
 
         Returns:
-            Path to metadata file
+            Path to metadata file with dimension suffix
         """
         project_id = self.get_project_id(project_path)
-        return self.storage_dir / f"{project_id}_metadata.json"
+
+        # Auto-detect dimension from current config if not provided
+        if dimension is None:
+            try:
+                # Import here to avoid circular dependency
+                import sys
+                from pathlib import Path as PathLib
+
+                # Add parent directory to path for imports
+                parent_dir = PathLib(__file__).parent.parent
+                if str(parent_dir) not in sys.path:
+                    sys.path.insert(0, str(parent_dir))
+
+                from search.config import get_search_config
+                config = get_search_config()
+                dimension = config.model_dimension
+            except Exception:
+                # Fallback to default if config unavailable
+                dimension = 768
+
+        return self.storage_dir / f"{project_id}_{dimension}d_metadata.json"
 
     def save_snapshot(self, dag: MerkleDAG, metadata: Optional[Dict] = None) -> None:
         """Save a Merkle DAG snapshot to disk.
@@ -171,6 +215,39 @@ class SnapshotManager:
 
         if metadata_path.exists():
             metadata_path.unlink()
+
+    def delete_all_snapshots(self, project_path: str) -> int:
+        """Delete ALL dimension snapshots and metadata for a project.
+
+        This removes snapshots for all model dimensions (768d, 1024d, etc.),
+        ensuring complete cleanup when clearing indices.
+
+        Args:
+            project_path: Path to project
+
+        Returns:
+            Number of files deleted
+        """
+        project_id = self.get_project_id(project_path)
+        deleted_count = 0
+
+        # Delete all snapshot files for this project (all dimensions)
+        for snapshot_file in self.storage_dir.glob(f"{project_id}_*d_snapshot.json"):
+            try:
+                snapshot_file.unlink()
+                deleted_count += 1
+            except Exception:
+                pass  # Continue even if one file fails
+
+        # Delete all metadata files for this project (all dimensions)
+        for metadata_file in self.storage_dir.glob(f"{project_id}_*d_metadata.json"):
+            try:
+                metadata_file.unlink()
+                deleted_count += 1
+            except Exception:
+                pass  # Continue even if one file fails
+
+        return deleted_count
 
     def list_snapshots(self) -> List[Dict]:
         """List all available snapshots.

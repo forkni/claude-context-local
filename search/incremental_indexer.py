@@ -150,6 +150,19 @@ class IncrementalIndexer:
             self.indexer.save_index()
             logger.info("[INCREMENTAL] Index saved")
 
+            # Clear GPU cache to free intermediate tensors from embedding batches
+            try:
+                import gc
+                import torch
+
+                gc.collect()  # Free Python wrapper objects first
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()  # Then release CUDA cache
+                    logger.info("[INCREMENTAL] GPU cache cleared after indexing")
+            except ImportError:
+                pass
+
             return IncrementalIndexResult(
                 files_added=len(changes.added),
                 files_removed=len(changes.removed),
@@ -275,6 +288,19 @@ class IncrementalIndexer:
             logger.info("[INCREMENTAL] Saving index...")
             self.indexer.save_index()
             logger.info("[INCREMENTAL] Index saved")
+
+            # Clear GPU cache to free intermediate tensors from embedding batches
+            try:
+                import gc
+                import torch
+
+                gc.collect()  # Free Python wrapper objects first
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()  # Then release CUDA cache
+                    logger.info("[INCREMENTAL] GPU cache cleared after indexing")
+            except ImportError:
+                pass
 
             return IncrementalIndexResult(
                 files_added=len(supported_files),
