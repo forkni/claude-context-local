@@ -10,7 +10,7 @@ echo ""
 # Track failures
 FAILED=0
 
-echo "[1/3] Running ruff..."
+echo "[1/4] Running ruff..."
 if .venv/Scripts/ruff.exe check .; then
     echo "✓ Ruff passed"
 else
@@ -19,7 +19,7 @@ else
 fi
 
 echo ""
-echo "[2/3] Running black..."
+echo "[2/4] Running black..."
 if .venv/Scripts/black.exe --check .; then
     echo "✓ Black passed"
 else
@@ -28,11 +28,20 @@ else
 fi
 
 echo ""
-echo "[3/3] Running isort..."
+echo "[3/4] Running isort..."
 if .venv/Scripts/isort.exe --check-only .; then
     echo "✓ Isort passed"
 else
     echo "❌ Isort checks failed"
+    FAILED=1
+fi
+
+echo ""
+echo "[4/4] Running markdownlint..."
+if markdownlint-cli2 "**/*.md" "!**/_archive/**" "!**/node_modules/**" "!**/.venv/**" "!**/benchmark_results/**" "!**/logs/**"; then
+    echo "✓ Markdownlint passed"
+else
+    echo "❌ Markdownlint checks failed"
     FAILED=1
 fi
 

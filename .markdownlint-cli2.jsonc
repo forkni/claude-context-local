@@ -2,15 +2,49 @@
 // See: https://github.com/DavidAnson/markdownlint-cli2
 
 {
-  // Rule MD013: Line length
-  // Disabled - Code blocks and long links often exceed this
-  "MD013": false,
+  // Exclude patterns (directories to ignore)
+  "ignores": [
+    "_archive",
+    "node_modules",
+    ".venv",
+    "benchmark_results",
+    "logs"
+  ],
 
-  // Rule MD033: Inline HTML
-  // Disabled - We use HTML for tables and formatting
-  "MD033": false,
+  // Rule configuration
+  "config": {
+    // MD013: Line length - increased to 120 chars
+    "MD013": {
+      "line_length": 120,
+      "tables": false,
+      "code_blocks": false
+    },
 
-  // Rule MD041: First line in file should be a top level heading
-  // Disabled - Some files start with front matter or explanations
-  "MD041": false
+    // MD022: Headings surrounded by blank lines
+    "MD022": true,
+
+    // MD024: Allow duplicate headings (CHANGELOG.md compatibility)
+    "MD024": false,
+
+    // MD029: Allow inconsistent ordered list prefixes
+    "MD029": false,
+
+    // MD031: Fenced code blocks surrounded by blank lines
+    "MD031": true,
+
+    // MD032: Lists surrounded by blank lines
+    "MD032": true,
+
+    // MD033: Inline HTML - disabled for tables/formatting
+    "MD033": false,
+
+    // MD036: Allow emphasis as heading
+    "MD036": false,
+
+    // MD040: Allow fenced code blocks without language
+    "MD040": false,
+
+    // MD041: First line in file should be a top level heading - disabled
+    "MD041": false
+  }
 }

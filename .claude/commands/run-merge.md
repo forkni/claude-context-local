@@ -1,10 +1,12 @@
 # Run Merge Workflow
 
-Guided workflow for merging development branch into main using the project's automated merge scripts with .gitattributes support.
+Guided workflow for merging development branch into main using the
+project's automated merge scripts with .gitattributes support.
 
 ## Overview
 
 This command guides you through the safe merge process:
+
 1. Validates both branches are ready
 2. Runs pre-merge checks
 3. Executes merge with .gitattributes exclusions
@@ -21,6 +23,7 @@ This command guides you through the safe merge process:
 ## Merge Types
 
 **Arguments:**
+
 - `full` - Full merge from development to main (default)
 - `docs` - Documentation-only merge
 - `status` - Check branch synchronization status
@@ -125,6 +128,7 @@ fi
 ## Usage Examples
 
 **Full Merge:**
+
 ```bash
 # Run full merge workflow
 /run-merge full
@@ -134,12 +138,14 @@ fi
 ```
 
 **Documentation Only:**
+
 ```bash
 # Merge only docs/ changes
 /run-merge docs
 ```
 
 **Status Check Only:**
+
 ```bash
 # Just check synchronization status
 /run-merge status
@@ -157,6 +163,7 @@ fi
 ## Rollback
 
 If merge has issues:
+
 ```bash
 ./scripts/git/rollback_merge.bat
 ```

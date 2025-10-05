@@ -96,6 +96,7 @@ These are automatically excluded from main branch via `.gitattributes` merge str
 All workflow scripts are located in `scripts/git/` directory.
 
 **Environment Compatibility**: Scripts are available in two formats:
+
 - **Windows cmd.exe**: Use `.bat` files (6 scripts)
 - **Git Bash / Linux / macOS**: Use `.sh` files (3 scripts: check_lint, fix_lint, validate_branches)
 
@@ -119,11 +120,13 @@ commit_enhanced.bat "Your commit message"
 #### check_lint - Code Quality Validation
 
 **Windows cmd.exe**:
+
 ```batch
 scripts\git\check_lint.bat
 ```
 
 **Git Bash / Linux / macOS**:
+
 ```bash
 ./scripts/git/check_lint.sh
 ```
@@ -133,25 +136,29 @@ scripts\git\check_lint.bat
 - Ruff linting (Python code style)
 - Black formatting (code consistency)
 - isort import sorting
+- markdownlint (documentation quality)
 
 **Configuration**: Uses pyproject.toml settings (automatically excludes .venv, _archive, all gitignored directories)
 
 #### fix_lint - Auto-fix Linting Issues
 
 **Windows cmd.exe**:
+
 ```batch
 scripts\git\fix_lint.bat
 ```
 
 **Git Bash / Linux / macOS**:
+
 ```bash
 ./scripts/git/fix_lint.sh
 ```
 
 **Fixes:**
 
-- Runs ruff --fix → black → isort
-- Auto-fixes ~90% of lint errors
+- Runs ruff --fix → black → isort → markdownlint --fix
+- Auto-fixes ~90% of Python lint errors
+- Auto-fixes most markdown formatting issues
 - Suggests running check_lint to verify all issues resolved
 
 #### merge_with_validation.bat - Safe Merge Workflow
@@ -171,11 +178,13 @@ scripts\git\merge_with_validation.bat
 #### validate_branches - Pre-merge Validation
 
 **Windows cmd.exe**:
+
 ```batch
 scripts\git\validate_branches.bat
 ```
 
 **Git Bash / Linux / macOS**:
+
 ```bash
 ./scripts/git/validate_branches.sh
 ```
@@ -516,18 +525,20 @@ cd claude-context-local
 | Task | Command | Result |
 |------|---------|---------|
 | **Safe commit** | `scripts\git\commit_enhanced.bat "message"` | Commits with lint checks and validations |
-| **Check code quality** | `scripts\git\check_lint.bat` | Validates code with ruff/black/isort |
-| **Fix linting** | `scripts\git\fix_lint.bat` | Auto-fixes linting issues |
-| **Merge to main** | `scripts\git\merge_with_validation.bat` | Safe merge: development → main |
+| **Check code quality** | `scripts\git\check_lint.bat` | Validates code with ruff/black/isort/markdownlint |
+| **Fix linting** | `scripts\git\fix_lint.bat` | Auto-fixes linting issues (Python + markdown) |
+| **Merge to main** | `scripts\git\merge_with_validation.bat` | Safe merge: development → main (auto-resolves test file conflicts) |
 | **Docs-only merge** | `scripts\git\merge_docs.bat` | Merge only documentation changes |
 | **Emergency rollback** | `scripts\git\rollback_merge.bat` | Rollback last merge |
+
+**Note on merges**: `merge_with_validation.bat` automatically handles expected modify/delete conflicts for test files. Manual merges (`git merge development`) will require running `git rm tests/**` to resolve conflicts. See [Understanding Modify/Delete Conflicts](#-understanding-modifydelete-conflicts-expected-behavior) for details.
 
 ### Git Bash / Linux / macOS
 
 | Task | Command | Result |
 |------|---------|---------|
-| **Check code quality** | `./scripts/git/check_lint.sh` | Validates code with ruff/black/isort |
-| **Fix linting** | `./scripts/git/fix_lint.sh` | Auto-fixes linting issues |
+| **Check code quality** | `./scripts/git/check_lint.sh` | Validates code with ruff/black/isort/markdownlint |
+| **Fix linting** | `./scripts/git/fix_lint.sh` | Auto-fixes linting issues (Python + markdown) |
 | **Validate branches** | `./scripts/git/validate_branches.sh` | Check branch status before merge |
 | **Check status** | `git status` | Shows staged changes |
 | **View branches** | `git branch -a` | Lists all branches |
@@ -621,6 +632,106 @@ Main Branch:
 └── User-ready repository
 ```
 
+## 🔀 Understanding Modify/Delete Conflicts (Expected Behavior)
+
+### What Are Modify/Delete Conflicts?
+
+When merging `development` → `main`, you may encounter **modify/delete conflicts** for test files:
+
+```
+CONFLICT (modify/delete): tests/integration/test_example.py deleted in HEAD and modified in development
+```
+
+**This is EXPECTED and NORMAL** for the dual-branch workflow.
+
+### Why Do These Conflicts Occur?
+
+1. **Development branch**: Has test files that were recently modified (e.g., lint fixes, updates)
+2. **Main branch**: Doesn't have test files (intentionally excluded for clean public release)
+3. **Git's dilemma**: During merge, Git cannot automatically decide:
+   - Should it add the modified test files from development? (modified)
+   - Should it keep test files deleted as on main? (deleted)
+
+### Why .gitattributes Doesn't Prevent These
+
+Your `.gitattributes` file has:
+
+```gitattributes
+tests/** merge=ours
+```
+
+**Important limitation**: The `merge=ours` strategy only works for **content conflicts** (when file exists on both branches with different content), NOT for **modify/delete conflicts** (when file exists on one branch but not the other).
+
+**Git doesn't have a built-in strategy** to say "if file doesn't exist on our branch, keep it deleted during merge."
+
+### Two Workflow Options
+
+#### Option 1: Automated Script (Recommended)
+
+Use `merge_with_validation.bat` which **automatically resolves** modify/delete conflicts:
+
+```batch
+scripts\git\merge_with_validation.bat
+```
+
+**What it does**:
+
+- Detects modify/delete conflicts for test files
+- Recognizes them as expected for excluded files
+- Automatically runs `git rm` on conflicted test files
+- Completes merge with proper exclusions
+
+**Output example**:
+
+```
+⚠ Merge conflicts detected - analyzing...
+Found modify/delete conflicts for excluded files
+These are expected and will be auto-resolved...
+✓ Auto-resolved modify/delete conflicts
+✓ Merge completed successfully
+```
+
+#### Option 2: Manual Merge (Requires Manual Resolution)
+
+If you run a manual merge (e.g., `git merge development --no-ff`):
+
+**You MUST manually resolve test file conflicts**:
+
+```bash
+# 1. Identify conflicted test files
+git status --short | findstr /C:"DU "
+
+# 2. Remove test files from main (standard procedure)
+git rm tests/integration/test_file1.py tests/integration/test_file2.py tests/unit/test_file3.py
+
+# 3. Complete the merge
+git commit --no-edit
+```
+
+**This is the expected resolution** - test files should be excluded from main.
+
+### When to Use Each Approach
+
+| Scenario | Use | Why |
+|----------|-----|-----|
+| **Standard releases** | `merge_with_validation.bat` | Automated conflict resolution, full validation |
+| **Documentation merges** | `merge_docs.bat` | Specific to docs-only changes |
+| **Emergency fixes** | Manual merge + manual resolution | Full control when needed |
+| **CI/CD workflows** | GitHub Actions workflow | Automated testing + merging |
+
+### Key Takeaway
+
+**Modify/delete conflicts for test files are EXPECTED**, not errors:
+
+- ✅ Test files modified on development
+- ✅ Test files don't exist on main
+- ✅ Git requires manual decision
+- ✅ Standard resolution: `git rm tests/**`
+
+**Best practice**: Use `merge_with_validation.bat` to automate this standard procedure.
+
+---
+
 ## 📝 Implementation Summary
 
 ✅ **Complete Setup:**
@@ -706,6 +817,7 @@ Check `pyproject.toml` for the current version number.
 ### Purpose
 
 ALL significant Git operations (commits, merges, releases) MUST be logged for:
+
 - Complete audit trail
 - Troubleshooting failed operations
 - Historical reference
@@ -720,12 +832,14 @@ ALL significant Git operations (commits, merges, releases) MUST be logged for:
 ### Log File Format
 
 **Execution Log**: `{workflow_type}_YYYYMMDD_HHMMSS.log`
+
 - Real-time command outputs
 - Timestamps for each phase
 - Error messages and warnings
 - Verification results
 
 **Analysis Report**: `{workflow_type}_analysis_YYYYMMDD_HHMMSS.md`
+
 - Executive summary
 - Timeline with durations
 - Files modified (with line counts)
@@ -735,27 +849,29 @@ ALL significant Git operations (commits, merges, releases) MUST be logged for:
 ### Examples
 
 **Release Workflow**:
+
 - Log: `logs/git_workflow_v0.4.2_release_20251005_190000.log`
 - Report: `logs/git_workflow_analysis_v0.4.2_20251005_190000.md`
 
 **Bash Scripts Creation**:
+
 - Log: `logs/bash_scripts_verification_20251005_182523.log`
 - Report: `logs/bash_scripts_analysis_20251005_182523.md`
 
 ### Mandatory Workflow Steps
 
-#### Before Starting Any Workflow:
+#### Before Starting Any Workflow
 
 1. Create timestamped log file in `logs/`
 2. Initialize with workflow metadata (type, start time, objectives)
 
-#### During Workflow:
+#### During Workflow
 
 3. Redirect all command outputs to log file (`>> logs/workflow.log`)
 4. Document each phase with timestamps
 5. Capture all verification checks
 
-#### After Workflow Completion:
+#### After Workflow Completion
 
 6. Generate comprehensive analysis report
 7. Document final status (success/failure)
@@ -802,6 +918,7 @@ set REPORTFILE=logs\merge_analysis_%TIMESTAMP%.md
 ### Previous Examples
 
 See existing logs in `logs/` directory (created during workflow execution):
+
 - v0.4.1 release logs (execution + analysis)
 - Bash scripts verification logs
 - Commit workflow logs
@@ -837,6 +954,7 @@ bash: scripts\git\check_lint.bat: command not found
 ```
 
 **Root Cause**:
+
 - Git Bash (MINGW64) cannot execute Windows batch files directly
 - Batch files require cmd.exe interpreter
 - cmd.exe wrapper (`cmd.exe /c`) doesn't capture output properly in bash
@@ -881,6 +999,7 @@ skip_glob = ["_archive/*", ".venv/*"]
 ```
 
 **Verification**:
+
 - All 3 bash scripts verified operational (2025-10-05)
 - Logs: `bash_scripts_verification_20251005_182523.log`, `bash_scripts_analysis_20251005_182523.md`
 - Location: `F:\RD_PROJECTS\COMPONENTS\claude-context-local_backup\logs\`
@@ -929,6 +1048,7 @@ This section tracks major workflow improvements and fixes in reverse chronologic
    - Files: test_glsl_*.py, test_hf_access.py, test_bm25_population.py, bm25_index.py
 
 **Final Status**:
+
 - ✅ 13 Ruff linting errors resolved
 - ✅ 2 critical workflow errors resolved
 - ✅ All changes merged to both development and main branches
@@ -1024,7 +1144,68 @@ Only these 8 docs are allowed in main branch: [list]
 
 ---
 
+### Expected: Modify/Delete Conflicts for Test Files
+
+**Symptom**: Test files show modify/delete conflicts when merging development → main
+
+```
+CONFLICT (modify/delete): tests/integration/test_example.py deleted in HEAD and modified in development
+CONFLICT (modify/delete): tests/unit/test_example.py deleted in HEAD and modified in development
+```
+
+**Status**: ✅ **THIS IS NORMAL AND EXPECTED** - Not an error!
+
+**Why**: Test files exist on development but are intentionally excluded from main branch. Git requires manual decision when file is modified on one branch but deleted on the other.
+
+**Quick Resolution**:
+
+```bash
+# Remove test files from merge (standard procedure)
+git rm tests/integration/*.py tests/unit/*.py
+
+# Complete merge
+git commit --no-edit
+```
+
+**Better Approach**: Use automated script to avoid manual resolution:
+
+```batch
+scripts\git\merge_with_validation.bat  # Auto-resolves these conflicts
+```
+
+**Full explanation**: See [Understanding Modify/Delete Conflicts](#-understanding-modifydelete-conflicts-expected-behavior)
+
+---
+
 ### Error: Merge Conflicts Not Auto-Resolved
+
+**Important**: First determine if you're seeing **expected conflicts** or a **script error**.
+
+#### Expected Conflicts (Manual Merge)
+
+If you ran a **manual merge** (e.g., `git merge development --no-ff`), modify/delete conflicts for test files are **EXPECTED**:
+
+```
+CONFLICT (modify/delete): tests/integration/test_example.py deleted in HEAD and modified in development
+```
+
+**This is NORMAL** - See [Understanding Modify/Delete Conflicts](#-understanding-modifydelete-conflicts-expected-behavior) for full explanation.
+
+**Standard resolution** (not an error):
+
+```bash
+# Remove test files from main (expected procedure)
+git rm tests/integration/*.py tests/unit/*.py
+
+# Complete merge
+git commit --no-edit
+```
+
+**Prevention**: Use `merge_with_validation.bat` for automated conflict resolution.
+
+#### Script Error (Automated Merge Failed)
+
+If you used `merge_with_validation.bat` and it **fails to auto-resolve**:
 
 **Symptom**: Script reports conflicts but doesn't resolve them automatically
 
@@ -1034,9 +1215,10 @@ Only these 8 docs are allowed in main branch: [list]
 ⚠ Merge conflicts detected - analyzing...
 Found modify/delete conflicts for excluded files
 [Lists files but doesn't resolve them]
+❌ Some conflicts remain unresolved
 ```
 
-**Root Cause**: Conflict resolution loop error handling issue in older script version
+**Root Cause**: Conflict resolution loop error (older script versions had this issue)
 
 **Solution**:
 
@@ -1059,7 +1241,7 @@ Found modify/delete conflicts for excluded files
    - Error checking for each file
    - Verification after resolution
 
-**Prevention**: Updated script with enhanced error handling and validation
+**Prevention**: Update to latest script version with enhanced error handling
 
 ---
 
@@ -1136,6 +1318,7 @@ main
 **Root Cause**: User didn't verify current branch before running commit script
 
 **Impact**:
+
 - Changes committed to wrong branch
 - Need to undo commit and re-commit to correct branch
 
@@ -1169,6 +1352,7 @@ main
    ```
 
 **Prevention**: commit_enhanced.bat now includes branch verification:
+
 - Shows current branch before commit
 - Requires user confirmation: "Is this the correct branch?"
 - Lists all available branches if user says no
@@ -1196,6 +1380,7 @@ Merge development into main
 ```
 
 **Root Cause**: Script logic issue
+
 - Merge command at [4/7] creates commit when auto-resolution succeeds
 - Script tries to commit again at [7/7] using `git commit --no-edit`
 - Second commit fails with "nothing to commit" → false error message
@@ -1215,6 +1400,7 @@ if %ERRORLEVEL% NEQ 0 (
 ```
 
 **Prevention**:
+
 - Script now detects when merge commit already exists
 - Skips redundant commit attempt
 - Prevents false error messages
@@ -1239,6 +1425,7 @@ You have unmerged paths.
 ```
 
 **Root Cause** (v3 implementation):
+
 - Single-layer check: only verified if MERGE_HEAD exists
 - Didn't validate that conflicts were actually resolved
 - Didn't check if changes were properly staged
@@ -1277,11 +1464,13 @@ if %ERRORLEVEL% EQU 0 (
 ```
 
 **Validation Layers**:
+
 1. **Unmerged files**: Check index for conflicts (`git diff --name-only --diff-filter=U`)
 2. **Staged changes**: Verify work was actually done (`git diff --cached --quiet`)
 3. **MERGE_HEAD state**: Confirm merge ref is gone (`git rev-parse MERGE_HEAD`)
 
 **Prevention**:
+
 - Only reports completion when ALL three conditions pass
 - Provides specific status messages for each validation layer
 - Continues to manual commit phase if any layer fails
@@ -1310,6 +1499,7 @@ operable program or batch file.
 ```
 
 **Root Causes Discovered**:
+
 1. **Multi-line git merge command** - Literal newlines in batch file
 2. **Multiple -m flags on long lines** - Batch parsing limits exceeded
 3. **For loop file processing** - Missing error suppression and delimiters
@@ -1317,19 +1507,23 @@ operable program or batch file.
 #### Error Evolution & Fix Attempts
 
 **Attempt 1: Enhanced Conflict Resolution Loop** (commit a5170b8)
+
 - Improved error handling in conflict resolution
 - Better file processing with temp files
 - **Result**: Still valuable but didn't fix parsing errors
 
 **Attempt 2: Multiple -m Flags** (commit 4529d1a)
+
 - Replaced multi-line message with multiple -m flags
 - **Result**: Caused 'message' parsing errors, abandoned
 
 **Attempt 3: Single-Line Commit Message** (commit bfeae9b)
+
 - Simplified to one-line commit message
 - **Result**: Fixed commit message source, but 'tch' errors remained
 
 **Attempt 4: For Loop Parsing Fixes** (commit 464dbd1)
+
 - Added `delims=` to for loops
 - Added `2^>nul` error suppression
 - **Result**: ✅ Complete resolution
@@ -1348,6 +1542,7 @@ git merge development --no-ff -m "Merge development into main
 ```
 
 **Why it failed**:
+
 - Batch files cannot have literal newlines in command arguments
 - Each newline creates a new line that batch tries to parse
 - The '-' characters at line start are interpreted as command names
@@ -1361,6 +1556,7 @@ for /f %%f in ('git diff --cached --name-only --diff-filter=A ^| findstr /C:"doc
 ```
 
 **Why it failed**:
+
 - Missing `delims=` caused word splitting on spaces in filenames
 - No error suppression caused 'tch' when piping empty results
 - Result: "tch" from "batch" parsed as command when no files found
@@ -1385,6 +1581,7 @@ for /f "delims=" %%f in ('git diff --cached --name-only --diff-filter=A 2^>nul ^
 ```
 
 **Key improvements**:
+
 - `delims=""` prevents word splitting on spaces
 - `2^>nul` suppresses stderr from both git and findstr
 - Handles empty results gracefully without parsing errors
@@ -1408,6 +1605,7 @@ for /f "usebackq tokens=2*" %%a in ("%TEMP%\merge_conflicts.txt") do (
 ```
 
 **Prevention Best Practices**:
+
 - ✅ Always use single-line commit messages in batch files
 - ✅ Avoid literal newlines in any batch command
 - ✅ Use `delims=""` in for loops processing filenames
@@ -1416,12 +1614,14 @@ for /f "usebackq tokens=2*" %%a in ("%TEMP%\merge_conflicts.txt") do (
 - ✅ Test batch scripts with edge cases (empty results, spaces in names)
 
 **Verification**:
+
 - Tested with merge commit e9d60c8 (2025-10-04)
 - All parsing errors eliminated
 - Merge completed successfully
 - No cosmetic warnings remain
 
 **Status**: ✅ FULLY RESOLVED in v4 (commits a5170b8, 4529d1a, bfeae9b, 464dbd1)
+
 - All parsing errors eliminated
 - Merge functionality verified working
 - Final verification commit: e9d60c8
@@ -1439,6 +1639,7 @@ After implementing ERROR #7 and ERROR #8 fixes, comprehensive verification testi
 **Purpose**: Verify both ERROR #7 and ERROR #8 are fully resolved
 
 **Test Steps**:
+
 1. Created minor documentation change (added timestamp to GIT_WORKFLOW.md)
 2. Committed to development branch
 3. Executed `merge_with_validation.bat` from main branch
@@ -1478,12 +1679,14 @@ Merge made by the 'ort' strategy.
 #### Verification Confirmation
 
 **ERROR #7 Validation** (Merge Completion Detection):
+
 - ✅ No false "automatically completed" messages
 - ✅ All 3 validation layers working correctly
 - ✅ Proper flow through all 7 steps
 - ✅ Accurate status reporting
 
 **ERROR #8 Validation** (Batch Parsing):
+
 - ✅ No "'-' is not recognized" errors
 - ✅ No 'tch' parsing errors
 - ✅ No 'message' parsing errors
@@ -1491,6 +1694,7 @@ Merge made by the 'ort' strategy.
 - ✅ For loops processed files correctly
 
 **Additional Validations**:
+
 - ✅ Pre-merge validation (9/9 checks passed)
 - ✅ Backup tag creation successful
 - ✅ Documentation CI policy validation
@@ -1588,6 +1792,7 @@ except Exception as e:
 ```
 
 **Why it matters**:
+
 - Preserves original exception traceback
 - Helps with debugging
 - Shows exception causality chain
@@ -1643,6 +1848,7 @@ All checks passed!
 ```
 
 **Prevention**:
+
 - ✅ Use underscore prefix for unused variables
 - ✅ Always add `from e` when re-raising exceptions
 - ✅ Run `fix_lint.bat` before committing
@@ -1794,6 +2000,43 @@ except Exception as bm25_error:
 **Total errors fixed**: 13 (4 B007 + 9 B904)
 **Commit**: 46dac62
 
+### Markdown Linting
+
+**Installation** (one-time setup):
+
+```bash
+# Install markdownlint-cli2 globally
+npm install -g markdownlint-cli2
+
+# Verify installation
+markdownlint-cli2 --version
+```
+
+**Local validation** (before commit):
+
+```batch
+# Check markdown quality
+scripts\git\check_lint.bat    # Includes markdownlint
+
+# Auto-fix markdown issues
+scripts\git\fix_lint.bat      # Includes markdownlint --fix
+```
+
+**Common markdown fixes**:
+
+- Line length violations (MD013) - break long lines
+- Missing blank lines around headings (MD022)
+- Missing blank lines around lists (MD032)
+- Missing blank lines around code fences (MD031)
+
+**Configuration**: `.markdownlint-cli2.yaml` in project root
+
+**Excluded directories**: `.venv`, `_archive`, `benchmark_results`, `logs`, `node_modules`
+
+**Match CI/CD**: Local markdown validation matches GitHub Actions `docs-validation.yml` rules
+
+---
+
 ### Expected Warnings (Updated 2025-10-04)
 
 **NOTE**: As of 2025-10-04, B007 and B904 warnings have been comprehensively resolved across the codebase.
@@ -1805,10 +2048,12 @@ except Exception as bm25_error:
 - **Formatting warnings** - When using specialized formatting (docstrings, ASCII art, etc.)
 
 **Previously common but now resolved**:
+
 - ~~B904 (exception chaining)~~ ✅ All fixed in commit 46dac62
 - ~~B007 (unused loop variables)~~ ✅ All fixed in commit 46dac62
 
 **When new warnings appear**:
+
 1. Run `fix_lint.bat` first (auto-fixes ~90%)
 2. Review changes with `git diff`
 3. Manually fix remaining issues
