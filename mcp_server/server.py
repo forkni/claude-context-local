@@ -76,7 +76,7 @@ def get_storage_dir() -> Path:
 
 
 def get_project_storage_dir(project_path: str) -> Path:
-    """Get or create project-specific storage directory."""
+    """Get or create project-specific storage directory with per-model dimension suffix."""
     base_dir = get_storage_dir()
 
     # Create a safe directory name from project path
@@ -87,17 +87,30 @@ def get_project_storage_dir(project_path: str) -> Path:
     project_name = project_path.name
     project_hash = hashlib.md5(str(project_path).encode()).hexdigest()[:8]
 
-    # Use project name + hash to ensure uniqueness and readability
-    project_dir = base_dir / "projects" / f"{project_name}_{project_hash}"
+    # Detect embedding dimension from current config for per-model index storage
+    from search.config import get_search_config, MODEL_REGISTRY
+
+    config = get_search_config()
+    model_name = config.embedding_model_name
+    dimension = MODEL_REGISTRY.get(model_name, {}).get("dimension", 768)
+
+    # Use project name + hash + dimension for per-model index separation
+    project_dir = base_dir / "projects" / f"{project_name}_{project_hash}_{dimension}d"
     project_dir.mkdir(parents=True, exist_ok=True)
 
-    # Store project info
+    logger.info(
+        f"[PER_MODEL_INDICES] Using storage: {project_dir.name} (model: {model_name}, dimension: {dimension}d)"
+    )
+
+    # Store project info with model metadata
     project_info_file = project_dir / "project_info.json"
     if not project_info_file.exists():
         project_info = {
             "project_name": project_name,
             "project_path": str(project_path),
             "project_hash": project_hash,
+            "embedding_model": model_name,
+            "model_dimension": dimension,
             "created_at": datetime.now().isoformat(),
         }
         with open(project_info_file, "w") as f:
@@ -684,6 +697,11 @@ def index_directory(
             indexer=indexer, embedder=embedder, chunker=chunker
         )
 
+        # Update current project tracker (CRITICAL for multi-project isolation - Bug #2 fix)
+        global _current_project
+        _current_project = str(directory_path)
+        logger.info(f"[PER_MODEL_INDICES] Updated _current_project to: {_current_project}")
+
         # Perform indexing
         result = incremental_indexer.incremental_index(
             str(directory_path), project_name, force_full=not incremental
@@ -913,7 +931,7 @@ def switch_project(project_path: str) -> str:
 def clear_index() -> str:
     """
     Clear the entire search index and metadata for the current project.
-    Also deletes associated Merkle snapshot to prevent stale state issues.
+    Deletes ALL dimension indices (768d, 1024d, etc.) and associated Merkle snapshots.
 
     Returns:
         JSON string confirming the operation
@@ -927,27 +945,70 @@ def clear_index() -> str:
                 }
             )
 
+        import hashlib
+        import shutil
+
+        # Get project identifiers
+        project_path = Path(_current_project).resolve()
+        project_name = project_path.name
+        project_hash = hashlib.md5(str(project_path).encode()).hexdigest()[:8]
+
+        # Clear current dimension index via index_manager
         index_manager = get_index_manager()
         index_manager.clear_index()
 
-        # Also clear Merkle snapshot to prevent "No changes detected" issues
+        # Delete ALL dimension project directories (multi-dimension cleanup)
+        base_dir = get_storage_dir()
+        projects_dir = base_dir / "projects"
+        deleted_dirs = []
+
+        if projects_dir.exists():
+            # Find all dimension directories for this project
+            pattern = f"{project_name}_{project_hash}_*"
+            for project_dir in projects_dir.glob(pattern):
+                if project_dir.is_dir():
+                    try:
+                        shutil.rmtree(project_dir)
+                        deleted_dirs.append(project_dir.name)
+                        logger.info(f"[PER_MODEL_INDICES] Deleted directory: {project_dir.name}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete {project_dir.name}: {e}")
+
+            # Also delete old format directory (no dimension suffix) for backward compatibility
+            old_format_dir = projects_dir / f"{project_name}_{project_hash}"
+            if old_format_dir.exists():
+                try:
+                    shutil.rmtree(old_format_dir)
+                    deleted_dirs.append(old_format_dir.name)
+                    logger.info(f"[PER_MODEL_INDICES] Deleted old format directory: {old_format_dir.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete old format directory: {e}")
+
+        # Delete ALL dimension Merkle snapshots
         from merkle.snapshot_manager import SnapshotManager
 
         snapshot_manager = SnapshotManager()
+        snapshots_deleted = 0
         try:
-            snapshot_manager.delete_snapshot(_current_project)
-            logger.info(f"Merkle snapshot deleted for {_current_project}")
+            snapshots_deleted = snapshot_manager.delete_all_snapshots(_current_project)
+            logger.info(f"[PER_MODEL_INDICES] Deleted {snapshots_deleted} snapshot files (all dimensions)")
         except Exception as snapshot_error:
             logger.warning(
-                f"Failed to delete snapshot (non-critical): {snapshot_error}"
+                f"Failed to delete snapshots (non-critical): {snapshot_error}"
             )
 
         response = {
             "success": True,
-            "message": "Search index and snapshot cleared successfully",
+            "message": f"Search index and snapshots cleared successfully for {project_name}",
+            "deleted": {
+                "project_directories": deleted_dirs,
+                "directory_count": len(deleted_dirs),
+                "snapshot_files": snapshots_deleted,
+            },
+            "note": "All model dimensions (768d, 1024d, etc.) have been removed",
         }
 
-        logger.info("Search index cleared")
+        logger.info(f"Search index cleared - {len(deleted_dirs)} directories, {snapshots_deleted} snapshots deleted")
         return json.dumps(response, indent=2)
 
     except (OSError, IOError, AttributeError, RuntimeError) as e:
@@ -1323,6 +1384,146 @@ def get_search_config_status() -> str:
 
     except Exception as e:
         logger.error(f"Error getting search config status: {e}")
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def list_embedding_models() -> str:
+    """
+    List all available embedding models with their specifications.
+
+    Returns:
+        JSON with model information including dimensions, context length, and descriptions
+    """
+    try:
+        from search.config import MODEL_REGISTRY
+
+        models_info = {}
+        for model_name, specs in MODEL_REGISTRY.items():
+            models_info[model_name] = {
+                "dimension": specs["dimension"],
+                "max_context": specs["max_context"],
+                "vram_gb": specs.get("vram_gb", "Unknown"),
+                "description": specs["description"],
+            }
+
+        # Get current model from config
+        config = get_search_config()
+        current_model = config.embedding_model_name
+
+        response = {
+            "available_models": models_info,
+            "current_model": current_model,
+            "current_dimension": config.model_dimension,
+        }
+
+        return json.dumps(response, indent=2)
+
+    except Exception as e:
+        logger.error(f"Error listing embedding models: {e}")
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def switch_embedding_model(model_name: str) -> str:
+    """
+    Switch to a different embedding model without deleting existing indices.
+
+    Per-model indices enable instant switching - if you've already indexed a project
+    with a model, switching back to it requires no re-indexing.
+
+    Args:
+        model_name: Model identifier from MODEL_REGISTRY (e.g., "BAAI/bge-m3")
+
+    Returns:
+        JSON confirmation with model info and existing indices status
+    """
+    try:
+        from search.config import MODEL_REGISTRY
+
+        # Validate model name
+        if model_name not in MODEL_REGISTRY:
+            available_models = list(MODEL_REGISTRY.keys())
+            return json.dumps(
+                {
+                    "error": f"Invalid model '{model_name}'. Available models: {available_models}",
+                    "available_models": available_models,
+                }
+            )
+
+        # Get model specs
+        old_config = get_search_config()
+        old_model = old_config.embedding_model_name
+        old_dimension = old_config.model_dimension
+
+        new_specs = MODEL_REGISTRY[model_name]
+        new_dimension = new_specs["dimension"]
+
+        # Update configuration
+        config_manager = get_config_manager()
+        config = config_manager.load_config()
+        config.embedding_model_name = model_name
+        config.model_dimension = new_dimension
+        config_manager.save_config(config)
+
+        # Reset global components to pick up new model
+        global _embedder, _index_manager, _searcher
+        _embedder = None
+        _index_manager = None
+        _searcher = None
+
+        # Check for existing indices in new dimension
+        base_dir = get_storage_dir()
+        projects_dir = base_dir / "projects"
+
+        existing_projects = []
+        if projects_dir.exists():
+            # Find all project directories with the new dimension suffix
+            for project_dir in projects_dir.iterdir():
+                if project_dir.is_dir() and project_dir.name.endswith(f"_{new_dimension}d"):
+                    existing_projects.append(project_dir.name)
+
+        response = {
+            "success": True,
+            "message": f"Switched embedding model from {old_model} ({old_dimension}d) to {model_name} ({new_dimension}d)",
+            "old_model": {
+                "name": old_model,
+                "dimension": old_dimension,
+            },
+            "new_model": {
+                "name": model_name,
+                "dimension": new_dimension,
+                "max_context": new_specs["max_context"],
+                "vram_gb": new_specs.get("vram_gb", "Unknown"),
+                "description": new_specs["description"],
+            },
+            "existing_indices": {
+                "count": len(existing_projects),
+                "projects": existing_projects,
+                "note": (
+                    f"{len(existing_projects)} projects already indexed with {new_dimension}d - no re-indexing needed!"
+                    if existing_projects
+                    else f"No existing {new_dimension}d indices found - projects will need indexing"
+                ),
+            },
+            "per_model_indices_info": (
+                f"Old {old_dimension}d indices preserved. "
+                f"Switching back to {old_model} will be instant (no re-indexing)."
+            ),
+        }
+
+        logger.info(
+            f"[PER_MODEL_INDICES] Switched model: {old_model} ({old_dimension}d) → {model_name} ({new_dimension}d)"
+        )
+        if existing_projects:
+            logger.info(
+                f"[PER_MODEL_INDICES] Found {len(existing_projects)} existing {new_dimension}d projects - instant activation!"
+            )
+
+        return json.dumps(response, indent=2)
+
+    except Exception as e:
+        logger.error(f"Error switching embedding model: {e}")
         return json.dumps({"error": str(e)})
 
 

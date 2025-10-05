@@ -681,6 +681,53 @@ Check `pyproject.toml` for the current version number.
 
 ## ⚠️ Common Errors and Solutions
 
+### 📅 Recent Fixes Chronology
+
+This section tracks major workflow improvements and fixes in reverse chronological order.
+
+#### 2025-10-04: v4 Workflow Improvements
+
+**Git Workflow Automation Fixes** (commits a5170b8, 4529d1a, bfeae9b, 464dbd1):
+
+1. **ERROR #7: Merge Completion Detection** ✅ RESOLVED
+   - Implemented 3-layer validation system
+   - Prevents false "automatically completed" messages
+   - Validates unmerged files, staged changes, and MERGE_HEAD state
+   - Commit: a5170b8
+
+2. **ERROR #8: Batch Parsing Errors** ✅ FULLY RESOLVED
+   - Fixed multi-line commit message parsing (commit bfeae9b)
+   - Fixed for loop file processing with `delims=` and `2^>nul` (commit 464dbd1)
+   - Enhanced conflict resolution with better error handling (commit a5170b8)
+   - All parsing errors eliminated
+
+3. **Verification Testing** ✅ PASSED
+   - Comprehensive test of both fixes (commit e9d60c8)
+   - Verified with real-world merge scenario
+   - No false messages, no parsing errors
+   - Workflow confirmed production-ready
+
+**Linting Improvements** (commit 46dac62):
+
+4. **Ruff B007: Unused Loop Variables** ✅ RESOLVED
+   - Fixed 4 errors in test_full_flow.py
+   - Renamed unused variables to `_chunk_id`, `_similarity`
+   - Follows Python convention for intentionally unused variables
+
+5. **Ruff B904: Exception Chaining** ✅ RESOLVED
+   - Fixed 9 errors across 6 test files + 1 in production code
+   - Added proper `from e` exception chaining
+   - Improves debugging and follows PEP 3134
+   - Files: test_glsl_*.py, test_hf_access.py, test_bm25_population.py, bm25_index.py
+
+**Final Status**:
+- ✅ 13 Ruff linting errors resolved
+- ✅ 2 critical workflow errors resolved
+- ✅ All changes merged to both development and main branches
+- ✅ CI/CD passing cleanly
+
+---
+
 ### Error: Invalid pyproject.toml Configuration
 
 **Symptom**: Ruff fails to parse pyproject.toml with error about unknown field
@@ -1040,7 +1087,7 @@ if %ERRORLEVEL% EQU 0 (
 
 **Symptom**: "'-' is not recognized as an internal or external command"
 
-**Example**:
+**Example Error Messages**:
 
 ```
 Merge made by the 'ort' strategy.
@@ -1048,15 +1095,40 @@ Merge made by the 'ort' strategy.
 operable program or batch file.
 '-' is not recognized as an internal or external command,
 operable program or batch file.
+'tch' is not recognized as an internal or external command,
+operable program or batch file.
+'message' is not recognized as an internal or external command,
+operable program or batch file.
 ```
 
-**Root Cause**:
-- Multi-line git merge command with literal newlines in batch file
-- Batch interpreter executed each newline as a separate command
-- Lines starting with '-' in commit message interpreted as commands
-- Result: Batch tried to execute '-' as a command
+**Root Causes Discovered**:
+1. **Multi-line git merge command** - Literal newlines in batch file
+2. **Multiple -m flags on long lines** - Batch parsing limits exceeded
+3. **For loop file processing** - Missing error suppression and delimiters
 
-**Original problematic code** (lines 52-57):
+#### Error Evolution & Fix Attempts
+
+**Attempt 1: Enhanced Conflict Resolution Loop** (commit a5170b8)
+- Improved error handling in conflict resolution
+- Better file processing with temp files
+- **Result**: Still valuable but didn't fix parsing errors
+
+**Attempt 2: Multiple -m Flags** (commit 4529d1a)
+- Replaced multi-line message with multiple -m flags
+- **Result**: Caused 'message' parsing errors, abandoned
+
+**Attempt 3: Single-Line Commit Message** (commit bfeae9b)
+- Simplified to one-line commit message
+- **Result**: Fixed commit message source, but 'tch' errors remained
+
+**Attempt 4: For Loop Parsing Fixes** (commit 464dbd1)
+- Added `delims=` to for loops
+- Added `2^>nul` error suppression
+- **Result**: ✅ Complete resolution
+
+#### Original Problematic Code
+
+**Multi-line commit message** (lines 52-57):
 
 ```batch
 git merge development --no-ff -m "Merge development into main
@@ -1071,39 +1143,307 @@ git merge development --no-ff -m "Merge development into main
 - Batch files cannot have literal newlines in command arguments
 - Each newline creates a new line that batch tries to parse
 - The '-' characters at line start are interpreted as command names
-- Long lines with multiple -m flags also cause parsing issues
 
-**Solution** (v4 fix - lines 52-53):
+**For loop file processing** (line 164, 223 - original):
+
+```batch
+for /f %%f in ('git diff --cached --name-only --diff-filter=A ^| findstr /C:"docs/"') do (
+    REM Process files...
+)
+```
+
+**Why it failed**:
+- Missing `delims=` caused word splitting on spaces in filenames
+- No error suppression caused 'tch' when piping empty results
+- Result: "tch" from "batch" parsed as command when no files found
+
+#### Complete Solution
+
+**Fix 1: Simple Commit Message** (lines 52-53):
 
 ```batch
 REM FIX ERROR #8: Simple single-line commit message to avoid batch parsing issues
 git merge development --no-ff -m "Merge development into main"
 ```
 
-**Additional improvements** (lines 77-90):
-- Enhanced conflict resolution loop with proper quoting
-- Used delayed expansion for conflict filenames
-- Added `usebackq` for better file parsing
-- Suppressed git rm output to reduce noise
+**Fix 2: For Loop Parsing** (lines 164, 223):
 
-**Prevention**:
-- Always use single-line commit messages in batch files
-- Avoid literal newlines in any batch command
-- Use proper quoting with delayed expansion (`!VAR!`) for filenames
-- Test batch scripts with various input scenarios
+```batch
+REM Before (caused 'tch' errors):
+for /f %%f in ('git diff --cached --name-only --diff-filter=A ^| findstr /C:"docs/"') do (
 
-**Known Cosmetic Issue**:
-- Some batch parsing warnings may still appear in output
-- These do not prevent merge from completing successfully
-- Core functionality tested and working
+REM After (FIX ERROR #8: proper delimiters and error suppression):
+for /f "delims=" %%f in ('git diff --cached --name-only --diff-filter=A 2^>nul ^| findstr /C:"docs/" 2^>nul') do (
+```
 
-**Status**: ✅ MOSTLY RESOLVED in v4 (commits a5170b8, 4529d1a, bfeae9b)
-- Merge functionality fully working
-- Some cosmetic parsing warnings remain (non-blocking)
+**Key improvements**:
+- `delims=""` prevents word splitting on spaces
+- `2^>nul` suppresses stderr from both git and findstr
+- Handles empty results gracefully without parsing errors
+
+**Fix 3: Enhanced Conflict Resolution** (lines 77-90):
+
+```batch
+REM Process each conflict with error checking (FIX ERROR #8)
+set RESOLUTION_FAILED=0
+for /f "usebackq tokens=2*" %%a in ("%TEMP%\merge_conflicts.txt") do (
+    set "CONFLICT_FILE=%%a %%b"
+    echo   Resolving: !CONFLICT_FILE!
+    git rm "!CONFLICT_FILE!" >nul 2>&1
+    if !ERRORLEVEL! NEQ 0 (
+        echo   ✗ ERROR: Failed to remove !CONFLICT_FILE!
+        set RESOLUTION_FAILED=1
+    ) else (
+        echo   ✓ Removed: !CONFLICT_FILE!
+    )
+)
+```
+
+**Prevention Best Practices**:
+- ✅ Always use single-line commit messages in batch files
+- ✅ Avoid literal newlines in any batch command
+- ✅ Use `delims=""` in for loops processing filenames
+- ✅ Add `2^>nul` to suppress stderr in for loop commands
+- ✅ Use proper quoting with delayed expansion (`!VAR!`)
+- ✅ Test batch scripts with edge cases (empty results, spaces in names)
+
+**Verification**:
+- Tested with merge commit e9d60c8 (2025-10-04)
+- All parsing errors eliminated
+- Merge completed successfully
+- No cosmetic warnings remain
+
+**Status**: ✅ FULLY RESOLVED in v4 (commits a5170b8, 4529d1a, bfeae9b, 464dbd1)
+- All parsing errors eliminated
+- Merge functionality verified working
+- Final verification commit: e9d60c8
+
+---
+
+### ✅ v4 Workflow Verification Results (2025-10-04)
+
+After implementing ERROR #7 and ERROR #8 fixes, comprehensive verification testing was performed to confirm the workflow operates correctly.
+
+#### Verification Test Execution
+
+**Date**: 2025-10-04
+**Commit**: e9d60c8
+**Purpose**: Verify both ERROR #7 and ERROR #8 are fully resolved
+
+**Test Steps**:
+1. Created minor documentation change (added timestamp to GIT_WORKFLOW.md)
+2. Committed to development branch
+3. Executed `merge_with_validation.bat` from main branch
+4. Monitored for parsing errors and false completion messages
+
+**Results**:
+
+```
+[1/7] Running pre-merge validation checks...
+✓ All validation checks passed
+
+[2/7] Creating backup tag...
+✓ Created backup tag: pre-merge-backup-20251004_143522
+
+[3/7] Checking git configuration...
+✓ merge.ours driver configured
+
+[4/7] Initiating merge...
+Merge made by the 'ort' strategy.
+✓ Merge initiated successfully
+
+[5/7] Checking for merge conflicts...
+✓ No conflicts detected
+
+[6/7] Validating documentation files against CI policy...
+✓ Documentation validation passed
+
+[7/7] Completing merge commit...
+✓ Merge completed successfully
+
+=== MERGE SUMMARY ===
+✓ Merge from development to main completed
+✓ Documentation validation: PASSED
+✓ Backup tag: pre-merge-backup-20251004_143522
+```
+
+#### Verification Confirmation
+
+**ERROR #7 Validation** (Merge Completion Detection):
+- ✅ No false "automatically completed" messages
+- ✅ All 3 validation layers working correctly
+- ✅ Proper flow through all 7 steps
+- ✅ Accurate status reporting
+
+**ERROR #8 Validation** (Batch Parsing):
+- ✅ No "'-' is not recognized" errors
+- ✅ No 'tch' parsing errors
+- ✅ No 'message' parsing errors
+- ✅ Clean execution with no warnings
+- ✅ For loops processed files correctly
+
+**Additional Validations**:
+- ✅ Pre-merge validation (9/9 checks passed)
+- ✅ Backup tag creation successful
+- ✅ Documentation CI policy validation
+- ✅ Merge completed in 7 steps as expected
+- ✅ Final git status shows clean main branch
+
+#### Post-Verification Actions
+
+**Merged to main**: 2025-10-04 (commit 30bdc70)
+**Status**: v4 workflow fully operational
+**Confidence**: High - verified with real-world merge scenario
+
+**Conclusion**: Both ERROR #7 and ERROR #8 are comprehensively resolved. The git workflow automation is production-ready and operates reliably without manual intervention.
 
 ---
 
 **Prevention**: validate_branches.bat checks merge.ours driver configuration ([6/9] check)
+
+---
+
+### Error: Ruff Linting Errors (B007, B904)
+
+**Symptom**: GitHub Actions CI fails with Ruff linting errors
+
+**Common Errors**:
+
+#### B007: Unused Loop Variables
+
+**Example Error**:
+
+```
+tests/integration/test_full_flow.py:162:9: B007 Loop control variable `chunk_id` not used within loop body
+tests/integration/test_full_flow.py:169:9: B007 Loop control variable `similarity` not used within loop body
+```
+
+**Root Cause**: Loop variables declared but not used in loop body
+
+**Problematic Code**:
+
+```python
+# Before (2 B007 errors):
+for chunk_id, similarity, metadata in function_results:
+    assert metadata["chunk_type"] == "function"
+
+for chunk_id, similarity, metadata in class_results:
+    assert metadata["chunk_type"] == "class"
+```
+
+**Solution**: Rename unused variables with underscore prefix
+
+```python
+# After (fixed):
+for _chunk_id, _similarity, metadata in function_results:
+    assert metadata["chunk_type"] == "function"
+
+for _chunk_id, _similarity, metadata in class_results:
+    assert metadata["chunk_type"] == "class"
+```
+
+**Convention**: Python convention uses `_` or `_variablename` for intentionally unused variables
+
+---
+
+#### B904: Missing Exception Chaining
+
+**Example Error**:
+
+```
+tests/integration/test_hf_access.py:41:9: B904 Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None`
+tests/unit/test_bm25_population.py:140:9: B904 Within an `except` clause, raise exceptions with `raise ... from err`
+```
+
+**Root Cause**: Re-raising exceptions without proper chaining (PEP 3134)
+
+**Problematic Code**:
+
+```python
+# Before (9 B904 errors across 6 files):
+try:
+    test_function()
+except Exception as e:
+    print(f"Error: {e}")
+    raise AssertionError(f"Test failed: {e}")  # Missing 'from e'
+```
+
+**Solution**: Add exception chaining with `from e`
+
+```python
+# After (fixed):
+try:
+    test_function()
+except Exception as e:
+    print(f"Error: {e}")
+    raise AssertionError(f"Test failed: {e}") from e  # Proper chaining
+```
+
+**Why it matters**:
+- Preserves original exception traceback
+- Helps with debugging
+- Shows exception causality chain
+- Python best practice (PEP 3134)
+
+**Alternative**: Use `from None` to explicitly suppress chaining:
+
+```python
+raise AssertionError(f"Test failed: {e}") from None  # Explicit suppression
+```
+
+---
+
+#### Comprehensive Fix (2025-10-04)
+
+**Files Modified** (commit 46dac62):
+
+1. **tests/integration/test_full_flow.py**
+   - Fixed 2 B007 errors (lines 162, 169)
+   - Renamed unused loop variables to `_chunk_id`, `_similarity`
+
+2. **tests/integration/test_glsl_chunker_only.py**
+   - Fixed 1 B904 error (line 103)
+   - Added exception chaining: `from e`
+
+3. **tests/integration/test_glsl_complete.py**
+   - Fixed 1 B904 error (line 109)
+   - Added exception chaining: `from e`
+
+4. **tests/integration/test_glsl_without_embedder.py**
+   - Fixed 1 B904 error (line 139)
+   - Added exception chaining: `from e`
+
+5. **tests/integration/test_hf_access.py**
+   - Fixed 5 B904 errors (lines 41, 80, 120, 173, 271)
+   - Added exception chaining: `from e`
+
+6. **tests/unit/test_bm25_population.py**
+   - Fixed 1 B904 error (line 140)
+   - Added exception chaining: `from e`
+
+7. **search/bm25_index.py** (production code)
+   - Fixed 1 B904 error (line 240)
+   - Added exception chaining: `from bm25_error`
+
+**Total**: 13 errors fixed (4 B007 + 9 B904)
+
+**Verification**:
+
+```bash
+$ .venv\Scripts\ruff.exe check .
+All checks passed!
+```
+
+**Prevention**:
+- ✅ Use underscore prefix for unused variables
+- ✅ Always add `from e` when re-raising exceptions
+- ✅ Run `fix_lint.bat` before committing
+- ✅ Use `from None` only when suppression is intentional
+- ✅ Review Ruff suggestions during development
+
+**Status**: ✅ RESOLVED (commit 46dac62, 2025-10-04)
+
+---
 
 ## 🔍 Lint Workflow Best Practices
 
@@ -1167,36 +1507,104 @@ scripts\git\commit_enhanced.bat "fix: Your commit message"
 - Run tests after auto-fixes
 - Unsafe != dangerous (just means "changes semantics")
 
-### Expected Warnings
+### Real-World Fix Examples (from 2025-10-04)
 
-Some warnings are expected and can be safely ignored or committed:
+This section shows actual fixes applied during v4 workflow improvements.
 
-**B904: Exception handling without chaining**
+#### B007: Unused Loop Variables - test_full_flow.py
+
+**Before** (2 errors):
 
 ```python
-# Ruff suggests this pattern:
-try:
-    something()
-except ValueError as e:
-    raise TypeError("message") from e  # Chaining with 'from e'
+for chunk_id, similarity, metadata in function_results:
+    assert metadata["chunk_type"] == "function"
+    # chunk_id and similarity not used!
 
-# Or explicit suppression:
-try:
-    something()
-except ValueError:
-    raise TypeError("message") from None  # Explicit 'from None'
+for chunk_id, similarity, metadata in class_results:
+    assert metadata["chunk_type"] == "class"
+    # chunk_id and similarity not used!
 ```
 
-- **Impact**: Stylistic preference, not a critical error
-- **Location**: Primarily in tests/ directory
-- **Action**: Safe to proceed with commit
-- **Fix**: Optional - add exception chaining if desired
+**After** (fixed):
 
-**Other safe-to-ignore warnings**:
+```python
+for _chunk_id, _similarity, metadata in function_results:
+    assert metadata["chunk_type"] == "function"
+    # Underscore prefix signals intentional non-use
 
-- E501 (line too long) - if breaking would harm readability
-- W293 (blank line with whitespace) - auto-fixed by black
-- Formatting warnings when using specialized formatting
+for _chunk_id, _similarity, metadata in class_results:
+    assert metadata["chunk_type"] == "class"
+    # Underscore prefix signals intentional non-use
+```
+
+**Lines changed**: 162, 169
+**Commit**: 46dac62
+
+#### B904: Exception Chaining - Multiple Files
+
+**test_hf_access.py** (5 locations):
+
+```python
+# Before (lines 41, 80, 120, 173, 271):
+except Exception as e:
+    print(f"[ERROR] Authentication failed: {e}")
+    raise AssertionError(f"Authentication failed: {e}")  # Missing 'from e'
+
+# After:
+except Exception as e:
+    print(f"[ERROR] Authentication failed: {e}")
+    raise AssertionError(f"Authentication failed: {e}") from e  # Added chaining
+```
+
+**test_bm25_population.py** (line 140):
+
+```python
+# Before:
+except Exception as e:
+    print(f"[TEST] Test failed with error: {e}")
+    raise AssertionError(f"Test failed with error: {e}")
+
+# After:
+except Exception as e:
+    print(f"[TEST] Test failed with error: {e}")
+    raise AssertionError(f"Test failed with error: {e}") from e
+```
+
+**search/bm25_index.py** (production code, line 240):
+
+```python
+# Before:
+except Exception as bm25_error:
+    raise ValueError(f"BM25 index creation failed: {bm25_error}")
+
+# After:
+except Exception as bm25_error:
+    raise ValueError(f"BM25 index creation failed: {bm25_error}") from bm25_error
+```
+
+**Total files modified**: 7 (6 test files + 1 production file)
+**Total errors fixed**: 13 (4 B007 + 9 B904)
+**Commit**: 46dac62
+
+### Expected Warnings (Updated 2025-10-04)
+
+**NOTE**: As of 2025-10-04, B007 and B904 warnings have been comprehensively resolved across the codebase.
+
+**Currently acceptable warnings**:
+
+- **E501 (line too long)** - Only if breaking would harm readability
+- **W293 (blank line with whitespace)** - Auto-fixed by black
+- **Formatting warnings** - When using specialized formatting (docstrings, ASCII art, etc.)
+
+**Previously common but now resolved**:
+- ~~B904 (exception chaining)~~ ✅ All fixed in commit 46dac62
+- ~~B007 (unused loop variables)~~ ✅ All fixed in commit 46dac62
+
+**When new warnings appear**:
+1. Run `fix_lint.bat` first (auto-fixes ~90%)
+2. Review changes with `git diff`
+3. Manually fix remaining issues
+4. Verify with `check_lint.bat`
 
 ### Error Code Categories
 
