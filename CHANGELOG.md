@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Documentation Updates**
   - Added missing tools: list_embedding_models, switch_embedding_model
   - Updated all tool parameters to match current API
+- **Git Bash Compatibility** - Created bash-compatible lint validation scripts
+  - Added scripts/git/check_lint.sh, fix_lint.sh, validate_branches.sh (3 new files)
+  - Resolves environment limitations when using Git Bash (MINGW64) encountered during v0.4.1 release
+  - Windows .bat files cannot execute in Git Bash → "command not found" errors, cmd.exe wrapper fails output capture
+  - New .sh scripts use forward-slash paths compatible with Windows executables in Git Bash
+  - Respects pyproject.toml configuration (automatic exclusion of .venv, _archive, all gitignored directories)
+  - Added per-file-ignores to pyproject.toml for imports inside try-except blocks (test files only)
+  - All 3 scripts verified operational with comprehensive testing (9 lint issues auto-fixed)
+  - Verification logs: bash_scripts_verification_20251005_182523.log, bash_scripts_analysis_20251005_182523.md
 - **Development Session Logging** - Updated MEMORY.md with session 2025-10-05 accomplishments
 - **Version Bump**: 0.4.0 → 0.4.1
 

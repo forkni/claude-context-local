@@ -224,6 +224,7 @@ __marimo__/
 # Local-only content (NEVER commit to ANY branch)
 _archive/
 benchmark_results/
+logs/                    # Workflow execution logs and analysis reports
 CLAUDE.md
 MEMORY.md
 

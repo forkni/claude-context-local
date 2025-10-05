@@ -466,7 +466,7 @@ claude-context-local/
 │   │   ├── hf_auth.ps1               # HuggingFace authentication helper
 │   │   ├── install-windows.ps1       # Windows automated installer
 │   │   └── start_mcp_server.ps1      # PowerShell MCP server launcher
-│   ├── git/                          # Git workflow automation (10 scripts)
+│   ├── git/                          # Git workflow automation (13 scripts: 10 .bat + 3 .sh)
 │   │   ├── commit.bat                # Privacy-protected commits
 │   │   ├── sync_branches.bat         # Branch synchronization
 │   │   ├── restore_local.bat         # Local file recovery
@@ -474,7 +474,10 @@ claude-context-local/
 │   │   ├── cherry_pick_commits.bat   # Selective commit merging
 │   │   ├── commit_enhanced.bat       # Enhanced commit with validations
 │   │   ├── merge_with_validation.bat # Full merge with .gitattributes support
-│   │   ├── validate_branches.bat     # Branch state validation
+│   │   ├── validate_branches.bat     # Branch state validation (Windows cmd.exe)
+│   │   ├── check_lint.bat/.sh        # Lint validation (cmd.exe + Git Bash)
+│   │   ├── fix_lint.bat/.sh          # Auto-fix lint issues (cmd.exe + Git Bash)
+│   │   ├── validate_branches.sh      # Branch validation (Git Bash/Linux/macOS)
 │   │   ├── sync_status.bat           # Check synchronization status
 │   │   └── rollback_merge.bat        # Rollback failed merges
 │   ├── verify_installation.py        # Python verification system
