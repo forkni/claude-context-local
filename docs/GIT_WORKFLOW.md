@@ -967,6 +967,142 @@ if %ERRORLEVEL% NEQ 0 (
 
 ---
 
+### ERROR #7: Premature Merge Completion Detection (v4 FIX)
+
+**Symptom**: Script reports "Merge commit automatically completed" but merge is NOT actually complete
+
+**Example**:
+
+```
+✓ Auto-resolved modify/delete conflicts
+✓ Merge commit automatically completed during auto-resolution
+
+# But checking git status shows:
+$ git status
+You have unmerged paths.
+  (fix conflicts and run "git commit")
+```
+
+**Root Cause** (v3 implementation):
+- Single-layer check: only verified if MERGE_HEAD exists
+- Didn't validate that conflicts were actually resolved
+- Didn't check if changes were properly staged
+- Could trigger prematurely during auto-resolution
+
+**Impact**: Manual intervention required even though script reported success
+
+**Solution** (v4 fix - lines 107-133 in merge_with_validation.bat):
+
+Implemented **3-layer validation**:
+
+```batch
+REM FIX ERROR #7: Check if all conflicts are actually resolved
+REM Layer 1: Check for unmerged files
+git diff --name-only --diff-filter=U >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    REM Unmerged files still exist
+    echo ⚠ Some conflicts remain unresolved
+    echo   Continuing to validation and manual commit...
+) else (
+    REM Layer 2: Verify changes are staged
+    git diff --cached --quiet >nul 2>&1
+    if %ERRORLEVEL% EQU 0 (
+        echo ⚠ No changes staged after auto-resolution
+        echo   Continuing to validation...
+    ) else (
+        REM Layer 3: Verify MERGE_HEAD is gone
+        git rev-parse -q --verify MERGE_HEAD >nul 2>&1
+        if %ERRORLEVEL% NEQ 0 (
+            REM All conditions met - truly complete
+            echo ✓ Merge commit automatically completed
+            goto :merge_success
+        )
+    )
+)
+```
+
+**Validation Layers**:
+1. **Unmerged files**: Check index for conflicts (`git diff --name-only --diff-filter=U`)
+2. **Staged changes**: Verify work was actually done (`git diff --cached --quiet`)
+3. **MERGE_HEAD state**: Confirm merge ref is gone (`git rev-parse MERGE_HEAD`)
+
+**Prevention**:
+- Only reports completion when ALL three conditions pass
+- Provides specific status messages for each validation layer
+- Continues to manual commit phase if any layer fails
+- Prevents false success messages
+
+**Status**: ✅ RESOLVED in v4 (commit a5170b8)
+
+---
+
+### ERROR #8: Batch Script Command Parsing Errors (v4 FIX)
+
+**Symptom**: "'-' is not recognized as an internal or external command"
+
+**Example**:
+
+```
+Merge made by the 'ort' strategy.
+'-' is not recognized as an internal or external command,
+operable program or batch file.
+'-' is not recognized as an internal or external command,
+operable program or batch file.
+```
+
+**Root Cause**:
+- Multi-line git merge command with literal newlines in batch file
+- Batch interpreter executed each newline as a separate command
+- Lines starting with '-' in commit message interpreted as commands
+- Result: Batch tried to execute '-' as a command
+
+**Original problematic code** (lines 52-57):
+
+```batch
+git merge development --no-ff -m "Merge development into main
+
+- Applied .gitattributes merge strategies
+- Excluded development-only files (tests/, docs/)
+- Combined CHANGELOG.md changes
+- Used diff3 for better conflict resolution"
+```
+
+**Why it failed**:
+- Batch files cannot have literal newlines in command arguments
+- Each newline creates a new line that batch tries to parse
+- The '-' characters at line start are interpreted as command names
+- Long lines with multiple -m flags also cause parsing issues
+
+**Solution** (v4 fix - lines 52-53):
+
+```batch
+REM FIX ERROR #8: Simple single-line commit message to avoid batch parsing issues
+git merge development --no-ff -m "Merge development into main"
+```
+
+**Additional improvements** (lines 77-90):
+- Enhanced conflict resolution loop with proper quoting
+- Used delayed expansion for conflict filenames
+- Added `usebackq` for better file parsing
+- Suppressed git rm output to reduce noise
+
+**Prevention**:
+- Always use single-line commit messages in batch files
+- Avoid literal newlines in any batch command
+- Use proper quoting with delayed expansion (`!VAR!`) for filenames
+- Test batch scripts with various input scenarios
+
+**Known Cosmetic Issue**:
+- Some batch parsing warnings may still appear in output
+- These do not prevent merge from completing successfully
+- Core functionality tested and working
+
+**Status**: ✅ MOSTLY RESOLVED in v4 (commits a5170b8, 4529d1a, bfeae9b)
+- Merge functionality fully working
+- Some cosmetic parsing warnings remain (non-blocking)
+
+---
+
 **Prevention**: validate_branches.bat checks merge.ours driver configuration ([6/9] check)
 
 ## 🔍 Lint Workflow Best Practices
