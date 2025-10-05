@@ -5,23 +5,47 @@ All notable changes to the Claude Context Local (MCP) semantic code search syste
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+---
+
+## [0.4.1] - 2025-10-05
+
+### Fixed
+
+- **Critical Bug: find_similar_code MCP Tool** - Added missing `find_similar_to_chunk()` method to HybridSearcher class (search/hybrid_searcher.py:428-465)
+  - Previously only existed in IntelligentSearcher, causing AttributeError when hybrid search enabled (default mode)
+  - Tool now functional for both searcher implementations
+  - Verified with multi-model testing (BGE-M3 1024d, Gemma 768d)
+
+### Changed
+
+- **MCP Tools Interface** - Removed `run_benchmark` from user-facing MCP tools
+  - Tool count reduced from 14 → 13 (development-only access via evaluation/run_evaluation.py)
+  - Updated documentation in mcp_server/server.py, CLAUDE.md (both projects), docs/MCP_TOOLS_REFERENCE.md
+- **Documentation Updates**
+  - Added missing tools: list_embedding_models, switch_embedding_model
+  - Updated all tool parameters to match current API
+- **Development Session Logging** - Updated MEMORY.md with session 2025-10-05 accomplishments
+- **Version Bump**: 0.4.0 → 0.4.1
+
+---
+
 ## [0.4.0] - 2025-10-03
 
 ### Added
 
-- **Git Workflow Automation System** (10 scripts total)
+- **Git Workflow Automation System** (9 scripts total)
   - `.gitattributes` with merge strategies (ours, union, diff3) for dual-branch workflow
-  - Phase 1 Core Scripts: `merge_with_validation.bat`, `validate_branches.bat`, `sync_status.bat`, `rollback_merge.bat`
-  - Phase 2 Helper Scripts: `merge_docs.bat`, `cherry_pick_commits.bat`, `commit_enhanced.bat`
-  - Test utilities: `test_merge_behavior.bat`
+  - Core Scripts: `merge_with_validation.bat`, `validate_branches.bat`, `rollback_merge.bat`
+  - Helper Scripts: `merge_docs.bat`, `cherry_pick_commits.bat`, `commit_enhanced.bat`, `check_lint.bat`, `fix_lint.bat`, `install_hooks.bat`
   - Automated branch synchronization with .gitattributes support
   - Pre-merge validation and rollback capabilities
 
-- **GitHub Actions Workflows** (4 workflows)
+- **GitHub Actions Workflows** (5 workflows)
   - `branch-protection.yml` - Automated CI/CD validation, testing, linting on every push
   - `merge-development-to-main.yml` - Manual merge workflow with .gitattributes support
   - `docs-validation.yml` - Documentation quality checks (markdown lint, link checking, spelling)
   - `claude.yml` - Interactive @claude mentions in GitHub issues/PRs (OAuth-based authentication)
+  - `claude-code-review.yml` - Automated code review workflow
 
 - **Claude Code GitHub Integration**
   - Custom command templates in `.claude/commands/` directory
@@ -54,9 +78,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Batch File Escaping**: Fixed parentheses escaping in sync_status.bat echo statements
 - **MCP Configuration**: Enhanced path validation and error handling
-- **Branch Synchronization**: Improved status reporting in sync_status.bat
+- **Branch Synchronization**: Improved status reporting in sync scripts
 - **Variable Initialization**: Fixed variable scoping issues in batch scripts
 
 ---
@@ -191,6 +214,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **v0.4.1** - Critical bug fix: find_similar_code, MCP tools cleanup (2025-10-05)
 - **v0.4.0** - Git automation, GitHub Actions, instant model switching (2025-10-03)
 - **v0.3.0** - Documentation accuracy & workflow consolidation (2025-09-29)
 - **v0.2.0** - Auto-tuning parameter optimization (2025-09-28)

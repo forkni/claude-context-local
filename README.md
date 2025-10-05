@@ -22,7 +22,7 @@
 
 ```
 
-**General-Purpose Semantic Code Search for Windows.** Advanced **hybrid search** that combines semantic understanding with text matching, running 100% locally using EmbeddingGemma. No API keys, no costs, your code never leaves your machine.
+**General-Purpose Semantic Code Search for Windows.** Advanced **hybrid search** that combines semantic understanding with text matching, running 100% locally using EmbeddingGemma or BGE-M3. No API keys, no costs, your code never leaves your machine.
 
 - 🔍 **Hybrid search: BM25 + semantic for best accuracy (44.4% precision, 100% MRR)**
 - 📈 **Optimized search efficiency with sub-second response times (162-487ms)**
@@ -30,8 +30,10 @@
 - 💰 **Zero API costs - forever free**
 - ⚡ **5-10x faster indexing with incremental updates**
 - 🪟 **Windows-optimized** for maximum performance and compatibility
+- 🔄 **Instant model switching (<150ms) with per-model index storage**
+- 🛠️ **13 MCP tools for Claude Code integration (search, index, configure)**
 
-An intelligent code search system that uses Google's EmbeddingGemma model and advanced multi-language chunking to provide semantic search capabilities across 22 file extensions and 11 programming languages, integrated with Claude Code via MCP (Model Context Protocol).
+An intelligent code search system that uses Google's EmbeddingGemma or BAAI's BGE-M3 models and advanced multi-language chunking to provide semantic search capabilities across 22 file extensions and 11 programming languages, integrated with Claude Code via MCP (Model Context Protocol).
 
 ## Status
 
@@ -62,7 +64,7 @@ An intelligent code search system that uses Google's EmbeddingGemma model and ad
 - **Intelligent chunking**: AST-based (Python) + tree-sitter (JS/TS/JSX/TSX/Svelte/Go/Java/Rust/C/C++/C#/GLSL)
 - **Semantic search**: Natural language queries to find code across all languages
 - **Rich metadata**: File paths, folder structure, semantic tags, language-specific info
-- **MCP integration**: Direct integration with Claude Code for seamless workflow
+- **MCP integration**: 13 tools for Claude Code - search, index, configure, and monitor
 - **Local processing**: All embeddings stored locally, no API calls required
 - **Fast search**: FAISS for efficient similarity search with GPU acceleration support
 - **Incremental indexing**: 5-10x faster updates with Merkle tree change detection
@@ -284,7 +286,7 @@ Create a `CLAUDE.md` file in your project root with this content:
 
 ---
 
-## Available MCP Tools (12)
+## Available MCP Tools (13)
 
 | Tool | Priority | Purpose |
 |------|----------|---------|

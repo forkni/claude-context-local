@@ -6,7 +6,7 @@ This modular reference can be embedded in any project instructions for Claude Co
 
 ---
 
-## Available MCP Tools (12)
+## Available MCP Tools (13)
 
 | Tool | Priority | Purpose | Parameters |
 |------|----------|---------|------------|
@@ -21,7 +21,8 @@ This modular reference can be embedded in any project instructions for Claude Co
 | switch_project | Management | Change active project | project_path |
 | clear_index | Reset | Delete current index | *(no parameters)* |
 | cleanup_resources | Cleanup | Free memory/caches | *(no parameters)* |
-| run_benchmark | Testing | Validate search quality | benchmark_type, project_path, max_instances=3 |
+| list_embedding_models | Model | View available embedding models | *(no parameters)* |
+| switch_embedding_model | Model | Switch embedding model | model_name |
 
 ---
 
@@ -81,9 +82,9 @@ This modular reference can be embedded in any project instructions for Claude Co
 /configure_search_mode "hybrid" 0.4 0.6
 /get_search_config_status
 
-# Benchmark performance
-/run_benchmark "token-efficiency"
-/run_benchmark "method-comparison" "."
+# Model management
+/list_embedding_models
+/switch_embedding_model "BAAI/bge-m3"
 ```
 
 ---
@@ -141,7 +142,7 @@ This modular reference can be embedded in any project instructions for Claude Co
 - [ ] Hugging Face authentication completed
 - [ ] Project indexed with `index_directory()`
 - [ ] Search mode configured (hybrid recommended)
-- [ ] Benchmark run to validate performance
+- [ ] Embedding model selected (BGE-M3 recommended for accuracy)
 
 ---
 
