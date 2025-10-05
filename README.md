@@ -997,7 +997,7 @@ scripts\batch\repair_installation.bat
 
 8. **"No changes detected" but files were modified**: Stale Merkle snapshot issue
    - Use force reindex to bypass snapshot checking
-   - Via menu: `start_mcp_server.bat` → Option 2 (Force Reindex)
+   - Via menu: `start_mcp_server.bat` → 5 (Project Management) → 2 (Force Reindex Project)
    - Via tool: `.venv\Scripts\python.exe tools\index_project.py --force`
    - Or use repair tool: `scripts\batch\repair_installation.bat` → Option 1
 
