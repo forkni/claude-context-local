@@ -4,6 +4,8 @@
 
 This repository uses a **Local-First Privacy Model** where certain development files remain strictly on your local machine and are never committed to any git branch. This ensures your development context stays private while maintaining a clean, professional public repository.
 
+**🤖 For Automated Claude Workflows**: See **[AUTOMATED_GIT_WORKFLOW.md](./AUTOMATED_GIT_WORKFLOW.md)** for step-by-step orchestration instructions with comprehensive logging.
+
 ## 🔒 Local-Only Files (NEVER Committed)
 
 | File/Directory | Size | Purpose | Status |
@@ -457,7 +459,9 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 ### Overview
 
-All workflow scripts support `--non-interactive` mode for automation. When Claude Code is asked to "commit and push to development, then merge to main following GIT_WORKFLOW.md", the scripts execute automatically with sensible defaults and create comprehensive logs.
+**For complete automated workflow orchestration by Claude**: See **[AUTOMATED_GIT_WORKFLOW.md](./AUTOMATED_GIT_WORKFLOW.md)** for comprehensive step-by-step instructions with detailed logging format.
+
+All workflow scripts support `--non-interactive` mode for individual script automation. These flags enable non-interactive execution with sensible defaults.
 
 ### Usage Pattern
 
