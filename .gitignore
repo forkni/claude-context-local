@@ -230,7 +230,6 @@ MEMORY.md
 
 # Documentation - only specific files are public
 docs/*
-!docs/AUTOMATED_GIT_WORKFLOW.md
 !docs/BENCHMARKS.md
 !docs/claude_code_config.md
 !docs/GIT_WORKFLOW.md
@@ -243,9 +242,9 @@ docs/*
 !docs/VSCODE_SETUP.md
 !docs/PRE_COMMIT_HOOKS.md
 
-# Development-only documentation (commented in allowed list above)
-# - AUTOMATED_GIT_WORKFLOW.md (Claude orchestration guide)
-# - GIT_WORKFLOW.md (comprehensive workflow guide)
+# Development-only documentation (local-only)
+# - AUTOMATED_GIT_WORKFLOW.md (Claude orchestration guide - development only)
+docs/AUTOMATED_GIT_WORKFLOW.md
 docs/GIT_WORKFLOW_CRITICAL_REVIEW.md
 docs/GIT_WORKFLOW_ENHANCEMENT_PLAN.md
 docs/GPU_MEMORY_LEAK_FIX.md
