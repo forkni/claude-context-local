@@ -5,9 +5,33 @@ REM Checks: ruff, black, isort, markdownlint (same as GitHub Actions CI)
 
 setlocal enabledelayedexpansion
 
+REM ========================================
+REM Initialize Mandatory Logging
+REM ========================================
+
+REM Create logs directory
+if not exist logs mkdir logs
+
+REM Generate timestamp
+for /f "tokens=2-4 delims=/ " %%a in ('date /t') do set mydate=%%c%%a%%b
+for /f "tokens=1-2 delims=/: " %%a in ('time /t') do set mytime=%%a%%b
+set TIMESTAMP=%mydate%_%mytime%
+set LOGFILE=logs\check_lint_%TIMESTAMP%.log
+
+REM Initialize log file
+echo ========================================= > "%LOGFILE%"
+echo Lint Validation Log >> "%LOGFILE%"
+echo ========================================= >> "%LOGFILE%"
+echo Start Time: %date% %time% >> "%LOGFILE%"
+echo. >> "%LOGFILE%"
+
 echo === Code Quality Checker ===
 echo Running lint checks (read-only)...
+echo 📋 Workflow Log: %LOGFILE%
 echo.
+echo === Code Quality Checker === >> "%LOGFILE%"
+echo Running lint checks (read-only)... >> "%LOGFILE%"
+echo. >> "%LOGFILE%"
 
 REM Track overall status
 set ERRORS_FOUND=0
@@ -59,10 +83,16 @@ echo.
 
 REM Summary
 echo ====================================
+echo End Time: %date% %time% >> "%LOGFILE%"
 if !ERRORS_FOUND! EQU 0 (
     echo ✓ ALL CHECKS PASSED
     echo Code is ready to commit!
     echo ====================================
+    echo. >> "%LOGFILE%"
+    echo ====================================  >> "%LOGFILE%"
+    echo STATUS: SUCCESS >> "%LOGFILE%"
+    echo ====================================  >> "%LOGFILE%"
+    echo 📋 Log saved: %LOGFILE%
     exit /b 0
 ) else (
     echo ✗ ERRORS FOUND
@@ -71,5 +101,10 @@ if !ERRORS_FOUND! EQU 0 (
     echo   1. Auto-fix: scripts\git\fix_lint.bat
     echo   2. Manual fix: Review errors above
     echo ====================================
+    echo. >> "%LOGFILE%"
+    echo ==================================== >> "%LOGFILE%"
+    echo STATUS: FAILED >> "%LOGFILE%"
+    echo ==================================== >> "%LOGFILE%"
+    echo 📋 Log saved: %LOGFILE%
     exit /b 1
 )
