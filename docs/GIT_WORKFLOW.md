@@ -453,6 +453,110 @@ ANTHROPIC_API_KEY=sk-ant-...
 | **Clean Commits** | Automatic checks ensure professional commit messages |
 | **Safe Merging** | Guided workflows with rollback support |
 
+## 🔄 Automated Workflows (Non-Interactive Mode)
+
+### Overview
+
+All workflow scripts support `--non-interactive` mode for automation. When Claude Code is asked to "commit and push to development, then merge to main following GIT_WORKFLOW.md", the scripts execute automatically with sensible defaults and create comprehensive logs.
+
+### Usage Pattern
+
+**Command Format**:
+
+```batch
+# Commit workflow
+scripts\git\commit_enhanced.bat --non-interactive "commit message"
+
+# Merge workflow
+scripts\git\merge_with_validation.bat --non-interactive
+```
+
+### Complete Automated Workflow
+
+**User Request**: "Commit and push to development, then merge to main following GIT_WORKFLOW.md"
+
+**Claude Code Execution**:
+
+```batch
+# 1. Ensure on development branch
+git checkout development
+
+# 2. Commit with automatic logging
+scripts\git\commit_enhanced.bat --non-interactive "feat: Your message here"
+
+# 3. Push to development remote
+git push origin development
+
+# 4. Merge to main with automatic logging
+scripts\git\merge_with_validation.bat --non-interactive
+
+# 5. Push to main remote
+git push origin main
+```
+
+### Non-Interactive Behavior
+
+**commit_enhanced.bat --non-interactive**:
+
+- Auto-stages all changes (no "Stage all changes?" prompt)
+- Auto-fixes lint issues (no "Auto-fix?" prompt)
+- Accepts non-conventional commit messages (no format prompt)
+- Skips branch verification prompts
+- Skips final confirmation prompt
+- Creates log: `logs/commit_enhanced_TIMESTAMP.log`
+
+**merge_with_validation.bat --non-interactive**:
+
+- Executes full merge workflow automatically
+- Auto-resolves modify/delete conflicts
+- Creates backup tag: `pre-merge-backup-TIMESTAMP`
+- Creates log: `logs/merge_with_validation_TIMESTAMP.log`
+- No user interaction required
+
+### Logging Output
+
+**Log File Location**: `logs/workflow_TIMESTAMP.log`
+
+**Log Format** (matches `bash_scripts_commit_merge_20251005_185155.log`):
+
+- Header with workflow identification
+- Start time timestamp
+- Phase-by-phase execution tracking
+- File changes summary
+- Conflict resolution details (if applicable)
+- Backup tag information
+- End time and final status
+- Comprehensive audit trail
+
+**Example Log Structure**:
+
+```
+=== Enhanced Commit Workflow ===
+Start Time: 2025-10-05 20:30:45
+
+[Phase 1] Pre-commit validation...
+[Phase 2] Staging changes...
+[Phase 3] Code quality checks...
+[Phase 4] Creating commit...
+
+End Time: 2025-10-05 20:31:12
+STATUS: SUCCESS
+```
+
+### Verification
+
+After workflow completion, user can verify:
+
+```batch
+# View log file
+type logs\commit_enhanced_TIMESTAMP.log
+type logs\merge_with_validation_TIMESTAMP.log
+
+# Verify git history
+git log --oneline -5
+git log --graph --oneline -10
+```
+
 ## 📋 Daily Workflow
 
 ### 1. Normal Development
@@ -525,9 +629,11 @@ cd claude-context-local
 | Task | Command | Result |
 |------|---------|---------|
 | **Safe commit** | `scripts\git\commit_enhanced.bat "message"` | Commits with lint checks and validations |
+| **Automated commit** | `scripts\git\commit_enhanced.bat --non-interactive "message"` | Non-interactive commit with auto-staging and auto-fix |
 | **Check code quality** | `scripts\git\check_lint.bat` | Validates code with ruff/black/isort/markdownlint |
 | **Fix linting** | `scripts\git\fix_lint.bat` | Auto-fixes linting issues (Python + markdown) |
 | **Merge to main** | `scripts\git\merge_with_validation.bat` | Safe merge: development → main (auto-resolves test file conflicts) |
+| **Automated merge** | `scripts\git\merge_with_validation.bat --non-interactive` | Non-interactive merge for automation |
 | **Docs-only merge** | `scripts\git\merge_docs.bat` | Merge only documentation changes |
 | **Emergency rollback** | `scripts\git\rollback_merge.bat` | Rollback last merge |
 

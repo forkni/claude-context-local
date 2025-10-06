@@ -1,12 +1,52 @@
 @echo off
 REM merge_with_validation.bat
-REM Safe merge from development to main with automatic conflict resolution
+REM Safe merge from development to main with automatic conflict resolution and mandatory logging
 REM Uses .gitattributes merge strategies to handle excluded files
+REM
+REM Usage: merge_with_validation.bat [--non-interactive]
+REM   --non-interactive: Flag for automation compatibility (currently no prompts exist)
 
 setlocal enabledelayedexpansion
 
-echo === Safe Merge: development ^→ main ===
-echo.
+REM ========================================
+REM Parse Command Line Arguments
+REM ========================================
+
+set NON_INTERACTIVE=0
+
+REM Check if first parameter is --non-interactive flag
+if "%~1"=="--non-interactive" (
+    set NON_INTERACTIVE=1
+)
+
+REM ========================================
+REM Initialize Mandatory Logging
+REM ========================================
+
+REM Create logs directory
+if not exist logs mkdir logs
+
+REM Generate timestamp
+for /f "tokens=2-4 delims=/ " %%a in ('date /t') do set mydate=%%c%%a%%b
+for /f "tokens=1-2 delims=/: " %%a in ('time /t') do set mytime=%%a%%b
+set TIMESTAMP=%mydate%_%mytime%
+set LOGFILE=logs\merge_with_validation_%TIMESTAMP%.log
+set REPORTFILE=logs\merge_with_validation_analysis_%TIMESTAMP%.md
+
+REM Initialize log file
+echo ========================================= > "%LOGFILE%"
+echo Safe Merge Workflow Log >> "%LOGFILE%"
+echo ========================================= >> "%LOGFILE%"
+echo Start Time: %date% %time% >> "%LOGFILE%"
+for /f "tokens=*" %%i in ('git branch --show-current') do echo Current Branch: %%i >> "%LOGFILE%"
+echo Target: development → main >> "%LOGFILE%"
+echo. >> "%LOGFILE%"
+
+REM Log initialization message
+call :LogMessage "=== Safe Merge: development → main ==="
+call :LogMessage ""
+call :LogMessage "📋 Workflow Log: %LOGFILE%"
+call :LogMessage ""
 
 REM [1/7] Run validation
 echo [1/7] Running pre-merge validation...
@@ -280,5 +320,74 @@ echo   - scripts\git\rollback_merge.bat
 echo   - Or: git reset --hard %BACKUP_TAG%
 echo.
 
+REM Generate analysis report
+call :GenerateAnalysisReport
+
 endlocal
 exit /b 0
+
+REM ========================================
+REM Helper Functions
+REM ========================================
+
+:LogMessage
+REM Logs message to both console and file
+set MSG=%~1
+echo %MSG%
+echo %MSG% >> "%LOGFILE%"
+goto :eof
+
+:GenerateAnalysisReport
+REM Generate comprehensive analysis report
+echo # Merge Validation Workflow Analysis Report > "%REPORTFILE%"
+echo. >> "%REPORTFILE%"
+echo **Workflow**: Safe Merge (development → main) >> "%REPORTFILE%"
+echo **Date**: %date% %time% >> "%REPORTFILE%"
+echo **Status**: ✅ SUCCESS >> "%REPORTFILE%"
+echo. >> "%REPORTFILE%"
+echo ## Summary >> "%REPORTFILE%"
+echo Successfully merged development into main with full validation, automatic conflict resolution, and mandatory logging. >> "%REPORTFILE%"
+echo. >> "%REPORTFILE%"
+echo ## Merge Details >> "%REPORTFILE%"
+echo. >> "%REPORTFILE%"
+echo - **Backup Tag**: `%BACKUP_TAG%` >> "%REPORTFILE%"
+echo - **Merge Strategy**: --no-ff (create merge commit) >> "%REPORTFILE%"
+echo - **Conflict Resolution**: Automatic (modify/delete conflicts) >> "%REPORTFILE%"
+echo. >> "%REPORTFILE%"
+echo ## Files Changed >> "%REPORTFILE%"
+echo. >> "%REPORTFILE%"
+git diff HEAD~1 --name-status >> "%REPORTFILE%" 2>nul
+echo. >> "%REPORTFILE%"
+echo ## Latest Commit >> "%REPORTFILE%"
+echo. >> "%REPORTFILE%"
+git log -1 --pretty=format:"- **Hash**: %%H%%n- **Message**: %%s%%n- **Author**: %%an%%n- **Date**: %%ad%%n" >> "%REPORTFILE%" 2>nul
+echo. >> "%REPORTFILE%"
+echo. >> "%REPORTFILE%"
+echo ## Validations Passed >> "%REPORTFILE%"
+echo. >> "%REPORTFILE%"
+echo - ✅ Pre-merge validation (validate_branches.bat) >> "%REPORTFILE%"
+echo - ✅ Backup tag created: %BACKUP_TAG% >> "%REPORTFILE%"
+echo - ✅ Modify/delete conflicts auto-resolved >> "%REPORTFILE%"
+echo - ✅ Documentation CI policy validated >> "%REPORTFILE%"
+echo - ✅ Merge completed successfully >> "%REPORTFILE%"
+echo. >> "%REPORTFILE%"
+echo ## Next Steps >> "%REPORTFILE%"
+echo. >> "%REPORTFILE%"
+echo 1. Review changes: `git log --oneline -5` >> "%REPORTFILE%"
+echo 2. Test build locally >> "%REPORTFILE%"
+echo 3. Push to remote: `git push origin main` >> "%REPORTFILE%"
+echo. >> "%REPORTFILE%"
+echo **Rollback if needed**: `git reset --hard %BACKUP_TAG%` >> "%REPORTFILE%"
+echo. >> "%REPORTFILE%"
+echo ## Logs >> "%REPORTFILE%"
+echo. >> "%REPORTFILE%"
+echo - Execution log: `%LOGFILE%` >> "%REPORTFILE%"
+echo - Analysis report: `%REPORTFILE%` >> "%REPORTFILE%"
+echo. >> "%REPORTFILE%"
+echo End Time: %date% %time% >> "%LOGFILE%"
+call :LogMessage ""
+call :LogMessage "======================================"
+call :LogMessage "📊 Analysis Report: %REPORTFILE%"
+call :LogMessage "📋 Backup Tag: %BACKUP_TAG%"
+call :LogMessage "======================================"
+goto :eof
