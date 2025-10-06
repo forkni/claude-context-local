@@ -32,157 +32,290 @@ echo $OSTYPE
 
 **Token-efficient execution**: All commands suppress output unless errors occur.
 
+### ⚠️ CRITICAL - Bash Tool Compatibility
+
+Due to Claude Code's Bash tool command parsing limitations:
+
+- **Execute each numbered step as a SEPARATE Bash call**
+- **DO NOT combine steps** with `&&` or `;` operators
+- **DO NOT use complex patterns** like `VAR=$(cmd) && other_cmd`
+- **Check exit codes** between steps
+- **Store output before using** it in subsequent commands
+
+Each step below must be a single, simple Bash tool invocation.
+
+### Execution Pattern
+
+For each phase:
+
+1. Read the step number
+2. Execute ONLY that step in one Bash call
+3. Check the result/exit code
+4. Decide whether to continue based on result
+5. Move to next step
+
+**Do NOT attempt to combine multiple steps into one Bash call.**
+
+---
+
 ### Phase 1: Pre-commit Validation
 
+Execute these commands in sequence (one Bash call per step):
+
+**Step 1.1: Switch to development branch**
+
 ```bash
-# Switch to development (suppress output)
 git checkout development >/dev/null 2>&1
-
-# Check for changes
-if ! git diff --quiet || ! git diff --cached --quiet; then
-  : # Changes exist, continue
-else
-  echo "⚠ No changes to commit"
-  exit 0
-fi
-
-# Run lint check (suppress unless errors)
-if ! ./scripts/git/check_lint.sh >/dev/null 2>&1; then
-  echo "⚠ Lint errors found, auto-fixing..."
-  ./scripts/git/fix_lint.sh
-
-  # Re-check (show output this time)
-  if ! ./scripts/git/check_lint.sh; then
-    echo "✗ Some lint errors remain - check output above"
-    exit 1
-  fi
-fi
 ```
 
-**Note**: Markdown errors in CLAUDE.md/MEMORY.md are expected (local-only files, won't be committed).
+**Step 1.2: Check for changes**
+
+```bash
+git diff --quiet && git diff --cached --quiet
+```
+
+- If exit code 0: No changes, display "⚠ No changes to commit", stop workflow
+- If exit code 1: Changes exist, continue to step 1.3
+
+**Step 1.3: Run lint check (suppress output)**
+
+```bash
+./scripts/git/check_lint.sh >/dev/null 2>&1
+```
+
+- If exit code 0: Lint passed, skip to Phase 2
+- If exit code ≠ 0: Continue to step 1.4
+
+**Step 1.4: Auto-fix lint issues**
+
+```bash
+./scripts/git/fix_lint.sh
+```
+
+**Step 1.5: Re-verify lint (show output this time)**
+
+```bash
+./scripts/git/check_lint.sh
+```
+
+- Ignore markdown errors in CLAUDE.md/MEMORY.md (local-only files, won't be committed)
+- If still fails: Stop workflow
+- If passes: Continue to Phase 2
+
+---
 
 ### Phase 2: Commit to Development
 
+Execute these commands in sequence (one Bash call per step):
+
+**Step 2.1: Stage all changes**
+
 ```bash
-# Stage all changes (suppress output)
-git add . 2>/dev/null
-
-# VALIDATION: Check for local-only files
-if git diff --cached --name-only | grep -qE "(CLAUDE\.md|MEMORY\.md|_archive|benchmark_results)"; then
-  echo "✗ ERROR: Local-only files are staged!"
-  echo "Files:"
-  git diff --cached --name-only | grep -E "(CLAUDE\.md|MEMORY\.md|_archive|benchmark_results)"
-  echo ""
-  echo "Remove with: git reset HEAD CLAUDE.md MEMORY.md _archive/ benchmark_results/"
-  exit 1
-fi
-
-# VALIDATION: Branch-specific check
-CURRENT_BRANCH=$(git branch --show-current)
-if [ "$CURRENT_BRANCH" = "main" ]; then
-  if git diff --cached --name-only | grep -q "^tests/"; then
-    echo "✗ ERROR: Test files staged on main branch"
-    exit 1
-  fi
-fi
-
-# Create commit (suppress output)
-git commit -m "feat: Add automated git workflow slash command" >/dev/null 2>&1
-if [ $? -ne 0 ]; then
-  echo "✗ Commit failed:"
-  git commit -m "feat: Add automated git workflow slash command"  # Show error
-  exit 1
-fi
-
-# Capture hash for final report
-DEV_COMMIT_HASH=$(git log -1 --format="%h")
-DEV_COMMIT_MSG=$(git log -1 --format="%s")
+git add .
 ```
 
-**Commit message**: Replace "feat: Add automated git workflow slash command" with appropriate message using conventional commit format (feat:, fix:, docs:, chore:, test:).
+**Step 2.2: Check for local-only files**
+
+```bash
+git diff --cached --name-only | grep -E "(CLAUDE\.md|MEMORY\.md|_archive|benchmark_results)"
+```
+
+- If found (exit code 0):
+  - Display error: "✗ ERROR: Local-only files are staged!"
+  - Show files found
+  - Display: "Remove with: git reset HEAD CLAUDE.md MEMORY.md _archive/ benchmark_results/"
+  - Stop workflow
+- If not found (exit code 1): Continue to step 2.3
+
+**Step 2.3: Get current branch**
+
+```bash
+git branch --show-current
+```
+
+- Store result for step 2.4
+
+**Step 2.4: If on main, check for test files**
+
+```bash
+git diff --cached --name-only | grep "^tests/"
+```
+
+- Only check if step 2.3 returned "main"
+- If found on main (exit code 0): Display "✗ ERROR: Test files staged on main branch", stop workflow
+- If not found (exit code 1) or not on main: Continue to step 2.5
+
+**Step 2.5: Create commit**
+
+```bash
+git commit -m "feat: Your descriptive commit message" >/dev/null 2>&1
+```
+
+- Replace message with appropriate conventional commit format (feat:, fix:, docs:, chore:, test:)
+- If fails: Show error by running without output suppression, then stop workflow
+
+**Step 2.6: Capture commit info for final report**
+
+```bash
+git log -1 --format="%h %s"
+```
+
+- Store result for final report (hash and message)
+
+---
 
 ### Phase 3: Push Development
 
+Execute these commands in sequence (one Bash call per step):
+
+**Step 3.1: Push to development (suppress output)**
+
 ```bash
-# Push (suppress unless error)
-if ! git push origin development >/dev/null 2>&1; then
-  echo "✗ Push to development failed:"
-  git push origin development  # Show error
-  exit 1
-fi
+git push origin development >/dev/null 2>&1
 ```
+
+- If exit code 0: Continue to Phase 4
+- If exit code ≠ 0: Continue to step 3.2
+
+**Step 3.2: If push failed, show error**
+
+```bash
+git push origin development
+```
+
+- Display full error output
+- Stop workflow
+
+---
 
 ### Phase 4: Merge to Main
 
+Execute these commands in sequence (one Bash call per step):
+
+**Step 4.1: Switch to main**
+
 ```bash
-# Optional: Pre-merge validation
-# ./scripts/git/validate_branches.sh >/dev/null 2>&1
-
-# Switch to main (suppress output)
 git checkout main >/dev/null 2>&1
-
-# Perform merge (suppress unless conflicts)
-git merge development --no-ff -m "Merge development into main" >/dev/null 2>&1
-MERGE_EXIT=$?
-
-if [ $MERGE_EXIT -ne 0 ]; then
-  # Check for expected modify/delete conflicts
-  if git status --short | grep -q "^DU "; then
-    echo "⚠ Resolving expected test file conflicts..."
-
-    # Auto-resolve: Remove test files from main
-    git status --short | grep "^DU " | awk '{print $2}' | while read file; do
-      git rm "$file" >/dev/null 2>&1
-    done
-
-    # Complete merge (suppress output)
-    if ! git commit --no-edit >/dev/null 2>&1; then
-      echo "✗ Failed to complete merge"
-      exit 1
-    fi
-  # Check for content conflicts
-  elif git status --short | grep -q "^UU "; then
-    echo "✗ Content conflicts require manual resolution:"
-    git status --short | grep "^UU "
-    echo ""
-    echo "Abort with: git merge --abort && git checkout development"
-    exit 1
-  fi
-fi
-
-# VALIDATION: CI documentation policy (optional but recommended)
-# Only these 8 docs allowed on main:
-# BENCHMARKS.md, claude_code_config.md, GIT_WORKFLOW.md,
-# HYBRID_SEARCH_CONFIGURATION_GUIDE.md, INSTALLATION_GUIDE.md,
-# MCP_TOOLS_REFERENCE.md, MODEL_MIGRATION_GUIDE.md, PYTORCH_COMPATIBILITY.md
-
-# Capture merge hash for final report
-MAIN_COMMIT_HASH=$(git log -1 --format="%h")
 ```
 
-**Expected**: Modify/delete conflicts for test files are normal (see GIT_WORKFLOW.md lines 745-842).
+**Step 4.2: Attempt merge (suppress output)**
+
+```bash
+git merge development --no-ff -m "Merge development into main" >/dev/null 2>&1
+```
+
+- If exit code 0: Clean merge, skip to step 4.7
+- If exit code ≠ 0: Conflicts detected, continue to step 4.3
+
+**Step 4.3: Check for modify/delete conflicts (expected)**
+
+```bash
+git status --short | grep "^DU "
+```
+
+- If found (exit code 0): Modify/delete conflicts (EXPECTED), continue to step 4.4
+- If not found (exit code 1): Continue to step 4.5
+
+**Step 4.4: Auto-resolve modify/delete conflicts**
+
+```bash
+git status --short | grep "^DU " | awk '{print $2}' | xargs -r git rm
+```
+
+- Display: "⚠ Resolving expected test file conflicts..."
+- Then continue to step 4.6
+
+**Step 4.5: Check for content conflicts (unexpected)**
+
+```bash
+git status --short | grep "^UU "
+```
+
+- If found (exit code 0):
+  - Display: "✗ Content conflicts require manual resolution:"
+  - Show conflicted files
+  - Display: "Abort with: git merge --abort && git checkout development"
+  - Stop workflow
+- If not found: Merge issue unclear, stop workflow
+
+**Step 4.6: Complete merge commit**
+
+```bash
+git commit --no-edit >/dev/null 2>&1
+```
+
+- If fails: Display "✗ Failed to complete merge", stop workflow
+- If succeeds: Continue to step 4.7
+
+**Step 4.7: Capture merge commit hash**
+
+```bash
+git log -1 --format="%h"
+```
+
+- Store result for final report
+
+---
 
 ### Phase 5: Push Main
 
-```bash
-# Push main (suppress unless error)
-if ! git push origin main >/dev/null 2>&1; then
-  echo "✗ Push to main failed:"
-  git push origin main  # Show error
-  exit 1
-fi
+Execute these commands in sequence (one Bash call per step):
 
-# Return to development (suppress output)
+**Step 5.1: Push to main (suppress output)**
+
+```bash
+git push origin main >/dev/null 2>&1
+```
+
+- If exit code 0: Continue to step 5.3
+- If exit code ≠ 0: Continue to step 5.2
+
+**Step 5.2: If push failed, show error**
+
+```bash
+git push origin main
+```
+
+- Display full error output
+- Stop workflow
+
+**Step 5.3: Return to development**
+
+```bash
 git checkout development >/dev/null 2>&1
 ```
 
+---
+
 ### Final Report
 
+Execute these commands in sequence (one Bash call per step):
+
+**Step 6.1: Get development commit info**
+
 ```bash
-echo "✅ Workflow complete"
-echo ""
-echo "Development: $DEV_COMMIT_HASH \"$DEV_COMMIT_MSG\""
-echo "Main: $MAIN_COMMIT_HASH merged & pushed"
+git log development -1 --format="%h %s"
+```
+
+- Store hash and message
+
+**Step 6.2: Get main commit hash**
+
+```bash
+git log main -1 --format="%h"
+```
+
+- Store hash
+
+**Step 6.3: Display summary**
+
+Use stored values from steps 2.6, 4.7, 6.1, and 6.2:
+
+```
+✅ Workflow complete
+
+Development: [hash] "[message]"
+Main: [hash] merged & pushed
 ```
 
 ---
