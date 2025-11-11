@@ -61,6 +61,7 @@ class MerkleDAG:
             "env",
             ".env",
             ".direnv",
+            "site-packages",  # Python package installations
             "node_modules",
             ".pnpm-store",
             ".yarn",
@@ -97,6 +98,7 @@ class MerkleDAG:
             "target",
             "bin",
             "obj",
+            "_archive",  # Historical content excluded from indexing
             "*.pyc",
             "*.pyo",
             ".DS_Store",

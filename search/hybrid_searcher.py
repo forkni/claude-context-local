@@ -65,6 +65,9 @@ class HybridSearcher:
         dense_weight: float = 0.6,
         rrf_k: int = 60,
         max_workers: int = 2,
+        bm25_use_stopwords: bool = True,
+        bm25_use_stemming: bool = True,
+        project_id: str = None,
     ):
         """
         Initialize hybrid searcher.
@@ -76,6 +79,9 @@ class HybridSearcher:
             dense_weight: Weight for dense vector results (0.0 to 1.0)
             rrf_k: RRF parameter for reranking
             max_workers: Maximum thread pool workers for parallel execution
+            bm25_use_stopwords: Whether BM25 should filter stopwords
+            bm25_use_stemming: Whether BM25 should use Snowball stemming
+            project_id: Project identifier for graph storage (Phase 1: Python call graphs)
         """
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
@@ -83,17 +89,31 @@ class HybridSearcher:
         # Store embedder for semantic search
         self.embedder = embedder
 
+        # Store project_id for graph storage (Phase 1)
+        self.project_id = project_id
+
         # Weights
         self.bm25_weight = bm25_weight
         self.dense_weight = dense_weight
+
+        # BM25 configuration
+        self.bm25_use_stopwords = bm25_use_stopwords
+        self.bm25_use_stemming = bm25_use_stemming
 
         # Components - use existing storage structure
         self._logger = logging.getLogger(__name__)
 
         # BM25 index gets its own subdirectory
-        self._logger.info(f"[INIT] Creating BM25Index at: {self.storage_dir / 'bm25'}")
+        self._logger.info(
+            f"[INIT] Creating BM25Index at: {self.storage_dir / 'bm25'} "
+            f"(stopwords={bm25_use_stopwords}, stemming={bm25_use_stemming})"
+        )
         try:
-            self.bm25_index = BM25Index(str(self.storage_dir / "bm25"))
+            self.bm25_index = BM25Index(
+                str(self.storage_dir / "bm25"),
+                use_stopwords=bm25_use_stopwords,
+                use_stemming=bm25_use_stemming
+            )
             self._logger.info("[INIT] BM25Index created successfully")
         except Exception as e:
             self._logger.error(f"[INIT] Failed to create BM25Index: {e}")
@@ -119,7 +139,7 @@ class HybridSearcher:
 
         # Dense index uses the main storage directory where existing indices are stored
         self._logger.info(f"[INIT] Initializing dense index at: {self.storage_dir}")
-        self.dense_index = CodeIndexManager(str(self.storage_dir))
+        self.dense_index = CodeIndexManager(str(self.storage_dir), project_id=project_id)
         # Dense index loads automatically in its __init__
         dense_count = self.dense_index.index.ntotal if self.dense_index.index else 0
         if dense_count > 0:
@@ -163,7 +183,7 @@ class HybridSearcher:
         self.shutdown()
 
     def shutdown(self):
-        """Shutdown the thread pool."""
+        """Shutdown the thread pool and cleanup resources."""
         with self._shutdown_lock:
             if not self._is_shutdown:
                 self._thread_pool.shutdown(wait=True)
@@ -310,6 +330,9 @@ class HybridSearcher:
         """
         Search using configurable approach (hybrid, semantic-only, or BM25-only).
 
+        Automatically uses multi-hop search if enabled in config, discovering
+        interconnected code relationships beyond direct matches.
+
         Args:
             query: Search query
             k: Number of results to return
@@ -337,6 +360,56 @@ class HybridSearcher:
                 self._logger.warning("Hybrid search not ready - indices may be empty")
                 return []
 
+        # Check if multi-hop search is enabled
+        from .config import get_search_config
+        config = get_search_config()
+
+        if config.enable_multi_hop:
+            # Use multi-hop search for discovering related code
+            return self._multi_hop_search_internal(
+                query=query,
+                k=k,
+                search_mode=search_mode,
+                hops=config.multi_hop_count,
+                expansion_factor=config.multi_hop_expansion,
+                use_parallel=use_parallel,
+                min_bm25_score=min_bm25_score,
+                filters=filters,
+            )
+
+        # Single-hop search (direct matching only)
+        return self._single_hop_search(
+            query=query,
+            k=k,
+            search_mode=search_mode,
+            use_parallel=use_parallel,
+            min_bm25_score=min_bm25_score,
+            filters=filters,
+        )
+
+    def _single_hop_search(
+        self,
+        query: str,
+        k: int = 5,
+        search_mode: str = "hybrid",
+        use_parallel: bool = True,
+        min_bm25_score: float = 0.0,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[SearchResult]:
+        """
+        Internal single-hop search implementation (direct query matching).
+
+        Args:
+            query: Search query
+            k: Number of results to return
+            search_mode: Search mode - "hybrid", "semantic", or "bm25"
+            use_parallel: Whether to run BM25 and dense search in parallel
+            min_bm25_score: Minimum BM25 score threshold
+            filters: Optional filters for dense search
+
+        Returns:
+            Search results from single-hop search
+        """
         self._logger.debug(f"{search_mode.title()} search for: '{query}' (k={k})")
 
         start_time = time.time()
@@ -463,6 +536,211 @@ class HybridSearcher:
             results.append(result)
 
         return results
+
+    def _multi_hop_search_internal(
+        self,
+        query: str,
+        k: int = 5,
+        search_mode: str = "hybrid",
+        hops: int = 2,
+        expansion_factor: float = 0.3,
+        use_parallel: bool = True,
+        min_bm25_score: float = 0.0,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List:
+        """
+        Internal multi-hop search implementation.
+
+        Discovers interconnected code relationships by:
+        1. Initial query-based search (Hop 1)
+        2. Finding similar chunks for each result (Hop 2+)
+        3. Re-ranking all discovered chunks by query relevance
+
+        Args:
+            query: Search query
+            k: Number of final results to return
+            search_mode: Search mode - "hybrid", "semantic", or "bm25"
+            hops: Number of search hops (default: 2)
+            expansion_factor: Fraction of k to expand per hop (default: 0.3)
+            use_parallel: Whether to use parallel search
+            min_bm25_score: Minimum BM25 score threshold
+            filters: Optional filters for search
+
+        Returns:
+            List of SearchResult objects with discovered related code
+        """
+        from .searcher import SearchResult
+
+        # Validate parameters
+        if hops < 1:
+            self._logger.warning(f"Invalid hops={hops}, using 1")
+            hops = 1
+        if expansion_factor < 0 or expansion_factor > 2.0:
+            self._logger.warning(f"Invalid expansion_factor={expansion_factor}, using 0.3")
+            expansion_factor = 0.3
+
+        self._logger.info(
+            f"[MULTI_HOP] Starting {hops}-hop search for '{query}' "
+            f"(k={k}, expansion={expansion_factor}, mode={search_mode})"
+        )
+
+        # Hop 1: Initial query-based search (use single-hop to avoid recursion)
+        # Use configurable multiplier from config
+        from .config import SearchConfigManager
+        config = SearchConfigManager().load_config()
+        initial_k_multiplier = config.multi_hop_initial_k_multiplier
+        initial_k = int(k * initial_k_multiplier)  # Get more initial results for better expansion
+        initial_results = self._single_hop_search(
+            query=query,
+            k=initial_k,
+            search_mode=search_mode,
+            use_parallel=use_parallel,
+            min_bm25_score=min_bm25_score,
+            filters=filters,
+        )
+
+        if not initial_results:
+            self._logger.info("[MULTI_HOP] No initial results found")
+            return []
+
+        self._logger.info(
+            f"[MULTI_HOP] Hop 1: Found {len(initial_results)} initial results"
+        )
+
+        # Track all discovered chunks (avoid duplicates)
+        # Note: HybridSearcher.search() returns reranker.SearchResult with doc_id
+        all_doc_ids = {r.doc_id for r in initial_results}
+        all_results = {r.doc_id: r for r in initial_results}
+
+        # If only 1 hop requested, return initial results
+        if hops == 1:
+            return initial_results[:k]
+
+        # Hop 2+: Expand from each initial result
+        expansion_k = max(1, int(k * expansion_factor))
+
+        for hop in range(2, hops + 1):
+            hop_discovered = 0
+
+            # Expand from top initial results only (not from previously expanded)
+            source_results = initial_results[:k]  # Use top k as expansion sources
+
+            for result in source_results:
+                try:
+                    # Find similar chunks to this result
+                    # find_similar_to_chunk returns searcher.SearchResult with chunk_id
+                    similar_chunks = self.find_similar_to_chunk(
+                        chunk_id=result.doc_id,  # doc_id is the same as chunk_id
+                        k=expansion_k
+                    )
+
+                    # Add new chunks
+                    for sim_result in similar_chunks:
+                        # Convert searcher.SearchResult chunk_id to doc_id for consistency
+                        doc_id = sim_result.chunk_id
+                        if doc_id not in all_doc_ids:
+                            all_doc_ids.add(doc_id)
+                            # Convert to reranker.SearchResult format
+                            from .reranker import SearchResult as RerankerSearchResult
+                            reranker_result = RerankerSearchResult(
+                                doc_id=doc_id,
+                                score=sim_result.similarity_score,
+                                metadata=sim_result.__dict__,
+                                source="multi_hop"
+                            )
+                            all_results[doc_id] = reranker_result
+                            hop_discovered += 1
+
+                except Exception as e:
+                    self._logger.warning(
+                        f"[MULTI_HOP] Failed to find similar chunks for {result.doc_id}: {e}"
+                    )
+                    continue
+
+            self._logger.info(
+                f"[MULTI_HOP] Hop {hop}: Discovered {hop_discovered} new chunks "
+                f"(total: {len(all_results)})"
+            )
+
+        # Re-rank all discovered results by query relevance
+        self._logger.info(
+            f"[MULTI_HOP] Re-ranking {len(all_results)} total chunks by query relevance"
+        )
+
+        final_results = self._rerank_by_query(
+            query=query,
+            results=list(all_results.values()),
+            k=k,
+            search_mode=search_mode
+        )
+
+        self._logger.info(
+            f"[MULTI_HOP] Returning top {len(final_results)} results after re-ranking"
+        )
+
+        return final_results
+
+    def _rerank_by_query(
+        self,
+        query: str,
+        results: List,
+        k: int,
+        search_mode: str = "hybrid"
+    ) -> List:
+        """
+        Re-rank results by computing fresh relevance scores against the original query.
+
+        Args:
+            query: Original search query
+            results: List of SearchResult objects to re-rank
+            k: Number of top results to return
+            search_mode: Search mode for re-ranking strategy
+
+        Returns:
+            Top k results sorted by query relevance
+        """
+        if not results:
+            return []
+
+        # For semantic/hybrid modes: re-score using dense similarity
+        if search_mode in ("semantic", "hybrid") and self.embedder:
+            try:
+                # Get query embedding
+                query_embedding = self.embedder.embed_query(query)
+
+                # Re-score each result by cosine similarity to query
+                import numpy as np
+
+                for result in results:
+                    # Get chunk embedding from dense index
+                    # reranker.SearchResult uses doc_id, not chunk_id
+                    doc_id = result.doc_id
+                    chunk_metadata = self.dense_index.metadata_db.get(doc_id)
+                    if chunk_metadata and "embedding" in chunk_metadata:
+                        chunk_emb = np.array(chunk_metadata["embedding"])
+                        # Compute cosine similarity
+                        similarity = np.dot(query_embedding, chunk_emb) / (
+                            np.linalg.norm(query_embedding) * np.linalg.norm(chunk_emb)
+                        )
+                        # reranker.SearchResult uses score, not similarity_score
+                        result.score = float(similarity)
+                    # Keep original score if embedding not found
+
+            except Exception as e:
+                self._logger.warning(
+                    f"[MULTI_HOP] Failed to re-score with embeddings: {e}, "
+                    "keeping original scores"
+                )
+
+        # Sort by score (descending)
+        # reranker.SearchResult uses score, not similarity_score
+        sorted_results = sorted(
+            results,
+            key=lambda r: r.score,
+            reverse=True
+        )
+
+        return sorted_results[:k]
 
     def _parallel_search(
         self,
@@ -880,11 +1158,15 @@ class HybridSearcher:
         self._logger.info("Clearing hybrid indices")
 
         try:
-            # Clear BM25 index by recreating it
-            self.bm25_index = BM25Index(str(self.storage_dir / "bm25"))
+            # Clear BM25 index by recreating it with same configuration
+            self.bm25_index = BM25Index(
+                str(self.storage_dir / "bm25"),
+                use_stopwords=self.bm25_use_stopwords,
+                use_stemming=self.bm25_use_stemming
+            )
 
-            # Clear dense index by recreating it
-            self.dense_index = CodeIndexManager(str(self.storage_dir))
+            # Clear dense index by recreating it (preserve project_id for graph storage)
+            self.dense_index = CodeIndexManager(str(self.storage_dir), project_id=self.project_id)
 
             self._logger.info("Successfully cleared hybrid indices")
         except Exception as e:
@@ -934,6 +1216,77 @@ class HybridSearcher:
         except Exception as e:
             self._logger.error(f"Failed to remove chunks for file {file_path}: {e}")
             return 0
+
+    def remove_multiple_files(self, file_paths: set, project_name: str) -> int:
+        """
+        Remove chunks for multiple files from both indices in a single pass.
+        Much faster than calling remove_file_chunks repeatedly.
+
+        IMPORTANT: This method properly removes chunks from both FAISS and BM25 indices,
+        preventing index corruption.
+
+        Args:
+            file_paths: Set of file paths to remove
+            project_name: Name of the project
+
+        Returns:
+            Total number of chunks removed
+        """
+        self._logger.info(
+            f"Batch removing chunks for {len(file_paths)} files from hybrid indices"
+        )
+
+        removed_count = 0
+        dense_failed = False
+        bm25_failed = False
+
+        # Remove from dense index
+        if hasattr(self.dense_index, "remove_multiple_files"):
+            try:
+                removed_dense = self.dense_index.remove_multiple_files(
+                    file_paths, project_name
+                )
+                removed_count += removed_dense
+                self._logger.info(
+                    f"Batch removed {removed_dense} chunks from dense (FAISS) index"
+                )
+            except Exception as e:
+                self._logger.error(f"Failed to batch remove from dense index: {e}")
+                import traceback
+                self._logger.error(traceback.format_exc())
+                dense_failed = True
+
+        # Remove from BM25 index
+        if hasattr(self.bm25_index, "remove_multiple_files"):
+            try:
+                removed_bm25 = self.bm25_index.remove_multiple_files(
+                    file_paths, project_name
+                )
+                removed_count += removed_bm25
+                self._logger.info(
+                    f"Batch removed {removed_bm25} chunks from BM25 index"
+                )
+            except Exception as e:
+                self._logger.error(f"Failed to batch remove from BM25 index: {e}")
+                import traceback
+                self._logger.error(traceback.format_exc())
+                bm25_failed = True
+        else:
+            self._logger.warning(
+                "BM25 index does not support batch file chunk removal"
+            )
+
+        # If both failed, raise exception to trigger error recovery
+        if dense_failed and bm25_failed:
+            raise RuntimeError(
+                "Batch removal failed for both dense and BM25 indices. "
+                "Indices may be in corrupted state."
+            )
+
+        self._logger.info(
+            f"Batch removed {removed_count} total chunks for {len(file_paths)} files"
+        )
+        return removed_count
 
     def save_index(self) -> None:
         """

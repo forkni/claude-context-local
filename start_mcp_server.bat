@@ -48,12 +48,13 @@ if "%~1"=="" (
     echo   5. Project Management
     echo   6. Advanced Options
     echo   7. Help ^& Documentation
+    echo   M. Quick Model Switch ^(Code vs General^)
     echo   8. Exit
     echo.
 
     REM Ensure we have a valid choice
     set choice=
-    set /p choice="Select option (1-8): "
+    set /p choice="Select option (1-8, M): "
 
     REM Handle empty input or Ctrl+C gracefully
     if not defined choice (
@@ -72,9 +73,11 @@ if "%~1"=="" (
     if "!choice!"=="5" goto project_management_menu
     if "!choice!"=="6" goto advanced_menu
     if "!choice!"=="7" goto show_help
+    if /i "!choice!"=="M" goto quick_model_switch
+    if /i "!choice!"=="m" goto quick_model_switch
     if "!choice!"=="8" goto exit_cleanly
 
-    echo [ERROR] Invalid choice: "%choice%". Please select 1-8.
+    echo [ERROR] Invalid choice: "%choice%". Please select 1-8 or M.
     echo.
     echo Press any key to try again...
     pause >nul
@@ -89,7 +92,33 @@ goto start_server
 
 :start_server
 echo.
-echo [INFO] Starting MCP Server...
+echo === MCP Server Transport Selection ===
+echo.
+echo Select transport mode:
+echo.
+echo   1. stdio Transport ^(Default - for Claude Code MCP^)
+echo   2. SSE Transport - VSCode Only ^(port 8765^)
+echo   3. SSE Transport - Dual Servers ^(VSCode + CLI, ports 8765 + 8766^)
+echo   0. Back to Main Menu
+echo.
+set /p transport_choice="Select transport (0-3): "
+
+REM Handle empty input or back option
+if not defined transport_choice goto menu_restart
+if "%transport_choice%"=="" goto menu_restart
+if "%transport_choice%"=="0" goto menu_restart
+
+if "%transport_choice%"=="1" goto start_server_stdio
+if "%transport_choice%"=="2" goto start_server_sse
+if "%transport_choice%"=="3" goto start_server_dual_sse
+
+echo [ERROR] Invalid choice. Please select 0-3.
+pause
+goto start_server
+
+:start_server_stdio
+echo.
+echo [INFO] Starting MCP Server (stdio transport)...
 echo [INFO] This server integrates with Claude Code for semantic search
 echo [INFO] The server will run in stdio mode - this is normal
 echo [INFO] Press Ctrl+C to stop the server
@@ -103,8 +132,8 @@ if not exist ".venv\Scripts\python.exe" (
     goto menu_restart
 )
 
-REM Start the MCP server
-.\.venv\Scripts\python.exe -m mcp_server.server
+REM Start the MCP server with stdio
+.\.venv\Scripts\python.exe -m mcp_server.server --transport stdio
 set SERVER_EXIT_CODE=%ERRORLEVEL%
 
 echo.
@@ -115,6 +144,60 @@ if %SERVER_EXIT_CODE% equ 0 (
     echo [INFO] Check error messages above for troubleshooting
 )
 pause
+goto menu_restart
+
+:start_server_sse
+echo.
+echo [INFO] Starting MCP Server (SSE transport)...
+echo [INFO] Server will run on: http://localhost:8765/sse
+echo [INFO] Use this mode to avoid stdio transport bugs in Claude Code
+echo [INFO] Press Ctrl+C to stop the server
+echo ==================================================
+echo.
+
+REM Check if Python exists
+if not exist ".venv\Scripts\python.exe" (
+    echo [ERROR] Python executable not found: .venv\Scripts\python.exe
+    pause
+    goto menu_restart
+)
+
+REM Check if port 8765 is in use
+netstat -ano | findstr :8765 >nul 2>&1
+if %ERRORLEVEL% equ 0 (
+    echo [WARNING] Port 8765 is already in use
+    echo [INFO] Kill existing process or choose stdio mode
+    echo.
+    set /p kill_port="Kill process on port 8765? (y/N): "
+    if /i NOT "!kill_port!"=="y" goto menu_restart
+    for /f "tokens=5" %%a in ('netstat -ano ^| findstr :8765') do (
+        taskkill /F /PID %%a >nul 2>&1
+    )
+    timeout /t 2 /nobreak >nul
+)
+
+REM Start the MCP server with SSE
+.\.venv\Scripts\python.exe -m mcp_server.server --transport sse --host localhost --port 8765
+set SERVER_EXIT_CODE=%ERRORLEVEL%
+
+echo.
+if %SERVER_EXIT_CODE% equ 0 (
+    echo [INFO] MCP server stopped normally
+) else (
+    echo [ERROR] MCP server failed with exit code: %SERVER_EXIT_CODE%
+    echo [INFO] Check error messages above for troubleshooting
+)
+pause
+goto menu_restart
+
+:start_server_dual_sse
+echo.
+echo [INFO] Starting DUAL SSE servers...
+echo [INFO] VSCode Server: http://localhost:8765/sse
+echo [INFO] CLI Server:    http://localhost:8766/sse
+echo ==================================================
+echo.
+call scripts\batch\start_both_sse_servers.bat
 goto menu_restart
 
 :debug_mode
@@ -289,13 +372,15 @@ echo.
 echo === Project Management ===
 echo.
 echo   1. Index New Project
-echo   2. Force Reindex Project ^(bypass snapshot^)
-echo   3. List Indexed Projects
-echo   4. Clear Project Indexes
-echo   5. View Storage Statistics
-echo   6. Back to Main Menu
+echo   2. Re-index Existing Project ^(Incremental^)
+echo   3. Force Re-index Existing Project ^(Full^)
+echo   4. List Indexed Projects
+echo   5. Clear Project Indexes
+echo   6. View Storage Statistics
+echo   7. Switch to Project
+echo   8. Back to Main Menu
 echo.
-set /p pm_choice="Select option (1-6): "
+set /p pm_choice="Select option (1-8): "
 
 REM Handle empty input gracefully
 if not defined pm_choice (
@@ -308,13 +393,15 @@ if "!pm_choice!"=="" (
 )
 
 if "!pm_choice!"=="1" goto index_new_project
-if "!pm_choice!"=="2" goto force_reindex_project
-if "!pm_choice!"=="3" goto list_projects_menu
-if "!pm_choice!"=="4" goto clear_project_indexes
-if "!pm_choice!"=="5" goto storage_stats
-if "!pm_choice!"=="6" goto menu_restart
+if "!pm_choice!"=="2" goto reindex_existing_project
+if "!pm_choice!"=="3" goto force_reindex_project
+if "!pm_choice!"=="4" goto list_projects_menu
+if "!pm_choice!"=="5" goto clear_project_indexes
+if "!pm_choice!"=="6" goto storage_stats
+if "!pm_choice!"=="7" goto switch_to_project
+if "!pm_choice!"=="8" goto menu_restart
 
-echo [ERROR] Invalid choice. Please select 1-6.
+echo [ERROR] Invalid choice. Please select 1-8.
 pause
 cls
 goto project_management_menu
@@ -355,18 +442,92 @@ goto advanced_menu
 REM Project Management Functions
 :index_new_project
 echo.
-echo [INFO] Starting Project Indexer...
+echo === Index New Project ===
 echo.
-.\.venv\Scripts\python.exe tools\index_project.py
+echo Enter the full path to the project directory to index.
+echo.
+echo Examples:
+echo   C:\Projects\MyProject
+echo   D:\Code\WebApp
+echo   F:\Development\TouchDesigner\MyToeFile
+echo.
+set /p new_project_path="Project path (or press Enter to cancel): "
+
+REM Handle cancel
+if not defined new_project_path goto project_management_menu
+if "%new_project_path%"=="" goto project_management_menu
+
+REM Remove quotes if present
+set new_project_path=%new_project_path:"=%
+
+REM Validate path exists
+if not exist "%new_project_path%" (
+    echo.
+    echo [ERROR] Path does not exist: %new_project_path%
+    echo [INFO] Please check the path and try again
+    pause
+    goto index_new_project
+)
+
+REM Validate it's a directory
+if not exist "%new_project_path%\*" (
+    echo.
+    echo [ERROR] Path is not a directory: %new_project_path%
+    pause
+    goto index_new_project
+)
+
+echo.
+echo [INFO] Indexing new project: %new_project_path%
+echo [INFO] This will create a new index and Merkle snapshot
+echo [INFO] Mode: New (first-time full index)
+echo.
+
+.\.venv\Scripts\python.exe tools\batch_index.py --path "%new_project_path%" --mode new
+pause
+goto menu_restart
+
+:reindex_existing_project
+echo.
+echo === Re-index Existing Project (Incremental) ===
+echo.
+echo This uses Merkle tree change detection and batch removal optimization.
+echo Only changed files will be processed (fast).
+echo.
+
+REM Get project selection
+call :select_indexed_project "re-index incrementally"
+if errorlevel 1 goto project_management_menu
+
+echo.
+echo [INFO] Re-indexing: %SELECTED_PROJECT_NAME%
+echo [INFO] Path: %SELECTED_PROJECT_PATH%
+echo [INFO] Mode: Incremental (detects changes only, uses batch removal)
+echo.
+
+.\.venv\Scripts\python.exe tools\batch_index.py --path "%SELECTED_PROJECT_PATH%" --mode incremental
 pause
 goto menu_restart
 
 :force_reindex_project
 echo.
-echo [INFO] Starting Force Reindex (bypasses Merkle snapshot)...
-echo [INFO] Use this if you see "No changes detected" but files should be indexed
+echo === Force Reindex Project (Full) ===
 echo.
-.\.venv\Scripts\python.exe tools\index_project.py --force
+echo This will bypass Merkle snapshot and re-index everything.
+echo Use this if you see "No changes detected" but files should be indexed.
+echo.
+
+REM Get project selection
+call :select_indexed_project "force reindex (full)"
+if errorlevel 1 goto project_management_menu
+
+echo.
+echo [INFO] Force reindexing: %SELECTED_PROJECT_NAME%
+echo [INFO] Path: %SELECTED_PROJECT_PATH%
+echo [INFO] Mode: Full (bypasses snapshot, indexes everything)
+echo.
+
+.\.venv\Scripts\python.exe tools\batch_index.py --path "%SELECTED_PROJECT_PATH%" --mode force
 pause
 goto menu_restart
 
@@ -543,6 +704,27 @@ echo.
 pause
 goto project_management_menu
 
+:switch_to_project
+echo.
+echo === Switch to Project ===
+echo.
+echo Select a project to switch to for semantic code search.
+echo This will change the active project for all search operations.
+echo.
+
+REM Get project selection
+call :select_indexed_project "switch to"
+if errorlevel 1 goto project_management_menu
+
+echo.
+echo [INFO] Switching to: %SELECTED_PROJECT_NAME%
+echo [INFO] Path: %SELECTED_PROJECT_PATH%
+echo.
+
+.\.venv\Scripts\python.exe tools\switch_project_helper.py --path "%SELECTED_PROJECT_PATH%"
+pause
+goto project_management_menu
+
 REM Installation & Setup Functions
 :run_installer
 echo.
@@ -665,21 +847,32 @@ echo Current Model:
 if errorlevel 1 echo   google/embeddinggemma-300m ^(default^)
 echo.
 echo Available Models:
-echo   1. EmbeddingGemma-300m ^(Default, 768 dim, 4-8GB VRAM^)
-echo   2. BGE-M3 ^(Recommended, 1024 dim, 8-16GB VRAM, +3-6%% accuracy^)
-echo   3. Custom model path
+echo.
+echo   [CODE-OPTIMIZED] - For programming projects
+echo   1. Qodo-1.5B ^(1536 dim, 4-6GB, CoIR: 68.53^)
+echo   2. Jina-Code ^(768 dim, 2-4GB, 31 languages^)
+echo   3. Qodo-7B ^(3584 dim, 14-20GB, CoIR: 71.5^)
+echo.
+echo   [GENERAL PURPOSE] - For all content types
+echo   4. EmbeddingGemma-300m ^(768 dim, 4-8GB^)
+echo   5. BGE-M3 ^(1024 dim, 8-16GB, +3-6%% accuracy^)
+echo.
+echo   6. Custom model path
 echo   0. Back to Search Configuration
 echo.
-set /p model_choice="Select model (0-3): "
+set /p model_choice="Select model (0-6): "
 
 if not defined model_choice goto search_config_menu
 if "!model_choice!"=="" goto search_config_menu
 if "!model_choice!"=="0" goto search_config_menu
 
 set SELECTED_MODEL=
-if "!model_choice!"=="1" set SELECTED_MODEL=google/embeddinggemma-300m
-if "!model_choice!"=="2" set SELECTED_MODEL=BAAI/bge-m3
-if "!model_choice!"=="3" (
+if "!model_choice!"=="1" set SELECTED_MODEL=Qodo/Qodo-Embed-1-1.5B
+if "!model_choice!"=="2" set SELECTED_MODEL=jinaai/jina-embeddings-v2-base-code
+if "!model_choice!"=="3" set SELECTED_MODEL=Qodo/Qodo-Embed-1-7B
+if "!model_choice!"=="4" set SELECTED_MODEL=google/embeddinggemma-300m
+if "!model_choice!"=="5" set SELECTED_MODEL=BAAI/bge-m3
+if "!model_choice!"=="6" (
     set /p SELECTED_MODEL="Enter model name or path: "
 )
 
@@ -706,6 +899,79 @@ if defined SELECTED_MODEL (
 )
 pause
 goto search_config_menu
+
+:quick_model_switch
+echo.
+echo === Quick Model Switch ===
+echo.
+echo Current Model:
+if exist ".venv\Scripts\python.exe" (
+    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding_model_name; specs = MODEL_REGISTRY.get(model, {}); is_code = specs.get('model_type', '').startswith('code'); marker = '[CODE]' if is_code else '[GENERAL]'; print(f'  {marker} {model} ({specs.get(\"dimension\", 768)}d)')" 2>nul
+) else (
+    echo   google/embeddinggemma-300m ^(default^)
+)
+echo.
+echo Recommended Models:
+echo.
+echo   [CODE-OPTIMIZED] - Best for programming projects
+echo   1. Qodo-1.5B ^(1536 dim, 4-6GB, CoIR: 68.53 - BEST accuracy/size^)
+echo   2. Jina-Code ^(768 dim, 2-4GB, 31 languages - BEST GLSL^)
+echo   3. Qodo-7B ^(3584 dim, 14-20GB, CoIR: 71.5 - MAX accuracy^)
+echo.
+echo   [GENERAL PURPOSE] - For all content types
+echo   4. BGE-M3 ^(1024 dim, 8-16GB, hybrid search^)
+echo   5. EmbeddingGemma ^(768 dim, 4-8GB, default^)
+echo.
+echo   A. View All Models ^(full registry^)
+echo   0. Back to Main Menu
+echo.
+set /p model_choice="Select model (0-5, A): "
+
+REM Handle empty input or back
+if not defined model_choice goto menu_restart
+if "!model_choice!"=="" goto menu_restart
+if "!model_choice!"=="0" goto menu_restart
+
+REM Map choices to model names
+set SELECTED_MODEL=
+if "!model_choice!"=="1" set SELECTED_MODEL=Qodo/Qodo-Embed-1-1.5B
+if "!model_choice!"=="2" set SELECTED_MODEL=jinaai/jina-embeddings-v2-base-code
+if "!model_choice!"=="3" set SELECTED_MODEL=Qodo/Qodo-Embed-1-7B
+if "!model_choice!"=="4" set SELECTED_MODEL=BAAI/bge-m3
+if "!model_choice!"=="5" set SELECTED_MODEL=google/embeddinggemma-300m
+
+REM Handle "All Models" option
+if /i "!model_choice!"=="A" goto select_embedding_model
+if /i "!model_choice!"=="a" goto select_embedding_model
+
+REM Perform model switch
+if defined SELECTED_MODEL (
+    echo.
+    echo [INFO] Switching to: !SELECTED_MODEL!
+    echo.
+
+    REM Use Python to switch model
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager, MODEL_REGISTRY; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding_model_name = '!SELECTED_MODEL!'; cfg.model_dimension = MODEL_REGISTRY['!SELECTED_MODEL!']['dimension']; mgr.save_config(cfg); print('[OK] Model switched successfully'); print(f'[INFO] Dimension: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"dimension\"]}d'); print(f'[INFO] VRAM: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"vram_gb\"]}')" 2>nul
+
+    if errorlevel 1 (
+        echo [ERROR] Failed to switch model
+        echo [INFO] Check that model name is correct and registered
+    ) else (
+        echo.
+        echo [OK] Per-model indices: Old indices preserved
+        echo [INFO] Switching back will be instant ^(no re-indexing^)
+        echo.
+        echo Next steps:
+        echo   - Index project: Project Management ^> Index New Project
+        echo   - Or re-index: Project Management ^> Re-index Existing
+        echo.
+    )
+) else (
+    echo [ERROR] Invalid choice. Please select 0-5 or A.
+)
+echo.
+pause
+goto menu_restart
 
 :reset_config
 echo.
@@ -834,7 +1100,10 @@ REM System Status Functions
 :show_system_status
 echo [Runtime Status]
 if exist ".venv\Scripts\python.exe" (
-    .\.venv\Scripts\python.exe -c "try: import torch; from search.config import get_search_config; cfg = get_search_config(); model_short = cfg.embedding_model_name.split('/')[-1]; cuda_available = torch.cuda.is_available(); gpu_name = torch.cuda.get_device_name(0) if cuda_available else 'N/A'; pytorch_version = torch.__version__; print(f'Model: {model_short} | GPU: {gpu_name}') if cuda_available else print(f'Model: {model_short} | CPU-Only'); except Exception: print('Runtime: Python | Status: Checking...')" 2>nul
+    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding_model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; is_code = specs.get('model_type', '').startswith('code'); dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); marker = '[CODE]' if is_code else '[GENERAL]'; print(f'Model: {marker} {model_short} ({dim}d, {vram})'); print('Tip: Press M for Quick Model Switch') if not is_code else print('Code-optimized model active')" 2>nul
+    if errorlevel 1 (
+        echo Model: embeddinggemma-300m ^| Status: Loading...
+    )
 ) else (
     echo Runtime: Python | Status: Not installed
 )
@@ -900,6 +1169,81 @@ echo This is normal - the server waits for commands from Claude.
 echo.
 pause
 goto menu_restart
+
+REM ============================================================================
+REM Reusable Subroutines
+REM ============================================================================
+
+:select_indexed_project
+REM Reusable project selection logic
+REM Usage: call :select_indexed_project "action description"
+REM Sets: SELECTED_PROJECT_PATH, SELECTED_PROJECT_NAME, SELECTED_PROJECT_HASH
+REM Returns: errorlevel 0 on success, 1 on cancel
+
+set ACTION_DESC=%~1
+
+REM Get list of projects
+set TEMP_PROJECTS=%TEMP%\mcp_projects_select.txt
+.\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; from pathlib import Path; import json; storage = get_storage_dir(); projects = list((storage / 'projects').glob('*/project_info.json')); [print(f'{i+1}|{json.load(open(p))[\"project_name\"]}|{json.load(open(p))[\"project_path\"]}|{p.parent.name}') for i, p in enumerate(projects)]" > "%TEMP_PROJECTS%" 2>nul
+
+REM Check if any projects exist
+findstr /R "." "%TEMP_PROJECTS%" >nul 2>&1
+if errorlevel 1 (
+    echo [INFO] No indexed projects found.
+    echo [INFO] Index a project first via: Project Management ^> Index New Project
+    del "%TEMP_PROJECTS%" 2>nul
+    pause
+    exit /b 1
+)
+
+REM Display projects
+echo Select project to %ACTION_DESC%:
+echo.
+for /f "tokens=1,2,3 delims=|" %%a in (%TEMP_PROJECTS%) do (
+    echo   %%a. %%b
+    echo      Path: %%c
+    echo.
+)
+echo   0. Cancel
+echo.
+set /p project_choice="Select project number (0 to cancel): "
+
+REM Handle cancel
+if not defined project_choice (
+    del "%TEMP_PROJECTS%" 2>nul
+    exit /b 1
+)
+if "%project_choice%"=="" (
+    del "%TEMP_PROJECTS%" 2>nul
+    exit /b 1
+)
+if "%project_choice%"=="0" (
+    del "%TEMP_PROJECTS%" 2>nul
+    exit /b 1
+)
+
+REM Find selected project
+set SELECTED_PROJECT_HASH=
+set SELECTED_PROJECT_NAME=
+set SELECTED_PROJECT_PATH=
+for /f "tokens=1,2,3,4 delims=|" %%a in (%TEMP_PROJECTS%) do (
+    if "%%a"=="%project_choice%" (
+        set SELECTED_PROJECT_NAME=%%b
+        set SELECTED_PROJECT_PATH=%%c
+        set SELECTED_PROJECT_HASH=%%d
+    )
+)
+
+del "%TEMP_PROJECTS%" 2>nul
+
+REM Validate selection
+if not defined SELECTED_PROJECT_PATH (
+    echo [ERROR] Invalid selection
+    pause
+    exit /b 1
+)
+
+exit /b 0
 
 :end
 echo.

@@ -17,6 +17,7 @@ try:
     import nltk
     from nltk.corpus import stopwords
     from nltk.tokenize import word_tokenize
+    from nltk.stem.snowball import SnowballStemmer
 
     # Download required NLTK data if needed
     try:
@@ -33,16 +34,33 @@ except ImportError:
     nltk = None
     stopwords = None
     word_tokenize = None
+    SnowballStemmer = None
 
 
 class TextPreprocessor:
-    """Handles text preprocessing for BM25 indexing."""
+    """Handles text preprocessing for BM25 indexing.
 
-    def __init__(self, use_stopwords: bool = True):
+    Supports:
+    - NLTK word tokenization
+    - Stopword filtering
+    - Snowball stemming (Porter2 algorithm)
+    - Code-specific preprocessing (camelCase/snake_case splitting)
+    """
+
+    def __init__(self, use_stopwords: bool = True, use_stemming: bool = True):
+        """Initialize text preprocessor.
+
+        Args:
+            use_stopwords: Whether to filter English stopwords
+            use_stemming: Whether to apply Snowball stemming for word normalization
+        """
         self.use_stopwords = use_stopwords
+        self.use_stemming = use_stemming
         self._stop_words = set()
+        self._stemmer = None
         self._logger = logging.getLogger(__name__)
 
+        # Initialize stopwords
         if use_stopwords and stopwords:
             try:
                 self._stop_words = set(stopwords.words("english"))
@@ -50,8 +68,30 @@ class TextPreprocessor:
                 self._logger.warning(f"Could not load stopwords: {e}")
                 self.use_stopwords = False
 
+        # Initialize stemmer
+        if use_stemming and SnowballStemmer:
+            try:
+                self._stemmer = SnowballStemmer("english")
+                self._logger.debug("Snowball stemmer initialized")
+            except Exception as e:
+                self._logger.warning(f"Could not initialize stemmer: {e}")
+                self.use_stemming = False
+
     def tokenize(self, text: str) -> List[str]:
-        """Tokenize text into words."""
+        """Tokenize text into words with optional stemming.
+
+        Process:
+        1. Lowercase and tokenize (NLTK word_tokenize or split)
+        2. Clean tokens (remove punctuation, keep code-friendly chars)
+        3. Filter stopwords (if enabled)
+        4. Apply stemming (if enabled)
+
+        Args:
+            text: Input text to tokenize
+
+        Returns:
+            List of processed tokens
+        """
         if not text or not isinstance(text, str):
             return []
 
@@ -77,6 +117,13 @@ class TextPreprocessor:
             for token in tokens
             if token and (not self.use_stopwords or token not in self._stop_words)
         ]
+
+        # Apply stemming (normalize word forms: indexing→index, managed→manag)
+        if self.use_stemming and self._stemmer:
+            try:
+                tokens = [self._stemmer.stem(token) for token in tokens]
+            except Exception as e:
+                self._logger.warning(f"Stemming failed, using original tokens: {e}")
 
         return tokens
 
@@ -114,7 +161,17 @@ class TextPreprocessor:
 class BM25Index:
     """BM25 sparse index manager (CPU-only)."""
 
-    def __init__(self, storage_dir: str, use_stopwords: bool = True):
+    # Index version for compatibility tracking
+    INDEX_VERSION = 2  # Version 2: Added stemming support
+
+    def __init__(self, storage_dir: str, use_stopwords: bool = True, use_stemming: bool = True):
+        """Initialize BM25 index.
+
+        Args:
+            storage_dir: Directory to store index files
+            use_stopwords: Whether to filter stopwords
+            use_stemming: Whether to apply Snowball stemming (default: True)
+        """
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
@@ -123,8 +180,12 @@ class BM25Index:
         self.metadata_path = self.storage_dir / "bm25_metadata.json"
         self.docs_path = self.storage_dir / "bm25_docs.json"
 
+        # Store configuration for version tracking
+        self.use_stopwords = use_stopwords
+        self.use_stemming = use_stemming
+
         # Components
-        self.preprocessor = TextPreprocessor(use_stopwords)
+        self.preprocessor = TextPreprocessor(use_stopwords, use_stemming)
         self._bm25 = None
         self._documents = []  # Original documents
         self._doc_ids = []  # Document IDs
@@ -339,6 +400,71 @@ class BM25Index:
 
         return removed_count
 
+    def validate_index_consistency(self) -> Tuple[bool, List[str]]:
+        """Validate consistency between BM25 index components.
+
+        This method checks for:
+        1. All data structures have the same length
+        2. BM25 index is initialized if documents exist
+        3. All doc_ids have corresponding metadata entries
+
+        Returns:
+            Tuple of (is_valid, list_of_issues)
+        """
+        issues = []
+
+        # Get sizes
+        doc_ids_size = len(self._doc_ids)
+        documents_size = len(self._documents)
+        tokenized_docs_size = len(self._tokenized_docs)
+        metadata_size = len(self._metadata)
+
+        # Check 1: All lists have same length
+        if doc_ids_size != documents_size:
+            issues.append(
+                f"doc_ids length ({doc_ids_size}) != documents length ({documents_size})"
+            )
+
+        if doc_ids_size != tokenized_docs_size:
+            issues.append(
+                f"doc_ids length ({doc_ids_size}) != tokenized_docs length ({tokenized_docs_size})"
+            )
+
+        # Check 2: BM25 index exists if we have documents
+        if tokenized_docs_size > 0 and self._bm25 is None:
+            issues.append(
+                f"BM25 index is None but have {tokenized_docs_size} tokenized documents"
+            )
+
+        # Check 3: All doc_ids have metadata (if metadata is being used)
+        missing_metadata = []
+        for doc_id in self._doc_ids:
+            if doc_id not in self._metadata:
+                missing_metadata.append(doc_id)
+
+        if missing_metadata:
+            issues.append(
+                f"Missing metadata for {len(missing_metadata)} documents: "
+                f"{', '.join(missing_metadata[:5])}"
+                + (f" ... and {len(missing_metadata) - 5} more" if len(missing_metadata) > 5 else "")
+            )
+
+        is_valid = len(issues) == 0
+
+        if is_valid:
+            self._logger.info(
+                f"BM25 index consistency validated: {doc_ids_size} documents, "
+                f"{metadata_size} metadata entries"
+            )
+        else:
+            self._logger.warning(
+                f"BM25 index consistency validation failed with {len(issues)} issues"
+            )
+            for issue in issues:
+                self._logger.warning(f"  - {issue}")
+
+        return is_valid, issues
+
     def save(self) -> None:
         """Save index to disk."""
         self._logger.info(f"[BM25_SAVE] Starting save to {self.storage_dir}")
@@ -400,17 +526,20 @@ class BM25Index:
                 f"[BM25_SAVE] Saved docs: {self.docs_path.stat().st_size} bytes"
             )
 
-            # Save metadata
+            # Save metadata with version tracking
             self._logger.debug(f"[BM25_SAVE] Saving metadata to {self.metadata_path}")
             metadata = {
+                "index_version": self.INDEX_VERSION,
                 "size": self.size,
-                "use_stopwords": self.preprocessor.use_stopwords,
+                "use_stopwords": self.use_stopwords,
+                "use_stemming": self.use_stemming,
                 "doc_metadata": self._metadata,
             }
             with open(self.metadata_path, "w", encoding="utf-8") as f:
                 json.dump(metadata, f, ensure_ascii=False, indent=2)
             self._logger.info(
-                f"[BM25_SAVE] Saved metadata: {self.metadata_path.stat().st_size} bytes"
+                f"[BM25_SAVE] Saved metadata: {self.metadata_path.stat().st_size} bytes "
+                f"(version={self.INDEX_VERSION}, stemming={self.use_stemming})"
             )
 
             self._logger.info("[BM25_SAVE] All files saved successfully")
@@ -442,13 +571,33 @@ class BM25Index:
                 self._doc_ids = docs_data["doc_ids"]
                 self._tokenized_docs = docs_data["tokenized_docs"]
 
-            # Load metadata
+            # Load metadata and check version compatibility
             with open(self.metadata_path, "r", encoding="utf-8") as f:
                 metadata = json.load(f)
                 self._metadata = metadata.get("doc_metadata", {})
 
+                # Check index version and configuration
+                index_version = metadata.get("index_version", 1)  # Default to v1 for old indices
+                saved_stemming = metadata.get("use_stemming", False)  # Old indices don't have stemming
+                saved_stopwords = metadata.get("use_stopwords", True)
+
+                # Detect configuration mismatch
+                if saved_stemming != self.use_stemming:
+                    self._logger.warning(
+                        f"⚠️  BM25 index configuration mismatch detected!\n"
+                        f"   Index built with stemming={saved_stemming}, current config={self.use_stemming}\n"
+                        f"   Search quality may be degraded. Recommendation: Re-index project for optimal results.\n"
+                        f"   Run: 'Re-index Existing Project (Incremental)' from start_mcp_server.bat"
+                    )
+
+                if saved_stopwords != self.use_stopwords:
+                    self._logger.warning(
+                        f"⚠️  Stopwords config mismatch: index={saved_stopwords}, current={self.use_stopwords}"
+                    )
+
             self._logger.info(
-                f"BM25 index loaded from {self.storage_dir} with {self.size} documents"
+                f"BM25 index loaded from {self.storage_dir} with {self.size} documents "
+                f"(version={index_version}, stemming={saved_stemming})"
             )
             return True
 
@@ -551,3 +700,102 @@ class BM25Index:
             f"Removed {removed_count} BM25 documents for file: {file_path}"
         )
         return removed_count
+
+    def remove_multiple_files(self, file_paths: set, project_name: str) -> int:
+        """
+        Remove documents associated with multiple files in a single pass.
+        Much faster than calling remove_file_chunks repeatedly.
+
+        IMPORTANT: This method properly rebuilds BM25 data structures to prevent
+        index corruption and ensure consistency.
+
+        Args:
+            file_paths: Set of file paths to remove
+            project_name: Name of the project
+
+        Returns:
+            Total number of documents removed
+        """
+        if not self._doc_ids or not file_paths:
+            return 0
+
+        self._logger.debug(
+            f"Batch removing BM25 documents for {len(file_paths)} files"
+        )
+
+        # Track indices to remove
+        indices_to_remove_set = set()
+
+        # Single pass through all doc_ids to identify documents to remove
+        for i, doc_id in enumerate(self._doc_ids):
+            # Check if document belongs to any of the files
+            for file_path in file_paths:
+                if file_path in doc_id:
+                    indices_to_remove_set.add(i)
+                    break  # Found match, no need to check other files
+
+        if not indices_to_remove_set:
+            self._logger.info("No BM25 documents found to remove")
+            return 0
+
+        removed_count = len(indices_to_remove_set)
+        self._logger.info(
+            f"Removing {removed_count} BM25 documents from {len(file_paths)} files"
+        )
+
+        try:
+            # Rebuild all data structures keeping only non-removed items
+            new_documents = []
+            new_doc_ids = []
+            new_tokenized_docs = []
+            docs_to_remove_from_metadata = []
+
+            for i, doc_id in enumerate(self._doc_ids):
+                if i not in indices_to_remove_set:
+                    # Keep this document
+                    if i < len(self._documents):
+                        new_documents.append(self._documents[i])
+                    new_doc_ids.append(doc_id)
+                    if i < len(self._tokenized_docs):
+                        new_tokenized_docs.append(self._tokenized_docs[i])
+                else:
+                    # Mark for metadata removal
+                    docs_to_remove_from_metadata.append(doc_id)
+
+            # Update data structures
+            self._documents = new_documents
+            self._doc_ids = new_doc_ids
+            self._tokenized_docs = new_tokenized_docs
+
+            # Remove from metadata
+            for doc_id in docs_to_remove_from_metadata:
+                if doc_id in self._metadata:
+                    del self._metadata[doc_id]
+
+            # Rebuild BM25 index
+            if self._tokenized_docs:
+                # Only rebuild if we still have documents
+                self._bm25 = BM25Okapi(self._tokenized_docs)
+                self._logger.info(
+                    f"Rebuilt BM25 index: {len(self._tokenized_docs)} documents "
+                    f"(removed {removed_count})"
+                )
+            else:
+                # No documents left, clear the index
+                self._bm25 = None
+                self._logger.info("Cleared BM25 index (no documents remaining)")
+
+            return removed_count
+
+        except Exception as e:
+            self._logger.error(f"Failed to batch remove BM25 documents: {e}")
+            import traceback
+            self._logger.error(traceback.format_exc())
+            # Reset to empty state on failure to prevent corruption
+            self._logger.warning("BM25 batch removal failed, clearing index to prevent corruption")
+            self._bm25 = None
+            self._documents = []
+            self._doc_ids = []
+            self._tokenized_docs = []
+            self._metadata = {}
+            raise

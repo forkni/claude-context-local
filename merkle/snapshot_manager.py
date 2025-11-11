@@ -38,7 +38,7 @@ class SnapshotManager:
     def get_snapshot_path(
         self, project_path: str, dimension: Optional[int] = None
     ) -> Path:
-        """Get the snapshot file path for a project with per-model dimension suffix.
+        """Get the snapshot file path for a project with per-model slug and dimension suffix.
 
         Args:
             project_path: Path to project
@@ -46,11 +46,11 @@ class SnapshotManager:
                       If None, auto-detects from current config.
 
         Returns:
-            Path to snapshot file with dimension suffix
+            Path to snapshot file with model slug and dimension suffix
         """
         project_id = self.get_project_id(project_path)
 
-        # Auto-detect dimension from current config if not provided
+        # Auto-detect dimension and model slug from current config if not provided
         if dimension is None:
             try:
                 # Import here to avoid circular dependency
@@ -62,20 +62,30 @@ class SnapshotManager:
                 if str(parent_dir) not in sys.path:
                     sys.path.insert(0, str(parent_dir))
 
-                from search.config import get_search_config
+                from search.config import get_search_config, get_model_slug
 
                 config = get_search_config()
                 dimension = config.model_dimension
+                model_slug = get_model_slug(config.embedding_model_name)
             except Exception:
                 # Fallback to default if config unavailable
                 dimension = 768
+                model_slug = "unknown"
+        else:
+            # If dimension is provided explicitly, we need to get the current model slug
+            try:
+                from search.config import get_search_config, get_model_slug
+                config = get_search_config()
+                model_slug = get_model_slug(config.embedding_model_name)
+            except Exception:
+                model_slug = "unknown"
 
-        return self.storage_dir / f"{project_id}_{dimension}d_snapshot.json"
+        return self.storage_dir / f"{project_id}_{model_slug}_{dimension}d_snapshot.json"
 
     def get_metadata_path(
         self, project_path: str, dimension: Optional[int] = None
     ) -> Path:
-        """Get the metadata file path for a project with per-model dimension suffix.
+        """Get the metadata file path for a project with per-model slug and dimension suffix.
 
         Args:
             project_path: Path to project
@@ -83,11 +93,11 @@ class SnapshotManager:
                       If None, auto-detects from current config.
 
         Returns:
-            Path to metadata file with dimension suffix
+            Path to metadata file with model slug and dimension suffix
         """
         project_id = self.get_project_id(project_path)
 
-        # Auto-detect dimension from current config if not provided
+        # Auto-detect dimension and model slug from current config if not provided
         if dimension is None:
             try:
                 # Import here to avoid circular dependency
@@ -99,15 +109,25 @@ class SnapshotManager:
                 if str(parent_dir) not in sys.path:
                     sys.path.insert(0, str(parent_dir))
 
-                from search.config import get_search_config
+                from search.config import get_search_config, get_model_slug
 
                 config = get_search_config()
                 dimension = config.model_dimension
+                model_slug = get_model_slug(config.embedding_model_name)
             except Exception:
                 # Fallback to default if config unavailable
                 dimension = 768
+                model_slug = "unknown"
+        else:
+            # If dimension is provided explicitly, we need to get the current model slug
+            try:
+                from search.config import get_search_config, get_model_slug
+                config = get_search_config()
+                model_slug = get_model_slug(config.embedding_model_name)
+            except Exception:
+                model_slug = "unknown"
 
-        return self.storage_dir / f"{project_id}_{dimension}d_metadata.json"
+        return self.storage_dir / f"{project_id}_{model_slug}_{dimension}d_metadata.json"
 
     def save_snapshot(self, dag: MerkleDAG, metadata: Optional[Dict] = None) -> None:
         """Save a Merkle DAG snapshot to disk.

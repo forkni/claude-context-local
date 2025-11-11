@@ -10,10 +10,11 @@ This modular reference can be embedded in any project instructions for Claude Co
 
 | Tool | Priority | Purpose | Parameters |
 |------|----------|---------|------------|
-| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language | query, k=5, search_mode, file_pattern, chunk_type |
+| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language + intelligent model routing | query, k=5, search_mode, model_key, use_routing, file_pattern, chunk_type |
 | **index_directory** | 🔴 **SETUP** | Index project (one-time) | directory_path, project_name, incremental=True |
 | find_similar_code | Secondary | Find alternative implementations | chunk_id, k=5 |
 | configure_search_mode | Config | Set search mode & weights | search_mode, bm25_weight=0.4, dense_weight=0.6 |
+| configure_query_routing | Config | Configure multi-model routing (v0.5.4+) | enable_multi_model, default_model, confidence_threshold |
 | get_search_config_status | Config | View current configuration | *(no parameters)* |
 | get_index_status | Status | Check index health | *(no parameters)* |
 | get_memory_status | Monitor | Check RAM/VRAM usage | *(no parameters)* |
@@ -85,6 +86,17 @@ This modular reference can be embedded in any project instructions for Claude Co
 # Model management
 /list_embedding_models
 /switch_embedding_model "BAAI/bge-m3"
+
+# Multi-model routing configuration (v0.5.4+)
+/configure_query_routing true                       # Enable multi-model mode (default)
+/configure_query_routing false                      # Disable multi-model (single-model fallback)
+/configure_query_routing true "qwen3" 0.10          # Enable + set default model + confidence threshold
+/configure_query_routing None "bge_m3" None         # Just change default model (keep multi-model enabled)
+
+# Multi-model search usage
+/search_code "Merkle tree detection"                # Auto-routes to optimal model (CodeRankEmbed)
+/search_code "error handling" --model_key "qwen3"   # Force specific model override
+/search_code "configuration" --use_routing False    # Disable routing for this query (use default)
 ```
 
 ---

@@ -31,9 +31,10 @@
 - ⚡ **5-10x faster indexing with incremental updates**
 - 🪟 **Windows-optimized** for maximum performance and compatibility
 - 🔄 **Instant model switching (<150ms) with per-model index storage**
+- 🧠 **Multi-model query routing with 100% accuracy (5.3GB VRAM for 3 models)**
 - 🛠️ **13 MCP tools for Claude Code integration (search, index, configure)**
 
-An intelligent code search system that uses Google's EmbeddingGemma or BAAI's BGE-M3 models and advanced multi-language chunking to provide semantic search capabilities across 22 file extensions and 11 programming languages, integrated with Claude Code via MCP (Model Context Protocol).
+An intelligent code search system that uses Google's EmbeddingGemma, BAAI's BGE-M3, and specialized code models with automatic intelligent routing. Advanced multi-language chunking provides semantic search capabilities across 22 file extensions and 11 programming languages, integrated with Claude Code via MCP (Model Context Protocol).
 
 ## Status
 
@@ -58,16 +59,31 @@ An intelligent code search system that uses Google's EmbeddingGemma or BAAI's BG
 - **Configurable weights**: Tune balance between text and semantic search
 - **Auto-mode detection**: System automatically chooses best search strategy
 
+### 🧠 **Intelligent Model Selection** (v0.5.4+)
+
+- **Multi-Model Query Routing**: Automatic selection between Qwen3-0.6B, BGE-M3, and CodeRankEmbed based on query characteristics
+- **100% Routing Accuracy**: Verified on 8 ground truth queries across diverse code search scenarios
+- **Memory Efficient**: Only 5.3 GB VRAM for all 3 models simultaneously (20.5% of RTX 4090, 79.5% headroom)
+- **Model Specializations**:
+  - **Qwen3-0.6B**: Implementation queries, algorithms, error handling (3/8 wins)
+  - **BGE-M3**: Workflow queries, configuration, system plumbing (3/8 wins, most consistent)
+  - **CodeRankEmbed**: Specialized algorithms like Merkle trees, RRF reranking (2/8 wins, high precision)
+- **Quality Improvement**: 15-25% better top-1 relevance vs single-model for diverse queries
+- **Routing Transparency**: Every search result shows which model processed the query with confidence scores
+- **User Control**: Override routing via `model_key` parameter or disable with `use_routing=False`
+- **Lazy Loading**: Models load on-demand to minimize memory footprint
+
 ### 🚀 **Core Features**
 
 - **Multi-language support**: 11 programming languages with 22 file extensions
 - **Intelligent chunking**: AST-based (Python) + tree-sitter (JS/TS/JSX/TSX/Svelte/Go/Java/Rust/C/C++/C#/GLSL)
 - **Semantic search**: Natural language queries to find code across all languages
 - **Rich metadata**: File paths, folder structure, semantic tags, language-specific info
-- **MCP integration**: 13 tools for Claude Code - search, index, configure, and monitor
+- **MCP integration**: 13 tools for Claude Code with human-readable JSON output - search, index, configure, and monitor
 - **Local processing**: All embeddings stored locally, no API calls required
 - **Fast search**: FAISS for efficient similarity search with GPU acceleration support
 - **Incremental indexing**: 5-10x faster updates with Merkle tree change detection
+- **Batch removal optimization**: 600-1000x faster when removing many files during incremental updates
 
 ## Why this
 
@@ -192,6 +208,51 @@ scripts\batch\start_mcp_simple.bat
 # Manual registration (alternative)
 claude mcp add code-search --scope user -- "F:\path\to\claude-context-local\.venv\Scripts\python.exe" -m mcp_server.server
 ```
+
+### Using the Interactive Menu
+
+The `start_mcp_server.bat` launcher provides an 8-option interactive menu for all operations:
+
+**1. Quick Start Server** (Transport Selection)
+
+- **stdio Transport** - Default MCP mode for Claude Code integration
+- **SSE Transport** - HTTP-based transport on port 8765 (bypasses Claude Code 2.0.22+ stdio bugs)
+
+**2. Project Management** (5 options)
+
+- **Index New Project** - Enter path for first-time indexing
+- **Re-index Existing Project** - Incremental update with Merkle change detection (fast, uses batch removal)
+- **Force Re-index Existing Project** - Full reindex bypassing snapshots
+- **List Indexed Projects** - View all indexed projects
+- **Clear Project Indexes** - Remove current project index
+- **View Storage Statistics** - Disk usage and index stats
+
+**3. Search Configuration** (4 options)
+
+- Configure search mode (hybrid/semantic/BM25)
+- View current configuration
+- Switch embedding model (Gemma/BGE-M3)
+- Tune search weights
+
+**4. Advanced Options**
+
+- Run benchmarks
+- Execute tests
+- View logs
+
+**SSE Transport Benefits:**
+
+- Bypasses known Claude Code stdio bugs (#3426, #768, #3487, #3369)
+- All 13 MCP tools available with identical functionality
+- Minimal latency overhead (<10ms)
+- Automatic port conflict detection and resolution
+
+**Batch Removal Optimization:**
+
+- 600-1000x faster when removing many files during incremental indexing
+- Automatically activated during "Re-index Existing Project" workflow
+- Performance: 250 files in 0.11s (vs 1.5+ hours without optimization)
+- Benefits large refactors, directory reorganizations, and backup deletions
 
 ### 3) Use in Claude Code
 
@@ -905,16 +966,22 @@ Data is stored in the configured storage directory:
 
 ## Performance
 
-- **Model size**: ~1.2GB (EmbeddingGemma-300m and caches)
-- **Embedding dimension**: 768 (can be reduced for speed)
+- **Model size**: ~1.2GB (EmbeddingGemma-300m) or ~2.3GB (BGE-M3)
+- **Embedding dimension**: 768 (Gemma) or 1024 (BGE-M3)
 - **Index types**: Flat (exact) or IVF (approximate) based on dataset size
-- **Batch processing**: Configurable batch sizes for embedding generation
+- **Batch processing**: Configurable batch sizes for optimal GPU utilization
+  - BGE-M3 (1024d): 256 chunks/batch (8x faster embedding generation)
+  - EmbeddingGemma (768d): 128 chunks/batch (4x faster embedding generation)
+  - Override via environment: `set CLAUDE_EMBEDDING_BATCH_SIZE=256`
+- **Incremental indexing**: Only processes changed files (Merkle tree-based)
+- **Batch removal**: 600-1000x faster for large-scale file deletions
 
 Tips:
 
 - First index on a large repo will take time (model load + chunk + embed). Subsequent runs are incremental.
 - With GPU FAISS, searches on large indexes are significantly faster.
 - Embeddings automatically use CUDA (NVIDIA) or MPS (Apple) if available.
+- Ensure venv/site-packages are properly excluded to avoid false-positive change detection.
 
 ## Troubleshooting
 
@@ -941,6 +1008,18 @@ scripts\batch\repair_installation.bat
 4. Verify dependencies
 5. Full system reset (indexes + snapshots)
 6. Return to main menu
+
+**Additional Cleanup Utilities:**
+
+```powershell
+# Clean up orphaned Merkle snapshots (advanced)
+.venv\Scripts\python.exe tools\cleanup_stale_snapshots.py
+
+# Clean up orphaned project indices (advanced)
+.venv\Scripts\python.exe tools\cleanup_orphaned_projects.py
+```
+
+These utilities identify and remove snapshots/indices for projects that no longer exist, recovering disk space and preventing false-positive change detection.
 
 ### Installation Issues
 

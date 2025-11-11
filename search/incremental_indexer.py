@@ -79,6 +79,32 @@ class IncrementalIndexer:
         """
         return self.change_detector.detect_changes_from_snapshot(project_path)
 
+    def _is_supported_file(self, project_path: str, file_path: str) -> bool:
+        """Check if file is supported for indexing.
+
+        Args:
+            project_path: Root project path
+            file_path: Relative file path
+
+        Returns:
+            True if file is supported and not in ignored directories
+        """
+        full_path = Path(project_path) / file_path
+
+        # Check if file extension is supported
+        if not self.chunker.is_supported(str(full_path)):
+            return False
+
+        # Check if file is in ignored directory
+        from chunking.multi_language_chunker import MultiLanguageChunker
+        ignored_dirs = MultiLanguageChunker.DEFAULT_IGNORED_DIRS
+
+        if any(part in ignored_dirs for part in Path(file_path).parts):
+            return False
+
+        return True
+
+
     def incremental_index(
         self,
         project_path: str,
@@ -113,6 +139,30 @@ class IncrementalIndexer:
 
             if not changes.has_changes():
                 logger.info(f"No changes detected in {project_name}")
+                # Even with no changes, save current statistics
+                all_files = list(current_dag.get_all_files())
+                supported_files = [f for f in all_files if self._is_supported_file(project_path, f)]
+                
+                total_chunks = 0
+                if hasattr(self.indexer, 'get_stats'):
+                    stats = self.indexer.get_stats()
+                    total_chunks = stats.get('total_chunks', 0)
+                elif hasattr(self.indexer, 'get_index_size'):
+                    total_chunks = self.indexer.get_index_size()
+
+                metadata = {
+                    "project_name": project_name,
+                    "incremental_update": True,
+                    "files_added": 0,
+                    "files_removed": 0,
+                    "files_modified": 0,
+                    "total_files": len(all_files),
+                    "supported_files": len(supported_files),
+                    "chunks_indexed": total_chunks,
+                }
+                self
+                self.snapshot_manager.save_snapshot(current_dag, metadata)
+
                 return IncrementalIndexResult(
                     files_added=0,
                     files_removed=0,
@@ -133,15 +183,46 @@ class IncrementalIndexer:
             chunks_removed = self._remove_old_chunks(changes, project_name)
             chunks_added = self._add_new_chunks(changes, project_path, project_name)
 
+            # Validate index consistency after operations
+            if hasattr(self.indexer, "validate_index_consistency"):
+                logger.info("[INCREMENTAL] Validating index consistency...")
+                is_valid, issues = self.indexer.validate_index_consistency()
+                if not is_valid:
+                    logger.error(
+                        f"[INCREMENTAL] Index validation failed with {len(issues)} issues. "
+                        "Triggering full re-index to recover."
+                    )
+                    # Clear corrupted index and do full re-index
+                    logger.warning("[INCREMENTAL] Clearing corrupted index...")
+                    self.indexer.clear_index()
+                    logger.info("[INCREMENTAL] Performing full re-index as recovery...")
+                    return self._full_index(project_path, project_name, start_time)
+
             # Update snapshot
+            # After processing changes, calculate cumulative stats
+            all_files = list(current_dag.get_all_files())
+            supported_files = [f for f in all_files if self._is_supported_file(project_path, f)]
+            
+            total_chunks = 0
+            if hasattr(self.indexer, 'get_stats'):
+                stats = self.indexer.get_stats()
+                total_chunks = stats.get('total_chunks', 0)
+            elif hasattr(self.indexer, 'get_index_size'):
+                total_chunks = self.indexer.get_index_size()
+
             self.snapshot_manager.save_snapshot(
                 current_dag,
                 {
                     "project_name": project_name,
                     "incremental_update": True,
+                    # Delta stats (what changed)
                     "files_added": len(changes.added),
                     "files_removed": len(changes.removed),
                     "files_modified": len(changes.modified),
+                    # Cumulative stats (current totals)
+                    "total_files": len(all_files),
+                    "supported_files": len(supported_files),
+                    "chunks_indexed": total_chunks,
                 },
             )
 
@@ -176,16 +257,32 @@ class IncrementalIndexer:
 
         except Exception as e:
             logger.error(f"Incremental indexing failed: {e}")
-            return IncrementalIndexResult(
-                files_added=0,
-                files_removed=0,
-                files_modified=0,
-                chunks_added=0,
-                chunks_removed=0,
-                time_taken=time.time() - start_time,
-                success=False,
-                error=str(e),
+            import traceback
+            logger.error(traceback.format_exc())
+
+            # Attempt recovery via full re-index
+            logger.warning(
+                "[INCREMENTAL] Attempting recovery via full re-index due to error..."
             )
+            try:
+                # Clear potentially corrupted index
+                self.indexer.clear_index()
+                # Attempt full re-index as recovery
+                return self._full_index(project_path, project_name, start_time)
+            except Exception as recovery_error:
+                logger.error(f"Recovery via full re-index also failed: {recovery_error}")
+                logger.error(traceback.format_exc())
+                # Return failure result with both errors
+                return IncrementalIndexResult(
+                    files_added=0,
+                    files_removed=0,
+                    files_modified=0,
+                    chunks_added=0,
+                    chunks_removed=0,
+                    time_taken=time.time() - start_time,
+                    success=False,
+                    error=f"Incremental indexing failed: {e}. Recovery attempt also failed: {recovery_error}",
+                )
 
     def _full_index(
         self, project_path: str, project_name: str, start_time: float
@@ -201,6 +298,11 @@ class IncrementalIndexer:
             IncrementalIndexResult
         """
         try:
+            # Delete old Merkle snapshot for current model only (preserves other models)
+            logger.info(f"[FULL_INDEX] Deleting old snapshot for current model: {project_name}")
+            self.snapshot_manager.delete_snapshot(project_path)
+            logger.info("[FULL_INDEX] Deleted old snapshot for current model")
+
             # Clear existing index
             self.indexer.clear_index()
 
@@ -338,15 +440,36 @@ class IncrementalIndexer:
             Number of chunks removed
         """
         files_to_remove = self.change_detector.get_files_to_remove(changes)
-        chunks_removed = 0
 
-        for file_path in files_to_remove:
-            # Remove from metadata
-            removed = self.indexer.remove_file_chunks(file_path, project_name)
-            chunks_removed += removed
-            logger.debug(f"Removed {removed} chunks from {file_path}")
-
-        return chunks_removed
+        # Use batch removal for efficiency (single pass instead of one per file)
+        # This has been fixed to properly handle FAISS vector removal and index reconstruction
+        if hasattr(self.indexer, "remove_multiple_files") and files_to_remove:
+            try:
+                chunks_removed = self.indexer.remove_multiple_files(
+                    set(files_to_remove), project_name
+                )
+                logger.info(
+                    f"Batch removed {chunks_removed} chunks from {len(files_to_remove)} files"
+                )
+                return chunks_removed
+            except Exception as e:
+                logger.error(f"Batch removal failed: {e}")
+                logger.warning("Falling back to individual file removal")
+                # Fall back to individual removal on error
+                chunks_removed = 0
+                for file_path in files_to_remove:
+                    removed = self.indexer.remove_file_chunks(file_path, project_name)
+                    chunks_removed += removed
+                    logger.debug(f"Removed {removed} chunks from {file_path}")
+                return chunks_removed
+        else:
+            # Fallback to individual removal if batch method not available
+            chunks_removed = 0
+            for file_path in files_to_remove:
+                removed = self.indexer.remove_file_chunks(file_path, project_name)
+                chunks_removed += removed
+                logger.debug(f"Removed {removed} chunks from {file_path}")
+            return chunks_removed
 
     def _add_new_chunks(
         self, changes: FileChanges, project_path: str, project_name: str

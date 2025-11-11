@@ -24,12 +24,19 @@ This guide covers the complete installation process for the Claude Context MCP s
 
 - **Python**: 3.11+ (tested with Python 3.11.1)
 - **Operating System**: Windows 10/11
-- **Disk Space**: 2-3 GB free space
+- **Disk Space**: 4-6 GB free space
   - EmbeddingGemma model: ~1.3 GB
+  - BGE-M3 model: ~2.3 GB
+  - Qwen3-0.6B model: ~2.4 GB (optional, for multi-model routing)
+  - CodeRankEmbed model: ~0.6 GB (optional, for multi-model routing)
   - PyTorch with CUDA: ~2.4 GB
   - Dependencies and cache: ~500 MB
 - **Memory**: 4GB RAM minimum, 8GB+ recommended
 - **GPU** (optional): NVIDIA GPU with CUDA 11.8+ or 12.x support
+  - Single-model mode: 2-4 GB VRAM
+  - Multi-model mode (v0.5.4+): 6-8 GB VRAM minimum (5.3 GB for 3 models)
+  - RTX 3060 12GB: Comfortable for multi-model (7 GB headroom)
+  - RTX 4090 24GB: Excellent for multi-model (19 GB headroom)
 
 > **Windows Focus**: This system is optimized for Windows environments with automated installers and comprehensive verification tools.
 
@@ -656,8 +663,27 @@ scripts\batch\repair_installation.bat
 
 - Bypasses Merkle tree snapshot checking
 - Performs full reindex of all files
-- Automatically deletes stale snapshots
+- Automatically deletes stale snapshots (v0.5.1+)
 - Useful after git operations or file system changes
+
+#### Advanced Cleanup Utilities
+
+For manual cleanup of orphaned snapshots and indices:
+
+```powershell
+# Clean up orphaned Merkle snapshots
+.venv\Scripts\python.exe tools\cleanup_stale_snapshots.py
+
+# Clean up orphaned project indices
+.venv\Scripts\python.exe tools\cleanup_orphaned_projects.py
+```
+
+**When to Use:**
+
+- `cleanup_stale_snapshots.py` - Removes Merkle snapshots for deleted projects or old model dimensions
+- `cleanup_orphaned_projects.py` - Removes project indices that no longer have source directories
+
+These utilities are interactive and will show you what will be deleted before proceeding.
 
 ### Common Issues
 
@@ -712,6 +738,104 @@ uv sync  # This will install correct transformers version
 ```
 
 **Root Cause**: Standard transformers 4.51.3 doesn't include gemma3_text architecture. The v4.56.0-Embedding-Gemma-preview branch includes the required support.
+
+#### 5. MCP stdio Transport Issues
+
+**Symptoms**: Claude Code 2.0.22+ experiencing stdio-related bugs:
+- Issue #3426: stdio transport parsing errors
+- Issue #768: MCP connection failures
+- Issue #3487: stdio buffer overflow
+- Issue #3369: stdio deadlocks
+
+**Solution**: Use SSE Transport as alternative
+
+```powershell
+# Option 1: Via interactive menu
+start_mcp_server.bat
+# Select: 1 - Quick Start Server → 2 - SSE Transport
+
+# Option 2: Direct launcher
+scripts\batch\start_mcp_sse.bat
+
+# Option 3: Manual start (development)
+.venv\Scripts\python.exe -m mcp_server.server --transport sse
+```
+
+**SSE Transport Features:**
+- Runs on `http://localhost:8765/sse`
+- Automatic port conflict detection
+- Auto-kill for processes on port 8765
+- All 13 MCP tools available
+- Identical functionality to stdio
+- <10ms latency overhead
+
+**When to Use SSE:**
+- Claude Code version 2.0.22 or later
+- Experiencing stdio connection issues
+- Need more reliable transport
+- Debugging MCP communication
+
+**When to Use stdio:**
+- Default Claude Code integration
+- No stdio bugs experienced
+- Standard MCP workflow
+
+#### 6. Port Conflicts (SSE Transport)
+
+**Error**: `Port 8765 is already in use`
+
+**Automatic Resolution**: SSE launcher detects and offers to kill conflicting process
+
+**Manual Resolution**:
+
+```powershell
+# Find process using port 8765
+netstat -ano | findstr :8765
+
+# Kill process (replace PID with actual process ID)
+powershell -Command "Stop-Process -Id <PID> -Force"
+```
+
+**Prevention**: Only run one SSE server instance at a time
+
+#### 7. WinError 64 - SSE Transport Connection Issues
+
+**Error**: `OSError: [WinError 64] The specified network name is no longer available`
+
+**Symptoms**:
+- SSE server starts successfully but shows WinError 64 in logs
+- Server accepts initial connections but becomes unresponsive
+- Error occurs in asyncio event loop: `asyncio.windows_events.py`
+
+**Root Cause**: Windows asyncio ProactorEventLoop bug where socket errors incorrectly close the listening socket ([Python issue #93821](https://github.com/python/cpython/issues/93821))
+
+**Solution**: **Automatically fixed in v0.5.2+**
+
+The MCP server now automatically detects Windows and uses SelectorEventLoop instead of ProactorEventLoop when running SSE transport. No user action required.
+
+**Verification**: Check server logs for confirmation message:
+```
+Windows detected: Using SelectorEventLoop for SSE transport (WinError 64 fix)
+```
+
+**Additional Mitigation** (Windows Console QuickEdit Mode):
+
+If you still experience connection issues, disable QuickEdit mode in Windows console:
+
+1. Right-click console window title bar → Properties
+2. Uncheck "QuickEdit Mode" under "Edit Options"
+3. Click OK and restart the SSE server
+
+**Why this helps**: QuickEdit mode can pause console output when text is selected, causing connection timeouts.
+
+**Manual Workaround** (for older versions < 0.5.2):
+
+```python
+# Add before mcp.run() in mcp_server/server.py
+if platform.system() == "Windows" and transport == "sse":
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+```
 
 ### Debug Commands
 

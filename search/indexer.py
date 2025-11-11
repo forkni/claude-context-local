@@ -26,6 +26,14 @@ except ImportError:
 
 from embeddings.embedder import EmbeddingResult
 
+# Import graph storage for call graph (Phase 1)
+try:
+    from graph.graph_storage import CodeGraphStorage
+    GRAPH_STORAGE_AVAILABLE = True
+except ImportError:
+    GRAPH_STORAGE_AVAILABLE = False
+    CodeGraphStorage = None
+
 
 def get_available_memory() -> Dict[str, int]:
     """Get available system and GPU memory in bytes."""
@@ -77,7 +85,7 @@ def estimate_index_memory_usage(
 class CodeIndexManager:
     """Manages FAISS vector index and metadata storage for code chunks."""
 
-    def __init__(self, storage_dir: str, embedder=None):
+    def __init__(self, storage_dir: str, embedder=None, project_id: str = None):
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
@@ -92,8 +100,23 @@ class CodeIndexManager:
         self._metadata_db = None
         self._chunk_ids = []
         self._logger = logging.getLogger(__name__)
+        self._logger.info(f"[INIT] CodeIndexManager created: storage_dir={storage_dir}, project_id={project_id}")
         self._on_gpu = False
         self.embedder = embedder  # Optional embedder for dimension validation
+
+        # Initialize call graph storage (Phase 1)
+        self.graph_storage = None
+        if GRAPH_STORAGE_AVAILABLE and project_id:
+            try:
+                # Store graph in same directory as vector index
+                graph_dir = self.storage_dir.parent
+                self.graph_storage = CodeGraphStorage(
+                    project_id=project_id,
+                    storage_dir=graph_dir
+                )
+                self._logger.info(f"Call graph storage initialized for project: {project_id}")
+            except Exception as e:
+                self._logger.warning(f"Failed to initialize graph storage: {e}")
 
         # Check dependencies
         self._check_dependencies()
@@ -202,6 +225,23 @@ class CodeIndexManager:
         embedding_dim = embedding_results[0].embedding.shape[0]
         num_new_vectors = len(embedding_results)
 
+        # Validate embedding dimension matches expected model dimension
+        if self.embedder is not None:
+            try:
+                model_info = self.embedder.get_model_info()
+                expected_dim = model_info.get("embedding_dimension")
+                if expected_dim and embedding_dim != expected_dim:
+                    raise ValueError(
+                        f"Embedding dimension mismatch detected!\n"
+                        f"  Provided embeddings: {embedding_dim} dimensions\n"
+                        f"  Expected for model '{self.embedder.model_name}': {expected_dim} dimensions\n"
+                        f"  This usually means embeddings were generated with a different model.\n"
+                        f"  Solution: Ensure embedder matches the model used to generate embeddings."
+                    )
+            except (KeyError, AttributeError) as e:
+                # Model info not available yet (model not loaded) or get_model_info not available
+                self._logger.debug(f"Cannot validate embedding dimension: {e}")
+
         memory_check = self.check_memory_requirements(num_new_vectors, embedding_dim)
 
         # Abort if insufficient memory to prevent OOM
@@ -245,6 +285,11 @@ class CodeIndexManager:
                 "metadata": result.metadata,
             }
 
+            # Populate call graph (Phase 1: Python only)
+            if self.graph_storage is not None:
+                self._add_to_graph(chunk_id, result.metadata)
+                self._logger.debug(f"Graph storage check: chunk_id={chunk_id}, type={result.metadata.get('chunk_type')}, graph_nodes={len(self.graph_storage)}")
+
         self._logger.info(f"Added {len(embedding_results)} embeddings to index")
 
         # Commit metadata in a single transaction for performance
@@ -253,6 +298,21 @@ class CodeIndexManager:
         except Exception:
             # If commit is unavailable for some reason, continue without failing
             pass
+
+        # Save call graph if populated
+        graph_status = "not None" if self.graph_storage is not None else "None"
+        graph_nodes = len(self.graph_storage) if self.graph_storage else 0
+        self._logger.info(f"Graph storage check before save: graph_storage={graph_status}, nodes={graph_nodes}")
+        if self.graph_storage is not None and len(self.graph_storage) > 0:
+            try:
+                self._logger.info(f"Saving call graph with {len(self.graph_storage)} nodes to {self.graph_storage.graph_path}")
+                self.graph_storage.save()
+                self._logger.info(f"Successfully saved call graph with {len(self.graph_storage)} nodes")
+            except Exception as e:
+                self._logger.warning(f"Failed to save call graph: {e}")
+        else:
+            skip_reason = "None" if self.graph_storage is None else "empty (0 nodes)"
+            self._logger.warning(f"Skipping graph save: graph_storage is {skip_reason}")
 
         # Update statistics
         self._update_stats()
@@ -452,6 +512,180 @@ class CodeIndexManager:
             pass
         return len(chunks_to_remove)
 
+    def remove_multiple_files(
+        self, file_paths: set, project_name: Optional[str] = None
+    ) -> int:
+        """Remove chunks from multiple files in a single pass.
+
+        This is much faster than calling remove_file_chunks() repeatedly,
+        as it only scans through all chunks once instead of once per file.
+
+        IMPORTANT: This method properly removes vectors from FAISS index by rebuilding it,
+        which prevents index corruption and access violations.
+
+        Args:
+            file_paths: Set of file paths to remove
+            project_name: Optional project name filter
+
+        Returns:
+            Total number of chunks removed
+        """
+        if not file_paths:
+            return 0
+
+        chunks_to_remove_ids = set()
+        chunks_to_remove_positions = []
+
+        # Single pass to identify chunks to remove
+        for position, chunk_id in enumerate(self._chunk_ids):
+            metadata_entry = self.metadata_db.get(chunk_id)
+            if not metadata_entry:
+                continue
+
+            metadata = metadata_entry["metadata"]
+
+            # Check if this chunk belongs to any of the files
+            chunk_file = metadata.get("file_path") or metadata.get("relative_path")
+            if not chunk_file:
+                continue
+
+            # Check if chunk matches any file in the set
+            for file_path in file_paths:
+                if file_path in chunk_file or chunk_file in file_path:
+                    # Check project name if provided
+                    if project_name and metadata.get("project_name") != project_name:
+                        continue
+                    chunks_to_remove_ids.add(chunk_id)
+                    chunks_to_remove_positions.append(position)
+                    break  # Found match, no need to check other files
+
+        if not chunks_to_remove_ids:
+            self._logger.info("No chunks found to remove")
+            return 0
+
+        self._logger.info(
+            f"Removing {len(chunks_to_remove_ids)} chunks from {len(file_paths)} files"
+        )
+
+        try:
+            # Rebuild FAISS index without removed chunks
+            if self._index is not None and self._index.ntotal > 0:
+                # Get positions to keep (all except those being removed)
+                positions_to_remove_set = set(chunks_to_remove_positions)
+                positions_to_keep = [
+                    i for i in range(len(self._chunk_ids))
+                    if i not in positions_to_remove_set
+                ]
+
+                if positions_to_keep:
+                    # Reconstruct embeddings for chunks we want to keep
+                    embeddings_to_keep = []
+                    for pos in positions_to_keep:
+                        try:
+                            embedding = self._index.reconstruct(int(pos))
+                            embeddings_to_keep.append(embedding)
+                        except Exception as e:
+                            self._logger.warning(
+                                f"Failed to reconstruct embedding at position {pos}: {e}"
+                            )
+                            continue
+
+                    if embeddings_to_keep:
+                        # Create new index with kept embeddings
+                        embeddings_array = np.array(embeddings_to_keep, dtype=np.float32)
+
+                        # Get embedding dimension
+                        embedding_dim = embeddings_array.shape[1]
+
+                        # Determine index type from current index
+                        index_type = "flat"  # Default
+                        if hasattr(self._index, "metric_type"):
+                            # Preserve metric type
+                            index_type = "flat"
+
+                        # Check if we were on GPU
+                        was_on_gpu = self._on_gpu
+
+                        # Create new CPU index
+                        new_index = faiss.IndexFlatIP(embedding_dim)
+
+                        # Normalize embeddings (we use cosine similarity)
+                        faiss.normalize_L2(embeddings_array)
+
+                        # Add kept embeddings to new index
+                        new_index.add(embeddings_array)
+
+                        # Replace old index
+                        if self._on_gpu:
+                            # Clear GPU memory from old index
+                            del self._index
+                            if torch and torch.cuda.is_available():
+                                torch.cuda.empty_cache()
+
+                        self._index = new_index
+                        self._on_gpu = False
+
+                        # Move to GPU if it was on GPU before
+                        if was_on_gpu:
+                            self._maybe_move_index_to_gpu()
+
+                        self._logger.info(
+                            f"Rebuilt FAISS index: {self._index.ntotal} vectors "
+                            f"(removed {len(chunks_to_remove_ids)})"
+                        )
+                    else:
+                        # No embeddings to keep, clear the index
+                        self._logger.warning(
+                            "No valid embeddings to keep, clearing index"
+                        )
+                        self.clear_index()
+                        return len(chunks_to_remove_ids)
+                else:
+                    # All chunks removed, clear the index
+                    self._logger.info("All chunks removed, clearing index")
+                    self.clear_index()
+                    return len(chunks_to_remove_ids)
+
+            # Update chunk_ids list (remove chunks at removed positions)
+            new_chunk_ids = [
+                chunk_id for i, chunk_id in enumerate(self._chunk_ids)
+                if i not in set(chunks_to_remove_positions)
+            ]
+            self._chunk_ids = new_chunk_ids
+
+            # Remove chunks from metadata and update index_ids
+            for chunk_id in chunks_to_remove_ids:
+                if chunk_id in self.metadata_db:
+                    del self.metadata_db[chunk_id]
+
+            # Update metadata with new index positions
+            for new_pos, chunk_id in enumerate(self._chunk_ids):
+                if chunk_id in self.metadata_db:
+                    metadata_entry = self.metadata_db[chunk_id]
+                    metadata_entry["index_id"] = new_pos
+                    self.metadata_db[chunk_id] = metadata_entry
+
+            # Commit all changes
+            try:
+                self.metadata_db.commit()
+            except Exception as e:
+                self._logger.warning(f"Failed to commit metadata changes: {e}")
+
+            self._logger.info(
+                f"Successfully batch removed {len(chunks_to_remove_ids)} chunks from {len(file_paths)} files"
+            )
+
+            return len(chunks_to_remove_ids)
+
+        except Exception as e:
+            self._logger.error(f"Failed to batch remove chunks: {e}")
+            import traceback
+            self._logger.error(traceback.format_exc())
+            # Don't leave index in corrupted state - if rebuild fails, clear it
+            self._logger.warning("Batch removal failed, clearing index to prevent corruption")
+            self.clear_index()
+            raise
+
     def save_index(self):
         """Save the FAISS index and chunk IDs to disk."""
         if self._index is not None:
@@ -478,6 +712,21 @@ class CodeIndexManager:
         # Save chunk IDs
         with open(self.chunk_id_path, "wb") as f:
             pickle.dump(self._chunk_ids, f)
+
+        # Save call graph if populated (Phase 1)
+        graph_status = "not None" if self.graph_storage is not None else "None"
+        graph_nodes = len(self.graph_storage) if self.graph_storage else 0
+        self._logger.info(f"[save_index] Graph storage check: graph_storage={graph_status}, nodes={graph_nodes}")
+        if self.graph_storage is not None and len(self.graph_storage) > 0:
+            try:
+                self._logger.info(f"[save_index] Saving call graph with {len(self.graph_storage)} nodes to {self.graph_storage.graph_path}")
+                self.graph_storage.save()
+                self._logger.info(f"[save_index] Successfully saved call graph")
+            except Exception as e:
+                self._logger.warning(f"[save_index] Failed to save call graph: {e}")
+        else:
+            skip_reason = "None" if self.graph_storage is None else "empty (0 nodes)"
+            self._logger.info(f"[save_index] Skipping graph save: graph_storage is {skip_reason}")
 
         # Save model metadata for dimension validation (if embedder available)
         if self.embedder is not None:
@@ -525,6 +774,51 @@ class CodeIndexManager:
                 return False
 
         return False
+
+
+    def _add_to_graph(self, chunk_id: str, metadata: Dict[str, Any]) -> None:
+        """Add chunk to call graph storage.
+
+        Args:
+            chunk_id: Unique chunk identifier
+            metadata: Chunk metadata including calls
+        """
+        if self.graph_storage is None:
+            self._logger.debug(f"_add_to_graph: graph_storage is None, skipping {chunk_id}")
+            return
+
+        try:
+            # Only process functions and methods
+            chunk_type = metadata.get("chunk_type")
+            chunk_name = metadata.get("name")
+            self._logger.debug(f"_add_to_graph called: chunk_id={chunk_id}, type={chunk_type}, name={chunk_name}")
+            if chunk_type not in ("function", "method"):
+                self._logger.debug(f"Skipping non-function/method chunk: {chunk_id} (type={chunk_type})")
+                return
+
+            self._logger.debug(f"Adding {chunk_type} '{metadata.get('name')}' to graph")
+
+            # Add node for this chunk
+            self.graph_storage.add_node(
+                chunk_id=chunk_id,
+                name=metadata.get("name", "unknown"),
+                chunk_type=chunk_type,
+                file_path=metadata.get("file_path", ""),
+                language=metadata.get("language", "python")
+            )
+
+            # Add call edges
+            calls = metadata.get("calls", [])
+            for call_dict in calls:
+                self.graph_storage.add_call_edge(
+                    caller_id=chunk_id,
+                    callee_name=call_dict.get("callee_name", "unknown"),
+                    line_number=call_dict.get("line_number", 0),
+                    is_method_call=call_dict.get("is_method_call", False)
+                )
+
+        except Exception as e:
+            self._logger.warning(f"Failed to add {chunk_id} to graph: {e}")
 
     def _update_stats(self):
         """Update index statistics."""
@@ -598,6 +892,88 @@ class CodeIndexManager:
         """Get the number of chunks in the index."""
         return len(self._chunk_ids)
 
+    def validate_index_consistency(self) -> Tuple[bool, List[str]]:
+        """Validate consistency between FAISS index, chunk_ids, and metadata.
+
+        This method checks for:
+        1. FAISS index size matches chunk_ids list length
+        2. All chunk_ids have corresponding metadata entries
+        3. All metadata entries have valid index_ids
+        4. No orphaned vectors in FAISS
+
+        Returns:
+            Tuple of (is_valid, list_of_issues)
+        """
+        issues = []
+
+        # Check if index exists
+        if self._index is None:
+            if len(self._chunk_ids) > 0:
+                issues.append(
+                    f"FAISS index is None but chunk_ids list has {len(self._chunk_ids)} entries"
+                )
+            if len(self.metadata_db) > 0:
+                issues.append(
+                    f"FAISS index is None but metadata has {len(self.metadata_db)} entries"
+                )
+            return len(issues) == 0, issues
+
+        # Check 1: FAISS index size matches chunk_ids length
+        faiss_size = self._index.ntotal
+        chunk_ids_size = len(self._chunk_ids)
+        if faiss_size != chunk_ids_size:
+            issues.append(
+                f"FAISS index size ({faiss_size}) != chunk_ids length ({chunk_ids_size})"
+            )
+
+        # Check 2: All chunk_ids have metadata entries
+        missing_metadata = []
+        for i, chunk_id in enumerate(self._chunk_ids):
+            metadata_entry = self.metadata_db.get(chunk_id)
+            if not metadata_entry:
+                missing_metadata.append(f"{chunk_id} (position {i})")
+            elif "index_id" in metadata_entry:
+                # Check 3: Metadata index_id is valid
+                index_id = metadata_entry["index_id"]
+                if index_id != i:
+                    issues.append(
+                        f"Chunk {chunk_id} has index_id {index_id} but is at position {i}"
+                    )
+                if index_id >= faiss_size:
+                    issues.append(
+                        f"Chunk {chunk_id} has index_id {index_id} >= FAISS size {faiss_size}"
+                    )
+
+        if missing_metadata:
+            issues.append(
+                f"Missing metadata for {len(missing_metadata)} chunks: "
+                f"{', '.join(missing_metadata[:5])}"
+                + (f" ... and {len(missing_metadata) - 5} more" if len(missing_metadata) > 5 else "")
+            )
+
+        # Check 4: Metadata database size consistency
+        metadata_size = len(self.metadata_db)
+        if metadata_size != chunk_ids_size:
+            issues.append(
+                f"Metadata database size ({metadata_size}) != chunk_ids length ({chunk_ids_size})"
+            )
+
+        is_valid = len(issues) == 0
+
+        if is_valid:
+            self._logger.info(
+                f"Index consistency validated: {faiss_size} vectors, "
+                f"{chunk_ids_size} chunk IDs, {metadata_size} metadata entries"
+            )
+        else:
+            self._logger.warning(
+                f"Index consistency validation failed with {len(issues)} issues"
+            )
+            for issue in issues:
+                self._logger.warning(f"  - {issue}")
+
+        return is_valid, issues
+
     def clear_index(self):
         """Clear the entire index and metadata."""
         # Close database connection
@@ -618,6 +994,14 @@ class CodeIndexManager:
         # Reset in-memory state
         self._index = None
         self._chunk_ids = []
+
+        # Clear call graph
+        if self.graph_storage is not None:
+            try:
+                self.graph_storage.clear()
+                self._logger.info("Call graph cleared")
+            except Exception as e:
+                self._logger.warning(f"Failed to clear call graph: {e}")
 
         self._logger.info("Index cleared")
 

@@ -261,8 +261,11 @@ class TestIncrementalIndexer:
             return_value=["new_file.py", "changed_file.py"]
         )
 
-        # Mock removing old chunks
-        self.mock_indexer.remove_file_chunks.return_value = 5
+        # Mock batch removal (now enabled by default)
+        self.mock_indexer.remove_multiple_files = Mock(return_value=10)  # 2 files * 5 chunks
+
+        # Mock successful validation
+        self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
 
         # Mock adding new chunks
         mock_chunk = Mock()
@@ -325,10 +328,14 @@ class TestIncrementalIndexer:
             side_effect=Exception("Change detection failed")
         )
 
-        result = indexer.incremental_index(str(self.project_path), "test_project")
+        # Mock recovery also fails
+        with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
+            mock_dag_class.side_effect = Exception("Recovery also failed")
 
-        assert result.success is False
-        assert result.error == "Change detection failed"
+            result = indexer.incremental_index(str(self.project_path), "test_project")
+
+            assert result.success is False
+            assert "Change detection failed" in result.error or "Recovery also failed" in result.error
 
     def test_get_indexing_stats(self):
         """Test getting indexing statistics."""
@@ -572,6 +579,221 @@ class TestIncrementalIndexer:
             # Should succeed with zero chunks added
             assert result.success is True
             assert result.chunks_added == 0
+
+    def test_batch_removal_with_validation(self):
+        """Test batch removal with index consistency validation."""
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+        # Mock snapshot exists
+        self.mock_snapshot_manager.has_snapshot.return_value = True
+
+        # Mock changes with file removals
+        mock_changes = Mock()
+        mock_changes.has_changes.return_value = True
+        mock_changes.added = []
+        mock_changes.removed = ["old_file1.py", "old_file2.py"]
+        mock_changes.modified = []
+        mock_dag = Mock()
+
+        indexer.change_detector.detect_changes_from_snapshot = Mock(
+            return_value=(mock_changes, mock_dag)
+        )
+        indexer.change_detector.get_files_to_remove = Mock(
+            return_value=["old_file1.py", "old_file2.py"]
+        )
+        indexer.change_detector.get_files_to_reindex = Mock(return_value=[])
+
+        # Mock batch removal
+        self.mock_indexer.remove_multiple_files = Mock(return_value=10)  # 2 files * 5 chunks
+
+        # Mock successful validation
+        self.mock_indexer.validate_index_consistency = Mock(
+            return_value=(True, [])
+        )
+
+        result = indexer.incremental_index(str(self.project_path), "test_project")
+
+        assert result.success is True
+        assert result.files_removed == 2
+        assert result.chunks_removed == 10  # 2 files * 5 chunks each
+        # Verify validation was called
+        self.mock_indexer.validate_index_consistency.assert_called_once()
+
+    def test_batch_removal_validation_failure_triggers_full_reindex(self):
+        """Test that validation failure triggers full re-index recovery."""
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+        # Mock snapshot exists
+        self.mock_snapshot_manager.has_snapshot.return_value = True
+
+        # Mock changes with file removals
+        mock_changes = Mock()
+        mock_changes.has_changes.return_value = True
+        mock_changes.added = []
+        mock_changes.removed = ["file1.py"]
+        mock_changes.modified = []
+        mock_dag = Mock()
+
+        indexer.change_detector.detect_changes_from_snapshot = Mock(
+            return_value=(mock_changes, mock_dag)
+        )
+        indexer.change_detector.get_files_to_remove = Mock(return_value=["file1.py"])
+        indexer.change_detector.get_files_to_reindex = Mock(return_value=[])
+
+        # Mock file removal
+        self.mock_indexer.remove_file_chunks.return_value = 5
+
+        # Mock FAILED validation (index corrupted)
+        self.mock_indexer.validate_index_consistency = Mock(
+            return_value=(False, ["FAISS index size mismatch"])
+        )
+
+        # Mock full re-index components
+        with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
+            mock_full_dag = Mock()
+            mock_full_dag.get_all_files.return_value = ["remaining_file.py"]
+            mock_dag_class.return_value = mock_full_dag
+
+            self.mock_chunker.is_supported.return_value = True
+            mock_chunk = Mock()
+            mock_chunk.content = "test content"
+            self.mock_chunker.chunk_file.return_value = [mock_chunk]
+
+            mock_embedding_result = Mock()
+            mock_embedding_result.metadata = {}
+            self.mock_embedder.embed_chunks.return_value = [mock_embedding_result]
+
+            result = indexer.incremental_index(str(self.project_path), "test_project")
+
+            # Should succeed via full re-index recovery
+            assert result.success is True
+            # Verify clear_index was called (recovery)
+            self.mock_indexer.clear_index.assert_called()
+            # Verify validation was attempted
+            self.mock_indexer.validate_index_consistency.assert_called_once()
+
+    def test_error_recovery_via_full_reindex(self):
+        """Test that errors during incremental indexing trigger full re-index recovery."""
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+        # Mock snapshot exists
+        self.mock_snapshot_manager.has_snapshot.return_value = True
+
+        # Mock change detection that will fail
+        indexer.change_detector.detect_changes_from_snapshot = Mock(
+            side_effect=RuntimeError("Index corruption detected")
+        )
+
+        # Mock successful full re-index
+        with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
+            mock_dag = Mock()
+            mock_dag.get_all_files.return_value = ["file.py"]
+            mock_dag_class.return_value = mock_dag
+
+            self.mock_chunker.is_supported.return_value = True
+            mock_chunk = Mock()
+            mock_chunk.content = "test"
+            self.mock_chunker.chunk_file.return_value = [mock_chunk]
+
+            mock_embedding_result = Mock()
+            mock_embedding_result.metadata = {}
+            self.mock_embedder.embed_chunks.return_value = [mock_embedding_result]
+
+            result = indexer.incremental_index(str(self.project_path), "test_project")
+
+            # Should succeed via recovery
+            assert result.success is True
+            assert result.chunks_added == 1
+            # Verify clear_index was called during recovery
+            self.mock_indexer.clear_index.assert_called()
+
+    def test_batch_removal_with_multiple_files(self):
+        """Test batch removal handles multiple file deletions correctly."""
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+        # Mock snapshot exists
+        self.mock_snapshot_manager.has_snapshot.return_value = True
+
+        # Mock changes with many file removals
+        files_to_remove = [f"file{i}.py" for i in range(10)]
+        mock_changes = Mock()
+        mock_changes.has_changes.return_value = True
+        mock_changes.added = []
+        mock_changes.removed = files_to_remove
+        mock_changes.modified = []
+        mock_dag = Mock()
+
+        indexer.change_detector.detect_changes_from_snapshot = Mock(
+            return_value=(mock_changes, mock_dag)
+        )
+        indexer.change_detector.get_files_to_remove = Mock(
+            return_value=files_to_remove
+        )
+        indexer.change_detector.get_files_to_reindex = Mock(return_value=[])
+
+        # Mock batch removal returns 30 chunks total (10 files * 3 chunks each)
+        self.mock_indexer.remove_multiple_files = Mock(return_value=30)
+
+        # Mock successful validation
+        self.mock_indexer.validate_index_consistency = Mock(
+            return_value=(True, [])
+        )
+
+        result = indexer.incremental_index(str(self.project_path), "test_project")
+
+        assert result.success is True
+        assert result.files_removed == 10
+        assert result.chunks_removed == 30  # 10 files * 3 chunks each
+        # Verify batch removal was called once with all files
+        self.mock_indexer.remove_multiple_files.assert_called_once()
+
+    def test_recovery_failure_returns_error(self):
+        """Test that recovery failure is properly reported."""
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+        # Mock snapshot exists
+        self.mock_snapshot_manager.has_snapshot.return_value = True
+
+        # Mock incremental indexing failure
+        indexer.change_detector.detect_changes_from_snapshot = Mock(
+            side_effect=RuntimeError("Original error")
+        )
+
+        # Mock full re-index also fails
+        with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
+            mock_dag_class.side_effect = Exception("Recovery failed")
+
+            result = indexer.incremental_index(str(self.project_path), "test_project")
+
+            # Should fail with recovery error (since _full_index catches and returns its own error)
+            assert result.success is False
+            # The error message will be from _full_index, which returns "Recovery failed"
+            assert "Recovery failed" in result.error or "failed" in result.error.lower()
 
     def teardown_method(self):
         """Clean up test fixtures."""

@@ -66,6 +66,63 @@ class TestTextPreprocessor:
         assert any("example" in token for token in tokens)
         assert any("func" in token for token in tokens)
 
+    def test_stemming_enabled(self):
+        """Test that stemming normalizes word forms."""
+        preprocessor = TextPreprocessor(use_stopwords=False, use_stemming=True)
+
+        text = "indexing indexed indexes index"
+        tokens = preprocessor.tokenize(text)
+
+        # All forms should be stemmed to same root
+        assert all(token == tokens[0] for token in tokens), \
+            f"Expected all tokens to be same stem, got: {tokens}"
+
+    def test_stemming_disabled(self):
+        """Test that stemming can be disabled."""
+        preprocessor = TextPreprocessor(use_stopwords=False, use_stemming=False)
+
+        text = "indexing indexed indexes index"
+        tokens = preprocessor.tokenize(text)
+
+        # Without stemming, should keep original forms
+        assert len(set(tokens)) > 1, "Without stemming, tokens should differ"
+        assert "indexing" in tokens
+        assert "indexed" in tokens
+
+    def test_stemming_verb_forms(self):
+        """Test stemming of verb forms (crucial for code search)."""
+        preprocessor = TextPreprocessor(use_stopwords=False, use_stemming=True)
+
+        # Test cases from actual code queries
+        test_cases = [
+            (["searching", "searches", "search"], 1),  # Common verb - should all stem same
+            (["connecting", "connected", "connects"], 1),  # -ing forms - should all stem same
+            (["indexing", "indexed", "indexes", "index"], 1),  # All should stem to "index"
+            (["managing", "managed", "manages"], 1),  # Verb forms should stem same
+        ]
+
+        for word_list, expected_unique_stems in test_cases:
+            tokens = preprocessor.tokenize(" ".join(word_list))
+            unique_stems = set(tokens)
+            assert len(unique_stems) == expected_unique_stems, \
+                f"Expected {expected_unique_stems} unique stem(s) for {word_list}, got {unique_stems}"
+
+    def test_code_stemming(self):
+        """Test stemming on code-specific terms."""
+        preprocessor = TextPreprocessor(use_stopwords=False, use_stemming=True)
+
+        # Code with verb forms
+        code = "def getUserName(user_id): # Get user by getting their name"
+        processed = preprocessor.preprocess_code(code)
+        tokens = preprocessor.tokenize(processed)
+
+        # Should contain stems
+        assert any("user" in token for token in tokens)
+        assert any("name" in token for token in tokens)
+        # "getting" and "get" should stem to similar form
+        get_tokens = [t for t in tokens if t.startswith("get")]
+        assert len(get_tokens) > 0, "Should find 'get' related tokens"
+
 
 class TestBM25Index:
     """Test BM25 index functionality."""
@@ -312,6 +369,82 @@ class TestBM25Index:
         # Should be able to search
         self.index.search("123", k=5)
         # Results depend on preprocessing, but shouldn't crash
+
+    def test_stemming_configuration(self):
+        """Test that stemming configuration is properly applied."""
+        # Create index with stemming enabled, disable stopwords for clearer testing
+        stemmed_index = BM25Index(self.temp_dir, use_stopwords=False, use_stemming=True)
+
+        docs = [
+            "def search_users(): pass",
+            "class UserSearcher: pass",
+            "# Searching for user records in database"
+        ]
+        ids = ["doc1", "doc2", "doc3"]
+        stemmed_index.index_documents(docs, ids)
+
+        # Query with different verb form - should match due to stemming
+        # "searching" in doc3 should match "search" in query
+        results = stemmed_index.search("search", k=3, min_score=0.0)
+        assert len(results) > 0, "Stemming should help match different verb forms"
+
+        # At least one document should be found (they all contain search-related terms)
+        result_ids = [r[0] for r in results]
+        assert len(result_ids) >= 1, "Should find at least one document with 'search' terms"
+
+        # Create index without stemming for comparison
+        import tempfile
+        import shutil
+        unstemmed_dir = tempfile.mkdtemp()
+        try:
+            unstemmed_index = BM25Index(unstemmed_dir, use_stopwords=False, use_stemming=False)
+            unstemmed_index.index_documents(docs, ids)
+
+            # Same query - both should work but with different matching
+            unstemmed_results = unstemmed_index.search("search", k=3, min_score=0.0)
+            assert isinstance(unstemmed_results, list)  # Should not crash
+            assert len(unstemmed_results) > 0, "Should also find results without stemming"
+        finally:
+            shutil.rmtree(unstemmed_dir, ignore_errors=True)
+
+    def test_version_tracking_in_metadata(self):
+        """Test that index version and config are saved in metadata."""
+        self.index.index_documents(self.documents, self.doc_ids)
+        self.index.save()
+
+        # Check that metadata file contains version info
+        import json
+        with open(self.index.metadata_path, 'r') as f:
+            metadata = json.load(f)
+
+        assert "index_version" in metadata, "Metadata should contain index_version"
+        assert metadata["index_version"] == BM25Index.INDEX_VERSION
+        assert "use_stemming" in metadata, "Metadata should contain use_stemming flag"
+        assert "use_stopwords" in metadata, "Metadata should contain use_stopwords flag"
+
+    def test_config_mismatch_detection(self):
+        """Test detection of stemming configuration mismatches."""
+        # Index with stemming enabled
+        self.index = BM25Index(self.temp_dir, use_stemming=True)
+        self.index.index_documents(self.documents, self.doc_ids)
+        self.index.save()
+
+        # Load with different stemming config - should warn but not fail
+        new_index = BM25Index(self.temp_dir, use_stemming=False)
+
+        # Capture log warnings
+        import logging
+        with patch('logging.Logger.warning') as mock_warning:
+            success = new_index.load()
+
+            # Should still load successfully
+            assert success, "Index should load despite config mismatch"
+
+            # Should have logged a warning
+            assert mock_warning.called, "Should warn about config mismatch"
+            warning_msg = str(mock_warning.call_args)
+            assert "mismatch" in warning_msg.lower(), \
+                "Warning should mention configuration mismatch"
 
     def teardown_method(self):
         """Clean up test fixtures."""

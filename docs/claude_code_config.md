@@ -85,6 +85,56 @@ For manual configuration, create or edit `.claude.json` in your user profile dir
 }
 ```
 
+### SSE Transport Configuration (Alternative to stdio)
+
+**When to Use SSE Transport:**
+- Claude Code version 2.0.22+ experiencing stdio bugs (#3426, #768, #3487, #3369)
+- More reliable transport needed
+- Debugging MCP communication issues
+
+**SSE Transport Features:**
+- HTTP-based transport on `http://localhost:8765/sse`
+- All 13 MCP tools available (identical to stdio)
+- Automatic port conflict detection
+- <10ms latency overhead
+- Independent of stdio limitations
+
+**Launch Options:**
+
+```powershell
+# Option 1: Interactive menu (recommended)
+start_mcp_server.bat
+# Select: 1 - Quick Start Server → 2 - SSE Transport
+
+# Option 2: Dedicated launcher
+scripts\batch\start_mcp_sse.bat
+
+# Option 3: Manual start (development)
+.venv\Scripts\python.exe -m mcp_server.server --transport sse
+```
+
+**SSE Server Status:**
+
+The SSE server runs independently of `.claude.json` configuration. No MCP client registration needed - it operates as an HTTP server on localhost:8765.
+
+**Port Conflict Resolution:**
+
+SSE launcher automatically detects port 8765 conflicts and offers to kill blocking processes:
+
+```powershell
+# Manual port check
+netstat -ano | findstr :8765
+
+# Manual process kill (replace <PID> with actual ID)
+powershell -Command "Stop-Process -Id <PID> -Force"
+```
+
+**Switching Between Transports:**
+
+- **stdio → SSE**: Just launch SSE server, no configuration changes needed
+- **SSE → stdio**: Stop SSE server, use normal MCP workflow
+- Both can coexist if needed (different access methods)
+
 ### Method 4: Python Manual Configuration Script (Automated Fallback)
 
 When the Claude CLI fails (common error: "missing required argument 'commandOrUrl'"), the PowerShell configuration script automatically falls back to a Python-based manual configuration method. You can also run this directly:
@@ -355,24 +405,37 @@ With MCP integration, you get:
 
 **Solutions**:
 
-1. Verify configuration structure using the verification script:
+1. **Try SSE Transport** (Bypasses stdio issues):
+
+   ```powershell
+   # Launch SSE server on port 8765
+   start_mcp_server.bat
+   # Select: 1 - Quick Start Server → 2 - SSE Transport
+
+   # Or use dedicated launcher
+   scripts\batch\start_mcp_sse.bat
+   ```
+
+   **Why this works**: SSE transport bypasses known Claude Code 2.0.22+ stdio bugs and provides more reliable MCP communication.
+
+2. Verify configuration structure using the verification script:
 
    ```powershell
    .\.venv\Scripts\python.exe scripts\manual_configure.py --validate-only
    ```
 
-2. Check for missing `args` or `env` fields in `.claude.json`:
+3. Check for missing `args` or `env` fields in `.claude.json`:
    - Open `%USERPROFILE%\.claude.json`
    - Ensure `args` field exists (should be an array, even if empty)
    - Ensure `env` field exists with PYTHONPATH and PYTHONUNBUFFERED
 
-3. Reconfigure using the automated script:
+4. Reconfigure using the automated script:
 
    ```powershell
    .\scripts\batch\manual_configure.bat
    ```
 
-4. Test the server manually:
+5. Test the server manually:
 
    ```bash
    # Test wrapper method
@@ -380,6 +443,9 @@ With MCP integration, you get:
 
    # Test direct Python method
    .venv\Scripts\python.exe -m mcp_server.server --help
+
+   # Test SSE transport
+   .venv\Scripts\python.exe -m mcp_server.server --transport sse
    ```
 
 ### Missing Environment Variables
@@ -438,10 +504,33 @@ Each project gets its own directory named `{project_name}_{hash}/`
 
 ## Environment Variables
 
-Optional configuration:
+Optional configuration variables for performance tuning and storage:
+
+### Storage Location
 
 ```
 CODE_SEARCH_STORAGE=D:\CustomStorage\.claude_code_search
 ```
 
 This allows you to store indexes on a different drive if needed.
+
+### Performance Tuning
+
+```
+# Embedding batch size for optimal GPU utilization
+CLAUDE_EMBEDDING_BATCH_SIZE=256  # BGE-M3 (default: 256)
+CLAUDE_EMBEDDING_BATCH_SIZE=128  # EmbeddingGemma (default: 128)
+
+# Other search configuration
+CLAUDE_EMBEDDING_MODEL=BAAI/bge-m3  # Model selection
+CLAUDE_SEARCH_MODE=hybrid  # hybrid, semantic, or bm25
+CLAUDE_ENABLE_HYBRID=true  # Enable hybrid search
+CLAUDE_BM25_WEIGHT=0.4  # BM25 weight in hybrid mode
+CLAUDE_DENSE_WEIGHT=0.6  # Dense weight in hybrid mode
+```
+
+**Batch Size Guidelines:**
+- **BGE-M3 (1024d)**: 256 chunks (optimal for 16GB+ VRAM)
+- **EmbeddingGemma (768d)**: 128 chunks (optimal for 8GB+ VRAM)
+- Larger batch sizes = faster embedding generation
+- Reduce if experiencing out-of-memory errors

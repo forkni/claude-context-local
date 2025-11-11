@@ -7,6 +7,13 @@ from typing import List, Optional
 from .python_ast_chunker import CodeChunk
 from .tree_sitter import TreeSitterChunk, TreeSitterChunker
 
+# Import call graph extractor for Python (Phase 1)
+try:
+    from graph.call_graph_extractor import CallGraphExtractorFactory
+    CALL_GRAPH_AVAILABLE = True
+except ImportError:
+    CALL_GRAPH_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -50,6 +57,7 @@ class MultiLanguageChunker:
         "env",
         ".env",
         ".direnv",
+        "site-packages",  # Python package installations
         "node_modules",
         ".pnpm-store",
         ".yarn",
@@ -99,6 +107,15 @@ class MultiLanguageChunker:
         # Use AST chunker for Python (more mature implementation)
         # Use tree-sitter for other languages
         self.tree_sitter_chunker = TreeSitterChunker()
+
+        # Initialize call graph extractor for Python (Phase 1)
+        self.call_graph_extractor = None
+        if CALL_GRAPH_AVAILABLE:
+            try:
+                self.call_graph_extractor = CallGraphExtractorFactory.create("python")
+                logger.info("Call graph extraction enabled for Python")
+            except Exception as e:
+                logger.warning(f"Failed to initialize call graph extractor: {e}")
 
     def is_supported(self, file_path: str) -> bool:
         """Check if file type is supported.
@@ -257,7 +274,36 @@ class MultiLanguageChunker:
                 imports=[],  # Tree-sitter doesn't extract imports yet
                 complexity_score=0,  # Not calculated for tree-sitter chunks
                 tags=tags,
+                language=tchunk.language,
             )
+
+            # Extract call graph for Python chunks (Phase 1)
+            if (
+                self.call_graph_extractor is not None
+                and tchunk.language == "python"
+                and chunk_type in ("function", "method")
+            ):
+                try:
+                    # Build chunk_id for call graph extraction
+                    chunk_id = f"{chunk.relative_path}:{chunk.start_line}-{chunk.end_line}:{chunk_type}"
+                    if name:
+                        chunk_id += f":{name}"
+
+                    # Extract function calls from this chunk
+                    chunk_metadata = {"chunk_id": chunk_id}
+                    calls = self.call_graph_extractor.extract_calls(
+                        tchunk.content, chunk_metadata
+                    )
+                    chunk.calls = calls
+
+                    if calls:
+                        logger.debug(
+                            f"Extracted {len(calls)} calls from {chunk_id}"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to extract calls for {name}: {e}"
+                    )
 
             code_chunks.append(chunk)
 
