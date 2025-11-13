@@ -23,10 +23,11 @@ if not exist ".venv" (
     exit /b 1
 )
 
-if not exist "mcp_server\server.py" (
-    echo [ERROR] MCP server script not found: mcp_server\server.py
+if not exist "mcp_server\server_lowlevel_complete.py" (
+    echo [ERROR] MCP server script not found: mcp_server\server_lowlevel_complete.py
     echo [DEBUG] Current directory: %CD%
-    echo [DEBUG] Looking for: %CD%\mcp_server\server.py
+    echo [DEBUG] Looking for: %CD%\mcp_server\server_lowlevel_complete.py
+    echo [DEBUG] NOTE: Server migrated to low-level MCP SDK for better reliability
     echo.
     echo Press any key to exit...
     pause >nul
