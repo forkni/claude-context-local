@@ -224,9 +224,12 @@ __marimo__/
 # Local-only content (NEVER commit to ANY branch)
 _archive/
 benchmark_results/
+analysis/
 logs/                    # Workflow execution logs and analysis reports
 CLAUDE.md
 MEMORY.md
+GEMINI.md
+BASH_STYLE_GUIDE.md
 
 # Documentation - only specific files are public
 docs/*

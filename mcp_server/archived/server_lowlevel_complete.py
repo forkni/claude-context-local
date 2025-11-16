@@ -57,10 +57,9 @@ else:
     logging.getLogger('asyncio').setLevel(logging.WARNING)
 
 # Global state
-_embedders = {}  # model_key -> CodeEmbedder instance
+_embedders = {}
 _index_manager = None
 _searcher = None
-_current_model_key = None  # Track which model the searcher was initialized with
 _storage_dir = None
 _current_project = None
 _model_preload_task_started = False
@@ -78,6 +77,15 @@ MODEL_POOL_CONFIG = {
 # HELPER FUNCTIONS (copied from FastMCP backup)
 # ============================================================================
 
+# Global state
+_embedders = {}  # model_key -> CodeEmbedder instance
+_index_manager = None
+_searcher = None
+_storage_dir = None
+_current_project = None
+_model_preload_task_started = False
+_multi_model_enabled = os.getenv('CLAUDE_MULTI_MODEL_ENABLED', 'true').lower() in ('true', '1', 'yes')
+
 
 def get_storage_dir() ->Path:
     """Get or create base storage directory."""
@@ -90,13 +98,8 @@ def get_storage_dir() ->Path:
     return _storage_dir
 
 
-def get_project_storage_dir(project_path: str, model_key: str = None) -> Path:
-    """Get or create project-specific storage directory with per-model dimension suffix.
-
-    Args:
-        project_path: Path to the project
-        model_key: Model key for routing (None = use config default)
-    """
+def get_project_storage_dir(project_path: str) ->Path:
+    """Get or create project-specific storage directory with per-model dimension suffix."""
     base_dir = get_storage_dir()
     import hashlib
     from datetime import datetime
@@ -104,22 +107,8 @@ def get_project_storage_dir(project_path: str, model_key: str = None) -> Path:
     project_name = project_path.name
     project_hash = hashlib.md5(str(project_path).encode()).hexdigest()[:8]
     from search.config import MODEL_REGISTRY, get_search_config, get_model_slug
-
-    # Determine which model to use
-    if model_key:
-        # Use routing-selected model (map model_key to model_name via MODEL_POOL_CONFIG)
-        if model_key not in MODEL_POOL_CONFIG:
-            logger.error(f'Invalid model_key: {model_key}, falling back to config default')
-            config = get_search_config()
-            model_name = config.embedding_model_name
-        else:
-            model_name = MODEL_POOL_CONFIG[model_key]
-            logger.info(f'[ROUTING] Using routed model: {model_name} (key: {model_key})')
-    else:
-        # Use config default
-        config = get_search_config()
-        model_name = config.embedding_model_name
-        logger.info(f'[CONFIG] Using config default model: {model_name}')
+    config = get_search_config()
+    model_name = config.embedding_model_name
 
     # Validate model exists in registry (prevent silent 768d fallback)
     model_config = MODEL_REGISTRY.get(model_name)
@@ -391,28 +380,21 @@ def get_index_manager(project_path: str=None) ->CodeIndexManager:
     return _index_manager
 
 
-def get_searcher(project_path: str=None, model_key: str=None):
-    """Get searcher for specific project or current project.
-
-    Args:
-        project_path: Path to project (None = use current project)
-        model_key: Model key for routing (None = use config default)
-    """
-    global _searcher, _current_project, _current_model_key
+def get_searcher(project_path: str=None):
+    """Get searcher for specific project or current project."""
+    global _searcher, _current_project
     if project_path is None and _current_project is None:
         project_path = str(PROJECT_ROOT)
         logger.info(
             f'No active project found. Using server directory: {project_path}')
-
-    # Invalidate cache if project or model changed
-    if _current_project != project_path or _current_model_key != model_key or _searcher is None:
+    if _current_project != project_path or _searcher is None:
         _current_project = project_path or _current_project
         config = get_search_config()
         logger.info(
             f'[GET_SEARCHER] Initializing searcher for project: {_current_project}'
             )
         if config.enable_hybrid_search:
-            project_storage = get_project_storage_dir(_current_project, model_key=model_key)
+            project_storage = get_project_storage_dir(_current_project)
             storage_dir = project_storage / 'index'
             logger.info(
                 f'[GET_SEARCHER] Using storage directory: {storage_dir}')
@@ -422,7 +404,7 @@ def get_searcher(project_path: str=None, model_key: str=None):
             project_id = project_storage.name.rsplit('_', 1)[0]  # Remove dimension suffix
 
             _searcher = HybridSearcher(storage_dir=str(storage_dir),
-                embedder=get_embedder(model_key), bm25_weight=config.bm25_weight,
+                embedder=get_embedder(), bm25_weight=config.bm25_weight,
                 dense_weight=config.dense_weight, rrf_k=config.
                 rrf_k_parameter, max_workers=2, project_id=project_id)
             try:
@@ -440,16 +422,15 @@ def get_searcher(project_path: str=None, model_key: str=None):
                 )
         else:
             _searcher = IntelligentSearcher(get_index_manager(project_path),
-                get_embedder(model_key))
+                get_embedder())
             logger.info('IntelligentSearcher initialized (semantic-only mode)')
-
-        # Track which model this searcher was initialized with
-        _current_model_key = model_key
         logger.info(
             f"Searcher initialized for project: {Path(_current_project).name if _current_project else 'unknown'}"
             )
     return _searcher
 
+
+# ============================================================================
 
 # ============================================================================
 # CRITICAL FIX: Explicit lifecycle management
@@ -641,55 +622,7 @@ if __name__ == '__main__':
     try:
         if args.transport == 'stdio':
             from mcp.server.stdio import stdio_server
-
-            async def run_stdio_server():
-                """Run stdio server with proper lifecycle management."""
-                global _current_project, _model_preload_task_started
-
-                # Initialize global state BEFORE starting server
-                logger.info("=" * 60)
-                logger.info("SERVER STARTUP: Initializing global state")
-                logger.info("=" * 60)
-
-                # Set default project if specified
-                default_project = os.getenv('CLAUDE_DEFAULT_PROJECT', None)
-                if default_project:
-                    _current_project = str(Path(default_project).resolve())
-                    logger.info(f"[INIT] Default project: {_current_project}")
-                else:
-                    logger.info("[INIT] No default project")
-
-                # Initialize model pool in lazy mode
-                if _multi_model_enabled and not _model_preload_task_started:
-                    initialize_model_pool(lazy_load=True)
-                    logger.info(f"[INIT] Model pool initialized: {list(MODEL_POOL_CONFIG.keys())}")
-                    _model_preload_task_started = True
-
-                # Log storage directory
-                storage = get_storage_dir()
-                logger.info(f"[INIT] Storage directory: {storage}")
-
-                logger.info("=" * 60)
-                logger.info("SERVER READY - Accepting connections")
-                logger.info("=" * 60)
-
-                # Run server using stdio transport (OFFICIAL MCP SDK PATTERN)
-                async with stdio_server() as (read_stream, write_stream):
-                    await server.run(
-                        read_stream,
-                        write_stream,
-                        server.create_initialization_options()
-                    )
-
-                # Cleanup after server stops
-                logger.info("=" * 60)
-                logger.info("SERVER SHUTDOWN: Cleaning up")
-                logger.info("=" * 60)
-                _cleanup_previous_resources()
-                logger.info("[SHUTDOWN] Cleanup complete")
-
-            # Run the async function
-            asyncio.run(run_stdio_server())
+            asyncio.run(stdio_server(server, server_lifespan))
         elif args.transport == 'sse':
             # SSE transport using Starlette + SseServerTransport + uvicorn
             from mcp.server.sse import SseServerTransport

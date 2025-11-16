@@ -30,6 +30,7 @@ class QueryRouter:
     """
 
     # Routing rules based on verification results (analysis/model_relevance_verification_results.md)
+    # Enhanced with single-word variants for natural query support (2025-11-15)
     ROUTING_RULES = {
         "coderankembed": {
             "keywords": [
@@ -38,9 +39,9 @@ class QueryRouter:
                 "rrf", "reranking", "reciprocal rank", "rank fusion", "rerank",
                 "tree structure", "directed acyclic", "dag",
                 # Data structures
-                "binary tree", "graph structure",
+                "binary tree", "graph structure", "binary", "graph",
                 # Hybrid search components
-                "hybrid", "fusion"
+                "hybrid", "fusion", "fuse", "combine"
             ],
             "weight": 1.5,  # Higher weight for specialized matches
             "description": "Specialized algorithms (Merkle trees, RRF reranking)"
@@ -48,21 +49,23 @@ class QueryRouter:
         "qwen3": {
             "keywords": [
                 # Implementation-heavy queries (3/8 wins)
-                "implementation", "implement", "how to implement",
-                "algorithm", "algorithmic",
+                "implementation", "implement", "implementing", "implements", "how to implement",
+                "algorithm", "algorithmic", "algorithms",
                 "pattern", "patterns", "design pattern",
-                "how does", "how do", "how is",
-                "class structure", "method flow", "function flow",
+                "how does", "how do", "how is", "how to", "how can",
+                "class structure", "method flow", "function flow", "function", "method", "class",
                 "complete system", "full implementation",
                 # Error handling (verified win) - expanded
                 "error", "error handling", "exception", "try except", "error pattern",
-                "exception handling", "catch", "raise",
+                "exception handling", "catch", "raise", "throw",
                 # BM25 implementation (verified win) - expanded
                 "bm25", "sparse index", "keyword search", "index implementation",
-                "search implementation",
+                "search implementation", "search", "searching", "query",
                 # Multi-hop search (verified win) - expanded
                 "multi-hop", "multi hop", "iterative search", "search algorithm",
-                "hop"
+                "hop", "iterative", "recursive",
+                # Common programming terms
+                "code", "coding", "write", "create", "build"
             ],
             "weight": 1.0,
             "description": "Implementation queries and algorithms"
@@ -70,17 +73,17 @@ class QueryRouter:
         "bge_m3": {
             "keywords": [
                 # Workflow & configuration (3/8 wins, most consistent)
-                "workflow", "process", "pipeline",
-                "loading", "initialization", "init", "setup",
-                "configuration", "config", "settings", "manager",
+                "workflow", "process", "pipeline", "flow",
+                "loading", "initialization", "init", "setup", "initialize",
+                "configuration", "config", "settings", "manager", "configure",
                 # Configuration loading (verified win) - expanded
-                "load config", "config file", "environment variable", "loading system",
+                "load config", "config file", "environment variable", "loading system", "load",
                 # Incremental indexing (verified win) - expanded
-                "incremental", "indexing logic", "reindex", "indexing", "logic",
+                "incremental", "indexing logic", "reindex", "indexing", "logic", "index",
                 # Embedding workflow (verified win) - expanded
-                "embedding", "embed", "generation", "batch", "generation workflow",
+                "embedding", "embed", "generation", "batch", "generation workflow", "generate",
                 # General system queries
-                "system", "integration", "connection"
+                "system", "integration", "connection", "connect", "integrate"
             ],
             "weight": 1.0,
             "description": "Workflow and configuration queries"
@@ -91,9 +94,10 @@ class QueryRouter:
     DEFAULT_MODEL = "bge_m3"
 
     # Confidence threshold for routing (below this, use default)
-    # Lowered from 0.3 → 0.15 → 0.10 based on empirical testing
-    # Keyword-based matching requires aggressive threshold for good routing
-    CONFIDENCE_THRESHOLD = 0.10
+    # Lowered from 0.3 → 0.15 → 0.10 → 0.05 based on empirical testing
+    # Enhanced routing with single-word keywords enables lower threshold
+    # Natural queries now trigger routing with 2-3 keyword matches
+    CONFIDENCE_THRESHOLD = 0.05
 
     def __init__(self, enable_logging: bool = True):
         """Initialize query router.

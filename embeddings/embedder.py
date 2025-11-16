@@ -49,7 +49,7 @@ class CodeEmbedder:
         device: str = "auto",
     ):
         self.model_name = model_name
-        self.cache_dir = cache_dir or os.path.expanduser("~/.cache/huggingface/hub")
+        self.cache_dir = cache_dir or str(Path.home() / ".cache" / "huggingface" / "hub")
         self.device = device
         self._model = None
         self._logger = logging.getLogger(__name__)
@@ -109,6 +109,28 @@ class CodeEmbedder:
             }
 
         return self._model_config
+
+
+    def _log_gpu_memory(self, stage: str):
+        """Log GPU memory usage at specific loading stages."""
+        if torch is None or not torch.cuda.is_available():
+            return
+
+        try:
+            for gpu_id in range(torch.cuda.device_count()):
+                allocated = torch.cuda.memory_allocated(gpu_id) / 1024**3  # GB
+                reserved = torch.cuda.memory_reserved(gpu_id) / 1024**3    # GB
+                total = torch.cuda.get_device_properties(gpu_id).total_memory / 1024**3
+
+                self._logger.info(
+                    f"[GPU_{gpu_id}] {stage}: "
+                    f"Allocated={allocated:.2f}GB, "
+                    f"Reserved={reserved:.2f}GB, "
+                    f"Total={total:.2f}GB "
+                    f"({allocated/total*100:.1f}% used)"
+                )
+        except Exception as e:
+            self._logger.debug(f"GPU memory logging failed: {e}")
 
     @property
     def model(self):
@@ -248,6 +270,7 @@ class CodeEmbedder:
         # Step 4: Load model with automatic fallback
         resolved_device = self._resolve_device(self.device)
         attempted_fallback = False
+        self._log_gpu_memory("BEFORE_LOAD")
 
         try:
             model_source = str(local_model_dir) if local_model_dir else self.model_name
@@ -263,6 +286,7 @@ class CodeEmbedder:
             self._logger.info(
                 f"Model loaded successfully on device: {self._model.device}"
             )
+            self._log_gpu_memory("AFTER_LOAD")
 
         except Exception as e:
             # Step 5: Fallback - If loading from cache failed, try network download
@@ -288,6 +312,7 @@ class CodeEmbedder:
                     self._logger.info(
                         f"[FALLBACK SUCCESS] Downloaded fresh model from HuggingFace"
                     )
+                    self._log_gpu_memory("AFTER_FALLBACK_LOAD")
                 except Exception as e2:
                     # Both cache and network download failed
                     raise RuntimeError(

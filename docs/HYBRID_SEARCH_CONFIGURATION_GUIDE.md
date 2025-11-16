@@ -136,11 +136,12 @@ set CLAUDE_MULTI_MODEL_ENABLED=false
 /configure_query_routing None "coderankembed" None  # Use CodeRankEmbed
 
 # Adjust confidence threshold (advanced)
-/configure_query_routing None None 0.10  # Lower threshold (more aggressive routing)
-/configure_query_routing None None 0.50  # Higher threshold (more conservative)
+/configure_query_routing None None 0.05  # Default threshold (recommended, natural query support)
+/configure_query_routing None None 0.03  # Lower threshold (maximum sensitivity, may over-route)
+/configure_query_routing None None 0.10  # Higher threshold (more conservative, keyword-dense queries only)
 
 # Combined configuration
-/configure_query_routing true "qwen3" 0.10  # Enable routing + Qwen3 default + 0.10 threshold
+/configure_query_routing true "qwen3" 0.05  # Enable routing + Qwen3 default + optimal threshold
 ```
 
 ### Model Specializations
@@ -179,6 +180,48 @@ All searches include routing metadata showing which model processed the query:
   },
   "results": [...]
 }
+```
+
+### Natural Query Routing (v0.5.5+)
+
+**Enhancement** (2025-11-15): Natural language queries now work without keyword stuffing.
+
+**Improvements**:
+- Default threshold lowered: 0.10 → 0.05
+- Enhanced keyword matching: 24 single-word variants per model
+- Simple queries like "error handling" trigger routing effectively
+
+**Comparison**:
+
+| Query Type | Before (v0.5.4) | After (v0.5.5) |
+|------------|-----------------|----------------|
+| "error handling" | Falls to BGE-M3 default | Routes to Qwen3 ✓ |
+| "configuration loading" | Falls to BGE-M3 default | Routes to BGE-M3 ✓ |
+| "merkle tree" | Falls to BGE-M3 default | Routes to CodeRankEmbed ✓ |
+
+**Threshold Guide**:
+- `0.03`: Maximum sensitivity (experimental, may over-route)
+- `0.05`: **Recommended default** (natural query support, balanced)
+- `0.10`: Conservative (requires more keyword matches)
+- `0.30`: Very conservative (keyword-dense queries only)
+
+**Example Natural Queries**:
+
+```bash
+# Implementation queries → Qwen3
+/search_code "error handling"           # Confidence: 0.08
+/search_code "algorithm implementation" # Confidence: 0.12
+/search_code "function flow"            # Confidence: 0.06
+
+# Workflow queries → BGE-M3
+/search_code "configuration loading"    # Confidence: 0.14
+/search_code "initialization process"   # Confidence: 0.11
+/search_code "indexing logic"           # Confidence: 0.09
+
+# Specialized algorithms → CodeRankEmbed
+/search_code "merkle tree"              # Confidence: 0.21
+/search_code "reranking algorithm"      # Confidence: 0.18
+/search_code "hybrid search"            # Confidence: 0.15
 ```
 
 ### Manual Model Override

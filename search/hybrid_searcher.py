@@ -579,6 +579,15 @@ class HybridSearcher:
             self._logger.warning(f"Invalid expansion_factor={expansion_factor}, using 0.3")
             expansion_factor = 0.3
 
+
+        # Initialize timing tracker
+        timings = {
+            "total": time.time(),
+            "hop_1": 0,
+            "expansion": {},  # {hop: duration}
+            "rerank": 0
+        }
+
         self._logger.info(
             f"[MULTI_HOP] Starting {hops}-hop search for '{query}' "
             f"(k={k}, expansion={expansion_factor}, mode={search_mode})"
@@ -590,6 +599,8 @@ class HybridSearcher:
         config = SearchConfigManager().load_config()
         initial_k_multiplier = config.multi_hop_initial_k_multiplier
         initial_k = int(k * initial_k_multiplier)  # Get more initial results for better expansion
+        
+        hop1_start = time.time()
         initial_results = self._single_hop_search(
             query=query,
             k=initial_k,
@@ -599,12 +610,15 @@ class HybridSearcher:
             filters=filters,
         )
 
+        timings["hop_1"] = time.time() - hop1_start
+
         if not initial_results:
             self._logger.info("[MULTI_HOP] No initial results found")
             return []
 
         self._logger.info(
-            f"[MULTI_HOP] Hop 1: Found {len(initial_results)} initial results"
+            f"[MULTI_HOP] Hop 1: Found {len(initial_results)} initial results "
+            f"({timings['hop_1']*1000:.1f}ms)"
         )
 
         # Track all discovered chunks (avoid duplicates)
@@ -620,6 +634,7 @@ class HybridSearcher:
         expansion_k = max(1, int(k * expansion_factor))
 
         for hop in range(2, hops + 1):
+            hop_start = time.time()
             hop_discovered = 0
 
             # Expand from top initial results only (not from previously expanded)
@@ -657,9 +672,11 @@ class HybridSearcher:
                     )
                     continue
 
+            timings["expansion"][hop] = time.time() - hop_start
+            
             self._logger.info(
                 f"[MULTI_HOP] Hop {hop}: Discovered {hop_discovered} new chunks "
-                f"(total: {len(all_results)})"
+                f"(total: {len(all_results)}, {timings['expansion'][hop]*1000:.1f}ms)"
             )
 
         # Re-rank all discovered results by query relevance
@@ -667,6 +684,7 @@ class HybridSearcher:
             f"[MULTI_HOP] Re-ranking {len(all_results)} total chunks by query relevance"
         )
 
+        rerank_start = time.time()
         final_results = self._rerank_by_query(
             query=query,
             results=list(all_results.values()),
@@ -674,8 +692,18 @@ class HybridSearcher:
             search_mode=search_mode
         )
 
+        timings["rerank"] = time.time() - rerank_start
+        
+        # Final summary
+        timings["total"] = time.time() - timings["total"]
+        expansion_time = sum(timings["expansion"].values()) if timings["expansion"] else 0
+        
         self._logger.info(
-            f"[MULTI_HOP] Returning top {len(final_results)} results after re-ranking"
+            f"[MULTI_HOP] Complete: {len(final_results)} results | "
+            f"Total={timings['total']*1000:.0f}ms "
+            f"(Hop1={timings['hop_1']*1000:.0f}ms, "
+            f"Expansion={expansion_time*1000:.0f}ms, "
+            f"Rerank={timings['rerank']*1000:.0f}ms)"
         )
 
         return final_results

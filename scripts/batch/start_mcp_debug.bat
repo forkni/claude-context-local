@@ -11,6 +11,7 @@ echo [DEBUG] =======================================
 echo [DEBUG] Project Directory: %CD%
 echo [DEBUG] Python Path: .venv\Scripts\python.exe
 echo [DEBUG] Server Module: mcp_server.server
+echo [DEBUG] NOTE: Using low-level MCP SDK (migrated from FastMCP)
 echo.
 
 REM Check prerequisites
@@ -44,8 +45,8 @@ echo [DEBUG] Press Ctrl+C to stop the server
 echo [DEBUG] =======================================
 echo.
 
-REM Start the MCP server with debug output
-.\.venv\Scripts\python.exe -u -m mcp_server.server
+REM Start the MCP server with debug output (low-level SDK)
+.\.venv\Scripts\python.exe -m mcp_server.server --transport stdio
 set SERVER_EXIT_CODE=%ERRORLEVEL%
 
 echo.

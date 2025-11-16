@@ -1,10 +1,12 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-echo ================================================================
-echo MCP Server (SSE) - Native CLI Instance
-echo Port: 8766 (for Native Claude Code CLI only)
-echo ================================================================
+echo ============================================================
+echo MCP Server SSE Mode - CLI Instance
+echo ============================================================
+echo Server will run on: http://localhost:8766/sse
+echo Press Ctrl+C to stop the server
+echo ============================================================
 echo.
 
 cd /d "%~dp0..\.."
@@ -27,11 +29,8 @@ if !errorlevel! equ 0 (
     timeout /t 2 >nul
 )
 
-echo Starting SSE server on port 8766...
-echo Press Ctrl+C to stop the server
-echo.
 
-.venv\Scripts\python.exe -m mcp_server.server --transport sse --port 8766
+"%~dp0..\..\.venv\Scripts\python.exe" -m mcp_server.server --transport sse --host localhost --port 8766
 
 if errorlevel 1 (
     echo.
