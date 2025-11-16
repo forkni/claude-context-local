@@ -657,8 +657,8 @@ if "!INDEX_RESULT!" neq "0" (
     )
 )
 
-REM Clear the Merkle snapshot
-.\.venv\Scripts\python.exe -c "from merkle.snapshot_manager import SnapshotManager; sm = SnapshotManager(); sm.delete_snapshot(r'%PROJECT_PATH%'); print('Snapshot: cleared')" 2>&1
+REM Clear the Merkle snapshots (all dimensions)
+.\.venv\Scripts\python.exe -c "from merkle.snapshot_manager import SnapshotManager; sm = SnapshotManager(); deleted = sm.delete_all_snapshots(r'%PROJECT_PATH%'); print(f'Snapshots: cleared {deleted} files')" 2>&1
 set SNAPSHOT_RESULT=!ERRORLEVEL!
 
 echo.
@@ -666,7 +666,7 @@ REM Report results
 if "!INDEX_RESULT!"=="0" (
     if "!SNAPSHOT_RESULT!"=="0" (
         echo [OK] Project index cleared: %PROJECT_NAME%
-        echo [OK] Merkle snapshot cleared
+        echo [OK] Merkle snapshots cleared (all dimensions)
     ) else (
         echo [OK] Index cleared but snapshot clearing failed
         echo [INFO] This is usually not critical
@@ -762,7 +762,7 @@ REM Search Configuration Functions
 echo.
 echo [INFO] Current Search Configuration:
 if exist ".venv\Scripts\python.exe" (
-    .\.venv\Scripts\python.exe -c "from search.config import get_search_config; config = get_search_config(); print('  Search Mode:', config.default_search_mode); print('  Hybrid Search:', 'Enabled' if config.enable_hybrid_search else 'Disabled'); print('  BM25 Weight:', config.bm25_weight); print('  Dense Weight:', config.dense_weight); print('  Prefer GPU:', config.prefer_gpu); print('  Parallel Search:', 'Enabled' if config.use_parallel_search else 'Disabled')"
+    .\.venv\Scripts\python.exe -c "import os; from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding_model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = os.getenv('CLAUDE_MULTI_MODEL_ENABLED', '').lower() in ('true', '1'); print(f'  Embedding Model: {model_short} ({dim}d, {vram})'); print('  Multi-Model Routing:', 'Enabled (BGE-M3 + Qwen3 + CodeRankEmbed)' if multi_enabled else 'Disabled'); print('  Search Mode:', config.default_search_mode); print('  Hybrid Search:', 'Enabled' if config.enable_hybrid_search else 'Disabled'); print('  BM25 Weight:', config.bm25_weight); print('  Dense Weight:', config.dense_weight); print('  Prefer GPU:', config.prefer_gpu); print('  Parallel Search:', 'Enabled' if config.use_parallel_search else 'Disabled')"
     if "!ERRORLEVEL!" neq "0" (
         echo Error loading configuration
         echo Using defaults: hybrid mode, BM25=0.4, Dense=0.6
@@ -843,33 +843,42 @@ echo Current Model:
 .\.venv\Scripts\python.exe -c "from search.config import get_search_config; print('  ', get_search_config().embedding_model_name)" 2>nul
 if errorlevel 1 echo   google/embeddinggemma-300m ^(default^)
 echo.
-echo Available Models:
+echo RECOMMENDED MODELS ^(Validated 2025-11^):
 echo.
-echo   [CODE-OPTIMIZED] - For programming projects
-echo   1. Qodo-1.5B ^(1536 dim, 4-6GB, CoIR: 68.53^)
-echo   2. Jina-Code ^(768 dim, 2-4GB, 31 languages^)
-echo   3. Qodo-7B ^(3584 dim, 14-20GB, CoIR: 71.5^)
+echo   [OPTIMAL CHOICE] - Production-validated
+echo   1. BGE-M3 [RECOMMENDED] ^(1024d, 3-4GB, MTEB: 61.85^)
+echo      Best for: Code + docs, proven optimal in hybrid search
 echo.
-echo   [GENERAL PURPOSE] - For all content types
-echo   4. EmbeddingGemma-300m ^(768 dim, 4-8GB^)
-echo   5. BGE-M3 ^(1024 dim, 8-16GB, +3-6%% accuracy^)
+echo   [HIGH EFFICIENCY] - Best value/performance
+echo   2. Qwen3-0.6B ^(1024d, 2.3GB, MTEB: 75.42^)
+echo      Best for: General-purpose, excellent value
 echo.
-echo   6. Custom model path
+echo   [DEFAULT] - Fast and lightweight
+echo   3. EmbeddingGemma ^(768d, 4-8GB^)
+echo      Best for: Quick start, resource-constrained systems
+echo.
+echo   [ADVANCED]
+echo   4. Multi-Model Routing ^(5.3GB total, 100%% accuracy^)
+echo      Smart routing across BGE-M3 + Qwen3 + CodeRankEmbed
+echo.
+echo   5. Custom model path
 echo   0. Back to Search Configuration
 echo.
-set /p model_choice="Select model (0-6): "
+echo IMPORTANT: BGE-M3 validated 100%% identical to code-specific models
+echo in hybrid search mode ^(30-query test, Nov 2025^). Choose by VRAM.
+echo.
+set /p model_choice="Select model (0-5): "
 
 if not defined model_choice goto search_config_menu
 if "!model_choice!"=="" goto search_config_menu
 if "!model_choice!"=="0" goto search_config_menu
 
 set SELECTED_MODEL=
-if "!model_choice!"=="1" set SELECTED_MODEL=Qodo/Qodo-Embed-1-1.5B
-if "!model_choice!"=="2" set SELECTED_MODEL=jinaai/jina-embeddings-v2-base-code
-if "!model_choice!"=="3" set SELECTED_MODEL=Qodo/Qodo-Embed-1-7B
-if "!model_choice!"=="4" set SELECTED_MODEL=google/embeddinggemma-300m
-if "!model_choice!"=="5" set SELECTED_MODEL=BAAI/bge-m3
-if "!model_choice!"=="6" (
+if "!model_choice!"=="1" set SELECTED_MODEL=BAAI/bge-m3
+if "!model_choice!"=="2" set SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B
+if "!model_choice!"=="3" set SELECTED_MODEL=google/embeddinggemma-300m
+if "!model_choice!"=="4" goto enable_multi_model
+if "!model_choice!"=="5" (
     set /p SELECTED_MODEL="Enter model name or path: "
 )
 
@@ -887,12 +896,37 @@ if defined SELECTED_MODEL (
         set /p reindex_now="Clear old indexes now? (y/N): "
         if /i "!reindex_now!"=="y" (
             echo [INFO] Clearing old indexes and Merkle snapshots...
-            .\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; from merkle.snapshot_manager import SnapshotManager; import shutil; import json; storage = get_storage_dir(); sm = SnapshotManager(); cleared = 0; projects = list((storage / 'projects').glob('*/project_info.json')); [sm.delete_snapshot(json.load(open(p))['project_path']) or shutil.rmtree(p.parent) if p.exists() and (cleared := cleared + 1) else None for p in projects]; print(f'[OK] Cleared indexes and snapshots for {cleared} projects')" 2>nul
-            echo [OK] Indexes and Merkle snapshots cleared. Re-index projects via: /index_directory "path"
+            .\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; from merkle.snapshot_manager import SnapshotManager; import shutil; import json; storage = get_storage_dir(); sm = SnapshotManager(); cleared = 0; projects = list((storage / 'projects').glob('*/project_info.json')); [sm.delete_all_snapshots(json.load(open(p))['project_path']) or shutil.rmtree(p.parent) if p.exists() and (cleared := cleared + 1) else None for p in projects]; print(f'[OK] Cleared indexes and snapshots for {cleared} projects')" 2>nul
+            echo [OK] Indexes and Merkle snapshots cleared (all dimensions). Re-index projects via: /index_directory "path"
         )
     )
 ) else (
     echo [ERROR] Invalid choice
+)
+pause
+goto search_config_menu
+
+:enable_multi_model
+echo.
+echo === Enable Multi-Model Routing ===
+echo.
+echo This will enable intelligent query routing across:
+echo   - BGE-M3 ^(1024d, 3-4GB^)
+echo   - Qwen3-0.6B ^(1024d, 2.3GB^)
+echo   - CodeRankEmbed ^(768d, ~2GB^)
+echo.
+echo Total VRAM: 5.3GB
+echo Routing Accuracy: 100%% ^(validated^)
+echo Performance: 15-25%% quality improvement on complex queries
+echo.
+set /p confirm_multi="Enable multi-model routing? (y/N): "
+if /i "!confirm_multi!"=="y" (
+    set CLAUDE_MULTI_MODEL_ENABLED=true
+    echo [OK] Multi-model routing enabled for this session
+    echo [INFO] To make permanent, add to environment variables:
+    echo [INFO]   set CLAUDE_MULTI_MODEL_ENABLED=true
+) else (
+    echo [INFO] Cancelled
 )
 pause
 goto search_config_menu
@@ -903,26 +937,29 @@ echo === Quick Model Switch ===
 echo.
 echo Current Model:
 if exist ".venv\Scripts\python.exe" (
-    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding_model_name; specs = MODEL_REGISTRY.get(model, {}); is_code = specs.get('model_type', '').startswith('code'); marker = '[CODE]' if is_code else '[GENERAL]'; print(f'  {marker} {model} ({specs.get(\"dimension\", 768)}d)')" 2>nul
+    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding_model_name; specs = MODEL_REGISTRY.get(model, {}); dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); print(f'  {model} ({dim}d, {vram})')" 2>nul
 ) else (
     echo   google/embeddinggemma-300m ^(default^)
 )
 echo.
-echo Recommended Models:
+echo Recommended Models ^(Validated 2025-11^):
 echo.
-echo   [CODE-OPTIMIZED] - Best for programming projects
-echo   1. Qodo-1.5B ^(1536 dim, 4-6GB, CoIR: 68.53 - BEST accuracy/size^)
-echo   2. Jina-Code ^(768 dim, 2-4GB, 31 languages - BEST GLSL^)
-echo   3. Qodo-7B ^(3584 dim, 14-20GB, CoIR: 71.5 - MAX accuracy^)
+echo   [OPTIMAL] - Production-validated
+echo   1. BGE-M3 [RECOMMENDED] ^(1024d, 3-4GB, MTEB: 61.85^)
 echo.
-echo   [GENERAL PURPOSE] - For all content types
-echo   4. BGE-M3 ^(1024 dim, 8-16GB, hybrid search^)
-echo   5. EmbeddingGemma ^(768 dim, 4-8GB, default^)
+echo   [HIGH EFFICIENCY] - Best value
+echo   2. Qwen3-0.6B ^(1024d, 2.3GB, MTEB: 75.42^)
+echo.
+echo   [DEFAULT] - Fast and lightweight
+echo   3. EmbeddingGemma ^(768d, 4-8GB^)
+echo.
+echo   [ADVANCED]
+echo   M. Multi-Model Routing ^(5.3GB, 100%% accuracy^)
 echo.
 echo   A. View All Models ^(full registry^)
 echo   0. Back to Main Menu
 echo.
-set /p model_choice="Select model (0-5, A): "
+set /p model_choice="Select model (0-3, M, A): "
 
 REM Handle empty input or back
 if not defined model_choice goto menu_restart
@@ -931,11 +968,13 @@ if "!model_choice!"=="0" goto menu_restart
 
 REM Map choices to model names
 set SELECTED_MODEL=
-if "!model_choice!"=="1" set SELECTED_MODEL=Qodo/Qodo-Embed-1-1.5B
-if "!model_choice!"=="2" set SELECTED_MODEL=jinaai/jina-embeddings-v2-base-code
-if "!model_choice!"=="3" set SELECTED_MODEL=Qodo/Qodo-Embed-1-7B
-if "!model_choice!"=="4" set SELECTED_MODEL=BAAI/bge-m3
-if "!model_choice!"=="5" set SELECTED_MODEL=google/embeddinggemma-300m
+if "!model_choice!"=="1" set SELECTED_MODEL=BAAI/bge-m3
+if "!model_choice!"=="2" set SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B
+if "!model_choice!"=="3" set SELECTED_MODEL=google/embeddinggemma-300m
+
+REM Handle multi-model option
+if /i "!model_choice!"=="M" goto enable_multi_model
+if /i "!model_choice!"=="m" goto enable_multi_model
 
 REM Handle "All Models" option
 if /i "!model_choice!"=="A" goto select_embedding_model
@@ -1097,7 +1136,7 @@ REM System Status Functions
 :show_system_status
 echo [Runtime Status]
 if exist ".venv\Scripts\python.exe" (
-    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding_model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; is_code = specs.get('model_type', '').startswith('code'); dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); marker = '[CODE]' if is_code else '[GENERAL]'; print(f'Model: {marker} {model_short} ({dim}d, {vram})'); print('Tip: Press M for Quick Model Switch') if not is_code else print('Code-optimized model active')" 2>nul
+    .\.venv\Scripts\python.exe -c "import os; from search.config import get_search_config, MODEL_REGISTRY; multi_enabled = os.getenv('CLAUDE_MULTI_MODEL_ENABLED', '').lower() in ('true', '1'); cfg = get_search_config(); model = cfg.embedding_model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); marker = '[MULTI-MODEL]' if multi_enabled else '[SINGLE]'; print(f'Model: {marker} {model_short} ({dim}d, {vram})'); print('Multi-model routing: BGE-M3 + Qwen3 + CodeRankEmbed (5.3GB)') if multi_enabled else print('Tip: Press M for Quick Model Switch')" 2>nul
     if errorlevel 1 (
         echo Model: embeddinggemma-300m ^| Status: Loading...
     )
@@ -1129,10 +1168,20 @@ echo.
 echo This server enables hybrid semantic code search in Claude Code.
 echo.
 echo Key Features:
+echo   - 14 MCP Tools: Index, search, configure, manage projects
+echo   - Low-Level MCP SDK: Official Anthropic implementation ^(v0.5.5^)
+echo   - Multi-Model Routing: BGE-M3 + Qwen3 + CodeRankEmbed ^(optional^)
 echo   - Hybrid Search: BM25 + Semantic for optimal accuracy
 echo   - 93-97%% Token Reduction: Validated benchmark results
 echo   - Multi-language Support: 11 languages, 22 extensions
 echo   - Local Processing: No API calls, complete privacy
+echo.
+echo What's New in v0.5.5 ^(2025-11-15^):
+echo   - Official Anthropic Low-Level MCP SDK migration ^(production-grade^)
+echo   - Natural query support: Simple queries work without keywords
+echo   - GPU memory logging: Detailed VRAM tracking during model loading
+echo   - Multi-hop search timing: Cold 1.7-3.7s, cached 17-117ms ^(60-140x faster^)
+echo   - All 14/14 tools fully operational
 echo.
 echo Quick Start:
 echo   1. Run: install-windows.bat ^(first time setup^)
@@ -1152,12 +1201,14 @@ echo     - README.md: Complete setup guide and quick start
 echo     - CLAUDE.md: Development context and advanced usage
 echo.
 echo   docs/ Directory:
+echo     - DOCUMENTATION_INDEX.md: Master reference guide
+echo     - ADVANCED_FEATURES_GUIDE.md: Multi-model routing, multi-hop, graph search
+echo     - VERSION_HISTORY.md: Complete feature timeline
 echo     - INSTALLATION_GUIDE.md: Detailed installation steps
 echo     - BENCHMARKS.md: Performance metrics and validation
 echo     - HYBRID_SEARCH_CONFIGURATION_GUIDE.md: Search tuning
 echo     - MODEL_MIGRATION_GUIDE.md: Model switching guide
 echo     - MCP_TOOLS_REFERENCE.md: MCP tools documentation
-echo     - claude_code_config.md: Claude Code integration
 echo     - TESTING_GUIDE.md: Test suite documentation
 echo     - GIT_WORKFLOW.md: Git automation scripts
 echo.

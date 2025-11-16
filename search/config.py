@@ -13,28 +13,28 @@ MODEL_REGISTRY = {
         "max_context": 2048,
         "passage_prefix": "Retrieval-document: ",
         "description": "Default model, fast and efficient",
-        "vram_gb": "4-8",
+        "vram_gb": "4-8GB",
         "recommended_batch_size": 128,  # Conservative for 8GB VRAM
     },
     "BAAI/bge-m3": {
         "dimension": 1024,
         "max_context": 8192,
         "description": "Recommended upgrade, hybrid search support",
-        "vram_gb": "8-16",
+        "vram_gb": "3-4GB",
         "recommended_batch_size": 256,  # Optimal for 16GB+ VRAM
     },
     "Qwen/Qwen3-Embedding-0.6B": {
         "dimension": 1024,
         "max_context": 32768,
         "description": "High-efficiency model with excellent performance-to-size ratio",
-        "vram_gb": "~2.3",
+        "vram_gb": "2.3GB",
         "recommended_batch_size": 256,
     },
     "Qwen/Qwen3-Embedding-4B": {
         "dimension": 2560,
         "max_context": 32768,
         "description": "High-performance model, top of MTEB leaderboard",
-        "vram_gb": "~15.3",
+        "vram_gb": "15.3GB",
         "recommended_batch_size": 128, # Smaller batch size for the larger model
     },
     # Code-specific models (optimized for Python, C++, and programming languages)
@@ -42,7 +42,7 @@ MODEL_REGISTRY = {
         "dimension": 1536,
         "max_context": 32000,
         "description": "Code-specific model (CoIR: 68.53), best accuracy/size ratio for code retrieval",
-        "vram_gb": "4-6",
+        "vram_gb": "4-6GB",
         "recommended_batch_size": 128,
         "model_type": "code-specific",
         "languages": ["python", "cpp", "csharp", "go", "java", "javascript", "php", "ruby", "typescript"],
@@ -51,7 +51,7 @@ MODEL_REGISTRY = {
         "dimension": 768,
         "max_context": 8192,
         "description": "Lightweight code model with 31-language support, best GLSL coverage probability",
-        "vram_gb": "2-4",
+        "vram_gb": "2-4GB",
         "recommended_batch_size": 256,
         "model_type": "code-specific-multilingual",
         "languages": 31,  # Python, C++, JavaScript, Java, Rust, Go, and 25 more
@@ -60,7 +60,7 @@ MODEL_REGISTRY = {
         "dimension": 3584,
         "max_context": 32000,
         "description": "Highest-accuracy code model (CoIR: 71.5), richest semantic embeddings",
-        "vram_gb": "14-20",
+        "vram_gb": "14-20GB",
         "recommended_batch_size": 64,
         "model_type": "code-specific",
         "languages": ["python", "cpp", "csharp", "go", "java", "javascript", "php", "ruby", "typescript"],
@@ -69,7 +69,7 @@ MODEL_REGISTRY = {
         "dimension": 2048,
         "max_context": 512,
         "description": "Code-specific large model (Code2Code: 51.55 MRR, NL2Code: 69.38 MRR), Matryoshka flexible embeddings",
-        "vram_gb": "5-10",
+        "vram_gb": "5-10GB",
         "recommended_batch_size": 128,
         "model_type": "code-specific",
         "languages": ["c", "csharp", "go", "java", "javascript", "typescript", "php", "python", "ruby"],
@@ -79,7 +79,7 @@ MODEL_REGISTRY = {
         "dimension": 768,
         "max_context": 8192,
         "description": "Code-specific embedding model (CSN: 77.9 MRR, CoIR: 60.1 NDCG@10)",
-        "vram_gb": "~2",
+        "vram_gb": "2GB",
         "recommended_batch_size": 128,
         "model_type": "code-specific",
         "task_instruction": "Represent this query for searching relevant code",  # Required query prefix
