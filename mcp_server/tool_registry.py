@@ -107,15 +107,14 @@ PROCESS:
                     "type": "string",
                     "description": "Optional name for organization (defaults to directory name)"
                 },
-                "file_patterns": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "File patterns to include (default: all supported extensions)"
-                },
                 "incremental": {
                     "type": "boolean",
                     "default": True,
                     "description": "Use incremental indexing if snapshot exists (default: True)"
+                },
+                "multi_model": {
+                    "type": "boolean",
+                    "description": "Index for all models in pool (Qwen3, BGE-M3, CodeRankEmbed). Default: auto-detect from CLAUDE_MULTI_MODEL_ENABLED environment variable"
                 }
             },
             "required": ["directory_path"]

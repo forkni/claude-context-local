@@ -1,13 +1,39 @@
-"""FastMCP server for Claude Code integration."""
+"""Low-level MCP server for Claude Code integration.
+
+AUTO-GENERATED from FastMCP backup.
+DO NOT EDIT MANUALLY - regenerate with tools/build_lowlevel_server.py
+
+Migrated from FastMCP to official MCP SDK for:
+- Explicit lifecycle management (fixes project_id=None bug)
+- Predictable state initialization (fixes SSE race conditions)
+- Better production reliability (official Anthropic implementation)
+"""
+
 import asyncio
 import json
 import logging
 import os
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
+
+# Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+
+# Official MCP SDK imports
+from mcp.server.lowlevel import Server
+from mcp.types import (
+    Tool,
+    Resource,
+    Prompt,
+    TextContent,
+    GetPromptResult,
+    PromptMessage,
+)
+
+# Project imports
 from chunking.multi_language_chunker import MultiLanguageChunker
 from embeddings.embedder import CodeEmbedder
 from search.config import get_config_manager, get_search_config
@@ -15,41 +41,30 @@ from search.hybrid_searcher import HybridSearcher
 from search.indexer import CodeIndexManager
 from search.searcher import IntelligentSearcher
 from search.query_router import QueryRouter
-try:
-    from mcp.server.fastmcp import FastMCP
-except ImportError:
-    print('FastMCP not found. Install with: uv add mcp fastmcp')
-    sys.exit(1)
+
+# Configure logging
 debug_mode = os.getenv('MCP_DEBUG', '').lower() in ('1', 'true', 'yes')
 log_level = logging.DEBUG if debug_mode else logging.INFO
 log_format = ('%(asctime)s - %(name)s - %(levelname)s - %(message)s' if
     debug_mode else '%(asctime)s - %(message)s')
 logging.basicConfig(level=log_level, format=log_format, datefmt='%H:%M:%S')
 logger = logging.getLogger(__name__)
+
 if debug_mode:
     logging.getLogger('mcp').setLevel(logging.DEBUG)
-    logging.getLogger('fastmcp').setLevel(logging.DEBUG)
 else:
     logging.getLogger('mcp').setLevel(logging.WARNING)
-    logging.getLogger('fastmcp').setLevel(logging.WARNING)
     logging.getLogger('asyncio').setLevel(logging.WARNING)
 
-# Get host/port from environment variables or command-line args
-# Parse args early if running as __main__ to configure FastMCP instance
-mcp_host = os.getenv('MCP_SERVER_HOST', '127.0.0.1')
-mcp_port = int(os.getenv('MCP_SERVER_PORT', '8000'))
-
-# If running as main module, parse args early to get host/port for FastMCP init
-if __name__ == '__main__':
-    import argparse
-    _early_parser = argparse.ArgumentParser(add_help=False)
-    _early_parser.add_argument('--host', default='localhost')
-    _early_parser.add_argument('--port', type=int, default=8000)
-    _early_args, _ = _early_parser.parse_known_args()
-    mcp_host = _early_args.host
-    mcp_port = _early_args.port
-
-mcp = FastMCP('Code Search', host=mcp_host, port=mcp_port)
+# Global state
+_embedders = {}  # model_key -> CodeEmbedder instance
+_index_manager = None
+_searcher = None
+_current_model_key = None  # Track which model the searcher was initialized with
+_storage_dir = None
+_current_project = None
+_model_preload_task_started = False
+_multi_model_enabled = os.getenv('CLAUDE_MULTI_MODEL_ENABLED', 'true').lower() in ('true', '1', 'yes')
 
 # Multi-model pool configuration
 MODEL_POOL_CONFIG = {
@@ -58,14 +73,10 @@ MODEL_POOL_CONFIG = {
     "coderankembed": "nomic-ai/CodeRankEmbed"
 }
 
-# Global state
-_embedders = {}  # model_key -> CodeEmbedder instance
-_index_manager = None
-_searcher = None
-_storage_dir = None
-_current_project = None
-_model_preload_task_started = False
-_multi_model_enabled = os.getenv('CLAUDE_MULTI_MODEL_ENABLED', 'true').lower() in ('true', '1', 'yes')
+
+# ============================================================================
+# HELPER FUNCTIONS (copied from FastMCP backup)
+# ============================================================================
 
 
 def get_storage_dir() ->Path:
@@ -79,8 +90,13 @@ def get_storage_dir() ->Path:
     return _storage_dir
 
 
-def get_project_storage_dir(project_path: str) ->Path:
-    """Get or create project-specific storage directory with per-model dimension suffix."""
+def get_project_storage_dir(project_path: str, model_key: str = None) -> Path:
+    """Get or create project-specific storage directory with per-model dimension suffix.
+
+    Args:
+        project_path: Path to the project
+        model_key: Model key for routing (None = use config default)
+    """
     base_dir = get_storage_dir()
     import hashlib
     from datetime import datetime
@@ -88,8 +104,22 @@ def get_project_storage_dir(project_path: str) ->Path:
     project_name = project_path.name
     project_hash = hashlib.md5(str(project_path).encode()).hexdigest()[:8]
     from search.config import MODEL_REGISTRY, get_search_config, get_model_slug
-    config = get_search_config()
-    model_name = config.embedding_model_name
+
+    # Determine which model to use
+    if model_key:
+        # Use routing-selected model (map model_key to model_name via MODEL_POOL_CONFIG)
+        if model_key not in MODEL_POOL_CONFIG:
+            logger.error(f'Invalid model_key: {model_key}, falling back to config default')
+            config = get_search_config()
+            model_name = config.embedding_model_name
+        else:
+            model_name = MODEL_POOL_CONFIG[model_key]
+            logger.info(f'[ROUTING] Using routed model: {model_name} (key: {model_key})')
+    else:
+        # Use config default
+        config = get_search_config()
+        model_name = config.embedding_model_name
+        logger.info(f'[CONFIG] Using config default model: {model_name}')
 
     # Validate model exists in registry (prevent silent 768d fallback)
     model_config = MODEL_REGISTRY.get(model_name)
@@ -361,21 +391,28 @@ def get_index_manager(project_path: str=None) ->CodeIndexManager:
     return _index_manager
 
 
-def get_searcher(project_path: str=None):
-    """Get searcher for specific project or current project."""
-    global _searcher, _current_project
+def get_searcher(project_path: str=None, model_key: str=None):
+    """Get searcher for specific project or current project.
+
+    Args:
+        project_path: Path to project (None = use current project)
+        model_key: Model key for routing (None = use config default)
+    """
+    global _searcher, _current_project, _current_model_key
     if project_path is None and _current_project is None:
         project_path = str(PROJECT_ROOT)
         logger.info(
             f'No active project found. Using server directory: {project_path}')
-    if _current_project != project_path or _searcher is None:
+
+    # Invalidate cache if project or model changed
+    if _current_project != project_path or _current_model_key != model_key or _searcher is None:
         _current_project = project_path or _current_project
         config = get_search_config()
         logger.info(
             f'[GET_SEARCHER] Initializing searcher for project: {_current_project}'
             )
         if config.enable_hybrid_search:
-            project_storage = get_project_storage_dir(_current_project)
+            project_storage = get_project_storage_dir(_current_project, model_key=model_key)
             storage_dir = project_storage / 'index'
             logger.info(
                 f'[GET_SEARCHER] Using storage directory: {storage_dir}')
@@ -385,7 +422,7 @@ def get_searcher(project_path: str=None):
             project_id = project_storage.name.rsplit('_', 1)[0]  # Remove dimension suffix
 
             _searcher = HybridSearcher(storage_dir=str(storage_dir),
-                embedder=get_embedder(), bm25_weight=config.bm25_weight,
+                embedder=get_embedder(model_key), bm25_weight=config.bm25_weight,
                 dense_weight=config.dense_weight, rrf_k=config.
                 rrf_k_parameter, max_workers=2, project_id=project_id)
             try:
@@ -403,1167 +440,362 @@ def get_searcher(project_path: str=None):
                 )
         else:
             _searcher = IntelligentSearcher(get_index_manager(project_path),
-                get_embedder())
+                get_embedder(model_key))
             logger.info('IntelligentSearcher initialized (semantic-only mode)')
+
+        # Track which model this searcher was initialized with
+        _current_model_key = model_key
         logger.info(
             f"Searcher initialized for project: {Path(_current_project).name if _current_project else 'unknown'}"
             )
     return _searcher
 
 
-@mcp.tool()
-def search_code(query: str, k: int=5, search_mode: str='auto', file_pattern:
-    str=None, chunk_type: str=None, include_context: bool=True,
-    auto_reindex: bool=True, max_age_minutes: float=5, use_routing: bool=True,
-    model_key: str=None) ->dict:
-    """
-    PREFERRED: Use this tool for code analysis and understanding tasks. Provides semantic search
-    with intelligent multi-model routing for optimal results.
+# ============================================================================
+# CRITICAL FIX: Explicit lifecycle management
+# ============================================================================
+# Server instance will be created without custom lifespan
+# Global state initialization happens in Starlette app_lifespan below
 
-    WHEN TO USE:
-    - Understanding how specific functionality is implemented
-    - Finding similar patterns across the codebase
-    - Discovering related functions/classes by behavior
-    - Searching for code that handles specific use cases
-    - Analyzing architectural patterns and relationships
+# Create server instance
+server = Server("Code Search")
 
-    WHEN NOT TO USE:
-    - Simple exact text/pattern matching (use generic grep/search tools instead)
-    - Searching non-Python files (this tool only works with Python codebases)
-    - When the codebase hasn't been indexed yet (use index_directory first)
+# Import tool registry
+from mcp_server.tool_registry import TOOL_REGISTRY, build_tool_list
 
-    Args:
-        query: Natural language description of functionality you're looking for
-               Examples: "error handling", "user authentication", "database connection"
-        k: Number of results to return (default: 5, max recommended: 20)
-        search_mode: Currently supports "semantic" mode only
-        file_pattern: Filter by filename/path pattern (e.g., "auth", "utils", "models")
-        chunk_type: Filter by code structure - "function", "class", "method", or None for all
-        include_context: Include similar chunks and relationships (default: True, recommended)
-        auto_reindex: Automatically reindex if index is stale (default: True)
-        max_age_minutes: Maximum age of index before auto-reindex (default: 5 minutes)
-        use_routing: Enable intelligent model routing based on query type (default: True)
-        model_key: Override model selection ("qwen3", "bge_m3", "coderankembed"). If None, uses routing or config default.
 
-    Returns:
-        JSON with semantically ranked results including similarity scores, file paths,
-        line numbers, code previews, semantic tags, and contextual relationships.
-        When multi-model routing is enabled, includes routing information.
-    """
+# ============================================================================
+# SERVER HANDLERS
+# ============================================================================
+
+@server.list_tools()
+async def handle_list_tools() -> List[Tool]:
+    """List all available tools."""
+    tools = build_tool_list()
+    logger.debug(f"Listing {len(tools)} tools")
+    return tools
+
+
+@server.call_tool()
+async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
+    """Dispatch tool calls to appropriate handlers."""
+    logger.info(f"[TOOL_CALL] {name}")
+
     try:
-        logger.info(
-            f"[SEARCH] MCP REQUEST: search_code(query='{query}', k={k}, mode='{search_mode}', file_pattern={file_pattern}, chunk_type={chunk_type}, use_routing={use_routing})"
-            )
+        # Import tool handler module
+        from mcp_server import tool_handlers
 
-        # PHASE 2: Intelligent Model Routing
-        selected_model_key = None
-        routing_info = None
+        # Get handler function
+        handler_name = f"handle_{name}"
+        if not hasattr(tool_handlers, handler_name):
+            raise ValueError(f"Unknown tool: {name}")
 
-        if _multi_model_enabled and use_routing and model_key is None:
-            # Route query to optimal model
-            router = QueryRouter(enable_logging=True)
-            decision = router.route(query)
-            selected_model_key = decision.model_key
-            routing_info = {
-                "model_selected": decision.model_key,
-                "confidence": decision.confidence,
-                "reason": decision.reason,
-                "scores": decision.scores
-            }
-            logger.info(f"[ROUTING] Selected model: {selected_model_key} (confidence: {decision.confidence:.2f})")
-        elif model_key is not None:
-            # User explicitly specified model
-            selected_model_key = model_key
-            routing_info = {
-                "model_selected": model_key,
-                "confidence": 1.0,
-                "reason": "User-specified model override",
-                "scores": {}
-            }
-            logger.info(f"[ROUTING] User override: {model_key}")
-        else:
-            # Single-model mode or routing disabled
-            logger.info("[ROUTING] Using default model (routing disabled or single-model mode)")
+        handler = getattr(tool_handlers, handler_name)
 
-        # ALWAYS populate routing_info for transparency (even when routing disabled)
-        if routing_info is None:
-            if _multi_model_enabled:
-                # Determine what model get_embedder() will use (simulating its logic)
-                # When selected_model_key is None, get_embedder() defaults to bge_m3
-                actual_model = "bge_m3"  # Default fallback model
-                reason = "Routing disabled - using default model (bge_m3)"
-            else:
-                # Single-model mode
-                actual_model = "single_model"
-                reason = "Single-model mode - routing not applicable"
+        # Call handler
+        result = await handler(arguments)
 
-            routing_info = {
-                "model_selected": actual_model,
-                "confidence": 0.0,
-                "reason": reason,
-                "scores": {}
-            }
-            logger.info(f"[ROUTING] Populated default routing info: {actual_model}")
+        # Convert to TextContent
+        result_text = json.dumps(result, indent=2) if isinstance(result, dict) else str(result)
+        return [TextContent(type="text", text=result_text)]
 
-        if auto_reindex and _current_project:
-            from search.incremental_indexer import IncrementalIndexer
-            logger.info(
-                f'Checking if index needs refresh (max age: {max_age_minutes} minutes)'
-                )
-            config_for_reindex = get_search_config()
-            if config_for_reindex.enable_hybrid_search:
-                project_storage = get_project_storage_dir(_current_project)
-                storage_dir = project_storage / 'index'
-                indexer_for_reindex = HybridSearcher(storage_dir=str(
-                    storage_dir), embedder=get_embedder(selected_model_key), bm25_weight=
-                    config_for_reindex.bm25_weight, dense_weight=
-                    config_for_reindex.dense_weight, rrf_k=
-                    config_for_reindex.rrf_k_parameter, max_workers=2)
-            else:
-                indexer_for_reindex = get_index_manager(_current_project)
-            embedder = get_embedder(selected_model_key)
-            chunker = MultiLanguageChunker(_current_project)
-            incremental_indexer = IncrementalIndexer(indexer=
-                indexer_for_reindex, embedder=embedder, chunker=chunker)
-            reindex_result = incremental_indexer.auto_reindex_if_needed(
-                _current_project, max_age_minutes=max_age_minutes)
-            if (reindex_result.files_modified > 0 or reindex_result.
-                files_added > 0):
-                logger.info(
-                    f'Auto-reindexed: {reindex_result.files_added} added, {reindex_result.files_modified} modified, took {reindex_result.time_taken:.2f}s'
-                    )
-                global _searcher
-                _searcher = None
-        searcher = get_searcher()
-        logger.info(f'Current project: {_current_project}')
-        if hasattr(searcher, 'index_manager'):
-            index_stats = searcher.index_manager.get_stats()
-            total_chunks = index_stats.get('total_chunks', 0)
-        elif hasattr(searcher, 'get_stats'):
-            index_stats = searcher.get_stats()
-            total_chunks = index_stats.get('total_chunks', 0)
-            logger.info(
-                f"[SEARCH] HybridSearcher stats - BM25: {index_stats.get('bm25_documents', 0)}, Dense: {index_stats.get('dense_vectors', 0)}, Ready: {index_stats.get('is_ready', False)}"
-                )
-        elif hasattr(searcher, 'is_ready'):
-            if searcher.is_ready:
-                total_chunks = 1
-            else:
-                total_chunks = 0
-        else:
-            total_chunks = 0
-        logger.info(f'Index contains {total_chunks} chunks')
-        if total_chunks == 0:
-            error_msg = {'error': 'No indexed project found', 'message':
-                'You must index a project before searching', 'suggestions':
-                [
-                "Index your project: index_directory('/path/to/your/project')",
-                'List available projects: list_projects()'],
-                'current_project': _current_project or 'None'}
-            return error_msg
-        config_manager = get_config_manager()
-        actual_search_mode = config_manager.get_search_mode_for_query(query,
-            search_mode)
-        logger.info(
-            f'Using search mode: {actual_search_mode} (requested: {search_mode})'
-            )
-        filters = {}
-        if file_pattern:
-            filters['file_pattern'] = [file_pattern]
-        if chunk_type:
-            filters['chunk_type'] = chunk_type
-        logger.info(f'Search filters: {filters}')
-        if isinstance(searcher, HybridSearcher):
-            results = searcher.search(query=query, k=k, search_mode=
-                actual_search_mode, min_bm25_score=0.1, use_parallel=
-                get_search_config().use_parallel_search, filters=filters if
-                filters else None)
-        else:
-            context_depth = 1 if include_context else 0
-            results = searcher.search(query=query, k=k, search_mode=
-                actual_search_mode, context_depth=context_depth, filters=
-                filters if filters else None)
-        logger.info(f'Search returned {len(results)} results')
-
-        def make_snippet(preview: Optional[str]) ->dict:
-            if not preview:
-                return ''
-            for line in preview.split('\n'):
-                s = line.strip()
-                if s:
-                    snippet = ' '.join(s.split())
-                    return snippet[:157] + '...' if len(snippet
-                        ) > 160 else snippet
-            return ''
-        formatted_results = []
-        for result in results:
-            if hasattr(result, 'relative_path'):
-                file_path = result.relative_path
-                start_line = result.start_line
-                end_line = result.end_line
-                chunk_type = result.chunk_type
-                similarity_score = result.similarity_score
-                chunk_id = result.chunk_id
-                name = getattr(result, 'name', None)
-                content_preview = getattr(result, 'content_preview', None)
-            else:
-                file_path = result.metadata.get('relative_path', '')
-                start_line = result.metadata.get('start_line', 0)
-                end_line = result.metadata.get('end_line', 0)
-                chunk_type = result.metadata.get('chunk_type', 'unknown')
-                similarity_score = result.score
-                chunk_id = result.doc_id
-                name = result.metadata.get('name')
-                content_preview = result.metadata.get('content_preview')
-            item = {'file': file_path, 'lines': f'{start_line}-{end_line}',
-                'kind': chunk_type, 'score': round(similarity_score, 2),
-                'chunk_id': chunk_id}
-            if name:
-                item['name'] = name
-            snippet = make_snippet(content_preview)
-            if snippet:
-                item['snippet'] = snippet
-            formatted_results.append(item)
-
-        # Enrich results with call graph metadata if available
-        # Get index_manager from searcher (already initialized with project_id)
-        index_manager = None
-        if hasattr(searcher, 'index_manager'):
-            index_manager = searcher.index_manager
-        elif hasattr(searcher, 'dense_index'):
-            index_manager = searcher.dense_index
-
-        # Debug logging to verify graph storage
-        if index_manager:
-            logger.info(f"[GRAPH_DEBUG] index_manager exists: {type(index_manager)}")
-            logger.info(f"[GRAPH_DEBUG] has graph_storage attr: {hasattr(index_manager, 'graph_storage')}")
-            if hasattr(index_manager, 'graph_storage') and index_manager.graph_storage:
-                logger.info(f"[GRAPH_DEBUG] graph_storage type: {type(index_manager.graph_storage)}")
-                logger.info(f"[GRAPH_DEBUG] graph nodes count: {len(index_manager.graph_storage)}")
-
-        if index_manager and index_manager.graph_storage is not None:
-            for item in formatted_results:
-                chunk_id = item.get('chunk_id')
-                if chunk_id:
-                    try:
-                        # Get call relationships from graph storage
-                        calls = index_manager.graph_storage.get_callees(chunk_id)
-                        called_by = index_manager.graph_storage.get_callers(chunk_id)
-                        
-                        # Only add graph field if there are relationships
-                        if calls or called_by:
-                            item['graph'] = {
-                                'calls': calls if calls else [],
-                                'called_by': called_by if called_by else []
-                            }
-                    except Exception as e:
-                        # Log exceptions during debugging
-                        logger.debug(f"[GRAPH_DEBUG] Failed to get graph data for {chunk_id}: {e}")
-                        pass
-
-        response = {'query': query, 'results': formatted_results}
-
-        # Add routing information if available
-        if routing_info:
-            response['routing'] = routing_info
-
-        return response
-    except (ValueError, TypeError, KeyError, AttributeError, RuntimeError
-        ) as e:
-        error_msg = f'Search failed: {str(e)}'
-        logger.error(error_msg, exc_info=True)
-        return {'error': error_msg}
+    except Exception as e:
+        logger.error(f"[TOOL_ERROR] {name}: {e}", exc_info=True)
+        error_response = {"error": str(e), "tool": name, "arguments": arguments}
+        return [TextContent(type="text", text=json.dumps(error_response, indent=2))]
 
 
-@mcp.tool()
-def index_directory(directory_path: str, project_name: str=None,
-    file_patterns: List[str]=None, incremental: bool=True) ->dict:
-    """
-    SETUP REQUIRED: Index a codebase for semantic search. Must run this before
-    using search_code on a new project. Supports Python, JavaScript, TypeScript, JSX, TSX, and Svelte.
+# ============================================================================
+# RESOURCE HANDLERS
+# ============================================================================
 
-    WHEN TO USE:
-    - First time analyzing a new codebase
-    - After significant code changes that might affect search results
-    - When switching to a different project
-
-    PROCESS:
-    - Uses Merkle trees to detect file changes efficiently
-    - Only reprocesses changed/new files (incremental mode)
-    - Parses code files using AST (Python) and tree-sitter (JS/TS/JSX/TSX/Svelte)
-    - Chunks code into semantic units (functions, classes, methods)
-    - Generates 768-dimensional embeddings using EmbeddingGemma-300m
-    - Builds FAISS vector index for fast similarity search
-    - Stores metadata in SQLite database
-
-    Args:
-        directory_path: Absolute path to project root
-        project_name: Optional name for organization (defaults to directory name)
-        file_patterns: File patterns to include (default: all supported extensions)
-        incremental: Use incremental indexing if snapshot exists (default: True)
-
-    Returns:
-        JSON with indexing statistics and success status
-
-    Note: Incremental indexing is much faster for updates. Full reindex on first run.
-    """
-    try:
-        from search.incremental_indexer import IncrementalIndexer
-        _maybe_start_model_preload()
-        directory_path = Path(directory_path).resolve()
-        if not directory_path.exists():
-            return {'error': f'Directory does not exist: {directory_path}'}
-        if not directory_path.is_dir():
-            return {'error': f'Path is not a directory: {directory_path}'}
-        project_name = project_name or directory_path.name
-        logger.info(
-            f'Indexing directory: {directory_path} (incremental={incremental})'
-            )
-        config = get_search_config()
-        # Get the globally managed searcher instance
-        # This ensures incremental updates are applied to the correct, persistent index
-        searcher_instance = get_searcher(str(directory_path))
-
-        if isinstance(searcher_instance, HybridSearcher):
-            indexer = searcher_instance # Pass the HybridSearcher directly
-            logger.info(
-                'Using HybridSearcher for indexing to populate both BM25 and dense indices'
-                )
-        else: # IntelligentSearcher (semantic-only)
-            indexer = searcher_instance.index_manager # Pass its CodeIndexManager
-            logger.info('Using CodeIndexManager for dense-only indexing')
-        embedder = get_embedder()
-        chunker = MultiLanguageChunker(str(directory_path))
-        incremental_indexer = IncrementalIndexer(indexer=indexer, embedder=
-            embedder, chunker=chunker)
-        global _current_project
-        _current_project = str(directory_path)
-        logger.info(
-            f'[PER_MODEL_INDICES] Updated _current_project to: {_current_project}'
-            )
-        result = incremental_indexer.incremental_index(str(directory_path),
-            project_name, force_full=not incremental)
-        stats = incremental_indexer.get_indexing_stats(str(directory_path))
-        response = {'success': result.success, 'directory': str(
-            directory_path), 'project_name': project_name, 'incremental': 
-            incremental and result.files_modified > 0, 'files_added':
-            result.files_added, 'files_removed': result.files_removed,
-            'files_modified': result.files_modified, 'chunks_added': result
-            .chunks_added, 'chunks_removed': result.chunks_removed,
-            'time_taken': round(result.time_taken, 2), 'index_stats': stats}
-        if result.error:
-            response['error'] = result.error
-        logger.info(
-            f'Indexing completed. Added: {result.files_added}, Modified: {result.files_modified}, Time: {result.time_taken:.2f}s'
-            )
-        return response
-    except (OSError, IOError, ValueError, TypeError, RuntimeError, MemoryError
-        ) as e:
-        error_msg = f'Indexing failed: {str(e)}'
-        logger.error(error_msg, exc_info=True)
-        return {'error': error_msg}
+@server.list_resources()
+async def handle_list_resources() -> List[Resource]:
+    """List all available resources."""
+    return [
+        Resource(
+            uri="search://stats",
+            name="Search Statistics",
+            description="Detailed search index statistics",
+            mimeType="application/json"
+        )
+    ]
 
 
-@mcp.tool()
-def find_similar_code(chunk_id: str, k: int=5) ->dict:
-    """
-    SPECIALIZED: Find code chunks functionally similar to a specific reference chunk.
-    Use this when you want to discover code that does similar things to a known piece of code.
+@server.read_resource()
+async def handle_read_resource(uri: str) -> str:
+    """Read a resource by URI."""
+    logger.info(f"[RESOURCE_READ] {uri}")
 
-    WHEN TO USE:
-    - Finding alternative implementations of the same functionality
-    - Discovering code duplication or similar patterns
-    - Understanding how a pattern is used throughout the codebase
-    - Refactoring: finding related code that might need similar changes
-
-    WORKFLOW:
-    1. First use search_code to find a reference chunk
-    2. Use the chunk_id from search results with this tool
-    3. Get ranked list of functionally similar code
-
-    Args:
-        chunk_id: ID from search_code results (format: "file:lines:type:name")
-        k: Number of similar chunks to return (default: 5)
-
-    Returns:
-        JSON with reference chunk info and ranked similar chunks with similarity scores
-    """
-    try:
-        searcher = get_searcher()
-        results = searcher.find_similar_to_chunk(chunk_id, k=k)
-        formatted_results = []
-        for result in results:
-            formatted_results.append({'file_path': result.relative_path,
-                'lines': f'{result.start_line}-{result.end_line}',
-                'chunk_type': result.chunk_type, 'name': result.name,
-                'similarity_score': round(result.similarity_score, 3),
-                'content_preview': result.content_preview, 'tags': result.tags}
-                )
-        response = {'reference_chunk': chunk_id, 'similar_chunks':
-            formatted_results}
-        return response
-    except (ValueError, TypeError, KeyError, AttributeError, RuntimeError
-        ) as e:
-        error_msg = f'Similar code search failed: {str(e)}'
-        logger.error(error_msg, exc_info=True)
-        return {'error': error_msg}
-
-
-@mcp.tool()
-def get_index_status() ->dict:
-    """
-    Get current status and statistics of the search index.
-
-    Returns:
-        JSON string with index statistics and model information
-    """
-    try:
-        index_manager = get_index_manager()
-        stats = index_manager.get_stats()
-
-        # Collect model info from all loaded models in pool
-        model_info = {}
-        if _multi_model_enabled:
-            loaded_models = []
-            for model_key, embedder in _embedders.items():
-                if embedder is not None:
-                    try:
-                        info = embedder.get_model_info()
-                        info['model_key'] = model_key
-                        loaded_models.append(info)
-                    except Exception as e:
-                        logger.warning(f"Failed to get info for {model_key}: {e}")
-
-            model_info = {
-                'multi_model_mode': True,
-                'loaded_models': loaded_models,
-                'total_loaded': len(loaded_models),
-                'available_models': list(MODEL_POOL_CONFIG.keys())
-            }
-        else:
-            # Single model mode
-            if "default" in _embedders and _embedders["default"] is not None:
-                model_info = _embedders["default"].get_model_info()
-                model_info['multi_model_mode'] = False
-            else:
-                model_info = {'status': 'not_loaded', 'multi_model_mode': False}
-
-        response = {'index_statistics': stats, 'model_information':
-            model_info, 'storage_directory': str(get_storage_dir())}
-        return response
-    except (OSError, IOError, AttributeError, RuntimeError) as e:
-        error_msg = f'Status check failed: {str(e)}'
-        logger.error(error_msg, exc_info=True)
-        return {'error': error_msg}
-
-
-@mcp.tool()
-def list_projects() ->dict:
-    """
-    List all indexed projects with their information.
-
-    Returns:
-        JSON string with list of projects and their metadata
-    """
-    try:
-        base_dir = get_storage_dir()
-        projects_dir = base_dir / 'projects'
-        if not projects_dir.exists():
-            return {'projects': [], 'count': 0, 'message':
-                'No projects indexed yet'}
-        projects = []
-        for project_dir in projects_dir.iterdir():
-            if project_dir.is_dir():
-                info_file = project_dir / 'project_info.json'
-                if info_file.exists():
-                    with open(info_file) as f:
-                        project_info = json.load(f)
-                    stats_file = project_dir / 'index' / 'stats.json'
-                    if stats_file.exists():
-                        with open(stats_file) as f:
-                            stats = json.load(f)
-                        project_info['index_stats'] = stats
-                    projects.append(project_info)
-        return {'projects': projects, 'count': len(projects),
-            'current_project': _current_project}
-    except (OSError, IOError, ValueError, TypeError) as e:
-        logger.error(f'Error listing projects: {e}')
-        return {'error': str(e)}
-
-
-@mcp.tool()
-def switch_project(project_path: str) ->dict:
-    """
-    Switch to a different indexed project for searching.
-
-    Args:
-        project_path: Path to the project directory
-
-    Returns:
-        JSON string with switch result
-    """
-    try:
-        global _current_project, _index_manager, _searcher
-        project_path = Path(project_path).resolve()
-        if not project_path.exists():
-            return {'error': f'Project path does not exist: {project_path}'}
-        project_dir = get_project_storage_dir(str(project_path))
-        index_dir = project_dir / 'index'
-        if not index_dir.exists() or not (index_dir / 'code.index').exists():
-            return {'error': f'Project not indexed: {project_path}',
-                'suggestion': f"Run index_directory('{project_path}') first"}
-        _current_project = str(project_path)
-        _index_manager = None
-        _searcher = None
-        info_file = project_dir / 'project_info.json'
-        project_info = {}
-        if info_file.exists():
-            with open(info_file) as f:
-                project_info = json.load(f)
-        logger.info(f'Switched to project: {project_path.name}')
-        return {'success': True, 'message':
-            f'Switched to project: {project_path.name}', 'project_info':
-            project_info}
-    except (OSError, IOError, ValueError, TypeError, AttributeError) as e:
-        logger.error(f'Error switching project: {e}')
-        return {'error': str(e)}
-
-
-@mcp.tool()
-def clear_index() ->dict:
-    """
-    Clear the entire search index and metadata for the current project.
-    Deletes ALL dimension indices (768d, 1024d, etc.) and associated Merkle snapshots.
-
-    Returns:
-        JSON string confirming the operation
-    """
-    try:
-        if _current_project is None:
-            return {'error':
-                'No project is currently active. Use index_directory() to index a project first.'
-                }
-        import hashlib
-        import shutil
-        project_path = Path(_current_project).resolve()
-        project_name = project_path.name
-        project_hash = hashlib.md5(str(project_path).encode()).hexdigest()[:8]
-        index_manager = get_index_manager()
-        index_manager.clear_index()
-        base_dir = get_storage_dir()
-        projects_dir = base_dir / 'projects'
-        deleted_dirs = []
-        if projects_dir.exists():
-            pattern = f'{project_name}_{project_hash}_*'
-            for project_dir in projects_dir.glob(pattern):
-                if project_dir.is_dir():
-                    try:
-                        shutil.rmtree(project_dir)
-                        deleted_dirs.append(project_dir.name)
-                        logger.info(
-                            f'[PER_MODEL_INDICES] Deleted directory: {project_dir.name}'
-                            )
-                    except Exception as e:
-                        logger.warning(
-                            f'Failed to delete {project_dir.name}: {e}')
-            old_format_dir = projects_dir / f'{project_name}_{project_hash}'
-            if old_format_dir.exists():
-                try:
-                    shutil.rmtree(old_format_dir)
-                    deleted_dirs.append(old_format_dir.name)
-                    logger.info(
-                        f'[PER_MODEL_INDICES] Deleted old format directory: {old_format_dir.name}'
-                        )
-                except Exception as e:
-                    logger.warning(
-                        f'Failed to delete old format directory: {e}')
-        from merkle.snapshot_manager import SnapshotManager
-        snapshot_manager = SnapshotManager()
-        snapshots_deleted = 0
+    if uri == "search://stats":
         try:
-            snapshots_deleted = snapshot_manager.delete_all_snapshots(
-                _current_project)
-            logger.info(
-                f'[PER_MODEL_INDICES] Deleted {snapshots_deleted} snapshot files (all dimensions)'
-                )
-        except Exception as snapshot_error:
-            logger.warning(
-                f'Failed to delete snapshots (non-critical): {snapshot_error}')
-        response = {'success': True, 'message':
-            f'Search index and snapshots cleared successfully for {project_name}'
-            , 'deleted': {'project_directories': deleted_dirs,
-            'directory_count': len(deleted_dirs), 'snapshot_files':
-            snapshots_deleted}, 'note':
-            'All model dimensions (768d, 1024d, etc.) have been removed'}
-        logger.info(
-            f'Search index cleared - {len(deleted_dirs)} directories, {snapshots_deleted} snapshots deleted'
-            )
-        return response
-    except (OSError, IOError, AttributeError, RuntimeError) as e:
-        error_msg = f'Clear index failed: {str(e)}'
-        logger.error(error_msg, exc_info=True)
-        return {'error': error_msg}
+            index_manager = get_index_manager()
+            stats = index_manager.get_stats()
+            return json.dumps(stats, indent=2)
+        except Exception as e:
+            error = {"error": f"Failed to get statistics: {str(e)}"}
+            return json.dumps(error, indent=2)
+    else:
+        error = {"error": f"Unknown resource URI: {uri}"}
+        return json.dumps(error, indent=2)
 
 
-@mcp.resource('search://stats')
-def get_search_statistics() ->dict:
-    """
-    Get detailed search index statistics.
+# ============================================================================
+# PROMPT HANDLERS
+# ============================================================================
 
-    Returns:
-        Detailed statistics about indexed files, chunks, and search performance
-    """
-    try:
-        index_manager = get_index_manager()
-        stats = index_manager.get_stats()
-        return stats
-    except (AttributeError, TypeError, ValueError) as e:
-        return {'error': f'Failed to get statistics: {str(e)}'}
+@server.list_prompts()
+async def handle_list_prompts() -> List[Prompt]:
+    """List all available prompts."""
+    return [
+        Prompt(
+            name="search_help",
+            description="Get help on how to use the code search tools effectively",
+            arguments=[]
+        )
+    ]
 
 
-@mcp.prompt()
-def search_help() ->dict:
-    """
-    Get help on how to use the code search tools effectively.
+@server.get_prompt()
+async def handle_get_prompt(name: str, arguments: Dict[str, str]) -> GetPromptResult:
+    """Get a prompt by name."""
+    logger.info(f"[PROMPT_GET] {name}")
 
-    Returns:
-        Detailed help text with examples
-    """
-    help_text = """
-# Code Search Tool Help
+    if name == "search_help":
+        help_text = """# Code Search Tool Help
 
-This tool provides semantic search capabilities for Python codebases using AI embeddings.
+This tool provides semantic search capabilities for codebases using AI embeddings.
 
-## Available Tools:
+## Quick Start
 
-### 1. search_code(query, k=5, ...)
-Search for code using natural language queries.
-
-Examples:
-- "Find authentication functions"
-- "Show database connection code"
-- "Find error handling patterns"
-- "Look for API endpoint definitions"
-
-### 2. index_directory(directory_path, ...)
-Index a Python project for search.
-
-Example:
-- index_directory("/path/to/my/project")
-
-### 3. get_index_status()
-Check current index statistics and model status.
-
-### 4. find_similar_code(chunk_id, k=5)
-Find code similar to a specific chunk.
-
-## Search Tips:
-
-1. **Natural Language**: Use descriptive phrases
-   - Good: "Find functions that handle user authentication"
-   - Better: "authentication login user validation"
-
-2. **Specific Terms**: Include technical terms
-   - "database query connection"
-   - "API endpoint route handler"
-
-3. **Filters**: Use filters to narrow results
-   - file_pattern: "auth" (files containing "auth")
-   - chunk_type: "function", "class", "method"
-
-## Getting Started:
-
-1. First, index your codebase:
+1. Index your project:
    ```
-   index_directory("/path/to/your/python/project")
+   index_directory("/path/to/project")
    ```
 
-2. Then search:
+2. Search for code:
    ```
-   search_code("find authentication code", k=10)
+   search_code("authentication functions", k=10)
    ```
 
-The tool uses advanced AST parsing to understand code structure and creates intelligent chunks that preserve function and class boundaries.
+## Available Tools
+
+- **search_code**: Natural language code search
+- **index_directory**: Index a project for search
+- **find_similar_code**: Find similar code to a reference chunk
+- **get_index_status**: Check index statistics
+
+## Search Tips
+
+1. Use natural language descriptions
+2. Include technical terms for better results
+3. Use filters (file_pattern, chunk_type) to narrow results
+
+For more information, see the project documentation.
 """
-    return help_text
-
-
-@mcp.tool()
-def get_memory_status() ->dict:
-    """
-    Get current memory usage status for the index and system.
-
-    Shows available RAM/VRAM, current index memory usage, and whether GPU acceleration is active.
-    Useful for monitoring memory consumption and optimizing performance.
-
-    Returns:
-        JSON with detailed memory status including available memory, current usage, and GPU status
-    """
-    try:
-        index_manager = get_index_manager()
-        memory_status = index_manager.get_memory_status()
-
-        # Collect status for all loaded models in pool
-        models_status = []
-        if _multi_model_enabled:
-            for model_key, embedder in _embedders.items():
-                if embedder is not None and embedder._model is not None:
-                    models_status.append({
-                        'model_key': model_key,
-                        'model_name': MODEL_POOL_CONFIG.get(model_key, 'unknown'),
-                        'model_loaded': True,
-                        'device': str(embedder.device) if hasattr(embedder, 'device') else 'unknown'
-                    })
-            model_status = {
-                'multi_model_mode': True,
-                'loaded_models_count': len(models_status),
-                'models': models_status
-            }
-        else:
-            # Single model mode
-            embedder = get_embedder()
-            model_status = {
-                'multi_model_mode': False,
-                'model_loaded': embedder._model is not None,
-                'model_device': str(embedder.device) if hasattr(embedder, 'device') else 'unknown'
-            }
-
-        def format_bytes(bytes_val):
-            if bytes_val == 0:
-                return '0 B'
-            for unit in ['B', 'KB', 'MB', 'GB']:
-                if bytes_val < 1024:
-                    return f'{bytes_val:.1f} {unit}'
-                bytes_val /= 1024
-            return f'{bytes_val:.1f} TB'
-
-        available = memory_status['available_memory']
-        gpu_total = available['gpu_total']
-        gpu_available = available['gpu_available']
-        gpu_used = gpu_total - gpu_available if gpu_total > 0 else 0
-        gpu_utilization = (gpu_used / gpu_total * 100) if gpu_total > 0 else 0
-
-        # VRAM threshold warnings (for RTX 4090: 24 GB)
-        vram_warnings = []
-        if gpu_total > 0:
-            if gpu_utilization > 92:  # >22 GB used on 24 GB GPU
-                vram_warnings.append('CRITICAL: VRAM usage >92% - consider offloading models')
-            elif gpu_utilization > 80:  # >19.2 GB used
-                vram_warnings.append('WARNING: High VRAM usage >80% - monitor closely')
-            elif gpu_utilization > 70:  # >16.8 GB used
-                vram_warnings.append('INFO: Moderate VRAM usage >70%')
-
-        formatted_status = {'system_memory': {'total': format_bytes(
-            available['system_total']), 'available': format_bytes(available
-            ['system_available']), 'utilization':
-            f"{(1 - available['system_available'] / available['system_total']) * 100:.1f}%"
-            }, 'gpu_memory': {'total': format_bytes(gpu_total),
-            'available': format_bytes(gpu_available),
-            'used': format_bytes(gpu_used),
-            'utilization': f"{gpu_utilization:.1f}%",
-            'warnings': vram_warnings
-            } if gpu_total > 0 else None, 'index_status': {'size':
-            memory_status['current_index_size'], 'gpu_enabled':
-            memory_status['is_gpu_enabled'], 'gpu_available': memory_status
-            ['gpu_available']}, 'model_status': model_status}
-        if 'estimated_index_memory' in memory_status:
-            estimated = memory_status['estimated_index_memory']
-            formatted_status['index_status']['estimated_memory'] = {'vectors':
-                format_bytes(estimated['vectors']), 'overhead':
-                format_bytes(estimated['overhead']), 'total': format_bytes(
-                estimated['total'])}
-        return formatted_status
-    except (ImportError, AttributeError, RuntimeError, OSError) as e:
-        logger.error(f'Error getting memory status: {e}')
-        return {'error': str(e)}
-
-
-@mcp.tool()
-def configure_query_routing(
-    enable_multi_model: bool = None,
-    default_model: str = None,
-    confidence_threshold: float = None
-) -> dict:
-    """
-    Configure query routing behavior for multi-model semantic search.
-
-    Args:
-        enable_multi_model: Enable/disable multi-model mode (default: True via env var)
-        default_model: Set default model key ("qwen3", "bge_m3", "coderankembed")
-        confidence_threshold: Minimum confidence for routing (0.0-1.0, default: 0.3)
-
-    Returns:
-        JSON with current configuration and available options
-    """
-    try:
-        global _multi_model_enabled
-
-        config_changes = []
-
-        # Update multi-model mode
-        if enable_multi_model is not None:
-            old_value = _multi_model_enabled
-            _multi_model_enabled = enable_multi_model
-            config_changes.append(
-                f"Multi-model mode: {old_value} → {_multi_model_enabled}"
-            )
-            logger.info(f"[CONFIG] Multi-model mode set to: {_multi_model_enabled}")
-
-        # Update default model (via environment or config)
-        if default_model is not None:
-            if default_model in MODEL_POOL_CONFIG:
-                config = get_search_config()
-                old_model = config.embedding_model_name
-                new_model_name = MODEL_POOL_CONFIG[default_model]
-
-                config_manager = get_config_manager()
-                config.embedding_model_name = new_model_name
-                config_manager.save_config(config)
-
-                config_changes.append(
-                    f"Default model: {old_model} → {new_model_name} ({default_model})"
+        return GetPromptResult(
+            description="Help documentation for code search tools",
+            messages=[
+                PromptMessage(
+                    role="user",
+                    content=TextContent(type="text", text=help_text)
                 )
-                logger.info(f"[CONFIG] Default model set to: {default_model} ({new_model_name})")
-            else:
-                return {
-                    'error': f"Invalid model_key '{default_model}'",
-                    'available_models': list(MODEL_POOL_CONFIG.keys())
-                }
-
-        # Confidence threshold (stored in router, not persisted)
-        if confidence_threshold is not None:
-            if 0.0 <= confidence_threshold <= 1.0:
-                QueryRouter.CONFIDENCE_THRESHOLD = confidence_threshold
-                config_changes.append(
-                    f"Confidence threshold: → {confidence_threshold}"
-                )
-                logger.info(f"[CONFIG] Confidence threshold set to: {confidence_threshold}")
-            else:
-                return {
-                    'error': f"Invalid confidence_threshold '{confidence_threshold}' (must be 0.0-1.0)"
-                }
-
-        # Get current configuration
-        router = QueryRouter(enable_logging=False)
-        current_config = {
-            'multi_model_enabled': _multi_model_enabled,
-            'available_models': list(MODEL_POOL_CONFIG.keys()),
-            'loaded_models': [key for key, emb in _embedders.items() if emb is not None],
-            'default_model': next(
-                (key for key, name in MODEL_POOL_CONFIG.items()
-                 if name == get_search_config().embedding_model_name),
-                'bge_m3'
-            ),
-            'confidence_threshold': QueryRouter.CONFIDENCE_THRESHOLD,
-            'routing_enabled': True  # Always available when multi_model_enabled
-        }
-
-        response = {
-            'status': 'success',
-            'message': 'Configuration updated' if config_changes else 'No changes made',
-            'changes': config_changes,
-            'current_config': current_config,
-            'model_details': {
-                key: {
-                    'full_name': name,
-                    'description': router.get_model_strengths(key)['description'] if router.get_model_strengths(key) else 'N/A'
-                }
-                for key, name in MODEL_POOL_CONFIG.items()
-            }
-        }
-
-        return response
-
-    except Exception as e:
-        logger.error(f'Error configuring query routing: {e}')
-        return {'error': str(e)}
+            ]
+        )
+    else:
+        raise ValueError(f"Unknown prompt: {name}")
 
 
-@mcp.tool()
-def cleanup_resources() ->dict:
-    """
-    Manually cleanup all resources to free memory.
-
-    Forces cleanup of indexes, embedding model(s), and GPU memory.
-    Useful when switching between large projects or when memory is running low.
-
-    Returns:
-        JSON confirmation of cleanup actions performed
-    """
-    try:
-        global _index_manager, _searcher, _embedders
-        cleanup_actions = []
-        if _index_manager is not None:
-            if hasattr(_index_manager, '_metadata_db'
-                ) and _index_manager._metadata_db is not None:
-                _index_manager._metadata_db.close()
-            _index_manager = None
-            cleanup_actions.append('Index manager cleared')
-        if _searcher is not None:
-            _searcher = None
-            cleanup_actions.append('Searcher cleared')
-
-        # Cleanup all embedders in the pool
-        if _embedders:
-            cleanup_count = 0
-            for model_key, embedder in list(_embedders.items()):
-                if embedder is not None:
-                    try:
-                        embedder.cleanup()
-                        cleanup_count += 1
-                    except Exception as e:
-                        logger.warning(f'Failed to cleanup {model_key}: {e}')
-            _embedders.clear()
-            cleanup_actions.append(f'Cleaned up {cleanup_count} embedding model(s)')
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                cleanup_actions.append('GPU cache cleared')
-        except ImportError as e:
-            logger.debug(f'GPU cache cleanup skipped: {e}')
-        import gc
-        collected = gc.collect()
-        cleanup_actions.append(f'Garbage collection freed {collected} objects')
-        response = {'success': True, 'message':
-            'Resources cleaned up successfully', 'actions_performed':
-            cleanup_actions}
-        logger.info('Manual resource cleanup completed')
-        return response
-    except (ImportError, AttributeError, RuntimeError) as e:
-        logger.error(f'Error during resource cleanup: {e}')
-        return {'error': str(e)}
-
-
-@mcp.tool()
-def configure_search_mode(search_mode: str='hybrid', bm25_weight: float=0.4,
-    dense_weight: float=0.6, enable_parallel: bool=True) ->dict:
-    """
-    Configure search mode and hybrid search parameters.
-
-    Args:
-        search_mode: Default search mode - "hybrid", "semantic", "bm25", or "auto"
-        bm25_weight: Weight for BM25 sparse search (0.0 to 1.0)
-        dense_weight: Weight for dense vector search (0.0 to 1.0)
-        enable_parallel: Enable parallel BM25 + Dense search execution
-
-    Returns:
-        JSON confirmation of configuration changes
-    """
-    try:
-        valid_modes = ['hybrid', 'semantic', 'bm25', 'auto']
-        if search_mode not in valid_modes:
-            return {'error':
-                f"Invalid search_mode '{search_mode}'. Must be one of: {valid_modes}"
-                }
-        if not 0.0 <= bm25_weight <= 1.0 or not 0.0 <= dense_weight <= 1.0:
-            return {'error': 'Weights must be between 0.0 and 1.0'}
-        total_weight = bm25_weight + dense_weight
-        if total_weight > 0:
-            bm25_weight = bm25_weight / total_weight
-            dense_weight = dense_weight / total_weight
-        config_manager = get_config_manager()
-        config = config_manager.load_config()
-        config.default_search_mode = search_mode
-        config.enable_hybrid_search = search_mode == 'hybrid'
-        config.bm25_weight = bm25_weight
-        config.dense_weight = dense_weight
-        config.use_parallel_search = enable_parallel
-        config_manager.save_config(config)
-        global _searcher
-        _searcher = None
-        response = {'success': True, 'message':
-            'Search configuration updated successfully', 'new_config': {
-            'search_mode': search_mode, 'enable_hybrid_search': config.
-            enable_hybrid_search, 'bm25_weight': round(bm25_weight, 3),
-            'dense_weight': round(dense_weight, 3), 'use_parallel_search':
-            enable_parallel}, 'note':
-            'Changes will take effect on next search. Searcher will be reinitialized.'
-            }
-        logger.info(
-            f'Search configuration updated: mode={search_mode}, weights=({bm25_weight:.3f}, {dense_weight:.3f}), parallel={enable_parallel}'
-            )
-        return response
-    except Exception as e:
-        logger.error(f'Error configuring search mode: {e}')
-        return {'error': str(e)}
-
-
-@mcp.tool()
-def get_search_config_status() ->dict:
-    """
-    Get current search configuration status and available options.
-
-    Returns:
-        JSON with current configuration and available settings
-    """
-    try:
-        config = get_search_config()
-        config_manager = get_config_manager()
-        current_searcher_type = 'None'
-        if _searcher:
-            current_searcher_type = type(_searcher).__name__
-        response = {'current_configuration': {'default_search_mode': config
-            .default_search_mode, 'enable_hybrid_search': config.
-            enable_hybrid_search, 'bm25_weight': config.bm25_weight,
-            'dense_weight': config.dense_weight, 'use_parallel_search':
-            config.use_parallel_search, 'rrf_k_parameter': config.
-            rrf_k_parameter, 'prefer_gpu': config.prefer_gpu,
-            'enable_auto_reindex': config.enable_auto_reindex},
-            'runtime_status': {'current_searcher_type':
-            current_searcher_type, 'active_project': _current_project or
-            'None', 'config_file': config_manager.config_file},
-            'available_modes': {'hybrid':
-            'BM25 + Dense vector search with RRF reranking (recommended)',
-            'semantic': 'Dense vector search only', 'bm25':
-            'Text-based sparse search only', 'auto':
-            'Automatically choose based on query characteristics'},
-            'environment_variables': {'CLAUDE_SEARCH_MODE':
-            'Override default search mode', 'CLAUDE_ENABLE_HYBRID':
-            'Enable/disable hybrid search (true/false)',
-            'CLAUDE_BM25_WEIGHT': 'BM25 weight (0.0-1.0)',
-            'CLAUDE_DENSE_WEIGHT': 'Dense weight (0.0-1.0)',
-            'CLAUDE_USE_PARALLEL': 'Enable parallel search (true/false)'}}
-        return response
-    except Exception as e:
-        logger.error(f'Error getting search config status: {e}')
-        return {'error': str(e)}
-
-
-@mcp.tool()
-def list_embedding_models() ->dict:
-    """
-    List all available embedding models with their specifications.
-
-    Returns:
-        JSON with model information including dimensions, context length, and descriptions
-    """
-    try:
-        from search.config import MODEL_REGISTRY
-        models_info = {}
-        for model_name, specs in MODEL_REGISTRY.items():
-            models_info[model_name] = {'dimension': specs['dimension'],
-                'max_context': specs['max_context'], 'vram_gb': specs.get(
-                'vram_gb', 'Unknown'), 'description': specs['description']}
-        config = get_search_config()
-        current_model = config.embedding_model_name
-        response = {'available_models': models_info, 'current_model':
-            current_model, 'current_dimension': config.model_dimension}
-        return response
-    except Exception as e:
-        logger.error(f'Error listing embedding models: {e}')
-        return {'error': str(e)}
-
-
-@mcp.tool()
-def switch_embedding_model(model_name: str) ->dict:
-    """
-    Switch to a different embedding model without deleting existing indices.
-
-    Per-model indices enable instant switching - if you've already indexed a project
-    with a model, switching back to it requires no re-indexing.
-
-    Args:
-        model_name: Model identifier from MODEL_REGISTRY (e.g., "BAAI/bge-m3")
-
-    Returns:
-        JSON confirmation with model info and existing indices status
-    """
-    try:
-        from search.config import MODEL_REGISTRY
-        if model_name not in MODEL_REGISTRY:
-            available_models = list(MODEL_REGISTRY.keys())
-            return {'error':
-                f"Invalid model '{model_name}'. Available models: {available_models}"
-                , 'available_models': available_models}
-        old_config = get_search_config()
-        old_model = old_config.embedding_model_name
-        old_dimension = old_config.model_dimension
-        new_specs = MODEL_REGISTRY[model_name]
-        new_dimension = new_specs['dimension']
-        config_manager = get_config_manager()
-        config = config_manager.load_config()
-        config.embedding_model_name = model_name
-        config.model_dimension = new_dimension
-        config_manager.save_config(config)
-        global _embedders, _index_manager, _searcher
-
-        # In multi-model mode, no need to clear embedders (all models stay loaded)
-        # In single-model mode, clear to force reload
-        if not _multi_model_enabled:
-            _embedders.clear()
-
-        _index_manager = None
-        _searcher = None
-        base_dir = get_storage_dir()
-        projects_dir = base_dir / 'projects'
-        existing_projects = []
-        if projects_dir.exists():
-            for project_dir in projects_dir.iterdir():
-                if project_dir.is_dir() and project_dir.name.endswith(
-                    f'_{new_dimension}d'):
-                    existing_projects.append(project_dir.name)
-        response = {'success': True, 'message':
-            f'Switched embedding model from {old_model} ({old_dimension}d) to {model_name} ({new_dimension}d)'
-            , 'old_model': {'name': old_model, 'dimension': old_dimension},
-            'new_model': {'name': model_name, 'dimension': new_dimension,
-            'max_context': new_specs['max_context'], 'vram_gb': new_specs.
-            get('vram_gb', 'Unknown'), 'description': new_specs[
-            'description']}, 'existing_indices': {'count': len(
-            existing_projects), 'projects': existing_projects, 'note': 
-            f'{len(existing_projects)} projects already indexed with {new_dimension}d - no re-indexing needed!'
-             if existing_projects else
-            f'No existing {new_dimension}d indices found - projects will need indexing'
-            }, 'per_model_indices_info':
-            f'Old {old_dimension}d indices preserved. Switching back to {old_model} will be instant (no re-indexing).'
-            }
-        logger.info(
-            f'[PER_MODEL_INDICES] Switched model: {old_model} ({old_dimension}d) → {model_name} ({new_dimension}d)'
-            )
-        if existing_projects:
-            logger.info(
-                f'[PER_MODEL_INDICES] Found {len(existing_projects)} existing {new_dimension}d projects - instant activation!'
-                )
-        return response
-    except Exception as e:
-        logger.error(f'Error switching embedding model: {e}')
-        return {'error': str(e)}
-
+# ============================================================================
+# MAIN ENTRY POINT
+# ============================================================================
 
 if __name__ == '__main__':
     import argparse
-    parser = argparse.ArgumentParser(description='Code Search MCP Server')
-    parser.add_argument('--transport', choices=['stdio', 'sse', 'http'],
-        default='stdio', help='Transport protocol to use (default: stdio)')
-    parser.add_argument('--host', default='localhost', help=
-        'Host for HTTP transport (default: localhost)')
-    parser.add_argument('--port', type=int, default=8000, help=
-        'Port for HTTP transport (default: 8000)')
-    args = parser.parse_args()
-    if debug_mode:
-        logger.info('MCP Server starting up (debug mode)')
-        logger.info(f'Server location: {PROJECT_ROOT}')
-        logger.info(f'Current working directory: {os.getcwd()}')
-        logger.info(f'Python executable: {sys.executable}')
-    else:
-        logger.info('MCP Server starting up')
-        logger.info(f'Server location: {PROJECT_ROOT}')
-        logger.info('Ready for Claude Code connections')
-    transport = 'sse' if args.transport == 'http' else args.transport
-    try:
-        if transport in ['sse', 'streamable-http']:
-            logger.info(f'Starting HTTP server on {args.host}:{args.port}')
 
-            # Windows-specific fix for WinError 64 (asyncio ProactorEventLoop bug)
-            import platform
-            if platform.system() == "Windows":
-                import asyncio
-                asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-                logger.info("Windows detected: Using SelectorEventLoop for SSE transport")
-        mcp.run(transport=transport)
+    parser = argparse.ArgumentParser(description='Code Search MCP Server (Low-Level SDK)')
+    parser.add_argument('--transport', choices=['stdio', 'sse'], default='stdio')
+    parser.add_argument('--host', default='localhost')
+    parser.add_argument('--port', type=int, default=8000)
+    args = parser.parse_args()
+
+    # Enable MCP debug logging
+    import logging
+    logging.getLogger('mcp').setLevel(logging.DEBUG)
+    logging.getLogger('mcp.server').setLevel(logging.DEBUG)
+
+    logger.info("=" * 60)
+    logger.info("MCP Server Starting (Low-Level SDK)")
+    logger.info("=" * 60)
+    logger.info(f"Transport: {args.transport}")
+    if args.transport == 'sse':
+        logger.info(f"SSE endpoint: http://{args.host}:{args.port}")
+
+    # Windows SSE fix
+    if args.transport == 'sse':
+        import platform
+        if platform.system() == "Windows":
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+            logger.info("Windows: Using SelectorEventLoop for SSE")
+
+    try:
+        if args.transport == 'stdio':
+            from mcp.server.stdio import stdio_server
+
+            async def run_stdio_server():
+                """Run stdio server with proper lifecycle management."""
+                global _current_project, _model_preload_task_started
+
+                # Initialize global state BEFORE starting server
+                logger.info("=" * 60)
+                logger.info("SERVER STARTUP: Initializing global state")
+                logger.info("=" * 60)
+
+                # Set default project if specified
+                default_project = os.getenv('CLAUDE_DEFAULT_PROJECT', None)
+                if default_project:
+                    _current_project = str(Path(default_project).resolve())
+                    logger.info(f"[INIT] Default project: {_current_project}")
+                else:
+                    logger.info("[INIT] No default project")
+
+                # Initialize model pool in lazy mode
+                if _multi_model_enabled and not _model_preload_task_started:
+                    initialize_model_pool(lazy_load=True)
+                    logger.info(f"[INIT] Model pool initialized: {list(MODEL_POOL_CONFIG.keys())}")
+                    _model_preload_task_started = True
+
+                # Log storage directory
+                storage = get_storage_dir()
+                logger.info(f"[INIT] Storage directory: {storage}")
+
+                logger.info("=" * 60)
+                logger.info("SERVER READY - Accepting connections")
+                logger.info("=" * 60)
+
+                # Run server using stdio transport (OFFICIAL MCP SDK PATTERN)
+                async with stdio_server() as (read_stream, write_stream):
+                    await server.run(
+                        read_stream,
+                        write_stream,
+                        server.create_initialization_options()
+                    )
+
+                # Cleanup after server stops
+                logger.info("=" * 60)
+                logger.info("SERVER SHUTDOWN: Cleaning up")
+                logger.info("=" * 60)
+                _cleanup_previous_resources()
+                logger.info("[SHUTDOWN] Cleanup complete")
+
+            # Run the async function
+            asyncio.run(run_stdio_server())
+        elif args.transport == 'sse':
+            # SSE transport using Starlette + SseServerTransport + uvicorn
+            from mcp.server.sse import SseServerTransport
+            from starlette.applications import Starlette
+            from starlette.routing import Route, Mount
+            from starlette.responses import Response
+            import uvicorn
+
+            # Create SSE transport with message endpoint
+            sse = SseServerTransport("/messages/")
+
+            # SSE handler - establishes bidirectional streams
+            async def handle_sse(request):
+                async with sse.connect_sse(
+                    request.scope,
+                    request.receive,
+                    request._send
+                ) as streams:
+                    await server.run(
+                        streams[0],  # read_stream
+                        streams[1],  # write_stream
+                        server.create_initialization_options()
+                    )
+                return Response()  # Prevent TypeError on disconnect
+
+            # Starlette app with lifespan integration
+            async def app_lifespan(app):
+                """Application lifecycle - initialize global state ONCE before accepting connections."""
+                global _current_project, _embedders, _model_preload_task_started
+
+                logger.info("=" * 60)
+                logger.info("APPLICATION STARTUP: Initializing global state")
+                logger.info("=" * 60)
+
+                try:
+                    # Set default project if specified
+                    default_project = os.getenv('CLAUDE_DEFAULT_PROJECT', None)
+                    if default_project:
+                        _current_project = str(Path(default_project).resolve())
+                        logger.info(f"[INIT] Default project: {_current_project}")
+                    else:
+                        logger.info("[INIT] No default project")
+
+                    # Initialize model pool in lazy mode
+                    if _multi_model_enabled and not _model_preload_task_started:
+                        initialize_model_pool(lazy_load=True)
+                        logger.info(f"[INIT] Model pool initialized: {list(MODEL_POOL_CONFIG.keys())}")
+                        _model_preload_task_started = True
+                    elif _multi_model_enabled:
+                        logger.info("[INIT] Model pool already initialized")
+                    else:
+                        logger.info("[INIT] Single-model mode enabled")
+
+                    # Log storage directory
+                    storage = get_storage_dir()
+                    logger.info(f"[INIT] Storage directory: {storage}")
+
+                    # Optional: Pre-load embedding model
+                    if os.getenv('MCP_PRELOAD_MODEL', 'false').lower() in ('true', '1', 'yes'):
+                        logger.info("[INIT] Pre-loading embedding model...")
+                        try:
+                            embedder = get_embedder()
+                            _ = embedder.model
+                            logger.info("[INIT] Embedding model pre-loaded")
+                        except Exception as e:
+                            logger.warning(f"[INIT] Model pre-load failed (non-critical): {e}")
+
+                    logger.info("=" * 60)
+                    logger.info("APPLICATION READY - Accepting connections")
+                    logger.info("=" * 60)
+
+                    yield  # Application runs
+
+                finally:
+                    logger.info("=" * 60)
+                    logger.info("APPLICATION SHUTDOWN: Cleaning up")
+                    logger.info("=" * 60)
+                    _cleanup_previous_resources()
+                    logger.info("[SHUTDOWN] Cleanup complete")
+
+            # Define routes: GET /sse + POST /messages/
+            routes = [
+                Route("/sse", endpoint=handle_sse, methods=["GET"]),
+                Mount("/messages/", app=sse.handle_post_message),
+            ]
+
+            starlette_app = Starlette(
+                routes=routes,
+                lifespan=app_lifespan
+            )
+
+            # Run server
+            logger.info(f"Starting SSE server on {args.host}:{args.port}")
+            logger.info(f"SSE endpoint: http://{args.host}:{args.port}/sse")
+            logger.info(f"Message endpoint: http://{args.host}:{args.port}/messages/")
+
+            uvicorn.run(
+                starlette_app,
+                host=args.host,
+                port=args.port,
+                log_level="info"
+            )
+
     except KeyboardInterrupt:
         logger.info('\nShutting down gracefully...')
         sys.exit(0)
     except Exception as e:
-        logger.error(f'Server error: {e}')
+        logger.error(f'Server error: {e}', exc_info=True)
         sys.exit(1)

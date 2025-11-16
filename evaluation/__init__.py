@@ -1,1 +1,0 @@
-"""claude-context-local Evaluation Framework."""

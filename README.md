@@ -32,7 +32,7 @@
 - 🪟 **Windows-optimized** for maximum performance and compatibility
 - 🔄 **Instant model switching (<150ms) with per-model index storage**
 - 🧠 **Multi-model query routing with 100% accuracy (5.3GB VRAM for 3 models)**
-- 🛠️ **13 MCP tools for Claude Code integration (search, index, configure)**
+- 🛠️ **14 MCP tools for Claude Code integration (search, index, configure)**
 
 An intelligent code search system that uses Google's EmbeddingGemma, BAAI's BGE-M3, and specialized code models with automatic intelligent routing. Advanced multi-language chunking provides semantic search capabilities across 22 file extensions and 11 programming languages, integrated with Claude Code via MCP (Model Context Protocol).
 
@@ -70,6 +70,7 @@ An intelligent code search system that uses Google's EmbeddingGemma, BAAI's BGE-
   - **CodeRankEmbed**: Specialized algorithms like Merkle trees, RRF reranking (2/8 wins, high precision)
 - **Quality Improvement**: 15-25% better top-1 relevance vs single-model for diverse queries
 - **Routing Transparency**: Every search result shows which model processed the query with confidence scores
+- **Natural Query Support** (v0.5.5+): Simple queries like "error handling" trigger routing without keyword stuffing
 - **User Control**: Override routing via `model_key` parameter or disable with `use_routing=False`
 - **Lazy Loading**: Models load on-demand to minimize memory footprint
 
@@ -79,7 +80,7 @@ An intelligent code search system that uses Google's EmbeddingGemma, BAAI's BGE-
 - **Intelligent chunking**: AST-based (Python) + tree-sitter (JS/TS/JSX/TSX/Svelte/Go/Java/Rust/C/C++/C#/GLSL)
 - **Semantic search**: Natural language queries to find code across all languages
 - **Rich metadata**: File paths, folder structure, semantic tags, language-specific info
-- **MCP integration**: 13 tools for Claude Code with human-readable JSON output - search, index, configure, and monitor
+- **MCP integration**: 14 tools for Claude Code with human-readable JSON output - search, index, configure, and monitor
 - **Local processing**: All embeddings stored locally, no API calls required
 - **Fast search**: FAISS for efficient similarity search with GPU acceleration support
 - **Incremental indexing**: 5-10x faster updates with Merkle tree change detection
@@ -216,7 +217,7 @@ The `start_mcp_server.bat` launcher provides an 8-option interactive menu for al
 **1. Quick Start Server** (Transport Selection)
 
 - **stdio Transport** - Default MCP mode for Claude Code integration
-- **SSE Transport** - HTTP-based transport on port 8765 (bypasses Claude Code 2.0.22+ stdio bugs)
+- **SSE Transport** - HTTP-based transport on port 8765 (bypasses Claude Code stdio bugs)
 
 **2. Project Management** (5 options)
 
@@ -243,9 +244,9 @@ The `start_mcp_server.bat` launcher provides an 8-option interactive menu for al
 **SSE Transport Benefits:**
 
 - Bypasses known Claude Code stdio bugs (#3426, #768, #3487, #3369)
-- All 13 MCP tools available with identical functionality
+- All 14 MCP tools available with identical functionality
 - Minimal latency overhead (<10ms)
-- Automatic port conflict detection and resolution
+- Single server on port 8765 (simplified from dual-server setup)
 
 **Batch Removal Optimization:**
 
@@ -804,6 +805,84 @@ Baseline (idle):        1.4GB
 ```
 
 📚 **Implementation details**: Cleanup uses `gc.collect()` + `torch.cuda.empty_cache()` pattern recommended by PyTorch and ComfyUI communities for optimal memory management.
+
+### 🔬 GPU Memory Logging (v0.5.5+)
+
+**Comprehensive VRAM tracking** during model loading for debugging and optimization:
+
+**What It Logs:**
+
+- GPU memory allocation before model load
+- GPU memory allocation after successful load
+- GPU memory allocation after fallback load (if primary fails)
+- Per-GPU device tracking (supports multi-GPU systems)
+- Detailed metrics: Allocated GB, Reserved GB, Total GB, Usage %
+
+**Implementation:**
+
+- Added `_log_gpu_memory(stage)` method in `embeddings/embedder.py`
+- Logs at 3 critical stages: BEFORE_LOAD, AFTER_LOAD, AFTER_FALLBACK_LOAD
+- Helps diagnose memory issues in multi-model loading scenarios
+
+**Example Log Output:**
+
+```
+[GPU_0] BEFORE_LOAD: Allocated=0.00GB, Reserved=0.00GB, Total=22.49GB (0.0% used)
+[GPU_0] AFTER_LOAD: Allocated=4.85GB, Reserved=5.12GB, Total=22.49GB (21.6% used)
+```
+
+**Benefits:**
+
+- Early detection of memory leaks or allocation issues
+- Performance debugging for multi-model routing (3 models = 5.3GB total)
+- Visibility into GPU resource consumption during indexing
+
+### ⚡ Multi-Hop Search Performance Timing (v0.5.5+)
+
+**Detailed timing breakdown** for multi-hop search operations:
+
+**What It Tracks:**
+
+- **Hop 1**: Initial dense/hybrid search time
+- **Expansion**: Time to expand results via graph relationships (per hop)
+- **Rerank**: Final re-ranking time
+- **Total**: Complete multi-hop search time
+
+**Performance Metrics:**
+
+- First search (cold): 1.7-3.7 seconds (model loading)
+- Cached searches: 17-117ms (60-140x faster)
+- Multi-hop overhead: Typically <100ms for graph expansion + rerank
+
+**Example Log Output:**
+
+```
+[MULTI_HOP] Complete: 10 results | Total=3,245ms (Hop1=3,100ms, Expansion=120ms, Rerank=25ms)
+[MULTI_HOP] Complete: 10 results | Total=117ms (Hop1=85ms, Expansion=18ms, Rerank=14ms)
+```
+
+**Implementation:**
+
+- Added comprehensive timing tracker in `search/hybrid_searcher.py`
+- Per-hop expansion timing in multi-hop scenarios
+- Helps optimize search performance and identify bottlenecks
+
+**Benefits:**
+
+- Performance debugging and optimization
+- Understand where time is spent in complex searches
+- Validate caching effectiveness (60-140x speedup)
+
+### 🛠️ Path Standardization (v0.5.5+)
+
+**Unified cross-platform path handling** using `pathlib.Path`:
+
+**Changes:**
+
+- Replaced `os.path.expanduser()` with `Path.home() / ".cache" / "huggingface" / "hub"`
+- File: `embeddings/embedder.py` line 52
+- Improved Windows/Linux/macOS compatibility
+- Cleaner, more maintainable code
 
 ### Model Configuration
 

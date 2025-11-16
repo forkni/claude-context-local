@@ -23,11 +23,11 @@ if not exist ".venv" (
     exit /b 1
 )
 
-if not exist "mcp_server\server_lowlevel_complete.py" (
-    echo [ERROR] MCP server script not found: mcp_server\server_lowlevel_complete.py
+if not exist "mcp_server\server.py" (
+    echo [ERROR] MCP server script not found: mcp_server\server.py
     echo [DEBUG] Current directory: %CD%
-    echo [DEBUG] Looking for: %CD%\mcp_server\server_lowlevel_complete.py
-    echo [DEBUG] NOTE: Server migrated to low-level MCP SDK for better reliability
+    echo [DEBUG] Looking for: %CD%\mcp_server\server.py
+    echo [DEBUG] NOTE: Using low-level MCP SDK implementation
     echo.
     echo Press any key to exit...
     pause >nul
@@ -98,11 +98,14 @@ echo.
 echo Select transport mode:
 echo.
 echo   1. stdio Transport ^(Default - for Claude Code MCP^)
-echo   2. SSE Transport - VSCode Only ^(port 8765^)
-echo   3. SSE Transport - Dual Servers ^(VSCode + CLI, ports 8765 + 8766^)
+echo   2. SSE Transport - Single Server ^(port 8765^)
 echo   0. Back to Main Menu
 echo.
-set /p transport_choice="Select transport (0-3): "
+echo NOTE: SSE Transport Options:
+echo   - Option 1 ^(stdio^): Default MCP mode for Claude Code
+echo   - Option 2 ^(Single SSE^): HTTP server on port 8765 for MCP access
+echo.
+set /p transport_choice="Select transport (0-2): "
 
 REM Handle empty input or back option
 if not defined transport_choice goto menu_restart
@@ -110,10 +113,9 @@ if "%transport_choice%"=="" goto menu_restart
 if "%transport_choice%"=="0" goto menu_restart
 
 if "%transport_choice%"=="1" goto start_server_stdio
-if "%transport_choice%"=="2" goto start_server_sse
-if "%transport_choice%"=="3" goto start_server_dual_sse
+if "%transport_choice%"=="2" goto start_server_dual_sse
 
-echo [ERROR] Invalid choice. Please select 0-3.
+echo [ERROR] Invalid choice. Please select 0-2.
 pause
 goto start_server
 
@@ -135,70 +137,53 @@ if not exist ".venv\Scripts\python.exe" (
 
 REM Start the MCP server with stdio
 .\.venv\Scripts\python.exe -m mcp_server.server --transport stdio
-set SERVER_EXIT_CODE=%ERRORLEVEL%
+set SERVER_EXIT_CODE=!ERRORLEVEL!
 
 echo.
-if %SERVER_EXIT_CODE% equ 0 (
+if "!SERVER_EXIT_CODE!"=="0" (
     echo [INFO] MCP server stopped normally
 ) else (
-    echo [ERROR] MCP server failed with exit code: %SERVER_EXIT_CODE%
+    echo [ERROR] MCP server failed with exit code: !SERVER_EXIT_CODE!
     echo [INFO] Check error messages above for troubleshooting
 )
 pause
 goto menu_restart
 
-:start_server_sse
+REM ============================================================================
+REM :start_server_sse - SECTION REMOVED (2025-11-15)
+REM ============================================================================
+REM This section has been removed due to unresolved Windows batch compatibility
+REM issues. The single SSE server option caused crashes when selected, likely
+REM due to complex interactions between:
+REM   - Delayed expansion (setlocal EnableDelayedExpansion)
+REM   - Nested IF blocks and FOR loops
+REM   - Quote parsing in the 'start' command
+REM   - goto statements inside code blocks
+REM
+REM WORKAROUND: Use Option 2 (Dual SSE Servers) instead, which works perfectly.
+REM The dual server mode launches both VSCode (port 8765) and CLI (port 8766)
+REM servers, and you can use either or both as needed.
+REM
+REM If you need single server mode, use Option 1 (stdio transport) or manually
+REM run: scripts\batch\start_mcp_sse.bat
+REM ============================================================================
+
+:start_server_dual_sse
 echo.
-echo [INFO] Starting MCP Server (SSE transport)...
-echo [INFO] Server will run on: http://localhost:8765/sse
-echo [INFO] Use this mode to avoid stdio transport bugs in Claude Code
+echo [INFO] Starting SSE server on port 8765...
+echo [INFO] Server URL: http://localhost:8765/sse
 echo [INFO] Press Ctrl+C to stop the server
 echo ==================================================
 echo.
 
-REM Check if Python exists
-if not exist ".venv\Scripts\python.exe" (
-    echo [ERROR] Python executable not found: .venv\Scripts\python.exe
+REM Validate batch file exists
+if not exist "scripts\batch\start_mcp_sse.bat" (
+    echo [ERROR] Batch file not found: scripts\batch\start_mcp_sse.bat
     pause
     goto menu_restart
 )
 
-REM Check if port 8765 is in use
-netstat -ano | findstr :8765 >nul 2>&1
-if %ERRORLEVEL% equ 0 (
-    echo [WARNING] Port 8765 is already in use
-    echo [INFO] Kill existing process or choose stdio mode
-    echo.
-    set /p kill_port="Kill process on port 8765? (y/N): "
-    if /i NOT "!kill_port!"=="y" goto menu_restart
-    for /f "tokens=5" %%a in ('netstat -ano ^| findstr :8765') do (
-        taskkill /F /PID %%a >nul 2>&1
-    )
-    timeout /t 2 /nobreak >nul
-)
-
-REM Start the MCP server with SSE
-.\.venv\Scripts\python.exe -m mcp_server.server --transport sse --host localhost --port 8765
-set SERVER_EXIT_CODE=%ERRORLEVEL%
-
-echo.
-if %SERVER_EXIT_CODE% equ 0 (
-    echo [INFO] MCP server stopped normally
-) else (
-    echo [ERROR] MCP server failed with exit code: %SERVER_EXIT_CODE%
-    echo [INFO] Check error messages above for troubleshooting
-)
-pause
-goto menu_restart
-
-:start_server_dual_sse
-echo.
-echo [INFO] Starting DUAL SSE servers...
-echo [INFO] VSCode Server: http://localhost:8765/sse
-echo [INFO] CLI Server:    http://localhost:8766/sse
-echo ==================================================
-echo.
-call scripts\batch\start_both_sse_servers.bat
+start "MCP SSE Server (8765)" cmd /k "scripts\batch\start_mcp_sse.bat"
 goto menu_restart
 
 :debug_mode
@@ -215,7 +200,7 @@ echo [INFO] Running unit tests for core components...
 echo [INFO] This will test chunking, indexing, search, and utility modules.
 echo.
 .\.venv\Scripts\python.exe -m pytest tests/unit/ -v --tb=short
-if %ERRORLEVEL% neq 0 (
+if "!ERRORLEVEL!" neq "0" (
     echo.
     echo [WARNING] Some tests failed. Check output above for details.
     echo [INFO] This is normal during active development
@@ -235,7 +220,7 @@ echo [INFO] Running integration tests for MCP server and search functionality...
 echo [INFO] This will test core imports, search functionality, and MCP integration.
 echo.
 .\.venv\Scripts\python.exe -m pytest tests/integration/ -v --tb=short
-if %ERRORLEVEL% neq 0 (
+if "!ERRORLEVEL!" neq "0" (
     echo.
     echo [WARNING] Some tests failed. Check output above for details.
     echo [INFO] This is normal during active development
@@ -257,7 +242,7 @@ echo.
 echo Running MCP Configuration Test...
 echo.
 powershell -ExecutionPolicy Bypass -File "tests\regression\test_mcp_configuration.ps1"
-if %ERRORLEVEL% neq 0 (
+if "!ERRORLEVEL!" neq "0" (
     echo.
     echo [WARNING] Configuration validation failed. Check output above for details.
     echo [INFO] Run: .\scripts\batch\manual_configure.bat to fix
@@ -372,6 +357,13 @@ goto performance_menu
 echo.
 echo === Project Management ===
 echo.
+REM Check if multi-model mode is enabled
+set MULTI_MODEL_STATUS=Disabled
+if "%CLAUDE_MULTI_MODEL_ENABLED%"=="true" set MULTI_MODEL_STATUS=Enabled
+if "%CLAUDE_MULTI_MODEL_ENABLED%"=="1" set MULTI_MODEL_STATUS=Enabled
+
+echo [Multi-Model Mode: %MULTI_MODEL_STATUS%]
+echo.
 echo   1. Index New Project
 echo   2. Re-index Existing Project ^(Incremental^)
 echo   3. Force Re-index Existing Project ^(Full^)
@@ -381,6 +373,10 @@ echo   6. View Storage Statistics
 echo   7. Switch to Project
 echo   8. Back to Main Menu
 echo.
+if "%MULTI_MODEL_STATUS%"=="Enabled" (
+    echo   Note: Indexing will update ALL models ^(Qwen3, BGE-M3, CodeRankEmbed^)
+    echo.
+)
 set /p pm_choice="Select option (1-8): "
 
 REM Handle empty input gracefully
@@ -536,7 +532,7 @@ goto menu_restart
 echo.
 echo === Indexed Projects ===
 echo.
-.\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; from pathlib import Path; import json; storage = get_storage_dir(); projects = list((storage / 'projects').glob('*/project_info.json')); print(f'Found {len(projects)} indexed projects:\n') if projects else print('No indexed projects found.\n'); [print(f'  {i+1}. {json.load(open(p))[\"project_name\"]}') or print(f'     Path: {json.load(open(p))[\"project_path\"]}') or print(f'     Hash: {p.parent.name}\n') for i, p in enumerate(projects)]" 2>nul
+.\.venv\Scripts\python.exe scripts\list_projects_display.py 2>nul
 if errorlevel 1 (
     echo [ERROR] Could not retrieve project list
     echo [INFO] Storage directory may not exist yet
@@ -638,10 +634,10 @@ echo.
 
 REM Clear the index directory with DB cleanup
 .\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; import shutil, time, gc; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; gc.collect(); time.sleep(0.5); shutil.rmtree(project_dir, ignore_errors=False) if project_dir.exists() else None; print('Index: cleared')"
-set INDEX_RESULT=%ERRORLEVEL%
+set INDEX_RESULT=!ERRORLEVEL!
 
 REM Handle locked files
-if %INDEX_RESULT% neq 0 (
+if "!INDEX_RESULT!" neq "0" (
     echo.
     echo [ERROR] Index is locked by another process
     echo.
@@ -663,12 +659,12 @@ if %INDEX_RESULT% neq 0 (
 
 REM Clear the Merkle snapshot
 .\.venv\Scripts\python.exe -c "from merkle.snapshot_manager import SnapshotManager; sm = SnapshotManager(); sm.delete_snapshot(r'%PROJECT_PATH%'); print('Snapshot: cleared')" 2>&1
-set SNAPSHOT_RESULT=%ERRORLEVEL%
+set SNAPSHOT_RESULT=!ERRORLEVEL!
 
 echo.
 REM Report results
-if %INDEX_RESULT% equ 0 (
-    if %SNAPSHOT_RESULT% equ 0 (
+if "!INDEX_RESULT!"=="0" (
+    if "!SNAPSHOT_RESULT!"=="0" (
         echo [OK] Project index cleared: %PROJECT_NAME%
         echo [OK] Merkle snapshot cleared
     ) else (
@@ -746,7 +742,7 @@ goto menu_restart
 echo.
 echo [INFO] Configuring Claude Code integration...
 powershell -ExecutionPolicy Bypass -File "scripts\batch\manual_configure.bat" -Global
-if %ERRORLEVEL% neq 0 (
+if "!ERRORLEVEL!" neq "0" (
     echo [ERROR] Configuration failed
 ) else (
     echo [OK] Claude Code configured
@@ -767,7 +763,7 @@ echo.
 echo [INFO] Current Search Configuration:
 if exist ".venv\Scripts\python.exe" (
     .\.venv\Scripts\python.exe -c "from search.config import get_search_config; config = get_search_config(); print('  Search Mode:', config.default_search_mode); print('  Hybrid Search:', 'Enabled' if config.enable_hybrid_search else 'Disabled'); print('  BM25 Weight:', config.bm25_weight); print('  Dense Weight:', config.dense_weight); print('  Prefer GPU:', config.prefer_gpu); print('  Parallel Search:', 'Enabled' if config.use_parallel_search else 'Disabled')"
-    if errorlevel 1 (
+    if "!ERRORLEVEL!" neq "0" (
         echo Error loading configuration
         echo Using defaults: hybrid mode, BM25=0.4, Dense=0.6
     )
@@ -1073,7 +1069,7 @@ echo [INFO] Running installation tests...
 if exist "tests\unit\test_imports.py" (
     echo [INFO] Testing core imports and MCP server functionality...
     .\.venv\Scripts\python.exe -m pytest tests\unit\test_imports.py tests\unit\test_mcp_server.py -v --tb=short
-    if %ERRORLEVEL% neq 0 (
+    if "!ERRORLEVEL!" neq "0" (
         echo [WARNING] Some tests failed. Check output above for details.
     ) else (
         echo [OK] Installation tests passed
@@ -1176,16 +1172,16 @@ REM Reusable Subroutines
 REM ============================================================================
 
 :select_indexed_project
-REM Reusable project selection logic
+REM Reusable project selection logic with grouped display
 REM Usage: call :select_indexed_project "action description"
-REM Sets: SELECTED_PROJECT_PATH, SELECTED_PROJECT_NAME, SELECTED_PROJECT_HASH
+REM Sets: SELECTED_PROJECT_PATH, SELECTED_PROJECT_NAME, SELECTED_PROJECT_MODELS
 REM Returns: errorlevel 0 on success, 1 on cancel
 
 set ACTION_DESC=%~1
 
-REM Get list of projects
-set TEMP_PROJECTS=%TEMP%\mcp_projects_select.txt
-.\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; from pathlib import Path; import json; storage = get_storage_dir(); projects = list((storage / 'projects').glob('*/project_info.json')); [print(f'{i+1}|{json.load(open(p))[\"project_name\"]}|{json.load(open(p))[\"project_path\"]}|{p.parent.name}') for i, p in enumerate(projects)]" > "%TEMP_PROJECTS%" 2>nul
+REM Get grouped project list
+set TEMP_PROJECTS=%TEMP%\mcp_projects_select_grouped.txt
+.\.venv\Scripts\python.exe scripts\list_projects_parseable.py > "%TEMP_PROJECTS%" 2>nul
 
 REM Check if any projects exist
 findstr /R "." "%TEMP_PROJECTS%" >nul 2>&1
@@ -1197,12 +1193,13 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM Display projects
+REM Display grouped projects
 echo Select project to %ACTION_DESC%:
 echo.
-for /f "tokens=1,2,3 delims=|" %%a in (%TEMP_PROJECTS%) do (
+for /f "tokens=1,2,3,4 delims=|" %%a in (%TEMP_PROJECTS%) do (
     echo   %%a. %%b
     echo      Path: %%c
+    echo      Models: %%d
     echo.
 )
 echo   0. Cancel
@@ -1224,14 +1221,14 @@ if "%project_choice%"=="0" (
 )
 
 REM Find selected project
-set SELECTED_PROJECT_HASH=
 set SELECTED_PROJECT_NAME=
 set SELECTED_PROJECT_PATH=
+set SELECTED_PROJECT_MODELS=
 for /f "tokens=1,2,3,4 delims=|" %%a in (%TEMP_PROJECTS%) do (
     if "%%a"=="%project_choice%" (
         set SELECTED_PROJECT_NAME=%%b
         set SELECTED_PROJECT_PATH=%%c
-        set SELECTED_PROJECT_HASH=%%d
+        set SELECTED_PROJECT_MODELS=%%d
     )
 )
 

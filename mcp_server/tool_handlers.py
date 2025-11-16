@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 # Import server globals and helpers
-from mcp_server.server_lowlevel import (
+from mcp_server.server import (
     get_storage_dir,
     get_project_storage_dir,
     get_embedder,
@@ -30,8 +30,9 @@ from mcp_server.server_lowlevel import (
 
 # Import dependencies
 from chunking.multi_language_chunker import MultiLanguageChunker
-from search.config import get_config_manager, get_search_config, MODEL_REGISTRY
+from search.config import get_config_manager, get_search_config, SearchConfigManager, MODEL_REGISTRY
 from search.hybrid_searcher import HybridSearcher
+from search.indexer import CodeIndexManager
 from search.query_router import QueryRouter
 from search.incremental_indexer import IncrementalIndexer
 
@@ -78,7 +79,7 @@ async def handle_get_index_status(arguments: Dict[str, Any]) -> dict:
 
 
 async def handle_list_projects(arguments: Dict[str, Any]) -> dict:
-    """List all indexed projects with their information."""
+    """List all indexed projects grouped by path with model details."""
     try:
         base_dir = get_storage_dir()
         projects_dir = base_dir / 'projects'
@@ -86,30 +87,61 @@ async def handle_list_projects(arguments: Dict[str, Any]) -> dict:
         if not projects_dir.exists():
             return {
                 'projects': [],
-                'count': 0,
+                'total_projects': 0,
+                'total_indices': 0,
                 'message': 'No projects indexed yet'
             }
 
-        projects = []
+        # Group projects by path
+        projects_by_path = {}  # project_path -> project_data
+
         for project_dir in projects_dir.iterdir():
-            if project_dir.is_dir():
-                info_file = project_dir / 'project_info.json'
-                if info_file.exists():
-                    with open(info_file) as f:
-                        project_info = json.load(f)
+            if not project_dir.is_dir():
+                continue
 
-                    # Add index stats if available
-                    stats_file = project_dir / 'index' / 'stats.json'
-                    if stats_file.exists():
-                        with open(stats_file) as f:
-                            stats = json.load(f)
-                        project_info['index_stats'] = stats
+            info_file = project_dir / 'project_info.json'
+            if not info_file.exists():
+                continue
 
-                    projects.append(project_info)
+            with open(info_file) as f:
+                project_info = json.load(f)
+
+            project_path = project_info['project_path']
+
+            # Initialize project entry if first time seeing this path
+            if project_path not in projects_by_path:
+                projects_by_path[project_path] = {
+                    'project_name': project_info['project_name'],
+                    'project_path': project_path,
+                    'project_hash': project_info['project_hash'],
+                    'models_indexed': []
+                }
+
+            # Prepare model info
+            model_info = {
+                'model': project_info['embedding_model'],
+                'dimension': project_info['model_dimension'],
+                'chunks': None,
+                'created_at': project_info.get('created_at')
+            }
+
+            # Try to load chunk count from stats
+            stats_file = project_dir / 'index' / 'stats.json'
+            if stats_file.exists():
+                with open(stats_file) as f:
+                    stats = json.load(f)
+                    model_info['chunks'] = stats.get('total_chunks', 0)
+
+            projects_by_path[project_path]['models_indexed'].append(model_info)
+
+        # Convert to list
+        projects = list(projects_by_path.values())
+        total_indices = sum(len(p['models_indexed']) for p in projects)
 
         return {
             'projects': projects,
-            'count': len(projects),
+            'total_projects': len(projects),
+            'total_indices': total_indices,
             'current_project': _current_project
         }
     except Exception as e:
@@ -413,7 +445,7 @@ async def handle_find_similar_code(arguments: Dict[str, Any]) -> dict:
         searcher = get_searcher()
 
         # Simple implementation - delegate to searcher
-        results = searcher.find_similar(chunk_id, k=k)
+        results = searcher.find_similar_to_chunk(chunk_id, k=k)
 
         formatted_results = []
         for result in results:
@@ -513,8 +545,8 @@ async def handle_search_code(arguments: Dict[str, Any]) -> dict:
                 global _searcher
                 _searcher = None
 
-        # Phase 3: Execute search
-        searcher = get_searcher()
+        # Phase 3: Execute search (pass routing decision to get correct model index)
+        searcher = get_searcher(model_key=selected_model_key)
 
         # Check if index ready
         total_chunks = 0
@@ -626,13 +658,17 @@ async def handle_search_code(arguments: Dict[str, Any]) -> dict:
 
 
 async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
-    """Index a directory for code search - SECOND MOST COMPLEX TOOL."""
+    """Index a directory for code search with multi-model support."""
     directory_path = arguments["directory_path"]
     project_name = arguments.get("project_name")
-    file_patterns = arguments.get("file_patterns")
     incremental = arguments.get("incremental", True)
+    multi_model = arguments.get("multi_model", None)  # None = auto-detect
 
-    logger.info(f"[INDEX] directory={directory_path}, incremental={incremental}")
+    # Auto-detect multi-model mode if not explicitly specified
+    if multi_model is None:
+        multi_model = _multi_model_enabled
+
+    logger.info(f"[INDEX] directory={directory_path}, incremental={incremental}, multi_model={multi_model}")
 
     try:
         from datetime import datetime
@@ -645,51 +681,187 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
         global _current_project
         _current_project = str(directory_path)
 
-        # Get or create project storage
-        project_dir = get_project_storage_dir(str(directory_path))
-        index_dir = project_dir / 'index'
-        index_dir.mkdir(exist_ok=True)
+        # Multi-model batch indexing
+        if multi_model and _multi_model_enabled:
+            logger.info(f"Multi-model batch indexing for: {directory_path}")
 
-        # Initialize components
-        chunker = MultiLanguageChunker(str(directory_path), file_patterns=file_patterns)
-        embedder = get_embedder()
+            results = []
+            original_config = get_search_config()
+            original_model = original_config.embedding_model_name
 
-        # Get index manager
-        searcher_instance = get_searcher(str(directory_path))
+            # Clear global state for clean model switching
+            global _index_manager, _searcher
 
-        config = get_search_config()
-        if config.enable_hybrid_search:
-            indexer = searcher_instance
+            try:
+                for model_key, model_name in MODEL_POOL_CONFIG.items():
+                    logger.info(f"Indexing with model: {model_name} ({model_key})")
+
+                    # Switch to this model temporarily
+                    config_mgr = SearchConfigManager()
+                    config = config_mgr.load_config()
+                    config.embedding_model_name = model_name
+
+                    # Update dimension from registry
+                    if model_name in MODEL_REGISTRY:
+                        config.model_dimension = MODEL_REGISTRY[model_name]['dimension']
+
+                    config_mgr.save_config(config)
+
+                    # Invalidate global config cache to force reload from disk
+                    # This ensures get_project_storage_dir() sees the updated model
+                    from search import config as config_module
+                    config_module._config_manager = None
+
+                    # Clear cached components to force reload with new model
+                    global _index_manager, _searcher
+                    _index_manager = None
+                    _searcher = None
+
+                    # Get project storage for this model
+                    project_dir = get_project_storage_dir(str(directory_path))
+                    index_dir = project_dir / 'index'
+                    index_dir.mkdir(exist_ok=True)
+
+                    # Initialize components for this model
+                    chunker = MultiLanguageChunker(str(directory_path))
+                    embedder = get_embedder(model_key)  # Get embedder for specific model
+
+                    # Create fresh indexer instance directly (bypass global cache)
+                    # This ensures the storage path is correct for the current model
+                    config = get_search_config()
+                    if config.enable_hybrid_search:
+                        # Create fresh HybridSearcher with correct storage path
+                        storage_dir = index_dir  # Already set on line 721
+                        project_id = project_dir.name.rsplit('_', 1)[0]  # Remove dimension suffix
+
+                        indexer = HybridSearcher(
+                            storage_dir=str(storage_dir),
+                            embedder=embedder,
+                            bm25_weight=config.bm25_weight,
+                            dense_weight=config.dense_weight,
+                            rrf_k=config.rrf_k_parameter,
+                            max_workers=2,
+                            bm25_use_stopwords=config.bm25_use_stopwords,
+                            bm25_use_stemming=config.bm25_use_stemming,
+                            project_id=project_id
+                        )
+                        logger.info(f"Created fresh HybridSearcher for {model_name} at {storage_dir}")
+                    else:
+                        # Create fresh CodeIndexManager with correct storage path
+                        project_id = project_dir.name.rsplit('_', 1)[0]  # Remove dimension suffix
+                        indexer = CodeIndexManager(str(index_dir), project_id=project_id)
+                        logger.info(f"Created fresh CodeIndexManager for {model_name} at {index_dir}")
+
+                    # Create incremental indexer with fresh components
+                    incremental_indexer = IncrementalIndexer(
+                        indexer=indexer,
+                        embedder=embedder,
+                        chunker=chunker
+                    )
+
+                    # Index with this model
+                    start_time = datetime.now()
+
+                    if incremental:
+                        result = incremental_indexer.incremental_index(str(directory_path))
+                    else:
+                        result = incremental_indexer.incremental_index(str(directory_path), force_full=True)
+
+                    elapsed = (datetime.now() - start_time).total_seconds()
+
+                    results.append({
+                        'model': model_name,
+                        'model_key': model_key,
+                        'dimension': config.model_dimension,
+                        'files_added': result.files_added,
+                        'files_modified': result.files_modified,
+                        'files_removed': result.files_removed,
+                        'chunks_added': result.chunks_added,
+                        'time_taken': round(elapsed, 2)
+                    })
+
+                    logger.info(f"Completed indexing with {model_name} in {elapsed:.2f}s")
+
+            finally:
+                # Restore original model
+                config_mgr = SearchConfigManager()
+                config = config_mgr.load_config()
+                config.embedding_model_name = original_model
+                config_mgr.save_config(config)
+
+                # Clear cached components
+                _index_manager = None
+                _searcher = None
+
+                logger.info(f"Restored original model: {original_model}")
+
+            # Calculate totals
+            total_time = sum(r['time_taken'] for r in results)
+            total_files_added = sum(r['files_added'] for r in results)
+            total_chunks_added = sum(r['chunks_added'] for r in results)
+
+            return {
+                'success': True,
+                'multi_model': True,
+                'project': str(directory_path),
+                'models_indexed': len(results),
+                'results': results,
+                'total_time': round(total_time, 2),
+                'total_files_added': total_files_added,
+                'total_chunks_added': total_chunks_added,
+                'mode': 'incremental' if incremental else 'full'
+            }
+
+        # Single model indexing (original behavior)
         else:
-            indexer = get_index_manager(str(directory_path))
+            logger.info(f"Single-model indexing for: {directory_path}")
 
-        # Create incremental indexer
-        incremental_indexer = IncrementalIndexer(
-            indexer=indexer,
-            embedder=embedder,
-            chunker=chunker
-        )
+            # Get or create project storage
+            project_dir = get_project_storage_dir(str(directory_path))
+            index_dir = project_dir / 'index'
+            index_dir.mkdir(exist_ok=True)
 
-        # Index the directory
-        start_time = datetime.now()
+            # Initialize components
+            chunker = MultiLanguageChunker(str(directory_path))
+            embedder = get_embedder()
 
-        if incremental:
-            result = incremental_indexer.index_incrementally(str(directory_path))
-        else:
-            result = incremental_indexer.force_reindex(str(directory_path))
+            # Get index manager
+            searcher_instance = get_searcher(str(directory_path))
 
-        elapsed = (datetime.now() - start_time).total_seconds()
+            config = get_search_config()
+            if config.enable_hybrid_search:
+                indexer = searcher_instance
+            else:
+                indexer = get_index_manager(str(directory_path))
 
-        return {
-            'success': True,
-            'project': str(directory_path),
-            'files_added': result.files_added,
-            'files_modified': result.files_modified,
-            'files_removed': result.files_removed,
-            'chunks_added': result.chunks_added,
-            'time_taken': round(elapsed, 2),
-            'mode': 'incremental' if incremental else 'full'
-        }
+            # Create incremental indexer
+            incremental_indexer = IncrementalIndexer(
+                indexer=indexer,
+                embedder=embedder,
+                chunker=chunker
+            )
+
+            # Index the directory
+            start_time = datetime.now()
+
+            if incremental:
+                result = incremental_indexer.incremental_index(str(directory_path))
+            else:
+                result = incremental_indexer.incremental_index(str(directory_path), force_full=True)
+
+            elapsed = (datetime.now() - start_time).total_seconds()
+
+            return {
+                'success': True,
+                'multi_model': False,
+                'project': str(directory_path),
+                'files_added': result.files_added,
+                'files_modified': result.files_modified,
+                'files_removed': result.files_removed,
+                'chunks_added': result.chunks_added,
+                'time_taken': round(elapsed, 2),
+                'mode': 'incremental' if incremental else 'full'
+            }
 
     except Exception as e:
         logger.error(f"Indexing failed: {e}", exc_info=True)

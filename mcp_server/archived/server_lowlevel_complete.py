@@ -435,56 +435,8 @@ def get_searcher(project_path: str=None):
 # ============================================================================
 # CRITICAL FIX: Explicit lifecycle management
 # ============================================================================
-
-@asynccontextmanager
-async def server_lifespan(server: Server):
-    """Server lifecycle management - runs BEFORE any tool calls."""
-    global _current_project, _embedders, _model_preload_task_started
-
-    logger.info("=" * 60)
-    logger.info("SERVER STARTUP: Initializing global state")
-    logger.info("=" * 60)
-
-    try:
-        default_project = os.getenv('CLAUDE_DEFAULT_PROJECT', None)
-        if default_project:
-            _current_project = str(Path(default_project).resolve())
-            logger.info(f"[INIT] Default project set: {_current_project}")
-        else:
-            logger.info("[INIT] No default project")
-
-        if _multi_model_enabled:
-            initialize_model_pool(lazy_load=True)
-            logger.info(f"[INIT] Model pool initialized: {list(MODEL_POOL_CONFIG.keys())}")
-        else:
-            logger.info("[INIT] Single-model mode enabled")
-
-        storage_dir = get_storage_dir()
-        logger.info(f"[INIT] Storage directory: {storage_dir}")
-
-        if os.getenv('MCP_PRELOAD_MODEL', 'false').lower() in ('true', '1', 'yes'):
-            logger.info("[INIT] Pre-loading embedding model...")
-            try:
-                embedder = get_embedder()
-                _ = embedder.model
-                logger.info("[INIT] Embedding model pre-loaded")
-            except Exception as e:
-                logger.warning(f"[INIT] Model pre-load failed (non-critical): {e}")
-
-        logger.info("=" * 60)
-        logger.info("[INIT] SERVER READY - State initialized, accepting connections")
-        logger.info("=" * 60)
-
-        yield
-
-    finally:
-        logger.info("=" * 60)
-        logger.info("SERVER SHUTDOWN: Cleaning up resources")
-        logger.info("=" * 60)
-        _cleanup_previous_resources()
-        logger.info("[SHUTDOWN] Cleanup complete")
-        logger.info("=" * 60)
-
+# Server instance will be created without custom lifespan
+# Global state initialization happens in Starlette app_lifespan below
 
 # Create server instance
 server = Server("Code Search")
@@ -648,6 +600,11 @@ if __name__ == '__main__':
     parser.add_argument('--port', type=int, default=8000)
     args = parser.parse_args()
 
+    # Enable MCP debug logging
+    import logging
+    logging.getLogger('mcp').setLevel(logging.DEBUG)
+    logging.getLogger('mcp.server').setLevel(logging.DEBUG)
+
     logger.info("=" * 60)
     logger.info("MCP Server Starting (Low-Level SDK)")
     logger.info("=" * 60)
@@ -663,13 +620,111 @@ if __name__ == '__main__':
             logger.info("Windows: Using SelectorEventLoop for SSE")
 
     try:
-        from mcp.server.stdio import stdio_server
-        from mcp.server.sse import sse_server
-
         if args.transport == 'stdio':
+            from mcp.server.stdio import stdio_server
             asyncio.run(stdio_server(server, server_lifespan))
         elif args.transport == 'sse':
-            asyncio.run(sse_server(server, server_lifespan, host=args.host, port=args.port))
+            # SSE transport using Starlette + SseServerTransport + uvicorn
+            from mcp.server.sse import SseServerTransport
+            from starlette.applications import Starlette
+            from starlette.routing import Route, Mount
+            from starlette.responses import Response
+            import uvicorn
+
+            # Create SSE transport with message endpoint
+            sse = SseServerTransport("/messages/")
+
+            # SSE handler - establishes bidirectional streams
+            async def handle_sse(request):
+                async with sse.connect_sse(
+                    request.scope,
+                    request.receive,
+                    request._send
+                ) as streams:
+                    await server.run(
+                        streams[0],  # read_stream
+                        streams[1],  # write_stream
+                        server.create_initialization_options()
+                    )
+                return Response()  # Prevent TypeError on disconnect
+
+            # Starlette app with lifespan integration
+            async def app_lifespan(app):
+                """Application lifecycle - initialize global state ONCE before accepting connections."""
+                global _current_project, _embedders, _model_preload_task_started
+
+                logger.info("=" * 60)
+                logger.info("APPLICATION STARTUP: Initializing global state")
+                logger.info("=" * 60)
+
+                try:
+                    # Set default project if specified
+                    default_project = os.getenv('CLAUDE_DEFAULT_PROJECT', None)
+                    if default_project:
+                        _current_project = str(Path(default_project).resolve())
+                        logger.info(f"[INIT] Default project: {_current_project}")
+                    else:
+                        logger.info("[INIT] No default project")
+
+                    # Initialize model pool in lazy mode
+                    if _multi_model_enabled and not _model_preload_task_started:
+                        initialize_model_pool(lazy_load=True)
+                        logger.info(f"[INIT] Model pool initialized: {list(MODEL_POOL_CONFIG.keys())}")
+                        _model_preload_task_started = True
+                    elif _multi_model_enabled:
+                        logger.info("[INIT] Model pool already initialized")
+                    else:
+                        logger.info("[INIT] Single-model mode enabled")
+
+                    # Log storage directory
+                    storage = get_storage_dir()
+                    logger.info(f"[INIT] Storage directory: {storage}")
+
+                    # Optional: Pre-load embedding model
+                    if os.getenv('MCP_PRELOAD_MODEL', 'false').lower() in ('true', '1', 'yes'):
+                        logger.info("[INIT] Pre-loading embedding model...")
+                        try:
+                            embedder = get_embedder()
+                            _ = embedder.model
+                            logger.info("[INIT] Embedding model pre-loaded")
+                        except Exception as e:
+                            logger.warning(f"[INIT] Model pre-load failed (non-critical): {e}")
+
+                    logger.info("=" * 60)
+                    logger.info("APPLICATION READY - Accepting connections")
+                    logger.info("=" * 60)
+
+                    yield  # Application runs
+
+                finally:
+                    logger.info("=" * 60)
+                    logger.info("APPLICATION SHUTDOWN: Cleaning up")
+                    logger.info("=" * 60)
+                    _cleanup_previous_resources()
+                    logger.info("[SHUTDOWN] Cleanup complete")
+
+            # Define routes: GET /sse + POST /messages/
+            routes = [
+                Route("/sse", endpoint=handle_sse, methods=["GET"]),
+                Mount("/messages/", app=sse.handle_post_message),
+            ]
+
+            starlette_app = Starlette(
+                routes=routes,
+                lifespan=app_lifespan
+            )
+
+            # Run server
+            logger.info(f"Starting SSE server on {args.host}:{args.port}")
+            logger.info(f"SSE endpoint: http://{args.host}:{args.port}/sse")
+            logger.info(f"Message endpoint: http://{args.host}:{args.port}/messages/")
+
+            uvicorn.run(
+                starlette_app,
+                host=args.host,
+                port=args.port,
+                log_level="info"
+            )
 
     except KeyboardInterrupt:
         logger.info('\nShutting down gracefully...')

@@ -94,10 +94,11 @@ def convert_tool_to_handler(func_name, func_body):
     func_logic = func_body[body_start + 3:].strip()
 
     # Build handler
+    arg_extraction_code = '\n'.join(arg_extraction)
     handler = f'''async def handle_{func_name}(arguments: Dict[str, Any]) -> dict:
     """Handler for {func_name} tool."""
     # Extract arguments
-{'\\n'.join(arg_extraction)}
+{arg_extraction_code}
 
     # Execute tool logic
 {func_logic}

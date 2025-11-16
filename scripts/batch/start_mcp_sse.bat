@@ -1,6 +1,11 @@
 @echo off
-REM MCP Server SSE Transport - Starts server on HTTP/SSE for Claude Code
-REM This avoids stdio transport bugs in Claude Code 2.0.22
+setlocal EnableDelayedExpansion
+
+:: Name:     start_mcp_sse.bat
+:: Purpose:  Start MCP Server with SSE transport on port 8765
+:: Note:     Avoids stdio transport bugs in Claude Code 2.0.22+
+:: Author:   claude-context-local project
+:: Revision: 2025-11-14 - Fixed delayed expansion inheritance issue
 
 echo ============================================================
 echo MCP Server SSE Mode
@@ -17,30 +22,37 @@ set PYTHONPATH=%~dp0..\..
 set PYTHONUNBUFFERED=1
 REM set MCP_DEBUG=1  (removed for clean logging)
 
-echo Starting server...
+REM Silent validation - only show errors
+if not exist "%~dp0..\..\.venv\Scripts\python.exe" (
+    echo [ERROR] Python NOT found at: %~dp0..\..\.venv\Scripts\python.exe
+    echo [ERROR] Run install-windows.bat first
+    pause
+    exit /b 1
+)
 echo.
+
 
 REM Start the server
 "%~dp0..\..\.venv\Scripts\python.exe" -m mcp_server.server --transport sse --host localhost --port 8765
 
-REM Check exit code
-if errorlevel 1 (
-    echo.
-    echo ============================================================
-    echo ERROR: Server failed to start (Exit Code: %errorlevel%)
+REM Capture exit code immediately (using delayed expansion syntax)
+set EXIT_CODE=!errorlevel!
+
+REM Always show exit status
+echo.
+echo ============================================================
+if "!EXIT_CODE!"=="0" (
+    echo Server stopped normally ^(Exit Code: !EXIT_CODE!^)
+) else (
+    echo ERROR: Server failed ^(Exit Code: !EXIT_CODE!^)
     echo ============================================================
     echo.
     echo Possible issues:
     echo   - Port 8765 already in use
-    echo   - Missing dependencies
+    echo   - Missing dependencies ^(run install-windows.bat^)
     echo   - Python path incorrect
-    echo.
-) else (
-    echo.
-    echo ============================================================
-    echo Server stopped normally
-    echo ============================================================
-    echo.
+    echo   - Module import errors ^(check error above^)
 )
-
-pause
+echo ============================================================
+echo.
+pause >nul

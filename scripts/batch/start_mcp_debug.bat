@@ -10,7 +10,7 @@ echo [DEBUG] Claude Context MCP Server - Debug Mode
 echo [DEBUG] =======================================
 echo [DEBUG] Project Directory: %CD%
 echo [DEBUG] Python Path: .venv\Scripts\python.exe
-echo [DEBUG] Server Module: mcp_server.server_lowlevel_complete
+echo [DEBUG] Server Module: mcp_server.server
 echo [DEBUG] NOTE: Using low-level MCP SDK (migrated from FastMCP)
 echo.
 
@@ -22,8 +22,8 @@ if not exist ".venv\Scripts\python.exe" (
     exit /b 1
 )
 
-if not exist "mcp_server\server_lowlevel_complete.py" (
-    echo [DEBUG ERROR] MCP server script not found: mcp_server\server_lowlevel_complete.py
+if not exist "mcp_server\server.py" (
+    echo [DEBUG ERROR] MCP server script not found: mcp_server\server.py
     echo [DEBUG] Current directory: %CD%
     pause
     exit /b 1
@@ -46,7 +46,7 @@ echo [DEBUG] =======================================
 echo.
 
 REM Start the MCP server with debug output (low-level SDK)
-.\.venv\Scripts\python.exe -u mcp_server\server_lowlevel_complete.py
+.\.venv\Scripts\python.exe -m mcp_server.server --transport stdio
 set SERVER_EXIT_CODE=%ERRORLEVEL%
 
 echo.
