@@ -7,8 +7,8 @@ that don't have the proper project_info.json file and won't appear
 in the Project Management menu.
 """
 
-import shutil
 import gc
+import shutil
 import time
 from pathlib import Path
 
@@ -35,7 +35,7 @@ def get_project_size(project_dir):
     """Calculate total size of project directory in MB."""
     total_size = 0
     try:
-        for file in project_dir.rglob('*'):
+        for file in project_dir.rglob("*"):
             if file.is_file():
                 total_size += file.stat().st_size
     except Exception:
@@ -96,7 +96,7 @@ def main():
     print()
     choice = input("Delete all orphaned projects? (y/N): ").strip().lower()
 
-    if choice != 'y':
+    if choice != "y":
         print("Cancelled.")
         return
 

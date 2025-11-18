@@ -43,6 +43,7 @@ All hybrid search features have been **comprehensively tested** and validated fo
 #### Feature Validation Status
 
 ✅ **Multi-Hop Search**
+
 - Overhead: 25-35ms (validated minimal)
 - Success rate: 93.3% of queries benefit
 - Average discovery: 3.2 unique chunks per query
@@ -50,6 +51,7 @@ All hybrid search features have been **comprehensively tested** and validated fo
 - **Status**: Enabled by default, optimal configuration validated
 
 ✅ **BM25 Snowball Stemming**
+
 - Overhead: ~18ms (validated acceptable)
 - Index v2 format: Fully operational
 - Backward compatibility: Validated with config mismatch tests
@@ -57,6 +59,7 @@ All hybrid search features have been **comprehensively tested** and validated fo
 - **Status**: Enabled by default, optimal configuration validated
 
 ✅ **Hybrid Search (BM25 + Dense)**
+
 - RRF reranking: Fully operational
 - Optimal weights: 0.4 BM25 / 0.6 Dense (validated)
 - Parallel execution: Working correctly
@@ -64,6 +67,7 @@ All hybrid search features have been **comprehensively tested** and validated fo
 - **Status**: Production ready with empirically validated settings
 
 ✅ **Edge Case Handling**
+
 - Empty queries: Handled gracefully (0 results returned)
 - Single character: Handled gracefully
 - Long queries (200+ chars): Processed normally
@@ -89,11 +93,48 @@ All hybrid search features have been **comprehensively tested** and validated fo
 }
 ```
 
-**Validation Reports**:
-- [Comprehensive Feature Test Report](../analysis/COMPREHENSIVE_FEATURE_TEST_REPORT.md) - Full 256-query validation
-- [v0.5.2 Recommendations](../analysis/RECOMMENDATIONS_v0.5.2.md) - Production readiness assessment
-- [Multi-Hop Validation](../analysis/MULTI_HOP_RECOMMENDATIONS.md) - Multi-hop testing results
-- [Stemming Validation](../analysis/STEMMING_VALIDATION_REPORT.md) - Stemming impact analysis
+**Validation**: Empirically tested with 256+ queries across multiple codebases.
+
+---
+
+## Filter Parameters
+
+The `search_code()` function supports filtering results by file path and code structure type.
+
+### Available Filters
+
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `file_pattern` | Substring match on file path | `"test_"`, `"auth"`, `"utils/"` |
+| `chunk_type` | Filter by code structure | `"function"`, `"class"`, `"method"` |
+
+### Usage
+
+```bash
+# Find only test files
+/search_code "authentication" --file_pattern "test_"
+
+# Find only classes
+/search_code "user" --chunk_type "class"
+
+# Combined filters
+/search_code "database" --file_pattern "models" --chunk_type "method"
+```
+
+### How Filtering Works
+
+1. **Initial Search**: BM25 + Dense search find semantically relevant chunks
+2. **Multi-Hop Expansion**: Related chunks discovered (expansion ignores filters)
+3. **Post-Expansion Filtering**: All results (initial + expanded) filtered before re-ranking
+4. **Pattern matching**: `file_pattern` uses substring matching (not glob/regex)
+
+**⚠️ Important**: Filters are post-search, so:
+
+- Query must return chunks that match the filter pattern
+- Generic queries like `"test"` may return 0 results if no semantic matches in filtered files
+- Use specific queries: `"index directory embedding"` instead of `"test"` when filtering
+
+**Best Mode for Filtering**: Use `hybrid` mode (default) - BM25 keyword matching improves filter hit rate compared to `semantic` mode
 
 ---
 
@@ -104,6 +145,7 @@ All hybrid search features have been **comprehensively tested** and validated fo
 ### Overview
 
 The system can automatically route queries to the most suitable model from a pool of three specialized embedding models:
+
 - **Qwen3-0.6B**: Implementation queries, algorithms, error handling
 - **BGE-M3**: Workflow queries, configuration, system plumbing (most consistent)
 - **CodeRankEmbed**: Specialized algorithms (Merkle trees, RRF reranking)
@@ -187,6 +229,7 @@ All searches include routing metadata showing which model processed the query:
 **Enhancement** (2025-11-15): Natural language queries now work without keyword stuffing.
 
 **Improvements**:
+
 - Default threshold lowered: 0.10 → 0.05
 - Enhanced keyword matching: 24 single-word variants per model
 - Simple queries like "error handling" trigger routing effectively
@@ -200,6 +243,7 @@ All searches include routing metadata showing which model processed the query:
 | "merkle tree" | Falls to BGE-M3 default | Routes to CodeRankEmbed ✓ |
 
 **Threshold Guide**:
+
 - `0.03`: Maximum sensitivity (experimental, may over-route)
 - `0.05`: **Recommended default** (natural query support, balanced)
 - `0.10`: Conservative (requires more keyword matches)
@@ -257,7 +301,7 @@ Models load on-demand (lazy loading) and can be cleaned up:
 - **Routing Accuracy**: 8/8 ground truth queries correct (100%)
 - **VRAM Efficiency**: 20.5% utilization on RTX 4090 (79.5% headroom)
 - **Cleanup Verified**: VRAM drops to 0.0 GB after cleanup
-- **Documentation**: [Complete Verification Report](../analysis/mcp_multi_model_verification_report.md)
+- **Documentation**: See `docs/ADVANCED_FEATURES_GUIDE.md#multi-model-query-routing` for complete details
 
 ---
 
@@ -323,11 +367,13 @@ Parameters:
 #### Benefits (Validated Through Testing)
 
 **93.3% of queries benefit** (14/15 test queries):
+
 - **HIGH value** (33.3% queries): Found 5-8 unique chunks
 - **MEDIUM value** (46.7% queries): Found 2-3 unique chunks
 - **LOW value** (13.3% queries): Found 1 unique chunk
 
 **Example: "configuration management system"**
+
 - Single-hop: Found primary class and direct matches
 - Multi-hop: Additionally discovered environment variable parsing, config validation, model integration, path resolution, persistence methods
 - **Result**: 60% of top results changed, providing complete system context
@@ -339,6 +385,7 @@ Parameters:
 Multi-hop is **enabled by default** with optimal settings validated through empirical testing:
 
 **Optimal Values (Do Not Change Unless Necessary):**
+
 - `enable_multi_hop`: `true` (enabled by default)
 - `multi_hop_count`: `2` (two hops - validated optimal)
 - `multi_hop_expansion`: `0.3` (30% expansion - validated optimal)
@@ -359,6 +406,7 @@ export CLAUDE_ENABLE_MULTI_HOP=false
 ```
 
 **Note**: Disabling multi-hop will:
+
 - Reduce search quality (93% of queries benefit from multi-hop)
 - Provide only +25-35ms speedup
 - Miss interconnected code relationships
@@ -377,11 +425,12 @@ export CLAUDE_ENABLE_MULTI_HOP=false
 ```
 
 **Warning**: These settings have been empirically validated as optimal. Changing them may:
+
 - Increase overhead without improving results (more hops/expansion)
 - Reduce discovery quality (lower expansion)
 - Waste computational resources
 
-See `analysis/MULTI_HOP_RECOMMENDATIONS.md` for detailed testing results showing why these are optimal.
+These parameters were validated with 15+ queries showing 93% benefit rate and optimal result diversity.
 
 ### BM25 Stemming Configuration (v0.5.2)
 
@@ -398,6 +447,7 @@ The Snowball stemmer (Porter2 algorithm) normalizes words during BM25 text prepr
 3. **Gerund normalization**: "indexing" matches "index", "indexed", "indexes"
 
 **Example queries that benefit:**
+
 - `"indexing and storage workflow"` - Matches code with "index", "indexed", "indexes"
 - `"searching for user records"` - Matches functions with "search", "searcher", "searches"
 - `"managing configuration settings"` - Matches classes with "manager", "manage", "managed"
@@ -407,9 +457,11 @@ The Snowball stemmer (Porter2 algorithm) normalizes words during BM25 text prepr
 Stemming is **enabled by default** with optimal settings validated through empirical testing:
 
 **Default Setting:**
+
 - `bm25_use_stemming`: `true` (enabled by default)
 
 **Performance:**
+
 - Query overhead: 0.47ms average (negligible)
 - Index size: 11% smaller due to vocabulary consolidation
 - No impact on indexing speed
@@ -429,6 +481,7 @@ export CLAUDE_BM25_USE_STEMMING=false
 ```
 
 **Note**: Disabling stemming will:
+
 - Reduce recall for queries with verb form variations (93% of queries benefit)
 - Miss noun/verb mismatches (e.g., "authentication" won't match "authenticator")
 - Provide no performance benefit (overhead is 0.47ms)
@@ -437,7 +490,7 @@ export CLAUDE_BM25_USE_STEMMING=false
 
 **After Upgrade**: Re-index existing projects for optimal stemming benefits. The system automatically detects configuration mismatches and warns you if loading old indices.
 
-See `analysis/STEMMING_VALIDATION_REPORT.md` for detailed testing results showing why stemming is beneficial.
+Stemming was validated with comparative testing showing improved recall for morphological variations without impacting precision.
 
 ### 2. Using Environment Variables
 

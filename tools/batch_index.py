@@ -7,7 +7,6 @@ Supports multi-model indexing when CLAUDE_MULTI_MODEL_ENABLED=true.
 
 import argparse
 import asyncio
-import json
 import os
 import sys
 import time
@@ -23,21 +22,17 @@ def main():
     parser = argparse.ArgumentParser(
         description="Index project for semantic code search"
     )
-    parser.add_argument(
-        "--path",
-        required=True,
-        help="Path to project directory"
-    )
+    parser.add_argument("--path", required=True, help="Path to project directory")
     parser.add_argument(
         "--mode",
         required=True,
         choices=["new", "incremental", "force"],
-        help="Indexing mode: new (first-time), incremental (change detection), force (full reindex)"
+        help="Indexing mode: new (first-time), incremental (change detection), force (full reindex)",
     )
     parser.add_argument(
         "--multi-model",
         action="store_true",
-        help="Index for all models in pool (Qwen3, BGE-M3, CodeRankEmbed). Auto-detects if not specified."
+        help="Index for all models in pool (Qwen3, BGE-M3, CodeRankEmbed). Auto-detects if not specified.",
     )
 
     args = parser.parse_args()
@@ -64,7 +59,11 @@ def main():
             mode_desc = "Force (full reindex, bypass snapshot)"
 
     # Check multi-model mode
-    multi_model_env = os.getenv('CLAUDE_MULTI_MODEL_ENABLED', 'true').lower() in ('true', '1', 'yes')
+    multi_model_env = os.getenv("CLAUDE_MULTI_MODEL_ENABLED", "true").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
     multi_model = args.multi_model if args.multi_model else None  # None = auto-detect
 
     # Display configuration
@@ -75,9 +74,9 @@ def main():
     print(f"Mode: {mode_desc}")
     print(f"Incremental: {incremental}")
     if multi_model or (multi_model is None and multi_model_env):
-        print(f"Multi-Model: Enabled (Qwen3, BGE-M3, CodeRankEmbed)")
+        print("Multi-Model: Enabled (Qwen3, BGE-M3, CodeRankEmbed)")
     else:
-        print(f"Multi-Model: Disabled (single model only)")
+        print("Multi-Model: Disabled (single model only)")
     print("=" * 70)
     print()
 
@@ -89,11 +88,15 @@ def main():
         print()
 
         # Call async handler
-        result = asyncio.run(handle_index_directory({
-            "directory_path": str(project_path),
-            "incremental": incremental,
-            "multi_model": multi_model
-        }))
+        result = asyncio.run(
+            handle_index_directory(
+                {
+                    "directory_path": str(project_path),
+                    "incremental": incremental,
+                    "multi_model": multi_model,
+                }
+            )
+        )
 
         elapsed = time.time() - start_time
 
@@ -111,17 +114,21 @@ def main():
             print()
 
             # Multi-model results
-            if result.get('multi_model'):
-                print(f"Multi-Model: Enabled ({result.get('models_indexed', 0)} models)")
+            if result.get("multi_model"):
+                print(
+                    f"Multi-Model: Enabled ({result.get('models_indexed', 0)} models)"
+                )
                 print()
 
                 # Display per-model results
-                for model_result in result.get('results', []):
-                    model_name = model_result.get('model', 'Unknown').split('/')[-1]
-                    dimension = model_result.get('dimension', 0)
+                for model_result in result.get("results", []):
+                    model_name = model_result.get("model", "Unknown").split("/")[-1]
+                    dimension = model_result.get("dimension", 0)
                     print(f"  [{model_name} ({dimension}d)]")
                     print(f"    Files added: {model_result.get('files_added', 0)}")
-                    print(f"    Files modified: {model_result.get('files_modified', 0)}")
+                    print(
+                        f"    Files modified: {model_result.get('files_modified', 0)}"
+                    )
                     print(f"    Files removed: {model_result.get('files_removed', 0)}")
                     print(f"    Chunks added: {model_result.get('chunks_added', 0)}")
                     print(f"    Time: {model_result.get('time_taken', 0):.2f}s")
@@ -147,7 +154,7 @@ def main():
 
         else:
             print("[ERROR] Indexing failed")
-            error = result.get('error', 'Unknown error')
+            error = result.get("error", "Unknown error")
             print(f"Error: {error}")
             print("=" * 70)
             return 1
@@ -162,6 +169,7 @@ def main():
         print(f"Time elapsed: {elapsed:.2f} seconds")
         print("=" * 70)
         import traceback
+
         traceback.print_exc()
         return 1
 

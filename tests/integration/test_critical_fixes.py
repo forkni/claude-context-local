@@ -10,15 +10,14 @@ The server no longer uses per-connection server_lifespan - initialization happen
 startup via Starlette's app_lifespan, guaranteeing state is ready before any connections.
 """
 
-import pytest
 import asyncio
 import os
 from pathlib import Path
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import Mock, patch
 
-from mcp_server.server import server
+import pytest
+
 from mcp_server import tool_handlers
-
 
 # REMOVED (2025-11-13): test_lifespan_hook_initializes_project
 # Reason: server_lifespan no longer exists - initialization now happens at application
@@ -45,18 +44,18 @@ async def test_parallel_tool_calls_dont_cause_race_condition():
 
     test_project = str(Path.cwd())
 
-    with patch.dict(os.environ, {'CLAUDE_DEFAULT_PROJECT': test_project}):
-        with patch('mcp_server.tool_handlers.get_storage_dir') as mock_storage:
-            mock_storage.return_value = Path('/tmp/test')
+    with patch.dict(os.environ, {"CLAUDE_DEFAULT_PROJECT": test_project}):
+        with patch("mcp_server.tool_handlers.get_storage_dir") as mock_storage:
+            mock_storage.return_value = Path("/tmp/test")
 
-            with patch('mcp_server.tool_handlers.get_search_config') as mock_config:
+            with patch("mcp_server.tool_handlers.get_search_config") as mock_config:
                 mock_cfg = Mock()
                 mock_cfg.enable_hybrid_search = True
                 mock_cfg.bm25_weight = 0.4
                 mock_cfg.dense_weight = 0.6
                 mock_cfg.rrf_k_parameter = 60
                 mock_cfg.use_parallel_search = True
-                mock_cfg.embedding_model_name = 'test'
+                mock_cfg.embedding_model_name = "test"
                 mock_config.return_value = mock_cfg
 
                 # Call multiple tools in parallel
@@ -64,13 +63,15 @@ async def test_parallel_tool_calls_dont_cause_race_condition():
                     tool_handlers.handle_get_search_config_status({}),
                     tool_handlers.handle_list_projects({}),
                     tool_handlers.handle_list_embedding_models({}),
-                    return_exceptions=True
+                    return_exceptions=True,
                 )
 
                 # All should succeed (no race condition errors)
                 for result in results:
                     assert not isinstance(result, Exception)
-                    assert 'error' not in result or 'project_id' not in str(result.get('error', ''))
+                    assert "error" not in result or "project_id" not in str(
+                        result.get("error", "")
+                    )
 
 
 # REMOVED (2025-11-13): test_cleanup_called_on_shutdown
@@ -85,5 +86,5 @@ async def test_parallel_tool_calls_dont_cause_race_condition():
 # Reason: Starlette's application lifecycle architecturally guarantees initialization order.
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v', '--tb=short'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v", "--tb=short"])

@@ -5,8 +5,8 @@ Based on empirical verification results comparing Qwen3-0.6B, BGE-M3, and CodeRa
 """
 
 import logging
-from typing import Dict, Tuple, Optional
 from dataclasses import dataclass
+from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RoutingDecision:
     """Result of query routing decision."""
+
     model_key: str
     confidence: float
     reason: str
@@ -35,59 +36,161 @@ class QueryRouter:
         "coderankembed": {
             "keywords": [
                 # Specialized algorithms (2/8 wins, but high precision)
-                "merkle", "merkle tree", "merkle dag", "tree", "change detection",
-                "rrf", "reranking", "reciprocal rank", "rank fusion", "rerank",
-                "tree structure", "directed acyclic", "dag",
+                "merkle",
+                "merkle tree",
+                "merkle dag",
+                "tree",
+                "change detection",
+                "rrf",
+                "reranking",
+                "reciprocal rank",
+                "rank fusion",
+                "rerank",
+                "tree structure",
+                "directed acyclic",
+                "dag",
                 # Data structures
-                "binary tree", "graph structure", "binary", "graph",
+                "binary tree",
+                "graph structure",
+                "binary",
+                "graph",
                 # Hybrid search components
-                "hybrid", "fusion", "fuse", "combine"
+                "hybrid",
+                "fusion",
+                "fuse",
+                "combine",
             ],
             "weight": 1.5,  # Higher weight for specialized matches
-            "description": "Specialized algorithms (Merkle trees, RRF reranking)"
+            "description": "Specialized algorithms (Merkle trees, RRF reranking)",
         },
         "qwen3": {
             "keywords": [
                 # Implementation-heavy queries (3/8 wins)
-                "implementation", "implement", "implementing", "implements", "how to implement",
-                "algorithm", "algorithmic", "algorithms",
-                "pattern", "patterns", "design pattern",
-                "how does", "how do", "how is", "how to", "how can",
-                "class structure", "method flow", "function flow", "function", "method", "class",
-                "complete system", "full implementation",
+                "implementation",
+                "implement",
+                "implementing",
+                "implements",
+                "how to implement",
+                "algorithm",
+                "algorithmic",
+                "algorithms",
+                "pattern",
+                "patterns",
+                "design pattern",
+                "how does",
+                "how do",
+                "how is",
+                "how to",
+                "how can",
+                "class structure",
+                "method flow",
+                "function flow",
+                "function",
+                "method",
+                "class",
+                "complete system",
+                "full implementation",
                 # Error handling (verified win) - expanded
-                "error", "error handling", "exception", "try except", "error pattern",
-                "exception handling", "catch", "raise", "throw",
+                "error",
+                "error handling",
+                "exception",
+                "try except",
+                "error pattern",
+                "exception handling",
+                "catch",
+                "raise",
+                "throw",
                 # BM25 implementation (verified win) - expanded
-                "bm25", "sparse index", "keyword search", "index implementation",
-                "search implementation", "search", "searching", "query",
+                "bm25",
+                "sparse index",
+                "keyword search",
+                "index implementation",
+                "search implementation",
+                "search",
+                "searching",
+                "query",
                 # Multi-hop search (verified win) - expanded
-                "multi-hop", "multi hop", "iterative search", "search algorithm",
-                "hop", "iterative", "recursive",
+                "multi-hop",
+                "multi hop",
+                "iterative search",
+                "search algorithm",
+                "hop",
+                "iterative",
+                "recursive",
                 # Common programming terms
-                "code", "coding", "write", "create", "build"
+                "code",
+                "coding",
+                "write",
+                "create",
+                "build",
+                # Async programming
+                "async",
+                "await",
+                "coroutine",
+                "asyncio",
+                "async def",
+                "concurrent",
+                "concurrency",
             ],
             "weight": 1.0,
-            "description": "Implementation queries and algorithms"
+            "description": "Implementation queries and algorithms",
         },
         "bge_m3": {
             "keywords": [
                 # Workflow & configuration (3/8 wins, most consistent)
-                "workflow", "process", "pipeline", "flow",
-                "loading", "initialization", "init", "setup", "initialize",
-                "configuration", "config", "settings", "manager", "configure",
+                "workflow",
+                "process",
+                "pipeline",
+                "flow",
+                "loading",
+                "initialization",
+                "init",
+                "setup",
+                "initialize",
+                "configuration",
+                "config",
+                "settings",
+                "manager",
+                "configure",
                 # Configuration loading (verified win) - expanded
-                "load config", "config file", "environment variable", "loading system", "load",
+                "load config",
+                "config file",
+                "environment variable",
+                "loading system",
+                "load",
                 # Incremental indexing (verified win) - expanded
-                "incremental", "indexing logic", "reindex", "indexing", "logic", "index",
+                "incremental",
+                "indexing logic",
+                "reindex",
+                "indexing",
+                "logic",
+                "index",
                 # Embedding workflow (verified win) - expanded
-                "embedding", "embed", "generation", "batch", "generation workflow", "generate",
+                "embedding",
+                "embed",
+                "generation",
+                "batch",
+                "generation workflow",
+                "generate",
+                # Vector search components
+                "faiss",
+                "vector",
+                "vectors",
+                "similarity",
+                "dense",
+                "nearest neighbor",
+                "knn",
+                "ann",
                 # General system queries
-                "system", "integration", "connection", "connect", "integrate"
+                "system",
+                "integration",
+                "connection",
+                "connect",
+                "integrate",
             ],
             "weight": 1.0,
-            "description": "Workflow and configuration queries"
-        }
+            "description": "Workflow and configuration queries",
+        },
     }
 
     # Default fallback model (most balanced)
@@ -107,13 +210,15 @@ class QueryRouter:
         """
         self.enable_logging = enable_logging
 
-    def route(self, query: str, confidence_threshold: Optional[float] = None) -> RoutingDecision:
+    def route(
+        self, query: str, confidence_threshold: Optional[float] = None
+    ) -> RoutingDecision:
         """Route query to optimal model based on characteristics.
 
         Args:
             query: Natural language search query
             confidence_threshold: Minimum confidence to use non-default model.
-                                  If None, uses CONFIDENCE_THRESHOLD (0.3).
+                                  If None, uses CONFIDENCE_THRESHOLD (0.05).
 
         Returns:
             RoutingDecision with model_key, confidence, and reasoning
@@ -131,7 +236,7 @@ class QueryRouter:
                 model_key=self.DEFAULT_MODEL,
                 confidence=0.0,
                 reason=f"No specific keywords matched - using default ({self.DEFAULT_MODEL})",
-                scores=scores
+                scores=scores,
             )
         else:
             best_model = max(scores, key=scores.get)
@@ -143,7 +248,7 @@ class QueryRouter:
                     model_key=self.DEFAULT_MODEL,
                     confidence=confidence,
                     reason=f"Low confidence ({confidence:.2f} < {confidence_threshold}) - using default ({self.DEFAULT_MODEL})",
-                    scores=scores
+                    scores=scores,
                 )
             else:
                 # High confidence - use matched model
@@ -152,7 +257,7 @@ class QueryRouter:
                     model_key=best_model,
                     confidence=confidence,
                     reason=f"Matched {rule['description']} with confidence {confidence:.2f}",
-                    scores=scores
+                    scores=scores,
                 )
 
         if self.enable_logging:
@@ -184,12 +289,11 @@ class QueryRouter:
             # Count matching keywords
             matches = sum(1 for keyword in keywords if keyword in query_lower)
 
-            # Normalize by keyword count and apply weight
-            if len(keywords) > 0:
-                normalized_score = (matches / len(keywords)) * weight
-                scores[model_key] = normalized_score
-            else:
-                scores[model_key] = 0.0
+            # Score based on match count: each match adds 0.05, apply weight, cap at 1.0
+            # This gives more predictable scores based on actual matches instead of
+            # penalizing categories with many keywords (old: matches/len(keywords))
+            normalized_score = min(matches * 0.05 * weight, 1.0)
+            scores[model_key] = normalized_score
 
         # Ensure scores don't exceed 1.0 after weighting
         max_score = max(scores.values()) if scores else 1.0

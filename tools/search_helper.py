@@ -5,7 +5,6 @@ Interactive tool for searching code using semantic search.
 """
 
 import argparse
-import json
 import sys
 from pathlib import Path
 

@@ -10,7 +10,6 @@ Use cases:
 - Recover from orphaned snapshot issues
 """
 
-import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Set
@@ -103,7 +102,9 @@ def find_stale_snapshots() -> Dict[str, List[Path]]:
             stale[project_id].append(snapshot_file)
 
             # Also include corresponding metadata file
-            metadata_file = snapshot_file.parent / f"{project_id}_{dimension}_metadata.json"
+            metadata_file = (
+                snapshot_file.parent / f"{project_id}_{dimension}_metadata.json"
+            )
             if metadata_file.exists():
                 stale[project_id].append(metadata_file)
 
@@ -192,7 +193,7 @@ def main():
 
     print()
     print("=" * 70)
-    print(f"Cleanup complete!")
+    print("Cleanup complete!")
     print(f"  Deleted: {deleted_count} files")
     if failed_count > 0:
         print(f"  Failed: {failed_count} files")

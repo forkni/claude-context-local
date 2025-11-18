@@ -51,16 +51,19 @@ python tests/benchmarks/capture_baseline.py --project-path "C:\Projects\MyProjec
 ### After Each Phase
 
 1. Run the benchmark script again:
+
    ```bash
    python tests/benchmarks/capture_baseline.py --output tests/benchmarks/phase1_metrics.json
    ```
 
 2. Compare metrics:
+
    ```bash
    python tests/benchmarks/compare_metrics.py baseline_metrics.json phase1_metrics.json
    ```
 
 3. Generate report:
+
    ```bash
    python tests/benchmarks/generate_report.py --baseline baseline_metrics.json --current phase1_metrics.json --output phase1_report.md
    ```
@@ -125,26 +128,31 @@ To compute Success@k and MRR, add ground truth labels:
 ## Success Criteria by Phase
 
 ### Phase 1 Targets
+
 - Call graph coverage: 90%+ functions
 - No performance regression: <10% increase in query time
 - All existing tests pass: 100%
 
 ### Phase 2 Targets
+
 - Identifier query improvement: +15% Success@10
 - Multi-hop improvement: +10% discoveries
 - Tokenization overhead: <5ms
 
 ### Phase 3 Targets
+
 - Composite tool usage: 50%+ queries
 - Context completeness: 80%+ queries
 - Tool latency: <200ms
 
 ### Phase 4 Targets
+
 - Type extraction coverage: 70%+
 - Dependency graph accuracy: 95%+
 - PageRank relevance boost: +5-10%
 
 ### Phase 5 Targets
+
 - C++ call graph coverage: 80%+
 - GLSL call graph coverage: 80%+
 - Multi-language support: 100%

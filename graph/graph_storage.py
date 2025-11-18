@@ -7,7 +7,7 @@ Provides NetworkX-based storage for code call graphs with JSON persistence.
 import json
 import logging
 from pathlib import Path
-from typing import Dict, List, Set, Optional, Any
+from typing import Any, Dict, List, Optional, Set
 
 try:
     import networkx as nx
@@ -69,7 +69,7 @@ class CodeGraphStorage:
         chunk_type: str,
         file_path: str,
         language: str = "python",
-        **kwargs
+        **kwargs,
     ) -> None:
         """
         Add a node to the graph.
@@ -88,7 +88,7 @@ class CodeGraphStorage:
             type=chunk_type,
             file=file_path,
             language=language,
-            **kwargs
+            **kwargs,
         )
 
     def add_call_edge(
@@ -97,7 +97,7 @@ class CodeGraphStorage:
         callee_name: str,
         line_number: int = 0,
         is_method_call: bool = False,
-        **kwargs
+        **kwargs,
     ) -> None:
         """
         Add a call relationship edge.
@@ -117,7 +117,59 @@ class CodeGraphStorage:
             type="calls",
             line=line_number,
             is_method=is_method_call,
-            **kwargs
+            **kwargs,
+        )
+
+    def add_relationship_edge(self, edge: "RelationshipEdge") -> None:
+        """
+        Add a relationship edge to the graph (Phase 3).
+
+        This is the new unified method for adding any type of relationship edge.
+        It replaces add_call_edge() for Phase 3 code.
+
+        Args:
+            edge: RelationshipEdge object with all relationship data
+
+        Example:
+            >>> from graph.relationship_types import RelationshipEdge, RelationshipType
+            >>> edge = RelationshipEdge(
+            ...     source_id="child.py:1-10:class:Child",
+            ...     target_name="Parent",
+            ...     relationship_type=RelationshipType.INHERITS,
+            ...     line_number=1
+            ... )
+            >>> graph_storage.add_relationship_edge(edge)
+        """
+        # Normalize source_id path separators to forward slashes (cross-platform)
+        normalized_source = edge.source_id.replace("\\", "/")
+
+        # CRITICAL FIX: Create lightweight node for target_name if it doesn't exist
+        # This enables queries like get_callers("BaseRelationshipExtractor") to work
+        #
+        # Background: Edges use symbol names as targets (e.g., "BaseRelationshipExtractor")
+        # but only full chunk_ids exist as nodes initially. Without target name nodes,
+        # queries fail silently because NetworkX checks "if node in graph" before traversing.
+        #
+        # Solution: Create lightweight "symbol_name" nodes that serve as query endpoints.
+        # These nodes have minimal metadata and are flagged with is_target_name=True.
+        if edge.target_name not in self.graph:
+            self.graph.add_node(
+                edge.target_name,
+                name=edge.target_name,
+                type="symbol_name",  # Distinguish from full chunk nodes
+                is_target_name=True,  # Flag for query filtering if needed
+                file="",  # Unknown file (symbol might be external or not yet indexed)
+                language="",  # Unknown language
+            )
+
+        # Add edge to graph with all attributes
+        self.graph.add_edge(
+            normalized_source,
+            edge.target_name,
+            type=edge.relationship_type.value,
+            line=edge.line_number,
+            confidence=edge.confidence,
+            **edge.metadata,  # Include all additional metadata
         )
 
     def get_callers(self, chunk_id: str) -> List[str]:
@@ -130,11 +182,28 @@ class CodeGraphStorage:
         Returns:
             List of caller chunk IDs
         """
-        if chunk_id not in self.graph:
+        # Normalize path separators to forward slashes for consistent lookup
+        # Fixes Issue 2: Query path normalization mismatch
+        normalized_chunk_id = chunk_id.replace("\\", "/")
+
+        # Debug logging for Phase 3 relationship queries
+        self.logger.debug(
+            f"[GET_CALLERS] {chunk_id} → normalized: {normalized_chunk_id}"
+        )
+        self.logger.debug(
+            f"  [GET_CALLERS] Node exists: {normalized_chunk_id in self.graph}, Total nodes: {self.graph.number_of_nodes()}"
+        )
+
+        if normalized_chunk_id not in self.graph:
+            self.logger.debug("  [GET_CALLERS] → Node not found, returning []")
             return []
 
         # In a directed graph, predecessors are callers
-        return list(self.graph.predecessors(chunk_id))
+        predecessors = list(self.graph.predecessors(normalized_chunk_id))
+        self.logger.debug(
+            f"  [GET_CALLERS] → Found {len(predecessors)} predecessors: {predecessors[:3] if predecessors else '[]'}..."
+        )
+        return predecessors
 
     def get_callees(self, chunk_id: str) -> List[str]:
         """
@@ -146,17 +215,21 @@ class CodeGraphStorage:
         Returns:
             List of callee chunk IDs or names
         """
-        if chunk_id not in self.graph:
+        # Normalize path separators to forward slashes for consistent lookup
+        # Fixes Issue 2: Query path normalization mismatch
+        normalized_chunk_id = chunk_id.replace("\\", "/")
+
+        if normalized_chunk_id not in self.graph:
             return []
 
         # In a directed graph, successors are callees
-        return list(self.graph.successors(chunk_id))
+        return list(self.graph.successors(normalized_chunk_id))
 
     def get_neighbors(
         self,
         chunk_id: str,
         relation_types: Optional[List[str]] = None,
-        max_depth: int = 1
+        max_depth: int = 1,
     ) -> Set[str]:
         """
         Get all related chunks within max_depth hops.
@@ -169,7 +242,11 @@ class CodeGraphStorage:
         Returns:
             Set of related chunk IDs
         """
-        if chunk_id not in self.graph:
+        # Normalize path separators to forward slashes for consistent lookup
+        # Fixes Issue 2: Query path normalization mismatch
+        normalized_chunk_id = chunk_id.replace("\\", "/")
+
+        if normalized_chunk_id not in self.graph:
             return set()
 
         # Default to both directions
@@ -179,8 +256,8 @@ class CodeGraphStorage:
         neighbors = set()
 
         # BFS traversal
-        queue = [(chunk_id, 0)]
-        visited = {chunk_id}
+        queue = [(normalized_chunk_id, 0)]
+        visited = {normalized_chunk_id}
 
         while queue:
             current_id, depth = queue.pop(0)
@@ -216,26 +293,82 @@ class CodeGraphStorage:
         Returns:
             Node data dictionary or None if not found
         """
-        if chunk_id not in self.graph:
+        # Normalize path separators to forward slashes for consistent lookup
+        # Fixes Issue 2: Query path normalization mismatch
+        normalized_chunk_id = chunk_id.replace("\\", "/")
+
+        if normalized_chunk_id not in self.graph:
             return None
 
-        return dict(self.graph.nodes[chunk_id])
+        return dict(self.graph.nodes[normalized_chunk_id])
 
     def get_edge_data(self, caller_id: str, callee_id: str) -> Optional[Dict[str, Any]]:
         """
-        Get edge metadata.
+        Get edge metadata with validation and normalization.
 
         Args:
-            caller_id: Caller chunk ID
-            callee_id: Callee chunk ID
+            caller_id: Caller chunk ID (source node)
+            callee_id: Callee chunk ID (target node)
 
         Returns:
-            Edge data dictionary or None if not found
+            Edge data dictionary with normalized keys, or None if edge not found.
+            Guaranteed to have 'relationship_type' and 'line_number' fields (with defaults).
         """
-        if not self.graph.has_edge(caller_id, callee_id):
+        # Normalize path separators to forward slashes for consistent lookup
+        # Fixes Issue 2: Query path normalization mismatch
+        normalized_caller = caller_id.replace("\\", "/")
+        normalized_callee = callee_id.replace("\\", "/")
+
+        if not self.graph.has_edge(normalized_caller, normalized_callee):
             return None
 
-        return dict(self.graph.edges[caller_id, callee_id])
+        edge_data = dict(self.graph.edges[normalized_caller, normalized_callee])
+
+        # Validate and normalize required fields
+        # Support both old ('type', 'line') and new ('relationship_type', 'line_number') keys
+
+        # 1. Normalize relationship_type
+        if "relationship_type" not in edge_data:
+            if "type" in edge_data:
+                edge_data["relationship_type"] = edge_data["type"]
+            else:
+                self.logger.warning(
+                    f"Edge {caller_id} → {callee_id} missing relationship type, defaulting to 'calls'"
+                )
+                edge_data["relationship_type"] = "calls"
+
+        # 2. Normalize line_number
+        if "line_number" not in edge_data:
+            if "line" in edge_data:
+                edge_data["line_number"] = edge_data["line"]
+            else:
+                # No line number available - use 0 as sentinel
+                edge_data["line_number"] = 0
+
+        # 3. Ensure confidence exists (optional but useful)
+        if "confidence" not in edge_data:
+            edge_data["confidence"] = 1.0  # Default to full confidence
+
+        # 4. Validate data types
+        try:
+            # Ensure line_number is int
+            edge_data["line_number"] = int(edge_data["line_number"])
+        except (ValueError, TypeError):
+            self.logger.warning(
+                f"Edge {caller_id} → {callee_id} has invalid line_number, defaulting to 0"
+            )
+            edge_data["line_number"] = 0
+
+        try:
+            # Ensure confidence is float
+            edge_data["confidence"] = float(edge_data["confidence"])
+        except (ValueError, TypeError):
+            self.logger.warning(
+                f"Edge {caller_id} → {callee_id} has invalid confidence, defaulting to 1.0"
+            )
+            edge_data["confidence"] = 1.0
+
+        return edge_data
 
     def save(self) -> None:
         """
@@ -249,7 +382,7 @@ class CodeGraphStorage:
             data = nx.node_link_data(self.graph, edges="edges")
 
             # Save to file
-            with open(self.graph_path, 'w') as f:
+            with open(self.graph_path, "w") as f:
                 json.dump(data, f, indent=2)
 
             self.logger.info(
@@ -273,7 +406,7 @@ class CodeGraphStorage:
             return False
 
         try:
-            with open(self.graph_path, 'r') as f:
+            with open(self.graph_path, "r") as f:
                 data = json.load(f)
 
             # Reconstruct graph from JSON

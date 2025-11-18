@@ -32,7 +32,7 @@
 - 🪟 **Windows-optimized** for maximum performance and compatibility
 - 🔄 **Instant model switching (<150ms) with per-model index storage**
 - 🧠 **Multi-model query routing with 100% accuracy (5.3GB VRAM for 3 models)**
-- 🛠️ **14 MCP tools for Claude Code integration (search, index, configure)**
+- 🛠️ **15 MCP tools for Claude Code integration (search, index, configure)**
 
 An intelligent code search system that uses Google's EmbeddingGemma, BAAI's BGE-M3, and specialized code models with automatic intelligent routing. Advanced multi-language chunking provides semantic search capabilities across 22 file extensions and 11 programming languages, integrated with Claude Code via MCP (Model Context Protocol).
 
@@ -244,7 +244,7 @@ The `start_mcp_server.bat` launcher provides an 8-option interactive menu for al
 **SSE Transport Benefits:**
 
 - Bypasses known Claude Code stdio bugs (#3426, #768, #3487, #3369)
-- All 14 MCP tools available with identical functionality
+- All 15 MCP tools available with identical functionality
 - Minimal latency overhead (<10ms)
 - Single server on port 8765 (simplified from dual-server setup)
 

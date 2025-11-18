@@ -48,7 +48,9 @@ class TestGetterFunctions:
         mock_storage_dir.name = "project_abc123_1024d"
         mock_index_dir = MagicMock(spec=Path)
         mock_index_dir.mkdir = MagicMock()  # Mock mkdir to avoid file operations
-        mock_storage_dir.__truediv__ = MagicMock(return_value=mock_index_dir)  # Mock / operator
+        mock_storage_dir.__truediv__ = MagicMock(
+            return_value=mock_index_dir
+        )  # Mock / operator
 
         mock_get_storage.return_value = mock_storage_dir
         mock_manager_instance = MagicMock()
@@ -59,12 +61,16 @@ class TestGetterFunctions:
 
         # Verify it returns the manager instance, not None
         assert result is not None, "get_index_manager() must return a value, not None"
-        assert result is mock_manager_instance, "get_index_manager() must return the CodeIndexManager instance"
+        assert (
+            result is mock_manager_instance
+        ), "get_index_manager() must return the CodeIndexManager instance"
 
         # Verify the manager was created with correct parameters
         mock_index_manager_class.assert_called_once()
         call_args = mock_index_manager_class.call_args
-        assert "project_id" in call_args.kwargs, "CodeIndexManager must be initialized with project_id"
+        assert (
+            "project_id" in call_args.kwargs
+        ), "CodeIndexManager must be initialized with project_id"
 
 
 # Note: Most MCP server functionality is tested in integration tests

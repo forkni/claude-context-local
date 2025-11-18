@@ -97,13 +97,13 @@ class IncrementalIndexer:
 
         # Check if file is in ignored directory
         from chunking.multi_language_chunker import MultiLanguageChunker
+
         ignored_dirs = MultiLanguageChunker.DEFAULT_IGNORED_DIRS
 
         if any(part in ignored_dirs for part in Path(file_path).parts):
             return False
 
         return True
-
 
     def incremental_index(
         self,
@@ -141,13 +141,15 @@ class IncrementalIndexer:
                 logger.info(f"No changes detected in {project_name}")
                 # Even with no changes, save current statistics
                 all_files = list(current_dag.get_all_files())
-                supported_files = [f for f in all_files if self._is_supported_file(project_path, f)]
-                
+                supported_files = [
+                    f for f in all_files if self._is_supported_file(project_path, f)
+                ]
+
                 total_chunks = 0
-                if hasattr(self.indexer, 'get_stats'):
+                if hasattr(self.indexer, "get_stats"):
                     stats = self.indexer.get_stats()
-                    total_chunks = stats.get('total_chunks', 0)
-                elif hasattr(self.indexer, 'get_index_size'):
+                    total_chunks = stats.get("total_chunks", 0)
+                elif hasattr(self.indexer, "get_index_size"):
                     total_chunks = self.indexer.get_index_size()
 
                 metadata = {
@@ -201,13 +203,15 @@ class IncrementalIndexer:
             # Update snapshot
             # After processing changes, calculate cumulative stats
             all_files = list(current_dag.get_all_files())
-            supported_files = [f for f in all_files if self._is_supported_file(project_path, f)]
-            
+            supported_files = [
+                f for f in all_files if self._is_supported_file(project_path, f)
+            ]
+
             total_chunks = 0
-            if hasattr(self.indexer, 'get_stats'):
+            if hasattr(self.indexer, "get_stats"):
                 stats = self.indexer.get_stats()
-                total_chunks = stats.get('total_chunks', 0)
-            elif hasattr(self.indexer, 'get_index_size'):
+                total_chunks = stats.get("total_chunks", 0)
+            elif hasattr(self.indexer, "get_index_size"):
                 total_chunks = self.indexer.get_index_size()
 
             self.snapshot_manager.save_snapshot(
@@ -258,6 +262,7 @@ class IncrementalIndexer:
         except Exception as e:
             logger.error(f"Incremental indexing failed: {e}")
             import traceback
+
             logger.error(traceback.format_exc())
 
             # Attempt recovery via full re-index
@@ -270,7 +275,9 @@ class IncrementalIndexer:
                 # Attempt full re-index as recovery
                 return self._full_index(project_path, project_name, start_time)
             except Exception as recovery_error:
-                logger.error(f"Recovery via full re-index also failed: {recovery_error}")
+                logger.error(
+                    f"Recovery via full re-index also failed: {recovery_error}"
+                )
                 logger.error(traceback.format_exc())
                 # Return failure result with both errors
                 return IncrementalIndexResult(
@@ -299,7 +306,9 @@ class IncrementalIndexer:
         """
         try:
             # Delete old Merkle snapshot for current model only (preserves other models)
-            logger.info(f"[FULL_INDEX] Deleting old snapshot for current model: {project_name}")
+            logger.info(
+                f"[FULL_INDEX] Deleting old snapshot for current model: {project_name}"
+            )
             self.snapshot_manager.delete_snapshot(project_path)
             logger.info("[FULL_INDEX] Deleted old snapshot for current model")
 

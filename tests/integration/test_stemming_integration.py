@@ -17,7 +17,6 @@ import pytest
 from chunking.multi_language_chunker import MultiLanguageChunker
 from embeddings.embedder import CodeEmbedder
 from search.bm25_index import BM25Index
-from search.config import SearchConfig, SearchConfigManager
 from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
 
@@ -25,6 +24,7 @@ from search.incremental_indexer import IncrementalIndexer
 def _has_hf_token() -> bool:
     """Check if HuggingFace token is available."""
     import os
+
     return bool(os.environ.get("HF_TOKEN"))
 
 
@@ -140,23 +140,19 @@ class DatabaseConnection:
         searcher = HybridSearcher(
             storage_dir=str(self.storage_dir / "index"),
             embedder=CodeEmbedder(),
-            bm25_use_stemming=True
+            bm25_use_stemming=True,
         )
 
         # Create incremental indexer
         chunker = MultiLanguageChunker(str(self.project_dir))
         embedder = CodeEmbedder()
         indexer = IncrementalIndexer(
-            indexer=searcher,
-            embedder=embedder,
-            chunker=chunker
+            indexer=searcher, embedder=embedder, chunker=chunker
         )
 
         # Index project
         result = indexer.incremental_index(
-            str(self.project_dir),
-            project_name="test_stemming",
-            force_full=True
+            str(self.project_dir), project_name="test_stemming", force_full=True
         )
 
         assert result.success, f"Indexing failed: {result.error}"
@@ -172,21 +168,17 @@ class DatabaseConnection:
         searcher_stemmed = HybridSearcher(
             storage_dir=str(self.storage_dir / "stemmed"),
             embedder=CodeEmbedder(),
-            bm25_use_stemming=True
+            bm25_use_stemming=True,
         )
 
         chunker = MultiLanguageChunker(str(self.project_dir))
         embedder = CodeEmbedder()
         indexer = IncrementalIndexer(
-            indexer=searcher_stemmed,
-            embedder=embedder,
-            chunker=chunker
+            indexer=searcher_stemmed, embedder=embedder, chunker=chunker
         )
 
         result = indexer.incremental_index(
-            str(self.project_dir),
-            project_name="test_stemmed",
-            force_full=True
+            str(self.project_dir), project_name="test_stemmed", force_full=True
         )
         assert result.success
 
@@ -198,9 +190,10 @@ class DatabaseConnection:
 
         # Check that we found the indexing_module
         result_contents = [r.metadata.get("content", "") for r in results]
-        assert any("index" in content.lower() or "indexing" in content.lower()
-                   for content in result_contents), \
-            "Should find documents with 'index' or 'indexing'"
+        assert any(
+            "index" in content.lower() or "indexing" in content.lower()
+            for content in result_contents
+        ), "Should find documents with 'index' or 'indexing'"
 
     @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_stemming_vs_no_stemming_comparison(self):
@@ -214,18 +207,14 @@ class DatabaseConnection:
         searcher_stemmed = HybridSearcher(
             storage_dir=str(stemmed_dir / "index"),
             embedder=embedder,
-            bm25_use_stemming=True
+            bm25_use_stemming=True,
         )
 
         indexer_stemmed = IncrementalIndexer(
-            indexer=searcher_stemmed,
-            embedder=embedder,
-            chunker=chunker
+            indexer=searcher_stemmed, embedder=embedder, chunker=chunker
         )
         result1 = indexer_stemmed.incremental_index(
-            str(self.project_dir),
-            project_name="stemmed",
-            force_full=True
+            str(self.project_dir), project_name="stemmed", force_full=True
         )
         assert result1.success
 
@@ -235,18 +224,14 @@ class DatabaseConnection:
         searcher_unstemmed = HybridSearcher(
             storage_dir=str(unstemmed_dir / "index"),
             embedder=embedder,
-            bm25_use_stemming=False
+            bm25_use_stemming=False,
         )
 
         indexer_unstemmed = IncrementalIndexer(
-            indexer=searcher_unstemmed,
-            embedder=embedder,
-            chunker=chunker
+            indexer=searcher_unstemmed, embedder=embedder, chunker=chunker
         )
         result2 = indexer_unstemmed.incremental_index(
-            str(self.project_dir),
-            project_name="unstemmed",
-            force_full=True
+            str(self.project_dir), project_name="unstemmed", force_full=True
         )
         assert result2.success
 
@@ -259,9 +244,10 @@ class DatabaseConnection:
         assert len(unstemmed_results) >= 0, "Unstemmed search should not crash"
 
         # Stemmed should find the search_module (contains "search_users", "UserSearcher", etc.)
-        stemmed_ids = [r.doc_id for r in stemmed_results]
-        assert any("search_module" in doc_id for doc_id in stemmed_ids), \
-            "Stemmed search should find search_module"
+        stemmed_ids = [r.chunk_id for r in stemmed_results]
+        assert any(
+            "search_module" in chunk_id for chunk_id in stemmed_ids
+        ), "Stemmed search should find search_module"
 
     @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_config_persistence_with_stemming(self):
@@ -270,22 +256,18 @@ class DatabaseConnection:
         searcher = HybridSearcher(
             storage_dir=str(self.storage_dir / "persist_test"),
             embedder=CodeEmbedder(),
-            bm25_use_stemming=True
+            bm25_use_stemming=True,
         )
 
         # Index some data
         embedder = CodeEmbedder()
         chunker = MultiLanguageChunker(str(self.project_dir))
         indexer = IncrementalIndexer(
-            indexer=searcher,
-            embedder=embedder,
-            chunker=chunker
+            indexer=searcher, embedder=embedder, chunker=chunker
         )
 
         result = indexer.incremental_index(
-            str(self.project_dir),
-            project_name="persist_test",
-            force_full=True
+            str(self.project_dir), project_name="persist_test", force_full=True
         )
         assert result.success
 
@@ -296,58 +278,57 @@ class DatabaseConnection:
         new_searcher = HybridSearcher(
             storage_dir=str(self.storage_dir / "persist_test"),
             embedder=CodeEmbedder(),
-            bm25_use_stemming=True
+            bm25_use_stemming=True,
         )
 
         load_success = new_searcher.load_indices()
         assert load_success, "Should load indices successfully"
 
         # Verify stemming config persisted
-        metadata_path = Path(str(self.storage_dir / "persist_test")) / "bm25" / "bm25_metadata.json"
+        metadata_path = (
+            Path(str(self.storage_dir / "persist_test")) / "bm25" / "bm25_metadata.json"
+        )
         assert metadata_path.exists(), "Metadata file should exist"
 
-        with open(metadata_path, 'r') as f:
+        with open(metadata_path, "r") as f:
             metadata = json.load(f)
 
         assert "use_stemming" in metadata, "Metadata should contain stemming config"
-        assert metadata["use_stemming"] is True, "Stemming should be enabled in metadata"
+        assert (
+            metadata["use_stemming"] is True
+        ), "Stemming should be enabled in metadata"
 
     @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_config_mismatch_warning(self):
         """Test that config mismatch is detected and warned."""
-        import logging
         from unittest.mock import patch
 
         # Index with stemming ON
         searcher = HybridSearcher(
             storage_dir=str(self.storage_dir / "mismatch_test"),
             embedder=CodeEmbedder(),
-            bm25_use_stemming=True
+            bm25_use_stemming=True,
         )
 
         embedder = CodeEmbedder()
         chunker = MultiLanguageChunker(str(self.project_dir))
         indexer = IncrementalIndexer(
-            indexer=searcher,
-            embedder=embedder,
-            chunker=chunker
+            indexer=searcher, embedder=embedder, chunker=chunker
         )
 
         result = indexer.incremental_index(
-            str(self.project_dir),
-            project_name="mismatch_test",
-            force_full=True
+            str(self.project_dir), project_name="mismatch_test", force_full=True
         )
         assert result.success
 
         searcher.save_indices()
 
         # Load with different stemming config
-        with patch('logging.Logger.warning') as mock_warning:
+        with patch("logging.Logger.warning") as mock_warning:
             new_searcher = HybridSearcher(
                 storage_dir=str(self.storage_dir / "mismatch_test"),
                 embedder=CodeEmbedder(),
-                bm25_use_stemming=False  # Different from saved config
+                bm25_use_stemming=False,  # Different from saved config
             )
 
             new_searcher.load_indices()
@@ -355,15 +336,15 @@ class DatabaseConnection:
             # Should have warned about mismatch
             assert mock_warning.called, "Should warn about config mismatch"
             warning_calls = [str(call) for call in mock_warning.call_args_list]
-            assert any("mismatch" in call.lower() for call in warning_calls), \
-                "Warning should mention configuration mismatch"
+            assert any(
+                "mismatch" in call.lower() for call in warning_calls
+            ), "Warning should mention configuration mismatch"
 
     def test_bm25_only_stemming(self):
         """Test BM25 index directly with stemming."""
         # Create BM25 index with stemming
         bm25_stemmed = BM25Index(
-            str(self.storage_dir / "bm25_stemmed"),
-            use_stemming=True
+            str(self.storage_dir / "bm25_stemmed"), use_stemming=True
         )
 
         # Index some code snippets with verb variations
@@ -373,7 +354,7 @@ class DatabaseConnection:
             "# Searching for records",
             "def index_documents(): pass",
             "# Indexing started",
-            "class DocumentIndexer: pass"
+            "class DocumentIndexer: pass",
         ]
         ids = [f"doc{i}" for i in range(len(docs))]
 
@@ -396,28 +377,25 @@ class DatabaseConnection:
         searcher = HybridSearcher(
             storage_dir=str(self.storage_dir / "incremental_test"),
             embedder=CodeEmbedder(),
-            bm25_use_stemming=True
+            bm25_use_stemming=True,
         )
 
         embedder = CodeEmbedder()
         chunker = MultiLanguageChunker(str(self.project_dir))
         indexer = IncrementalIndexer(
-            indexer=searcher,
-            embedder=embedder,
-            chunker=chunker
+            indexer=searcher, embedder=embedder, chunker=chunker
         )
 
         # Initial indexing
         result1 = indexer.incremental_index(
-            str(self.project_dir),
-            project_name="incremental_test",
-            force_full=True
+            str(self.project_dir), project_name="incremental_test", force_full=True
         )
         assert result1.success
 
         # Add a new file
         new_file = self.project_dir / "new_module.py"
-        new_file.write_text('''
+        new_file.write_text(
+            '''
 def manage_users():
     """Manage user accounts."""
     # Managing user database
@@ -426,13 +404,12 @@ def manage_users():
 class UserManager:
     """Manager for user operations."""
     pass
-''')
+'''
+        )
 
         # Incremental reindex
         result2 = indexer.incremental_index(
-            str(self.project_dir),
-            project_name="incremental_test",
-            force_full=False
+            str(self.project_dir), project_name="incremental_test", force_full=False
         )
 
         assert result2.success
@@ -444,11 +421,13 @@ class UserManager:
 
         # New file content should be searchable
         result_contents = [r.metadata.get("content", "") for r in results]
-        assert any("manage" in content.lower() or "managing" in content.lower()
-                   for content in result_contents), \
-            "Should find new file with 'manage' or 'managing'"
+        assert any(
+            "manage" in content.lower() or "managing" in content.lower()
+            for content in result_contents
+        ), "Should find new file with 'manage' or 'managing'"
 
     def teardown_method(self):
         """Clean up test fixtures."""
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)

@@ -8,30 +8,31 @@ This script automates the migration by:
 """
 
 import re
-import ast
 from pathlib import Path
 
 # Paths
-BACKUP_PATH = Path(__file__).parent.parent / 'mcp_server' / 'server_fastmcp_backup.py'
-OUTPUT_PATH = Path(__file__).parent.parent / 'mcp_server' / 'server_lowlevel.py'
+BACKUP_PATH = Path(__file__).parent.parent / "mcp_server" / "server_fastmcp_backup.py"
+OUTPUT_PATH = Path(__file__).parent.parent / "mcp_server" / "server_lowlevel.py"
+
 
 def extract_helper_functions():
     """Extract all helper functions (before @mcp.tool() decorators)."""
-    with open(BACKUP_PATH, 'r', encoding='utf-8') as f:
+    with open(BACKUP_PATH, "r", encoding="utf-8") as f:
         content = f.read()
 
     # Find first @mcp.tool() occurrence
-    match = re.search(r'@mcp\.tool\(\)', content)
+    match = re.search(r"@mcp\.tool\(\)", content)
     if match:
         helpers_end = match.start()
         # Extract from after MODEL_POOL_CONFIG to before first @mcp.tool()
-        start = content.find('MODEL_POOL_CONFIG = {')
+        start = content.find("MODEL_POOL_CONFIG = {")
         if start != -1:
             helpers = content[start:helpers_end]
             # Remove the MODEL_POOL_CONFIG definition (we'll redefine it)
-            helpers = helpers[helpers.find('\n\n') + 2:]
+            helpers = helpers[helpers.find("\n\n") + 2 :]
             return helpers.strip()
     return ""
+
 
 def extract_tool_info(backup_content):
     """Extract tool names, signatures, and docstrings."""
@@ -47,20 +48,23 @@ def extract_tool_info(backup_content):
         return_type = match.group(3)
         docstring = match.group(4).strip()
 
-        tools.append({
-            'name': name,
-            'params': params,
-            'return_type': return_type,
-            'docstring': docstring
-        })
+        tools.append(
+            {
+                "name": name,
+                "params": params,
+                "return_type": return_type,
+                "docstring": docstring,
+            }
+        )
 
     return tools
+
 
 def build_server_template():
     """Build the complete low-level server file."""
 
     print("Reading backup file...")
-    with open(BACKUP_PATH, 'r', encoding='utf-8') as f:
+    with open(BACKUP_PATH, "r", encoding="utf-8") as f:
         backup_content = f.read()
 
     print("Extracting helper functions...")
@@ -238,16 +242,17 @@ logger.info("[BUILD] Next: Implement TOOL_REGISTRY and handlers")
 '''
 
     print(f"Writing server to: {OUTPUT_PATH}")
-    with open(OUTPUT_PATH, 'w', encoding='utf-8') as f:
+    with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
         f.write(server_content)
 
     print("✓ Server template generated successfully!")
-    print(f"✓ Extracted {len(helpers.split('def '))-1} helper functions")
+    print(f"✓ Extracted {len(helpers.split('def ')) - 1} helper functions")
     print(f"✓ Detected {len(tools)} tools to migrate")
     print("\nNext steps:")
     print("1. Review generated server_lowlevel.py")
     print("2. Implement TOOL_REGISTRY with JSON schemas")
     print("3. Implement tool handlers")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     build_server_template()

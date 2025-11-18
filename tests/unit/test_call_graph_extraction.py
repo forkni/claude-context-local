@@ -10,10 +10,11 @@ Tests Python call graph extraction from AST, covering:
 """
 
 import pytest
+
 from graph.call_graph_extractor import (
     CallEdge,
-    PythonCallGraphExtractor,
     CallGraphExtractorFactory,
+    PythonCallGraphExtractor,
 )
 
 

@@ -20,11 +20,11 @@ Future Enhancements:
 from .call_graph_extractor import (
     CallEdge,
     CallGraphExtractor,
-    PythonCallGraphExtractor,
     CallGraphExtractorFactory,
+    PythonCallGraphExtractor,
 )
-from .graph_storage import CodeGraphStorage
 from .graph_queries import GraphQueryEngine
+from .graph_storage import CodeGraphStorage
 
 __all__ = [
     "CallEdge",

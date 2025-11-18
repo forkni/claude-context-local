@@ -49,7 +49,9 @@ class CodeEmbedder:
         device: str = "auto",
     ):
         self.model_name = model_name
-        self.cache_dir = cache_dir or str(Path.home() / ".cache" / "huggingface" / "hub")
+        self.cache_dir = cache_dir or str(
+            Path.home() / ".cache" / "huggingface" / "hub"
+        )
         self.device = device
         self._model = None
         self._logger = logging.getLogger(__name__)
@@ -110,7 +112,6 @@ class CodeEmbedder:
 
         return self._model_config
 
-
     def _log_gpu_memory(self, stage: str):
         """Log GPU memory usage at specific loading stages."""
         if torch is None or not torch.cuda.is_available():
@@ -119,7 +120,7 @@ class CodeEmbedder:
         try:
             for gpu_id in range(torch.cuda.device_count()):
                 allocated = torch.cuda.memory_allocated(gpu_id) / 1024**3  # GB
-                reserved = torch.cuda.memory_reserved(gpu_id) / 1024**3    # GB
+                reserved = torch.cuda.memory_reserved(gpu_id) / 1024**3  # GB
                 total = torch.cuda.get_device_properties(gpu_id).total_memory / 1024**3
 
                 self._logger.info(
@@ -127,7 +128,7 @@ class CodeEmbedder:
                     f"Allocated={allocated:.2f}GB, "
                     f"Reserved={reserved:.2f}GB, "
                     f"Total={total:.2f}GB "
-                    f"({allocated/total*100:.1f}% used)"
+                    f"({allocated / total * 100:.1f}% used)"
                 )
         except Exception as e:
             self._logger.debug(f"GPU memory logging failed: {e}")
@@ -171,7 +172,9 @@ class CodeEmbedder:
                 removed_count, removed_files = self._cleanup_incomplete_downloads()
 
                 if removed_count > 0:
-                    self._logger.info(f"[CLEANUP SUCCESS] Removed {removed_count} incomplete file(s)")
+                    self._logger.info(
+                        f"[CLEANUP SUCCESS] Removed {removed_count} incomplete file(s)"
+                    )
 
                     # Re-validate cache after cleanup
                     cache_valid_retry, cache_reason_retry = self._validate_model_cache()
@@ -179,7 +182,7 @@ class CodeEmbedder:
                     if cache_valid_retry:
                         # Cache is now valid after cleanup!
                         self._logger.info(
-                            f"[RECOVERY SUCCESS] Cache is now valid after incomplete download cleanup"
+                            "[RECOVERY SUCCESS] Cache is now valid after incomplete download cleanup"
                         )
                         cache_valid = True
                         cache_reason = "Valid after cleanup"
@@ -191,8 +194,8 @@ class CodeEmbedder:
                         )
                 else:
                     self._logger.warning(
-                        f"[CLEANUP FAILED] Could not remove incomplete files\n"
-                        f"[AUTO-RECOVERY] Proceeding with cache deletion..."
+                        "[CLEANUP FAILED] Could not remove incomplete files\n"
+                        "[AUTO-RECOVERY] Proceeding with cache deletion..."
                     )
 
             # Step 1b: If still corrupted, delete cache and force re-download
@@ -219,17 +222,22 @@ class CodeEmbedder:
                         f"  2. Delete directory: {cache_path_obj}\n"
                         f"  3. Re-run indexing to download fresh model\n\n"
                         f"Alternative: Use cleanup utility:\n"
-                        f"  python tools/cleanup_model_cache.py --model \"{self.model_name}\""
-                    )
+                        f'  python tools/cleanup_model_cache.py --model "{self.model_name}"'
+                    ) from e
 
         # Step 2: Validate model exists on HuggingFace (if no valid cache)
         if not cache_valid:
             # Model not cached or cache was corrupted - validate on HuggingFace Hub
             try:
                 from huggingface_hub import model_info
-                self._logger.info(f"Checking if '{self.model_name}' exists on HuggingFace Hub...")
+
+                self._logger.info(
+                    f"Checking if '{self.model_name}' exists on HuggingFace Hub..."
+                )
                 info = model_info(self.model_name)
-                self._logger.info(f"Model found: {info.modelId} (library: {info.library_name or 'unknown'})")
+                self._logger.info(
+                    f"Model found: {info.modelId} (library: {info.library_name or 'unknown'})"
+                )
             except ImportError:
                 self._logger.warning(
                     "huggingface_hub not available, skipping model existence check. "
@@ -238,6 +246,7 @@ class CodeEmbedder:
             except Exception as e:
                 # Model not found on HuggingFace Hub
                 from search.config import MODEL_REGISTRY
+
                 available_models = list(MODEL_REGISTRY.keys())
                 raise ValueError(
                     f"Model '{self.model_name}' not found on HuggingFace Hub!\n"
@@ -247,7 +256,7 @@ class CodeEmbedder:
                     f"  1. Model name for typos (e.g., 'Qodo/Qodo-Embed-1-1.5B')\n"
                     f"  2. Model exists on https://huggingface.co/{self.model_name}\n"
                     f"  3. You have internet access to download the model"
-                )
+                ) from e
 
         # Step 3: Prepare for loading (enable offline mode if cache is valid)
         local_model_dir = None
@@ -257,7 +266,7 @@ class CodeEmbedder:
                 os.environ.setdefault("HF_HUB_OFFLINE", "1")
                 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
                 self._logger.info(
-                    f"[VALIDATED CACHE] Enabling offline mode for faster startup."
+                    "[VALIDATED CACHE] Enabling offline mode for faster startup."
                 )
                 local_model_dir = self._find_local_model_dir()
                 if local_model_dir:
@@ -269,7 +278,6 @@ class CodeEmbedder:
 
         # Step 4: Load model with automatic fallback
         resolved_device = self._resolve_device(self.device)
-        attempted_fallback = False
         self._log_gpu_memory("BEFORE_LOAD")
 
         try:
@@ -279,7 +287,7 @@ class CodeEmbedder:
                 model_source,
                 cache_folder=self.cache_dir,
                 device=resolved_device,
-                trust_remote_code=True  # Required for some models like Qodo
+                trust_remote_code=True,  # Required for some models like Qodo
             )
 
             self.device = resolved_device
@@ -299,18 +307,17 @@ class CodeEmbedder:
                 # Disable offline mode to allow re-download
                 os.environ.pop("HF_HUB_OFFLINE", None)
                 os.environ.pop("TRANSFORMERS_OFFLINE", None)
-                attempted_fallback = True
 
                 try:
                     self._model = SentenceTransformer(
                         self.model_name,  # Use model name, not local path
                         cache_folder=self.cache_dir,
                         device=resolved_device,
-                        trust_remote_code=True
+                        trust_remote_code=True,
                     )
                     self.device = resolved_device
                     self._logger.info(
-                        f"[FALLBACK SUCCESS] Downloaded fresh model from HuggingFace"
+                        "[FALLBACK SUCCESS] Downloaded fresh model from HuggingFace"
                     )
                     self._log_gpu_memory("AFTER_FALLBACK_LOAD")
                 except Exception as e2:
@@ -328,10 +335,10 @@ class CodeEmbedder:
                         f"  4. Insufficient disk space for download\n\n"
                         f"Manual fixes:\n"
                         f"  1. Check internet connection and retry\n"
-                        f"  2. Clear cache: python tools/cleanup_model_cache.py --model \"{self.model_name}\"\n"
+                        f'  2. Clear cache: python tools/cleanup_model_cache.py --model "{self.model_name}"\n'
                         f"  3. Verify model exists: https://huggingface.co/{self.model_name}\n"
                         f"  4. Check disk space and permissions"
-                    )
+                    ) from e2
             else:
                 # No cache to fall back from - this is a direct download failure
                 raise RuntimeError(
@@ -344,7 +351,7 @@ class CodeEmbedder:
                     f"  2. HuggingFace Hub access\n"
                     f"  3. Model name is correct: {self.model_name}\n"
                     f"  4. Sufficient disk space for download"
-                )
+                ) from e
 
     def create_embedding_content(self, chunk: CodeChunk, max_chars: int = 6000) -> str:
         """Create clean content for embedding generation with size limits."""
@@ -459,6 +466,12 @@ class CodeEmbedder:
             ),
             # Call graph data (Phase 1: Python only)
             "calls": [call.to_dict() for call in chunk.calls] if chunk.calls else [],
+            # Phase 3: Relationship edges (all relationship types)
+            "relationships": (
+                [rel.to_dict() for rel in chunk.relationships]
+                if chunk.relationships
+                else []
+            ),
             "language": getattr(chunk, "language", "python"),
         }
 
@@ -493,14 +506,17 @@ class CodeEmbedder:
         # Process in batches for efficiency
         for i in range(0, len(chunks), batch_size):
             batch = chunks[i : i + batch_size]
-            
+
             # Prepend passage prefix if it exists
             if passage_prefix:
                 batch_contents = [
-                    passage_prefix + self.create_embedding_content(chunk) for chunk in batch
+                    passage_prefix + self.create_embedding_content(chunk)
+                    for chunk in batch
                 ]
             else:
-                batch_contents = [self.create_embedding_content(chunk) for chunk in batch]
+                batch_contents = [
+                    self.create_embedding_content(chunk) for chunk in batch
+                ]
 
             # Generate embeddings for batch
             batch_embeddings = self.model.encode(
@@ -537,7 +553,15 @@ class CodeEmbedder:
                         else chunk.content
                     ),
                     # Call graph data (Phase 1: Python only)
-                    "calls": [call.to_dict() for call in chunk.calls] if chunk.calls else [],
+                    "calls": (
+                        [call.to_dict() for call in chunk.calls] if chunk.calls else []
+                    ),
+                    # Phase 3: Relationship edges (all relationship types)
+                    "relationships": (
+                        [rel.to_dict() for rel in chunk.relationships]
+                        if chunk.relationships
+                        else []
+                    ),
                     "language": getattr(chunk, "language", "python"),
                 }
 
@@ -640,7 +664,7 @@ class CodeEmbedder:
 
         # Hugging Face cache structure: cache_dir/models--{org}--{model_name}/
         # Handle both 'org/model_name' and 'model_name' formats
-        parts = self.model_name.split('/')
+        parts = self.model_name.split("/")
         if len(parts) == 2:
             org, name = parts
             expected_model_dir_name = f"models--{org}--{name}"
@@ -660,7 +684,7 @@ class CodeEmbedder:
         default_hf_cache = Path.home() / ".cache" / "huggingface" / "hub"
 
         # Hugging Face cache structure: cache_dir/models--{org}--{model_name}/
-        parts = self.model_name.split('/')
+        parts = self.model_name.split("/")
         if len(parts) == 2:
             org, name = parts
             expected_model_dir_name = f"models--{org}--{name}"
@@ -706,11 +730,14 @@ class CodeEmbedder:
 
             # Validate config.json is valid JSON with required keys
             try:
-                with open(config_path, 'r', encoding='utf-8') as f:
+                with open(config_path, "r", encoding="utf-8") as f:
                     config = json.load(f)
                     # Check for model_type or architectures (required by transformers)
                     if "model_type" not in config and "architectures" not in config:
-                        return False, "Invalid config.json (missing model_type and architectures)"
+                        return (
+                            False,
+                            "Invalid config.json (missing model_type and architectures)",
+                        )
             except json.JSONDecodeError as e:
                 return False, f"Corrupted config.json (invalid JSON): {e}"
             except Exception as e:
@@ -720,19 +747,28 @@ class CodeEmbedder:
             has_safetensors = (snapshot_dir / "model.safetensors").exists()
             has_pytorch = (snapshot_dir / "pytorch_model.bin").exists()
             has_pytorch_index = (snapshot_dir / "pytorch_model.bin.index.json").exists()
-            has_safetensors_index = (snapshot_dir / "model.safetensors.index.json").exists()
+            has_safetensors_index = (
+                snapshot_dir / "model.safetensors.index.json"
+            ).exists()
 
             # For sharded models, validate that actual shard files exist
             if has_safetensors_index or has_pytorch_index:
                 # Parse index.json to find shard files
-                index_file = snapshot_dir / ("model.safetensors.index.json" if has_safetensors_index else "pytorch_model.bin.index.json")
+                index_file = snapshot_dir / (
+                    "model.safetensors.index.json"
+                    if has_safetensors_index
+                    else "pytorch_model.bin.index.json"
+                )
                 try:
-                    with open(index_file, 'r', encoding='utf-8') as f:
+                    with open(index_file, "r", encoding="utf-8") as f:
                         index_data = json.load(f)
                         shard_files = set(index_data.get("weight_map", {}).values())
 
                         if not shard_files:
-                            return False, f"Invalid index file (no shards listed): {index_file.name}"
+                            return (
+                                False,
+                                f"Invalid index file (no shards listed): {index_file.name}",
+                            )
 
                         # Check that all shard files exist (either as actual files or symlinks)
                         missing_shards = []
@@ -746,20 +782,34 @@ class CodeEmbedder:
                                     target = shard_path.resolve()
                                     if not target.exists():
                                         # Check if there's an incomplete blob
-                                        incomplete_blob = target.parent / f"{target.name}.incomplete"
+                                        incomplete_blob = (
+                                            target.parent / f"{target.name}.incomplete"
+                                        )
                                         if incomplete_blob.exists():
-                                            size_mb = incomplete_blob.stat().st_size / (1024**2)
-                                            incomplete_shards.append(f"{shard} ({size_mb:.1f}MB incomplete)")
+                                            size_mb = incomplete_blob.stat().st_size / (
+                                                1024**2
+                                            )
+                                            incomplete_shards.append(
+                                                f"{shard} ({size_mb:.1f}MB incomplete)"
+                                            )
                                         else:
-                                            missing_shards.append(f"{shard} -> {target.name} (broken symlink)")
+                                            missing_shards.append(
+                                                f"{shard} -> {target.name} (broken symlink)"
+                                            )
                                 else:
                                     missing_shards.append(shard)
 
                         if incomplete_shards:
-                            return False, f"Incomplete downloads detected: {', '.join(incomplete_shards)}. Run cleanup to remove partial downloads."
+                            return (
+                                False,
+                                f"Incomplete downloads detected: {', '.join(incomplete_shards)}. Run cleanup to remove partial downloads.",
+                            )
 
                         if missing_shards:
-                            return False, f"Missing shard files: {', '.join(missing_shards)}"
+                            return (
+                                False,
+                                f"Missing shard files: {', '.join(missing_shards)}",
+                            )
 
                 except json.JSONDecodeError as e:
                     return False, f"Corrupted index file {index_file.name}: {e}"
@@ -775,7 +825,7 @@ class CodeEmbedder:
                 "tokenizer_config.json",
                 "vocab.txt",
                 "sentencepiece.bpe.model",
-                "tokenizer.model"
+                "tokenizer.model",
             ]
             has_tokenizer = any((snapshot_dir / f).exists() for f in tokenizer_files)
             if not has_tokenizer:
@@ -812,7 +862,9 @@ class CodeEmbedder:
             # Fallback: Check default HuggingFace cache location
             # Some models with trust_remote_code ignore cache_folder and use default location
             default_cache_path = self._get_default_hf_cache_path()
-            default_valid, default_reason = self._check_cache_at_location(default_cache_path)
+            default_valid, default_reason = self._check_cache_at_location(
+                default_cache_path
+            )
 
             if default_valid:
                 # Cache found in default location instead of custom location
@@ -856,7 +908,7 @@ class CodeEmbedder:
             message = (
                 f"Found {len(incomplete_files)} incomplete download(s) ({size_mb:.1f} MB total). "
                 f"These may be from interrupted downloads. "
-                f"Files: {[f.name[:16]+'...' for f in incomplete_files[:3]]}"
+                f"Files: {[f.name[:16] + '...' for f in incomplete_files[:3]]}"
             )
 
             return True, message
@@ -889,18 +941,28 @@ class CodeEmbedder:
             # Find all .incomplete files
             for incomplete_file in blobs_dir.glob("*.incomplete"):
                 size_mb = incomplete_file.stat().st_size / (1024**2)
-                incomplete_files.append(f"{incomplete_file.name[:16]}... ({size_mb:.1f}MB)")
+                incomplete_files.append(
+                    f"{incomplete_file.name[:16]}... ({size_mb:.1f}MB)"
+                )
 
                 try:
                     incomplete_file.unlink()
                     removed_count += 1
-                    self._logger.info(f"Removed incomplete download: {incomplete_file.name} ({size_mb:.1f}MB)")
+                    self._logger.info(
+                        f"Removed incomplete download: {incomplete_file.name} ({size_mb:.1f}MB)"
+                    )
                 except Exception as e:
-                    self._logger.warning(f"Failed to remove {incomplete_file.name}: {e}")
+                    self._logger.warning(
+                        f"Failed to remove {incomplete_file.name}: {e}"
+                    )
 
             if removed_count > 0:
-                total_size = sum(f.stat().st_size for f in blobs_dir.glob("*.incomplete")) / (1024**2)
-                self._logger.info(f"Cleanup complete: Removed {removed_count} incomplete file(s)")
+                sum(f.stat().st_size for f in blobs_dir.glob("*.incomplete")) / (
+                    1024**2
+                )
+                self._logger.info(
+                    f"Cleanup complete: Removed {removed_count} incomplete file(s)"
+                )
 
             return removed_count, incomplete_files
 

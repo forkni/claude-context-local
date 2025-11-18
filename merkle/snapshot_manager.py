@@ -62,7 +62,7 @@ class SnapshotManager:
                 if str(parent_dir) not in sys.path:
                     sys.path.insert(0, str(parent_dir))
 
-                from search.config import get_search_config, get_model_slug
+                from search.config import get_model_slug, get_search_config
 
                 config = get_search_config()
                 dimension = config.model_dimension
@@ -74,13 +74,16 @@ class SnapshotManager:
         else:
             # If dimension is provided explicitly, we need to get the current model slug
             try:
-                from search.config import get_search_config, get_model_slug
+                from search.config import get_model_slug, get_search_config
+
                 config = get_search_config()
                 model_slug = get_model_slug(config.embedding_model_name)
             except Exception:
                 model_slug = "unknown"
 
-        return self.storage_dir / f"{project_id}_{model_slug}_{dimension}d_snapshot.json"
+        return (
+            self.storage_dir / f"{project_id}_{model_slug}_{dimension}d_snapshot.json"
+        )
 
     def get_metadata_path(
         self, project_path: str, dimension: Optional[int] = None
@@ -109,7 +112,7 @@ class SnapshotManager:
                 if str(parent_dir) not in sys.path:
                     sys.path.insert(0, str(parent_dir))
 
-                from search.config import get_search_config, get_model_slug
+                from search.config import get_model_slug, get_search_config
 
                 config = get_search_config()
                 dimension = config.model_dimension
@@ -121,13 +124,16 @@ class SnapshotManager:
         else:
             # If dimension is provided explicitly, we need to get the current model slug
             try:
-                from search.config import get_search_config, get_model_slug
+                from search.config import get_model_slug, get_search_config
+
                 config = get_search_config()
                 model_slug = get_model_slug(config.embedding_model_name)
             except Exception:
                 model_slug = "unknown"
 
-        return self.storage_dir / f"{project_id}_{model_slug}_{dimension}d_metadata.json"
+        return (
+            self.storage_dir / f"{project_id}_{model_slug}_{dimension}d_metadata.json"
+        )
 
     def save_snapshot(self, dag: MerkleDAG, metadata: Optional[Dict] = None) -> None:
         """Save a Merkle DAG snapshot to disk.

@@ -8,8 +8,6 @@ Tests the complete pipeline:
 """
 
 import json
-import tempfile
-from pathlib import Path
 
 import pytest
 
@@ -205,7 +203,7 @@ class TestGraphEnhancedSearch:
         # Check graph metadata
         chunk_id = setup_result.chunk_id
         if chunk_id in indexer.graph_storage:
-            callers = indexer.graph_storage.get_callers(chunk_id)
+            indexer.graph_storage.get_callers(chunk_id)
             callees = indexer.graph_storage.get_callees(chunk_id)
 
             # Note: Call relationships exist, but unresolved callees are stored as name strings
@@ -317,8 +315,7 @@ class TestGraphEnhancedSearch:
         assert len(results) > 0
 
         # Format results (should not have graph metadata)
-        for result in results:
-            item = {"chunk_id": result.chunk_id, "name": result.name}
+        for _result in results:
 
             # Try to add graph metadata (should gracefully skip)
             if (

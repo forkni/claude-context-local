@@ -29,6 +29,7 @@ from embeddings.embedder import EmbeddingResult
 # Import graph storage for call graph (Phase 1)
 try:
     from graph.graph_storage import CodeGraphStorage
+
     GRAPH_STORAGE_AVAILABLE = True
 except ImportError:
     GRAPH_STORAGE_AVAILABLE = False
@@ -100,7 +101,9 @@ class CodeIndexManager:
         self._metadata_db = None
         self._chunk_ids = []
         self._logger = logging.getLogger(__name__)
-        self._logger.info(f"[INIT] CodeIndexManager created: storage_dir={storage_dir}, project_id={project_id}")
+        self._logger.info(
+            f"[INIT] CodeIndexManager created: storage_dir={storage_dir}, project_id={project_id}"
+        )
         self._on_gpu = False
         self.embedder = embedder  # Optional embedder for dimension validation
 
@@ -111,10 +114,11 @@ class CodeIndexManager:
                 # Store graph in same directory as vector index
                 graph_dir = self.storage_dir.parent
                 self.graph_storage = CodeGraphStorage(
-                    project_id=project_id,
-                    storage_dir=graph_dir
+                    project_id=project_id, storage_dir=graph_dir
                 )
-                self._logger.info(f"Call graph storage initialized for project: {project_id}")
+                self._logger.info(
+                    f"Call graph storage initialized for project: {project_id}"
+                )
             except Exception as e:
                 self._logger.warning(f"Failed to initialize graph storage: {e}")
 
@@ -132,6 +136,67 @@ class CodeIndexManager:
             raise ImportError(
                 "sqlitedict not found. Install with: pip install sqlitedict"
             )
+
+    @staticmethod
+    def normalize_chunk_id(chunk_id: str) -> str:
+        """Normalize chunk_id path separators to forward slashes.
+
+                Converts chunk_id to cross-platform compatible format with forward slashes.
+                Handles Windows backslashes and ensures consistent path format.
+
+                Args:
+                    chunk_id: Chunk ID in format "file:lines:type:name"
+
+                Returns:
+                    Normalized chunk_id with forward slashes
+
+                Example:
+                    >>> normalize_chunk_id("search
+        eranker.py:36-137:method:rerank")
+                    "search/reranker.py:36-137:method:rerank"
+        """
+        # Split by chunk_id structure (file:lines:type:name)
+        parts = chunk_id.split(":")
+        if len(parts) >= 4:
+            # First part is the file path - normalize it
+            file_path = parts[0].replace("\\", "/")
+            # Reconstruct chunk_id
+            return f"{file_path}:{':'.join(parts[1:])}"
+        # Fallback: just normalize backslashes
+        return chunk_id.replace("\\", "/")
+
+    @staticmethod
+    def get_chunk_id_variants(chunk_id: str) -> list:
+        """Get all possible chunk_id variants for robust lookup.
+
+        Returns list of chunk_id variants to try during lookup, handling:
+        - Original format (exact match)
+        - Un-double-escaped (fixes MCP JSON transport bug on Windows)
+        - Forward slash normalized (cross-platform)
+        - Backslash normalized (Windows native)
+
+        Args:
+            chunk_id: Original chunk ID to generate variants for
+
+        Returns:
+            List of chunk_id variants to try in lookup order
+        """
+        variants = [
+            chunk_id,  # Original (exact match)
+            chunk_id.replace("\\\\", "\\"),  # Un-double-escape (MCP bug fix)
+            chunk_id.replace("\\", "/"),  # Normalize to forward slash
+            chunk_id.replace("/", "\\"),  # Try backslash variant
+        ]
+
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_variants = []
+        for variant in variants:
+            if variant not in seen:
+                seen.add(variant)
+                unique_variants.append(variant)
+
+        return unique_variants
 
     @property
     def index(self):
@@ -288,7 +353,9 @@ class CodeIndexManager:
             # Populate call graph (Phase 1: Python only)
             if self.graph_storage is not None:
                 self._add_to_graph(chunk_id, result.metadata)
-                self._logger.debug(f"Graph storage check: chunk_id={chunk_id}, type={result.metadata.get('chunk_type')}, graph_nodes={len(self.graph_storage)}")
+                self._logger.debug(
+                    f"Graph storage check: chunk_id={chunk_id}, type={result.metadata.get('chunk_type')}, graph_nodes={len(self.graph_storage)}"
+                )
 
         self._logger.info(f"Added {len(embedding_results)} embeddings to index")
 
@@ -302,12 +369,18 @@ class CodeIndexManager:
         # Save call graph if populated
         graph_status = "not None" if self.graph_storage is not None else "None"
         graph_nodes = len(self.graph_storage) if self.graph_storage else 0
-        self._logger.info(f"Graph storage check before save: graph_storage={graph_status}, nodes={graph_nodes}")
+        self._logger.info(
+            f"Graph storage check before save: graph_storage={graph_status}, nodes={graph_nodes}"
+        )
         if self.graph_storage is not None and len(self.graph_storage) > 0:
             try:
-                self._logger.info(f"Saving call graph with {len(self.graph_storage)} nodes to {self.graph_storage.graph_path}")
+                self._logger.info(
+                    f"Saving call graph with {len(self.graph_storage)} nodes to {self.graph_storage.graph_path}"
+                )
                 self.graph_storage.save()
-                self._logger.info(f"Successfully saved call graph with {len(self.graph_storage)} nodes")
+                self._logger.info(
+                    f"Successfully saved call graph with {len(self.graph_storage)} nodes"
+                )
             except Exception as e:
                 self._logger.warning(f"Failed to save call graph: {e}")
         else:
@@ -437,15 +510,46 @@ class CodeIndexManager:
         return True
 
     def get_chunk_by_id(self, chunk_id: str) -> Optional[Dict[str, Any]]:
-        """Retrieve chunk metadata by ID."""
-        metadata_entry = self.metadata_db.get(chunk_id)
-        return metadata_entry["metadata"] if metadata_entry else None
+        """Retrieve chunk metadata by ID with path normalization.
+
+        Handles Windows backslash escaping issues in MCP transport by trying
+        multiple path separator variants.
+
+        Args:
+            chunk_id: Chunk ID to lookup
+
+        Returns:
+            Chunk metadata dict if found, None otherwise
+        """
+        # Try multiple path separator variants for robust lookup
+        variants = self.get_chunk_id_variants(chunk_id)
+
+        for variant in variants:
+            metadata_entry = self.metadata_db.get(variant)
+            if metadata_entry:
+                if variant != chunk_id:
+                    self._logger.debug(
+                        f"Found chunk with variant: {variant} (original: {chunk_id})"
+                    )
+                return metadata_entry["metadata"]
+
+        self._logger.warning(
+            f"Chunk not found for ID (tried {len(variants)} variants): {chunk_id}"
+        )
+        return None
 
     def get_similar_chunks(
         self, chunk_id: str, k: int = 5
     ) -> List[Tuple[str, float, Dict[str, Any]]]:
         """Find chunks similar to a given chunk."""
-        metadata_entry = self.metadata_db.get(chunk_id)
+        # Try all path variants to handle Windows/Unix differences
+        metadata_entry = None
+        for variant in self.get_chunk_id_variants(chunk_id):
+            metadata_entry = self.metadata_db.get(variant)
+            if metadata_entry:
+                chunk_id = variant  # Use the variant that worked
+                break
+
         if not metadata_entry:
             return []
 
@@ -573,7 +677,8 @@ class CodeIndexManager:
                 # Get positions to keep (all except those being removed)
                 positions_to_remove_set = set(chunks_to_remove_positions)
                 positions_to_keep = [
-                    i for i in range(len(self._chunk_ids))
+                    i
+                    for i in range(len(self._chunk_ids))
                     if i not in positions_to_remove_set
                 ]
 
@@ -592,16 +697,17 @@ class CodeIndexManager:
 
                     if embeddings_to_keep:
                         # Create new index with kept embeddings
-                        embeddings_array = np.array(embeddings_to_keep, dtype=np.float32)
+                        embeddings_array = np.array(
+                            embeddings_to_keep, dtype=np.float32
+                        )
 
                         # Get embedding dimension
                         embedding_dim = embeddings_array.shape[1]
 
                         # Determine index type from current index
-                        index_type = "flat"  # Default
                         if hasattr(self._index, "metric_type"):
                             # Preserve metric type
-                            index_type = "flat"
+                            pass
 
                         # Check if we were on GPU
                         was_on_gpu = self._on_gpu
@@ -648,7 +754,8 @@ class CodeIndexManager:
 
             # Update chunk_ids list (remove chunks at removed positions)
             new_chunk_ids = [
-                chunk_id for i, chunk_id in enumerate(self._chunk_ids)
+                chunk_id
+                for i, chunk_id in enumerate(self._chunk_ids)
                 if i not in set(chunks_to_remove_positions)
             ]
             self._chunk_ids = new_chunk_ids
@@ -680,9 +787,12 @@ class CodeIndexManager:
         except Exception as e:
             self._logger.error(f"Failed to batch remove chunks: {e}")
             import traceback
+
             self._logger.error(traceback.format_exc())
             # Don't leave index in corrupted state - if rebuild fails, clear it
-            self._logger.warning("Batch removal failed, clearing index to prevent corruption")
+            self._logger.warning(
+                "Batch removal failed, clearing index to prevent corruption"
+            )
             self.clear_index()
             raise
 
@@ -716,17 +826,23 @@ class CodeIndexManager:
         # Save call graph if populated (Phase 1)
         graph_status = "not None" if self.graph_storage is not None else "None"
         graph_nodes = len(self.graph_storage) if self.graph_storage else 0
-        self._logger.info(f"[save_index] Graph storage check: graph_storage={graph_status}, nodes={graph_nodes}")
+        self._logger.info(
+            f"[save_index] Graph storage check: graph_storage={graph_status}, nodes={graph_nodes}"
+        )
         if self.graph_storage is not None and len(self.graph_storage) > 0:
             try:
-                self._logger.info(f"[save_index] Saving call graph with {len(self.graph_storage)} nodes to {self.graph_storage.graph_path}")
+                self._logger.info(
+                    f"[save_index] Saving call graph with {len(self.graph_storage)} nodes to {self.graph_storage.graph_path}"
+                )
                 self.graph_storage.save()
-                self._logger.info(f"[save_index] Successfully saved call graph")
+                self._logger.info("[save_index] Successfully saved call graph")
             except Exception as e:
                 self._logger.warning(f"[save_index] Failed to save call graph: {e}")
         else:
             skip_reason = "None" if self.graph_storage is None else "empty (0 nodes)"
-            self._logger.info(f"[save_index] Skipping graph save: graph_storage is {skip_reason}")
+            self._logger.info(
+                f"[save_index] Skipping graph save: graph_storage is {skip_reason}"
+            )
 
         # Save model metadata for dimension validation (if embedder available)
         if self.embedder is not None:
@@ -775,26 +891,57 @@ class CodeIndexManager:
 
         return False
 
-
     def _add_to_graph(self, chunk_id: str, metadata: Dict[str, Any]) -> None:
         """Add chunk to call graph storage.
 
         Args:
             chunk_id: Unique chunk identifier
-            metadata: Chunk metadata including calls
+            metadata: Chunk metadata including calls and relationships
         """
         if self.graph_storage is None:
-            self._logger.debug(f"_add_to_graph: graph_storage is None, skipping {chunk_id}")
+            self._logger.debug(
+                f"_add_to_graph: graph_storage is None, skipping {chunk_id}"
+            )
             return
 
         try:
-            # Only process functions and methods
+            # Phase 3: Process all semantic chunk types for relationships
+            # - Functions/methods: call relationships (Phase 1)
+            # - Classes/structs/interfaces/etc: inheritance, type usage (Phase 3)
             chunk_type = metadata.get("chunk_type")
             chunk_name = metadata.get("name")
-            self._logger.debug(f"_add_to_graph called: chunk_id={chunk_id}, type={chunk_type}, name={chunk_name}")
-            if chunk_type not in ("function", "method"):
-                self._logger.debug(f"Skipping non-function/method chunk: {chunk_id} (type={chunk_type})")
-                return
+            relationships = metadata.get("relationships", [])
+
+            self._logger.debug(
+                f"_add_to_graph called: chunk_id={chunk_id}, type={chunk_type}, name={chunk_name}"
+            )
+
+            # Semantic chunk types that can have relationships
+            # Based on Codanna's approach: index ALL semantic symbols
+            SEMANTIC_TYPES = (
+                "function",
+                "method",
+                "class",
+                "struct",
+                "interface",
+                "enum",
+                "trait",
+                "impl",
+                "constant",
+                "variable",
+            )
+
+            if chunk_type not in SEMANTIC_TYPES:
+                # Allow through if it has Phase 3 relationships (edge case)
+                if not relationships:
+                    self._logger.debug(
+                        f"Skipping non-semantic chunk: {chunk_id} (type={chunk_type})"
+                    )
+                    return
+                else:
+                    self._logger.debug(
+                        f"Processing non-semantic chunk with relationships: {chunk_id} (type={chunk_type}, rels={len(relationships)})"
+                    )
 
             self._logger.debug(f"Adding {chunk_type} '{metadata.get('name')}' to graph")
 
@@ -804,18 +951,52 @@ class CodeIndexManager:
                 name=metadata.get("name", "unknown"),
                 chunk_type=chunk_type,
                 file_path=metadata.get("file_path", ""),
-                language=metadata.get("language", "python")
+                language=metadata.get("language", "python"),
             )
 
-            # Add call edges
+            # Phase 1: Add legacy call edges (backwards compatibility)
             calls = metadata.get("calls", [])
             for call_dict in calls:
                 self.graph_storage.add_call_edge(
                     caller_id=chunk_id,
                     callee_name=call_dict.get("callee_name", "unknown"),
                     line_number=call_dict.get("line_number", 0),
-                    is_method_call=call_dict.get("is_method_call", False)
+                    is_method_call=call_dict.get("is_method_call", False),
                 )
+
+            # Phase 3: Add all relationship edges
+            relationships = metadata.get("relationships", [])
+            if relationships:
+                self._logger.debug(
+                    f"[PHASE3] Processing {len(relationships)} relationship edges for {chunk_id}"
+                )
+                for rel_dict in relationships:
+                    try:
+                        # Import RelationshipEdge to reconstruct from dict
+                        from graph.relationship_types import (
+                            RelationshipEdge,
+                            RelationshipType,
+                        )
+
+                        # Reconstruct RelationshipEdge from dict
+                        edge = RelationshipEdge(
+                            source_id=rel_dict.get("source_id", chunk_id),
+                            target_name=rel_dict.get("target_name", "unknown"),
+                            relationship_type=RelationshipType(
+                                rel_dict.get("relationship_type", "calls")
+                            ),
+                            line_number=rel_dict.get("line_number", 0),
+                            confidence=rel_dict.get("confidence", 1.0),
+                            metadata=rel_dict.get("metadata", {}),
+                        )
+
+                        # Add to graph storage
+                        self.graph_storage.add_relationship_edge(edge)
+
+                    except Exception as e:
+                        self._logger.warning(
+                            f"Failed to add relationship edge from {chunk_id}: {e}"
+                        )
 
         except Exception as e:
             self._logger.warning(f"Failed to add {chunk_id} to graph: {e}")
@@ -948,7 +1129,11 @@ class CodeIndexManager:
             issues.append(
                 f"Missing metadata for {len(missing_metadata)} chunks: "
                 f"{', '.join(missing_metadata[:5])}"
-                + (f" ... and {len(missing_metadata) - 5} more" if len(missing_metadata) > 5 else "")
+                + (
+                    f" ... and {len(missing_metadata) - 5} more"
+                    if len(missing_metadata) > 5
+                    else ""
+                )
             )
 
         # Check 4: Metadata database size consistency

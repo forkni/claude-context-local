@@ -35,7 +35,7 @@ MODEL_REGISTRY = {
         "max_context": 32768,
         "description": "High-performance model, top of MTEB leaderboard",
         "vram_gb": "15.3GB",
-        "recommended_batch_size": 128, # Smaller batch size for the larger model
+        "recommended_batch_size": 128,  # Smaller batch size for the larger model
     },
     # Code-specific models (optimized for Python, C++, and programming languages)
     "Qodo/Qodo-Embed-1-1.5B": {
@@ -45,7 +45,17 @@ MODEL_REGISTRY = {
         "vram_gb": "4-6GB",
         "recommended_batch_size": 128,
         "model_type": "code-specific",
-        "languages": ["python", "cpp", "csharp", "go", "java", "javascript", "php", "ruby", "typescript"],
+        "languages": [
+            "python",
+            "cpp",
+            "csharp",
+            "go",
+            "java",
+            "javascript",
+            "php",
+            "ruby",
+            "typescript",
+        ],
     },
     "jinaai/jina-embeddings-v2-base-code": {
         "dimension": 768,
@@ -63,7 +73,17 @@ MODEL_REGISTRY = {
         "vram_gb": "14-20GB",
         "recommended_batch_size": 64,
         "model_type": "code-specific",
-        "languages": ["python", "cpp", "csharp", "go", "java", "javascript", "php", "ruby", "typescript"],
+        "languages": [
+            "python",
+            "cpp",
+            "csharp",
+            "go",
+            "java",
+            "javascript",
+            "php",
+            "ruby",
+            "typescript",
+        ],
     },
     "codesage/codesage-large-v2": {
         "dimension": 2048,
@@ -72,7 +92,17 @@ MODEL_REGISTRY = {
         "vram_gb": "5-10GB",
         "recommended_batch_size": 128,
         "model_type": "code-specific",
-        "languages": ["c", "csharp", "go", "java", "javascript", "typescript", "php", "python", "ruby"],
+        "languages": [
+            "c",
+            "csharp",
+            "go",
+            "java",
+            "javascript",
+            "typescript",
+            "php",
+            "python",
+            "ruby",
+        ],
         "trust_remote_code": True,
     },
     "nomic-ai/CodeRankEmbed": {
@@ -116,7 +146,9 @@ class SearchConfig:
     # BM25 Configuration
     bm25_k_parameter: int = 100
     bm25_use_stopwords: bool = True
-    bm25_use_stemming: bool = True  # Snowball stemmer for word normalization (indexing→index)
+    bm25_use_stemming: bool = (
+        True  # Snowball stemmer for word normalization (indexing→index)
+    )
     min_bm25_score: float = 0.1
 
     # Reranking Configuration
@@ -136,7 +168,9 @@ class SearchConfig:
     enable_multi_hop: bool = True
     multi_hop_count: int = 2  # Number of expansion hops
     multi_hop_expansion: float = 0.3  # Expansion factor per hop
-    multi_hop_initial_k_multiplier: float = 2.0  # Multiplier for initial results (k * multiplier)
+    multi_hop_initial_k_multiplier: float = (
+        2.0  # Multiplier for initial results (k * multiplier)
+    )
 
     # Search Result Limits
     default_k: int = 5
@@ -164,7 +198,6 @@ class SearchConfig:
         valid_fields = {f.name for f in cls.__dataclass_fields__.values()}
         filtered_data = {k: v for k, v in data.items() if k in valid_fields}
         return cls(**filtered_data)
-
 
 
 class SearchConfigManager:
@@ -242,7 +275,10 @@ class SearchConfigManager:
             "CLAUDE_ENABLE_MULTI_HOP": ("enable_multi_hop", self._bool_from_env),
             "CLAUDE_MULTI_HOP_COUNT": ("multi_hop_count", int),
             "CLAUDE_MULTI_HOP_EXPANSION": ("multi_hop_expansion", float),
-            "CLAUDE_MULTI_HOP_INITIAL_K_MULTIPLIER": ("multi_hop_initial_k_multiplier", float),
+            "CLAUDE_MULTI_HOP_INITIAL_K_MULTIPLIER": (
+                "multi_hop_initial_k_multiplier",
+                float,
+            ),
             "CLAUDE_DEFAULT_K": ("default_k", int),
             "CLAUDE_MAX_K": ("max_k", int),
         }

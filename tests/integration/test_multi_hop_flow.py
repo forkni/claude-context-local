@@ -1,6 +1,5 @@
 """Integration tests for multi-hop semantic search functionality."""
 
-import json
 import shutil
 import tempfile
 from pathlib import Path
@@ -10,9 +9,8 @@ import pytest
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from embeddings.embedder import CodeEmbedder, EmbeddingResult
-from search.config import SearchConfig, SearchConfigManager
+from search.config import SearchConfig
 from search.hybrid_searcher import HybridSearcher
-from search.indexer import CodeIndexManager
 
 
 class TestMultiHopSearchFlow:
@@ -35,8 +33,7 @@ class TestMultiHopSearchFlow:
         """Reusable embedder for all tests."""
         cache_dir = tempfile.mkdtemp()
         embedder = CodeEmbedder(
-            model_name="google/embeddinggemma-300m",
-            cache_dir=cache_dir
+            model_name="google/embeddinggemma-300m", cache_dir=cache_dir
         )
         yield embedder
         # Cleanup
@@ -62,23 +59,26 @@ class TestMultiHopSearchFlow:
             embed_results = embedder.embed_batch(
                 texts=texts,
                 chunk_ids=chunk_ids,
-                metadata=[{
-                    "name": chunk.name,
-                    "chunk_type": chunk.chunk_type,
-                    "file_path": chunk.file_path,
-                    "relative_path": chunk.relative_path,
-                    "folder_structure": chunk.folder_structure,
-                    "start_line": chunk.start_line,
-                    "end_line": chunk.end_line,
-                    "docstring": chunk.docstring,
-                    "tags": chunk.tags,
-                    "complexity_score": chunk.complexity_score,
-                    "content_preview": (
-                        chunk.content[:200] + "..."
-                        if len(chunk.content) > 200
-                        else chunk.content
-                    ),
-                } for chunk in chunks]
+                metadata=[
+                    {
+                        "name": chunk.name,
+                        "chunk_type": chunk.chunk_type,
+                        "file_path": chunk.file_path,
+                        "relative_path": chunk.relative_path,
+                        "folder_structure": chunk.folder_structure,
+                        "start_line": chunk.start_line,
+                        "end_line": chunk.end_line,
+                        "docstring": chunk.docstring,
+                        "tags": chunk.tags,
+                        "complexity_score": chunk.complexity_score,
+                        "content_preview": (
+                            chunk.content[:200] + "..."
+                            if len(chunk.content) > 200
+                            else chunk.content
+                        ),
+                    }
+                    for chunk in chunks
+                ],
             )
             return embed_results
 
@@ -154,18 +154,12 @@ class TestMultiHopSearchFlow:
 
         # Single-hop search for comparison
         single_hop_results = hybrid_searcher.search(
-            query=query,
-            k=3,
-            search_mode="hybrid"
+            query=query, k=3, search_mode="hybrid"
         )
 
         # Multi-hop search
         multi_hop_results = hybrid_searcher._multi_hop_search_internal(
-            query=query,
-            k=3,
-            search_mode="hybrid",
-            hops=2,
-            expansion_factor=0.3
+            query=query, k=3, search_mode="hybrid", hops=2, expansion_factor=0.3
         )
 
         # Verify results
@@ -174,8 +168,9 @@ class TestMultiHopSearchFlow:
 
         # Multi-hop should potentially find more related code
         # (or at least same amount as single-hop)
-        assert len(multi_hop_results) >= len(single_hop_results) or True, \
-            "Multi-hop should discover related code"
+        assert (
+            len(multi_hop_results) >= len(single_hop_results) or True
+        ), "Multi-hop should discover related code"
 
     def test_multi_hop_expansion_factor(self, test_project_path, mock_storage_dir):
         """Test that expansion factor affects number of discovered chunks."""
@@ -212,18 +207,12 @@ class TestMultiHopSearchFlow:
 
         # Low expansion
         low_expansion_results = hybrid_searcher._multi_hop_search_internal(
-            query=query,
-            k=k,
-            hops=2,
-            expansion_factor=0.2
+            query=query, k=k, hops=2, expansion_factor=0.2
         )
 
         # High expansion
         high_expansion_results = hybrid_searcher._multi_hop_search_internal(
-            query=query,
-            k=k,
-            hops=2,
-            expansion_factor=0.8
+            query=query, k=k, hops=2, expansion_factor=0.8
         )
 
         # Both should return results
@@ -232,8 +221,7 @@ class TestMultiHopSearchFlow:
 
         # Results should be properly ranked (scores descending)
         for i in range(len(low_expansion_results) - 1):
-            assert low_expansion_results[i].score >= \
-                   low_expansion_results[i + 1].score
+            assert low_expansion_results[i].score >= low_expansion_results[i + 1].score
 
     def test_multi_hop_hop_count(self, test_project_path, mock_storage_dir):
         """Test multi-hop search with different hop counts."""
@@ -268,26 +256,17 @@ class TestMultiHopSearchFlow:
 
         # 1 hop (should be same as regular search)
         results_1_hop = hybrid_searcher._multi_hop_search_internal(
-            query=query,
-            k=k,
-            hops=1,
-            expansion_factor=0.3
+            query=query, k=k, hops=1, expansion_factor=0.3
         )
 
         # 2 hops (default)
         results_2_hops = hybrid_searcher._multi_hop_search_internal(
-            query=query,
-            k=k,
-            hops=2,
-            expansion_factor=0.3
+            query=query, k=k, hops=2, expansion_factor=0.3
         )
 
         # 3 hops
         results_3_hops = hybrid_searcher._multi_hop_search_internal(
-            query=query,
-            k=k,
-            hops=3,
-            expansion_factor=0.3
+            query=query, k=k, hops=3, expansion_factor=0.3
         )
 
         # All should return results
@@ -297,17 +276,15 @@ class TestMultiHopSearchFlow:
 
         # Verify results are properly structured
         for result in results_2_hops:
-            assert hasattr(result, 'doc_id')
-            assert hasattr(result, 'score')
-            assert hasattr(result, 'metadata')
+            assert hasattr(result, "chunk_id")
+            assert hasattr(result, "score")
+            assert hasattr(result, "metadata")
 
     def test_multi_hop_config_integration(self, test_project_path, mock_storage_dir):
         """Test that multi-hop respects configuration settings."""
         # Create test config with multi-hop enabled
         config = SearchConfig(
-            enable_multi_hop=True,
-            multi_hop_count=2,
-            multi_hop_expansion=0.3
+            enable_multi_hop=True, multi_hop_count=2, multi_hop_expansion=0.3
         )
 
         # Verify config values
@@ -316,9 +293,7 @@ class TestMultiHopSearchFlow:
         assert config.multi_hop_expansion == 0.3
 
         # Test config with multi-hop disabled
-        config_disabled = SearchConfig(
-            enable_multi_hop=False
-        )
+        config_disabled = SearchConfig(enable_multi_hop=False)
 
         assert config_disabled.enable_multi_hop is False
 
@@ -348,18 +323,16 @@ class TestMultiHopSearchFlow:
 
         # Multi-hop search
         results = hybrid_searcher._multi_hop_search_internal(
-            query="database query",
-            k=5,
-            hops=2,
-            expansion_factor=0.5
+            query="database query", k=5, hops=2, expansion_factor=0.5
         )
 
-        # Verify no duplicate doc_ids
-        doc_ids = [r.doc_id for r in results]
-        unique_doc_ids = set(doc_ids)
+        # Verify no duplicate chunk_ids
+        chunk_ids = [r.chunk_id for r in results]
+        unique_chunk_ids = set(chunk_ids)
 
-        assert len(doc_ids) == len(unique_doc_ids), \
-            "Multi-hop should deduplicate results"
+        assert len(chunk_ids) == len(
+            unique_chunk_ids
+        ), "Multi-hop should deduplicate results"
 
     def test_multi_hop_reranking(self, test_project_path, mock_storage_dir):
         """Test that multi-hop properly re-ranks results by query relevance."""
@@ -387,15 +360,13 @@ class TestMultiHopSearchFlow:
 
         # Multi-hop search
         results = hybrid_searcher._multi_hop_search_internal(
-            query="user authentication validation",
-            k=5,
-            hops=2,
-            expansion_factor=0.3
+            query="user authentication validation", k=5, hops=2, expansion_factor=0.3
         )
 
         assert len(results) > 0
 
         # Verify results are sorted by score (descending)
         for i in range(len(results) - 1):
-            assert results[i].score >= results[i + 1].score, \
-                "Results should be sorted by relevance score"
+            assert (
+                results[i].score >= results[i + 1].score
+            ), "Results should be sorted by relevance score"

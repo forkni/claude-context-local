@@ -5,7 +5,7 @@ Provides high-level query operations on code graphs.
 """
 
 import logging
-from typing import List, Dict, Set, Optional, Any
+from typing import Any, Dict, List, Optional, Set
 
 try:
     import networkx as nx
@@ -39,10 +39,7 @@ class GraphQueryEngine:
         self.logger = logging.getLogger(__name__)
 
     def find_call_chain(
-        self,
-        start_chunk_id: str,
-        end_chunk_id: str,
-        max_depth: int = 10
+        self, start_chunk_id: str, end_chunk_id: str, max_depth: int = 10
     ) -> Optional[List[str]]:
         """
         Find shortest call chain from start to end function.
@@ -66,9 +63,7 @@ class GraphQueryEngine:
         try:
             # Use NetworkX shortest path
             path = nx.shortest_path(
-                self.storage.graph,
-                source=start_chunk_id,
-                target=end_chunk_id
+                self.storage.graph, source=start_chunk_id, target=end_chunk_id
             )
 
             if len(path) > max_depth:
@@ -84,9 +79,7 @@ class GraphQueryEngine:
             return None
 
     def find_all_callers(
-        self,
-        chunk_id: str,
-        max_depth: int = 3
+        self, chunk_id: str, max_depth: int = 3
     ) -> Dict[int, Set[str]]:
         """
         Find all callers up to max_depth levels.
@@ -124,9 +117,7 @@ class GraphQueryEngine:
         return callers_by_depth
 
     def find_all_callees(
-        self,
-        chunk_id: str,
-        max_depth: int = 3
+        self, chunk_id: str, max_depth: int = 3
     ) -> Dict[int, Set[str]]:
         """
         Find all callees up to max_depth levels.
@@ -164,10 +155,7 @@ class GraphQueryEngine:
         return callees_by_depth
 
     def find_related_functions(
-        self,
-        chunk_id: str,
-        relation_types: List[str] = None,
-        max_depth: int = 2
+        self, chunk_id: str, relation_types: List[str] = None, max_depth: int = 2
     ) -> List[Dict[str, Any]]:
         """
         Find all related functions with metadata.
@@ -189,18 +177,19 @@ class GraphQueryEngine:
         for related_id in related_ids:
             node_data = self.storage.get_node_data(related_id)
             if node_data:
-                func_info = {
-                    "chunk_id": related_id,
-                    **node_data
-                }
+                func_info = {"chunk_id": related_id, **node_data}
 
                 # Determine relationship type
                 if self.storage.graph.has_edge(chunk_id, related_id):
                     func_info["relationship"] = "calls"
-                    func_info["edge_data"] = self.storage.get_edge_data(chunk_id, related_id)
+                    func_info["edge_data"] = self.storage.get_edge_data(
+                        chunk_id, related_id
+                    )
                 elif self.storage.graph.has_edge(related_id, chunk_id):
                     func_info["relationship"] = "called_by"
-                    func_info["edge_data"] = self.storage.get_edge_data(related_id, chunk_id)
+                    func_info["edge_data"] = self.storage.get_edge_data(
+                        related_id, chunk_id
+                    )
 
                 related_functions.append(func_info)
 

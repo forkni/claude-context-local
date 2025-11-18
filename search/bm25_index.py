@@ -16,8 +16,8 @@ except ImportError:
 try:
     import nltk
     from nltk.corpus import stopwords
-    from nltk.tokenize import word_tokenize
     from nltk.stem.snowball import SnowballStemmer
+    from nltk.tokenize import word_tokenize
 
     # Download required NLTK data if needed
     try:
@@ -164,7 +164,9 @@ class BM25Index:
     # Index version for compatibility tracking
     INDEX_VERSION = 2  # Version 2: Added stemming support
 
-    def __init__(self, storage_dir: str, use_stopwords: bool = True, use_stemming: bool = True):
+    def __init__(
+        self, storage_dir: str, use_stopwords: bool = True, use_stemming: bool = True
+    ):
         """Initialize BM25 index.
 
         Args:
@@ -446,7 +448,11 @@ class BM25Index:
             issues.append(
                 f"Missing metadata for {len(missing_metadata)} documents: "
                 f"{', '.join(missing_metadata[:5])}"
-                + (f" ... and {len(missing_metadata) - 5} more" if len(missing_metadata) > 5 else "")
+                + (
+                    f" ... and {len(missing_metadata) - 5} more"
+                    if len(missing_metadata) > 5
+                    else ""
+                )
             )
 
         is_valid = len(issues) == 0
@@ -577,8 +583,12 @@ class BM25Index:
                 self._metadata = metadata.get("doc_metadata", {})
 
                 # Check index version and configuration
-                index_version = metadata.get("index_version", 1)  # Default to v1 for old indices
-                saved_stemming = metadata.get("use_stemming", False)  # Old indices don't have stemming
+                index_version = metadata.get(
+                    "index_version", 1
+                )  # Default to v1 for old indices
+                saved_stemming = metadata.get(
+                    "use_stemming", False
+                )  # Old indices don't have stemming
                 saved_stopwords = metadata.get("use_stopwords", True)
 
                 # Detect configuration mismatch
@@ -719,9 +729,7 @@ class BM25Index:
         if not self._doc_ids or not file_paths:
             return 0
 
-        self._logger.debug(
-            f"Batch removing BM25 documents for {len(file_paths)} files"
-        )
+        self._logger.debug(f"Batch removing BM25 documents for {len(file_paths)} files")
 
         # Track indices to remove
         indices_to_remove_set = set()
@@ -790,9 +798,12 @@ class BM25Index:
         except Exception as e:
             self._logger.error(f"Failed to batch remove BM25 documents: {e}")
             import traceback
+
             self._logger.error(traceback.format_exc())
             # Reset to empty state on failure to prevent corruption
-            self._logger.warning("BM25 batch removal failed, clearing index to prevent corruption")
+            self._logger.warning(
+                "BM25 batch removal failed, clearing index to prevent corruption"
+            )
             self._bm25 = None
             self._documents = []
             self._doc_ids = []

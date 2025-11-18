@@ -12,6 +12,7 @@ import pytest
 
 try:
     import networkx as nx
+
     NETWORKX_AVAILABLE = True
 except ImportError:
     NETWORKX_AVAILABLE = False
@@ -32,10 +33,7 @@ class TestCodeGraphStorage:
     @pytest.fixture
     def graph_storage(self, temp_storage_dir):
         """Create a CodeGraphStorage instance."""
-        return CodeGraphStorage(
-            project_id="test_project",
-            storage_dir=temp_storage_dir
-        )
+        return CodeGraphStorage(project_id="test_project", storage_dir=temp_storage_dir)
 
     def test_initialization(self, graph_storage, temp_storage_dir):
         """Test graph storage initialization."""
@@ -51,7 +49,7 @@ class TestCodeGraphStorage:
             name="foo",
             chunk_type="function",
             file_path="test.py",
-            language="python"
+            language="python",
         )
 
         assert len(graph_storage) == 1
@@ -64,14 +62,14 @@ class TestCodeGraphStorage:
             name="foo",
             chunk_type="function",
             file_path="test.py",
-            language="python"
+            language="python",
         )
         graph_storage.add_node(
             chunk_id="test.py:12-20:function:bar",
             name="bar",
             chunk_type="function",
             file_path="test.py",
-            language="python"
+            language="python",
         )
 
         assert len(graph_storage) == 2
@@ -84,7 +82,7 @@ class TestCodeGraphStorage:
             name="foo",
             chunk_type="function",
             file_path="test.py",
-            language="python"
+            language="python",
         )
 
         # Add call edge (foo calls bar)
@@ -92,7 +90,7 @@ class TestCodeGraphStorage:
             caller_id="test.py:1-10:function:foo",
             callee_name="bar",
             line_number=5,
-            is_method_call=False
+            is_method_call=False,
         )
 
         assert graph_storage.graph.number_of_edges() == 1
@@ -142,9 +140,7 @@ class TestCodeGraphStorage:
 
         # Get neighbors within 1 hop (calls only)
         neighbors = graph_storage.get_neighbors(
-            "foo_id",
-            relation_types=["calls"],
-            max_depth=1
+            "foo_id", relation_types=["calls"], max_depth=1
         )
 
         assert "bar_id" in neighbors
@@ -158,9 +154,7 @@ class TestCodeGraphStorage:
 
         # Get neighbors of bar in both directions
         neighbors = graph_storage.get_neighbors(
-            "bar_id",
-            relation_types=["calls", "called_by"],
-            max_depth=1
+            "bar_id", relation_types=["calls", "called_by"], max_depth=1
         )
 
         assert "foo_id" in neighbors  # Caller
@@ -174,9 +168,7 @@ class TestCodeGraphStorage:
 
         # Get neighbors within 2 hops
         neighbors = graph_storage.get_neighbors(
-            "foo_id",
-            relation_types=["calls"],
-            max_depth=2
+            "foo_id", relation_types=["calls"], max_depth=2
         )
 
         assert "bar_id" in neighbors  # 1 hop
@@ -190,7 +182,7 @@ class TestCodeGraphStorage:
             chunk_type="function",
             file_path="test.py",
             language="python",
-            custom_attr="value"
+            custom_attr="value",
         )
 
         node_data = graph_storage.get_node_data("test.py:1-10:function:foo")
@@ -215,7 +207,7 @@ class TestCodeGraphStorage:
             callee_name="bar_id",
             line_number=42,
             is_method_call=True,
-            custom_attr="value"
+            custom_attr="value",
         )
 
         edge_data = graph_storage.get_edge_data("foo_id", "bar_id")
@@ -240,19 +232,19 @@ class TestCodeGraphStorage:
             name="foo",
             chunk_type="function",
             file_path="test.py",
-            language="python"
+            language="python",
         )
         graph_storage.add_node(
             chunk_id="test.py:12-20:function:bar",
             name="bar",
             chunk_type="function",
             file_path="test.py",
-            language="python"
+            language="python",
         )
         graph_storage.add_call_edge(
             caller_id="test.py:1-10:function:foo",
             callee_name="test.py:12-20:function:bar",
-            line_number=5
+            line_number=5,
         )
 
         # Save graph
@@ -263,8 +255,7 @@ class TestCodeGraphStorage:
 
         # Create new storage instance and load
         new_storage = CodeGraphStorage(
-            project_id="test_project",
-            storage_dir=temp_storage_dir
+            project_id="test_project", storage_dir=temp_storage_dir
         )
 
         assert len(new_storage) == 2
@@ -273,8 +264,7 @@ class TestCodeGraphStorage:
     def test_load_nonexistent_graph(self, temp_storage_dir):
         """Test loading when graph file doesn't exist."""
         storage = CodeGraphStorage(
-            project_id="nonexistent_project",
-            storage_dir=temp_storage_dir
+            project_id="nonexistent_project", storage_dir=temp_storage_dir
         )
 
         # Should initialize empty graph without error
@@ -288,7 +278,7 @@ class TestCodeGraphStorage:
             name="foo",
             chunk_type="function",
             file_path="test.py",
-            language="python"
+            language="python",
         )
         graph_storage.add_call_edge("foo_id", "bar_id", line_number=1)
 
@@ -309,14 +299,14 @@ class TestCodeGraphStorage:
             name="foo",
             chunk_type="function",
             file_path="test.py",
-            language="python"
+            language="python",
         )
         graph_storage.add_node(
             chunk_id="bar_id",
             name="bar",
             chunk_type="function",
             file_path="test.py",
-            language="python"
+            language="python",
         )
         graph_storage.add_call_edge("foo_id", "bar_id", line_number=1)
 
@@ -334,7 +324,7 @@ class TestCodeGraphStorage:
             name="foo",
             chunk_type="function",
             file_path="test.py",
-            language="python"
+            language="python",
         )
 
         assert "foo_id" in graph_storage
@@ -349,7 +339,7 @@ class TestCodeGraphStorage:
             name="foo",
             chunk_type="function",
             file_path="test.py",
-            language="python"
+            language="python",
         )
 
         assert len(graph_storage) == 1
@@ -362,8 +352,7 @@ class TestCodeGraphStorage:
 
         # Load in new instance
         new_storage = CodeGraphStorage(
-            project_id="test_project",
-            storage_dir=temp_storage_dir
+            project_id="test_project", storage_dir=temp_storage_dir
         )
 
         # Verify directionality
@@ -378,14 +367,14 @@ class TestCodeGraphStorage:
             name="foo",
             chunk_type="function",
             file_path="test.py",
-            language="python"
+            language="python",
         )
         graph_storage.add_call_edge("foo_id", "bar_id", line_number=1)
 
         graph_storage.save()
 
         # Read and verify JSON structure
-        with open(graph_storage.graph_path, 'r') as f:
+        with open(graph_storage.graph_path, "r") as f:
             data = json.load(f)
 
         assert "nodes" in data

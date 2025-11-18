@@ -11,14 +11,14 @@ class TestSearchResult:
     def test_search_result_creation(self):
         """Test creating SearchResult objects."""
         result = SearchResult(
-            doc_id="doc1",
+            chunk_id="doc1",
             score=0.8,
             metadata={"type": "function"},
             source="bm25",
             rank=1,
         )
 
-        assert result.doc_id == "doc1"
+        assert result.chunk_id == "doc1"
         assert result.score == 0.8
         assert result.metadata == {"type": "function"}
         assert result.source == "bm25"
@@ -26,7 +26,7 @@ class TestSearchResult:
 
     def test_search_result_defaults(self):
         """Test SearchResult default values."""
-        result = SearchResult(doc_id="doc1", score=0.8, metadata={})
+        result = SearchResult(chunk_id="doc1", score=0.8, metadata={})
 
         assert result.source == "unknown"
         assert result.rank == 0
@@ -78,7 +78,7 @@ class TestRRFReranker:
         assert all("rrf_score" in result.metadata for result in results)
 
         # Should maintain relative order for single list
-        assert results[0].doc_id == "doc1"  # Best BM25 score
+        assert results[0].chunk_id == "doc1"  # Best BM25 score
 
     def test_multiple_lists_reranking(self):
         """Test reranking with multiple result lists."""
@@ -87,8 +87,8 @@ class TestRRFReranker:
         )
 
         # Should get unique documents
-        doc_ids = [r.doc_id for r in results]
-        assert len(doc_ids) == len(set(doc_ids))
+        chunk_ids = [r.chunk_id for r in results]
+        assert len(chunk_ids) == len(set(chunk_ids))
 
         # Should have RRF scores
         assert all("rrf_score" in result.metadata for result in results)
@@ -116,7 +116,7 @@ class TestRRFReranker:
         # Results should be the same (within floating point precision)
         assert len(results1) == len(results2)
         for r1, r2 in zip(results1, results2, strict=False):
-            assert r1.doc_id == r2.doc_id
+            assert r1.chunk_id == r2.chunk_id
             assert abs(r1.metadata["rrf_score"] - r2.metadata["rrf_score"]) < 1e-6
 
     def test_max_results_limiting(self):
@@ -134,15 +134,15 @@ class TestRRFReranker:
         )
 
         # doc1 and doc2 appear in both lists
-        doc1_results = [r for r in results if r.doc_id == "doc1"]
-        doc2_results = [r for r in results if r.doc_id == "doc2"]
+        doc1_results = [r for r in results if r.chunk_id == "doc1"]
+        doc2_results = [r for r in results if r.chunk_id == "doc2"]
 
         assert len(doc1_results) == 1
         assert len(doc2_results) == 1
 
         # Should track appearances in metadata
         for result in results:
-            if result.doc_id in ["doc1", "doc2"]:
+            if result.chunk_id in ["doc1", "doc2"]:
                 assert result.metadata["appears_in_lists"] == 2
             else:
                 assert result.metadata["appears_in_lists"] == 1
@@ -274,7 +274,7 @@ class TestRRFReranker:
         results = self.reranker.rerank([single_result], max_results=10)
 
         assert len(results) == 1
-        assert results[0].doc_id == "doc1"
+        assert results[0].chunk_id == "doc1"
         assert results[0].source == "hybrid"
 
     def test_identical_documents_different_sources(self):
@@ -285,7 +285,7 @@ class TestRRFReranker:
         results = self.reranker.rerank([list1, list2], max_results=10)
 
         assert len(results) == 1
-        assert results[0].doc_id == "doc1"
+        assert results[0].chunk_id == "doc1"
         assert results[0].score == 0.9  # Should keep higher score
         assert results[0].metadata["appears_in_lists"] == 2
 

@@ -5,7 +5,6 @@ CLI wrapper for batch files to switch between indexed projects.
 """
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -20,9 +19,7 @@ def main():
         description="Switch to a different indexed project for semantic code search"
     )
     parser.add_argument(
-        "--path",
-        required=True,
-        help="Path to project directory to switch to"
+        "--path", required=True, help="Path to project directory to switch to"
     )
 
     args = parser.parse_args()
@@ -63,7 +60,7 @@ def main():
             print(f"Message: {result.get('message', 'Unknown')}")
 
             # Show project info if available
-            project_info = result.get('project_info', {})
+            project_info = result.get("project_info", {})
             if project_info:
                 print()
                 print("Project Information:")
@@ -71,7 +68,7 @@ def main():
                 print(f"  Directory: {project_info.get('directory', 'Unknown')}")
 
                 # Show index statistics if available
-                index_stats = project_info.get('index_stats', {})
+                index_stats = project_info.get("index_stats", {})
                 if index_stats:
                     print()
                     print("Index Statistics:")
@@ -84,11 +81,11 @@ def main():
 
         else:
             print("[ERROR] Project switch failed")
-            error = result.get('error', 'Unknown error')
+            error = result.get("error", "Unknown error")
             print(f"Error: {error}")
 
             # Show suggestion if available
-            suggestion = result.get('suggestion', '')
+            suggestion = result.get("suggestion", "")
             if suggestion:
                 print()
                 print(f"Suggestion: {suggestion}")
@@ -104,6 +101,7 @@ def main():
         print(f"Error: {str(e)}")
         print("=" * 70)
         import traceback
+
         traceback.print_exc()
         return 1
 

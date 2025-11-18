@@ -279,7 +279,7 @@ class DatabaseConnection:
 
             # Check that results have the expected format
             for result in results:
-                assert hasattr(result, "doc_id"), "Result missing doc_id"
+                assert hasattr(result, "chunk_id"), "Result missing chunk_id"
                 assert hasattr(result, "score"), "Result missing score"
                 assert hasattr(result, "metadata"), "Result missing metadata"
                 assert (
@@ -344,14 +344,14 @@ class DatabaseConnection:
         assert len(hybrid_results) > 0, "Hybrid search should return results"
 
         # Check that hybrid results contain documents from both searches
-        hybrid_doc_ids = {result.doc_id for result in hybrid_results}
-        bm25_doc_ids = {doc_id for doc_id, _, _ in bm25_results}
-        dense_doc_ids = {doc_id for doc_id, _, _ in dense_results}
+        hybrid_chunk_ids = {result.chunk_id for result in hybrid_results}
+        bm25_chunk_ids = {doc_id for doc_id, _, _ in bm25_results}
+        dense_chunk_ids = {doc_id for doc_id, _, _ in dense_results}
 
         # At least some hybrid results should come from BM25 or dense
         assert (
-            len(hybrid_doc_ids & bm25_doc_ids) > 0
-            or len(hybrid_doc_ids & dense_doc_ids) > 0
+            len(hybrid_chunk_ids & bm25_chunk_ids) > 0
+            or len(hybrid_chunk_ids & dense_chunk_ids) > 0
         ), "Hybrid results should include documents from BM25 or dense searches"
 
     @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
@@ -376,11 +376,11 @@ class DatabaseConnection:
         assert len(sequential_results) > 0, "Sequential search should return results"
 
         # Results should be similar (same reranking algorithm)
-        parallel_doc_ids = [r.doc_id for r in parallel_results]
-        sequential_doc_ids = [r.doc_id for r in sequential_results]
+        parallel_chunk_ids = [r.chunk_id for r in parallel_results]
+        sequential_chunk_ids = [r.chunk_id for r in sequential_results]
 
         # Allow for some differences due to threading, but expect significant overlap
-        overlap = len(set(parallel_doc_ids) & set(sequential_doc_ids))
+        overlap = len(set(parallel_chunk_ids) & set(sequential_chunk_ids))
         assert (
             overlap >= len(parallel_results) // 2
         ), "Parallel and sequential search should have significant overlap in results"
@@ -461,7 +461,7 @@ def validate_item(item):
         assert len(results) > 0, "New content should be searchable"
 
         # Check that at least one result is from the new file
-        new_file_results = [r for r in results if "new_module.py" in r.doc_id]
+        new_file_results = [r for r in results if "new_module.py" in r.chunk_id]
         assert len(new_file_results) > 0, "Should find results from new file"
 
     @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")

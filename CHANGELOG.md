@@ -11,6 +11,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.7] - 2025-11-18
+
+### Fixed
+
+- **Multi-hop Filter Propagation** - Filters now apply to both initial and expanded results
+  - **Root cause**: Multi-hop expansion (Hop 2+) called `find_similar_to_chunk` without passing filters
+  - **Fix**: Added post-expansion filtering in `search/hybrid_searcher.py:725-744`
+  - **Result**: `file_pattern` and `chunk_type` filters work correctly across all hops
+
+- **find_similar_code Path Variant Lookup** - Fixed 0 results bug for path-based queries
+  - **Root cause**: Strict path matching failed when chunk_id used different separators
+  - **Fix**: Added path variant lookup in `search/indexer.py:542-555`
+  - **Result**: `find_similar_code()` now finds chunks regardless of path format
+
+- **Query Routing Confidence Calculation** - Better scoring for natural language queries
+  - **Root cause**: Old calculation did not account for keyword weights properly
+  - **Fix**: New calculation in `search/query_router.py:275-279`
+  - **Result**: Natural queries trigger routing more effectively
+
+- **Dual SSE Server Verification Timing** - Fixed false negatives in server startup checks
+  - **Root cause**: 3-second timeout too short for server initialization
+  - **Fix**: Increased timeout to 5 seconds in `scripts/batch/start_both_sse_servers.bat:92`
+
+- **Parse Error Logging** - Suppressed verbose parse errors to DEBUG level
+  - **Files**: Type/import/inheritance extractors in `graph/relationship_extractors/`
+  - **Result**: Cleaner logs during normal operation
+
+- **Phase 3 Relationship Extraction** - All semantic chunk types now contribute to relationship graphs
+  - Extended indexer to allow classes, structs, interfaces, enums, traits, impl blocks, constants, variables
+  - Fixed HybridSearcher graph access path in `code_relationship_analyzer.py`
+  - `find_connections()` now returns complete relationship data
+  - **Re-indexing required** for projects indexed before this fix
+
+### Changed
+
+- **Default Search Mode** - Changed from `semantic` to `hybrid` for better filter hit rate
+  - BM25 keyword matching improves filter results compared to semantic-only
+
+- **Query Routing Keywords** - Expanded keyword variants for better routing
+  - Added: async, await, vector, matrix and other domain-specific terms
+
+- **Codebase Cleanup** - 26 files archived (38% reduction)
+  - Moved deprecated/backup files to `_archive/` directories
+
+- **Tool Count** - Updated from 14 to 15 MCP tools
+  - Added `find_connections` tool for dependency analysis
+
+### Added
+
+- **Filter Best Practices Documentation** - Post-filtering behavior explained
+  - Added to: `docs/MCP_TOOLS_REFERENCE.md`, `docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md`
+
+- **Phase 1 Features Documentation** - Complete user-facing documentation
+  - Symbol ID lookups, AI Guidance messages, Dependency analysis
+  - File: `docs/ADVANCED_FEATURES_GUIDE.md`
+
+- **MCP Tools Test Plan** - 55 test queries across 6 categories
+
+---
+
+## [0.5.6] - 2025-11-17
+
+### Fixed
+
+- **Phase 3 Relationship Extraction - Complete Graph Type Coverage** - All semantic chunk types now contribute to relationship graphs
+  - Extended indexer to allow classes, structs, interfaces, enums, traits, impl blocks, constants, variables
+  - Fixed HybridSearcher graph access path in `code_relationship_analyzer.py`
+  - `find_connections()` now returns complete relationship data
+  - **Re-indexing required** for projects indexed before this fix
+
+### Fixed
+
+- **Phase 3 Relationship Extraction - Complete Graph Type Coverage** - All semantic chunk types now contribute to relationship graphs
+  - **Root cause 1**: Graph was limited to functions/methods only in `search/indexer.py:902-931`
+  - **Root cause 2**: HybridSearcher graph access path incorrect in `code_relationship_analyzer.py:74-94`
+  - **Fix 1**: Extended indexer to allow classes, structs, interfaces, enums, traits, impl blocks, constants, variables
+  - **Fix 2**: Changed graph access from `searcher.graph_storage` to `searcher.dense_index.graph_storage`
+  - **Result**: `find_connections()` now returns complete relationship data:
+    - `parent_classes` / `child_classes` - Inheritance relationships
+    - `uses_types` / `used_as_type_in` - Type annotation relationships
+    - `imports` / `imported_by` - Import relationships
+  - **Re-indexing required**: Projects indexed before this fix need re-indexing for Phase 3 relationships to populate
+  - **Backward compatibility**: Zero breaking changes, graceful degradation if relationships unavailable
+
+---
+
 ## [0.5.5] - 2025-11-13
 
 ### Added
@@ -187,6 +273,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `called_by`: Array of function names that call this code
   - Automatic graph population during indexing when `project_id` provided
   - Example result format:
+
     ```json
     {
       "chunk_id": "auth.py:10-25:function:authenticate_user",
@@ -196,6 +283,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       }
     }
     ```
+
   - Performance: <5% indexing overhead, ~24MB storage for typical projects
   - 50+ unit tests + 7 integration tests passing
   - **Re-indexing required**: Projects indexed before 2025-11-06 need re-indexing for graph data
@@ -264,6 +352,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dual-Server**: Minimal resource overhead - two server processes share same index storage
 
 ---
+
 ## [0.4.0] - 2025-10-03
 
 ### Added
@@ -437,6 +526,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.5.7] - 2025-11-18
+
+### Fixed
+
+- **Multi-hop Filter Propagation** - Filters now apply to both initial and expanded results
+  - **Root cause**: Multi-hop expansion (Hop 2+) called `find_similar_to_chunk` without passing filters
+  - **Fix**: Added post-expansion filtering in `search/hybrid_searcher.py:725-744`
+  - **Result**: `file_pattern` and `chunk_type` filters work correctly across all hops
+
+- **find_similar_code Path Variant Lookup** - Fixed 0 results bug for path-based queries
+  - **Root cause**: Strict path matching failed when chunk_id used different separators
+  - **Fix**: Added path variant lookup in `search/indexer.py:542-555`
+  - **Result**: `find_similar_code()` now finds chunks regardless of path format
+
+- **Query Routing Confidence Calculation** - Better scoring for natural language queries
+  - **Root cause**: Old calculation did not account for keyword weights properly
+  - **Fix**: New calculation in `search/query_router.py:275-279`
+  - **Result**: Natural queries trigger routing more effectively
+
+- **Dual SSE Server Verification Timing** - Fixed false negatives in server startup checks
+  - **Root cause**: 3-second timeout too short for server initialization
+  - **Fix**: Increased timeout to 5 seconds in `scripts/batch/start_both_sse_servers.bat:92`
+
+- **Parse Error Logging** - Suppressed verbose parse errors to DEBUG level
+  - **Files**: Type/import/inheritance extractors in `graph/relationship_extractors/`
+  - **Result**: Cleaner logs during normal operation
+
+- **Phase 3 Relationship Extraction** - All semantic chunk types now contribute to relationship graphs
+  - Extended indexer to allow classes, structs, interfaces, enums, traits, impl blocks, constants, variables
+  - Fixed HybridSearcher graph access path in `code_relationship_analyzer.py`
+  - `find_connections()` now returns complete relationship data
+  - **Re-indexing required** for projects indexed before this fix
+
+### Changed
+
+- **Default Search Mode** - Changed from `semantic` to `hybrid` for better filter hit rate
+  - BM25 keyword matching improves filter results compared to semantic-only
+
+- **Query Routing Keywords** - Expanded keyword variants for better routing
+  - Added: async, await, vector, matrix and other domain-specific terms
+
+- **Codebase Cleanup** - 26 files archived (38% reduction)
+  - Moved deprecated/backup files to `_archive/` directories
+
+- **Tool Count** - Updated from 14 to 15 MCP tools
+  - Added `find_connections` tool for dependency analysis
+
+### Added
+
+- **Filter Best Practices Documentation** - Post-filtering behavior explained
+  - Added to: `docs/MCP_TOOLS_REFERENCE.md`, `docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md`
+
+- **Phase 1 Features Documentation** - Complete user-facing documentation
+  - Symbol ID lookups, AI Guidance messages, Dependency analysis
+  - File: `docs/ADVANCED_FEATURES_GUIDE.md`
+
+- **MCP Tools Test Plan** - 55 test queries across 6 categories
+
+---
+
+## [0.5.6] - 2025-11-17
+
+### Fixed
+
+- **Phase 3 Relationship Extraction - Complete Graph Type Coverage** - All semantic chunk types now contribute to relationship graphs
+  - Extended indexer to allow classes, structs, interfaces, enums, traits, impl blocks, constants, variables
+  - Fixed HybridSearcher graph access path in `code_relationship_analyzer.py`
+  - `find_connections()` now returns complete relationship data
+  - **Re-indexing required** for projects indexed before this fix
+
 ### Planned Features
 
 - Real-world usage pattern analysis
@@ -449,6 +610,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **v0.5.7** - Bug fixes, performance improvements & documentation (2025-11-18)
+- **v0.5.6** - Phase 3 complete type coverage (2025-11-17)
 - **v0.5.5** - Low-level MCP SDK migration, natural query routing support (2025-11-13)
 - **v0.5.4** - Multi-model query routing system (2025-11-10)
 - **v0.5.3** - Graph-enhanced search Phase 1, dual-server SSE transport, critical bug fixes (2025-11-07)

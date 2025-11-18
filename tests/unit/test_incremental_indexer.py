@@ -262,7 +262,9 @@ class TestIncrementalIndexer:
         )
 
         # Mock batch removal (now enabled by default)
-        self.mock_indexer.remove_multiple_files = Mock(return_value=10)  # 2 files * 5 chunks
+        self.mock_indexer.remove_multiple_files = Mock(
+            return_value=10
+        )  # 2 files * 5 chunks
 
         # Mock successful validation
         self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
@@ -335,7 +337,10 @@ class TestIncrementalIndexer:
             result = indexer.incremental_index(str(self.project_path), "test_project")
 
             assert result.success is False
-            assert "Change detection failed" in result.error or "Recovery also failed" in result.error
+            assert (
+                "Change detection failed" in result.error
+                or "Recovery also failed" in result.error
+            )
 
     def test_get_indexing_stats(self):
         """Test getting indexing statistics."""
@@ -609,12 +614,12 @@ class TestIncrementalIndexer:
         indexer.change_detector.get_files_to_reindex = Mock(return_value=[])
 
         # Mock batch removal
-        self.mock_indexer.remove_multiple_files = Mock(return_value=10)  # 2 files * 5 chunks
+        self.mock_indexer.remove_multiple_files = Mock(
+            return_value=10
+        )  # 2 files * 5 chunks
 
         # Mock successful validation
-        self.mock_indexer.validate_index_consistency = Mock(
-            return_value=(True, [])
-        )
+        self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
 
         result = indexer.incremental_index(str(self.project_path), "test_project")
 
@@ -746,18 +751,14 @@ class TestIncrementalIndexer:
         indexer.change_detector.detect_changes_from_snapshot = Mock(
             return_value=(mock_changes, mock_dag)
         )
-        indexer.change_detector.get_files_to_remove = Mock(
-            return_value=files_to_remove
-        )
+        indexer.change_detector.get_files_to_remove = Mock(return_value=files_to_remove)
         indexer.change_detector.get_files_to_reindex = Mock(return_value=[])
 
         # Mock batch removal returns 30 chunks total (10 files * 3 chunks each)
         self.mock_indexer.remove_multiple_files = Mock(return_value=30)
 
         # Mock successful validation
-        self.mock_indexer.validate_index_consistency = Mock(
-            return_value=(True, [])
-        )
+        self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
 
         result = indexer.incremental_index(str(self.project_path), "test_project")
 

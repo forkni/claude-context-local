@@ -29,14 +29,16 @@ if [ -n "$PROBLEMATIC_FILES" ]; then
     exit 1
 fi
 
-# Check for unauthorized docs/ files (only 11 specific files allowed)
-ALLOWED_DOCS="^[AM]\s+docs/(BENCHMARKS\.md|claude_code_config\.md|GIT_WORKFLOW\.md|HYBRID_SEARCH_CONFIGURATION_GUIDE\.md|INSTALLATION_GUIDE\.md|MCP_TOOLS_REFERENCE\.md|MODEL_MIGRATION_GUIDE\.md|PRE_COMMIT_HOOKS\.md|PYTORCH_COMPATIBILITY\.md|TESTING_GUIDE\.md|VSCODE_SETUP\.md)$"
+# Check for unauthorized docs/ files (only specific files allowed)
+ALLOWED_DOCS="^[AM]\s+docs/(ADVANCED_FEATURES_GUIDE\.md|AUTOMATED_GIT_WORKFLOW\.md|BENCHMARKS\.md|claude_code_config\.md|GIT_WORKFLOW\.md|HYBRID_SEARCH_CONFIGURATION_GUIDE\.md|INSTALLATION_GUIDE\.md|MCP_TOOLS_REFERENCE\.md|MODEL_MIGRATION_GUIDE\.md|PER_MODEL_INDICES_IMPLEMENTATION\.md|PRE_COMMIT_HOOKS\.md|PYTORCH_COMPATIBILITY\.md|TESTING_GUIDE\.md|VERSION_HISTORY\.md|VSCODE_SETUP\.md)$"
 UNAUTHORIZED_DOCS=$(git diff --cached --name-status | grep -E "^[AM]\s+docs/" | grep -v -E "$ALLOWED_DOCS")
 
 if [ -n "$UNAUTHORIZED_DOCS" ]; then
     echo "ERROR: Attempting to add unauthorized docs/ files!"
     echo ""
-    echo "Only these 11 documentation files are allowed in public repository:"
+    echo "Only these documentation files are allowed in public repository:"
+    echo "- docs/ADVANCED_FEATURES_GUIDE.md"
+    echo "- docs/AUTOMATED_GIT_WORKFLOW.md"
     echo "- docs/BENCHMARKS.md"
     echo "- docs/claude_code_config.md"
     echo "- docs/GIT_WORKFLOW.md"
@@ -44,9 +46,11 @@ if [ -n "$UNAUTHORIZED_DOCS" ]; then
     echo "- docs/INSTALLATION_GUIDE.md"
     echo "- docs/MCP_TOOLS_REFERENCE.md"
     echo "- docs/MODEL_MIGRATION_GUIDE.md"
+    echo "- docs/PER_MODEL_INDICES_IMPLEMENTATION.md"
     echo "- docs/PRE_COMMIT_HOOKS.md"
     echo "- docs/PYTORCH_COMPATIBILITY.md"
     echo "- docs/TESTING_GUIDE.md"
+    echo "- docs/VERSION_HISTORY.md"
     echo "- docs/VSCODE_SETUP.md"
     echo ""
     echo "Unauthorized files being added:"

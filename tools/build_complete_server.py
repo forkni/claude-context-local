@@ -10,14 +10,17 @@ This script generates the full server implementation by:
 import re
 from pathlib import Path
 
-BACKUP_PATH = Path(__file__).parent.parent / 'mcp_server' / 'server_fastmcp_backup.py'
-CURRENT_SERVER = Path(__file__).parent.parent / 'mcp_server' / 'server_lowlevel.py'
-OUTPUT_PATH = Path(__file__).parent.parent / 'mcp_server' / 'server_lowlevel_complete.py'
+BACKUP_PATH = Path(__file__).parent.parent / "mcp_server" / "server_fastmcp_backup.py"
+CURRENT_SERVER = Path(__file__).parent.parent / "mcp_server" / "server_lowlevel.py"
+OUTPUT_PATH = (
+    Path(__file__).parent.parent / "mcp_server" / "server_lowlevel_complete.py"
+)
+
 
 def extract_tool_function(backup_content, tool_name):
     """Extract complete tool function from backup."""
     # Find @mcp.tool() followed by the function
-    pattern = rf'@mcp\.tool\(\)\s*\ndef {tool_name}\((.*?)\n(?=\n@mcp\.|if __name__|$)'
+    pattern = rf"@mcp\.tool\(\)\s*\ndef {tool_name}\((.*?)\n(?=\n@mcp\.|if __name__|$)"
     match = re.search(pattern, backup_content, re.DOTALL)
 
     if match:
@@ -25,24 +28,29 @@ def extract_tool_function(backup_content, tool_name):
         return full_function
     return None
 
+
 def convert_to_async_handler(tool_function, tool_name):
     """Convert sync function to async handler."""
     # Simple conversion: change def to async def, rename function
     handler_name = f"handle_{tool_name}"
-    async_func = tool_function.replace(f"def {tool_name}(", f"async def {handler_name}(arguments: Dict[str, Any]) -> dict:")
+    async_func = tool_function.replace(
+        f"def {tool_name}(",
+        f"async def {handler_name}(arguments: Dict[str, Any]) -> dict:",
+    )
 
     # Extract parameters for argument unpacking
     # This is a simplified version - full implementation would parse AST
     return async_func
 
+
 print("Building complete server...")
 print("Step 1: Reading backup...")
 
-with open(BACKUP_PATH, 'r', encoding='utf-8') as f:
+with open(BACKUP_PATH, "r", encoding="utf-8") as f:
     backup_content = f.read()
 
 print("Step 2: Reading current server...")
-with open(CURRENT_SERVER, 'r', encoding='utf-8') as f:
+with open(CURRENT_SERVER, "r", encoding="utf-8") as f:
     current_server = f.read()
 
 # Extract the helper functions section
@@ -305,7 +313,7 @@ if __name__ == '__main__':
         sys.exit(1)
 '''
 
-with open(OUTPUT_PATH, 'w', encoding='utf-8') as f:
+with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
     f.write(server_content)
 
 print(f"Server template written to: {OUTPUT_PATH}")

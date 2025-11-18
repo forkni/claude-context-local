@@ -14,9 +14,8 @@ import json
 import logging
 import os
 import sys
-from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -25,36 +24,37 @@ PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 # Official MCP SDK imports
 from mcp.server.lowlevel import Server
 from mcp.types import (
-    Tool,
-    Resource,
-    Prompt,
-    TextContent,
     GetPromptResult,
+    Prompt,
     PromptMessage,
+    Resource,
+    TextContent,
+    Tool,
 )
 
 # Project imports
-from chunking.multi_language_chunker import MultiLanguageChunker
 from embeddings.embedder import CodeEmbedder
-from search.config import get_config_manager, get_search_config
+from search.config import get_search_config
 from search.hybrid_searcher import HybridSearcher
 from search.indexer import CodeIndexManager
 from search.searcher import IntelligentSearcher
-from search.query_router import QueryRouter
 
 # Configure logging
-debug_mode = os.getenv('MCP_DEBUG', '').lower() in ('1', 'true', 'yes')
+debug_mode = os.getenv("MCP_DEBUG", "").lower() in ("1", "true", "yes")
 log_level = logging.DEBUG if debug_mode else logging.INFO
-log_format = ('%(asctime)s - %(name)s - %(levelname)s - %(message)s' if
-    debug_mode else '%(asctime)s - %(message)s')
-logging.basicConfig(level=log_level, format=log_format, datefmt='%H:%M:%S')
+log_format = (
+    "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    if debug_mode
+    else "%(asctime)s - %(message)s"
+)
+logging.basicConfig(level=log_level, format=log_format, datefmt="%H:%M:%S")
 logger = logging.getLogger(__name__)
 
 if debug_mode:
-    logging.getLogger('mcp').setLevel(logging.DEBUG)
+    logging.getLogger("mcp").setLevel(logging.DEBUG)
 else:
-    logging.getLogger('mcp').setLevel(logging.WARNING)
-    logging.getLogger('asyncio').setLevel(logging.WARNING)
+    logging.getLogger("mcp").setLevel(logging.WARNING)
+    logging.getLogger("asyncio").setLevel(logging.WARNING)
 
 # Global state
 _embedders = {}  # model_key -> CodeEmbedder instance
@@ -64,13 +64,17 @@ _current_model_key = None  # Track which model the searcher was initialized with
 _storage_dir = None
 _current_project = None
 _model_preload_task_started = False
-_multi_model_enabled = os.getenv('CLAUDE_MULTI_MODEL_ENABLED', 'true').lower() in ('true', '1', 'yes')
+_multi_model_enabled = os.getenv("CLAUDE_MULTI_MODEL_ENABLED", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 
 # Multi-model pool configuration
 MODEL_POOL_CONFIG = {
     "qwen3": "Qwen/Qwen3-Embedding-0.6B",
     "bge_m3": "BAAI/bge-m3",
-    "coderankembed": "nomic-ai/CodeRankEmbed"
+    "coderankembed": "nomic-ai/CodeRankEmbed",
 }
 
 
@@ -79,12 +83,13 @@ MODEL_POOL_CONFIG = {
 # ============================================================================
 
 
-def get_storage_dir() ->Path:
+def get_storage_dir() -> Path:
     """Get or create base storage directory."""
     global _storage_dir
     if _storage_dir is None:
-        storage_path = os.getenv('CODE_SEARCH_STORAGE', str(Path.home() /
-            '.claude_code_search'))
+        storage_path = os.getenv(
+            "CODE_SEARCH_STORAGE", str(Path.home() / ".claude_code_search")
+        )
         _storage_dir = Path(storage_path)
         _storage_dir.mkdir(parents=True, exist_ok=True)
     return _storage_dir
@@ -100,72 +105,82 @@ def get_project_storage_dir(project_path: str, model_key: str = None) -> Path:
     base_dir = get_storage_dir()
     import hashlib
     from datetime import datetime
+
     project_path = Path(project_path).resolve()
     project_name = project_path.name
     project_hash = hashlib.md5(str(project_path).encode()).hexdigest()[:8]
-    from search.config import MODEL_REGISTRY, get_search_config, get_model_slug
+    from search.config import MODEL_REGISTRY, get_model_slug, get_search_config
 
     # Determine which model to use
     if model_key:
         # Use routing-selected model (map model_key to model_name via MODEL_POOL_CONFIG)
         if model_key not in MODEL_POOL_CONFIG:
-            logger.error(f'Invalid model_key: {model_key}, falling back to config default')
+            logger.error(
+                f"Invalid model_key: {model_key}, falling back to config default"
+            )
             config = get_search_config()
             model_name = config.embedding_model_name
         else:
             model_name = MODEL_POOL_CONFIG[model_key]
-            logger.info(f'[ROUTING] Using routed model: {model_name} (key: {model_key})')
+            logger.info(
+                f"[ROUTING] Using routed model: {model_name} (key: {model_key})"
+            )
     else:
         # Use config default
         config = get_search_config()
         model_name = config.embedding_model_name
-        logger.info(f'[CONFIG] Using config default model: {model_name}')
+        logger.info(f"[CONFIG] Using config default model: {model_name}")
 
     # Validate model exists in registry (prevent silent 768d fallback)
     model_config = MODEL_REGISTRY.get(model_name)
     if model_config is None:
-        available_models = ', '.join(sorted(MODEL_REGISTRY.keys()))
+        available_models = ", ".join(sorted(MODEL_REGISTRY.keys()))
         raise ValueError(
             f"Unknown embedding model: '{model_name}'\n"
             f"This model is not registered in MODEL_REGISTRY.\n"
             f"Available models:\n  {available_models}\n"
             f"To add this model, update search/config.py:MODEL_REGISTRY"
         )
-    dimension = model_config['dimension']
+    dimension = model_config["dimension"]
     model_slug = get_model_slug(model_name)
-    project_dir = (base_dir / 'projects' /
-        f'{project_name}_{project_hash}_{model_slug}_{dimension}d')
+    project_dir = (
+        base_dir
+        / "projects"
+        / f"{project_name}_{project_hash}_{model_slug}_{dimension}d"
+    )
     project_dir.mkdir(parents=True, exist_ok=True)
     logger.info(
-        f'[PER_MODEL_INDICES] Using storage: {project_dir.name} (model: {model_name}, dimension: {dimension}d)'
-        )
-    project_info_file = project_dir / 'project_info.json'
+        f"[PER_MODEL_INDICES] Using storage: {project_dir.name} (model: {model_name}, dimension: {dimension}d)"
+    )
+    project_info_file = project_dir / "project_info.json"
     if not project_info_file.exists():
-        project_info = {'project_name': project_name, 'project_path': str(
-            project_path), 'project_hash': project_hash, 'embedding_model':
-            model_name, 'model_dimension': dimension, 'created_at':
-            datetime.now().isoformat()}
-        with open(project_info_file, 'w') as f:
+        project_info = {
+            "project_name": project_name,
+            "project_path": str(project_path),
+            "project_hash": project_hash,
+            "embedding_model": model_name,
+            "model_dimension": dimension,
+            "created_at": datetime.now().isoformat(),
+        }
+        with open(project_info_file, "w") as f:
             json.dump(project_info, f, indent=2)
     return project_dir
 
 
-def ensure_project_indexed(project_path: str) ->bool:
+def ensure_project_indexed(project_path: str) -> bool:
     """Check if project is indexed, auto-index only for non-server directories."""
     try:
         project_dir = get_project_storage_dir(project_path)
-        index_dir = project_dir / 'index'
-        if index_dir.exists() and (index_dir / 'code.index').exists():
+        index_dir = project_dir / "index"
+        if index_dir.exists() and (index_dir / "code.index").exists():
             return True
         project_path_obj = Path(project_path)
         if project_path_obj == PROJECT_ROOT:
-            logger.info(
-                f'Skipping auto-index of server directory: {project_path}')
+            logger.info(f"Skipping auto-index of server directory: {project_path}")
             return False
         return False
     except (OSError, IOError, PermissionError) as e:
-        logger.warning(
-            f'Failed to check/auto-index project {project_path}: {e}')
+        logger.warning(f"Failed to check/auto-index project {project_path}: {e}")
         return False
 
 
@@ -181,14 +196,16 @@ def initialize_model_pool(lazy_load: bool = True) -> None:
         logger.info("Multi-model routing disabled - using single model mode")
         return
 
-    cache_dir = get_storage_dir() / 'models'
+    cache_dir = get_storage_dir() / "models"
     cache_dir.mkdir(exist_ok=True)
 
     if lazy_load:
         # Initialize empty slots - models will load on first get_embedder() call
         for model_key in MODEL_POOL_CONFIG.keys():
             _embedders[model_key] = None
-        logger.info(f"Model pool initialized in lazy mode: {list(MODEL_POOL_CONFIG.keys())}")
+        logger.info(
+            f"Model pool initialized in lazy mode: {list(MODEL_POOL_CONFIG.keys())}"
+        )
     else:
         # Eagerly load all models (WARNING: ~18-20 GB VRAM)
         logger.info("Loading all models eagerly (this may take 30-60 seconds)...")
@@ -196,8 +213,7 @@ def initialize_model_pool(lazy_load: bool = True) -> None:
             try:
                 logger.info(f"Loading {model_key} ({model_name})...")
                 _embedders[model_key] = CodeEmbedder(
-                    model_name=model_name,
-                    cache_dir=str(cache_dir)
+                    model_name=model_name, cache_dir=str(cache_dir)
                 )
                 logger.info(f"✓ {model_key} loaded successfully")
             except Exception as e:
@@ -205,7 +221,9 @@ def initialize_model_pool(lazy_load: bool = True) -> None:
                 _embedders[model_key] = None
 
         loaded_count = sum(1 for e in _embedders.values() if e is not None)
-        logger.info(f"Model pool loaded: {loaded_count}/{len(MODEL_POOL_CONFIG)} models ready")
+        logger.info(
+            f"Model pool loaded: {loaded_count}/{len(MODEL_POOL_CONFIG)} models ready"
+        )
 
 
 def get_embedder(model_key: str = None) -> CodeEmbedder:
@@ -220,7 +238,7 @@ def get_embedder(model_key: str = None) -> CodeEmbedder:
     """
     global _embedders, _multi_model_enabled
 
-    cache_dir = get_storage_dir() / 'models'
+    cache_dir = get_storage_dir() / "models"
     cache_dir.mkdir(exist_ok=True)
 
     # Multi-model mode
@@ -240,7 +258,9 @@ def get_embedder(model_key: str = None) -> CodeEmbedder:
                         break
 
                 if model_key is None:
-                    logger.warning(f"Config model '{config_model_name}' not in pool, using bge_m3")
+                    logger.warning(
+                        f"Config model '{config_model_name}' not in pool, using bge_m3"
+                    )
                     model_key = "bge_m3"
             except Exception as e:
                 logger.warning(f"Failed to load model from config: {e}, using bge_m3")
@@ -248,7 +268,9 @@ def get_embedder(model_key: str = None) -> CodeEmbedder:
 
         # Validate model_key
         if model_key not in MODEL_POOL_CONFIG:
-            logger.error(f"Invalid model_key '{model_key}', available: {list(MODEL_POOL_CONFIG.keys())}")
+            logger.error(
+                f"Invalid model_key '{model_key}', available: {list(MODEL_POOL_CONFIG.keys())}"
+            )
             model_key = "bge_m3"  # Fallback to most reliable model
 
         # Lazy load model if not already loaded
@@ -257,15 +279,18 @@ def get_embedder(model_key: str = None) -> CodeEmbedder:
             logger.info(f"Lazy loading {model_key} ({model_name})...")
             try:
                 _embedders[model_key] = CodeEmbedder(
-                    model_name=model_name,
-                    cache_dir=str(cache_dir)
+                    model_name=model_name, cache_dir=str(cache_dir)
                 )
                 logger.info(f"✓ {model_key} loaded successfully")
             except Exception as e:
                 logger.error(f"✗ Failed to load {model_key}: {e}")
                 # Fallback to bge_m3 if available
-                if model_key != "bge_m3" and "bge_m3" in _embedders and _embedders["bge_m3"] is not None:
-                    logger.warning(f"Falling back to bge_m3")
+                if (
+                    model_key != "bge_m3"
+                    and "bge_m3" in _embedders
+                    and _embedders["bge_m3"] is not None
+                ):
+                    logger.warning("Falling back to bge_m3")
                     return _embedders["bge_m3"]
                 raise
 
@@ -278,22 +303,21 @@ def get_embedder(model_key: str = None) -> CodeEmbedder:
             try:
                 config = get_search_config()
                 model_name = config.embedding_model_name
-                logger.info(f'Using single embedding model: {model_name}')
+                logger.info(f"Using single embedding model: {model_name}")
             except Exception as e:
-                logger.warning(f'Failed to load model from config: {e}')
-                model_name = 'google/embeddinggemma-300m'
-                logger.info(f'Falling back to default model: {model_name}')
+                logger.warning(f"Failed to load model from config: {e}")
+                model_name = "google/embeddinggemma-300m"
+                logger.info(f"Falling back to default model: {model_name}")
 
             _embedders["default"] = CodeEmbedder(
-                model_name=model_name,
-                cache_dir=str(cache_dir)
+                model_name=model_name, cache_dir=str(cache_dir)
             )
-            logger.info('Embedder initialized successfully')
+            logger.info("Embedder initialized successfully")
 
         return _embedders["default"]
 
 
-def _maybe_start_model_preload() ->None:
+def _maybe_start_model_preload() -> None:
     """Preload the embedding model in the background to avoid cold-start delays."""
     global _model_preload_task_started
     if _model_preload_task_started:
@@ -302,11 +326,12 @@ def _maybe_start_model_preload() ->None:
 
     async def _preload():
         try:
-            logger.info('Starting background model preload')
+            logger.info("Starting background model preload")
             _ = get_embedder().model
-            logger.info('Background model preload completed')
+            logger.info("Background model preload completed")
         except (ImportError, RuntimeError, ValueError) as e:
-            logger.warning(f'Background model preload failed: {e}')
+            logger.warning(f"Background model preload failed: {e}")
+
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
@@ -314,7 +339,7 @@ def _maybe_start_model_preload() ->None:
         else:
             loop.run_until_complete(_preload())
     except (RuntimeError, AttributeError) as e:
-        logger.debug(f'Model preload scheduling skipped: {e}')
+        logger.debug(f"Model preload scheduling skipped: {e}")
 
 
 def _cleanup_previous_resources():
@@ -322,14 +347,16 @@ def _cleanup_previous_resources():
     global _index_manager, _searcher, _embedders
     try:
         if _index_manager is not None:
-            if hasattr(_index_manager, '_metadata_db'
-                ) and _index_manager._metadata_db is not None:
+            if (
+                hasattr(_index_manager, "_metadata_db")
+                and _index_manager._metadata_db is not None
+            ):
                 _index_manager._metadata_db.close()
             _index_manager = None
-            logger.info('Previous index manager cleaned up')
+            logger.info("Previous index manager cleaned up")
         if _searcher is not None:
             _searcher = None
-            logger.info('Previous searcher cleaned up')
+            logger.info("Previous searcher cleaned up")
 
         # Cleanup all embedders in the pool
         if _embedders:
@@ -340,58 +367,56 @@ def _cleanup_previous_resources():
                         embedder.cleanup()
                         cleanup_count += 1
                     except Exception as e:
-                        logger.warning(f'Failed to cleanup {model_key}: {e}')
+                        logger.warning(f"Failed to cleanup {model_key}: {e}")
             _embedders.clear()
-            logger.info(f'Cleaned up {cleanup_count} embedder(s) from pool')
+            logger.info(f"Cleaned up {cleanup_count} embedder(s) from pool")
 
         try:
             import torch
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-                logger.info('GPU cache cleared')
+                logger.info("GPU cache cleared")
         except ImportError as e:
-            logger.debug(f'GPU cache cleanup skipped: {e}')
+            logger.debug(f"GPU cache cleanup skipped: {e}")
     except (AttributeError, TypeError) as e:
-        logger.warning(f'Error during resource cleanup: {e}')
+        logger.warning(f"Error during resource cleanup: {e}")
 
 
-def get_index_manager(project_path: str=None) ->CodeIndexManager:
+def get_index_manager(project_path: str = None) -> CodeIndexManager:
     """Get index manager for specific project or current project."""
     global _index_manager, _current_project
     if project_path is None:
         if _current_project is None:
             project_path = str(PROJECT_ROOT)
             logger.info(
-                f'No active project found. Using server directory: {project_path}'
-                )
+                f"No active project found. Using server directory: {project_path}"
+            )
         else:
             project_path = _current_project
     if _current_project != project_path:
         logger.info(
             f"Switching project from '{_current_project}' to '{Path(project_path).name}'"
-            )
+        )
         _cleanup_previous_resources()
         _current_project = project_path
     if _index_manager is None:
         project_dir = get_project_storage_dir(project_path)
-        index_dir = project_dir / 'index'
+        index_dir = project_dir / "index"
         index_dir.mkdir(exist_ok=True)
 
         # Extract project_id from storage directory name
         # Format: projectname_hash_dimension (e.g., claude-context-local_caf2e75a_1024d)
-        project_id = project_dir.name.rsplit('_', 1)[0]  # Remove dimension suffix
+        project_id = project_dir.name.rsplit("_", 1)[0]  # Remove dimension suffix
 
-        _index_manager = CodeIndexManager(
-            str(index_dir),
-            project_id=project_id
-        )
+        _index_manager = CodeIndexManager(str(index_dir), project_id=project_id)
         logger.info(
-            f'Index manager initialized for project: {Path(project_path).name} (ID: {project_id})'
-            )
+            f"Index manager initialized for project: {Path(project_path).name} (ID: {project_id})"
+        )
     return _index_manager
 
 
-def get_searcher(project_path: str=None, model_key: str=None):
+def get_searcher(project_path: str = None, model_key: str = None):
     """Get searcher for specific project or current project.
 
     Args:
@@ -401,53 +426,68 @@ def get_searcher(project_path: str=None, model_key: str=None):
     global _searcher, _current_project, _current_model_key
     if project_path is None and _current_project is None:
         project_path = str(PROJECT_ROOT)
-        logger.info(
-            f'No active project found. Using server directory: {project_path}')
+        logger.info(f"No active project found. Using server directory: {project_path}")
 
     # Invalidate cache if project or model changed
-    if _current_project != project_path or _current_model_key != model_key or _searcher is None:
+    if (
+        _current_project != project_path
+        or _current_model_key != model_key
+        or _searcher is None
+    ):
         _current_project = project_path or _current_project
         config = get_search_config()
         logger.info(
-            f'[GET_SEARCHER] Initializing searcher for project: {_current_project}'
-            )
+            f"[GET_SEARCHER] Initializing searcher for project: {_current_project}"
+        )
         if config.enable_hybrid_search:
-            project_storage = get_project_storage_dir(_current_project, model_key=model_key)
-            storage_dir = project_storage / 'index'
-            logger.info(
-                f'[GET_SEARCHER] Using storage directory: {storage_dir}')
+            project_storage = get_project_storage_dir(
+                _current_project, model_key=model_key
+            )
+            storage_dir = project_storage / "index"
+            logger.info(f"[GET_SEARCHER] Using storage directory: {storage_dir}")
 
             # Extract project_id from storage directory name
             # Format: projectname_hash_dimension (e.g., claude-context-local_caf2e75a_1024d)
-            project_id = project_storage.name.rsplit('_', 1)[0]  # Remove dimension suffix
+            project_id = project_storage.name.rsplit("_", 1)[
+                0
+            ]  # Remove dimension suffix
 
-            _searcher = HybridSearcher(storage_dir=str(storage_dir),
-                embedder=get_embedder(model_key), bm25_weight=config.bm25_weight,
-                dense_weight=config.dense_weight, rrf_k=config.
-                rrf_k_parameter, max_workers=2, project_id=project_id)
+            _searcher = HybridSearcher(
+                storage_dir=str(storage_dir),
+                embedder=get_embedder(model_key),
+                bm25_weight=config.bm25_weight,
+                dense_weight=config.dense_weight,
+                rrf_k=config.rrf_k_parameter,
+                max_workers=2,
+                project_id=project_id,
+            )
             try:
-                existing_index_manager = get_index_manager(project_path or
-                    _current_project)
-                if (existing_index_manager.index and existing_index_manager
-                    .index.ntotal > 0):
-                    logger.info(
-                        'Attempting to populate HybridSearcher with existing dense index data'
-                        )
-            except Exception as e:
-                logger.warning(f'Could not check existing indices: {e}')
-            logger.info(
-                f'HybridSearcher initialized (BM25: {config.bm25_weight}, Dense: {config.dense_weight})'
+                existing_index_manager = get_index_manager(
+                    project_path or _current_project
                 )
+                if (
+                    existing_index_manager.index
+                    and existing_index_manager.index.ntotal > 0
+                ):
+                    logger.info(
+                        "Attempting to populate HybridSearcher with existing dense index data"
+                    )
+            except Exception as e:
+                logger.warning(f"Could not check existing indices: {e}")
+            logger.info(
+                f"HybridSearcher initialized (BM25: {config.bm25_weight}, Dense: {config.dense_weight})"
+            )
         else:
-            _searcher = IntelligentSearcher(get_index_manager(project_path),
-                get_embedder(model_key))
-            logger.info('IntelligentSearcher initialized (semantic-only mode)')
+            _searcher = IntelligentSearcher(
+                get_index_manager(project_path), get_embedder(model_key)
+            )
+            logger.info("IntelligentSearcher initialized (semantic-only mode)")
 
         # Track which model this searcher was initialized with
         _current_model_key = model_key
         logger.info(
             f"Searcher initialized for project: {Path(_current_project).name if _current_project else 'unknown'}"
-            )
+        )
     return _searcher
 
 
@@ -461,12 +501,12 @@ def get_searcher(project_path: str=None, model_key: str=None):
 server = Server("Code Search")
 
 # Import tool registry
-from mcp_server.tool_registry import TOOL_REGISTRY, build_tool_list
-
+from mcp_server.tool_registry import build_tool_list
 
 # ============================================================================
 # SERVER HANDLERS
 # ============================================================================
+
 
 @server.list_tools()
 async def handle_list_tools() -> List[Tool]:
@@ -496,7 +536,9 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[TextCon
         result = await handler(arguments)
 
         # Convert to TextContent
-        result_text = json.dumps(result, indent=2) if isinstance(result, dict) else str(result)
+        result_text = (
+            json.dumps(result, indent=2) if isinstance(result, dict) else str(result)
+        )
         return [TextContent(type="text", text=result_text)]
 
     except Exception as e:
@@ -509,6 +551,7 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[TextCon
 # RESOURCE HANDLERS
 # ============================================================================
 
+
 @server.list_resources()
 async def handle_list_resources() -> List[Resource]:
     """List all available resources."""
@@ -517,7 +560,7 @@ async def handle_list_resources() -> List[Resource]:
             uri="search://stats",
             name="Search Statistics",
             description="Detailed search index statistics",
-            mimeType="application/json"
+            mimeType="application/json",
         )
     ]
 
@@ -544,6 +587,7 @@ async def handle_read_resource(uri: str) -> str:
 # PROMPT HANDLERS
 # ============================================================================
 
+
 @server.list_prompts()
 async def handle_list_prompts() -> List[Prompt]:
     """List all available prompts."""
@@ -551,7 +595,7 @@ async def handle_list_prompts() -> List[Prompt]:
         Prompt(
             name="search_help",
             description="Get help on how to use the code search tools effectively",
-            arguments=[]
+            arguments=[],
         )
     ]
 
@@ -597,10 +641,9 @@ For more information, see the project documentation.
             description="Help documentation for code search tools",
             messages=[
                 PromptMessage(
-                    role="user",
-                    content=TextContent(type="text", text=help_text)
+                    role="user", content=TextContent(type="text", text=help_text)
                 )
-            ]
+            ],
         )
     else:
         raise ValueError(f"Unknown prompt: {name}")
@@ -610,36 +653,40 @@ For more information, see the project documentation.
 # MAIN ENTRY POINT
 # ============================================================================
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description='Code Search MCP Server (Low-Level SDK)')
-    parser.add_argument('--transport', choices=['stdio', 'sse'], default='stdio')
-    parser.add_argument('--host', default='localhost')
-    parser.add_argument('--port', type=int, default=8000)
+    parser = argparse.ArgumentParser(
+        description="Code Search MCP Server (Low-Level SDK)"
+    )
+    parser.add_argument("--transport", choices=["stdio", "sse"], default="stdio")
+    parser.add_argument("--host", default="localhost")
+    parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
 
     # Enable MCP debug logging
     import logging
-    logging.getLogger('mcp').setLevel(logging.DEBUG)
-    logging.getLogger('mcp.server').setLevel(logging.DEBUG)
+
+    logging.getLogger("mcp").setLevel(logging.DEBUG)
+    logging.getLogger("mcp.server").setLevel(logging.DEBUG)
 
     logger.info("=" * 60)
     logger.info("MCP Server Starting (Low-Level SDK)")
     logger.info("=" * 60)
     logger.info(f"Transport: {args.transport}")
-    if args.transport == 'sse':
+    if args.transport == "sse":
         logger.info(f"SSE endpoint: http://{args.host}:{args.port}")
 
     # Windows SSE fix
-    if args.transport == 'sse':
+    if args.transport == "sse":
         import platform
+
         if platform.system() == "Windows":
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
             logger.info("Windows: Using SelectorEventLoop for SSE")
 
     try:
-        if args.transport == 'stdio':
+        if args.transport == "stdio":
             from mcp.server.stdio import stdio_server
 
             async def run_stdio_server():
@@ -652,7 +699,7 @@ if __name__ == '__main__':
                 logger.info("=" * 60)
 
                 # Set default project if specified
-                default_project = os.getenv('CLAUDE_DEFAULT_PROJECT', None)
+                default_project = os.getenv("CLAUDE_DEFAULT_PROJECT", None)
                 if default_project:
                     _current_project = str(Path(default_project).resolve())
                     logger.info(f"[INIT] Default project: {_current_project}")
@@ -662,7 +709,9 @@ if __name__ == '__main__':
                 # Initialize model pool in lazy mode
                 if _multi_model_enabled and not _model_preload_task_started:
                     initialize_model_pool(lazy_load=True)
-                    logger.info(f"[INIT] Model pool initialized: {list(MODEL_POOL_CONFIG.keys())}")
+                    logger.info(
+                        f"[INIT] Model pool initialized: {list(MODEL_POOL_CONFIG.keys())}"
+                    )
                     _model_preload_task_started = True
 
                 # Log storage directory
@@ -678,7 +727,7 @@ if __name__ == '__main__':
                     await server.run(
                         read_stream,
                         write_stream,
-                        server.create_initialization_options()
+                        server.create_initialization_options(),
                     )
 
                 # Cleanup after server stops
@@ -690,13 +739,13 @@ if __name__ == '__main__':
 
             # Run the async function
             asyncio.run(run_stdio_server())
-        elif args.transport == 'sse':
+        elif args.transport == "sse":
             # SSE transport using Starlette + SseServerTransport + uvicorn
+            import uvicorn
             from mcp.server.sse import SseServerTransport
             from starlette.applications import Starlette
-            from starlette.routing import Route, Mount
             from starlette.responses import Response
-            import uvicorn
+            from starlette.routing import Mount, Route
 
             # Create SSE transport with message endpoint
             sse = SseServerTransport("/messages/")
@@ -704,14 +753,12 @@ if __name__ == '__main__':
             # SSE handler - establishes bidirectional streams
             async def handle_sse(request):
                 async with sse.connect_sse(
-                    request.scope,
-                    request.receive,
-                    request._send
+                    request.scope, request.receive, request._send
                 ) as streams:
                     await server.run(
                         streams[0],  # read_stream
                         streams[1],  # write_stream
-                        server.create_initialization_options()
+                        server.create_initialization_options(),
                     )
                 return Response()  # Prevent TypeError on disconnect
 
@@ -726,7 +773,7 @@ if __name__ == '__main__':
 
                 try:
                     # Set default project if specified
-                    default_project = os.getenv('CLAUDE_DEFAULT_PROJECT', None)
+                    default_project = os.getenv("CLAUDE_DEFAULT_PROJECT", None)
                     if default_project:
                         _current_project = str(Path(default_project).resolve())
                         logger.info(f"[INIT] Default project: {_current_project}")
@@ -736,7 +783,9 @@ if __name__ == '__main__':
                     # Initialize model pool in lazy mode
                     if _multi_model_enabled and not _model_preload_task_started:
                         initialize_model_pool(lazy_load=True)
-                        logger.info(f"[INIT] Model pool initialized: {list(MODEL_POOL_CONFIG.keys())}")
+                        logger.info(
+                            f"[INIT] Model pool initialized: {list(MODEL_POOL_CONFIG.keys())}"
+                        )
                         _model_preload_task_started = True
                     elif _multi_model_enabled:
                         logger.info("[INIT] Model pool already initialized")
@@ -748,14 +797,20 @@ if __name__ == '__main__':
                     logger.info(f"[INIT] Storage directory: {storage}")
 
                     # Optional: Pre-load embedding model
-                    if os.getenv('MCP_PRELOAD_MODEL', 'false').lower() in ('true', '1', 'yes'):
+                    if os.getenv("MCP_PRELOAD_MODEL", "false").lower() in (
+                        "true",
+                        "1",
+                        "yes",
+                    ):
                         logger.info("[INIT] Pre-loading embedding model...")
                         try:
                             embedder = get_embedder()
                             _ = embedder.model
                             logger.info("[INIT] Embedding model pre-loaded")
                         except Exception as e:
-                            logger.warning(f"[INIT] Model pre-load failed (non-critical): {e}")
+                            logger.warning(
+                                f"[INIT] Model pre-load failed (non-critical): {e}"
+                            )
 
                     logger.info("=" * 60)
                     logger.info("APPLICATION READY - Accepting connections")
@@ -776,26 +831,18 @@ if __name__ == '__main__':
                 Mount("/messages/", app=sse.handle_post_message),
             ]
 
-            starlette_app = Starlette(
-                routes=routes,
-                lifespan=app_lifespan
-            )
+            starlette_app = Starlette(routes=routes, lifespan=app_lifespan)
 
             # Run server
             logger.info(f"Starting SSE server on {args.host}:{args.port}")
             logger.info(f"SSE endpoint: http://{args.host}:{args.port}/sse")
             logger.info(f"Message endpoint: http://{args.host}:{args.port}/messages/")
 
-            uvicorn.run(
-                starlette_app,
-                host=args.host,
-                port=args.port,
-                log_level="info"
-            )
+            uvicorn.run(starlette_app, host=args.host, port=args.port, log_level="info")
 
     except KeyboardInterrupt:
-        logger.info('\nShutting down gracefully...')
+        logger.info("\nShutting down gracefully...")
         sys.exit(0)
     except Exception as e:
-        logger.error(f'Server error: {e}', exc_info=True)
+        logger.error(f"Server error: {e}", exc_info=True)
         sys.exit(1)

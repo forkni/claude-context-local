@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Optional
 
 if TYPE_CHECKING:
     from graph.call_graph_extractor import CallEdge
@@ -35,6 +35,11 @@ class CodeChunk:
 
     # Call graph metadata (Phase 1: Python only)
     calls: Optional[List["CallEdge"]] = None  # function calls made by this chunk
+
+    # Phase 3: Comprehensive relationship tracking
+    relationships: Optional[List] = (
+        None  # All relationship types (RelationshipEdge objects)
+    )
 
     # Evaluation framework compatibility
     language: str = "python"  # programming language

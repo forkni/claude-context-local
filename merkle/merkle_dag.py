@@ -99,6 +99,7 @@ class MerkleDAG:
             "bin",
             "obj",
             "_archive",  # Historical content excluded from indexing
+            "backups",  # Development backup directories
             "*.pyc",
             "*.pyo",
             ".DS_Store",

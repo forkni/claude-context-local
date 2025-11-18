@@ -94,6 +94,11 @@ class IntelligentSearcher:
             ],
         }
 
+    @property
+    def graph_storage(self):
+        """Access graph storage from index manager."""
+        return getattr(self.index_manager, "graph_storage", None)
+
     def search(
         self,
         query: str,
@@ -454,6 +459,29 @@ class IntelligentSearcher:
             results.append(result)
 
         return results
+
+    def get_by_chunk_id(self, chunk_id: str):
+        """
+        Direct lookup by chunk_id (unambiguous, no search needed).
+
+        Args:
+            chunk_id: Format "file.py:10-20:function:name"
+
+        Returns:
+            SearchResult if found, None otherwise
+        """
+        metadata = self.index_manager.get_chunk_by_id(chunk_id)
+        if not metadata:
+            return None
+
+        # Create SearchResult with score 1.0 (exact match)
+        result = self._create_search_result(
+            chunk_id,
+            similarity=1.0,
+            metadata=metadata,
+            context_depth=2,  # Include full context for direct lookups
+        )
+        return result
 
     def get_search_suggestions(self, partial_query: str) -> List[str]:
         """Generate search suggestions based on indexed content."""

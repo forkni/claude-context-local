@@ -26,12 +26,14 @@
 ### 1.1 Directory Changes - ALWAYS Check Success
 
 **❌ DANGEROUS**:
+
 ```bash
 cd /some/path
 rm -rf *  # If cd failed, this deletes wrong directory!
 ```
 
 **✅ SAFE**:
+
 ```bash
 cd /some/path || exit
 rm -rf *  # Only executes if cd succeeded
@@ -42,6 +44,7 @@ rm -rf *  # Only executes if cd succeeded
 **Why**: If `cd` fails silently, subsequent commands execute in the wrong directory, causing data loss or corruption.
 
 **Windows Example**:
+
 ```bash
 cd "D:\Users\alexk\projects\my-project" || exit
 # Now safe to operate on files
@@ -50,12 +53,14 @@ cd "D:\Users\alexk\projects\my-project" || exit
 ### 1.2 Variable Quoting - Prevent Word-Splitting
 
 **❌ DANGEROUS**:
+
 ```bash
 file="my document.txt"
 rm $file  # Tries to delete "my" and "document.txt" separately!
 ```
 
 **✅ SAFE**:
+
 ```bash
 file="my document.txt"
 rm "$file"  # Deletes "my document.txt" as single argument
@@ -64,11 +69,13 @@ rm "$file"  # Deletes "my document.txt" as single argument
 **Rule**: Quote variables containing paths, filenames, or user input: `"$var"` not `$var`.
 
 **Exceptions** (when quoting is optional):
+
 - Controlled boolean values: `enabled=true` then `if $enabled; then`
 - Special variables: `$$`, `$?`, `$#` (process ID, exit code, argument count)
 - Inside `[[ ]]` conditionals: `[[ $var == "value" ]]` (word-splitting disabled)
 
 **Windows Paths** (MANDATORY quoting):
+
 ```bash
 # ALWAYS quote Windows paths
 path="C:\Users\Inter\AppData\Local\Temp"
@@ -82,18 +89,21 @@ venv_python=".\venv\Scripts\python.exe"
 ### 1.3 Error Checking - Verify Command Success
 
 **❌ FRAGILE**:
+
 ```bash
 pip install torch
 python test_gpu.py  # Runs even if install failed!
 ```
 
 **✅ ROBUST**:
+
 ```bash
 pip install torch || { echo "pip install failed"; exit 1; }
 python test_gpu.py
 ```
 
 **Alternative (sequential checking)**:
+
 ```bash
 pip install torch && python test_gpu.py
 # test_gpu.py only runs if pip succeeds
@@ -104,6 +114,7 @@ pip install torch && python test_gpu.py
 ### 1.4 Conditional Testing - Use `[[ ]]` Not `[ ]`
 
 **❌ OLD STYLE**:
+
 ```bash
 if [ "$var" = "value" ]; then  # POSIX test command
     echo "match"
@@ -111,6 +122,7 @@ fi
 ```
 
 **✅ MODERN BASH**:
+
 ```bash
 if [[ "$var" == "value" ]]; then  # Bash builtin
     echo "match"
@@ -118,12 +130,14 @@ fi
 ```
 
 **Why `[[ ]]` is better**:
+
 - No word-splitting inside `[[ ]]` (safer with unquoted variables)
 - Pattern matching: `[[ $file == *.txt ]]`
 - Logical operators: `[[ $a == "x" && $b == "y" ]]`
 - Regex matching: `[[ $str =~ ^[0-9]+$ ]]`
 
 **Windows Path Example**:
+
 ```bash
 if [[ -f "$python_path" ]]; then
     echo "Python executable exists"
@@ -133,6 +147,7 @@ fi
 ### 1.5 Never Use `eval` - Prevents Code Injection
 
 **❌ DANGEROUS**:
+
 ```bash
 cmd="ls -la"
 eval $cmd  # If cmd="ls; rm -rf /", disaster!
@@ -141,12 +156,14 @@ eval $cmd  # If cmd="ls; rm -rf /", disaster!
 **✅ SAFE ALTERNATIVES**:
 
 **Use arrays**:
+
 ```bash
 cmd=(ls -la)
 "${cmd[@]}"
 ```
 
 **Use functions**:
+
 ```bash
 run_command() {
     ls -la "$@"
@@ -155,6 +172,7 @@ run_command /some/path
 ```
 
 **Use parameter expansion**:
+
 ```bash
 # Instead of: eval echo \$var_$suffix
 # Use: (with nameref or indirect expansion)
@@ -167,6 +185,7 @@ echo "$varname"
 ### 1.6 Avoid `set -e` - Unreliable Error Handling
 
 **❌ PROBLEMATIC**:
+
 ```bash
 set -e  # Exit on any error
 cd /tmp || echo "Warning: using current dir"  # Script exits here!
@@ -174,12 +193,14 @@ cd /tmp || echo "Warning: using current dir"  # Script exits here!
 ```
 
 **✅ EXPLICIT CHECKING**:
+
 ```bash
 cd /tmp || { echo "Warning: using current dir"; }
 # Error handled, script continues
 ```
 
 **Why avoid `set -e`**:
+
 - Exits before your error handlers run
 - Unpredictable with conditionals and functions
 - Makes anticipated errors fatal
@@ -189,11 +210,13 @@ cd /tmp || { echo "Warning: using current dir"; }
 ### 1.7 Command Substitution - Use `$(...)` Not Backticks
 
 **❌ OLD STYLE**:
+
 ```bash
 result=`ls -la`  # Hard to read, can't nest
 ```
 
 **✅ MODERN**:
+
 ```bash
 result=$(ls -la)  # Clear, nestable
 result=$(echo "$(date): $(whoami)")  # Nesting works
@@ -204,18 +227,21 @@ result=$(echo "$(date): $(whoami)")  # Nesting works
 ### 1.8 Arithmetic - Use `$((...))` Not `let` or `-gt`
 
 **❌ OLD STYLE**:
+
 ```bash
 let count=$count+1
 if [ $count -gt 10 ]; then
 ```
 
 **✅ BASH ARITHMETIC**:
+
 ```bash
 ((count++))
 if ((count > 10)); then
 ```
 
 **Math operations**:
+
 ```bash
 result=$((5 + 3))
 ((x = y * 2 + 1))
@@ -227,6 +253,7 @@ fi
 ### 1.9 String Manipulation - Use Bash Builtins
 
 **❌ SLOW (external commands)**:
+
 ```bash
 basename=$(basename "$filepath")
 dirname=$(dirname "$filepath")
@@ -234,6 +261,7 @@ trimmed=$(echo "$str" | sed 's/^[[:space:]]*//')
 ```
 
 **✅ FAST (bash built-in)**:
+
 ```bash
 basename="${filepath##*/}"
 dirname="${filepath%/*}"
@@ -241,6 +269,7 @@ trimmed="${str#"${str%%[![:space:]]*}"}"
 ```
 
 **Common patterns**:
+
 ```bash
 # Remove extension
 filename="${path%.txt}"
@@ -261,11 +290,13 @@ upper="${str^^}"
 ### 1.10 Avoid Useless Cat - Use Redirection
 
 **❌ INEFFICIENT**:
+
 ```bash
 cat file.txt | grep "pattern"
 ```
 
 **✅ EFFICIENT**:
+
 ```bash
 grep "pattern" file.txt
 # OR
@@ -277,6 +308,7 @@ grep "pattern" < file.txt
 ### 1.11 Loop Over Files - Use Globs Not `ls`
 
 **❌ DANGEROUS (breaks on spaces)**:
+
 ```bash
 for file in $(ls *.txt); do
     echo "$file"
@@ -284,6 +316,7 @@ done
 ```
 
 **✅ SAFE (proper globbing)**:
+
 ```bash
 for file in *.txt; do
     echo "$file"
@@ -291,6 +324,7 @@ done
 ```
 
 **Recursive search**:
+
 ```bash
 # Instead of: for file in $(find . -name "*.py")
 while IFS= read -r -d '' file; do
@@ -303,6 +337,7 @@ done < <(find . -name "*.py" -print0)
 ### 1.12 Reading Lines - Use `while read` Not `for`
 
 **❌ MEMORY INEFFICIENT**:
+
 ```bash
 # Loads entire file into memory
 for line in $(cat large_file.txt); do
@@ -311,6 +346,7 @@ done
 ```
 
 **✅ MEMORY EFFICIENT**:
+
 ```bash
 while IFS= read -r line; do
     process "$line"
@@ -318,6 +354,7 @@ done < large_file.txt
 ```
 
 **Why**:
+
 - `while read` streams line-by-line (constant memory)
 - `for` loads entire file into memory (scales with file size)
 - `read -r` prevents backslash interpretation
@@ -331,6 +368,7 @@ done < large_file.txt
 **Critical Rule**: Windows paths with spaces, parentheses, or special characters MUST be quoted.
 
 **Common Windows path patterns requiring quotes**:
+
 ```bash
 # Spaces
 "C:\Program Files\Python311\python.exe"
@@ -347,6 +385,7 @@ done < large_file.txt
 ```
 
 **Project paths** (ALWAYS quote):
+
 ```bash
 project_root="D:\Users\username\projects\my-project"
 cd "$project_root" || exit
@@ -355,6 +394,7 @@ cd "$project_root" || exit
 ### 2.2 Forward Slash vs Backslash
 
 **Git Bash prefers forward slashes**:
+
 ```bash
 # ✅ Works in Git Bash
 cd /c/Users/Inter/project
@@ -369,6 +409,7 @@ cd C:\Users\Inter\project
 **Best practice**: Use forward slashes in Git Bash, quote when using backslashes.
 
 **Path conversion**:
+
 ```bash
 # Convert backslashes to forward slashes
 windows_path="C:\Users\Inter\file.txt"
@@ -379,6 +420,7 @@ echo "$bash_path"  # C:/Users/Inter/file.txt
 ### 2.3 Drive Letter Handling
 
 **Git Bash drive letter syntax**:
+
 ```bash
 # Windows: D:\Users\alexk\
 # Git Bash: /d/Users/alexk/
@@ -390,6 +432,7 @@ cd "D:\Users\alexk\project"
 ```
 
 **Check if path exists across drives**:
+
 ```bash
 if [[ -d "/d/Users/alexk/projects" ]]; then
     echo "D: drive accessible"
@@ -399,6 +442,7 @@ fi
 ### 2.4 Case Sensitivity
 
 **Windows is case-insensitive, bash is case-sensitive**:
+
 ```bash
 # These are DIFFERENT in bash comparison:
 [[ "File.txt" == "file.txt" ]]  # false
@@ -408,6 +452,7 @@ fi
 ```
 
 **Use case-insensitive comparison when needed**:
+
 ```bash
 # Convert to lowercase for comparison
 file_lower="${filename,,}"
@@ -417,6 +462,7 @@ if [[ "$file_lower" == "readme.md" ]]; then
 ### 2.5 Git Bash Feature Availability
 
 **Available in Git Bash**:
+
 - `[[ ]]` conditionals ✅
 - `$((...))` arithmetic ✅
 - Bash arrays ✅
@@ -424,11 +470,13 @@ if [[ "$file_lower" == "readme.md" ]]; then
 - Process substitution `<(...)` ✅
 
 **Limited or unavailable**:
+
 - Some GNU-specific flags (check `--help`)
 - Full POSIX signals (partial support)
 - Advanced terminal control (limited)
 
 **Test feature availability**:
+
 ```bash
 # Check if command exists
 if command -v python &> /dev/null; then
@@ -439,6 +487,7 @@ fi
 ### 2.6 Windows Environment Variables
 
 **Access Windows env vars**:
+
 ```bash
 # Direct access
 echo "$USERPROFILE"  # C:\Users\Inter
@@ -451,6 +500,7 @@ echo "$user_home"  # C:/Users/Inter
 ```
 
 **Common variables**:
+
 - `$USERPROFILE` - User home directory
 - `$APPDATA` - Application data folder
 - `$LOCALAPPDATA` - Local application data
@@ -473,6 +523,7 @@ done < windows_file.txt
 ```
 
 **Git configuration**:
+
 ```bash
 # Check current setting
 git config core.autocrlf
@@ -486,6 +537,7 @@ git config --global core.autocrlf true
 **⚠️ CRITICAL MISCONCEPTION**: Quoting does NOT protect backslashes from interpretation!
 
 **❌ DANGEROUS (WILL FAIL)**:
+
 ```bash
 # Many developers assume quotes protect backslashes - WRONG!
 cp "D:\Users\alexk\file.sh" "F:\RD_PROJECTS\file.sh"
@@ -495,12 +547,14 @@ cp "D:\Users\alexk\file.sh" "F:\RD_PROJECTS\file.sh"
 ```
 
 **Why this fails**:
+
 1. Git Bash treats backslashes as escape characters EVEN INSIDE DOUBLE QUOTES
 2. `\U` tries to escape `U` → becomes just `U`
 3. `\R` tries to escape `R` → becomes just `R`
 4. `\"` escapes the closing quote → bash looks for another quote (never finds it)
 
 **Real-world failure example** (from production debugging):
+
 ```bash
 # This command was blocked by bash-pre-validator.sh:
 cp "D:\Users\alexk\FORKNI\STREAM_DIFFUSION\file.sh" "F:\RD_PROJECTS\file.sh"
@@ -510,6 +564,7 @@ cp "D:\Users\alexk\FORKNI\STREAM_DIFFUSION\file.sh" "F:\RD_PROJECTS\file.sh"
 ```
 
 **✅ SAFE (CORRECT)**:
+
 ```bash
 # Use forward slashes (works on Windows!)
 cp "D:/Users/alexk/file.sh" "F:/RD_PROJECTS/file.sh"
@@ -529,6 +584,7 @@ cp "/d/Users/alexk/file.sh" "/f/RD_PROJECTS/file.sh"
 **⚠️ KNOWN BUG**: Claude Code's Edit/MultiEdit tools have a regression bug causing false "File has been unexpectedly modified" errors.
 
 **Bug Timeline**:
+
 - **Introduced**: Version 1.0.111 (July-August 2024)
 - **Still Present**: Version 2.0.36+ (current)
 - **GitHub Issues**: #3513, #7443, #7918, #7920, #7883, #8191, #8680, #8971
@@ -539,12 +595,14 @@ cp "/d/Users/alexk/file.sh" "/f/RD_PROJECTS/file.sh"
 #### The Bug Has TWO Distinct Causes
 
 **PRIMARY CAUSE: Claude Code Bug** (issue #7443)
+
 - Edit tool fails with absolute paths (both forward and back slashes)
 - Affects Windows and Linux
 - Occurs even when NO external modification happened
 - Session state tracking bug: pre-existing files fail, newly created files work
 
 **SECONDARY CAUSE: External Program Interference**
+
 - VS Code file watcher
 - Cloud sync (OneDrive, Dropbox, Google Drive)
 - Git GUI clients
@@ -559,6 +617,7 @@ Error: File has been unexpectedly modified. Read it again before attempting to w
 ```
 
 **Bug Behavior**:
+
 - ❌ Absolute paths: `F:/RD_PROJECTS/file.md` → FAILS
 - ❌ Absolute paths: `F:\RD_PROJECTSile.md` → FAILS  
 - ✅ Relative paths: `./file.md` → WORKS
@@ -567,6 +626,7 @@ Error: File has been unexpectedly modified. Read it again before attempting to w
 #### Workarounds (in order of reliability)
 
 **1. Use Relative Paths** (Most Reliable)
+
 ```bash
 # ❌ FAILS (absolute path triggers bug)
 # Edit: F:/RD_PROJECTS/COMPONENTS/claude-context-local/README.md
@@ -577,6 +637,7 @@ cd "F:/RD_PROJECTS/COMPONENTS/claude-context-local" || exit
 ```
 
 **2. Use Bash Commands Instead of Edit Tool**
+
 ```bash
 # Instead of Edit tool, use:
 cat > "path/to/file.md" << 'EOF'
@@ -596,6 +657,7 @@ with open('file.md', 'w') as f:
 **3. Add Project Documentation**
 
 Create `CLAUDE.md` with:
+
 ```markdown
 ## File Path Rules (Claude Code Bug Workaround)
 - **ALWAYS use relative paths** when editing files
@@ -606,6 +668,7 @@ Create `CLAUDE.md` with:
 ```
 
 **4. If External Programs Are ALSO Causing Issues**
+
 ```bash
 # Close VS Code, Git GUI clients
 # Pause cloud sync temporarily
@@ -614,6 +677,7 @@ Create `CLAUDE.md` with:
 ```
 
 **5. Downgrade (Last Resort)**
+
 ```bash
 npm install -g @anthropic-ai/claude-code@1.0.100
 ```
@@ -621,6 +685,7 @@ npm install -g @anthropic-ai/claude-code@1.0.100
 #### Why This Matters
 
 **During our documentation updates today**, we encountered this error repeatedly because:
+
 1. We used absolute paths: `F:/RD_PROJECTS/COMPONENTS/claude-context-local/CHANGELOG.md`
 2. This triggered the Claude Code bug (PRIMARY cause)
 3. Workaround: We switched to Python scripts and bash commands
@@ -630,16 +695,19 @@ npm install -g @anthropic-ai/claude-code@1.0.100
 #### Official Tracking
 
 **GitHub Issue #7443**: Most comprehensive discussion (57+ comments)
+
 - Community workarounds documented
 - Multiple users confirm relative paths work
 - Bug remains unresolved
 
 **Medium Article**: "The Elusive Claude 'File has been unexpectedly modified' Bug" (2025-09-27)
+
 - Confirms bug is "fickle" and changes behavior
 - Sometimes fixes itself (possible silent hotfixes)
 - Recommends trying edit first, then workarounds
 
 **Rule**: When you see "File has been unexpectedly modified":
+
 1. **First**, assume it's the Claude Code bug (#7443)
 2. **Try**: Relative paths or bash commands
 3. **Only if that fails**: Consider external program interference
@@ -655,7 +723,9 @@ npm install -g @anthropic-ai/claude-code@1.0.100
 **Symptom**: Command fails with file not found
 
 **Likely Causes**:
+
 1. **Unquoted path with spaces**
+
    ```bash
    # ❌ WRONG
    cd C:\Program Files\app
@@ -664,6 +734,7 @@ npm install -g @anthropic-ai/claude-code@1.0.100
    ```
 
 2. **Wrong working directory**
+
    ```bash
    # Check current directory
    pwd
@@ -672,6 +743,7 @@ npm install -g @anthropic-ai/claude-code@1.0.100
    ```
 
 3. **Backslash escaping issues**
+
    ```bash
    # Use forward slashes or quote
    cd /d/Users/alexk/project  # OR
@@ -683,7 +755,9 @@ npm install -g @anthropic-ai/claude-code@1.0.100
 **Symptom**: Bash can't find executable
 
 **Likely Causes**:
+
 1. **Command not in PATH**
+
    ```bash
    # Check if command exists
    command -v python
@@ -692,12 +766,14 @@ npm install -g @anthropic-ai/claude-code@1.0.100
    ```
 
 2. **Virtual environment not activated**
+
    ```bash
    # Use direct path instead
    "./venv/Scripts/python.exe" script.py
    ```
 
 3. **Trying to run Windows executable without extension**
+
    ```bash
    # ❌ WRONG
    ./venv/Scripts/python
@@ -710,13 +786,16 @@ npm install -g @anthropic-ai/claude-code@1.0.100
 **Symptom**: Bash parser error
 
 **Likely Causes**:
+
 1. **Unescaped special characters**
+
    ```bash
    # Parentheses in path
    cd "C:\Program Files (x86)\app"
    ```
 
 2. **Missing quotes around expansion**
+
    ```bash
    # ❌ WRONG
    result=$(echo $var)
@@ -727,21 +806,25 @@ npm install -g @anthropic-ai/claude-code@1.0.100
 ### 3.2 Diagnostic Commands
 
 **Check file existence**:
+
 ```bash
 [[ -f "path/to/file" ]] && echo "File exists" || echo "File not found"
 ```
 
 **Check directory existence**:
+
 ```bash
 [[ -d "path/to/dir" ]] && echo "Directory exists" || echo "Not found"
 ```
 
 **Check if command available**:
+
 ```bash
 command -v python &> /dev/null && echo "Found" || echo "Not found"
 ```
 
 **Debug variable content**:
+
 ```bash
 # Print variable with delimiters
 echo "Variable content: [$var]"
@@ -751,6 +834,7 @@ echo "Variable content: [$var]"
 ```
 
 **Test path with spaces**:
+
 ```bash
 path="C:\Program Files\app"
 echo "Unquoted: $path"
@@ -763,21 +847,25 @@ ls -la "$path"  # This should work
 #### Workflow: Fix "cd" Failure
 
 1. **Verify path exists**:
+
    ```bash
    ls -la "D:\Users\alexk\projects"
    ```
 
 2. **Check working directory**:
+
    ```bash
    pwd
    ```
 
 3. **Try forward slash variant**:
+
    ```bash
    cd /d/Users/alexk/projects
    ```
 
 4. **Add error handler**:
+
    ```bash
    cd /d/Users/alexk/projects || { echo "Failed to cd"; exit 1; }
    ```
@@ -785,21 +873,25 @@ ls -la "$path"  # This should work
 #### Workflow: Fix Pip Install Failure
 
 1. **Verify pip exists**:
+
    ```bash
    "./venv/Scripts/pip.exe" --version
    ```
 
 2. **Check Python version**:
+
    ```bash
    "./venv/Scripts/python.exe" --version
    ```
 
 3. **Test with verbose output**:
+
    ```bash
    "./venv/Scripts/pip.exe" install package-name -v
    ```
 
 4. **Check network/index URL**:
+
    ```bash
    "./venv/Scripts/pip.exe" install package-name --index-url https://pypi.org/simple
    ```
@@ -807,6 +899,7 @@ ls -la "$path"  # This should work
 #### Workflow: Fix File Not Found in Loop
 
 1. **Test glob pattern**:
+
    ```bash
    for f in *.txt; do
        echo "Found: [$f]"
@@ -814,6 +907,7 @@ ls -la "$path"  # This should work
    ```
 
 2. **Check if files exist**:
+
    ```bash
    if compgen -G "*.txt" > /dev/null; then
        echo "Files match pattern"
@@ -821,6 +915,7 @@ ls -la "$path"  # This should work
    ```
 
 3. **Use find with null-termination**:
+
    ```bash
    while IFS= read -r -d '' file; do
        echo "Processing: $file"
@@ -882,6 +977,7 @@ Before invoking bash command, verify:
 | `C:\Program Files (x86)` | `/c/Program Files (x86)` | `path="/c/Program Files (x86)"` |
 
 **Conversion function**:
+
 ```bash
 win_to_bash() {
     local win_path="$1"
@@ -902,6 +998,7 @@ cd "$bash_path" || exit
 ### 5.1 When to Consult This Guide
 
 **Pre-flight (before invoking Bash tool)**:
+
 - Command contains `cd`
 - Command involves file operations (`rm`, `mv`, `cp`)
 - Command uses paths with spaces, parentheses, or special chars
@@ -909,6 +1006,7 @@ cd "$bash_path" || exit
 - Command uses virtual environment executables
 
 **Error recovery (after bash failure)**:
+
 - Check Section 3 (Error Recovery Reference)
 - Match error message to Section 4.3 table
 - Apply diagnostic commands from Section 3.2
@@ -917,6 +1015,7 @@ cd "$bash_path" || exit
 ### 5.2 Automatic Validation Triggers
 
 Claude Code should automatically consult this guide when detecting:
+
 - `cd` without `|| exit` or `|| return`
 - Unquoted `$var` in file paths
 - Windows paths without quotes: `C:\...` not in quotes

@@ -74,8 +74,9 @@ class TestTextPreprocessor:
         tokens = preprocessor.tokenize(text)
 
         # All forms should be stemmed to same root
-        assert all(token == tokens[0] for token in tokens), \
-            f"Expected all tokens to be same stem, got: {tokens}"
+        assert all(
+            token == tokens[0] for token in tokens
+        ), f"Expected all tokens to be same stem, got: {tokens}"
 
     def test_stemming_disabled(self):
         """Test that stemming can be disabled."""
@@ -95,17 +96,27 @@ class TestTextPreprocessor:
 
         # Test cases from actual code queries
         test_cases = [
-            (["searching", "searches", "search"], 1),  # Common verb - should all stem same
-            (["connecting", "connected", "connects"], 1),  # -ing forms - should all stem same
-            (["indexing", "indexed", "indexes", "index"], 1),  # All should stem to "index"
+            (
+                ["searching", "searches", "search"],
+                1,
+            ),  # Common verb - should all stem same
+            (
+                ["connecting", "connected", "connects"],
+                1,
+            ),  # -ing forms - should all stem same
+            (
+                ["indexing", "indexed", "indexes", "index"],
+                1,
+            ),  # All should stem to "index"
             (["managing", "managed", "manages"], 1),  # Verb forms should stem same
         ]
 
         for word_list, expected_unique_stems in test_cases:
             tokens = preprocessor.tokenize(" ".join(word_list))
             unique_stems = set(tokens)
-            assert len(unique_stems) == expected_unique_stems, \
-                f"Expected {expected_unique_stems} unique stem(s) for {word_list}, got {unique_stems}"
+            assert (
+                len(unique_stems) == expected_unique_stems
+            ), f"Expected {expected_unique_stems} unique stem(s) for {word_list}, got {unique_stems}"
 
     def test_code_stemming(self):
         """Test stemming on code-specific terms."""
@@ -378,7 +389,7 @@ class TestBM25Index:
         docs = [
             "def search_users(): pass",
             "class UserSearcher: pass",
-            "# Searching for user records in database"
+            "# Searching for user records in database",
         ]
         ids = ["doc1", "doc2", "doc3"]
         stemmed_index.index_documents(docs, ids)
@@ -390,20 +401,27 @@ class TestBM25Index:
 
         # At least one document should be found (they all contain search-related terms)
         result_ids = [r[0] for r in results]
-        assert len(result_ids) >= 1, "Should find at least one document with 'search' terms"
+        assert (
+            len(result_ids) >= 1
+        ), "Should find at least one document with 'search' terms"
 
         # Create index without stemming for comparison
-        import tempfile
         import shutil
+        import tempfile
+
         unstemmed_dir = tempfile.mkdtemp()
         try:
-            unstemmed_index = BM25Index(unstemmed_dir, use_stopwords=False, use_stemming=False)
+            unstemmed_index = BM25Index(
+                unstemmed_dir, use_stopwords=False, use_stemming=False
+            )
             unstemmed_index.index_documents(docs, ids)
 
             # Same query - both should work but with different matching
             unstemmed_results = unstemmed_index.search("search", k=3, min_score=0.0)
             assert isinstance(unstemmed_results, list)  # Should not crash
-            assert len(unstemmed_results) > 0, "Should also find results without stemming"
+            assert (
+                len(unstemmed_results) > 0
+            ), "Should also find results without stemming"
         finally:
             shutil.rmtree(unstemmed_dir, ignore_errors=True)
 
@@ -414,7 +432,8 @@ class TestBM25Index:
 
         # Check that metadata file contains version info
         import json
-        with open(self.index.metadata_path, 'r') as f:
+
+        with open(self.index.metadata_path, "r") as f:
             metadata = json.load(f)
 
         assert "index_version" in metadata, "Metadata should contain index_version"
@@ -433,8 +452,8 @@ class TestBM25Index:
         new_index = BM25Index(self.temp_dir, use_stemming=False)
 
         # Capture log warnings
-        import logging
-        with patch('logging.Logger.warning') as mock_warning:
+
+        with patch("logging.Logger.warning") as mock_warning:
             success = new_index.load()
 
             # Should still load successfully
@@ -443,8 +462,9 @@ class TestBM25Index:
             # Should have logged a warning
             assert mock_warning.called, "Should warn about config mismatch"
             warning_msg = str(mock_warning.call_args)
-            assert "mismatch" in warning_msg.lower(), \
-                "Warning should mention configuration mismatch"
+            assert (
+                "mismatch" in warning_msg.lower()
+            ), "Warning should mention configuration mismatch"
 
     def teardown_method(self):
         """Clean up test fixtures."""

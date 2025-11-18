@@ -1,6 +1,8 @@
 """Multi-language chunker that combines AST and tree-sitter approaches."""
 
+import ast
 import logging
+import textwrap
 from pathlib import Path
 from typing import List, Optional
 
@@ -10,11 +12,69 @@ from .tree_sitter import TreeSitterChunk, TreeSitterChunker
 # Import call graph extractor for Python (Phase 1)
 try:
     from graph.call_graph_extractor import CallGraphExtractorFactory
+    from graph.relationship_extractors.import_extractor import ImportExtractor
+    from graph.relationship_extractors.inheritance_extractor import InheritanceExtractor
+    from graph.relationship_extractors.type_extractor import TypeAnnotationExtractor
+
     CALL_GRAPH_AVAILABLE = True
 except ImportError:
     CALL_GRAPH_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+
+def _smart_dedent(code: str) -> str:
+    """Dedent code using the 'if True:' wrapper technique.
+
+    This is the industry-standard solution (used by Scrapy, Numba)
+    that handles ALL edge cases including:
+    - Flush-left string continuations
+    - Mixed tabs/spaces
+    - Blank lines without whitespace
+    - Decorators and nested structures
+
+    Args:
+        code: Source code string with potential leading indentation
+
+    Returns:
+        Dedented code that can be parsed by ast.parse()
+    """
+    if not code or not code.strip():
+        return code
+
+    # Strip leading/trailing blank lines
+    lines = code.split("\n")
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    if not lines:
+        return code
+
+    code = "\n".join(lines)
+
+    # Try standard dedent first (handles simple cases)
+    dedented = textwrap.dedent(code)
+
+    # Test if it parses
+    try:
+        ast.parse(dedented)
+        return dedented
+    except SyntaxError:
+        pass
+
+    # Fallback: wrap with "if True:" to create valid indented block
+    # This handles flush-left content, mixed indentation, etc.
+    indented = textwrap.indent(dedented, "    ")
+    wrapped = "if True:\n" + indented
+
+    try:
+        ast.parse(wrapped)
+        return wrapped
+    except SyntaxError:
+        # If still fails, return original - let extractor handle error
+        return code
 
 
 class MultiLanguageChunker:
@@ -95,6 +155,7 @@ class MultiLanguageChunker:
         "bin",
         "obj",
         "_archive",
+        "backups",  # Development backup directories
     }
 
     def __init__(self, root_path: Optional[str] = None):
@@ -116,6 +177,20 @@ class MultiLanguageChunker:
                 logger.info("Call graph extraction enabled for Python")
             except Exception as e:
                 logger.warning(f"Failed to initialize call graph extractor: {e}")
+
+        # Initialize Phase 3 relationship extractors
+        self.relationship_extractors = []
+        try:
+            self.relationship_extractors = [
+                InheritanceExtractor(),
+                TypeAnnotationExtractor(),
+                ImportExtractor(),
+            ]
+            logger.info(
+                f"Phase 3: Initialized {len(self.relationship_extractors)} relationship extractors"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to initialize Phase 3 extractors: {e}")
 
     def is_supported(self, file_path: str) -> bool:
         """Check if file type is supported.
@@ -277,6 +352,21 @@ class MultiLanguageChunker:
                 language=tchunk.language,
             )
 
+            # Build chunk_id for relationship extraction (Phase 1 + Phase 3)
+            # Normalize path to forward slashes (cross-platform)
+            normalized_path = str(chunk.relative_path).replace("\\", "/")
+            chunk_id = (
+                f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk_type}"
+            )
+            if name:
+                chunk_id += f":{name}"
+            chunk_metadata = {
+                "chunk_id": chunk_id,
+                "file_path": chunk.relative_path,
+                "name": name,
+                "chunk_type": chunk_type,
+            }
+
             # Extract call graph for Python chunks (Phase 1)
             if (
                 self.call_graph_extractor is not None
@@ -284,25 +374,37 @@ class MultiLanguageChunker:
                 and chunk_type in ("function", "method")
             ):
                 try:
-                    # Build chunk_id for call graph extraction
-                    chunk_id = f"{chunk.relative_path}:{chunk.start_line}-{chunk.end_line}:{chunk_type}"
-                    if name:
-                        chunk_id += f":{name}"
-
                     # Extract function calls from this chunk
-                    chunk_metadata = {"chunk_id": chunk_id}
                     calls = self.call_graph_extractor.extract_calls(
                         tchunk.content, chunk_metadata
                     )
                     chunk.calls = calls
 
                     if calls:
+                        logger.debug(f"Extracted {len(calls)} calls from {chunk_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to extract calls for {name}: {e}")
+
+            # Phase 3: Extract all relationship types (for ALL Python chunks)
+            if tchunk.language == "python" and self.relationship_extractors:
+                try:
+                    all_relationships = []
+                    # Use smart_dedent to properly dedent nested code
+                    # Handles blank lines correctly while preserving relative indentation
+                    dedented_content = _smart_dedent(tchunk.content)
+                    for extractor in self.relationship_extractors:
+                        edges = extractor.extract(dedented_content, chunk_metadata)
+                        all_relationships.extend(edges)
+
+                    chunk.relationships = all_relationships
+
+                    if all_relationships:
                         logger.debug(
-                            f"Extracted {len(calls)} calls from {chunk_id}"
+                            f"Extracted {len(all_relationships)} Phase 3 relationships from {chunk_id}"
                         )
                 except Exception as e:
                     logger.warning(
-                        f"Failed to extract calls for {name}: {e}"
+                        f"Failed to extract Phase 3 relationships for {name}: {e}"
                     )
 
             code_chunks.append(chunk)

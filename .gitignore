@@ -230,15 +230,17 @@ CLAUDE.md
 MEMORY.md
 GEMINI.md
 BASH_STYLE_GUIDE.md
+BATCH_STYLE_GUIDE.md
 
 # Documentation - only specific files are public
 docs/*
 !docs/BENCHMARKS.md
 !docs/claude_code_config.md
 !docs/GIT_WORKFLOW.md
-!docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md
-!docs/INSTALLATION_GUIDE.md
 !docs/MCP_TOOLS_REFERENCE.md
+!docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md
+!docs/ADVANCED_FEATURES_GUIDE.md
+!docs/INSTALLATION_GUIDE.md
 !docs/MODEL_MIGRATION_GUIDE.md
 !docs/PYTORCH_COMPATIBILITY.md
 !docs/TESTING_GUIDE.md
@@ -252,6 +254,7 @@ docs/GIT_WORKFLOW_CRITICAL_REVIEW.md
 docs/GIT_WORKFLOW_ENHANCEMENT_PLAN.md
 docs/GPU_MEMORY_LEAK_FIX.md
 docs/PER_MODEL_INDICES_IMPLEMENTATION.md
+docs/MODEL_MIGRATION_GUIDE.md
 
 # Evaluation and test results (temporary/generated files)
 custom_evaluation_results/

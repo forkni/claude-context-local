@@ -742,6 +742,7 @@ uv sync  # This will install correct transformers version
 #### 5. MCP stdio Transport Issues
 
 **Symptoms**: Claude Code 2.0.22+ experiencing stdio-related bugs:
+
 - Issue #3426: stdio transport parsing errors
 - Issue #768: MCP connection failures
 - Issue #3487: stdio buffer overflow
@@ -762,6 +763,7 @@ scripts\batch\start_mcp_sse.bat
 ```
 
 **SSE Transport Features:**
+
 - Runs on `http://localhost:8765/sse`
 - Automatic port conflict detection
 - Auto-kill for processes on port 8765
@@ -770,12 +772,14 @@ scripts\batch\start_mcp_sse.bat
 - <10ms latency overhead
 
 **When to Use SSE:**
+
 - Claude Code version 2.0.22 or later
 - Experiencing stdio connection issues
 - Need more reliable transport
 - Debugging MCP communication
 
 **When to Use stdio:**
+
 - Default Claude Code integration
 - No stdio bugs experienced
 - Standard MCP workflow
@@ -803,6 +807,7 @@ powershell -Command "Stop-Process -Id <PID> -Force"
 **Error**: `OSError: [WinError 64] The specified network name is no longer available`
 
 **Symptoms**:
+
 - SSE server starts successfully but shows WinError 64 in logs
 - Server accepts initial connections but becomes unresponsive
 - Error occurs in asyncio event loop: `asyncio.windows_events.py`
@@ -814,6 +819,7 @@ powershell -Command "Stop-Process -Id <PID> -Force"
 The MCP server now automatically detects Windows and uses SelectorEventLoop instead of ProactorEventLoop when running SSE transport. No user action required.
 
 **Verification**: Check server logs for confirmation message:
+
 ```
 Windows detected: Using SelectorEventLoop for SSE transport (WinError 64 fix)
 ```

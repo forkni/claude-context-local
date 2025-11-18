@@ -8,8 +8,7 @@ Supports Python (Phase 1) with planned support for C++/GLSL (Phase 5).
 import ast
 import logging
 from dataclasses import dataclass
-from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -24,6 +23,7 @@ class CallEdge:
         is_method_call: Whether this is a method call (obj.method())
         confidence: Confidence score (0.0-1.0) for the call detection
     """
+
     caller_id: str
     callee_name: str
     line_number: int
@@ -63,9 +63,7 @@ class CallGraphExtractor:
         self.logger = logging.getLogger(self.__class__.__name__)
 
     def extract_calls(
-        self,
-        code: str,
-        chunk_metadata: Dict[str, Any]
+        self, code: str, chunk_metadata: Dict[str, Any]
     ) -> List[CallEdge]:
         """
         Extract function calls from code.
@@ -93,9 +91,7 @@ class PythonCallGraphExtractor(CallGraphExtractor):
     """
 
     def extract_calls(
-        self,
-        code: str,
-        chunk_metadata: Dict[str, Any]
+        self, code: str, chunk_metadata: Dict[str, Any]
     ) -> List[CallEdge]:
         """
         Extract function calls from Python code.
@@ -130,9 +126,7 @@ class PythonCallGraphExtractor(CallGraphExtractor):
         return calls
 
     def _extract_call_from_node(
-        self,
-        node: ast.Call,
-        chunk_id: str
+        self, node: ast.Call, chunk_id: str
     ) -> Optional[CallEdge]:
         """
         Extract CallEdge from an ast.Call node.
@@ -213,9 +207,7 @@ class PythonCallGraphExtractor(CallGraphExtractor):
             return None
 
     def extract_calls_from_ast_node(
-        self,
-        ast_node: ast.AST,
-        chunk_id: str
+        self, ast_node: ast.AST, chunk_id: str
     ) -> List[CallEdge]:
         """
         Extract calls from a specific AST node (for integration with chunking).
