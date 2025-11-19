@@ -3,7 +3,7 @@ REM commit_enhanced.bat
 REM Enhanced commit workflow with comprehensive validations and mandatory logging
 REM Extends commit.bat with branch-specific checks and safety validations
 REM
-REM Usage: commit_enhanced.bat [--non-interactive] [--skip-lint] "commit message"
+REM Usage: commit_enhanced.bat [--non-interactive] [--skip-md-lint] "commit message"
 REM   --non-interactive: Skip all prompts, use sensible defaults (for automation)
 
 setlocal enabledelayedexpansion
@@ -13,7 +13,7 @@ REM Parse Command Line Arguments
 REM ========================================
 
 set NON_INTERACTIVE=0
-set SKIP_LINT=0
+set SKIP_MD_LINT=0
 set COMMIT_MSG_PARAM=%~1
 
 REM Check if first parameter is --non-interactive flag
@@ -22,13 +22,13 @@ if "%~1"=="--non-interactive" (
     set COMMIT_MSG_PARAM=%~2
 )
 
-REM Check for --skip-lint flag (can be in any position)
-if "%~1"=="--skip-lint" (
-    set SKIP_LINT=1
+REM Check for --skip-md-lint flag (can be in any position)
+if "%~1"=="--skip-md-lint" (
+    set SKIP_MD_LINT=1
     set COMMIT_MSG_PARAM=%~2
 )
-if "%~2"=="--skip-lint" (
-    set SKIP_LINT=1
+if "%~2"=="--skip-md-lint" (
+    set SKIP_MD_LINT=1
     if %NON_INTERACTIVE% EQU 1 (
         set COMMIT_MSG_PARAM=%~3
     )
@@ -186,57 +186,75 @@ echo ✓ Staged files validated
 echo.
 
 REM [4/7] Code quality check
-if %SKIP_LINT% EQU 1 (
-    echo [4/7] Skipping code quality check ^(--skip-lint flag^)
-    echo.
-) else (
 echo [4/7] Checking code quality...
-call scripts\git\check_lint.bat >nul 2>&1
-if %ERRORLEVEL% NEQ 0 (
-    echo ⚠ Lint errors detected
+
+REM Always run Python lint checks (ruff, black, isort)
+set PYTHON_LINT_ERROR=0
+call .venv\Scripts\ruff.exe check . >nul 2>&1
+if %ERRORLEVEL% NEQ 0 set PYTHON_LINT_ERROR=1
+call .venv\Scripts\black.exe --check . >nul 2>&1
+if %ERRORLEVEL% NEQ 0 set PYTHON_LINT_ERROR=1
+call .venv\Scripts\isort.exe --check-only . >nul 2>&1
+if %ERRORLEVEL% NEQ 0 set PYTHON_LINT_ERROR=1
+
+REM Check markdownlint unless --skip-md-lint is set
+set MD_LINT_ERROR=0
+if %SKIP_MD_LINT% EQU 0 (
+    call markdownlint-cli2 "*.md" ".claude/**/*.md" ".github/**/*.md" ".githooks/**/*.md" ".vscode/**/*.md" "docs/**/*.md" "tests/**/*.md" >nul 2>&1
+    if %ERRORLEVEL% NEQ 0 set MD_LINT_ERROR=1
+) else (
+    echo   [--skip-md-lint] Skipping markdown lint checks
+)
+
+REM Handle lint errors
+if %PYTHON_LINT_ERROR% EQU 1 (
+    echo ⚠ Python lint errors detected
     echo.
     if %NON_INTERACTIVE% EQU 1 (
-        echo [Non-interactive mode] Auto-fixing lint issues...
+        echo [Non-interactive mode] Auto-fixing Python lint issues...
         echo.
-        call scripts\git\fix_lint.bat
-        if %ERRORLEVEL% NEQ 0 (
-            echo.
-            echo ✗ Some issues could not be fixed automatically
-            echo Please fix manually and run this script again
-            exit /b 1
-        )
+        call .venv\Scripts\isort.exe . >nul 2>&1
+        call .venv\Scripts\black.exe . >nul 2>&1
+        call .venv\Scripts\ruff.exe check --fix . >nul 2>&1
         echo.
         echo Restaging fixed files...
         git add .
         echo ✓ Fixed files staged
+
+        REM Re-check Python lint
+        set PYTHON_LINT_ERROR=0
+        call .venv\Scripts\ruff.exe check . >nul 2>&1
+        if %ERRORLEVEL% NEQ 0 (
+            echo ✗ Python lint errors remain after auto-fix
+            exit /b 1
+        )
     ) else (
-        set /p FIX_LINT="Auto-fix lint issues? (yes/no): "
+        set /p FIX_LINT="Auto-fix Python lint issues? (yes/no): "
         if /i "!FIX_LINT!" == "yes" (
             echo.
-            call scripts\git\fix_lint.bat
-            if %ERRORLEVEL% NEQ 0 (
-                echo.
-                echo ✗ Some issues could not be fixed automatically
-                echo Please fix manually and run this script again
-                exit /b 1
-            )
+            call .venv\Scripts\isort.exe . >nul 2>&1
+            call .venv\Scripts\black.exe . >nul 2>&1
+            call .venv\Scripts\ruff.exe check --fix . >nul 2>&1
             echo.
             echo Restaging fixed files...
             git add .
             echo ✓ Fixed files staged
         ) else (
             echo.
-            echo To see lint errors, run: scripts\git\check_lint.bat
-            set /p CONTINUE_ANYWAY="Continue commit with lint errors? (yes/no): "
+            echo To see Python lint errors, run: .venv\Scripts\ruff.exe check .
+            set /p CONTINUE_ANYWAY="Continue commit with Python lint errors? (yes/no): "
             if /i not "!CONTINUE_ANYWAY!" == "yes" (
-                echo Commit cancelled - fix lint errors first
+                echo Commit cancelled - fix Python lint errors first
                 exit /b 1
             )
         )
     )
+) else if %MD_LINT_ERROR% EQU 1 (
+    echo ⚠ Markdown lint warnings detected ^(non-blocking^)
+    echo   Run: markdownlint-cli2 "*.md" "docs/**/*.md" to see details
+    echo   Use --skip-md-lint to suppress this warning
 ) else (
     echo ✓ Code quality checks passed
-)
 )
 echo.
 
