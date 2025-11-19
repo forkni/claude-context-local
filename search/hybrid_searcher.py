@@ -875,7 +875,13 @@ class HybridSearcher:
         start_time = time.time()
         try:
             # Get more results if filtering, to ensure enough after filter
-            search_k = k * 3 if filters else k
+            # Use higher multiplier for directory filters (can exclude 50%+ of results)
+            if filters and ("include_dirs" in filters or "exclude_dirs" in filters):
+                search_k = k * 5
+            elif filters:
+                search_k = k * 3
+            else:
+                search_k = k
             results = self.bm25_index.search(query, search_k, min_score)
 
             # Apply filters post-search
@@ -911,10 +917,52 @@ class HybridSearcher:
             self._logger.error(f"BM25 search failed: {e}")
             return []
 
+    def _matches_directory_filter(
+        self, relative_path: str, include_dirs: list = None, exclude_dirs: list = None
+    ) -> bool:
+        """Check if a file path matches directory filters.
+
+        Args:
+            relative_path: File path relative to project root
+            include_dirs: If provided, path must start with one of these
+            exclude_dirs: If provided, path must NOT start with any of these
+
+        Returns:
+            True if path passes both filters
+        """
+        # Normalize path separators
+        normalized_path = relative_path.replace("\\", "/")
+
+        # Check exclusions first (fast reject)
+        if exclude_dirs:
+            for dir_pattern in exclude_dirs:
+                pattern = dir_pattern.rstrip("/") + "/"
+                if normalized_path.startswith(pattern):
+                    return False
+
+        # Check inclusions (must match at least one)
+        if include_dirs:
+            for dir_pattern in include_dirs:
+                pattern = dir_pattern.rstrip("/") + "/"
+                if normalized_path.startswith(pattern):
+                    return True
+            return False  # No include pattern matched
+
+        return True  # No include filter, not excluded
+
     def _matches_bm25_filters(self, metadata: Dict, filters: Dict) -> bool:
         """Check if BM25 result metadata matches filters."""
         for key, value in filters.items():
-            if key == "file_pattern":
+            if key == "include_dirs" or key == "exclude_dirs":
+                # Directory filtering - handled together
+                include_dirs = filters.get("include_dirs")
+                exclude_dirs = filters.get("exclude_dirs")
+                relative_path = metadata.get("relative_path", "")
+                if not self._matches_directory_filter(relative_path, include_dirs, exclude_dirs):
+                    return False
+                # Skip further processing of these keys
+                continue
+            elif key == "file_pattern":
                 # Pattern matching for file paths (substring match)
                 patterns = value if isinstance(value, list) else [value]
                 relative_path = metadata.get("relative_path", "")

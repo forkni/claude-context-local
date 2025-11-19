@@ -10,8 +10,8 @@ This modular reference can be embedded in any project instructions for Claude Co
 
 | Tool | Priority | Purpose | Parameters |
 |------|----------|---------|------------|
-| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=5, search_mode="auto", model_key, use_routing=True, file_pattern, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5 |
-| **find_connections** | 🟡 **IMPACT** | Analyze dependencies (calls + Phase 3: inheritance/types/imports) | chunk_id (preferred) OR symbol_name, max_depth=3 |
+| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=5, search_mode="auto", model_key, use_routing=True, file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5 |
+| **find_connections** | 🟡 **IMPACT** | Analyze dependencies (calls + Phase 3: inheritance/types/imports) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs |
 | **index_directory** | 🔴 **SETUP** | Index project (multi-model support) | directory_path (required), project_name, incremental=True, multi_model=auto |
 | find_similar_code | Secondary | Find alternative implementations | chunk_id (required), k=5 |
 | configure_search_mode | Config | Set search mode & weights | search_mode="hybrid", bm25_weight=0.4, dense_weight=0.6, enable_parallel=True |
@@ -33,7 +33,33 @@ This modular reference can be embedded in any project instructions for Claude Co
 | Parameter | Type | Description | Valid Values |
 |-----------|------|-------------|--------------|
 | **file_pattern** | string | Substring match on file path | Any string (e.g., "auth", "test_", "utils/") |
+| **include_dirs** | array | Only search in these directories (prefix match) | `["src/", "lib/"]` |
+| **exclude_dirs** | array | Exclude from search (prefix match) | `["tests/", "vendor/", "node_modules/"]` |
 | **chunk_type** | string | Filter by code structure type | `"function"`, `"class"`, `"method"`, `"module"`, `"decorated_definition"` |
+
+### Directory Filtering (v0.5.9+)
+
+**Path Matching**: Uses prefix matching with normalized separators (`\` → `/`)
+
+```python
+# Only search in source directories
+search_code("auth handler", include_dirs=["src/", "lib/"])
+
+# Exclude tests and vendor
+search_code("database connection", exclude_dirs=["tests/", "vendor/"])
+
+# Combine both
+search_code("user model", include_dirs=["src/"], exclude_dirs=["src/tests/"])
+```
+
+**For find_connections**: Use `exclude_dirs` to filter symbol resolution:
+
+```python
+# Find production code, not test doubles
+find_connections(symbol_name="UserService", exclude_dirs=["tests/"])
+```
+
+**Note**: In `find_connections`, `exclude_dirs` applies to symbol resolution only. Callers are not filtered (to preserve test coverage visibility).
 
 ### Filter Examples
 

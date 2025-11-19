@@ -571,6 +571,8 @@ async def handle_search_code(arguments: Dict[str, Any]) -> dict:
     # NORMAL PATH: Search by query
     search_mode = arguments.get("search_mode", "auto")
     file_pattern = arguments.get("file_pattern")
+    include_dirs = arguments.get("include_dirs")
+    exclude_dirs = arguments.get("exclude_dirs")
     chunk_type = arguments.get("chunk_type")
     include_context = arguments.get("include_context", True)
     auto_reindex = arguments.get("auto_reindex", True)
@@ -655,6 +657,10 @@ async def handle_search_code(arguments: Dict[str, Any]) -> dict:
         filters = {}
         if file_pattern:
             filters["file_pattern"] = [file_pattern]
+        if include_dirs:
+            filters["include_dirs"] = include_dirs
+        if exclude_dirs:
+            filters["exclude_dirs"] = exclude_dirs
         if chunk_type:
             filters["chunk_type"] = chunk_type
 
@@ -985,6 +991,7 @@ async def handle_find_connections(arguments: Dict[str, Any]) -> dict:
     chunk_id = arguments.get("chunk_id")
     symbol_name = arguments.get("symbol_name")
     max_depth = arguments.get("max_depth", 3)
+    exclude_dirs = arguments.get("exclude_dirs")
 
     # Validate inputs
     if not chunk_id and not symbol_name:
@@ -1012,7 +1019,8 @@ async def handle_find_connections(arguments: Dict[str, Any]) -> dict:
 
         # Run analysis
         report = analyzer.analyze_impact(
-            chunk_id=chunk_id, symbol_name=symbol_name, max_depth=max_depth
+            chunk_id=chunk_id, symbol_name=symbol_name, max_depth=max_depth,
+            exclude_dirs=exclude_dirs
         )
 
         # Convert to dict

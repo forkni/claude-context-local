@@ -122,7 +122,8 @@ class CodeRelationshipAnalyzer:
             )
 
     def analyze_impact(
-        self, chunk_id: str = None, symbol_name: str = None, max_depth: int = 3
+        self, chunk_id: str = None, symbol_name: str = None, max_depth: int = 3,
+        exclude_dirs: list = None
     ) -> ImpactReport:
         """
         Analyze the impact radius of changes to a symbol.
@@ -131,6 +132,7 @@ class CodeRelationshipAnalyzer:
             chunk_id: Direct chunk ID lookup (preferred for unambiguous analysis)
             symbol_name: Symbol name (requires search, may be ambiguous)
             max_depth: Maximum depth for dependency traversal (default: 3)
+            exclude_dirs: Directories to exclude from symbol resolution and caller lookup
 
         Returns:
             ImpactReport with structured impact data
@@ -151,7 +153,11 @@ class CodeRelationshipAnalyzer:
         else:
             # Search by name - returns reranker.SearchResult
             # Search with more results to find best match by type preference
-            results = self.searcher.search(symbol_name, k=10)
+            # Apply exclude_dirs filter if provided
+            filters = {}
+            if exclude_dirs:
+                filters["exclude_dirs"] = exclude_dirs
+            results = self.searcher.search(symbol_name, k=30, filters=filters if filters else None)
             if not results:
                 raise ValueError(f"Symbol not found: {symbol_name}")
 

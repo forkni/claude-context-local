@@ -49,6 +49,16 @@ WHEN NOT TO USE:
                     "type": "string",
                     "description": 'Filter by filename/path pattern (e.g., "auth", "utils", "models")',
                 },
+                "include_dirs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": 'Only search in these directories (e.g., ["src/", "lib/"]). Uses path prefix matching.',
+                },
+                "exclude_dirs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": 'Exclude these directories from search (e.g., ["tests/", "node_modules/"]). Uses path prefix matching.',
+                },
                 "chunk_type": {
                     "type": "string",
                     "enum": ["function", "class", "method"],
@@ -317,6 +327,11 @@ RETURNS:
                     "minimum": 1,
                     "maximum": 5,
                     "description": "Maximum depth for dependency traversal (default: 3, affects indirect callers)",
+                },
+                "exclude_dirs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": 'Exclude these directories from symbol resolution and caller lookup (e.g., ["tests/"]). Default: None (searches all).',
                 },
             },
             "required": [],

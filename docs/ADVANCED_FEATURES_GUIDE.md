@@ -9,10 +9,11 @@ Complete guide to advanced features in claude-context-local MCP server.
 3. [Multi-Model Query Routing](#multi-model-query-routing)
 4. [Multi-Model Batch Indexing](#multi-model-batch-indexing)
 5. [Per-Model Index Storage](#per-model-index-storage)
-6. [Model Selection Guide](#model-selection-guide)
-7. [Symbol ID Lookups (Phase 1.1)](#symbol-id-lookups-phase-11)
-8. [AI Guidance Messages (Phase 1.2)](#ai-guidance-messages-phase-12)
-9. [Dependency Analysis (Phase 1.3)](#dependency-analysis-phase-13)
+6. [Directory Filtering](#directory-filtering)
+7. [Model Selection Guide](#model-selection-guide)
+8. [Symbol ID Lookups (Phase 1.1)](#symbol-id-lookups-phase-11)
+9. [AI Guidance Messages (Phase 1.2)](#ai-guidance-messages-phase-12)
+10. [Dependency Analysis (Phase 1.3)](#dependency-analysis-phase-13)
 
 ---
 
@@ -456,6 +457,62 @@ Found 1 project with 3 model indices:
 ### Implementation Details
 
 **Complete technical documentation**: `docs/PER_MODEL_INDICES_IMPLEMENTATION.md`
+
+---
+
+## Directory Filtering
+
+**Feature**: Filter search results by directory path to focus on specific code areas or exclude irrelevant directories.
+
+**Version**: v0.5.9+
+
+### Parameters
+
+| Parameter | Tools | Type | Description |
+|-----------|-------|------|-------------|
+| `include_dirs` | search_code | array | Only search in these directories |
+| `exclude_dirs` | search_code, find_connections | array | Exclude from search |
+
+### Path Matching
+
+- **Prefix matching**: `"src/"` matches `src/utils/auth.py`
+- **Normalized separators**: Windows backslashes (`\`) converted to forward slashes (`/`)
+- **Trailing slash optional**: `"tests"` and `"tests/"` both work
+
+### Use Cases
+
+**Focus on production code**:
+```python
+search_code("user authentication", exclude_dirs=["tests/", "vendor/"])
+```
+
+**Search specific modules**:
+```python
+search_code("database connection", include_dirs=["src/db/", "src/models/"])
+```
+
+**Find production class (not test doubles)**:
+```python
+find_connections(symbol_name="UserService", exclude_dirs=["tests/"])
+```
+
+### Filter Precedence
+
+1. `exclude_dirs` - Applied first (fast rejection)
+2. `include_dirs` - Must match at least one (if provided)
+3. `file_pattern` - Substring match on remaining results
+4. `chunk_type` - Exact type match
+
+### Performance Notes
+
+- Filters apply post-search (after FAISS/BM25 retrieval)
+- Search k multiplier increased from 3x to 5x when directory filters present
+- Minimal overhead for typical filter sizes
+
+### Limitations
+
+- **find_connections callers**: `exclude_dirs` applies to symbol resolution only, not caller lookup (preserves test coverage visibility)
+- **Large classes**: Semantic search may not find very large class definitions; use `chunk_id` for direct lookup
 
 ---
 
