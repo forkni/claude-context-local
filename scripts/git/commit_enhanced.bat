@@ -60,18 +60,18 @@ echo Enhanced Commit Workflow Log >> "%LOGFILE%"
 echo ========================================= >> "%LOGFILE%"
 echo Start Time: %date% %time% >> "%LOGFILE%"
 for /f "tokens=*" %%i in ('git branch --show-current') do echo Branch: %%i >> "%LOGFILE%"
-echo. >> "%LOGFILE%"
+echo: >> "%LOGFILE%"
 
 REM Log initialization message
 call :LogMessage "=== Enhanced Commit Workflow ==="
 call :LogMessage ""
-call :LogMessage "📋 Workflow Log: %LOGFILE%"
+call :LogMessage "[LOG] Workflow Log: %LOGFILE%"
 call :LogMessage ""
 
 REM [1/6] Get current branch
 for /f "tokens=*" %%i in ('git branch --show-current') do set CURRENT_BRANCH=%%i
 echo Current branch: !CURRENT_BRANCH!
-echo.
+echo:
 
 REM [2/6] Check for uncommitted changes
 echo [2/6] Checking for changes...
@@ -83,7 +83,7 @@ set HAS_STAGED=%ERRORLEVEL%
 
 if %HAS_UNSTAGED% EQU 0 (
     if %HAS_STAGED% EQU 0 (
-        echo ⚠ No changes to commit
+        echo [!] No changes to commit
         echo Working directory is clean
         popd && exit /b 0
     )
@@ -91,21 +91,21 @@ if %HAS_UNSTAGED% EQU 0 (
 
 if %HAS_UNSTAGED% NEQ 0 (
     echo Unstaged changes detected
-    echo.
+    echo:
     echo Unstaged files:
     git diff --name-status
-    echo.
+    echo:
     if %NON_INTERACTIVE% EQU 1 (
         echo [Non-interactive mode] Auto-staging all changes...
         git add .
-        echo ✓ All changes staged
+        echo [OK] All changes staged
     ) else (
         set /p STAGE_ALL="Stage all changes? (yes/no): "
         if /i "!STAGE_ALL!" == "yes" (
             git add .
-            echo ✓ All changes staged
+            echo [OK] All changes staged
         ) else (
-            echo.
+            echo:
             echo Please stage changes manually:
             echo   git add ^<files^>
             echo Then run this script again
@@ -113,9 +113,9 @@ if %HAS_UNSTAGED% NEQ 0 (
         )
     )
 ) else (
-    echo ✓ All changes already staged
+    echo [OK] All changes already staged
 )
-echo.
+echo:
 
 REM [3/6] Validate staged files
 echo [3/6] Validating staged files...
@@ -131,24 +131,24 @@ set FOUND_LOCAL_FILES=0
 
 git diff --cached --name-only | findstr /i "CLAUDE.md" >nul
 if %ERRORLEVEL% EQU 0 (
-    echo ✗ ERROR: CLAUDE.md is staged ^(should be local-only^)
+    echo [X] ERROR: CLAUDE.md is staged ^(should be local-only^)
     set FOUND_LOCAL_FILES=1
 )
 
 git diff --cached --name-only | findstr /i "MEMORY.md" >nul
 if %ERRORLEVEL% EQU 0 (
-    echo ✗ ERROR: MEMORY.md is staged ^(should be local-only^)
+    echo [X] ERROR: MEMORY.md is staged ^(should be local-only^)
     set FOUND_LOCAL_FILES=1
 )
 
 git diff --cached --name-only | findstr /i "_archive" >nul
 if %ERRORLEVEL% EQU 0 (
-    echo ✗ ERROR: _archive/ is staged ^(should be local-only^)
+    echo [X] ERROR: _archive/ is staged ^(should be local-only^)
     set FOUND_LOCAL_FILES=1
 )
 
 if !FOUND_LOCAL_FILES! EQU 1 (
-    echo.
+    echo:
     echo Please remove these files from staging
     popd && exit /b 1
 )
@@ -160,19 +160,19 @@ if "!CURRENT_BRANCH!" == "main" (
     REM Check for test files
     git diff --cached --name-only | findstr "^tests/" >nul
     if %ERRORLEVEL% EQU 0 (
-        echo ✗ ERROR: Test files staged on main branch
+        echo [X] ERROR: Test files staged on main branch
         echo Tests should only be on development branch
-        echo.
+        echo:
         echo Staged test files:
         git diff --cached --name-only | findstr "^tests/"
-        echo.
+        echo:
         popd && exit /b 1
     )
 
     REM Check for pytest.ini
     git diff --cached --name-only | findstr "pytest.ini" >nul
     if %ERRORLEVEL% EQU 0 (
-        echo ✗ ERROR: pytest.ini staged on main branch
+        echo [X] ERROR: pytest.ini staged on main branch
         echo This file should only be on development branch
         popd && exit /b 1
     )
@@ -180,16 +180,16 @@ if "!CURRENT_BRANCH!" == "main" (
     REM Check for development-only docs
     git diff --cached --name-only | findstr "docs/TESTING_GUIDE.md" >nul
     if %ERRORLEVEL% EQU 0 (
-        echo ✗ ERROR: TESTING_GUIDE.md staged on main branch
+        echo [X] ERROR: TESTING_GUIDE.md staged on main branch
         echo This doc should only be on development branch
         popd && exit /b 1
     )
 
-    echo ✓ No development-only files detected
+    echo [OK] No development-only files detected
 )
 
-echo ✓ Staged files validated
-echo.
+echo [OK] Staged files validated
+echo:
 
 REM [4/7] Code quality check
 echo [4/7] Checking code quality...
@@ -214,39 +214,39 @@ if %SKIP_MD_LINT% EQU 0 (
 
 REM Handle lint errors
 if %PYTHON_LINT_ERROR% EQU 1 (
-    echo ⚠ Python lint errors detected
-    echo.
+    echo [!] Python lint errors detected
+    echo:
     if %NON_INTERACTIVE% EQU 1 (
         echo [Non-interactive mode] Auto-fixing Python lint issues...
-        echo.
+        echo:
         call .venv\Scripts\isort.exe . >nul 2>&1
         call .venv\Scripts\black.exe . >nul 2>&1
         call .venv\Scripts\ruff.exe check --fix . >nul 2>&1
-        echo.
+        echo:
         echo Restaging fixed files...
         git add .
-        echo ✓ Fixed files staged
+        echo [OK] Fixed files staged
 
         REM Re-check Python lint
         set PYTHON_LINT_ERROR=0
         call .venv\Scripts\ruff.exe check . >nul 2>&1
         if %ERRORLEVEL% NEQ 0 (
-            echo ✗ Python lint errors remain after auto-fix
+            echo [X] Python lint errors remain after auto-fix
             popd && exit /b 1
         )
     ) else (
         set /p FIX_LINT="Auto-fix Python lint issues? (yes/no): "
         if /i "!FIX_LINT!" == "yes" (
-            echo.
+            echo:
             call .venv\Scripts\isort.exe . >nul 2>&1
             call .venv\Scripts\black.exe . >nul 2>&1
             call .venv\Scripts\ruff.exe check --fix . >nul 2>&1
-            echo.
+            echo:
             echo Restaging fixed files...
             git add .
-            echo ✓ Fixed files staged
+            echo [OK] Fixed files staged
         ) else (
-            echo.
+            echo:
             echo To see Python lint errors, run: .venv\Scripts\ruff.exe check .
             set /p CONTINUE_ANYWAY="Continue commit with Python lint errors? (yes/no): "
             if /i not "!CONTINUE_ANYWAY!" == "yes" (
@@ -256,42 +256,42 @@ if %PYTHON_LINT_ERROR% EQU 1 (
         )
     )
 ) else if %MD_LINT_ERROR% EQU 1 (
-    echo ⚠ Markdown lint warnings detected ^(non-blocking^)
+    echo [!] Markdown lint warnings detected ^(non-blocking^)
     echo   Run: markdownlint-cli2 "*.md" "docs/**/*.md" to see details
     echo   Use --skip-md-lint to suppress this warning
 ) else (
-    echo ✓ Code quality checks passed
+    echo [OK] Code quality checks passed
 )
-echo.
+echo:
 
 REM [5/7] Show staged changes
 echo [5/7] Staged changes:
 echo ====================================
 git diff --cached --name-status
 echo ====================================
-echo.
+echo:
 
 REM Count staged files
 for /f %%i in ('git diff --cached --name-only ^| find.exe /c /v ""') do set STAGED_COUNT=%%i
 echo Files to commit: !STAGED_COUNT!
-echo.
+echo:
 
 REM [6/7] Get commit message
 echo [6/7] Commit message...
 
 if "%COMMIT_MSG_PARAM%"=="" (
-    echo.
+    echo:
     echo Commit message required
-    echo.
+    echo:
     echo Usage: commit_enhanced.bat [--non-interactive] "Your commit message"
-    echo.
+    echo:
     echo Conventional commit format recommended:
     echo   feat:   New feature
     echo   fix:    Bug fix
     echo   docs:   Documentation changes
     echo   chore:  Maintenance tasks
     echo   test:   Test changes
-    echo.
+    echo:
     echo Example: commit_enhanced.bat "feat: Add semantic search caching"
     echo Example: commit_enhanced.bat --non-interactive "feat: Add semantic search caching"
     popd && exit /b 1
@@ -302,9 +302,9 @@ set COMMIT_MSG=%COMMIT_MSG_PARAM%
 REM Basic commit message validation
 echo !COMMIT_MSG! | findstr "^feat: ^fix: ^docs: ^chore: ^test: ^refactor: ^style: ^perf:" >nul
 if %ERRORLEVEL% NEQ 0 (
-    echo ⚠ WARNING: Commit message doesn't follow conventional format
+    echo [!] WARNING: Commit message doesn't follow conventional format
     echo   Recommended prefixes: feat:, fix:, docs:, chore:, test:
-    echo.
+    echo:
     if %NON_INTERACTIVE% EQU 1 (
         echo [Non-interactive mode] Continuing with non-conventional format...
     ) else (
@@ -316,31 +316,31 @@ if %ERRORLEVEL% NEQ 0 (
     )
 )
 
-echo.
+echo:
 echo Commit message: !COMMIT_MSG!
-echo.
+echo:
 
 REM [7/7] Create commit
 echo [7/7] Creating commit...
-echo.
+echo:
 if %NON_INTERACTIVE% EQU 1 (
     echo [Non-interactive mode] Branch: !CURRENT_BRANCH!
     echo [Non-interactive mode] Proceeding with commit...
 ) else (
-    echo ⚠ BRANCH VERIFICATION
+    echo [!] BRANCH VERIFICATION
     echo You are about to commit to: !CURRENT_BRANCH!
-    echo.
+    echo:
     set /p CORRECT_BRANCH="Is this the correct branch? (yes/no): "
     if /i not "!CORRECT_BRANCH!" == "yes" (
-        echo.
+        echo:
         echo Available branches:
         git branch
-        echo.
+        echo:
         echo Switch to the correct branch first, then run this script again
         echo Command: git checkout ^<branch-name^>
         popd && exit /b 0
     )
-    echo.
+    echo:
     set /p CONFIRM="Proceed with commit? (yes/no): "
     if /i not "!CONFIRM!" == "yes" (
         echo Commit cancelled
@@ -351,18 +351,18 @@ if %NON_INTERACTIVE% EQU 1 (
 git commit -m "!COMMIT_MSG!"
 
 if %ERRORLEVEL% EQU 0 (
-    echo.
+    echo:
     echo ====================================
-    echo ✓ COMMIT SUCCESSFUL
+    echo [OK] COMMIT SUCCESSFUL
     echo ====================================
-    echo.
+    echo:
     for /f "tokens=*" %%i in ('git log -1 --oneline') do echo Commit: %%i
     echo Branch: !CURRENT_BRANCH!
     echo Files: !STAGED_COUNT!
-    echo.
-    echo ✓ Local files remained private
-    echo ✓ Branch-specific validations passed
-    echo.
+    echo:
+    echo [OK] Local files remained private
+    echo [OK] Branch-specific validations passed
+    echo:
     echo Next steps:
     if "!CURRENT_BRANCH!" == "development" (
         echo   - Continue development
@@ -374,8 +374,8 @@ if %ERRORLEVEL% EQU 0 (
         echo   - Push to remote: git push origin !CURRENT_BRANCH!
     )
 ) else (
-    echo.
-    echo ✗ Commit failed - check output above
+    echo:
+    echo [X] Commit failed - check output above
     popd && exit /b 1
 )
 
@@ -399,39 +399,39 @@ goto :eof
 :GenerateAnalysisReport
 REM Generate comprehensive analysis report
 echo # Enhanced Commit Workflow Analysis Report > "%REPORTFILE%"
-echo. >> "%REPORTFILE%"
+echo: >> "%REPORTFILE%"
 echo **Workflow**: Enhanced Commit >> "%REPORTFILE%"
 echo **Date**: %date% %time% >> "%REPORTFILE%"
 echo **Branch**: !CURRENT_BRANCH! >> "%REPORTFILE%"
-echo **Status**: ✅ SUCCESS >> "%REPORTFILE%"
-echo. >> "%REPORTFILE%"
+echo **Status**: [OK] SUCCESS >> "%REPORTFILE%"
+echo: >> "%REPORTFILE%"
 echo ## Summary >> "%REPORTFILE%"
 echo Successfully committed changes with full validation and logging. >> "%REPORTFILE%"
-echo. >> "%REPORTFILE%"
+echo: >> "%REPORTFILE%"
 echo ## Files Committed >> "%REPORTFILE%"
-echo. >> "%REPORTFILE%"
+echo: >> "%REPORTFILE%"
 git diff HEAD~1 --name-status >> "%REPORTFILE%" 2>nul
-echo. >> "%REPORTFILE%"
+echo: >> "%REPORTFILE%"
 echo ## Commit Details >> "%REPORTFILE%"
-echo. >> "%REPORTFILE%"
+echo: >> "%REPORTFILE%"
 git log -1 --pretty=format:"- **Hash**: %%H%%n- **Message**: %%s%%n- **Author**: %%an%%n- **Date**: %%ad%%n" >> "%REPORTFILE%" 2>nul
-echo. >> "%REPORTFILE%"
-echo. >> "%REPORTFILE%"
+echo: >> "%REPORTFILE%"
+echo: >> "%REPORTFILE%"
 echo ## Validations Passed >> "%REPORTFILE%"
-echo. >> "%REPORTFILE%"
-echo - ✅ No local-only files committed (CLAUDE.md, MEMORY.md, _archive) >> "%REPORTFILE%"
-echo - ✅ Branch-specific validations passed >> "%REPORTFILE%"
-echo - ✅ Code quality checks passed >> "%REPORTFILE%"
-echo - ✅ Conventional commit format validated >> "%REPORTFILE%"
-echo. >> "%REPORTFILE%"
+echo: >> "%REPORTFILE%"
+echo - [OK] No local-only files committed (CLAUDE.md, MEMORY.md, _archive) >> "%REPORTFILE%"
+echo - [OK] Branch-specific validations passed >> "%REPORTFILE%"
+echo - [OK] Code quality checks passed >> "%REPORTFILE%"
+echo - [OK] Conventional commit format validated >> "%REPORTFILE%"
+echo: >> "%REPORTFILE%"
 echo ## Logs >> "%REPORTFILE%"
-echo. >> "%REPORTFILE%"
+echo: >> "%REPORTFILE%"
 echo - Execution log: `%LOGFILE%` >> "%REPORTFILE%"
 echo - Analysis report: `%REPORTFILE%` >> "%REPORTFILE%"
-echo. >> "%REPORTFILE%"
+echo: >> "%REPORTFILE%"
 echo End Time: %date% %time% >> "%LOGFILE%"
 call :LogMessage ""
 call :LogMessage "======================================"
-call :LogMessage "📊 Analysis Report: %REPORTFILE%"
+call :LogMessage "[REPORT] Analysis Report: %REPORTFILE%"
 call :LogMessage "======================================"
 goto :eof

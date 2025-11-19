@@ -100,6 +100,7 @@ class CodeGraphStorage:
         callee_name: str,
         line_number: int = 0,
         is_method_call: bool = False,
+        is_resolved: bool = False,
         **kwargs,
     ) -> None:
         """
@@ -107,9 +108,14 @@ class CodeGraphStorage:
 
         Args:
             caller_id: Chunk ID of the caller
-            callee_name: Name of the called function (may not have chunk_id yet)
+            callee_name: Name of the called function. Can be:
+                - Qualified name (ClassName.method) for self/super calls
+                - Bare name (method) for unresolved calls
+                - Full chunk_id (future: for fully resolved calls)
             line_number: Line number of the call
             is_method_call: Whether this is a method call
+            is_resolved: Whether callee_name is fully resolved to a chunk_id
+                (vs qualified name or bare name)
             **kwargs: Additional edge attributes
         """
         # Note: callee_name might not correspond to a chunk_id yet
@@ -120,6 +126,7 @@ class CodeGraphStorage:
             type="calls",
             line=line_number,
             is_method=is_method_call,
+            is_resolved=is_resolved,
             **kwargs,
         )
 

@@ -304,12 +304,15 @@ class MultiLanguageChunker:
 
             chunk_type = chunk_type_map.get(tchunk.node_type, tchunk.node_type)
 
-            # Extract parent name and adjust chunk type for methods
-            parent_name = tchunk.metadata.get("parent_name")
+            # Extract parent class from chunk (prefer explicit field, fallback to metadata)
+            parent_name = tchunk.parent_class or tchunk.metadata.get("parent_name")
 
             # If we have a parent_name and it's a function, it's actually a method
             if parent_name and chunk_type == "function":
                 chunk_type = "method"
+
+            # Build qualified name for methods/functions inside classes
+            qualified_name = f"{parent_name}.{name}" if parent_name and name else name
 
             # Build folder structure from file path
             path = Path(file_path)
@@ -368,13 +371,15 @@ class MultiLanguageChunker:
             chunk_id = (
                 f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk_type}"
             )
-            if name:
-                chunk_id += f":{name}"
+            # Use qualified name (ClassName.method_name) for better disambiguation
+            if qualified_name:
+                chunk_id += f":{qualified_name}"
             chunk_metadata = {
                 "chunk_id": chunk_id,
                 "file_path": chunk.relative_path,
                 "name": name,
                 "chunk_type": chunk_type,
+                "parent_class": parent_name,  # For self/super call resolution
             }
 
             # Extract call graph for Python chunks (Phase 1)

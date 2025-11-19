@@ -119,6 +119,7 @@ class TreeSitterChunk:
     language: str
     metadata: Dict[str, Any]
     chunk_id: Optional[str] = None  # unique identifier for evaluation
+    parent_class: Optional[str] = None  # Enclosing class name for methods
 
     def to_dict(self) -> Dict:
         """Convert to dictionary format compatible with existing system."""
@@ -232,6 +233,11 @@ class LanguageChunker(ABC):
                 if parent_info:
                     metadata.update(parent_info)
 
+                # Extract parent class from parent_info if available
+                parent_class_name = (
+                    parent_info.get("parent_name") if parent_info else None
+                )
+
                 chunk = TreeSitterChunk(
                     content=content,
                     start_line=start_line,
@@ -239,6 +245,7 @@ class LanguageChunker(ABC):
                     node_type=node.type,
                     language=self.language_name,
                     metadata=metadata,
+                    parent_class=parent_class_name,
                 )
                 chunks.append(chunk)
 

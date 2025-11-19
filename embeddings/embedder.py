@@ -443,8 +443,14 @@ class CodeEmbedder:
         chunk_id = (
             f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
         )
-        if chunk.name:
-            chunk_id += f":{chunk.name}"
+        # Build qualified name for methods/functions inside classes
+        qualified_name = (
+            f"{chunk.parent_name}.{chunk.name}"
+            if chunk.parent_name and chunk.name
+            else chunk.name
+        )
+        if qualified_name:
+            chunk_id += f":{qualified_name}"
 
         # Prepare metadata
         metadata = {
@@ -534,8 +540,14 @@ class CodeEmbedder:
                 # Normalize path separators for cross-platform consistency
                 normalized_path = str(chunk.relative_path).replace("\\", "/")
                 chunk_id = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
-                if chunk.name:
-                    chunk_id += f":{chunk.name}"
+                # Build qualified name for methods/functions inside classes
+                qualified_name = (
+                    f"{chunk.parent_name}.{chunk.name}"
+                    if chunk.parent_name and chunk.name
+                    else chunk.name
+                )
+                if qualified_name:
+                    chunk_id += f":{qualified_name}"
 
                 metadata = {
                     "file_path": chunk.file_path,

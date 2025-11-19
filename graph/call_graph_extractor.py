@@ -85,10 +85,20 @@ class PythonCallGraphExtractor(CallGraphExtractor):
     Features:
     - Function calls: foo()
     - Method calls: obj.method()
+    - Self calls: self.method() -> ClassName.method (resolved)
+    - Super calls: super().method() -> ParentClass.method (resolved)
     - Nested calls: foo(bar())
     - Lambda calls: (lambda x: process(x))(value)
     - Decorator detection (not counted as calls)
     """
+
+    def __init__(self):
+        super().__init__()
+        # Class context tracking for self/super resolution
+        self._current_class: Optional[str] = None
+        self._class_bases: Dict[str, List[str]] = (
+            {}
+        )  # class_name -> list of base classes
 
     def extract_calls(
         self, code: str, chunk_metadata: Dict[str, Any]
@@ -98,12 +108,14 @@ class PythonCallGraphExtractor(CallGraphExtractor):
 
         Args:
             code: Python source code
-            chunk_metadata: Must contain 'chunk_id' key
+            chunk_metadata: Must contain 'chunk_id' key, optionally 'parent_class'
 
         Returns:
             List of CallEdge objects
         """
         chunk_id = chunk_metadata.get("chunk_id", "unknown")
+        # Get parent class from chunk metadata (passed from chunker)
+        parent_class = chunk_metadata.get("parent_class")
 
         try:
             tree = ast.parse(code)
@@ -113,6 +125,19 @@ class PythonCallGraphExtractor(CallGraphExtractor):
                 f"Returning empty call list."
             )
             return []
+
+        # Reset class context
+        self._class_bases = {}
+
+        # First pass: extract class hierarchy for super() resolution
+        self._extract_class_hierarchy(tree)
+
+        # Set current class context from metadata or detect from code
+        if parent_class:
+            self._current_class = parent_class
+        else:
+            # Try to detect class context from the code itself
+            self._current_class = self._detect_enclosing_class(tree)
 
         calls = []
 
@@ -124,6 +149,32 @@ class PythonCallGraphExtractor(CallGraphExtractor):
                     calls.append(call_edge)
 
         return calls
+
+    def _extract_class_hierarchy(self, tree: ast.AST) -> None:
+        """Extract class inheritance relationships for super() resolution."""
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                bases = []
+                for base in node.bases:
+                    if isinstance(base, ast.Name):
+                        bases.append(base.id)
+                    elif isinstance(base, ast.Attribute):
+                        bases.append(base.attr)
+                self._class_bases[node.name] = bases
+
+    def _detect_enclosing_class(self, tree: ast.AST) -> Optional[str]:
+        """Detect if code is inside a class from AST structure."""
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                return node.name
+        return None
+
+    def _get_parent_class(self, class_name: str) -> Optional[str]:
+        """Get the first base class for super() resolution."""
+        bases = self._class_bases.get(class_name, [])
+        if bases:
+            return bases[0]
+        return None
 
     def _extract_call_from_node(
         self, node: ast.Call, chunk_id: str
@@ -163,6 +214,8 @@ class PythonCallGraphExtractor(CallGraphExtractor):
 
         Handles:
         - Simple calls: foo() -> "foo"
+        - Self calls: self.method() -> "ClassName.method" (resolved)
+        - Super calls: super().method() -> "ParentClass.method" (resolved)
         - Method calls: obj.method() -> "method"
         - Attribute chains: obj.attr.method() -> "method"
         - Nested calls: foo(bar())() -> "foo" (for outer call)
@@ -180,8 +233,30 @@ class PythonCallGraphExtractor(CallGraphExtractor):
 
         elif isinstance(func_node, ast.Attribute):
             # Method call: obj.method()
-            # Return just the method name, not the full chain
-            return func_node.attr
+            receiver = func_node.value
+            method_name = func_node.attr
+
+            # Check for self/cls call - resolve to qualified name
+            if isinstance(receiver, ast.Name) and receiver.id in ("self", "cls"):
+                if self._current_class:
+                    return f"{self._current_class}.{method_name}"
+                # Fallback to bare name if no class context
+                return method_name
+
+            # Check for super() call - resolve to parent class
+            if isinstance(receiver, ast.Call):
+                if isinstance(receiver.func, ast.Name) and receiver.func.id == "super":
+                    if self._current_class:
+                        parent_class = self._get_parent_class(self._current_class)
+                        if parent_class:
+                            return f"{parent_class}.{method_name}"
+                        # No parent class found, but we know it's a super call
+                        # Return with indicator for documentation
+                        return f"super.{method_name}"
+                    return method_name
+
+            # Regular method call - return bare method name
+            return method_name
 
         elif isinstance(func_node, ast.Call):
             # Nested call: foo(bar())()
