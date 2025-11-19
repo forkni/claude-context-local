@@ -248,7 +248,7 @@ echo ====================================
 echo.
 
 REM Count staged files
-for /f %%i in ('git diff --cached --name-only ^| find /c /v ""') do set STAGED_COUNT=%%i
+for /f %%i in ('git diff --cached --name-only ^| find.exe /c /v ""') do set STAGED_COUNT=%%i
 echo Files to commit: !STAGED_COUNT!
 echo.
 

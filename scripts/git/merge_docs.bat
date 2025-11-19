@@ -56,7 +56,7 @@ echo [4/7] Checking for code changes...
 set HAS_CODE_CHANGES=0
 
 REM Count non-docs changes
-for /f %%i in ('git diff --name-only main development ^| findstr /v "^docs/" ^| find /c /v ""') do set NON_DOCS_COUNT=%%i
+for /f %%i in ('git diff --name-only main development ^| findstr /v "^docs/" ^| find.exe /c /v ""') do set NON_DOCS_COUNT=%%i
 
 if !NON_DOCS_COUNT! GTR 0 (
     echo ⚠ WARNING: Non-documentation changes detected
