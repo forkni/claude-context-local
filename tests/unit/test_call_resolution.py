@@ -253,7 +253,7 @@ def caller():
         assert len(helper_calls) == 1
 
     def test_external_method_call(self):
-        """Test external method calls return bare method name."""
+        """Test external method calls with assignment use function name as type (Phase 3)."""
         code = """
 def process():
     obj = get_object()
@@ -266,8 +266,9 @@ def process():
 
         calls = self.extractor.extract_calls(code, chunk_metadata)
 
-        # External method call should just be method name
-        process_calls = [c for c in calls if c.callee_name == "process_data"]
+        # Phase 3: obj = get_object() assigns get_object as type
+        # So obj.process_data() resolves to get_object.process_data
+        process_calls = [c for c in calls if c.callee_name == "get_object.process_data"]
         assert len(process_calls) == 1
 
     def test_chained_method_call(self):

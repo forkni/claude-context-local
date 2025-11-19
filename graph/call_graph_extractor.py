@@ -148,6 +148,11 @@ class PythonCallGraphExtractor(CallGraphExtractor):
                 self._type_annotations = self._extract_type_annotations(node)
                 break  # Only process the top-level function
 
+        # Extract type information from local assignments (Phase 3)
+        # Note: Local assignments can shadow parameter annotations for same-named variables
+        local_assignments = self._extract_local_assignments(tree)
+        self._type_annotations.update(local_assignments)
+
         calls = []
 
         # Walk AST to find all Call nodes
@@ -304,6 +309,94 @@ class PythonCallGraphExtractor(CallGraphExtractor):
         # Unresolvable annotation type
         return None
 
+    def _extract_local_assignments(self, tree: ast.AST) -> Dict[str, str]:
+        """
+        Extract type information from local variable assignments.
+
+        Handles:
+        - Constructor calls: x = MyClass()
+        - Annotated assignments: x: MyClass = value
+        - Named expressions: if (x := MyClass()):
+        - Attribute assignments: self.handler = Handler()
+        - With statement assignments: with Context() as ctx:
+
+        Args:
+            tree: AST tree to analyze
+
+        Returns:
+            Dictionary mapping variable names to inferred type names
+        """
+        assignments: Dict[str, str] = {}
+
+        for node in ast.walk(tree):
+            # Handle simple assignments: x = MyClass()
+            if isinstance(node, ast.Assign):
+                if isinstance(node.value, ast.Call):
+                    type_name = self._infer_type_from_call(node.value)
+                    if type_name:
+                        for target in node.targets:
+                            if isinstance(target, ast.Name):
+                                # Simple variable: x = MyClass()
+                                assignments[target.id] = type_name
+                            elif isinstance(target, ast.Attribute):
+                                # Attribute assignment: self.handler = Handler()
+                                # Only track self.attr and cls.attr
+                                if isinstance(target.value, ast.Name):
+                                    if target.value.id in ("self", "cls"):
+                                        attr_key = f"{target.value.id}.{target.attr}"
+                                        assignments[attr_key] = type_name
+
+            # Handle annotated assignments: x: MyClass = value
+            elif isinstance(node, ast.AnnAssign):
+                if isinstance(node.target, ast.Name):
+                    type_name = self._annotation_to_string(node.annotation)
+                    if type_name:
+                        assignments[node.target.id] = type_name
+
+            # Handle named expressions (walrus operator): if (x := MyClass()):
+            elif isinstance(node, ast.NamedExpr):
+                if isinstance(node.value, ast.Call):
+                    type_name = self._infer_type_from_call(node.value)
+                    if type_name and isinstance(node.target, ast.Name):
+                        assignments[node.target.id] = type_name
+
+            # Handle with statement: with Context() as ctx:
+            elif isinstance(node, ast.With):
+                for item in node.items:
+                    if item.optional_vars and isinstance(item.context_expr, ast.Call):
+                        type_name = self._infer_type_from_call(item.context_expr)
+                        if type_name and isinstance(item.optional_vars, ast.Name):
+                            assignments[item.optional_vars.id] = type_name
+
+        return assignments
+
+    def _infer_type_from_call(self, call_node: ast.Call) -> Optional[str]:
+        """
+        Infer type from a Call node (constructor or factory call).
+
+        Handles:
+        - Simple constructor: MyClass() -> "MyClass"
+        - Qualified constructor: module.MyClass() -> "MyClass"
+
+        Args:
+            call_node: AST Call node
+
+        Returns:
+            Type name or None if not inferable
+        """
+        func = call_node.func
+
+        if isinstance(func, ast.Name):
+            # Simple constructor: MyClass()
+            return func.id
+
+        elif isinstance(func, ast.Attribute):
+            # Qualified constructor: module.MyClass() -> MyClass
+            return func.attr
+
+        # Factory method or other complex call - cannot infer
+        return None
+
     def _extract_call_from_node(
         self, node: ast.Call, chunk_id: str
     ) -> Optional[CallEdge]:
@@ -384,12 +477,22 @@ class PythonCallGraphExtractor(CallGraphExtractor):
                         return f"super.{method_name}"
                     return method_name
 
-            # Check for type-annotated parameter (Phase 2)
+            # Check for type-annotated parameter or local assignment (Phases 2 & 3)
             if isinstance(receiver, ast.Name):
                 var_name = receiver.id
                 if var_name in self._type_annotations:
                     type_name = self._type_annotations[var_name]
                     return f"{type_name}.{method_name}"
+
+            # Check for self.attr.method() pattern (Phase 3)
+            # e.g., self.handler.handle() where self.handler = Handler()
+            if isinstance(receiver, ast.Attribute):
+                if isinstance(receiver.value, ast.Name):
+                    if receiver.value.id in ("self", "cls"):
+                        attr_key = f"{receiver.value.id}.{receiver.attr}"
+                        if attr_key in self._type_annotations:
+                            type_name = self._type_annotations[attr_key]
+                            return f"{type_name}.{method_name}"
 
             # Regular method call - return bare method name
             return method_name
