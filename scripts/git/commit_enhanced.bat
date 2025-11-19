@@ -3,7 +3,7 @@ REM commit_enhanced.bat
 REM Enhanced commit workflow with comprehensive validations and mandatory logging
 REM Extends commit.bat with branch-specific checks and safety validations
 REM
-REM Usage: commit_enhanced.bat [--non-interactive] "commit message"
+REM Usage: commit_enhanced.bat [--non-interactive] [--skip-lint] "commit message"
 REM   --non-interactive: Skip all prompts, use sensible defaults (for automation)
 
 setlocal enabledelayedexpansion
@@ -13,12 +13,25 @@ REM Parse Command Line Arguments
 REM ========================================
 
 set NON_INTERACTIVE=0
+set SKIP_LINT=0
 set COMMIT_MSG_PARAM=%~1
 
 REM Check if first parameter is --non-interactive flag
 if "%~1"=="--non-interactive" (
     set NON_INTERACTIVE=1
     set COMMIT_MSG_PARAM=%~2
+)
+
+REM Check for --skip-lint flag (can be in any position)
+if "%~1"=="--skip-lint" (
+    set SKIP_LINT=1
+    set COMMIT_MSG_PARAM=%~2
+)
+if "%~2"=="--skip-lint" (
+    set SKIP_LINT=1
+    if %NON_INTERACTIVE% EQU 1 (
+        set COMMIT_MSG_PARAM=%~3
+    )
 )
 
 REM ========================================
@@ -173,6 +186,10 @@ echo ✓ Staged files validated
 echo.
 
 REM [4/7] Code quality check
+if %SKIP_LINT% EQU 1 (
+    echo [4/7] Skipping code quality check ^(--skip-lint flag^)
+    echo.
+) else (
 echo [4/7] Checking code quality...
 call scripts\git\check_lint.bat >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
@@ -219,6 +236,7 @@ if %ERRORLEVEL% NEQ 0 (
     )
 ) else (
     echo ✓ Code quality checks passed
+)
 )
 echo.
 
