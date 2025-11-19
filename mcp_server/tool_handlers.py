@@ -1019,8 +1019,10 @@ async def handle_find_connections(arguments: Dict[str, Any]) -> dict:
 
         # Run analysis
         report = analyzer.analyze_impact(
-            chunk_id=chunk_id, symbol_name=symbol_name, max_depth=max_depth,
-            exclude_dirs=exclude_dirs
+            chunk_id=chunk_id,
+            symbol_name=symbol_name,
+            max_depth=max_depth,
+            exclude_dirs=exclude_dirs,
         )
 
         # Convert to dict

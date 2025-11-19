@@ -482,16 +482,19 @@ Found 1 project with 3 model indices:
 ### Use Cases
 
 **Focus on production code**:
+
 ```python
 search_code("user authentication", exclude_dirs=["tests/", "vendor/"])
 ```
 
 **Search specific modules**:
+
 ```python
 search_code("database connection", include_dirs=["src/db/", "src/models/"])
 ```
 
 **Find production class (not test doubles)**:
+
 ```python
 find_connections(symbol_name="UserService", exclude_dirs=["tests/"])
 ```

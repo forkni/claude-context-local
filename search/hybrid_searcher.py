@@ -958,7 +958,9 @@ class HybridSearcher:
                 include_dirs = filters.get("include_dirs")
                 exclude_dirs = filters.get("exclude_dirs")
                 relative_path = metadata.get("relative_path", "")
-                if not self._matches_directory_filter(relative_path, include_dirs, exclude_dirs):
+                if not self._matches_directory_filter(
+                    relative_path, include_dirs, exclude_dirs
+                ):
                     return False
                 # Skip further processing of these keys
                 continue

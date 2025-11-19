@@ -12,21 +12,59 @@ logger = logging.getLogger(__name__)
 
 # Builtin types that should not be searched for in uses_type resolution
 # These are Python primitives, stdlib types, and typing module types
-BUILTIN_TYPES = frozenset({
-    # Python primitives
-    "str", "int", "bool", "float", "bytes", "complex",
-    # Collection types
-    "list", "dict", "tuple", "set", "frozenset",
-    # Special types
-    "None", "type", "object", "slice", "range",
-    # Typing module common types
-    "Any", "Union", "Optional", "List", "Dict", "Tuple", "Set", "FrozenSet",
-    "Type", "Callable", "Iterator", "Iterable", "Generator", "Sequence",
-    "Mapping", "MutableMapping", "MutableSequence", "MutableSet",
-    "Awaitable", "Coroutine", "AsyncIterator", "AsyncIterable", "AsyncGenerator",
-    # Generic type vars
-    "T", "K", "V", "KT", "VT",
-})
+BUILTIN_TYPES = frozenset(
+    {
+        # Python primitives
+        "str",
+        "int",
+        "bool",
+        "float",
+        "bytes",
+        "complex",
+        # Collection types
+        "list",
+        "dict",
+        "tuple",
+        "set",
+        "frozenset",
+        # Special types
+        "None",
+        "type",
+        "object",
+        "slice",
+        "range",
+        # Typing module common types
+        "Any",
+        "Union",
+        "Optional",
+        "List",
+        "Dict",
+        "Tuple",
+        "Set",
+        "FrozenSet",
+        "Type",
+        "Callable",
+        "Iterator",
+        "Iterable",
+        "Generator",
+        "Sequence",
+        "Mapping",
+        "MutableMapping",
+        "MutableSequence",
+        "MutableSet",
+        "Awaitable",
+        "Coroutine",
+        "AsyncIterator",
+        "AsyncIterable",
+        "AsyncGenerator",
+        # Generic type vars
+        "T",
+        "K",
+        "V",
+        "KT",
+        "VT",
+    }
+)
 
 
 @dataclass
@@ -122,8 +160,11 @@ class CodeRelationshipAnalyzer:
             )
 
     def analyze_impact(
-        self, chunk_id: str = None, symbol_name: str = None, max_depth: int = 3,
-        exclude_dirs: list = None
+        self,
+        chunk_id: str = None,
+        symbol_name: str = None,
+        max_depth: int = 3,
+        exclude_dirs: list = None,
     ) -> ImpactReport:
         """
         Analyze the impact radius of changes to a symbol.
@@ -157,7 +198,9 @@ class CodeRelationshipAnalyzer:
             filters = {}
             if exclude_dirs:
                 filters["exclude_dirs"] = exclude_dirs
-            results = self.searcher.search(symbol_name, k=30, filters=filters if filters else None)
+            results = self.searcher.search(
+                symbol_name, k=30, filters=filters if filters else None
+            )
             if not results:
                 raise ValueError(f"Symbol not found: {symbol_name}")
 
@@ -190,17 +233,25 @@ class CodeRelationshipAnalyzer:
             def get_priority(result):
                 if hasattr(result, "metadata"):
                     chunk_type = result.metadata.get("chunk_type", "unknown")
-                    file_path = result.metadata.get("file", result.metadata.get("file_path", ""))
+                    file_path = result.metadata.get(
+                        "file", result.metadata.get("file_path", "")
+                    )
                 else:
                     chunk_type = getattr(result, "chunk_type", "unknown")
-                    file_path = getattr(result, "file_path", getattr(result, "relative_path", ""))
+                    file_path = getattr(
+                        result, "file_path", getattr(result, "relative_path", "")
+                    )
 
                 base_priority = type_priority.get(chunk_type, 99)
 
                 # Deprioritize test files (add 100 to base priority)
                 # Check for common test directory patterns
                 file_path_normalized = file_path.replace("\\", "/").lower()
-                if "/tests/" in file_path_normalized or "/test_" in file_path_normalized or file_path_normalized.startswith("tests/"):
+                if (
+                    "/tests/" in file_path_normalized
+                    or "/test_" in file_path_normalized
+                    or file_path_normalized.startswith("tests/")
+                ):
                     base_priority += 100
 
                 return base_priority
@@ -273,9 +324,11 @@ class CodeRelationshipAnalyzer:
                     # Get caller details
                     caller_result = self.searcher.get_by_chunk_id(caller_id)
                     if caller_result:
-                        direct_callers.append(
-                            self._result_to_dict(caller_result, caller_id)
-                        )
+                        caller_dict = self._result_to_dict(caller_result, caller_id)
+                        # Apply exclude_dirs filter
+                        file_path = caller_dict.get("file", "")
+                        if self._matches_directory_filter(file_path, exclude_dirs):
+                            direct_callers.append(caller_dict)
                     else:
                         stale_caller_count += 1
 
@@ -326,9 +379,13 @@ class CodeRelationshipAnalyzer:
                             if next_id not in visited:
                                 result = self.searcher.get_by_chunk_id(next_id)
                                 if result:
-                                    current_level.append(
-                                        self._result_to_dict(result, next_id)
-                                    )
+                                    result_dict = self._result_to_dict(result, next_id)
+                                    # Apply exclude_dirs filter
+                                    file_path = result_dict.get("file", "")
+                                    if self._matches_directory_filter(
+                                        file_path, exclude_dirs
+                                    ):
+                                        current_level.append(result_dict)
                                 else:
                                     stale_indirect_count += 1
                     except Exception as e:
@@ -401,6 +458,31 @@ class CodeRelationshipAnalyzer:
             imported_by=graph_relationships.get("imported_by", []),
             stale_chunk_count=stale_caller_count + stale_indirect_count,
         )
+
+    def _matches_directory_filter(
+        self, file_path: str, exclude_dirs: list = None
+    ) -> bool:
+        """Check if file path should be included based on directory filters.
+
+        Args:
+            file_path: The file path to check
+            exclude_dirs: List of directory prefixes to exclude
+
+        Returns:
+            True if the file should be included, False if it should be filtered out
+        """
+        if not exclude_dirs:
+            return True
+
+        # Normalize path separators
+        normalized_path = file_path.replace("\\", "/")
+
+        for dir_pattern in exclude_dirs:
+            pattern = dir_pattern.rstrip("/") + "/"
+            if normalized_path.startswith(pattern) or f"/{pattern}" in normalized_path:
+                return False
+
+        return True
 
     def _result_to_dict(self, result, chunk_id: str) -> Dict[str, Any]:
         """Convert search result to dict format."""
@@ -541,18 +623,23 @@ class CodeRelationshipAnalyzer:
                             if rel_type in ["uses_type", "imports"]:
                                 # Skip builtin/primitive types - they won't be in the index
                                 if rel_type == "uses_type" and target in BUILTIN_TYPES:
-                                    result[forward_field].append({
-                                        "chunk_id": "",
-                                        "target_name": target,
-                                        "relationship_type": rel_type,
-                                        "file": "",
-                                        "lines": "",
-                                        "kind": "builtin",
-                                        "line": edge_data.get("line_number") or edge_data.get("line", 0),
-                                        "confidence": edge_data.get("confidence", 1.0),
-                                        "metadata": edge_data.get("metadata", {}),
-                                        "note": "Python builtin type (not searchable)",
-                                    })
+                                    result[forward_field].append(
+                                        {
+                                            "chunk_id": "",
+                                            "target_name": target,
+                                            "relationship_type": rel_type,
+                                            "file": "",
+                                            "lines": "",
+                                            "kind": "builtin",
+                                            "line": edge_data.get("line_number")
+                                            or edge_data.get("line", 0),
+                                            "confidence": edge_data.get(
+                                                "confidence", 1.0
+                                            ),
+                                            "metadata": edge_data.get("metadata", {}),
+                                            "note": "Python builtin type (not searchable)",
+                                        }
+                                    )
                                     continue
 
                                 # Try to find a chunk matching this type/module name
