@@ -10,6 +10,24 @@ from typing import Any, Dict, List, Set
 
 logger = logging.getLogger(__name__)
 
+# Builtin types that should not be searched for in uses_type resolution
+# These are Python primitives, stdlib types, and typing module types
+BUILTIN_TYPES = frozenset({
+    # Python primitives
+    "str", "int", "bool", "float", "bytes", "complex",
+    # Collection types
+    "list", "dict", "tuple", "set", "frozenset",
+    # Special types
+    "None", "type", "object", "slice", "range",
+    # Typing module common types
+    "Any", "Union", "Optional", "List", "Dict", "Tuple", "Set", "FrozenSet",
+    "Type", "Callable", "Iterator", "Iterable", "Generator", "Sequence",
+    "Mapping", "MutableMapping", "MutableSequence", "MutableSet",
+    "Awaitable", "Coroutine", "AsyncIterator", "AsyncIterable", "AsyncGenerator",
+    # Generic type vars
+    "T", "K", "V", "KT", "VT",
+})
+
 
 @dataclass
 class ImpactReport:
@@ -45,6 +63,7 @@ class ImpactReport:
     imported_by: List[Dict[str, Any]] = field(
         default_factory=list
     )  # Files that import this
+    stale_chunk_count: int = 0  # Count of chunk_ids not found in current index
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -65,6 +84,7 @@ class ImpactReport:
             "used_as_type_in": self.used_as_type_in,
             "imports": self.imports,
             "imported_by": self.imported_by,
+            "stale_chunk_count": self.stale_chunk_count,
         }
 
 
@@ -160,12 +180,24 @@ class CodeRelationshipAnalyzer:
             candidates = matching_results if matching_results else results
 
             # Sort by type priority (prefer classes over methods)
+            # ALSO deprioritize test files to prefer production code
             def get_priority(result):
                 if hasattr(result, "metadata"):
                     chunk_type = result.metadata.get("chunk_type", "unknown")
+                    file_path = result.metadata.get("file", result.metadata.get("file_path", ""))
                 else:
                     chunk_type = getattr(result, "chunk_type", "unknown")
-                return type_priority.get(chunk_type, 99)
+                    file_path = getattr(result, "file_path", getattr(result, "relative_path", ""))
+
+                base_priority = type_priority.get(chunk_type, 99)
+
+                # Deprioritize test files (add 100 to base priority)
+                # Check for common test directory patterns
+                file_path_normalized = file_path.replace("\\", "/").lower()
+                if "/tests/" in file_path_normalized or "/test_" in file_path_normalized or file_path_normalized.startswith("tests/"):
+                    base_priority += 100
+
+                return base_priority
 
             candidates.sort(key=get_priority)
             target_result = candidates[0]
@@ -205,6 +237,7 @@ class CodeRelationshipAnalyzer:
 
         # Step 2: Find direct callers using graph
         direct_callers = []
+        stale_caller_count = 0  # Track unresolved chunk_ids
         if self.graph:
             try:
                 # Extract symbol name from chunk_id for name-based lookup
@@ -237,11 +270,21 @@ class CodeRelationshipAnalyzer:
                         direct_callers.append(
                             self._result_to_dict(caller_result, caller_id)
                         )
+                    else:
+                        stale_caller_count += 1
+
+                # Log summary if any stale IDs found
+                if stale_caller_count > 0:
+                    logger.info(
+                        f"[FIND_CONNECTIONS] {stale_caller_count} of {len(all_callers)} caller chunk_ids "
+                        f"not found in index (stale from previous indexing)"
+                    )
             except Exception as e:
                 logger.warning(f"Failed to get callers from graph: {e}")
 
         # Step 3: Find indirect callers (multi-hop)
         indirect_callers = []
+        stale_indirect_count = 0  # Track stale chunk_ids in multi-hop
         visited = {target_id}
 
         if self.graph and direct_callers:
@@ -280,6 +323,8 @@ class CodeRelationshipAnalyzer:
                                     current_level.append(
                                         self._result_to_dict(result, next_id)
                                     )
+                                else:
+                                    stale_indirect_count += 1
                     except Exception as e:
                         logger.debug(f"Failed to get callers for {caller_id}: {e}")
 
@@ -348,6 +393,7 @@ class CodeRelationshipAnalyzer:
             used_as_type_in=graph_relationships.get("used_as_type_in", []),
             imports=graph_relationships.get("imports", []),
             imported_by=graph_relationships.get("imported_by", []),
+            stale_chunk_count=stale_caller_count + stale_indirect_count,
         )
 
     def _result_to_dict(self, result, chunk_id: str) -> Dict[str, Any]:
@@ -487,6 +533,22 @@ class CodeRelationshipAnalyzer:
                             # For uses_type and imports, target is a type/module name, not a chunk_id
                             # Try to resolve it to a chunk_id by searching
                             if rel_type in ["uses_type", "imports"]:
+                                # Skip builtin/primitive types - they won't be in the index
+                                if rel_type == "uses_type" and target in BUILTIN_TYPES:
+                                    result[forward_field].append({
+                                        "chunk_id": "",
+                                        "target_name": target,
+                                        "relationship_type": rel_type,
+                                        "file": "",
+                                        "lines": "",
+                                        "kind": "builtin",
+                                        "line": edge_data.get("line_number") or edge_data.get("line", 0),
+                                        "confidence": edge_data.get("confidence", 1.0),
+                                        "metadata": edge_data.get("metadata", {}),
+                                        "note": "Python builtin type (not searchable)",
+                                    })
+                                    continue
+
                                 # Try to find a chunk matching this type/module name
                                 target_chunk = None
                                 try:
@@ -545,6 +607,7 @@ class CodeRelationshipAnalyzer:
                                             "confidence": edge_data.get(
                                                 "confidence", 1.0
                                             ),
+                                            "metadata": edge_data.get("metadata", {}),
                                         }
                                     )
                                 else:
@@ -562,6 +625,7 @@ class CodeRelationshipAnalyzer:
                                             "confidence": edge_data.get(
                                                 "confidence", 1.0
                                             ),
+                                            "metadata": edge_data.get("metadata", {}),
                                             "note": "Type not found in index (external or built-in)",
                                         }
                                     )
