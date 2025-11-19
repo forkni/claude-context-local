@@ -130,12 +130,52 @@ class CodeRelationshipAnalyzer:
             target_id = chunk_id
         else:
             # Search by name - returns reranker.SearchResult
-            results = self.searcher.search(symbol_name, k=1)
+            # Search with more results to find best match by type preference
+            results = self.searcher.search(symbol_name, k=10)
             if not results:
                 raise ValueError(f"Symbol not found: {symbol_name}")
-            target_result = results[0]
+
+            # Preference ranking: class > type_definition > interface > function > method
+            # This ensures "HybridSearcher" finds the class, not a method with same name
+            type_priority = {
+                "class": 0,
+                "type_definition": 1,
+                "interface": 2,
+                "struct": 3,
+                "enum": 4,
+                "trait": 5,
+                "function": 6,
+                "decorated_definition": 7,
+                "method": 8,
+            }
+
+            # Filter to results with matching name
+            matching_results = []
+            for r in results:
+                r_name = r.chunk_id.split(":")[-1] if hasattr(r, "chunk_id") else ""
+                if r_name == symbol_name:
+                    matching_results.append(r)
+
+            # If we have exact name matches, use them; otherwise use all results
+            candidates = matching_results if matching_results else results
+
+            # Sort by type priority (prefer classes over methods)
+            def get_priority(result):
+                if hasattr(result, "metadata"):
+                    chunk_type = result.metadata.get("chunk_type", "unknown")
+                else:
+                    chunk_type = getattr(result, "chunk_type", "unknown")
+                return type_priority.get(chunk_type, 99)
+
+            candidates.sort(key=get_priority)
+            target_result = candidates[0]
             # Both SearchResult types now use chunk_id
             target_id = target_result.chunk_id
+
+            logger.debug(
+                f"[ANALYZE_IMPACT] symbol_name='{symbol_name}' resolved to chunk_id='{target_id}' "
+                f"(selected from {len(candidates)} candidates)"
+            )
 
         # Extract symbol info (handle both reranker.SearchResult and searcher.SearchResult)
         if hasattr(target_result, "metadata"):
@@ -167,8 +207,30 @@ class CodeRelationshipAnalyzer:
         direct_callers = []
         if self.graph:
             try:
-                callers = self.graph.get_callers(target_id)
-                for caller_id in callers:
+                # Extract symbol name from chunk_id for name-based lookup
+                # Graph stores edges as: caller_chunk_id → callee_name (not callee_chunk_id)
+                # So we need to query by both the full chunk_id and the symbol name
+                symbol_name_for_callers = (
+                    target_id.split(":")[-1] if ":" in target_id else target_id
+                )
+
+                # Get callers using both chunk_id AND symbol name
+                callers_by_id = self.graph.get_callers(target_id)
+                callers_by_name = (
+                    self.graph.get_callers(symbol_name_for_callers)
+                    if symbol_name_for_callers != target_id
+                    else []
+                )
+
+                # Combine and deduplicate callers
+                all_callers = list(set(callers_by_id + callers_by_name))
+
+                logger.debug(
+                    f"[FIND_CONNECTIONS] Direct callers: by_id={len(callers_by_id)}, "
+                    f"by_name={len(callers_by_name)}, combined={len(all_callers)}"
+                )
+
+                for caller_id in all_callers:
                     # Get caller details
                     caller_result = self.searcher.get_by_chunk_id(caller_id)
                     if caller_result:
@@ -197,7 +259,20 @@ class CodeRelationshipAnalyzer:
                     visited.add(caller_id)
 
                     try:
-                        next_callers = self.graph.get_callers(caller_id)
+                        # Extract symbol name for name-based lookup (same fix as Step 2)
+                        caller_symbol = (
+                            caller_id.split(":")[-1] if ":" in caller_id else caller_id
+                        )
+
+                        # Get callers using both chunk_id AND symbol name
+                        callers_by_id = self.graph.get_callers(caller_id)
+                        callers_by_name = (
+                            self.graph.get_callers(caller_symbol)
+                            if caller_symbol != caller_id
+                            else []
+                        )
+                        next_callers = list(set(callers_by_id + callers_by_name))
+
                         for next_id in next_callers:
                             if next_id not in visited:
                                 result = self.searcher.get_by_chunk_id(next_id)
@@ -313,7 +388,11 @@ class CodeRelationshipAnalyzer:
         try:
             caller_id = potential_caller.get("chunk_id")
             callees = self.graph.get_callees(caller_id)
-            return callee_id in callees
+            # Graph stores callees as symbol names, not full chunk_ids
+            # Extract symbol name from callee_id for comparison
+            callee_symbol = callee_id.split(":")[-1] if ":" in callee_id else callee_id
+            # Check both full chunk_id and symbol name
+            return callee_id in callees or callee_symbol in callees
         except Exception:
             return False
 
@@ -406,17 +485,86 @@ class CodeRelationshipAnalyzer:
                         forward_field, _ = field_mapping.get(rel_type, (None, None))
                         if forward_field and forward_field in result:
                             # For uses_type and imports, target is a type/module name, not a chunk_id
+                            # Try to resolve it to a chunk_id by searching
                             if rel_type in ["uses_type", "imports"]:
-                                result[forward_field].append(
-                                    {
-                                        "target_name": target,
-                                        "relationship_type": rel_type,
-                                        "line": edge_data.get("line_number")
-                                        or edge_data.get("line", 0),
-                                        "confidence": edge_data.get("confidence", 1.0),
-                                        "metadata": edge_data.get("metadata", {}),
-                                    }
-                                )
+                                # Try to find a chunk matching this type/module name
+                                target_chunk = None
+                                try:
+                                    # Search for classes/types with this name
+                                    search_results = self.searcher.search(target, k=5)
+                                    # Find best match (prefer class definitions)
+                                    for sr in search_results:
+                                        sr_name = (
+                                            sr.chunk_id.split(":")[-1]
+                                            if hasattr(sr, "chunk_id")
+                                            else ""
+                                        )
+                                        sr_type = getattr(sr, "chunk_type", "")
+                                        if sr_name == target and sr_type in [
+                                            "class",
+                                            "type_definition",
+                                            "interface",
+                                        ]:
+                                            target_chunk = sr
+                                            break
+                                    # Fall back to any name match
+                                    if not target_chunk:
+                                        for sr in search_results:
+                                            sr_name = (
+                                                sr.chunk_id.split(":")[-1]
+                                                if hasattr(sr, "chunk_id")
+                                                else ""
+                                            )
+                                            if sr_name == target:
+                                                target_chunk = sr
+                                                break
+                                except Exception as e:
+                                    logger.debug(
+                                        f"Failed to resolve type {target}: {e}"
+                                    )
+
+                                if target_chunk:
+                                    # Resolved to a chunk
+                                    result[forward_field].append(
+                                        {
+                                            "chunk_id": target_chunk.chunk_id,
+                                            "target_name": target,
+                                            "relationship_type": rel_type,
+                                            "file": getattr(
+                                                target_chunk, "file_path", ""
+                                            )
+                                            or getattr(
+                                                target_chunk, "relative_path", ""
+                                            ),
+                                            "lines": f"{getattr(target_chunk, 'start_line', 0)}-{getattr(target_chunk, 'end_line', 0)}",
+                                            "kind": getattr(
+                                                target_chunk, "chunk_type", "unknown"
+                                            ),
+                                            "line": edge_data.get("line_number")
+                                            or edge_data.get("line", 0),
+                                            "confidence": edge_data.get(
+                                                "confidence", 1.0
+                                            ),
+                                        }
+                                    )
+                                else:
+                                    # Couldn't resolve - external or built-in type
+                                    result[forward_field].append(
+                                        {
+                                            "chunk_id": "",
+                                            "target_name": target,
+                                            "relationship_type": rel_type,
+                                            "file": "",
+                                            "lines": "",
+                                            "kind": "external",
+                                            "line": edge_data.get("line_number")
+                                            or edge_data.get("line", 0),
+                                            "confidence": edge_data.get(
+                                                "confidence", 1.0
+                                            ),
+                                            "note": "Type not found in index (external or built-in)",
+                                        }
+                                    )
                             else:
                                 # For inherits, target is ALSO a name (not chunk_id)
                                 # Try to look it up, but fall back to name-only if not found

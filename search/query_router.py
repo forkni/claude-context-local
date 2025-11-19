@@ -187,6 +187,22 @@ class QueryRouter:
                 "connection",
                 "connect",
                 "integrate",
+                # Relationship and dependency queries
+                "caller",
+                "callers",
+                "callee",
+                "callees",
+                "relationship",
+                "relationships",
+                "dependency",
+                "dependencies",
+                "impact",
+                "inheritance",
+                "inherits",
+                "extends",
+                "uses",
+                "type usage",
+                "imports",
             ],
             "weight": 1.0,
             "description": "Workflow and configuration queries",
@@ -289,10 +305,14 @@ class QueryRouter:
             # Count matching keywords
             matches = sum(1 for keyword in keywords if keyword in query_lower)
 
-            # Score based on match count: each match adds 0.05, apply weight, cap at 1.0
+            # Score based on match count: each match adds 0.10, apply weight, cap at 1.0
             # This gives more predictable scores based on actual matches instead of
             # penalizing categories with many keywords (old: matches/len(keywords))
-            normalized_score = min(matches * 0.05 * weight, 1.0)
+            # Increased from 0.05 to 0.10 for better confidence scores:
+            # - 2 matches = 0.20 confidence
+            # - 3 matches = 0.30 confidence
+            # - 5 matches = 0.50 confidence
+            normalized_score = min(matches * 0.10 * weight, 1.0)
             scores[model_key] = normalized_score
 
         # Ensure scores don't exceed 1.0 after weighting
