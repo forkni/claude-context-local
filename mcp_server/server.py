@@ -22,8 +22,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
 # Official MCP SDK imports
-from mcp.server.lowlevel import Server
-from mcp.types import (
+from mcp.server.lowlevel import Server  # noqa: E402
+from mcp.types import (  # noqa: E402
     GetPromptResult,
     Prompt,
     PromptMessage,
@@ -33,11 +33,11 @@ from mcp.types import (
 )
 
 # Project imports
-from embeddings.embedder import CodeEmbedder
-from search.config import get_search_config
-from search.hybrid_searcher import HybridSearcher
-from search.indexer import CodeIndexManager
-from search.searcher import IntelligentSearcher
+from embeddings.embedder import CodeEmbedder  # noqa: E402
+from search.config import get_search_config  # noqa: E402
+from search.hybrid_searcher import HybridSearcher  # noqa: E402
+from search.indexer import CodeIndexManager  # noqa: E402
+from search.searcher import IntelligentSearcher  # noqa: E402
 
 # Configure logging
 debug_mode = os.getenv("MCP_DEBUG", "").lower() in ("1", "true", "yes")
@@ -501,7 +501,7 @@ def get_searcher(project_path: str = None, model_key: str = None):
 server = Server("Code Search")
 
 # Import tool registry
-from mcp_server.tool_registry import build_tool_list
+from mcp_server.tool_registry import build_tool_list  # noqa: E402
 
 # ============================================================================
 # SERVER HANDLERS

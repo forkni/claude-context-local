@@ -162,7 +162,6 @@ class IncrementalIndexer:
                     "supported_files": len(supported_files),
                     "chunks_indexed": total_chunks,
                 }
-                self
                 self.snapshot_manager.save_snapshot(current_dag, metadata)
 
                 return IncrementalIndexResult(

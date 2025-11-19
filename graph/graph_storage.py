@@ -7,7 +7,10 @@ Provides NetworkX-based storage for code call graphs with JSON persistence.
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
+
+if TYPE_CHECKING:
+    from graph.relationship_types import RelationshipEdge
 
 try:
     import networkx as nx

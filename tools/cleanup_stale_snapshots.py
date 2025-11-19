@@ -18,7 +18,7 @@ from typing import Dict, List, Set
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from merkle.snapshot_manager import SnapshotManager
+from merkle.snapshot_manager import SnapshotManager  # noqa: E402
 
 
 def get_indexed_projects() -> Dict[str, Set[str]]:
@@ -181,7 +181,7 @@ def main():
     deleted_count = 0
     failed_count = 0
 
-    for project_id, files in stale_snapshots.items():
+    for _project_id, files in stale_snapshots.items():
         for f in files:
             try:
                 f.unlink()

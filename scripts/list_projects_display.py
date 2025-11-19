@@ -78,7 +78,7 @@ def main():
         f"Found {len(projects_by_path)} projects with {total_indices} model indices:\n"
     )
 
-    for i, (path, info) in enumerate(projects_by_path.items(), 1):
+    for i, (_path, info) in enumerate(projects_by_path.items(), 1):
         print(f"  {i}. {info['name']}")
         print(f"     Path: {info['path']}")
         print(f"     Models: {', '.join(info['models'])}")

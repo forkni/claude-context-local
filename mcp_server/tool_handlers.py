@@ -194,7 +194,7 @@ async def handle_get_memory_status(arguments: Dict[str, Any]) -> dict:
                     "dimension": dimension,
                     "estimated_mb": round(estimated_mb, 2),
                 }
-        except:
+        except Exception:
             pass
 
         return {

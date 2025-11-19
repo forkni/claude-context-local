@@ -11,9 +11,9 @@ import requests  # Added for ConnectionError, HTTPError
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from chunking.python_ast_chunker import CodeChunk
-from embeddings.embedder import CodeEmbedder, EmbeddingResult
-from search.config import MODEL_REGISTRY
+from chunking.python_ast_chunker import CodeChunk  # noqa: E402
+from embeddings.embedder import CodeEmbedder, EmbeddingResult  # noqa: E402
+from search.config import MODEL_REGISTRY  # noqa: E402
 
 # Get all configured models to test
 supported_models = list(MODEL_REGISTRY.keys())

@@ -314,7 +314,7 @@ class CodeRelationshipAnalyzer:
             caller_id = potential_caller.get("chunk_id")
             callees = self.graph.get_callees(caller_id)
             return callee_id in callees
-        except:
+        except Exception:
             return False
 
     def _extract_result_info(self, result, chunk_id: str) -> Dict[str, Any]:

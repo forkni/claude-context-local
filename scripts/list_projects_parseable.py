@@ -73,7 +73,7 @@ def main():
         projects_by_path[path]["models"].append(f"{model_short} ({dimension}d)")
 
     # Output format: index|name|path|models
-    for i, (path, info) in enumerate(projects_by_path.items(), 1):
+    for i, (_path, info) in enumerate(projects_by_path.items(), 1):
         models_str = ", ".join(info["models"])
         print(f"{i}|{info['name']}|{info['path']}|{models_str}")
 
