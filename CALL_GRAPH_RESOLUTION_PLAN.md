@@ -101,10 +101,12 @@ Example:
 
 ## Implementation Phases
 
-### Phase 1: Self/Super Calls + Qualified Chunk IDs
+### Phase 1: Self/Super Calls + Qualified Chunk IDs ✅ COMPLETE
 
+**Status**: Implemented in v0.5.12 (2025-11-19)
 **Coverage**: ~70% of method calls
 **Effort**: 1-2 days
+**Tests**: 11 unit + 16 unit + 8 integration (100% pass)
 
 #### 1.1 Modify Chunk ID Format for Methods
 
@@ -245,10 +247,12 @@ def _get_direct_callers(self, target_id: str) -> List[str]:
 
 ---
 
-### Phase 2: Type Annotation Resolution
+### Phase 2: Type Annotation Resolution ✅ COMPLETE
 
+**Status**: Implemented in v0.5.13 (2025-11-19)
 **Coverage**: +10% (cumulative ~80%)
 **Effort**: 1 day
+**Tests**: 38 unit + 9 integration (100% pass)
 
 #### 2.1 Extract Type Annotations
 

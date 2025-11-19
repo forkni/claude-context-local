@@ -99,6 +99,8 @@ class PythonCallGraphExtractor(CallGraphExtractor):
         self._class_bases: Dict[str, List[str]] = (
             {}
         )  # class_name -> list of base classes
+        # Type annotation tracking for parameter type resolution (Phase 2)
+        self._type_annotations: Dict[str, str] = {}  # param_name -> type_name
 
     def extract_calls(
         self, code: str, chunk_metadata: Dict[str, Any]
@@ -126,8 +128,9 @@ class PythonCallGraphExtractor(CallGraphExtractor):
             )
             return []
 
-        # Reset class context
+        # Reset class context and type annotations
         self._class_bases = {}
+        self._type_annotations = {}
 
         # First pass: extract class hierarchy for super() resolution
         self._extract_class_hierarchy(tree)
@@ -138,6 +141,12 @@ class PythonCallGraphExtractor(CallGraphExtractor):
         else:
             # Try to detect class context from the code itself
             self._current_class = self._detect_enclosing_class(tree)
+
+        # Extract type annotations from function definition (Phase 2)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                self._type_annotations = self._extract_type_annotations(node)
+                break  # Only process the top-level function
 
         calls = []
 
@@ -174,6 +183,125 @@ class PythonCallGraphExtractor(CallGraphExtractor):
         bases = self._class_bases.get(class_name, [])
         if bases:
             return bases[0]
+        return None
+
+    def _extract_type_annotations(self, func_node: ast.FunctionDef) -> Dict[str, str]:
+        """
+        Extract parameter type annotations from a function definition.
+
+        Args:
+            func_node: AST FunctionDef or AsyncFunctionDef node
+
+        Returns:
+            Dictionary mapping parameter names to type names
+        """
+        annotations = {}
+
+        # Extract from positional arguments
+        for arg in func_node.args.args:
+            if arg.annotation:
+                type_name = self._annotation_to_string(arg.annotation)
+                if type_name:
+                    annotations[arg.arg] = type_name
+
+        # Extract from keyword-only arguments
+        for arg in func_node.args.kwonlyargs:
+            if arg.annotation:
+                type_name = self._annotation_to_string(arg.annotation)
+                if type_name:
+                    annotations[arg.arg] = type_name
+
+        # Extract from positional-only arguments (Python 3.8+)
+        for arg in func_node.args.posonlyargs:
+            if arg.annotation:
+                type_name = self._annotation_to_string(arg.annotation)
+                if type_name:
+                    annotations[arg.arg] = type_name
+
+        # Extract from *args
+        if func_node.args.vararg and func_node.args.vararg.annotation:
+            type_name = self._annotation_to_string(func_node.args.vararg.annotation)
+            if type_name:
+                annotations[func_node.args.vararg.arg] = type_name
+
+        # Extract from **kwargs
+        if func_node.args.kwarg and func_node.args.kwarg.annotation:
+            type_name = self._annotation_to_string(func_node.args.kwarg.annotation)
+            if type_name:
+                annotations[func_node.args.kwarg.arg] = type_name
+
+        return annotations
+
+    def _annotation_to_string(self, annotation: ast.AST) -> Optional[str]:
+        """
+        Convert an AST annotation node to a string type name.
+
+        Handles:
+        - Simple names: MyClass
+        - Attributes: module.MyClass (returns MyClass)
+        - Subscripts: Optional[MyClass], List[MyClass] (returns MyClass)
+        - Constants: "MyClass" (forward references)
+
+        Args:
+            annotation: AST node representing a type annotation
+
+        Returns:
+            Type name string or None if not resolvable
+        """
+        if isinstance(annotation, ast.Name):
+            # Simple type: MyClass
+            return annotation.id
+
+        elif isinstance(annotation, ast.Attribute):
+            # Qualified type: module.MyClass -> MyClass
+            # We return just the class name for resolution
+            return annotation.attr
+
+        elif isinstance(annotation, ast.Subscript):
+            # Generic type: Optional[X], List[X], Union[X, Y]
+            if isinstance(annotation.value, ast.Name):
+                container = annotation.value.id
+
+                # Extract inner type from container types
+                if container in (
+                    "Optional",
+                    "List",
+                    "Set",
+                    "Tuple",
+                    "Sequence",
+                    "Iterable",
+                    "Iterator",
+                    "Collection",
+                    "Type",
+                ):
+                    return self._annotation_to_string(annotation.slice)
+
+                # Handle Union - try to get first non-None type
+                if container == "Union":
+                    if isinstance(annotation.slice, ast.Tuple):
+                        for elt in annotation.slice.elts:
+                            # Skip None type
+                            if isinstance(elt, ast.Constant) and elt.value is None:
+                                continue
+                            if isinstance(elt, ast.Name) and elt.id == "None":
+                                continue
+                            result = self._annotation_to_string(elt)
+                            if result:
+                                return result
+                    else:
+                        return self._annotation_to_string(annotation.slice)
+
+            # Unresolvable generic (Dict, Callable, etc.)
+            return None
+
+        elif isinstance(annotation, ast.Constant):
+            # Forward reference: "MyClass"
+            if isinstance(annotation.value, str):
+                # Extract class name from string (handle "module.Class")
+                return annotation.value.split(".")[-1]
+            return None
+
+        # Unresolvable annotation type
         return None
 
     def _extract_call_from_node(
@@ -216,6 +344,7 @@ class PythonCallGraphExtractor(CallGraphExtractor):
         - Simple calls: foo() -> "foo"
         - Self calls: self.method() -> "ClassName.method" (resolved)
         - Super calls: super().method() -> "ParentClass.method" (resolved)
+        - Type-annotated calls: param.method() -> "TypeName.method" (resolved)
         - Method calls: obj.method() -> "method"
         - Attribute chains: obj.attr.method() -> "method"
         - Nested calls: foo(bar())() -> "foo" (for outer call)
@@ -254,6 +383,13 @@ class PythonCallGraphExtractor(CallGraphExtractor):
                         # Return with indicator for documentation
                         return f"super.{method_name}"
                     return method_name
+
+            # Check for type-annotated parameter (Phase 2)
+            if isinstance(receiver, ast.Name):
+                var_name = receiver.id
+                if var_name in self._type_annotations:
+                    type_name = self._type_annotations[var_name]
+                    return f"{type_name}.{method_name}"
 
             # Regular method call - return bare method name
             return method_name
