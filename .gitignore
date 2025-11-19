@@ -261,6 +261,15 @@ evaluation_results/
 evaluation.log
 sample_dataset.json
 
+# Development-only tests (require local evaluation module or invalid imports)
+tests/unit/test_evaluation.py
+tests/unit/test_token_efficiency.py
+tests/unit/test_tool_handlers.py
+tests/integration/test_complete_workflow.py
+tests/integration/test_mcp_functionality.py
+tests/integration/test_semantic_search.py
+tests/integration/test_token_efficiency_workflow.py
+
 # Windows-specific temporary files
 nul
 *.bat.bak
