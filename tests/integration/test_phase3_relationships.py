@@ -1,11 +1,19 @@
 """
 Integration test for Phase 3 relationship extraction.
 
-Verifies that all 4 Priority 1 relationship types are extracted during indexing:
+Verifies that all Priority 1 and Priority 2 relationship types are extracted during indexing:
+
+Priority 1:
 1. CALLS - Function/method calls
 2. INHERITS - Class inheritance
 3. USES_TYPE - Type annotations
 4. IMPORTS - Import statements
+
+Priority 2:
+5. DECORATES - Decorator applications
+6. RAISES - Exception raising
+7. CATCHES - Exception catching
+8. INSTANTIATES - Class instantiation
 """
 
 import pytest
@@ -489,3 +497,292 @@ class TestPhase3RelationshipExtraction:
             print(
                 "\nNote: No uses_types relationships found in ImpactReport (may be outgoing only)"
             )
+
+
+# Sample Python code with Priority 2 relationship types
+SAMPLE_CODE_WITH_PRIORITY2_RELATIONSHIPS = """
+from dataclasses import dataclass
+
+@dataclass
+class DataModel:
+    \"\"\"Data model with decorator.\"\"\"
+    name: str
+    value: int
+
+class CustomError(Exception):
+    \"\"\"Custom exception.\"\"\"
+    pass
+
+class ValidationError(Exception):
+    \"\"\"Validation exception.\"\"\"
+    pass
+
+@custom_decorator
+def decorated_function():
+    \"\"\"Function with decorator.\"\"\"
+    pass
+
+class ServiceClass:
+    \"\"\"Service with exceptions and instantiation.\"\"\"
+
+    @another_decorator
+    def process_data(self, data: str) -> DataModel:
+        \"\"\"Process data with exceptions and instantiation.\"\"\"
+        try:
+            if not data:
+                raise ValidationError("Empty data")
+
+            model = DataModel(name=data, value=42)
+            return model
+
+        except ValueError as e:
+            raise CustomError("Processing failed") from e
+
+    def create_models(self) -> list:
+        \"\"\"Create multiple model instances.\"\"\"
+        models = []
+        models.append(DataModel(name="first", value=1))
+        models.append(DataModel(name="second", value=2))
+        return models
+"""
+
+
+@pytest.fixture
+def temp_project_priority2(tmp_path):
+    """Create temporary project with Priority 2 relationship code."""
+    project_dir = tmp_path / "test_priority2"
+    project_dir.mkdir()
+
+    # Create service.py with Priority 2 relationships
+    service_file = project_dir / "service.py"
+    service_file.write_text(SAMPLE_CODE_WITH_PRIORITY2_RELATIONSHIPS)
+
+    return project_dir
+
+
+@pytest.fixture
+def indexed_project_priority2(temp_project_priority2, session_embedder):
+    """Index the temporary project with Priority 2 relationships."""
+    # Create chunker and index manager
+    chunker = MultiLanguageChunker(str(temp_project_priority2))
+    index_dir = temp_project_priority2 / "index"
+    index_dir.mkdir()
+
+    indexer = CodeIndexManager(
+        storage_dir=str(index_dir),
+        embedder=session_embedder,
+        project_id="test_priority2_relationships",
+    )
+
+    # Chunk and index all files
+    chunks = []
+    for file_path in temp_project_priority2.glob("**/*.py"):
+        file_chunks = chunker.chunk_file(str(file_path))
+        chunks.extend(file_chunks)
+
+    # Generate embeddings and index
+    embedding_results = session_embedder.embed_chunks(chunks)
+    indexer.add_embeddings(embedding_results)
+
+    return indexer, chunks
+
+
+class TestPriority2RelationshipExtraction:
+    """Test suite for Priority 2 relationship extraction."""
+
+    def test_priority2_types_extracted(self, indexed_project_priority2):
+        """Verify that Priority 2 relationship types are extracted."""
+        indexer, chunks = indexed_project_priority2
+
+        # Collect all relationship types from chunks
+        relationship_types = set()
+        for chunk in chunks:
+            if chunk.relationships:
+                for rel in chunk.relationships:
+                    relationship_types.add(rel.relationship_type)
+
+        # Expected Priority 2 types
+        expected_types = {
+            RelationshipType.DECORATES,
+            RelationshipType.RAISES,
+            RelationshipType.CATCHES,
+            RelationshipType.INSTANTIATES,
+        }
+
+        # Check which types are present
+        found_types = relationship_types & expected_types
+        print(f"\nFound Priority 2 relationship types: {found_types}")
+
+        # At least some Priority 2 types should be present
+        assert (
+            len(found_types) > 0
+        ), f"Expected at least one Priority 2 type. Found: {relationship_types}"
+
+    def test_decorators_extracted(self, indexed_project_priority2):
+        """Verify DECORATES relationships are extracted."""
+        indexer, chunks = indexed_project_priority2
+
+        # Find decorator relationships
+        decorator_relationships = []
+        for chunk in chunks:
+            if chunk.relationships:
+                for rel in chunk.relationships:
+                    if rel.relationship_type == RelationshipType.DECORATES:
+                        decorator_relationships.append((chunk.name, rel.target_name))
+
+        print(f"\nFound {len(decorator_relationships)} decorator relationships:")
+        for name, target in decorator_relationships:
+            print(f"  {name} -> {target}")
+
+        # Should have at least dataclass and custom_decorator
+        assert len(decorator_relationships) > 0, "Expected decorator relationships"
+
+        decorator_targets = {rel[1] for rel in decorator_relationships}
+        # dataclass is a common decorator, but it might be filtered
+        # custom_decorator should be captured
+        assert any(
+            "decorator" in target.lower() for target in decorator_targets
+        ), f"Expected decorator targets, found: {decorator_targets}"
+
+    def test_raises_extracted(self, indexed_project_priority2):
+        """Verify RAISES relationships are extracted."""
+        indexer, chunks = indexed_project_priority2
+
+        # Find raises relationships
+        raises_relationships = []
+        for chunk in chunks:
+            if chunk.relationships:
+                for rel in chunk.relationships:
+                    if rel.relationship_type == RelationshipType.RAISES:
+                        raises_relationships.append((chunk.name, rel.target_name))
+
+        print(f"\nFound {len(raises_relationships)} raises relationships:")
+        for name, target in raises_relationships:
+            print(f"  {name} raises {target}")
+
+        assert len(raises_relationships) > 0, "Expected raises relationships"
+
+        # Should have ValidationError and CustomError
+        exception_targets = {rel[1] for rel in raises_relationships}
+        assert any(
+            "Error" in target for target in exception_targets
+        ), f"Expected Error exceptions, found: {exception_targets}"
+
+    def test_catches_extracted(self, indexed_project_priority2):
+        """Verify CATCHES relationships are extracted."""
+        indexer, chunks = indexed_project_priority2
+
+        # Find catches relationships
+        catches_relationships = []
+        for chunk in chunks:
+            if chunk.relationships:
+                for rel in chunk.relationships:
+                    if rel.relationship_type == RelationshipType.CATCHES:
+                        catches_relationships.append((chunk.name, rel.target_name))
+
+        print(f"\nFound {len(catches_relationships)} catches relationships:")
+        for name, target in catches_relationships:
+            print(f"  {name} catches {target}")
+
+        assert len(catches_relationships) > 0, "Expected catches relationships"
+
+        # Should catch ValueError
+        catch_targets = {rel[1] for rel in catches_relationships}
+        assert (
+            "ValueError" in catch_targets
+        ), f"Expected ValueError, found: {catch_targets}"
+
+    def test_instantiations_extracted(self, indexed_project_priority2):
+        """Verify INSTANTIATES relationships are extracted."""
+        indexer, chunks = indexed_project_priority2
+
+        # Find instantiation relationships
+        instantiation_relationships = []
+        for chunk in chunks:
+            if chunk.relationships:
+                for rel in chunk.relationships:
+                    if rel.relationship_type == RelationshipType.INSTANTIATES:
+                        instantiation_relationships.append(
+                            (chunk.name, rel.target_name)
+                        )
+
+        print(
+            f"\nFound {len(instantiation_relationships)} instantiation relationships:"
+        )
+        for name, target in instantiation_relationships:
+            print(f"  {name} instantiates {target}")
+
+        assert (
+            len(instantiation_relationships) > 0
+        ), "Expected instantiation relationships"
+
+        # Should have DataModel instantiations
+        instantiation_targets = {rel[1] for rel in instantiation_relationships}
+        assert (
+            "DataModel" in instantiation_targets
+        ), f"Expected DataModel instantiation, found: {instantiation_targets}"
+
+    def test_find_connections_has_priority2_fields(
+        self, indexed_project_priority2, session_embedder
+    ):
+        """Verify find_connections returns Priority 2 relationship fields."""
+        indexer, chunks = indexed_project_priority2
+
+        # Find a chunk with Priority 2 relationships
+        test_chunk = None
+        for chunk in chunks:
+            if chunk.relationships:
+                for rel in chunk.relationships:
+                    if rel.relationship_type in {
+                        RelationshipType.DECORATES,
+                        RelationshipType.RAISES,
+                        RelationshipType.CATCHES,
+                        RelationshipType.INSTANTIATES,
+                    }:
+                        test_chunk = chunk
+                        break
+            if test_chunk:
+                break
+
+        if not test_chunk:
+            pytest.skip("No chunks with Priority 2 relationships found")
+
+        # Analyze the chunk
+        from mcp_server.tools.code_relationship_analyzer import CodeRelationshipAnalyzer
+        from search.searcher import IntelligentSearcher
+
+        searcher = IntelligentSearcher(indexer, session_embedder)
+        analyzer = CodeRelationshipAnalyzer(searcher)
+
+        chunk_id = f"{test_chunk.relative_path}:{test_chunk.start_line}-{test_chunk.end_line}:{test_chunk.chunk_type}"
+        if test_chunk.name:
+            chunk_id += f":{test_chunk.name}"
+
+        report = analyzer.analyze_impact(chunk_id=chunk_id)
+        result = report.to_dict()
+
+        # Verify Priority 2 fields are present
+        assert "decorates" in result, "decorates field missing from ImpactReport"
+        assert "decorated_by" in result, "decorated_by field missing from ImpactReport"
+        assert (
+            "exceptions_raised" in result
+        ), "exceptions_raised field missing from ImpactReport"
+        assert (
+            "exception_handlers" in result
+        ), "exception_handlers field missing from ImpactReport"
+        assert (
+            "exceptions_caught" in result
+        ), "exceptions_caught field missing from ImpactReport"
+        assert "instantiates" in result, "instantiates field missing from ImpactReport"
+        assert (
+            "instantiated_by" in result
+        ), "instantiated_by field missing from ImpactReport"
+
+        print(f"\nfind_connections Priority 2 fields for {chunk_id}:")
+        print(f"  decorates: {len(result['decorates'])}")
+        print(f"  decorated_by: {len(result['decorated_by'])}")
+        print(f"  exceptions_raised: {len(result['exceptions_raised'])}")
+        print(f"  exception_handlers: {len(result['exception_handlers'])}")
+        print(f"  exceptions_caught: {len(result['exceptions_caught'])}")
+        print(f"  instantiates: {len(result['instantiates'])}")
+        print(f"  instantiated_by: {len(result['instantiated_by'])}")

@@ -101,6 +101,30 @@ class ImpactReport:
     imported_by: List[Dict[str, Any]] = field(
         default_factory=list
     )  # Files that import this
+
+    # Phase 3b: Priority 2 relationship fields (decorators, exceptions, instantiation)
+    decorates: List[Dict[str, Any]] = field(
+        default_factory=list
+    )  # Decorators applied by this code
+    decorated_by: List[Dict[str, Any]] = field(
+        default_factory=list
+    )  # Code decorated by this
+    exceptions_raised: List[Dict[str, Any]] = field(
+        default_factory=list
+    )  # Exceptions raised by this code
+    exception_handlers: List[Dict[str, Any]] = field(
+        default_factory=list
+    )  # Where exceptions from this are caught
+    exceptions_caught: List[Dict[str, Any]] = field(
+        default_factory=list
+    )  # Exceptions caught by this code
+    instantiates: List[Dict[str, Any]] = field(
+        default_factory=list
+    )  # Classes instantiated by this code
+    instantiated_by: List[Dict[str, Any]] = field(
+        default_factory=list
+    )  # Where this class is instantiated
+
     stale_chunk_count: int = 0  # Count of chunk_ids not found in current index
 
     def to_dict(self) -> Dict[str, Any]:
@@ -122,6 +146,14 @@ class ImpactReport:
             "used_as_type_in": self.used_as_type_in,
             "imports": self.imports,
             "imported_by": self.imported_by,
+            # Phase 3b: Priority 2 relationships
+            "decorates": self.decorates,
+            "decorated_by": self.decorated_by,
+            "exceptions_raised": self.exceptions_raised,
+            "exception_handlers": self.exception_handlers,
+            "exceptions_caught": self.exceptions_caught,
+            "instantiates": self.instantiates,
+            "instantiated_by": self.instantiated_by,
             "stale_chunk_count": self.stale_chunk_count,
         }
 
@@ -344,21 +376,24 @@ class CodeRelationshipAnalyzer:
         # Step 3: Find indirect callers (multi-hop)
         indirect_callers = []
         stale_indirect_count = 0  # Track stale chunk_ids in multi-hop
-        visited = {target_id}
+        # Normalize target_id for visited set (handle mixed path separators)
+        normalized_target = target_id.replace("\\", "/")
+        visited = {normalized_target}
 
         if self.graph and direct_callers:
-            # Traverse up the call graph
-            for depth in range(1, max_depth):
+            # Traverse up the call graph using proper BFS
+            prev_level = direct_callers  # Track previous level for BFS
+            for _depth in range(1, max_depth):
                 current_level = []
-                for caller_dict in (
-                    direct_callers
-                    if depth == 1
-                    else indirect_callers[-len(direct_callers) :]
-                ):
+                for caller_dict in prev_level:
                     caller_id = caller_dict.get("chunk_id")
-                    if caller_id in visited:
+                    # Normalize caller_id before checking visited set
+                    normalized_caller = (
+                        caller_id.replace("\\", "/") if caller_id else ""
+                    )
+                    if normalized_caller in visited:
                         continue
-                    visited.add(caller_id)
+                    visited.add(normalized_caller)
 
                     try:
                         # Extract symbol name for name-based lookup (same fix as Step 2)
@@ -376,7 +411,9 @@ class CodeRelationshipAnalyzer:
                         next_callers = list(set(callers_by_id + callers_by_name))
 
                         for next_id in next_callers:
-                            if next_id not in visited:
+                            # Normalize next_id before checking visited set
+                            normalized_next = next_id.replace("\\", "/")
+                            if normalized_next not in visited:
                                 result = self.searcher.get_by_chunk_id(next_id)
                                 if result:
                                     result_dict = self._result_to_dict(result, next_id)
@@ -394,6 +431,7 @@ class CodeRelationshipAnalyzer:
                 if not current_level:
                     break
                 indirect_callers.extend(current_level)
+                prev_level = current_level  # Use this level for next iteration
 
         # Step 4: Find similar code (semantic)
         # Note: find_similar_to_chunk() returns searcher.SearchResult (different type!)
@@ -456,6 +494,14 @@ class CodeRelationshipAnalyzer:
             used_as_type_in=graph_relationships.get("used_as_type_in", []),
             imports=graph_relationships.get("imports", []),
             imported_by=graph_relationships.get("imported_by", []),
+            # Phase 3b: Priority 2 relationships
+            decorates=graph_relationships.get("decorates", []),
+            decorated_by=graph_relationships.get("decorated_by", []),
+            exceptions_raised=graph_relationships.get("exceptions_raised", []),
+            exception_handlers=graph_relationships.get("exception_handlers", []),
+            exceptions_caught=graph_relationships.get("exceptions_caught", []),
+            instantiates=graph_relationships.get("instantiates", []),
+            instantiated_by=graph_relationships.get("instantiated_by", []),
             stale_chunk_count=stale_caller_count + stale_indirect_count,
         )
 

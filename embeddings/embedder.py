@@ -438,8 +438,11 @@ class CodeEmbedder:
 
         embedding = self.model.encode([content_to_embed], show_progress_bar=False)[0]
 
-        # Create unique chunk ID
-        chunk_id = f"{chunk.relative_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
+        # Create unique chunk ID with normalized path separators
+        normalized_path = str(chunk.relative_path).replace("\\", "/")
+        chunk_id = (
+            f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
+        )
         if chunk.name:
             chunk_id += f":{chunk.name}"
 
@@ -528,7 +531,9 @@ class CodeEmbedder:
             for _j, (chunk, embedding) in enumerate(
                 zip(batch, batch_embeddings, strict=False)
             ):
-                chunk_id = f"{chunk.relative_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
+                # Normalize path separators for cross-platform consistency
+                normalized_path = str(chunk.relative_path).replace("\\", "/")
+                chunk_id = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
                 if chunk.name:
                     chunk_id += f":{chunk.name}"
 

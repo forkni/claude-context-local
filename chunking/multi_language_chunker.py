@@ -12,8 +12,13 @@ from .tree_sitter import TreeSitterChunk, TreeSitterChunker
 # Import call graph extractor for Python (Phase 1)
 try:
     from graph.call_graph_extractor import CallGraphExtractorFactory
+    from graph.relationship_extractors.decorator_extractor import DecoratorExtractor
+    from graph.relationship_extractors.exception_extractor import ExceptionExtractor
     from graph.relationship_extractors.import_extractor import ImportExtractor
     from graph.relationship_extractors.inheritance_extractor import InheritanceExtractor
+    from graph.relationship_extractors.instantiation_extractor import (
+        InstantiationExtractor,
+    )
     from graph.relationship_extractors.type_extractor import TypeAnnotationExtractor
 
     CALL_GRAPH_AVAILABLE = True
@@ -182,9 +187,14 @@ class MultiLanguageChunker:
         self.relationship_extractors = []
         try:
             self.relationship_extractors = [
+                # Priority 1 (Foundation)
                 InheritanceExtractor(),
                 TypeAnnotationExtractor(),
                 ImportExtractor(),
+                # Priority 2 (Core)
+                DecoratorExtractor(),
+                ExceptionExtractor(),
+                InstantiationExtractor(),
             ]
             logger.info(
                 f"Phase 3: Initialized {len(self.relationship_extractors)} relationship extractors"

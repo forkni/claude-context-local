@@ -23,7 +23,21 @@ the extract() method to find relationships in Python code.
 """
 
 from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
+from graph.relationship_extractors.decorator_extractor import DecoratorExtractor
+from graph.relationship_extractors.exception_extractor import ExceptionExtractor
+from graph.relationship_extractors.import_extractor import ImportExtractor
+from graph.relationship_extractors.inheritance_extractor import InheritanceExtractor
+from graph.relationship_extractors.instantiation_extractor import InstantiationExtractor
+from graph.relationship_extractors.type_extractor import TypeAnnotationExtractor
 
 __all__ = [
     "BaseRelationshipExtractor",
+    # Priority 1 (Foundation)
+    "InheritanceExtractor",
+    "TypeAnnotationExtractor",
+    "ImportExtractor",
+    # Priority 2 (Core)
+    "DecoratorExtractor",
+    "ExceptionExtractor",
+    "InstantiationExtractor",
 ]

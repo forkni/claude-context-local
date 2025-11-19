@@ -8,6 +8,12 @@ REM   --non-interactive: Skip all prompts, use sensible defaults (for automation
 
 setlocal enabledelayedexpansion
 
+REM Change to project root (two levels up from scripts\git\)
+pushd "%~dp0..\.." || (
+    echo ERROR: Cannot find project root
+    exit /b 1
+)
+
 REM ========================================
 REM Parse Command Line Arguments
 REM ========================================
@@ -79,7 +85,7 @@ if %HAS_UNSTAGED% EQU 0 (
     if %HAS_STAGED% EQU 0 (
         echo ⚠ No changes to commit
         echo Working directory is clean
-        exit /b 0
+        popd && exit /b 0
     )
 )
 
@@ -103,7 +109,7 @@ if %HAS_UNSTAGED% NEQ 0 (
             echo Please stage changes manually:
             echo   git add ^<files^>
             echo Then run this script again
-            exit /b 1
+            popd && exit /b 1
         )
     )
 ) else (
@@ -144,7 +150,7 @@ if %ERRORLEVEL% EQU 0 (
 if !FOUND_LOCAL_FILES! EQU 1 (
     echo.
     echo Please remove these files from staging
-    exit /b 1
+    popd && exit /b 1
 )
 
 REM Branch-specific validations
@@ -160,7 +166,7 @@ if "!CURRENT_BRANCH!" == "main" (
         echo Staged test files:
         git diff --cached --name-only | findstr "^tests/"
         echo.
-        exit /b 1
+        popd && exit /b 1
     )
 
     REM Check for pytest.ini
@@ -168,7 +174,7 @@ if "!CURRENT_BRANCH!" == "main" (
     if %ERRORLEVEL% EQU 0 (
         echo ✗ ERROR: pytest.ini staged on main branch
         echo This file should only be on development branch
-        exit /b 1
+        popd && exit /b 1
     )
 
     REM Check for development-only docs
@@ -176,7 +182,7 @@ if "!CURRENT_BRANCH!" == "main" (
     if %ERRORLEVEL% EQU 0 (
         echo ✗ ERROR: TESTING_GUIDE.md staged on main branch
         echo This doc should only be on development branch
-        exit /b 1
+        popd && exit /b 1
     )
 
     echo ✓ No development-only files detected
@@ -226,7 +232,7 @@ if %PYTHON_LINT_ERROR% EQU 1 (
         call .venv\Scripts\ruff.exe check . >nul 2>&1
         if %ERRORLEVEL% NEQ 0 (
             echo ✗ Python lint errors remain after auto-fix
-            exit /b 1
+            popd && exit /b 1
         )
     ) else (
         set /p FIX_LINT="Auto-fix Python lint issues? (yes/no): "
@@ -245,7 +251,7 @@ if %PYTHON_LINT_ERROR% EQU 1 (
             set /p CONTINUE_ANYWAY="Continue commit with Python lint errors? (yes/no): "
             if /i not "!CONTINUE_ANYWAY!" == "yes" (
                 echo Commit cancelled - fix Python lint errors first
-                exit /b 1
+                popd && exit /b 1
             )
         )
     )
@@ -288,7 +294,7 @@ if "%COMMIT_MSG_PARAM%"=="" (
     echo.
     echo Example: commit_enhanced.bat "feat: Add semantic search caching"
     echo Example: commit_enhanced.bat --non-interactive "feat: Add semantic search caching"
-    exit /b 1
+    popd && exit /b 1
 )
 
 set COMMIT_MSG=%COMMIT_MSG_PARAM%
@@ -305,7 +311,7 @@ if %ERRORLEVEL% NEQ 0 (
         set /p CONTINUE="Continue anyway? (yes/no): "
         if /i not "!CONTINUE!" == "yes" (
             echo Commit cancelled
-            exit /b 0
+            popd && exit /b 0
         )
     )
 )
@@ -332,13 +338,13 @@ if %NON_INTERACTIVE% EQU 1 (
         echo.
         echo Switch to the correct branch first, then run this script again
         echo Command: git checkout ^<branch-name^>
-        exit /b 0
+        popd && exit /b 0
     )
     echo.
     set /p CONFIRM="Proceed with commit? (yes/no): "
     if /i not "!CONFIRM!" == "yes" (
         echo Commit cancelled
-        exit /b 0
+        popd && exit /b 0
     )
 )
 
@@ -370,14 +376,14 @@ if %ERRORLEVEL% EQU 0 (
 ) else (
     echo.
     echo ✗ Commit failed - check output above
-    exit /b 1
+    popd && exit /b 1
 )
 
 REM Generate analysis report
 call :GenerateAnalysisReport
 
 endlocal
-exit /b 0
+popd && exit /b 0
 
 REM ========================================
 REM Helper Functions
