@@ -4,8 +4,8 @@ REM MCP Server Launcher - Interactive menu for double-click usage
 title Claude Context MCP Server Launcher
 
 REM Get the current directory where the batch file is located
-set PROJECT_DIR=%~dp0
-if "%PROJECT_DIR:~-1%"=="\" set PROJECT_DIR=%PROJECT_DIR:~0,-1%
+set "PROJECT_DIR=%~dp0"
+if "%PROJECT_DIR:~-1%"=="\" set "PROJECT_DIR=%PROJECT_DIR:~0,-1%"
 cd /d "%PROJECT_DIR%"
 
 echo === Claude Context MCP Server Launcher ===
@@ -137,7 +137,7 @@ if not exist ".venv\Scripts\python.exe" (
 
 REM Start the MCP server with stdio
 .\.venv\Scripts\python.exe -m mcp_server.server --transport stdio
-set SERVER_EXIT_CODE=!ERRORLEVEL!
+set "SERVER_EXIT_CODE=!ERRORLEVEL!"
 
 echo.
 if "!SERVER_EXIT_CODE!"=="0" (
@@ -358,9 +358,9 @@ echo.
 echo === Project Management ===
 echo.
 REM Check if multi-model mode is enabled
-set MULTI_MODEL_STATUS=Disabled
-if "%CLAUDE_MULTI_MODEL_ENABLED%"=="true" set MULTI_MODEL_STATUS=Enabled
-if "%CLAUDE_MULTI_MODEL_ENABLED%"=="1" set MULTI_MODEL_STATUS=Enabled
+set "MULTI_MODEL_STATUS=Disabled"
+if "%CLAUDE_MULTI_MODEL_ENABLED%"=="true" set "MULTI_MODEL_STATUS=Enabled"
+if "%CLAUDE_MULTI_MODEL_ENABLED%"=="1" set "MULTI_MODEL_STATUS=Enabled"
 
 echo [Multi-Model Mode: %MULTI_MODEL_STATUS%]
 echo.
@@ -547,7 +547,7 @@ echo === Clear Project Indexes ===
 echo.
 
 REM Get list of projects and store in temp file
-set TEMP_PROJECTS=%TEMP%\mcp_projects.txt
+set "TEMP_PROJECTS=%TEMP%\mcp_projects.txt"
 .\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; from pathlib import Path; import json; storage = get_storage_dir(); projects = list((storage / 'projects').glob('*/project_info.json')); [print(f'{i+1}|{json.load(open(p))[\"project_name\"]}|{json.load(open(p))[\"project_path\"]}|{p.parent.name}') for i, p in enumerate(projects)]" > "%TEMP_PROJECTS%" 2>nul
 
 REM Check if any projects exist
@@ -588,14 +588,14 @@ if "%project_choice%"=="0" (
 )
 
 REM Find the selected project
-set PROJECT_HASH=
-set PROJECT_NAME=
-set PROJECT_PATH=
+set "PROJECT_HASH="
+set "PROJECT_NAME="
+set "PROJECT_PATH="
 for /f "tokens=1,2,3,4 delims=|" %%a in (%TEMP_PROJECTS%) do (
     if "%%a"=="%project_choice%" (
-        set PROJECT_NAME=%%b
-        set PROJECT_PATH=%%c
-        set PROJECT_HASH=%%d
+        set "PROJECT_NAME=%%b"
+        set "PROJECT_PATH=%%c"
+        set "PROJECT_HASH=%%d"
     )
 )
 
@@ -634,7 +634,7 @@ echo.
 
 REM Clear the index directory with DB cleanup
 .\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; import shutil, time, gc; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; gc.collect(); time.sleep(0.5); shutil.rmtree(project_dir, ignore_errors=False) if project_dir.exists() else None; print('Index: cleared')"
-set INDEX_RESULT=!ERRORLEVEL!
+set "INDEX_RESULT=!ERRORLEVEL!"
 
 REM Handle locked files
 if "!INDEX_RESULT!" neq "0" (
@@ -649,17 +649,17 @@ if "!INDEX_RESULT!" neq "0" (
 
         if exist "%USERPROFILE%\.claude_code_search\projects\%PROJECT_HASH%" (
             echo [WARNING] Force cleanup partially successful
-            set INDEX_RESULT=1
+            set "INDEX_RESULT=1"
         ) else (
             echo [OK] Force cleanup successful
-            set INDEX_RESULT=0
+            set "INDEX_RESULT=0"
         )
     )
 )
 
 REM Clear the Merkle snapshots (all dimensions)
 .\.venv\Scripts\python.exe -c "from merkle.snapshot_manager import SnapshotManager; sm = SnapshotManager(); deleted = sm.delete_all_snapshots(r'%PROJECT_PATH%'); print(f'Snapshots: cleared {deleted} files')" 2>&1
-set SNAPSHOT_RESULT=!ERRORLEVEL!
+set "SNAPSHOT_RESULT=!ERRORLEVEL!"
 
 echo.
 REM Report results
@@ -733,9 +733,9 @@ goto menu_restart
 :verify_install
 echo.
 echo [INFO] Running installation verification...
-set VERIFY_PERSISTENT_MODE=1
+set "VERIFY_PERSISTENT_MODE=1"
 call verify-installation.bat
-set VERIFY_PERSISTENT_MODE=
+set "VERIFY_PERSISTENT_MODE="
 goto menu_restart
 
 :configure_claude
@@ -793,16 +793,16 @@ if not defined mode_choice goto search_config_menu
 if "!mode_choice!"=="" goto search_config_menu
 if "!mode_choice!"=="0" goto search_config_menu
 
-set SEARCH_MODE=
-if "!mode_choice!"=="1" set SEARCH_MODE=hybrid
-if "!mode_choice!"=="2" set SEARCH_MODE=semantic
-if "!mode_choice!"=="3" set SEARCH_MODE=bm25
-if "!mode_choice!"=="4" set SEARCH_MODE=auto
+set "SEARCH_MODE="
+if "!mode_choice!"=="1" set "SEARCH_MODE=hybrid"
+if "!mode_choice!"=="2" set "SEARCH_MODE=semantic"
+if "!mode_choice!"=="3" set "SEARCH_MODE=bm25"
+if "!mode_choice!"=="4" set "SEARCH_MODE=auto"
 
 if defined SEARCH_MODE (
     echo [INFO] Setting search mode to: !SEARCH_MODE!
     REM Here you would call a configuration script or set environment variable
-    set CLAUDE_SEARCH_MODE=!SEARCH_MODE!
+    set "CLAUDE_SEARCH_MODE=!SEARCH_MODE!"
     echo [OK] Search mode updated for this session
 ) else (
     echo [ERROR] Invalid choice
@@ -829,8 +829,8 @@ if not defined dense_weight goto search_config_menu
 if "!dense_weight!"=="" goto search_config_menu
 
 echo [INFO] Weights set - BM25: %bm25_weight%, Dense: %dense_weight%
-set CLAUDE_BM25_WEIGHT=%bm25_weight%
-set CLAUDE_DENSE_WEIGHT=%dense_weight%
+set "CLAUDE_BM25_WEIGHT=%bm25_weight%"
+set "CLAUDE_DENSE_WEIGHT=%dense_weight%"
 echo [OK] Configuration saved for current session
 pause
 goto search_config_menu
@@ -873,13 +873,13 @@ if not defined model_choice goto search_config_menu
 if "!model_choice!"=="" goto search_config_menu
 if "!model_choice!"=="0" goto search_config_menu
 
-set SELECTED_MODEL=
-if "!model_choice!"=="1" set SELECTED_MODEL=BAAI/bge-m3
-if "!model_choice!"=="2" set SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B
-if "!model_choice!"=="3" set SELECTED_MODEL=google/embeddinggemma-300m
+set "SELECTED_MODEL="
+if "!model_choice!"=="1" set "SELECTED_MODEL=BAAI/bge-m3"
+if "!model_choice!"=="2" set "SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B"
+if "!model_choice!"=="3" set "SELECTED_MODEL=google/embeddinggemma-300m"
 if "!model_choice!"=="4" goto enable_multi_model
 if "!model_choice!"=="5" (
-    set /p SELECTED_MODEL="Enter model name or path: "
+    set /p "SELECTED_MODEL=Enter model name or path: "
 )
 
 if defined SELECTED_MODEL (
@@ -967,10 +967,10 @@ if "!model_choice!"=="" goto menu_restart
 if "!model_choice!"=="0" goto menu_restart
 
 REM Map choices to model names
-set SELECTED_MODEL=
-if "!model_choice!"=="1" set SELECTED_MODEL=BAAI/bge-m3
-if "!model_choice!"=="2" set SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B
-if "!model_choice!"=="3" set SELECTED_MODEL=google/embeddinggemma-300m
+set "SELECTED_MODEL="
+if "!model_choice!"=="1" set "SELECTED_MODEL=BAAI/bge-m3"
+if "!model_choice!"=="2" set "SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B"
+if "!model_choice!"=="3" set "SELECTED_MODEL=google/embeddinggemma-300m"
 
 REM Handle multi-model option
 if /i "!model_choice!"=="M" goto enable_multi_model
@@ -1016,10 +1016,10 @@ echo   - Search Mode: hybrid
 echo   - BM25 Weight: 0.4
 echo   - Dense Weight: 0.6
 echo   - GPU: auto
-set CLAUDE_SEARCH_MODE=hybrid
-set CLAUDE_BM25_WEIGHT=0.4
-set CLAUDE_DENSE_WEIGHT=0.6
-set CLAUDE_ENABLE_HYBRID=true
+set "CLAUDE_SEARCH_MODE=hybrid"
+set "CLAUDE_BM25_WEIGHT=0.4"
+set "CLAUDE_DENSE_WEIGHT=0.6"
+set "CLAUDE_ENABLE_HYBRID=true"
 echo [OK] Configuration reset
 pause
 goto search_config_menu
@@ -1095,8 +1095,8 @@ goto menu_restart
 :force_cpu_mode
 echo.
 echo [INFO] Forcing CPU-only mode for this session...
-set CUDA_VISIBLE_DEVICES=
-set FORCE_CPU_MODE=1
+set "CUDA_VISIBLE_DEVICES="
+set "FORCE_CPU_MODE=1"
 echo [OK] CPU-only mode enabled
 echo [INFO] Starting MCP server in CPU-only mode...
 .\.venv\Scripts\python.exe -m mcp_server.server
@@ -1228,10 +1228,10 @@ REM Usage: call :select_indexed_project "action description"
 REM Sets: SELECTED_PROJECT_PATH, SELECTED_PROJECT_NAME, SELECTED_PROJECT_MODELS
 REM Returns: errorlevel 0 on success, 1 on cancel
 
-set ACTION_DESC=%~1
+set "ACTION_DESC=%~1"
 
 REM Get grouped project list
-set TEMP_PROJECTS=%TEMP%\mcp_projects_select_grouped.txt
+set "TEMP_PROJECTS=%TEMP%\mcp_projects_select_grouped.txt"
 .\.venv\Scripts\python.exe scripts\list_projects_parseable.py > "%TEMP_PROJECTS%" 2>nul
 
 REM Check if any projects exist
@@ -1272,14 +1272,14 @@ if "%project_choice%"=="0" (
 )
 
 REM Find selected project
-set SELECTED_PROJECT_NAME=
-set SELECTED_PROJECT_PATH=
-set SELECTED_PROJECT_MODELS=
+set "SELECTED_PROJECT_NAME="
+set "SELECTED_PROJECT_PATH="
+set "SELECTED_PROJECT_MODELS="
 for /f "tokens=1,2,3,4 delims=|" %%a in (%TEMP_PROJECTS%) do (
     if "%%a"=="%project_choice%" (
-        set SELECTED_PROJECT_NAME=%%b
-        set SELECTED_PROJECT_PATH=%%c
-        set SELECTED_PROJECT_MODELS=%%d
+        set "SELECTED_PROJECT_NAME=%%b"
+        set "SELECTED_PROJECT_PATH=%%c"
+        set "SELECTED_PROJECT_MODELS=%%d"
     )
 )
 

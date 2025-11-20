@@ -8,7 +8,7 @@ echo HuggingFace Authentication Verification
 echo =================================================
 
 REM Set project directory to current location
-set PROJECT_DIR=%~dp0
+set "PROJECT_DIR=%~dp0"
 cd /d "%PROJECT_DIR%"
 
 REM Check if virtual environment exists

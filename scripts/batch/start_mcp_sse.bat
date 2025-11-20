@@ -18,8 +18,8 @@ echo.
 cd /d "%~dp0..\.."
 
 REM Set environment variables
-set PYTHONPATH=%~dp0..\..
-set PYTHONUNBUFFERED=1
+set "PYTHONPATH=%~dp0..\..\"
+set "PYTHONUNBUFFERED=1"
 REM set MCP_DEBUG=1  (removed for clean logging)
 
 REM Silent validation - only show errors
@@ -36,7 +36,7 @@ REM Start the server
 "%~dp0..\..\.venv\Scripts\python.exe" -m mcp_server.server --transport sse --host localhost --port 8765
 
 REM Capture exit code immediately (using delayed expansion syntax)
-set EXIT_CODE=!errorlevel!
+set "EXIT_CODE=!errorlevel!"
 
 REM Always show exit status
 echo.

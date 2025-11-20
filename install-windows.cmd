@@ -9,7 +9,7 @@ echo Unified Installation with Smart CUDA Detection
 echo =================================================
 
 REM Set project directory to current location
-set PROJECT_DIR=%~dp0
+set "PROJECT_DIR=%~dp0"
 cd /d "%PROJECT_DIR%"
 
 echo Step 1: System Detection...
@@ -186,12 +186,12 @@ goto menu
 REM Functions
 
 :detect_cuda
-set CUDA_AVAILABLE=0
-set CUDA_VERSION=
-set GPU_NAME=
-set PYTORCH_INDEX=
-set CUDA_INSTALLED_VERSION=
-set CUDA_DRIVER_VERSION=
+set "CUDA_AVAILABLE=0"
+set "CUDA_VERSION="
+set "GPU_NAME="
+set "PYTORCH_INDEX="
+set "CUDA_INSTALLED_VERSION="
+set "CUDA_DRIVER_VERSION="
 
 echo [INFO] Checking for NVIDIA GPU and CUDA installation...
 
@@ -310,7 +310,7 @@ if "!CUDA_INSTALLED_VERSION!"=="" (
 )
 
 echo [OK] CUDA Toolkit !CUDA_INSTALLED_VERSION! installed
-set CUDA_FULL=!CUDA_INSTALLED_VERSION!
+set "CUDA_FULL=!CUDA_INSTALLED_VERSION!"
 goto :eof
 
 :check_cuda_path
@@ -383,7 +383,7 @@ call :install_remaining_deps
 goto :eof
 
 :install_with_index
-set INDEX_URL=%~1
+set "INDEX_URL=%~1"
 .venv\Scripts\uv.exe pip install torch torchvision torchaudio --index-url %INDEX_URL%
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] PyTorch installation failed with index %INDEX_URL%
@@ -627,7 +627,7 @@ if "!hf_token!"=="" (
 
 REM Validate and test the token
 echo [INFO] Testing provided token...
-set HF_TOKEN=!hf_token!
+set "HF_TOKEN=!hf_token!"
 .venv\Scripts\python.exe -c "import os; from huggingface_hub import login, whoami; login(token=os.environ.get('HF_TOKEN'), add_to_git_credential=False); info = whoami(); print('[OK] Authentication successful! User:', info['name'])"
 
 if %ERRORLEVEL% neq 0 (

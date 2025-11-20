@@ -16,8 +16,8 @@ cd /d "%~dp0..\.."
 
 REM Check for port conflicts
 echo [Pre-flight] Checking port availability...
-set PORT_8765_IN_USE=0
-set PORT_8766_IN_USE=0
+set "PORT_8765_IN_USE=0"
+set "PORT_8766_IN_USE=0"
 
 netstat -ano | findstr :8765 >nul 2>&1
 if !errorlevel! equ 0 set PORT_8765_IN_USE=1
@@ -92,8 +92,8 @@ echo [Verification] Checking server startup status...
 timeout /t 5 /nobreak >nul
 
 REM Verify both servers are running
-set SERVER_8765_RUNNING=0
-set SERVER_8766_RUNNING=0
+set "SERVER_8765_RUNNING=0"
+set "SERVER_8766_RUNNING=0"
 
 netstat -ano | findstr :8765 >nul 2>&1
 if !errorlevel! equ 0 set SERVER_8765_RUNNING=1
