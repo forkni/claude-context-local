@@ -226,7 +226,7 @@ class Processor:
         # Test the full class - assignments are tracked across the class
         chunk_metadata = {
             "chunk_id": "test.py:1-8:class:Processor",
-            "parent_class": "Processor"
+            "parent_class": "Processor",
         }
 
         calls = self.extractor.extract_calls(code, chunk_metadata)
@@ -247,7 +247,7 @@ class Factory:
 """
         chunk_metadata = {
             "chunk_id": "test.py:1-6:method:Factory.create",
-            "parent_class": "Factory"
+            "parent_class": "Factory",
         }
         calls = self.extractor.extract_calls(code, chunk_metadata)
 
@@ -369,7 +369,7 @@ class MyClass:
 """
         chunk_metadata = {
             "chunk_id": "test.py:1-7:class:MyClass",
-            "parent_class": "MyClass"
+            "parent_class": "MyClass",
         }
         calls = self.extractor.extract_calls(code, chunk_metadata)
 
@@ -513,7 +513,7 @@ class MyClass:
 """
         chunk_metadata = {
             "chunk_id": "test.py:1-4:method:MyClass.process",
-            "parent_class": "MyClass"
+            "parent_class": "MyClass",
         }
         calls = self.extractor.extract_calls(code, chunk_metadata)
 
@@ -534,7 +534,7 @@ class Processor:
 """
         chunk_metadata = {
             "chunk_id": "test.py:1-7:method:Processor.process",
-            "parent_class": "Processor"
+            "parent_class": "Processor",
         }
         calls = self.extractor.extract_calls(code, chunk_metadata)
 
@@ -556,7 +556,7 @@ class MyClass:
 """
         chunk_metadata = {
             "chunk_id": "test.py:1-4:method:MyClass.process",
-            "parent_class": "MyClass"
+            "parent_class": "MyClass",
         }
         calls = self.extractor.extract_calls(code, chunk_metadata)
 

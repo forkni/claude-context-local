@@ -11,7 +11,7 @@ This modular reference can be embedded in any project instructions for Claude Co
 | Tool | Priority | Purpose | Parameters |
 |------|----------|---------|------------|
 | **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=5, search_mode="auto", model_key, use_routing=True, file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5 |
-| **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (~85-90% accuracy with assignment tracking) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs |
+| **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (~90% accuracy with import resolution) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs |
 | **index_directory** | 🔴 **SETUP** | Index project (multi-model support) | directory_path (required), project_name, incremental=True, multi_model=auto |
 | find_similar_code | Secondary | Find alternative implementations | chunk_id (required), k=5 |
 | configure_search_mode | Config | Set search mode & weights | search_mode="hybrid", bm25_weight=0.4, dense_weight=0.6, enable_parallel=True |
@@ -317,10 +317,12 @@ search_code("error handling exception try except", model_key="qwen3")
 
 **Purpose**: Understand code impact before refactoring/modification.
 
-**Accuracy**: ~85-90% for Python method calls with call graph resolution:
+**Accuracy**: ~90% for Python method calls with call graph resolution:
+
 - Phase 1: Self/super calls (v0.5.12)
 - Phase 2: Type annotations (v0.5.13)
 - Phase 3: Assignment tracking (v0.5.14)
+- Phase 4: Import resolution (v0.5.15)
 
 **Examples**:
 
@@ -523,6 +525,8 @@ search_code("error handling exception try except", model_key="qwen3")
 |---------|---------|----------|
 | v0.5.12 | Qualified chunk_ids + self/super resolution | ~70% |
 | v0.5.13 | + Type annotation resolution | ~80% |
+| v0.5.14 | + Assignment tracking | ~85-90% |
+| v0.5.15 | + Import resolution | ~90% |
 
 **Qualified Chunk IDs for Methods**:
 

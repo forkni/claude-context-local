@@ -11,6 +11,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.15] - 2025-11-19
+
+### Added
+
+- **Phase 4: Import-Based Resolution** - Complete call graph resolution system (~90% accuracy)
+  - Import tracking: `from x import Y; y = Y(); y.method()` → `Y.method`
+  - Alias resolution: `from x import Y as Z` → resolves Z to Y
+  - Relative imports: `from . import helper` → `.helper`
+  - File-level import caching for performance
+  - New methods: `_extract_imports()`, `_read_file_imports()`
+  - **Re-indexing required** for projects indexed before this version
+
+- **Comprehensive Test Suite** - 37 new tests for Phase 4
+  - Unit tests: 26 tests in `tests/unit/test_import_resolution.py`
+  - Integration tests: 11 tests in `tests/integration/test_import_resolution_integration.py`
+  - All 126 tests passing (100% success rate)
+
+### Changed
+
+- **Call Graph Resolution Accuracy** - Improved from ~85% to ~90%
+  - Complete resolution priority chain: self/super > annotations > assignments > imports
+  - Qualified chunk_ids for methods: `"file.py:1-10:method:ClassName.method"`
+
+### Documentation
+
+- Updated ADVANCED_FEATURES_GUIDE.md with Phase 4 section
+- Updated MCP_TOOLS_REFERENCE.md with ~90% accuracy claims
+- Updated VERSION_HISTORY.md with v0.5.15 entry
+- Updated CLAUDE.md to version 0.5.15
+
+---
+
+## [0.5.14] - 2025-11-19
+
+### Added
+
+- **Phase 3: Assignment Tracking** - Local variable type inference
+  - Tracks constructor assignments: `result = MyClass()` → type is `MyClass`
+  - Resolves subsequent calls: `result.method()` → `MyClass.method`
+  - Supports walrus operator (named expressions)
+  - 27 unit tests for assignment tracking
+
+---
+
+## [0.5.13] - 2025-11-19
+
+### Added
+
+- **Phase 2: Type Annotation Resolution** - Parameter type inference
+  - Resolves type-annotated parameters: `def foo(client: HttpClient):`
+  - Tracks calls through annotations: `client.get()` → `HttpClient.get`
+  - 16 unit tests for type annotation resolution
+
+---
+
+## [0.5.12] - 2025-11-19
+
+### Added
+
+- **Phase 1: Self/Super Resolution** - Method context inference
+  - Resolves `self.method()` calls to `ClassName.method`
+  - Resolves `super().method()` calls to parent class
+  - Qualified chunk_ids for methods with class context
+  - 19 unit tests for self/super resolution
+
+---
+
+## [0.5.11] - 2025-11-18
+
+### Fixed
+
+- **Priority 2 Relationships** - Type annotation and decorator extractors
+- **Path Normalization** - Consistent path handling across Windows/Linux
+
+---
+
+## [0.5.8-0.5.10] - 2025-11-18
+
+### Fixed
+
+- Various bug fixes and stability improvements
+- Git workflow enhancements
+- Documentation updates
+
+---
+
 ## [0.5.7] - 2025-11-18
 
 ### Fixed
@@ -610,6 +696,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **v0.5.15** - Phase 4: Import-Based Resolution (~90% accuracy) (2025-11-19)
+- **v0.5.14** - Phase 3: Assignment Tracking (2025-11-19)
+- **v0.5.13** - Phase 2: Type Annotation Resolution (2025-11-19)
+- **v0.5.12** - Phase 1: Self/Super Resolution (2025-11-19)
+- **v0.5.11** - Priority 2 relationships + path normalization (2025-11-18)
 - **v0.5.7** - Bug fixes, performance improvements & documentation (2025-11-18)
 - **v0.5.6** - Phase 3 complete type coverage (2025-11-17)
 - **v0.5.5** - Low-level MCP SDK migration, natural query routing support (2025-11-13)

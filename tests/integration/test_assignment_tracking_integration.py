@@ -29,7 +29,7 @@ class TestAssignmentTrackingIntegration:
 
     def test_chunking_and_call_extraction_with_assignments(self):
         """Test full pipeline with assignment-based resolution."""
-        code = '''
+        code = """
 class ErrorHandler:
     def handle(self):
         return "handled"
@@ -37,7 +37,7 @@ class ErrorHandler:
 def process_errors():
     handler = ErrorHandler()
     handler.handle()
-'''
+"""
         # Write to file
         test_file = Path(self.test_dir) / "test_module.py"
         test_file.write_text(code)
@@ -57,7 +57,7 @@ def process_errors():
         # Extract calls from the function
         chunk_metadata = {
             "chunk_id": func_chunk.chunk_id,
-            "parent_class": None  # standalone function
+            "parent_class": None,  # standalone function
         }
         calls = self.extractor.extract_calls(func_chunk.content, chunk_metadata)
 
@@ -73,7 +73,7 @@ def process_errors():
             chunk_id=target_id,
             name="ErrorHandler.handle",
             chunk_type="method",
-            file_path="module.py"
+            file_path="module.py",
         )
 
         # Add caller node
@@ -82,14 +82,14 @@ def process_errors():
             chunk_id=caller_id,
             name="process_errors",
             chunk_type="function",
-            file_path="module.py"
+            file_path="module.py",
         )
 
         # Add call edge with qualified name (as Phase 3 would produce)
         self.graph.add_call_edge(
             caller_id,
             "ErrorHandler.handle",  # Qualified name from assignment tracking
-            line_number=25
+            line_number=25,
         )
 
         # Query callers
@@ -99,7 +99,7 @@ def process_errors():
 
     def test_no_false_positives_multiple_classes(self):
         """Test assignments don't create false positives."""
-        code = '''
+        code = """
 class DataHandler:
     def handle(self):
         return "data"
@@ -115,7 +115,7 @@ def process_data():
 def process_errors():
     handler = ErrorHandler()
     return handler.handle()
-'''
+"""
         # Write to file
         test_file = Path(self.test_dir) / "handlers.py"
         test_file.write_text(code)
@@ -138,7 +138,7 @@ def process_errors():
         # Extract calls from process_data
         data_metadata = {
             "chunk_id": data_func.chunk_id,
-            "parent_class": None  # standalone function
+            "parent_class": None,  # standalone function
         }
         data_calls = self.extractor.extract_calls(data_func.content, data_metadata)
         data_callee_names = {c.callee_name for c in data_calls}
@@ -146,7 +146,7 @@ def process_errors():
         # Extract calls from process_errors
         error_metadata = {
             "chunk_id": error_func.chunk_id,
-            "parent_class": None  # standalone function
+            "parent_class": None,  # standalone function
         }
         error_calls = self.extractor.extract_calls(error_func.content, error_metadata)
         error_callee_names = {c.callee_name for c in error_calls}
@@ -168,10 +168,10 @@ class TestBackwardCompatibility:
 
     def test_unannotated_unassigned_falls_back(self):
         """Test code without annotations or assignments still works."""
-        code = '''
+        code = """
 def process(obj):
     obj.handle()
-'''
+"""
         chunk_metadata = {"chunk_id": "test.py:1-3:function:process"}
         calls = self.extractor.extract_calls(code, chunk_metadata)
 
@@ -182,15 +182,15 @@ def process(obj):
 
     def test_existing_phase1_still_works(self):
         """Test self/super calls still resolve correctly."""
-        code = '''
+        code = """
 class MyClass(BaseClass):
     def method(self):
         self.helper()
         super().base_method()
-'''
+"""
         chunk_metadata = {
             "chunk_id": "test.py:1-5:method:MyClass.method",
-            "parent_class": "MyClass"
+            "parent_class": "MyClass",
         }
         calls = self.extractor.extract_calls(code, chunk_metadata)
 
@@ -200,10 +200,10 @@ class MyClass(BaseClass):
 
     def test_existing_phase2_still_works(self):
         """Test parameter annotations still resolve correctly."""
-        code = '''
+        code = """
 def process(handler: ErrorHandler):
     handler.handle()
-'''
+"""
         chunk_metadata = {"chunk_id": "test.py:1-3:function:process"}
         calls = self.extractor.extract_calls(code, chunk_metadata)
 
@@ -221,7 +221,7 @@ class TestRealWorldPatterns:
 
     def test_dependency_injection_pattern(self):
         """Test DI pattern with constructor assignments."""
-        code = '''
+        code = """
 class Service:
     def __init__(self):
         self.repo = UserRepository()
@@ -234,10 +234,10 @@ class Service:
         user = self.repo.find(id)
         self.cache.set(id, user)
         return user
-'''
+"""
         chunk_metadata = {
             "chunk_id": "test.py:1-13:class:Service",
-            "parent_class": "Service"
+            "parent_class": "Service",
         }
         calls = self.extractor.extract_calls(code, chunk_metadata)
 
@@ -250,12 +250,12 @@ class Service:
 
     def test_factory_pattern_partial_resolution(self):
         """Test factory pattern - constructor resolves, factory result doesn't."""
-        code = '''
+        code = """
 def process():
     factory = HandlerFactory()
     handler = factory.create()
     handler.handle()
-'''
+"""
         chunk_metadata = {"chunk_id": "test.py:1-5:function:process"}
         calls = self.extractor.extract_calls(code, chunk_metadata)
 
@@ -273,12 +273,12 @@ def process():
 
     def test_context_manager_pattern(self):
         """Test context manager pattern resolution."""
-        code = '''
+        code = """
 def process_file():
     with DatabaseConnection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT 1")
-'''
+"""
         chunk_metadata = {"chunk_id": "test.py:1-5:function:process_file"}
         calls = self.extractor.extract_calls(code, chunk_metadata)
 
@@ -307,7 +307,7 @@ class TestAllPhasesCombined:
 
     def test_all_phases_in_single_file(self):
         """Test Phase 1, 2, and 3 all work together in one file."""
-        code = '''
+        code = """
 class BaseProcessor:
     def base_process(self):
         pass
@@ -335,7 +335,7 @@ class Processor(BaseProcessor):
 
     def helper(self):
         pass
-'''
+"""
         # Write to file
         test_file = Path(self.test_dir) / "processor.py"
         test_file.write_text(code)
@@ -357,28 +357,40 @@ class Processor(BaseProcessor):
                     process_chunk = chunk
                     break
 
-        assert process_chunk is not None, f"process method chunk not found. Available chunks: {[c.name for c in chunks]}"
+        assert (
+            process_chunk is not None
+        ), f"process method chunk not found. Available chunks: {[c.name for c in chunks]}"
 
         # Extract calls
         chunk_metadata = {
             "chunk_id": process_chunk.chunk_id,
-            "parent_class": "Processor"
+            "parent_class": "Processor",
         }
         calls = self.extractor.extract_calls(process_chunk.content, chunk_metadata)
 
         callee_names = {c.callee_name for c in calls}
 
         # Phase 1 checks
-        assert "Processor.helper" in callee_names, f"self.helper() not resolved. Got: {callee_names}"
+        assert (
+            "Processor.helper" in callee_names
+        ), f"self.helper() not resolved. Got: {callee_names}"
         # Note: super() without class hierarchy in chunk resolves to "super.base_process"
-        assert "super.base_process" in callee_names, f"super().base_process() not resolved. Got: {callee_names}"
+        assert (
+            "super.base_process" in callee_names
+        ), f"super().base_process() not resolved. Got: {callee_names}"
 
         # Phase 2 check
-        assert "Validator.validate" in callee_names, f"validator.validate() not resolved. Got: {callee_names}"
+        assert (
+            "Validator.validate" in callee_names
+        ), f"validator.validate() not resolved. Got: {callee_names}"
 
         # Phase 3 checks
-        assert "DataFormatter.format" in callee_names, f"formatter.format() not resolved. Got: {callee_names}"
+        assert (
+            "DataFormatter.format" in callee_names
+        ), f"formatter.format() not resolved. Got: {callee_names}"
         # Note: self.handler.handle() needs __init__ to be in same chunk
         # When extracting just the method chunk, self.handler assignment isn't visible
         # So it falls back to bare "handle"
-        assert "handle" in callee_names, f"self.handler.handle() not resolved. Got: {callee_names}"
+        assert (
+            "handle" in callee_names
+        ), f"self.handler.handle() not resolved. Got: {callee_names}"

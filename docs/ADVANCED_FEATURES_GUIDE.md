@@ -1248,7 +1248,8 @@ Call graph resolution improves the accuracy of `find_connections` by correctly i
 | v0.5.11 | None | ~50% | Basic function calls only |
 | v0.5.12 | Self/super + qualified IDs | ~70% | + Method calls within classes |
 | v0.5.13 | + Type annotations | ~80% | + Typed parameter method calls |
-| v0.5.14+ | + Assignment tracking | ~90% | + Local variable method calls |
+| v0.5.14 | + Assignment tracking | ~85-90% | + Local variable method calls |
+| v0.5.15 | + Import resolution | ~90% | + Imported class method calls |
 
 ### Phase 1: Qualified Chunk IDs (v0.5.12)
 
@@ -1363,6 +1364,49 @@ class Service:
 
 **Coverage**: ~85-90% of method calls correctly resolved (combined with Phases 1 & 2)
 
+### Phase 4: Import Resolution (v0.5.15)
+
+**What It Does**: Tracks imports to resolve method calls on imported classes:
+
+```python
+from handlers import ErrorHandler
+from utils import Logger as L
+
+def process():
+    handler = ErrorHandler()      # Import tracking + assignment
+    handler.handle()              # → "ErrorHandler.handle"
+
+    L.configure()                 # Aliased import
+    # → "Logger.configure" (resolves alias to original)
+```
+
+**Supported Import Patterns**:
+
+| Pattern | Example | Resolution |
+|---------|---------|------------|
+| Simple | `from x import Y` | `Y` → `x.Y` |
+| Aliased | `from x import Y as Z` | `Z` → `Y` (original name) |
+| Relative | `from . import helper` | `helper` → `.helper` |
+| Dotted | `import os.path` | `os` → `os.path` |
+
+**How It Works**:
+
+1. Read full file (not just chunk) to get all module-level imports
+2. Build import mapping: imported name/alias → qualified name
+3. When resolving method calls, check if variable name matches an imported class
+4. For aliased imports, resolve to original class name
+
+**Full File Analysis**: Since method chunks don't include file-level imports, the extractor reads the complete file using `file_path` from `chunk_metadata` to extract all imports. Results are cached per-file for performance.
+
+**Limitations**:
+
+- **Star imports**: `from x import *` cannot be resolved (names not explicit)
+- **Cross-module assignments**: `from x import Handler; MyHandler = Handler` not tracked
+- **Dynamic imports**: `importlib.import_module()` not supported
+- **Shadowing**: Local assignment of same name takes precedence over import
+
+**Coverage**: ~90% of method calls correctly resolved (combined with all phases)
+
 ### Usage Examples
 
 **Finding Connections with Resolved Calls**:
@@ -1411,14 +1455,16 @@ class Service:
   - `_extract_local_assignments()`: Tracks variable assignments (Phase 3)
   - `_infer_type_from_call()`: Infers type from Call nodes (Phase 3)
   - `_annotation_to_string()`: Converts AST annotations to strings
+  - `_extract_imports()`: Extracts import mappings from AST (Phase 4)
+  - `_read_file_imports()`: Reads full file for module-level imports (Phase 4)
   - `_get_call_name()`: Resolution priority chain
 
 **Resolution Priority** (highest to lowest):
 
-1. Self/super calls → containing class
-2. Type-annotated parameters → annotation type
-3. (Future) Assignment tracking → assigned class
-4. (Future) Import resolution → imported module
+1. Self/super calls → containing class (Phase 1)
+2. Type-annotated parameters → annotation type (Phase 2)
+3. Assignment tracking → assigned class (Phase 3)
+4. Import resolution → imported module (Phase 4)
 
 **Storage**:
 

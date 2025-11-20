@@ -2,14 +2,14 @@
 
 ## Overview
 
-This comprehensive guide covers the testing infrastructure for the Claude Context MCP semantic search system. The project maintains a professional test suite with 40 test files (352 passing tests) organized into clear categories for effective quality assurance and continuous integration.
+This comprehensive guide covers the testing infrastructure for the Claude Context MCP semantic search system. The project maintains a professional test suite with 42 test files (389 passing tests) organized into clear categories for effective quality assurance and continuous integration.
 
 ### Current Test Status
 
-✅ **All tests passing** (as of 2025-01-10):
+✅ **All tests passing** (as of 2025-11-19):
 
-- **Unit Tests**: 204 tests passing
-- **Integration Tests**: 147 tests passing
+- **Unit Tests**: 230 tests passing (16 files)
+- **Integration Tests**: 158 tests passing (25 files)
 - **Regression Tests**: 1 test (15 checks) passing
 - **Test Execution Time**: Unit ~5s, Integration ~13 minutes
 
@@ -41,11 +41,12 @@ tests/
 │   ├── glsl_project/         # GLSL shader samples
 │   ├── multi_language/       # Multi-language test files
 │   └── python_project/       # Python project samples
-├── unit/                     # Unit tests (15 files, 204 tests)
+├── unit/                     # Unit tests (16 files, 230 tests)
 │   ├── test_bm25_index.py    # BM25 index functionality
 │   ├── test_bm25_population.py # BM25 document population
 │   ├── test_evaluation.py    # Evaluation framework components
 │   ├── test_hybrid_search.py # Hybrid search logic
+│   ├── test_import_resolution.py # Import-based call graph resolution (26 tests)
 │   ├── test_imports.py       # Import validation
 │   ├── test_incremental_indexer.py # Incremental indexing
 │   ├── test_mcp_server.py    # MCP server tools
@@ -56,13 +57,14 @@ tests/
 │   ├── test_search_config.py # Search configuration
 │   ├── test_token_efficiency.py # Token efficiency evaluation
 │   └── test_tree_sitter.py   # Tree-sitter parsing
-├── integration/              # Integration tests (24 files, 147 tests)
+├── integration/              # Integration tests (25 files, 158 tests)
 │   ├── test_auto_reindex.py  # Auto-reindexing functionality
 │   ├── test_complete_workflow.py # End-to-end workflow
 │   ├── test_cuda_detection.py # GPU/CUDA detection
 │   ├── test_encoding_validation.py # Text encoding validation
 │   ├── test_glsl_*.py        # GLSL-specific integration tests
 │   ├── test_hybrid_search_integration.py # Hybrid search integration
+│   ├── test_import_resolution_integration.py # Import resolution end-to-end (11 tests)
 │   ├── test_installation.py  # Installation verification
 │   ├── test_installation_flow.py # Installation workflow
 │   ├── test_mcp_*.py         # MCP server integration tests
@@ -85,7 +87,7 @@ tests/
 ### Basic Test Execution
 
 ```bash
-# Run all tests (40 files, 352 tests)
+# Run all tests (42 files, 389 tests)
 pytest tests/
 
 # Run with verbose output
@@ -101,10 +103,10 @@ pytest tests/ -x
 ### Category-Specific Testing
 
 ```bash
-# Unit tests only (15 files, 204 tests) - Fast component testing
+# Unit tests only (16 files, 230 tests) - Fast component testing
 pytest tests/unit/
 
-# Integration tests only (24 files, 147 tests) - Workflow validation
+# Integration tests only (25 files, 158 tests) - Workflow validation
 pytest tests/integration/
 
 # Regression tests (PowerShell, 1 file, 15 checks)
@@ -172,7 +174,7 @@ pytest tests/ --durations=10
 
 ## Test Categories
 
-### Unit Tests (15 files, 204 tests)
+### Unit Tests (16 files, 230 tests)
 
 **Purpose**: Test individual components in isolation with mocked dependencies.
 
@@ -184,6 +186,7 @@ pytest tests/ --durations=10
 - **Core Infrastructure**: Merkle trees, incremental indexing, search configuration
 - **Evaluation Framework**: Token efficiency measurement, evaluation components
 - **MCP Integration**: Server tools, import validation
+- **Call Graph Resolution**: Import-based resolution, type annotations, assignment tracking (v0.5.12-v0.5.15)
 
 **Characteristics**:
 
@@ -192,7 +195,7 @@ pytest tests/ --durations=10
 - Extensive use of mocks and fixtures
 - High code coverage targets (>90%)
 
-### Integration Tests (24 files, 147 tests)
+### Integration Tests (25 files, 158 tests)
 
 **Purpose**: Verify component interactions and complete workflows.
 
@@ -762,9 +765,9 @@ timeout 300 pytest tests/
 6. **Include regression tests** in CI pipeline
 7. **Validate configuration** before deployment
 
-### Recent Test Improvements (2025-01-10)
+### Recent Test Improvements (2025-11-19)
 
-**All 352 tests now passing:**
+**All 389 tests now passing:**
 
 - ✅ Fixed BM25 metadata handling with subset validation
 - ✅ Fixed CUDA detection disk space assertions
@@ -772,5 +775,8 @@ timeout 300 pytest tests/
 - ✅ Added public load() method to CodeIndexManager
 - ✅ Added SentenceTransformer mocking to prevent downloads
 - ✅ Created comprehensive MCP configuration regression test (15 checks)
+- ✅ **Phase 4 Import Resolution Tests** (v0.5.15):
+  - `test_import_resolution.py` - 26 unit tests for import extraction and resolution
+  - `test_import_resolution_integration.py` - 11 integration tests for end-to-end import resolution
 
 This comprehensive testing guide ensures high-quality, maintainable code through systematic testing practices and clear documentation.

@@ -80,7 +80,7 @@ An intelligent code search system that uses Google's EmbeddingGemma, BAAI's BGE-
 - **Intelligent chunking**: AST-based (Python) + tree-sitter (JS/TS/JSX/TSX/Svelte/Go/Java/Rust/C/C++/C#/GLSL)
 - **Semantic search**: Natural language queries to find code across all languages
 - **Rich metadata**: File paths, folder structure, semantic tags, language-specific info
-- **MCP integration**: 14 tools for Claude Code with human-readable JSON output - search, index, configure, and monitor
+- **MCP integration**: 15 tools for Claude Code with human-readable JSON output - search, index, configure, and monitor
 - **Local processing**: All embeddings stored locally, no API calls required
 - **Fast search**: FAISS for efficient similarity search with GPU acceleration support
 - **Incremental indexing**: 5-10x faster updates with Merkle tree change detection
@@ -348,22 +348,25 @@ Create a `CLAUDE.md` file in your project root with this content:
 
 ---
 
-## Available MCP Tools (13)
+## Available MCP Tools (15)
 
 | Tool | Priority | Purpose |
 |------|----------|---------|
 | **search_code** | 🔴 **ESSENTIAL** | Find code with natural language |
 | **index_directory** | 🔴 **SETUP** | Index project (one-time) |
+| **find_connections** | 🟡 **IMPACT** | Analyze code dependencies |
 | find_similar_code | Secondary | Find alternative implementations |
 | configure_search_mode | Config | Set search mode (hybrid/semantic/BM25) |
+| configure_query_routing | Config | Configure multi-model routing |
 | get_search_config_status | Config | View current search configuration |
+| list_embedding_models | Config | List available models |
+| switch_embedding_model | Config | Switch between models |
 | get_index_status | Status | Check index health |
 | get_memory_status | Monitor | Check RAM/VRAM usage |
 | list_projects | Management | Show indexed projects |
 | switch_project | Management | Change active project |
 | clear_index | Reset | Delete current index |
 | cleanup_resources | Cleanup | Free memory/caches |
-| run_benchmark | Testing | Validate search quality |
 
 ### Quick Examples
 

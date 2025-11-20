@@ -101,6 +101,10 @@ class PythonCallGraphExtractor(CallGraphExtractor):
         )  # class_name -> list of base classes
         # Type annotation tracking for parameter type resolution (Phase 2)
         self._type_annotations: Dict[str, str] = {}  # param_name -> type_name
+        # Import tracking for import-based resolution (Phase 4)
+        self._imports: Dict[str, str] = {}  # imported_name/alias -> qualified_name
+        # Cache for file imports to avoid re-reading
+        self._file_imports_cache: Dict[str, Dict[str, str]] = {}  # file_path -> imports
 
     def extract_calls(
         self, code: str, chunk_metadata: Dict[str, Any]
@@ -128,9 +132,10 @@ class PythonCallGraphExtractor(CallGraphExtractor):
             )
             return []
 
-        # Reset class context and type annotations
+        # Reset class context, type annotations, and imports
         self._class_bases = {}
         self._type_annotations = {}
+        self._imports = {}
 
         # First pass: extract class hierarchy for super() resolution
         self._extract_class_hierarchy(tree)
@@ -141,6 +146,16 @@ class PythonCallGraphExtractor(CallGraphExtractor):
         else:
             # Try to detect class context from the code itself
             self._current_class = self._detect_enclosing_class(tree)
+
+        # Extract imports for type resolution (Phase 4)
+        # Read from full file (not just chunk) to get all module-level imports
+        # Must be done BEFORE local assignments since _infer_type_from_call uses _imports
+        file_path = chunk_metadata.get("file_path", "")
+        if file_path:
+            self._imports = self._read_file_imports(file_path)
+        else:
+            # Fall back to extracting imports from chunk code (limited)
+            self._imports = self._extract_imports(tree)
 
         # Extract type annotations from function definition (Phase 2)
         for node in ast.walk(tree):
@@ -377,6 +392,7 @@ class PythonCallGraphExtractor(CallGraphExtractor):
         Handles:
         - Simple constructor: MyClass() -> "MyClass"
         - Qualified constructor: module.MyClass() -> "MyClass"
+        - Aliased import: H() where H is alias for Handler -> "Handler"
 
         Args:
             call_node: AST Call node
@@ -387,8 +403,15 @@ class PythonCallGraphExtractor(CallGraphExtractor):
         func = call_node.func
 
         if isinstance(func, ast.Name):
-            # Simple constructor: MyClass()
-            return func.id
+            # Simple constructor: MyClass() or aliased H()
+            name = func.id
+            # Check if this is an imported name (possibly aliased)
+            if name in self._imports:
+                # Get the qualified name and extract the actual class name
+                # e.g., "x.Handler" -> "Handler"
+                qualified = self._imports[name]
+                return qualified.split(".")[-1]
+            return name
 
         elif isinstance(func, ast.Attribute):
             # Qualified constructor: module.MyClass() -> MyClass
@@ -396,6 +419,107 @@ class PythonCallGraphExtractor(CallGraphExtractor):
 
         # Factory method or other complex call - cannot infer
         return None
+
+    def _extract_imports(self, tree: ast.AST) -> Dict[str, str]:
+        """
+        Extract import mappings from AST.
+
+        Handles:
+        - import os                    -> {"os": "os"}
+        - import os.path               -> {"os": "os.path"}
+        - from x import Y              -> {"Y": "x.Y"}
+        - from x import Y as Z         -> {"Z": "x.Y"}
+        - from . import helper         -> {"helper": ".helper"}
+        - from ..utils import Parser   -> {"Parser": "..utils.Parser"}
+        - from x import *              -> {}  (cannot resolve)
+
+        Args:
+            tree: AST tree to analyze
+
+        Returns:
+            Dictionary mapping imported names/aliases to qualified names
+        """
+        imports: Dict[str, str] = {}
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                # import os, import os.path, import x as y
+                for alias in node.names:
+                    # Use alias if provided, otherwise first component
+                    local_name = (
+                        alias.asname if alias.asname else alias.name.split(".")[0]
+                    )
+                    imports[local_name] = alias.name
+
+            elif isinstance(node, ast.ImportFrom):
+                # from x import Y, from x import Y as Z
+                module = node.module or ""
+                # Handle relative imports: from . import x, from .. import y
+                prefix = "." * node.level if node.level else ""
+                full_module = f"{prefix}{module}" if module else prefix
+
+                for alias in node.names:
+                    if alias.name == "*":
+                        # Star import - cannot resolve specific names
+                        self.logger.debug(
+                            f"Star import from '{full_module}' cannot be resolved"
+                        )
+                        continue
+
+                    local_name = alias.asname if alias.asname else alias.name
+                    # Build qualified name
+                    if module:
+                        # Has module name: from .utils import Parser -> .utils.Parser
+                        qualified = f"{full_module}.{alias.name}"
+                    elif prefix:
+                        # Pure relative: from . import helper -> .helper
+                        qualified = f"{prefix}{alias.name}"
+                    else:
+                        # Absolute: from package import Class -> package.Class
+                        qualified = alias.name
+                    imports[local_name] = qualified
+
+        return imports
+
+    def _read_file_imports(self, file_path: str) -> Dict[str, str]:
+        """
+        Read and extract imports from a full file.
+
+        This method reads the entire file (not just the chunk code) to extract
+        all import statements, enabling resolution of types used in method chunks.
+
+        Args:
+            file_path: Path to the source file
+
+        Returns:
+            Dictionary mapping imported names to qualified names,
+            or empty dict if file cannot be read
+        """
+        # Check cache first
+        if file_path in self._file_imports_cache:
+            return self._file_imports_cache[file_path]
+
+        imports: Dict[str, str] = {}
+
+        if not file_path:
+            return imports
+
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                file_content = f.read()
+
+            tree = ast.parse(file_content)
+            imports = self._extract_imports(tree)
+
+            # Cache the result
+            self._file_imports_cache[file_path] = imports
+
+        except (OSError, SyntaxError) as e:
+            self.logger.debug(f"Could not read imports from {file_path}: {e}")
+            # Cache empty result to avoid repeated failures
+            self._file_imports_cache[file_path] = {}
+
+        return imports
 
     def _extract_call_from_node(
         self, node: ast.Call, chunk_id: str
@@ -483,6 +607,16 @@ class PythonCallGraphExtractor(CallGraphExtractor):
                 if var_name in self._type_annotations:
                     type_name = self._type_annotations[var_name]
                     return f"{type_name}.{method_name}"
+
+                # Check for imported name (Phase 4)
+                # Handles: from handlers import Handler; Handler.class_method()
+                # Also handles aliased: from x import Y as Z; Z.method()
+                if var_name in self._imports:
+                    qualified = self._imports[var_name]
+                    # Extract the class name from qualified import
+                    # e.g., "handlers.Handler" -> "Handler"
+                    class_name = qualified.split(".")[-1]
+                    return f"{class_name}.{method_name}"
 
             # Check for self.attr.method() pattern (Phase 3)
             # e.g., self.handler.handle() where self.handler = Handler()
