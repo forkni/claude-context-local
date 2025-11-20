@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Git Workflow Scripts** - Critical bug fix for C: drive scanning issue
+  - Root cause: Git Bash interpreted `find /c` as Unix find command → full C: drive scan → infinite hang
+  - Fix: All scripts now use explicit Windows tool paths: `"%WINDIR%\System32\find.exe"` and `"%WINDIR%\System32\findstr.exe"`
+  - Performance: commit_enhanced.bat now completes in 6.8s (was: infinite hang)
+  - Affected scripts: commit_enhanced.bat, merge_with_validation.bat, validate_branches.bat, cherry_pick_commits.bat, merge_docs.bat
+  - Commits: `273e821`, `d6f5a70`
+
+- **cherry_pick_commits.bat** - Fixed delayed expansion bug in backup tag creation
+  - Changed `git tag %BACKUP_TAG%` → `git tag "!BACKUP_TAG!"`
+  - Backup tags now created correctly with timestamp format: `pre-cherry-pick-YYYYMMDD_HHMMSS`
+
+### Changed
+
+- **Git Workflow Scripts** - Applied BATCH_STYLE_GUIDE.md compliance across all 8 scripts
+  - Quoted variable assignments: `set "VAR=value"` (prevents trailing spaces)
+  - Project root navigation with error handling: `pushd "%~dp0..\.." || exit /b 1`
+  - Safe argument handling: `set "ARG=%~1"` with quote stripping
+  - Proper cleanup: `popd` at all exit points
+  - Unix command replacements: `head -1` → Batch loop, `wmic` → PowerShell `Get-Date`
+  - Added comments with guide references for maintainability
+
 ---
 
 ## [0.5.15] - 2025-11-19
