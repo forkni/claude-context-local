@@ -108,9 +108,10 @@ echo.
 echo [5/6] Creating pre-cherry-pick backup...
 for /f "usebackq" %%i in (`powershell -Command "Get-Date -Format 'yyyyMMdd_HHmmss'"`) do set "datetime=%%i"
 set "BACKUP_TAG=pre-cherry-pick-%datetime%"
-git tag %BACKUP_TAG%
+REM [Guide 1.4] Use delayed expansion for variables set in loops
+git tag "!BACKUP_TAG!"
 if %ERRORLEVEL% EQU 0 (
-    echo ✓ Created backup tag: %BACKUP_TAG%
+    echo ✓ Created backup tag: !BACKUP_TAG!
 ) else (
     echo ⚠ Warning: Could not create backup tag
 )
