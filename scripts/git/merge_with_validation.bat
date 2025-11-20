@@ -1,37 +1,35 @@
 @echo off
 REM merge_with_validation.bat
-REM Safe merge from development to main with automatic conflict resolution and mandatory logging
-REM Uses .gitattributes merge strategies to handle excluded files
-REM
-REM Usage: merge_with_validation.bat [--non-interactive]
-REM   --non-interactive: Flag for automation compatibility (currently no prompts exist)
+REM Safe merge from development to main with automatic conflict resolution
 
 setlocal enabledelayedexpansion
+
+REM [Guide 1.3] Ensure execution from project root
+pushd "%~dp0..\.." || (
+    echo ERROR: Cannot find project root
+    exit /b 1
+)
 
 REM ========================================
 REM Parse Command Line Arguments
 REM ========================================
 
-set NON_INTERACTIVE=0
+set "NON_INTERACTIVE=0"
 
-REM Check if first parameter is --non-interactive flag
 if "%~1"=="--non-interactive" (
-    set NON_INTERACTIVE=1
+    set "NON_INTERACTIVE=1"
 )
 
 REM ========================================
 REM Initialize Mandatory Logging
 REM ========================================
 
-REM Create logs directory
-if not exist logs mkdir logs
+if not exist "logs\" mkdir "logs"
 
-REM Generate timestamp
-for /f "tokens=2-4 delims=/ " %%a in ('date /t') do set mydate=%%c%%a%%b
-for /f "tokens=1-2 delims=/: " %%a in ('time /t') do set mytime=%%a%%b
-set TIMESTAMP=%mydate%_%mytime%
-set LOGFILE=logs\merge_with_validation_%TIMESTAMP%.log
-set REPORTFILE=logs\merge_with_validation_analysis_%TIMESTAMP%.md
+REM Generate timestamp (PowerShell method is robust, good job)
+for /f "usebackq" %%i in (`powershell -Command "Get-Date -Format 'yyyyMMdd_HHmmss'"`) do set "TIMESTAMP=%%i"
+set "LOGFILE=logs\merge_with_validation_%TIMESTAMP%.log"
+set "REPORTFILE=logs\merge_with_validation_analysis_%TIMESTAMP%.md"
 
 REM Initialize log file
 echo ========================================= > "%LOGFILE%"
@@ -42,7 +40,6 @@ for /f "tokens=*" %%i in ('git branch --show-current') do echo Current Branch: %
 echo Target: development → main >> "%LOGFILE%"
 echo. >> "%LOGFILE%"
 
-REM Log initialization message
 call :LogMessage "=== Safe Merge: development → main ==="
 call :LogMessage ""
 call :LogMessage "📋 Workflow Log: %LOGFILE%"
@@ -50,23 +47,25 @@ call :LogMessage ""
 
 REM [1/7] Run validation
 echo [1/7] Running pre-merge validation...
-call scripts\git\validate_branches.bat
+call "scripts\git\validate_branches.bat"
 if %ERRORLEVEL% NEQ 0 (
     echo.
     echo ✗ Validation failed - aborting merge
     echo Please fix validation errors before retrying
+    popd
     exit /b 1
 )
 echo.
 
 REM [2/7] Store current branch and checkout main
 echo [2/7] Switching to main branch...
-for /f "tokens=*" %%i in ('git branch --show-current') do set ORIGINAL_BRANCH=%%i
+for /f "tokens=*" %%i in ('git branch --show-current') do set "ORIGINAL_BRANCH=%%i"
 echo Current branch: !ORIGINAL_BRANCH!
 
 git checkout main
 if %ERRORLEVEL% NEQ 0 (
     echo ✗ Failed to checkout main branch
+    popd
     exit /b 1
 )
 echo ✓ Switched to main branch
@@ -74,8 +73,7 @@ echo.
 
 REM [3/7] Create pre-merge backup tag
 echo [3/7] Creating pre-merge backup tag...
-for /f "usebackq" %%i in (`powershell -Command "Get-Date -Format 'yyyyMMdd_HHmmss'"`) do set datetime=%%i
-set BACKUP_TAG=pre-merge-backup-%datetime%
+set "BACKUP_TAG=pre-merge-backup-%TIMESTAMP%"
 git tag %BACKUP_TAG%
 if %ERRORLEVEL% EQU 0 (
     echo ✓ Created backup tag: %BACKUP_TAG%
@@ -89,10 +87,9 @@ echo [4/7] Merging development into main...
 echo Running: git merge development --no-ff
 echo.
 
-REM FIX ERROR #8: Simple single-line commit message to avoid batch parsing issues
 git merge development --no-ff -m "Merge development into main"
 
-set MERGE_EXIT_CODE=%ERRORLEVEL%
+set "MERGE_EXIT_CODE=%ERRORLEVEL%"
 
 REM [5/7] Handle merge conflicts
 if %MERGE_EXIT_CODE% NEQ 0 (
@@ -101,35 +98,34 @@ if %MERGE_EXIT_CODE% NEQ 0 (
     echo   Analyzing conflict types and preparing auto-resolution...
     echo.
 
-    REM Check for modify/delete conflicts (expected for excluded files)
-    git status | findstr /C:"deleted by us" >nul
+    REM Check for modify/delete conflicts
+    git status | "%WINDIR%\System32\findstr.exe" /C:"deleted by us" >nul
     if %ERRORLEVEL% EQU 0 (
         echo   Found modify/delete conflicts for excluded files
         echo   These are expected and will be auto-resolved...
         echo.
         echo   Files to be removed from main branch:
-        git status --short | findstr /C:"DU "
+        git status --short | "%WINDIR%\System32\findstr.exe" /C:"DU "
         echo.
 
         REM Create temp file with conflicts
-        git status --short | findstr /C:"DU " > "%TEMP%\merge_conflicts.txt"
+        git status --short | "%WINDIR%\System32\findstr.exe" /C:"DU " > "%TEMP%\merge_conflicts.txt"
 
-        REM Process each conflict with error checking (FIX ERROR #8)
-        set RESOLUTION_FAILED=0
+        REM Process each conflict
+        set "RESOLUTION_FAILED=0"
         for /f "usebackq tokens=2*" %%a in ("%TEMP%\merge_conflicts.txt") do (
             set "CONFLICT_FILE=%%a %%b"
             echo   Resolving: !CONFLICT_FILE!
             git rm "!CONFLICT_FILE!" >nul 2>&1
             if !ERRORLEVEL! NEQ 0 (
                 echo   ✗ ERROR: Failed to remove !CONFLICT_FILE!
-                set RESOLUTION_FAILED=1
+                set "RESOLUTION_FAILED=1"
             ) else (
                 echo   ✓ Removed: !CONFLICT_FILE!
             )
         )
         del "%TEMP%\merge_conflicts.txt" 2>nul
 
-        REM Verify all conflicts resolved
         if !RESOLUTION_FAILED! EQU 1 (
             echo.
             echo ✗ Auto-resolution failed for some files
@@ -137,34 +133,28 @@ if %MERGE_EXIT_CODE% NEQ 0 (
             git status --short
             echo.
             echo Please resolve manually or abort merge
+            popd
             exit /b 1
         )
 
         echo.
         echo ✓ Auto-resolved modify/delete conflicts
-        echo   (Kept main's version - excluded development-only files)
 
-        REM FIX ERROR #7: Check if all conflicts are actually resolved
-        REM Method 1: Check for unmerged files in index
+        REM Check if all conflicts are actually resolved
         git diff --name-only --diff-filter=U >nul 2>&1
         if %ERRORLEVEL% EQU 0 (
-            REM Unmerged files still exist
             echo.
             echo ⚠ Some conflicts remain unresolved
             echo   Continuing to validation and manual commit...
         ) else (
-            REM No unmerged files - check merge state
             git diff --cached --quiet >nul 2>&1
             if %ERRORLEVEL% EQU 0 (
-                REM Nothing staged - merge might be incomplete
                 echo.
                 echo ⚠ No changes staged after auto-resolution
                 echo   Continuing to validation...
             ) else (
-                REM Changes are staged - check if MERGE_HEAD is gone
                 git rev-parse -q --verify MERGE_HEAD >nul 2>&1
                 if %ERRORLEVEL% NEQ 0 (
-                    REM MERGE_HEAD is gone and changes staged - truly complete
                     echo.
                     echo ✓ Merge commit automatically completed during auto-resolution
                     goto :merge_success
@@ -174,12 +164,12 @@ if %MERGE_EXIT_CODE% NEQ 0 (
     )
 
     REM Check for actual content conflicts
-    git status | findstr /C:"both modified" >nul
+    git status | "%WINDIR%\System32\findstr.exe" /C:"both modified" >nul
     if %ERRORLEVEL% EQU 0 (
         echo.
         echo ✗ Content conflicts require manual resolution:
         echo.
-        git status --short | findstr /C:"UU "
+        git status --short | "%WINDIR%\System32\findstr.exe" /C:"UU "
         echo.
         echo Please resolve these conflicts manually:
         echo   1. Edit conflicted files
@@ -189,6 +179,7 @@ if %MERGE_EXIT_CODE% NEQ 0 (
         echo Or abort the merge:
         echo   git merge --abort
         echo   git checkout !ORIGINAL_BRANCH!
+        popd
         exit /b 1
     )
 
@@ -196,20 +187,18 @@ if %MERGE_EXIT_CODE% NEQ 0 (
     echo.
     echo [6/7] Validating documentation files against CI policy...
 
-    REM Allowed docs list from .github/workflows/branch-protection.yml
-    set ALLOWED_DOCS_REGEX=BENCHMARKS.md claude_code_config.md GIT_WORKFLOW.md HYBRID_SEARCH_CONFIGURATION_GUIDE.md INSTALLATION_GUIDE.md MCP_TOOLS_REFERENCE.md MODEL_MIGRATION_GUIDE.md PYTORCH_COMPATIBILITY.md
+    set "ALLOWED_DOCS_REGEX=BENCHMARKS.md claude_code_config.md GIT_WORKFLOW.md HYBRID_SEARCH_CONFIGURATION_GUIDE.md INSTALLATION_GUIDE.md MCP_TOOLS_REFERENCE.md MODEL_MIGRATION_GUIDE.md PYTORCH_COMPATIBILITY.md"
 
     REM Check docs being added to main
-    set DOCS_VALIDATION_FAILED=0
-    for /f "delims=" %%f in ('git diff --cached --name-only --diff-filter=A 2^>nul ^| findstr /C:"docs/" 2^>nul') do (
-        set DOC_FILE=%%~nxf
+    set "DOCS_VALIDATION_FAILED=0"
+    for /f "delims=" %%f in ('git diff --cached --name-only --diff-filter=A 2^>nul ^| "%WINDIR%\System32\findstr.exe" /C:"docs/" 2^>nul') do (
+        set "DOC_FILE=%%~nxf"
 
-        REM Check if doc is in allowed list
-        echo !ALLOWED_DOCS_REGEX! | findstr /C:"!DOC_FILE!" >nul
+        echo !ALLOWED_DOCS_REGEX! | "%WINDIR%\System32\findstr.exe" /C:"!DOC_FILE!" >nul
         if %ERRORLEVEL% NEQ 0 (
             echo ✗ ERROR: Unauthorized doc file: %%f
             echo    This file is not in the CI allowed docs list
-            set DOCS_VALIDATION_FAILED=1
+            set "DOCS_VALIDATION_FAILED=1"
         )
     )
 
@@ -217,21 +206,10 @@ if %MERGE_EXIT_CODE% NEQ 0 (
         echo.
         echo ✗ CI POLICY VIOLATION: Unauthorized documentation detected
         echo.
-        echo Only these 8 docs are allowed on main branch:
-        echo   - BENCHMARKS.md
-        echo   - claude_code_config.md
-        echo   - GIT_WORKFLOW.md
-        echo   - HYBRID_SEARCH_CONFIGURATION_GUIDE.md
-        echo   - INSTALLATION_GUIDE.md
-        echo   - MCP_TOOLS_REFERENCE.md
-        echo   - MODEL_MIGRATION_GUIDE.md
-        echo   - PYTORCH_COMPATIBILITY.md
-        echo.
-        echo Development-only docs should be in .gitattributes with merge=ours
-        echo.
         echo Aborting merge to prevent CI failure...
         git merge --abort
         git checkout !ORIGINAL_BRANCH!
+        popd
         exit /b 1
     )
     echo ✓ Documentation validation passed
@@ -245,6 +223,7 @@ if %MERGE_EXIT_CODE% NEQ 0 (
         echo ✗ Failed to complete merge commit
         echo.
         echo To abort: git merge --abort
+        popd
         exit /b 1
     )
 ) else (
@@ -255,23 +234,19 @@ if %MERGE_EXIT_CODE% NEQ 0 (
     echo.
     echo [6/7] Validating documentation files against CI policy...
 
-    REM Allowed docs list from .github/workflows/branch-protection.yml
-    set ALLOWED_DOCS_REGEX=BENCHMARKS.md claude_code_config.md GIT_WORKFLOW.md HYBRID_SEARCH_CONFIGURATION_GUIDE.md INSTALLATION_GUIDE.md MCP_TOOLS_REFERENCE.md MODEL_MIGRATION_GUIDE.md PYTORCH_COMPATIBILITY.md
+    set "ALLOWED_DOCS_REGEX=BENCHMARKS.md claude_code_config.md GIT_WORKFLOW.md HYBRID_SEARCH_CONFIGURATION_GUIDE.md INSTALLATION_GUIDE.md MCP_TOOLS_REFERENCE.md MODEL_MIGRATION_GUIDE.md PYTORCH_COMPATIBILITY.md"
 
-    REM Check docs being added to main
-    set DOCS_VALIDATION_FAILED=0
-    for /f "delims=" %%f in ('git diff --name-only HEAD~1 HEAD 2^>nul ^| findstr /C:"docs/" 2^>nul') do (
-        set DOC_FILE=%%~nxf
+    set "DOCS_VALIDATION_FAILED=0"
+    for /f "delims=" %%f in ('git diff --name-only HEAD~1 HEAD 2^>nul ^| "%WINDIR%\System32\findstr.exe" /C:"docs/" 2^>nul') do (
+        set "DOC_FILE=%%~nxf"
 
-        REM Check if doc is in allowed list
-        echo !ALLOWED_DOCS_REGEX! | findstr /C:"!DOC_FILE!" >nul
+        echo !ALLOWED_DOCS_REGEX! | "%WINDIR%\System32\findstr.exe" /C:"!DOC_FILE!" >nul
         if %ERRORLEVEL% NEQ 0 (
-            REM Check if file was added (not just modified)
             git diff --diff-filter=A HEAD~1 HEAD -- %%f >nul 2>&1
             if %ERRORLEVEL% EQU 0 (
                 echo ✗ ERROR: Unauthorized doc file: %%f
                 echo    This file is not in the CI allowed docs list
-                set DOCS_VALIDATION_FAILED=1
+                set "DOCS_VALIDATION_FAILED=1"
             )
         )
     )
@@ -280,21 +255,10 @@ if %MERGE_EXIT_CODE% NEQ 0 (
         echo.
         echo ✗ CI POLICY VIOLATION: Unauthorized documentation detected
         echo.
-        echo Only these 8 docs are allowed on main branch:
-        echo   - BENCHMARKS.md
-        echo   - claude_code_config.md
-        echo   - GIT_WORKFLOW.md
-        echo   - HYBRID_SEARCH_CONFIGURATION_GUIDE.md
-        echo   - INSTALLATION_GUIDE.md
-        echo   - MCP_TOOLS_REFERENCE.md
-        echo   - MODEL_MIGRATION_GUIDE.md
-        echo   - PYTORCH_COMPATIBILITY.md
-        echo.
-        echo Development-only docs should be in .gitattributes with merge=ours
-        echo.
         echo Rolling back merge...
         git reset --hard HEAD~1
         git checkout !ORIGINAL_BRANCH!
+        popd
         exit /b 1
     )
     echo ✓ Documentation validation passed
@@ -320,10 +284,10 @@ echo   - scripts\git\rollback_merge.bat
 echo   - Or: git reset --hard %BACKUP_TAG%
 echo.
 
-REM Generate analysis report
 call :GenerateAnalysisReport
 
 endlocal
+popd
 exit /b 0
 
 REM ========================================
@@ -331,8 +295,7 @@ REM Helper Functions
 REM ========================================
 
 :LogMessage
-REM Logs message to both console and file
-set MSG=%~1
+set "MSG=%~1"
 echo %MSG%
 echo %MSG% >> "%LOGFILE%"
 goto :eof

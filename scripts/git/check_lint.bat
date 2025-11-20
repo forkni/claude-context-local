@@ -1,22 +1,26 @@
 @echo off
 REM check_lint.bat
 REM Quick code quality checker - runs all linting tools without making changes
-REM Checks: ruff, black, isort, markdownlint (same as GitHub Actions CI)
 
 setlocal enabledelayedexpansion
+
+REM [Guide 1.3] Ensure execution from project root
+pushd "%~dp0..\.." || (
+    echo ERROR: Cannot find project root
+    exit /b 1
+)
 
 REM ========================================
 REM Initialize Mandatory Logging
 REM ========================================
 
-REM Create logs directory
-if not exist logs mkdir logs
+if not exist "logs\" mkdir "logs"
 
-REM Generate timestamp
-for /f "tokens=2-4 delims=/ " %%a in ('date /t') do set mydate=%%c%%a%%b
-for /f "tokens=1-2 delims=/: " %%a in ('time /t') do set mytime=%%a%%b
-set TIMESTAMP=%mydate%_%mytime%
-set LOGFILE=logs\check_lint_%TIMESTAMP%.log
+REM [Guide 1.1] Quoted assignments
+for /f "tokens=2-4 delims=/ " %%a in ('date /t') do set "mydate=%%c%%a%%b"
+for /f "tokens=1-2 delims=/: " %%a in ('time /t') do set "mytime=%%a%%b"
+set "TIMESTAMP=%mydate%_%mytime%"
+set "LOGFILE=logs\check_lint_%TIMESTAMP%.log"
 
 REM Initialize log file
 echo ========================================= > "%LOGFILE%"
@@ -33,15 +37,15 @@ echo === Code Quality Checker === >> "%LOGFILE%"
 echo Running lint checks (read-only)... >> "%LOGFILE%"
 echo. >> "%LOGFILE%"
 
-REM Track overall status
-set ERRORS_FOUND=0
+set "ERRORS_FOUND=0"
 
 REM [1/4] Check with Ruff
 echo [1/4] Running ruff...
-call .venv\Scripts\ruff.exe check .
+REM [Guide 1.6] Quote paths to executables
+call ".venv\Scripts\ruff.exe" check .
 if %ERRORLEVEL% NEQ 0 (
     echo ✗ Ruff found issues
-    set ERRORS_FOUND=1
+    set "ERRORS_FOUND=1"
 ) else (
     echo ✓ Ruff passed
 )
@@ -49,10 +53,10 @@ echo.
 
 REM [2/4] Check with Black
 echo [2/4] Running black...
-call .venv\Scripts\black.exe --check .
+call ".venv\Scripts\black.exe" --check .
 if %ERRORLEVEL% NEQ 0 (
     echo ✗ Black found formatting issues
-    set ERRORS_FOUND=1
+    set "ERRORS_FOUND=1"
 ) else (
     echo ✓ Black passed
 )
@@ -60,10 +64,10 @@ echo.
 
 REM [3/4] Check with isort
 echo [3/4] Running isort...
-call .venv\Scripts\isort.exe --check-only .
+call ".venv\Scripts\isort.exe" --check-only .
 if %ERRORLEVEL% NEQ 0 (
     echo ✗ isort found import sorting issues
-    set ERRORS_FOUND=1
+    set "ERRORS_FOUND=1"
 ) else (
     echo ✓ isort passed
 )
@@ -71,11 +75,10 @@ echo.
 
 REM [4/4] Check with markdownlint
 echo [4/4] Running markdownlint...
-REM Note: Scanning specific directories since negation patterns don't work in batch
 call markdownlint-cli2 "*.md" ".claude/**/*.md" ".github/**/*.md" ".githooks/**/*.md" ".vscode/**/*.md" "docs/**/*.md" "tests/**/*.md"
 if %ERRORLEVEL% NEQ 0 (
     echo ✗ Markdownlint found issues
-    set ERRORS_FOUND=1
+    set "ERRORS_FOUND=1"
 ) else (
     echo ✓ Markdownlint passed
 )
@@ -93,6 +96,7 @@ if !ERRORS_FOUND! EQU 0 (
     echo STATUS: SUCCESS >> "%LOGFILE%"
     echo ====================================  >> "%LOGFILE%"
     echo 📋 Log saved: %LOGFILE%
+    popd
     exit /b 0
 ) else (
     echo ✗ ERRORS FOUND
@@ -106,5 +110,6 @@ if !ERRORS_FOUND! EQU 0 (
     echo STATUS: FAILED >> "%LOGFILE%"
     echo ==================================== >> "%LOGFILE%"
     echo 📋 Log saved: %LOGFILE%
+    popd
     exit /b 1
 )

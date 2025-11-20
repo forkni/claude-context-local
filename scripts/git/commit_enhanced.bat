@@ -9,6 +9,7 @@ REM   --non-interactive: Skip all prompts, use sensible defaults (for automation
 setlocal enabledelayedexpansion
 
 REM Change to project root (two levels up from scripts\git\)
+REM [Guide 1.3] Use pushd with error check
 pushd "%~dp0..\.." || (
     echo ERROR: Cannot find project root
     exit /b 1
@@ -18,25 +19,26 @@ REM ========================================
 REM Parse Command Line Arguments
 REM ========================================
 
-set NON_INTERACTIVE=0
-set SKIP_MD_LINT=0
-set COMMIT_MSG_PARAM=%~1
+set "NON_INTERACTIVE=0"
+set "SKIP_MD_LINT=0"
+REM [Guide 1.9] Strip quotes from arguments safely
+set "COMMIT_MSG_PARAM=%~1"
 
 REM Check if first parameter is --non-interactive flag
 if "%~1"=="--non-interactive" (
-    set NON_INTERACTIVE=1
-    set COMMIT_MSG_PARAM=%~2
+    set "NON_INTERACTIVE=1"
+    set "COMMIT_MSG_PARAM=%~2"
 )
 
 REM Check for --skip-md-lint flag (can be in any position)
 if "%~1"=="--skip-md-lint" (
-    set SKIP_MD_LINT=1
-    set COMMIT_MSG_PARAM=%~2
+    set "SKIP_MD_LINT=1"
+    set "COMMIT_MSG_PARAM=%~2"
 )
 if "%~2"=="--skip-md-lint" (
-    set SKIP_MD_LINT=1
-    if %NON_INTERACTIVE% EQU 1 (
-        set COMMIT_MSG_PARAM=%~3
+    set "SKIP_MD_LINT=1"
+    if !NON_INTERACTIVE! EQU 1 (
+        set "COMMIT_MSG_PARAM=%~3"
     )
 )
 
@@ -45,14 +47,15 @@ REM Initialize Mandatory Logging
 REM ========================================
 
 REM Create logs directory
-if not exist logs mkdir logs
+if not exist "logs\" mkdir "logs"
 
-REM Generate timestamp
-for /f "tokens=2-4 delims=/ " %%a in ('date /t') do set mydate=%%c%%a%%b
-for /f "tokens=1-2 delims=/: " %%a in ('time /t') do set mytime=%%a%%b
-set TIMESTAMP=%mydate%_%mytime%
-set LOGFILE=logs\commit_enhanced_%TIMESTAMP%.log
-set REPORTFILE=logs\commit_enhanced_analysis_%TIMESTAMP%.md
+REM Generate timestamp (Note: Locale dependent, but keeping original logic)
+for /f "tokens=2-4 delims=/ " %%a in ('date /t') do set "mydate=%%c%%a%%b"
+for /f "tokens=1-2 delims=/: " %%a in ('time /t') do set "mytime=%%a%%b"
+set "TIMESTAMP=%mydate%_%mytime%"
+REM [Guide 1.1] Quoted assignments
+set "LOGFILE=logs\commit_enhanced_%TIMESTAMP%.log"
+set "REPORTFILE=logs\commit_enhanced_analysis_%TIMESTAMP%.md"
 
 REM Initialize log file
 echo ========================================= > "%LOGFILE%"
@@ -69,17 +72,17 @@ call :LogMessage "[LOG] Workflow Log: %LOGFILE%"
 call :LogMessage ""
 
 REM [1/6] Get current branch
-for /f "tokens=*" %%i in ('git branch --show-current') do set CURRENT_BRANCH=%%i
+for /f "tokens=*" %%i in ('git branch --show-current') do set "CURRENT_BRANCH=%%i"
 echo Current branch: !CURRENT_BRANCH!
 echo:
 
 REM [2/6] Check for uncommitted changes
 echo [2/6] Checking for changes...
 git diff --quiet
-set HAS_UNSTAGED=%ERRORLEVEL%
+set "HAS_UNSTAGED=%ERRORLEVEL%"
 
 git diff --cached --quiet
-set HAS_STAGED=%ERRORLEVEL%
+set "HAS_STAGED=%ERRORLEVEL%"
 
 if %HAS_UNSTAGED% EQU 0 (
     if %HAS_STAGED% EQU 0 (
@@ -95,12 +98,12 @@ if %HAS_UNSTAGED% NEQ 0 (
     echo Unstaged files:
     git diff --name-status
     echo:
-    if %NON_INTERACTIVE% EQU 1 (
+    if !NON_INTERACTIVE! EQU 1 (
         echo [Non-interactive mode] Auto-staging all changes...
         git add .
         echo [OK] All changes staged
     ) else (
-        set /p STAGE_ALL="Stage all changes? (yes/no): "
+        set /p "STAGE_ALL=Stage all changes? (yes/no): "
         if /i "!STAGE_ALL!" == "yes" (
             git add .
             echo [OK] All changes staged
@@ -127,24 +130,24 @@ git reset HEAD _archive/ 2>nul
 git reset HEAD benchmark_results/ 2>nul
 
 REM Check for local-only files
-set FOUND_LOCAL_FILES=0
+set "FOUND_LOCAL_FILES=0"
 
-git diff --cached --name-only | findstr /i "CLAUDE.md" >nul
+git diff --cached --name-only | "%WINDIR%\System32\find.exe" /i "CLAUDE.md" >nul
 if %ERRORLEVEL% EQU 0 (
     echo [X] ERROR: CLAUDE.md is staged ^(should be local-only^)
-    set FOUND_LOCAL_FILES=1
+    set "FOUND_LOCAL_FILES=1"
 )
 
-git diff --cached --name-only | findstr /i "MEMORY.md" >nul
+git diff --cached --name-only | "%WINDIR%\System32\find.exe" /i "MEMORY.md" >nul
 if %ERRORLEVEL% EQU 0 (
     echo [X] ERROR: MEMORY.md is staged ^(should be local-only^)
-    set FOUND_LOCAL_FILES=1
+    set "FOUND_LOCAL_FILES=1"
 )
 
-git diff --cached --name-only | findstr /i "_archive" >nul
+git diff --cached --name-only | "%WINDIR%\System32\find.exe" /i "_archive" >nul
 if %ERRORLEVEL% EQU 0 (
     echo [X] ERROR: _archive/ is staged ^(should be local-only^)
-    set FOUND_LOCAL_FILES=1
+    set "FOUND_LOCAL_FILES=1"
 )
 
 if !FOUND_LOCAL_FILES! EQU 1 (
@@ -158,19 +161,19 @@ if "!CURRENT_BRANCH!" == "main" (
     echo Validating main branch commit...
 
     REM Check for test files
-    git diff --cached --name-only | findstr "^tests/" >nul
+    git diff --cached --name-only | "%WINDIR%\System32\findstr.exe" "^tests/" >nul
     if %ERRORLEVEL% EQU 0 (
         echo [X] ERROR: Test files staged on main branch
         echo Tests should only be on development branch
         echo:
         echo Staged test files:
-        git diff --cached --name-only | findstr "^tests/"
+        git diff --cached --name-only | "%WINDIR%\System32\findstr.exe" "^tests/"
         echo:
         popd && exit /b 1
     )
 
     REM Check for pytest.ini
-    git diff --cached --name-only | findstr "pytest.ini" >nul
+    git diff --cached --name-only | "%WINDIR%\System32\findstr.exe" "pytest.ini" >nul
     if %ERRORLEVEL% EQU 0 (
         echo [X] ERROR: pytest.ini staged on main branch
         echo This file should only be on development branch
@@ -178,7 +181,7 @@ if "!CURRENT_BRANCH!" == "main" (
     )
 
     REM Check for development-only docs
-    git diff --cached --name-only | findstr "docs/TESTING_GUIDE.md" >nul
+    git diff --cached --name-only | "%WINDIR%\System32\findstr.exe" "docs/TESTING_GUIDE.md" >nul
     if %ERRORLEVEL% EQU 0 (
         echo [X] ERROR: TESTING_GUIDE.md staged on main branch
         echo This doc should only be on development branch
@@ -195,52 +198,53 @@ REM [4/7] Code quality check
 echo [4/7] Checking code quality...
 
 REM Always run Python lint checks (ruff, black, isort)
-set PYTHON_LINT_ERROR=0
-call .venv\Scripts\ruff.exe check . >nul 2>&1
-if %ERRORLEVEL% NEQ 0 set PYTHON_LINT_ERROR=1
-call .venv\Scripts\black.exe --check . >nul 2>&1
-if %ERRORLEVEL% NEQ 0 set PYTHON_LINT_ERROR=1
-call .venv\Scripts\isort.exe --check-only . >nul 2>&1
-if %ERRORLEVEL% NEQ 0 set PYTHON_LINT_ERROR=1
+set "PYTHON_LINT_ERROR=0"
+REM [Guide 1.6] Quote paths
+call ".venv\Scripts\ruff.exe" check . >nul 2>&1
+if %ERRORLEVEL% NEQ 0 set "PYTHON_LINT_ERROR=1"
+call ".venv\Scripts\black.exe" --check . >nul 2>&1
+if %ERRORLEVEL% NEQ 0 set "PYTHON_LINT_ERROR=1"
+call ".venv\Scripts\isort.exe" --check-only . >nul 2>&1
+if %ERRORLEVEL% NEQ 0 set "PYTHON_LINT_ERROR=1"
 
 REM Check markdownlint unless --skip-md-lint is set
-set MD_LINT_ERROR=0
+set "MD_LINT_ERROR=0"
 if %SKIP_MD_LINT% EQU 0 (
     call markdownlint-cli2 "*.md" ".claude/**/*.md" ".github/**/*.md" ".githooks/**/*.md" ".vscode/**/*.md" "docs/**/*.md" "tests/**/*.md" >nul 2>&1
-    if %ERRORLEVEL% NEQ 0 set MD_LINT_ERROR=1
+    if %ERRORLEVEL% NEQ 0 set "MD_LINT_ERROR=1"
 ) else (
     echo   [--skip-md-lint] Skipping markdown lint checks
 )
 
 REM Handle lint errors
-if %PYTHON_LINT_ERROR% EQU 1 (
+if !PYTHON_LINT_ERROR! EQU 1 (
     echo [!] Python lint errors detected
     echo:
-    if %NON_INTERACTIVE% EQU 1 (
+    if !NON_INTERACTIVE! EQU 1 (
         echo [Non-interactive mode] Auto-fixing Python lint issues...
         echo:
-        call .venv\Scripts\isort.exe . >nul 2>&1
-        call .venv\Scripts\black.exe . >nul 2>&1
-        call .venv\Scripts\ruff.exe check --fix . >nul 2>&1
+        call ".venv\Scripts\isort.exe" . >nul 2>&1
+        call ".venv\Scripts\black.exe" . >nul 2>&1
+        call ".venv\Scripts\ruff.exe" check --fix . >nul 2>&1
         echo:
         echo Restaging fixed files...
         git add .
         echo [OK] Fixed files staged
 
         REM Re-check Python lint
-        set PYTHON_LINT_ERROR=0
-        call .venv\Scripts\ruff.exe check . >nul 2>&1
+        set "PYTHON_LINT_ERROR=0"
+        call ".venv\Scripts\ruff.exe" check . >nul 2>&1
         if %ERRORLEVEL% NEQ 0 (
             echo [X] Python lint errors remain after auto-fix
             popd && exit /b 1
         )
     ) else (
-        set /p FIX_LINT="Auto-fix Python lint issues? (yes/no): "
+        set /p "FIX_LINT=Auto-fix Python lint issues? (yes/no): "
         if /i "!FIX_LINT!" == "yes" (
             echo:
-            call .venv\Scripts\isort.exe . >nul 2>&1
-            call .venv\Scripts\black.exe . >nul 2>&1
-            call .venv\Scripts\ruff.exe check --fix . >nul 2>&1
+            call ".venv\Scripts\isort.exe" . >nul 2>&1
+            call ".venv\Scripts\black.exe" . >nul 2>&1
+            call ".venv\Scripts\ruff.exe" check --fix . >nul 2>&1
             echo:
             echo Restaging fixed files...
             git add .
@@ -248,14 +252,14 @@ if %PYTHON_LINT_ERROR% EQU 1 (
         ) else (
             echo:
             echo To see Python lint errors, run: .venv\Scripts\ruff.exe check .
-            set /p CONTINUE_ANYWAY="Continue commit with Python lint errors? (yes/no): "
+            set /p "CONTINUE_ANYWAY=Continue commit with Python lint errors? (yes/no): "
             if /i not "!CONTINUE_ANYWAY!" == "yes" (
                 echo Commit cancelled - fix Python lint errors first
                 popd && exit /b 1
             )
         )
     )
-) else if %MD_LINT_ERROR% EQU 1 (
+) else if !MD_LINT_ERROR! EQU 1 (
     echo [!] Markdown lint warnings detected ^(non-blocking^)
     echo   Run: markdownlint-cli2 "*.md" "docs/**/*.md" to see details
     echo   Use --skip-md-lint to suppress this warning
@@ -272,7 +276,8 @@ echo ====================================
 echo:
 
 REM Count staged files
-for /f %%i in ('git diff --cached --name-only ^| find.exe /c /v ""') do set STAGED_COUNT=%%i
+REM [BUG FIX] Use explicit path to Windows find.exe to avoid Unix find /c (path) collision
+for /f %%i in ('git diff --cached --name-only ^| "%WINDIR%\System32\find.exe" /c /v ""') do set "STAGED_COUNT=%%i"
 echo Files to commit: !STAGED_COUNT!
 echo:
 
@@ -297,18 +302,18 @@ if "%COMMIT_MSG_PARAM%"=="" (
     popd && exit /b 1
 )
 
-set COMMIT_MSG=%COMMIT_MSG_PARAM%
+set "COMMIT_MSG=%COMMIT_MSG_PARAM%"
 
 REM Basic commit message validation
-echo !COMMIT_MSG! | findstr "^feat: ^fix: ^docs: ^chore: ^test: ^refactor: ^style: ^perf:" >nul
+echo !COMMIT_MSG! | "%WINDIR%\System32\findstr.exe" "^feat: ^fix: ^docs: ^chore: ^test: ^refactor: ^style: ^perf:" >nul
 if %ERRORLEVEL% NEQ 0 (
     echo [!] WARNING: Commit message doesn't follow conventional format
     echo   Recommended prefixes: feat:, fix:, docs:, chore:, test:
     echo:
-    if %NON_INTERACTIVE% EQU 1 (
+    if !NON_INTERACTIVE! EQU 1 (
         echo [Non-interactive mode] Continuing with non-conventional format...
     ) else (
-        set /p CONTINUE="Continue anyway? (yes/no): "
+        set /p "CONTINUE=Continue anyway? (yes/no): "
         if /i not "!CONTINUE!" == "yes" (
             echo Commit cancelled
             popd && exit /b 0
@@ -323,14 +328,14 @@ echo:
 REM [7/7] Create commit
 echo [7/7] Creating commit...
 echo:
-if %NON_INTERACTIVE% EQU 1 (
+if !NON_INTERACTIVE! EQU 1 (
     echo [Non-interactive mode] Branch: !CURRENT_BRANCH!
     echo [Non-interactive mode] Proceeding with commit...
 ) else (
     echo [!] BRANCH VERIFICATION
     echo You are about to commit to: !CURRENT_BRANCH!
     echo:
-    set /p CORRECT_BRANCH="Is this the correct branch? (yes/no): "
+    set /p "CORRECT_BRANCH=Is this the correct branch? (yes/no): "
     if /i not "!CORRECT_BRANCH!" == "yes" (
         echo:
         echo Available branches:
@@ -341,7 +346,7 @@ if %NON_INTERACTIVE% EQU 1 (
         popd && exit /b 0
     )
     echo:
-    set /p CONFIRM="Proceed with commit? (yes/no): "
+    set /p "CONFIRM=Proceed with commit? (yes/no): "
     if /i not "!CONFIRM!" == "yes" (
         echo Commit cancelled
         popd && exit /b 0
@@ -391,7 +396,7 @@ REM ========================================
 
 :LogMessage
 REM Logs message to both console and file
-set MSG=%~1
+set "MSG=%~1"
 echo %MSG%
 echo %MSG% >> "%LOGFILE%"
 goto :eof
