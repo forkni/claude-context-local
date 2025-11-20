@@ -83,6 +83,18 @@ Issues = "https://github.com/forkni/claude-context-local/issues"
 [tool.setuptools.packages.find]
 include = ["chunking*", "embeddings*", "mcp_server*", "search*", "merkle*"]
 
+# Security: Minimum versions for transitive dependencies (CVE fixes)
+# These are installed automatically but documented here for security tracking
+# Last audit: 2025-11-20 (pip-audit)
+#
+# authlib>=1.6.5     # Fixes CVE-2025-59420, CVE-2025-61920, CVE-2025-62706
+# pip>=25.3          # Fixes CVE-2025-8869 (tarfile path traversal)
+# starlette>=0.49.1  # Fixes CVE (version: 0.47.3 → 0.49.1)
+# uv>=0.9.6          # Fixes 2 CVEs (version: 0.8.21 → 0.9.6)
+#
+# Verification: .venv/Scripts/pip-audit --format json > audit_reports/YYYY-MM-DD-audit.json
+# Summary: python tools/summarize_audit.py audit_reports/YYYY-MM-DD-audit.json
+
 [tool.uv]
 index-url = "https://pypi.org/simple"
 
