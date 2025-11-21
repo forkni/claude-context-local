@@ -4,7 +4,9 @@ import tempfile
 import time
 from pathlib import Path
 from unittest import TestCase
+from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 from huggingface_hub import HfFolder
 
@@ -22,6 +24,7 @@ def _has_hf_token():
     return HfFolder.get_token() is not None
 
 
+@pytest.mark.slow
 class TestIncrementalIndexing(TestCase):
     """Test incremental indexing functionality."""
 
@@ -97,9 +100,21 @@ class Database:
 '''
         )
 
-    @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
-    def test_full_index(self):
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_full_index(self, mock_sentence_transformer):
         """Test full indexing of a codebase."""
+
+        # Mock the model to prevent downloads
+        def mock_encode(sentences, show_progress_bar=False):
+            if isinstance(sentences, str):
+                return np.ones(768, dtype=np.float32) * 0.5
+            else:
+                return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
+
+        mock_model = MagicMock()
+        mock_model.encode.side_effect = mock_encode
+        mock_sentence_transformer.return_value = mock_model
+
         indexer = Indexer(storage_dir=str(self.index_dir))
         embedder = CodeEmbedder()
         chunker = MultiLanguageChunker(str(self.test_path))
@@ -155,9 +170,21 @@ class Database:
         assert result2.files_removed == 0
         assert result2.files_modified == 0
 
-    @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
-    def test_file_modification(self):
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_file_modification(self, mock_sentence_transformer):
         """Test incremental indexing when files are modified."""
+
+        # Mock the model to prevent downloads
+        def mock_encode(sentences, show_progress_bar=False):
+            if isinstance(sentences, str):
+                return np.ones(768, dtype=np.float32) * 0.5
+            else:
+                return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
+
+        mock_model = MagicMock()
+        mock_model.encode.side_effect = mock_encode
+        mock_sentence_transformer.return_value = mock_model
+
         indexer = Indexer(storage_dir=str(self.index_dir))
         embedder = CodeEmbedder()
         chunker = MultiLanguageChunker(str(self.test_path))
@@ -207,9 +234,21 @@ class Calculator:
         assert result2.chunks_removed > 0
         assert result2.chunks_added > 0
 
-    @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
-    def test_file_addition(self):
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_file_addition(self, mock_sentence_transformer):
         """Test incremental indexing when files are added."""
+
+        # Mock the model to prevent downloads
+        def mock_encode(sentences, show_progress_bar=False):
+            if isinstance(sentences, str):
+                return np.ones(768, dtype=np.float32) * 0.5
+            else:
+                return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
+
+        mock_model = MagicMock()
+        mock_model.encode.side_effect = mock_encode
+        mock_sentence_transformer.return_value = mock_model
+
         indexer = Indexer(storage_dir=str(self.index_dir))
         embedder = CodeEmbedder()
         chunker = MultiLanguageChunker(str(self.test_path))
@@ -248,9 +287,21 @@ class NewClass:
         assert result2.files_modified == 0
         assert result2.chunks_added > 0
 
-    @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
-    def test_file_deletion(self):
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_file_deletion(self, mock_sentence_transformer):
         """Test incremental indexing when files are deleted."""
+
+        # Mock the model to prevent downloads
+        def mock_encode(sentences, show_progress_bar=False):
+            if isinstance(sentences, str):
+                return np.ones(768, dtype=np.float32) * 0.5
+            else:
+                return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
+
+        mock_model = MagicMock()
+        mock_model.encode.side_effect = mock_encode
+        mock_sentence_transformer.return_value = mock_model
+
         indexer = Indexer(storage_dir=str(self.index_dir))
         embedder = CodeEmbedder()
         chunker = MultiLanguageChunker(str(self.test_path))

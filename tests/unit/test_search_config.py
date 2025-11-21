@@ -210,33 +210,28 @@ class TestDefaultConfigPath:
 
                 config_module._config_manager = None
 
-    def test_config_persistence_to_storage_location(self):
-        """Test saving config to .claude_code_search directory."""
-        from pathlib import Path
+    def test_config_persistence_to_storage_location(self, tmp_path):
+        """Test saving config to storage directory."""
 
-        # Use explicit storage path
-        storage_path = Path.home() / ".claude_code_search" / "test_search_config.json"
+        # Use temporary storage path instead of production directory
+        storage_path = tmp_path / "test_search_config.json"
 
-        try:
-            mgr = SearchConfigManager(config_file=str(storage_path))
-            cfg = mgr.load_config()
-            cfg.embedding_model_name = "BAAI/bge-m3"
-            cfg.default_search_mode = "semantic"
-            mgr.save_config(cfg)
+        mgr = SearchConfigManager(config_file=str(storage_path))
+        cfg = mgr.load_config()
+        cfg.embedding_model_name = "BAAI/bge-m3"
+        cfg.default_search_mode = "semantic"
+        mgr.save_config(cfg)
 
-            # Verify file exists
-            assert storage_path.exists()
+        # Verify file exists
+        assert storage_path.exists()
 
-            # Load in new manager
-            mgr2 = SearchConfigManager(config_file=str(storage_path))
-            cfg2 = mgr2.load_config()
-            assert cfg2.embedding_model_name == "BAAI/bge-m3"
-            assert cfg2.default_search_mode == "semantic"
+        # Load in new manager
+        mgr2 = SearchConfigManager(config_file=str(storage_path))
+        cfg2 = mgr2.load_config()
+        assert cfg2.embedding_model_name == "BAAI/bge-m3"
+        assert cfg2.default_search_mode == "semantic"
 
-        finally:
-            # Cleanup
-            if storage_path.exists():
-                storage_path.unlink()
+        # tmp_path cleanup is automatic via pytest fixture
 
 
 def test_global_config_functions():

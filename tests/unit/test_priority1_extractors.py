@@ -31,7 +31,7 @@ def chunk_metadata():
 # ===== InheritanceExtractor Tests =====
 
 
-def test_inheritance_single_parent(chunk_metadata):
+def test_inheritance_single_parent():
     """Test extraction of single parent inheritance."""
     code = """
 class Parent:
@@ -40,6 +40,14 @@ class Parent:
 class Child(Parent):
     pass
 """
+
+    # Create chunk metadata for the Child class chunk
+    chunk_metadata = {
+        "chunk_id": "test.py:5-7:class:Child",
+        "file_path": "test.py",
+        "name": "Child",
+        "chunk_type": "class",
+    }
 
     extractor = InheritanceExtractor()
     edges = extractor.extract(code, chunk_metadata)

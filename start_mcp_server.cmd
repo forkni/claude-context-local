@@ -212,21 +212,44 @@ echo.
 pause
 goto menu_restart
 
-:run_integration_tests
+:run_fast_integration_tests
 echo.
-echo === Run Integration Tests ===
+echo === Run Fast Integration Tests ===
 echo.
-echo [INFO] Running integration tests for MCP server and search functionality...
-echo [INFO] This will test core imports, search functionality, and MCP integration.
+echo [INFO] Running fast integration tests (^< 5s each)...
+echo [INFO] This will test quick workflows, system integration, and MCP server functionality.
+echo [INFO] Expected duration: ~2 minutes
 echo.
-.\.venv\Scripts\python.exe -m pytest tests/integration/ -v --tb=short
+.\.venv\Scripts\python.exe -m pytest tests/fast_integration/ -v --tb=short
 if "!ERRORLEVEL!" neq "0" (
     echo.
     echo [WARNING] Some tests failed. Check output above for details.
     echo [INFO] This is normal during active development
 ) else (
     echo.
-    echo [OK] All integration tests passed!
+    echo [OK] All fast integration tests passed!
+)
+echo.
+pause
+goto menu_restart
+
+:run_slow_integration_tests
+echo.
+echo === Run Slow Integration Tests ===
+echo.
+echo [INFO] Running slow integration tests (^> 10s each)...
+echo [INFO] This will test complete workflows, advanced features, and relationship extraction.
+echo [INFO] Expected duration: ~10 minutes
+echo [WARNING] These tests use real embeddings and take significant time.
+echo.
+.\.venv\Scripts\python.exe -m pytest tests/slow_integration/ -v --tb=short
+if "!ERRORLEVEL!" neq "0" (
+    echo.
+    echo [WARNING] Some tests failed. Check output above for details.
+    echo [INFO] This is normal during active development
+) else (
+    echo.
+    echo [OK] All slow integration tests passed!
 )
 echo.
 pause
@@ -409,11 +432,12 @@ echo === Advanced Options ===
 echo.
 echo   1. Start Server in Debug Mode
 echo   2. Run Unit Tests
-echo   3. Run Integration Tests
-echo   4. Run Regression Tests
-echo   5. Back to Main Menu
+echo   3. Run Fast Integration Tests (77 tests, ~2 min)
+echo   4. Run Slow Integration Tests (67 tests, ~10 min)
+echo   5. Run Regression Tests
+echo   6. Back to Main Menu
 echo.
-set /p adv_choice="Select option (1-5): "
+set /p adv_choice="Select option (1-6): "
 
 REM Handle empty input gracefully
 if not defined adv_choice (
@@ -427,11 +451,12 @@ if "!adv_choice!"=="" (
 
 if "!adv_choice!"=="1" goto debug_mode
 if "!adv_choice!"=="2" goto run_unit_tests
-if "!adv_choice!"=="3" goto run_integration_tests
-if "!adv_choice!"=="4" goto run_regression_tests
-if "!adv_choice!"=="5" goto menu_restart
+if "!adv_choice!"=="3" goto run_fast_integration_tests
+if "!adv_choice!"=="4" goto run_slow_integration_tests
+if "!adv_choice!"=="5" goto run_regression_tests
+if "!adv_choice!"=="6" goto menu_restart
 
-echo [ERROR] Invalid choice. Please select 1-5.
+echo [ERROR] Invalid choice. Please select 1-6.
 pause
 cls
 goto advanced_menu

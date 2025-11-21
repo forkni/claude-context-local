@@ -116,7 +116,7 @@ class TestIncrementalIndexer:
         assert indexer.snapshot_manager == self.mock_snapshot_manager
         assert indexer.change_detector is not None
 
-    def test_initialization_with_defaults(self):
+    def test_initialization_with_defaults(self, tmp_path):
         """Test initialization with default components."""
         with (
             patch("search.incremental_indexer.Indexer") as mock_indexer_class,
@@ -126,12 +126,19 @@ class TestIncrementalIndexer:
             ) as mock_chunker_class,
             patch("search.incremental_indexer.SnapshotManager") as mock_snapshot_class,
         ):
-            IncrementalIndexer()
+            # Mock SnapshotManager to use temp directory
+            mock_snapshot_instance = Mock()
+            mock_snapshot_instance.storage_dir = tmp_path / "merkle"
+            mock_snapshot_class.return_value = mock_snapshot_instance
+
+            # Pass explicit snapshot_manager to avoid production pollution
+            IncrementalIndexer(snapshot_manager=mock_snapshot_instance)
 
             mock_indexer_class.assert_called_once()
             mock_embedder_class.assert_called_once()
             mock_chunker_class.assert_called_once()
-            mock_snapshot_class.assert_called_once()
+            # SnapshotManager not called when passed explicitly
+            mock_snapshot_class.assert_not_called()
 
     def test_detect_changes(self):
         """Test change detection."""
@@ -218,6 +225,9 @@ class TestIncrementalIndexer:
         mock_changes = Mock()
         mock_changes.has_changes.return_value = False
         mock_dag = Mock()
+        mock_dag.get_all_files.return_value = (
+            []
+        )  # Mock get_all_files to return empty list
         indexer.change_detector.detect_changes_from_snapshot = Mock(
             return_value=(mock_changes, mock_dag)
         )
@@ -250,6 +260,11 @@ class TestIncrementalIndexer:
         mock_changes.removed = ["old_file.py"]
         mock_changes.modified = ["changed_file.py"]
         mock_dag = Mock()
+        mock_dag.get_all_files.return_value = [
+            "new_file.py",
+            "old_file.py",
+            "changed_file.py",
+        ]
 
         indexer.change_detector.detect_changes_from_snapshot = Mock(
             return_value=(mock_changes, mock_dag)
@@ -604,6 +619,7 @@ class TestIncrementalIndexer:
         mock_changes.removed = ["old_file1.py", "old_file2.py"]
         mock_changes.modified = []
         mock_dag = Mock()
+        mock_dag.get_all_files.return_value = ["old_file1.py", "old_file2.py"]
 
         indexer.change_detector.detect_changes_from_snapshot = Mock(
             return_value=(mock_changes, mock_dag)
@@ -747,6 +763,7 @@ class TestIncrementalIndexer:
         mock_changes.removed = files_to_remove
         mock_changes.modified = []
         mock_dag = Mock()
+        mock_dag.get_all_files.return_value = files_to_remove
 
         indexer.change_detector.detect_changes_from_snapshot = Mock(
             return_value=(mock_changes, mock_dag)

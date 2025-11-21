@@ -9,7 +9,9 @@ import json
 import shutil
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 from huggingface_hub import HfFolder
 
@@ -25,8 +27,25 @@ def _has_hf_token():
     return HfFolder.get_token() is not None
 
 
+@pytest.mark.slow
 class TestHybridSearchIntegration:
     """Integration tests for hybrid search system."""
+
+    @pytest.fixture(autouse=True)
+    def mock_embedder(self):
+        """Mock SentenceTransformer to prevent model downloads for all tests."""
+
+        def mock_encode(sentences, show_progress_bar=False):
+            if isinstance(sentences, str):
+                return np.ones(768, dtype=np.float32) * 0.5
+            else:
+                return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
+
+        with patch("embeddings.embedder.SentenceTransformer") as mock_st:
+            mock_model = MagicMock()
+            mock_model.encode.side_effect = mock_encode
+            mock_st.return_value = mock_model
+            yield mock_st
 
     def setup_method(self):
         """Set up test environment with real components."""
@@ -188,7 +207,6 @@ class DatabaseConnection:
         except Exception as e:
             pytest.skip(f"Could not initialize components: {e}")
 
-    @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_hybrid_searcher_has_add_embeddings_method(self):
         """Test that HybridSearcher has add_embeddings method."""
         self.initialize_components()
@@ -198,7 +216,6 @@ class DatabaseConnection:
             self.hybrid_searcher, "add_embeddings"
         ), "HybridSearcher missing add_embeddings method required by incremental indexer"
 
-    @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_incremental_indexing_with_hybrid_search(self):
         """Test that incremental indexing works with hybrid search."""
         self.initialize_components()
@@ -218,7 +235,6 @@ class DatabaseConnection:
             else:
                 raise
 
-    @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_hybrid_indices_are_populated(self):
         """Test that both BM25 and dense indices are populated after indexing."""
         self.initialize_components()
@@ -248,7 +264,6 @@ class DatabaseConnection:
             self.hybrid_searcher.dense_index.index.ntotal > 0
         ), "Dense index should contain vectors after indexing"
 
-    @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_hybrid_search_returns_results(self):
         """Test that hybrid search returns results from both indices."""
         self.initialize_components()
@@ -286,7 +301,6 @@ class DatabaseConnection:
                     result.score > 0
                 ), f"Result score should be positive: {result.score}"
 
-    @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_bm25_vs_dense_results_differ(self):
         """Test that BM25-only and dense-only searches return different results."""
         self.initialize_components()
@@ -320,7 +334,6 @@ class DatabaseConnection:
             bm25_doc_ids != dense_doc_ids
         ), "BM25 and dense search should return different results for semantic queries"
 
-    @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_hybrid_reranking_combines_results(self):
         """Test that hybrid reranking properly combines BM25 and dense results."""
         self.initialize_components()
@@ -354,7 +367,6 @@ class DatabaseConnection:
             or len(hybrid_chunk_ids & dense_chunk_ids) > 0
         ), "Hybrid results should include documents from BM25 or dense searches"
 
-    @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_parallel_vs_sequential_search(self):
         """Test that parallel and sequential search modes work and return similar results."""
         self.initialize_components()
@@ -385,7 +397,6 @@ class DatabaseConnection:
             overlap >= len(parallel_results) // 2
         ), "Parallel and sequential search should have significant overlap in results"
 
-    @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_index_persistence(self):
         """Test that hybrid indices persist across searcher instances."""
         self.initialize_components()
@@ -418,7 +429,6 @@ class DatabaseConnection:
         results = new_searcher.search(query, k=3)
         assert len(results) > 0, "Search should work with loaded indices"
 
-    @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_incremental_updates(self):
         """Test that incremental updates work with hybrid search."""
         self.initialize_components()
@@ -464,7 +474,6 @@ def validate_item(item):
         new_file_results = [r for r in results if "new_module.py" in r.chunk_id]
         assert len(new_file_results) > 0, "Should find results from new file"
 
-    @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_search_mode_configuration(self):
         """Test search mode configuration and switching."""
         self.initialize_components()
@@ -491,7 +500,6 @@ def validate_item(item):
         self.hybrid_searcher.bm25_weight = original_bm25_weight
         self.hybrid_searcher.dense_weight = original_dense_weight
 
-    @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_error_handling(self):
         """Test error handling in hybrid search system."""
         self.initialize_components()
@@ -513,7 +521,6 @@ def validate_item(item):
         results = self.hybrid_searcher.search("test", k=0)
         assert len(results) == 0, "k=0 should return no results"
 
-    @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_statistics_and_monitoring(self):
         """Test statistics collection and monitoring features."""
         self.initialize_components()
@@ -556,6 +563,7 @@ def validate_item(item):
             pass
 
 
+@pytest.mark.slow
 class TestHybridSearchConfigIntegration:
     """Integration tests for hybrid search configuration."""
 

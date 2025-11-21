@@ -2,7 +2,9 @@
 
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 from embeddings.embedder import CodeEmbedder
@@ -28,16 +30,16 @@ class TestModelRegistry:
         config = get_model_config("google/embeddinggemma-300m")
         assert config is not None
         assert config["dimension"] == 768
-        assert config["prompt_name"] == "Retrieval-document"
-        assert config["vram_gb"] == "4-8"
+        assert config["passage_prefix"] == "Retrieval-document: "
+        assert config["vram_gb"] == "4-8GB"
 
     def test_bge_m3_config(self):
         """Test BGE-M3 model configuration."""
         config = get_model_config("BAAI/bge-m3")
         assert config is not None
         assert config["dimension"] == 1024
-        assert config["prompt_name"] is None  # BGE-M3 doesn't use prompts
-        assert config["vram_gb"] == "8-16"
+        assert config.get("passage_prefix") is None  # BGE-M3 doesn't use prompts
+        assert config["vram_gb"] == "3-4GB"
 
     def test_unknown_model_returns_none(self):
         """Test that unknown model returns None."""
@@ -128,8 +130,19 @@ class TestSearchConfigManager:
         assert config.embedding_model_name == "BAAI/bge-m3"
 
 
+@pytest.mark.usefixtures("mock_sentence_transformer")
 class TestCodeEmbedderModelSupport:
     """Test CodeEmbedder multi-model support."""
+
+    @pytest.fixture(autouse=True)
+    def mock_sentence_transformer(self):
+        """Mock SentenceTransformer to avoid downloading models."""
+        with patch("embeddings.embedder.SentenceTransformer") as mock_st:
+            # Create a mock that returns proper embeddings
+            mock_model = MagicMock()
+            mock_model.encode.return_value = np.ones(768, dtype=np.float32) * 0.5
+            mock_st.return_value = mock_model
+            yield mock_st
 
     def test_default_model_is_gemma(self):
         """Test that default model is Gemma (backward compatibility)."""
@@ -154,7 +167,7 @@ class TestCodeEmbedderModelSupport:
         config = embedder._get_model_config()
 
         assert config["dimension"] == 768
-        assert config["prompt_name"] == "Retrieval-document"
+        assert config["passage_prefix"] == "Retrieval-document: "
 
     def test_model_config_detection_bge_m3(self):
         """Test automatic config detection for BGE-M3."""
@@ -162,7 +175,7 @@ class TestCodeEmbedderModelSupport:
         config = embedder._get_model_config()
 
         assert config["dimension"] == 1024
-        assert config["prompt_name"] is None  # No prompts for BGE-M3
+        assert config.get("passage_prefix") is None  # No prompts for BGE-M3
 
     def test_model_config_detection_unknown_model(self):
         """Test fallback config for unknown models."""

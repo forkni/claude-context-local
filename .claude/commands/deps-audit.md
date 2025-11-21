@@ -1,5 +1,5 @@
 ---
-model: claude-sonnet-4-0
+model: claude-sonnet-4-5
 ---
 
 # Practical Dependency Audit for Python/ML Projects
@@ -11,12 +11,14 @@ model: claude-sonnet-4-0
 ## When to Use This Command
 
 ✅ **Good use cases:**
+
 - Quarterly security review
 - Before major releases
 - After adding new ML dependencies
 - Investigating known CVEs
 
 ❌ **Don't use for:**
+
 - Daily/weekly monitoring (overkill for local tools)
 - Internet-exposed production services (need enterprise security)
 - Projects with < 10 dependencies (just review manually)
@@ -26,6 +28,7 @@ model: claude-sonnet-4-0
 This command takes no arguments. Run directly with `/deps-audit` to audit the current project's dependencies.
 
 **Requirements:**
+
 - Active Python virtual environment (`.venv` or similar)
 - Project with `pyproject.toml` or `requirements.txt`
 - Internet connection for vulnerability database queries
@@ -48,6 +51,7 @@ audit_reports/
 ```
 
 **Why this matters:**
+
 - ✅ Git-ignored by default (no sensitive data committed)
 - ✅ Organized history for tracking improvements
 - ✅ Clean project root
@@ -60,6 +64,7 @@ audit_reports/
 ### Use pip-audit (Official PyPA Tool)
 
 **Why pip-audit?**
+
 - ✅ Official Python Packaging Authority tool
 - ✅ Free and actively maintained
 - ✅ Queries OSV database (Google's Open Source Vulnerabilities)
@@ -105,6 +110,7 @@ audit_reports/
 | **Low** | ⚪ Consider update | Quarterly review |
 
 **ML-Specific Red Flags:**
+
 - PyTorch vulnerabilities (model deserialization, JIT compiler)
 - transformers CVEs (arbitrary code execution in configs)
 - FAISS issues (memory corruption in C++ layer)
@@ -143,6 +149,7 @@ pip-licenses --summary
 | Unknown | ⚠️ Investigate | Contact maintainer |
 
 **For MIT/Apache Projects:**
+
 - MIT/Apache/BSD dependencies: ✅ All compatible
 - GPL dependencies: ❌ Incompatible (forces GPL license)
 - AGPL dependencies: ❌ Strong copyleft restriction
@@ -188,12 +195,14 @@ if torch.cuda.is_available():
 ### ML Dependency Update Strategy
 
 🚫 **NEVER auto-update these packages:**
+
 - `torch`, `torchvision`, `torchaudio` (CUDA compatibility)
 - `transformers` (model behavior changes)
 - `faiss-cpu` / `faiss-gpu` (index format changes)
 - `sentence-transformers` (embedding changes)
 
 ✅ **Safe to update (with testing):**
+
 - `pytest`, `rich`, `click` (dev tools)
 - `psutil`, `tqdm` (utilities)
 - `nltk`, `tiktoken` (tokenizers)
@@ -250,6 +259,7 @@ pip list --outdated --format=json | \
 | Patch version only | +5 | 2.6.0 → 2.6.1 |
 
 **Priority Buckets:**
+
 - **Score >100**: Update this week (security issue)
 - **Score 50-100**: Update next sprint (ML core + old)
 - **Score 20-50**: Update quarterly
@@ -262,12 +272,14 @@ pip list --outdated --format=json | \
 ### Only Do This If You Actually Need It
 
 **When you DON'T need this:**
+
 - Local development tool
 - Single developer/small team
 - Trusted code sources only
 - No internet exposure
 
 **When you DO need this:**
+
 - Public-facing API
 - Multi-tenant service
 - Processing untrusted input
@@ -390,6 +402,7 @@ After applying security updates, verify:
 4. **Requires major dependency upgrade** → Example: PyTorch 2.6→3.0 not stable yet
 
 **Document all deferred fixes** in `audit_reports/deferred-cves-2025-11-20.md`:
+
 ```markdown
 ## Deferred CVE Fixes
 
@@ -401,9 +414,88 @@ After applying security updates, verify:
 
 ---
 
+## Phase 7: Cleanup Audit Tools (Optional)
+
+After completing your security updates, you have two options for managing the audit tools (`pip-audit`, `pip-licenses`):
+
+### Option A: Keep Tools Installed (Recommended for Active Projects)
+
+**When to choose this:**
+
+- ✅ You plan quarterly maintenance reviews (every 3 months)
+- ✅ You're actively developing/maintaining the project
+- ✅ Disk space isn't a concern (~15-20 MB for both tools)
+- ✅ You want instant access to audit commands
+
+**What to do:**
+
+```bash
+# Nothing! Keep pip-audit and pip-licenses installed
+# They'll be ready for your next quarterly review
+
+# Optional: Document these as dev dependencies in pyproject.toml
+# [tool.poetry.group.dev.dependencies]
+# pip-audit = ">=2.7.3"
+# pip-licenses = ">=5.0.0"
+```
+
+**Benefit**: 30-60 seconds saved every quarter (no reinstall time).
+
+### Option B: Remove Tools After Audit (Cleaner Environment)
+
+**When to choose this:**
+
+- ✅ You rarely run audits (< 2 times/year)
+- ✅ You want minimal virtual environment footprint
+- ✅ You're archiving/freezing the project
+- ✅ You use containerized builds (want lean images)
+
+**What to do:**
+
+```bash
+# Remove audit tools after saving reports
+pip uninstall pip-audit pip-licenses -y
+
+# Verify removal
+pip list | grep -E "pip-audit|pip-licenses"
+# (should return nothing)
+
+# Your audit reports remain safe in audit_reports/
+ls audit_reports/*.json  # Confirms historical data preserved
+```
+
+**Benefit**: Cleaner virtual environment, ~15-20 MB disk space saved.
+
+### Decision Matrix
+
+| Factor | Keep Tools | Remove Tools |
+|--------|-----------|-------------|
+| **Quarterly reviews** | ✅ Best choice | ❌ Must reinstall |
+| **Archived project** | ❌ Wastes space | ✅ Best choice |
+| **Disk space critical** | ❌ ~20 MB used | ✅ Saves space |
+| **Container builds** | ❌ Bloats image | ✅ Lean image |
+| **Active development** | ✅ Always ready | ⚠️ Reinstall delay |
+
+### If You Remove Tools: Quick Reinstall
+
+**Next quarterly review:**
+
+```bash
+# Takes 30-60 seconds to reinstall
+.venv/Scripts/pip install pip-audit pip-licenses
+
+# Continue with audit workflow
+.venv/Scripts/pip-audit --format json > audit_reports/quarterly-2025-02-20.json
+```
+
+**Bottom Line**: For most projects with regular maintenance, **keep the tools installed**. Only remove them for archived projects or when disk space is truly constrained.
+
+---
+
 ## Output Format
 
 **Executive Summary:**
+
 ```
 === Dependency Audit Summary ===
 Date: 2025-11-20
@@ -479,6 +571,7 @@ python -c "import torch; print(f'PyTorch {torch.__version__}, CUDA {torch.cuda.i
 | Tree-sitter parser exploit | Very Low | Low | Keep updated |
 
 **NOT actual risks:**
+
 - HuggingFace model repository compromise (HTTPS + checksums built-in)
 - Typosquatting "torsh" instead of "torch" (you'd notice immediately)
 - Supply chain attack on PyTorch (millions of users, would be detected fast)
@@ -503,13 +596,20 @@ pip-licenses --format=markdown > licenses.md  # Full report
 pip list --outdated                 # Check for updates
 pip show <package>                  # Package details
 pip-licenses --packages <package>   # Package license
+
+# Cleanup (optional, see Phase 7 for guidance)
+pip uninstall pip-audit pip-licenses -y  # Remove audit tools after review
+pip list | grep -E "pip-audit|pip-licenses"  # Verify removal (should be empty)
 ```
+
+**Note**: These are **development tools**, not production dependencies. Consider adding to `[tool.poetry.group.dev.dependencies]` in `pyproject.toml` if using Poetry, or keep them in your virtual environment for quarterly maintenance.
 
 ---
 
 ## Summary: Practical vs Enterprise Approach
 
 **This Command (Practical):**
+
 - ✅ 10-min setup + 5-min quarterly
 - ✅ Focuses on known CVEs and ML compatibility
 - ✅ Manual updates with testing
@@ -517,6 +617,7 @@ pip-licenses --packages <package>   # Package license
 - ✅ Low maintenance, high value
 
 **Enterprise Security Theater (Don't Do This):**
+
 - ❌ Weekly automated scans
 - ❌ Model integrity checking
 - ❌ Supply chain monitoring
@@ -525,6 +626,7 @@ pip-licenses --packages <package>   # Package license
 - ❌ High maintenance, marginal value
 
 **Cost/Benefit Ratio:**
+
 - Practical approach: 90% of security benefit, 5% of effort
 - Enterprise approach: 100% of security benefit, 100% of effort (40+ hours/month)
 
@@ -537,6 +639,7 @@ pip-licenses --packages <package>   # Package license
 **Solution**: Use the included Python helper script at `tools/summarize_audit.py` to generate executive summaries.
 
 **Features**:
+
 - ✅ Windows-safe (no Unicode crashes, uses ASCII formatting)
 - ✅ Groups vulnerabilities by package
 - ✅ Shows actionable fix commands
@@ -615,6 +718,7 @@ Severity Breakdown:
 **Cause**: Tool not installed in current environment.
 
 **Fix**:
+
 ```bash
 # Install in your virtual environment
 .venv/Scripts/pip install pip-audit  # Windows
@@ -632,6 +736,7 @@ Severity Breakdown:
 **Symptom**: Warning message about different virtual environment.
 
 **Fix**:
+
 ```bash
 # Option 1: Use virtual environment's pip-audit directly
 .venv/Scripts/pip-audit --format json
@@ -646,6 +751,7 @@ pip-audit --format json
 **Cause**: Tool not installed.
 
 **Fix**:
+
 ```bash
 .venv/Scripts/pip install pip-licenses
 ```
@@ -655,6 +761,7 @@ pip-audit --format json
 **Cause**: Virtual environment not activated or PyTorch not installed.
 
 **Fix**:
+
 ```bash
 # Activate environment first
 .venv/Scripts/activate  # Windows
@@ -669,6 +776,7 @@ pip list | grep torch
 **Expected**: Should complete in 1-2 seconds for ~200 packages.
 
 **Possible Causes**:
+
 - Slow internet connection (queries OSV database)
 - Large number of dependencies (>500 packages)
 - Network proxy/firewall blocking requests

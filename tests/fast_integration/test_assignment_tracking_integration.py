@@ -21,7 +21,9 @@ class TestAssignmentTrackingIntegration:
         self.test_dir = tempfile.mkdtemp()
         self.chunker = MultiLanguageChunker()
         self.extractor = PythonCallGraphExtractor()
-        self.graph = CodeGraphStorage("test_project")
+        self.graph = CodeGraphStorage(
+            "test_project", storage_dir=Path(self.test_dir) / "graphs"
+        )
 
     def teardown_method(self):
         """Clean up test fixtures."""

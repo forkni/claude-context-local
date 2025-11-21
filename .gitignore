@@ -231,6 +231,7 @@ MEMORY.md
 GEMINI.md
 BASH_STYLE_GUIDE.md
 BATCH_STYLE_GUIDE.md
+SLASH_COMMAND_TESTING_PROTOCOL.md
 
 # Documentation - only specific files are public
 docs/*

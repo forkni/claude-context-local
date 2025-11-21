@@ -3,16 +3,19 @@
 import shutil
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+from conftest import create_test_embeddings
 
 from chunking.multi_language_chunker import MultiLanguageChunker
-from embeddings.embedder import CodeEmbedder, EmbeddingResult
+from embeddings.embedder import CodeEmbedder
 from search.config import SearchConfig
 from search.hybrid_searcher import HybridSearcher
 
 
+@pytest.mark.slow
 class TestMultiHopSearchFlow:
     """Integration tests for multi-hop semantic search."""
 
@@ -30,90 +33,20 @@ class TestMultiHopSearchFlow:
 
     @pytest.fixture
     def session_embedder(self):
-        """Reusable embedder for all tests."""
-        cache_dir = tempfile.mkdtemp()
-        embedder = CodeEmbedder(
-            model_name="google/embeddinggemma-300m", cache_dir=cache_dir
-        )
-        yield embedder
-        # Cleanup
-        shutil.rmtree(cache_dir, ignore_errors=True)
+        """Reusable mocked embedder for all tests."""
+        # Mock SentenceTransformer to avoid downloading models
+        with patch("embeddings.embedder.SentenceTransformer") as mock_st:
+            mock_model = MagicMock()
+            mock_model.encode.return_value = np.ones(768, dtype=np.float32) * 0.5
+            mock_st.return_value = mock_model
 
-    def _generate_chunk_id(self, chunk):
-        """Generate chunk ID like the embedder does."""
-        chunk_id = f"{chunk.relative_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
-        if chunk.name:
-            chunk_id += f":{chunk.name}"
-        return chunk_id
-
-    def _create_embeddings_from_chunks(self, chunks, embedder=None):
-        """Create embeddings from chunks using deterministic approach or real embedder."""
-        embeddings = []
-
-        # If real embedder provided, use it
-        if embedder:
-            texts = [chunk.content for chunk in chunks]
-            chunk_ids = [self._generate_chunk_id(chunk) for chunk in chunks]
-
-            # Use embedder to generate real embeddings
-            embed_results = embedder.embed_batch(
-                texts=texts,
-                chunk_ids=chunk_ids,
-                metadata=[
-                    {
-                        "name": chunk.name,
-                        "chunk_type": chunk.chunk_type,
-                        "file_path": chunk.file_path,
-                        "relative_path": chunk.relative_path,
-                        "folder_structure": chunk.folder_structure,
-                        "start_line": chunk.start_line,
-                        "end_line": chunk.end_line,
-                        "docstring": chunk.docstring,
-                        "tags": chunk.tags,
-                        "complexity_score": chunk.complexity_score,
-                        "content_preview": (
-                            chunk.content[:200] + "..."
-                            if len(chunk.content) > 200
-                            else chunk.content
-                        ),
-                    }
-                    for chunk in chunks
-                ],
+            cache_dir = tempfile.mkdtemp()
+            embedder = CodeEmbedder(
+                model_name="google/embeddinggemma-300m", cache_dir=cache_dir
             )
-            return embed_results
-
-        # Otherwise use deterministic embeddings for fast tests
-        for chunk in chunks:
-            content_hash = abs(hash(chunk.content)) % 10000
-            embedding = (
-                np.random.RandomState(content_hash).random(768).astype(np.float32)
-            )
-
-            chunk_id = self._generate_chunk_id(chunk)
-            metadata = {
-                "name": chunk.name,
-                "chunk_type": chunk.chunk_type,
-                "file_path": chunk.file_path,
-                "relative_path": chunk.relative_path,
-                "folder_structure": chunk.folder_structure,
-                "start_line": chunk.start_line,
-                "end_line": chunk.end_line,
-                "docstring": chunk.docstring,
-                "tags": chunk.tags,
-                "complexity_score": chunk.complexity_score,
-                "content_preview": (
-                    chunk.content[:200] + "..."
-                    if len(chunk.content) > 200
-                    else chunk.content
-                ),
-            }
-
-            result = EmbeddingResult(
-                embedding=embedding, chunk_id=chunk_id, metadata=metadata
-            )
-            embeddings.append(result)
-
-        return embeddings
+            yield embedder
+            # Cleanup
+            shutil.rmtree(cache_dir, ignore_errors=True)
 
     def test_multi_hop_basic_functionality(self, test_project_path, mock_storage_dir):
         """Test basic multi-hop search with 2 hops."""
@@ -130,7 +63,7 @@ class TestMultiHopSearchFlow:
         assert len(test_chunks) >= 10, "Need at least 10 chunks for multi-hop test"
 
         # Create embeddings (deterministic for speed)
-        embeddings = self._create_embeddings_from_chunks(test_chunks)
+        embeddings = create_test_embeddings(test_chunks)
 
         # Index the chunks
         storage_dir = Path(mock_storage_dir)
@@ -183,7 +116,7 @@ class TestMultiHopSearchFlow:
             all_chunks.extend(chunks)
 
         test_chunks = all_chunks[:20]
-        embeddings = self._create_embeddings_from_chunks(test_chunks)
+        embeddings = create_test_embeddings(test_chunks)
 
         # Index
         storage_dir = Path(mock_storage_dir)
@@ -234,7 +167,7 @@ class TestMultiHopSearchFlow:
             all_chunks.extend(chunks)
 
         test_chunks = all_chunks[:15]
-        embeddings = self._create_embeddings_from_chunks(test_chunks)
+        embeddings = create_test_embeddings(test_chunks)
 
         # Index
         storage_dir = Path(mock_storage_dir)
@@ -308,7 +241,7 @@ class TestMultiHopSearchFlow:
             all_chunks.extend(chunks)
 
         test_chunks = all_chunks[:15]
-        embeddings = self._create_embeddings_from_chunks(test_chunks)
+        embeddings = create_test_embeddings(test_chunks)
 
         # Index
         storage_dir = Path(mock_storage_dir)
@@ -345,7 +278,7 @@ class TestMultiHopSearchFlow:
             all_chunks.extend(chunks)
 
         test_chunks = all_chunks[:15]
-        embeddings = self._create_embeddings_from_chunks(test_chunks)
+        embeddings = create_test_embeddings(test_chunks)
 
         # Index
         storage_dir = Path(mock_storage_dir)

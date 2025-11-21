@@ -1479,5 +1479,5 @@ def process():
 - **MCP Tools Reference**: `docs/MCP_TOOLS_REFERENCE.md`
 - **Installation Guide**: `docs/INSTALLATION_GUIDE.md`
 - **Hybrid Search Configuration**: `docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md`
-- **Testing Guide**: `docs/TESTING_GUIDE.md`
+- **Testing Guide**: `tests/TESTING_GUIDE.md`
 - **Version History**: `docs/VERSION_HISTORY.md`

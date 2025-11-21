@@ -8,6 +8,7 @@ and find_connections.
 import os
 import shutil
 import tempfile
+from pathlib import Path
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from graph.call_graph_extractor import PythonCallGraphExtractor
@@ -22,7 +23,9 @@ class TestTypeAnnotationIntegration:
         self.test_dir = tempfile.mkdtemp()
         self.chunker = MultiLanguageChunker()
         self.extractor = PythonCallGraphExtractor()
-        self.graph = CodeGraphStorage("test_project")
+        self.graph = CodeGraphStorage(
+            "test_project", storage_dir=Path(self.test_dir) / "graphs"
+        )
 
     def teardown_method(self):
         """Clean up test fixtures."""
@@ -285,8 +288,16 @@ class TestFindConnectionsWithTypeAnnotations:
 
     def setup_method(self):
         """Set up test fixtures."""
-        self.graph = CodeGraphStorage("test_project")
+        self.test_dir = tempfile.mkdtemp()
+        self.graph = CodeGraphStorage(
+            "test_project", storage_dir=Path(self.test_dir) / "graphs"
+        )
         self.extractor = PythonCallGraphExtractor()
+
+    def teardown_method(self):
+        """Clean up test fixtures."""
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
 
     def test_find_callers_with_resolved_edges(self):
         """Test that find_callers returns only resolved callers."""

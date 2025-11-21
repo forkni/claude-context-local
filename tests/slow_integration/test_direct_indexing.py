@@ -6,11 +6,14 @@ Direct test of the incremental indexer process to debug the issue.
 import sys
 from pathlib import Path
 
+import pytest
+
 # Add the project root to the path
 sys.path.insert(0, str(Path(__file__).parent))
 
 
-def test_direct_indexing():
+@pytest.mark.slow
+def test_direct_indexing(tmp_path):
     """Test the incremental indexer directly."""
     from chunking.multi_language_chunker import MultiLanguageChunker
     from search.indexer import CodeIndexManager
@@ -25,7 +28,8 @@ def test_direct_indexing():
     try:
         # Initialize components
         print("\n1. INITIALIZING COMPONENTS")
-        CodeIndexManager(storage_dir="C:/Users/Inter/.claude_code_search")
+        # Use temporary directory instead of production path
+        CodeIndexManager(storage_dir=str(tmp_path))
         print("   Index manager initialized")
 
         # Skip embedder for now to avoid dependency issues
@@ -101,16 +105,21 @@ def test_direct_indexing():
         return None
 
 
-def test_incremental_indexer_class():
+@pytest.mark.slow
+def test_incremental_indexer_class(tmp_path):
     """Test the IncrementalIndexer class directly."""
     print("\n\nTESTING INCREMENTAL INDEXER CLASS")
     print("=" * 60)
 
     try:
+        from merkle.snapshot_manager import SnapshotManager
         from search.incremental_indexer import IncrementalIndexer
 
-        # Create without embedder to avoid dependency issues
-        indexer = IncrementalIndexer()
+        # Create SnapshotManager with temp directory to avoid production pollution
+        snapshot_manager = SnapshotManager(storage_dir=str(tmp_path / "merkle"))
+
+        # Create with explicit snapshot_manager to avoid dependency issues
+        indexer = IncrementalIndexer(snapshot_manager=snapshot_manager)
 
         project_path = str(Path(__file__).parent.parent.parent / "test_glsl_dir")
 
@@ -136,18 +145,8 @@ def test_incremental_indexer_class():
 
 
 if __name__ == "__main__":
-    # Test direct components first
-    result1 = test_direct_indexing()
-
-    # Test incremental indexer class
-    result2 = test_incremental_indexer_class()
-
-    print("\n\nSUMMARY:")
-    if result1:
-        print(
-            f"Direct test: {len(result1['supported_files'])} supported files, {len(result1['chunks'])} chunks"
-        )
-    if result2:
-        print(
-            f"Incremental indexer: {result2.files_added} files added, {result2.chunks_added} chunks added"
-        )
+    # These tests now use pytest fixtures (tmp_path)
+    # Run via: pytest tests/integration/test_direct_indexing.py -v
+    print("Please run these tests via pytest:")
+    print("  pytest tests/integration/test_direct_indexing.py -v")
+    print("\nDirect execution is not supported for tests using pytest fixtures.")

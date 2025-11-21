@@ -2,23 +2,27 @@
 
 This directory contains comprehensive tests for the Claude Context MCP semantic search system.
 
+**📖 For comprehensive testing documentation, see [TESTING_GUIDE.md](./TESTING_GUIDE.md)** - includes detailed test organization, best practices, CI/CD strategies, and troubleshooting guides.
+
 ## Test Status
 
-**Current Status**: ✅ All tests passing (as of 2025-01-10)
+**Current Status**: ✅ All tests passing (as of 2025-11-20)
 
-- **Unit Tests**: 204 tests passing
-- **Integration Tests**: 147 tests passing
+- **Unit Tests**: 82 tests passing (16 files, < 1s each)
+- **Fast Integration Tests**: 77 tests passing (11 files, < 5s each)
+- **Slow Integration Tests**: 67 tests passing (10 files, > 10s each)
 - **Regression Tests**: 1 test (15 checks) passing
-- **Total Coverage**: Unit tests run in ~5s, Integration tests in ~13 minutes
+- **Total**: 227 tests (38 files)
+- **Execution Time**: Unit ~5s, Fast Integration ~2 min, Slow Integration ~10 min
 
-### Recent Fixes (2025-01-10)
+### Recent Updates (2025-11-20)
 
-- ✅ Fixed BM25 metadata handling test (subset validation instead of exact equality)
-- ✅ Fixed CUDA detection disk space assertion (0.5GB for low disk test)
-- ✅ Added Mock import to token efficiency workflow test
-- ✅ Added public load() method to CodeIndexManager
-- ✅ Added SentenceTransformer mocking to auto-reindex test
-- ✅ Created comprehensive MCP configuration regression test (15 checks)
+- ✅ Reorganized integration tests into fast_integration/ and slow_integration/ directories
+- ✅ Added @pytest.mark.slow decorator to 14 test functions/classes
+- ✅ Moved helper scripts to slow_integration/helpers/ directory
+- ✅ Merged test_imports.py functionality into test_system.py
+- ✅ Created 3-tier test organization (unit/fast/slow) for CI/CD optimization
+- ✅ Moved TESTING_GUIDE.md to tests/ folder for centralized documentation
 
 ## Test Structure
 
@@ -27,6 +31,7 @@ tests/
 ├── __init__.py               # Package initialization
 ├── conftest.py               # Global pytest configuration
 ├── README.md                 # This documentation
+├── TESTING_GUIDE.md          # Comprehensive testing guide (moved from docs/)
 ├── fixtures/                 # Test fixtures and mocks
 │   ├── __init__.py
 │   ├── installation_mocks.py # Installation testing mocks
@@ -35,12 +40,13 @@ tests/
 │   ├── glsl_project/         # GLSL shader samples
 │   ├── multi_language/       # Multi-language test files
 │   └── python_project/       # Python project samples
-├── unit/                     # Unit tests (14 files)
+├── unit/                     # Unit tests (16 files, 82 tests, < 1s each)
 │   ├── test_bm25_index.py    # BM25 index functionality
 │   ├── test_bm25_population.py # BM25 document population
+│   ├── test_embedder.py      # Embedding generation
 │   ├── test_evaluation.py    # Evaluation framework components
 │   ├── test_hybrid_search.py # Hybrid search logic
-│   ├── test_imports.py       # Import validation
+│   ├── test_import_resolution.py # Import-based call graph resolution
 │   ├── test_incremental_indexer.py # Incremental indexing
 │   ├── test_mcp_server.py    # MCP server tools
 │   ├── test_merkle.py        # Merkle tree functionality
@@ -50,29 +56,36 @@ tests/
 │   ├── test_search_config.py # Search configuration
 │   ├── test_token_efficiency.py # Token efficiency evaluation
 │   └── test_tree_sitter.py   # Tree-sitter parsing
-├── integration/              # Integration tests (22 files)
-│   ├── check_auth.py         # Authentication checker script
-│   ├── run_hybrid_tests.py   # Hybrid search runner
-│   ├── test_auto_reindex.py  # Auto-reindexing functionality
+├── fast_integration/         # Fast integration tests (11 files, 77 tests, < 5s each)
 │   ├── test_complete_workflow.py # End-to-end workflow
 │   ├── test_cuda_detection.py # GPU/CUDA detection
-│   ├── test_direct_indexing.py # Direct indexing tests
 │   ├── test_encoding_validation.py # Text encoding validation
-│   ├── test_full_flow.py     # Complete indexing flow
-│   ├── test_glsl_*.py        # GLSL-specific integration tests
-│   ├── test_hf_access.py     # Hugging Face access
-│   ├── test_hybrid_search_integration.py # Hybrid search integration
-│   ├── test_incremental_indexing.py # Incremental indexing flow
+│   ├── test_glsl_chunking.py # GLSL chunking validation
+│   ├── test_import_resolution_integration.py # Import resolution integration
 │   ├── test_installation.py  # Installation verification
 │   ├── test_installation_flow.py # Installation workflow
-│   ├── test_mcp_*.py         # MCP server integration tests
+│   ├── test_mcp_project_management.py # MCP project management
 │   ├── test_model_switching.py # Model switching (Gemma/BGE-M3)
+│   ├── test_token_efficiency_workflow.py # Token efficiency workflow
+│   └── test_tree_sitter_*.py # Tree-sitter parsing tests
+├── slow_integration/         # Slow integration tests (10 files, 67 tests, > 10s each)
+│   ├── helpers/              # Test helper utilities
+│   │   ├── __init__.py
+│   │   ├── check_auth.py     # Authentication validation
+│   │   └── run_hybrid_tests.py # Hybrid search test runner
+│   ├── test_auto_reindex.py  # Auto-reindexing functionality
+│   ├── test_direct_indexing.py # Direct indexing tests
+│   ├── test_full_flow.py     # Complete search workflow
+│   ├── test_glsl_advanced.py # Advanced GLSL features
+│   ├── test_hybrid_search_integration.py # Hybrid search integration
+│   ├── test_incremental_indexing.py # Incremental indexing
+│   ├── test_mcp_indexing.py  # MCP indexing workflow
+│   ├── test_multi_hop_flow.py # Multi-hop semantic search
+│   ├── test_relationship_extraction_integration.py # Code relationship extraction
 │   ├── test_semantic_search.py # End-to-end semantic search
-│   ├── test_system.py        # System-level tests
-│   └── test_token_efficiency_workflow.py # Token efficiency workflow
+│   └── test_system.py        # System integration tests
 └── regression/               # Regression tests (PowerShell scripts)
     └── test_mcp_configuration.ps1 # MCP config validation (15 checks)
-                                    # Note: Uses Python/batch configuration scripts
 ```
 
 ## Running Tests
@@ -80,18 +93,31 @@ tests/
 ### Using Pytest Directly
 
 ```bash
-# Run all tests (unit + integration)
+# Run all tests (unit + fast + slow integration)
 pytest tests/
 
-# Run only unit tests
+# Run only unit tests (82 tests, ~5s)
 pytest tests/unit/
 
-# Run only integration tests
-pytest tests/integration/
+# Run only fast integration tests (77 tests, ~2 min)
+pytest tests/fast_integration/
+
+# Run only slow integration tests (67 tests, ~10 min)
+pytest tests/slow_integration/
+
+# Run unit + fast integration (fast CI pipeline, ~3 min)
+pytest tests/unit/ tests/fast_integration/
+
+# Skip slow tests using marker (unit + fast integration)
+pytest tests/ -m "not slow"
+
+# Run only slow tests
+pytest tests/ -m slow
 
 # Run specific test files
 pytest tests/unit/test_bm25_index.py
-pytest tests/integration/test_complete_workflow.py
+pytest tests/fast_integration/test_complete_workflow.py
+pytest tests/slow_integration/test_full_flow.py
 
 # Run with coverage
 pytest tests/ --cov=. --cov-report=html
@@ -104,7 +130,7 @@ pytest tests/ -x
 
 # Run tests matching a pattern
 pytest tests/ -k "bm25"
-pytest tests/ -k "hybrid and not slow"
+pytest tests/ -k "hybrid"
 ```
 
 ### Using Interactive Menu
@@ -158,7 +184,7 @@ pytest tests/integration/test_glsl_*
 
 ## Test Categories
 
-### Unit Tests
+### Unit Tests (82 tests, ~5s)
 
 Fast tests that validate individual components in isolation:
 
@@ -168,17 +194,33 @@ Fast tests that validate individual components in isolation:
 - **Core Infrastructure**: Merkle trees, incremental indexing, search configuration
 - **Evaluation**: Token efficiency measurement, evaluation framework
 - **MCP Integration**: Server tools, import validation
+- **Call Graph Resolution**: Import-based resolution, type annotations, assignment tracking
 
-### Integration Tests
+### Fast Integration Tests (77 tests, ~2 min)
 
-Comprehensive tests that verify component interactions and full workflows:
+Quick workflow validation with mocked slow operations for fast CI feedback:
 
-- **End-to-End Workflows**: Complete indexing and search flows
-- **System Integration**: Installation, CUDA detection, encoding validation
-- **MCP Server**: Full server functionality, project storage, indexing workflows
-- **Model Switching**: Embedding generation with Gemma and BGE-M3, model switching workflows
-- **Language-Specific**: GLSL shader processing, multi-language projects
-- **Performance**: Token efficiency workflows, benchmark validation
+- **Quick Workflows**: End-to-end workflow validation, installation verification
+- **System Integration**: CUDA detection, encoding validation
+- **MCP Server**: Project management, basic indexing workflows
+- **Model Switching**: Embedding generation with Gemma and BGE-M3
+- **Language-Specific**: GLSL chunking validation, tree-sitter parsing
+- **Performance**: Token efficiency workflows, import resolution integration
+
+**Characteristics**: Real component interactions with mocked slow operations (< 5s per test)
+
+### Slow Integration Tests (67 tests, ~10 min)
+
+Comprehensive end-to-end validation with real components (marked with `@pytest.mark.slow`):
+
+- **Complete Workflows**: Full indexing and search processes with real embeddings
+- **Advanced Features**: Multi-hop search, hybrid search integration, auto-reindexing
+- **Code Relationships**: Phase 3 relationship extraction and call graph analysis
+- **System Tests**: Complete system integration, semantic search end-to-end
+- **Performance**: Large codebase performance testing, incremental indexing
+- **GLSL Advanced**: Advanced GLSL shader processing features
+
+**Characteristics**: Real component interactions without mocking (> 10s per test)
 
 ### Regression Tests
 
@@ -277,24 +319,31 @@ Tests use temporary directories for:
 
 ## Development Workflow
 
-### Quick Validation
+### Quick Validation (< 3 min)
 
 ```bash
-# Fast unit tests only
+# Fast tests only (unit + fast integration)
+pytest tests/unit/ tests/fast_integration/ -q
+
+# Unit tests only (~5s)
 pytest tests/unit/ -q
 
 # Test specific functionality
 pytest tests/unit/test_bm25_index.py -v
+pytest tests/fast_integration/test_complete_workflow.py -v
 ```
 
 ### Pre-commit Testing
 
 ```bash
-# Full test suite with coverage
+# Fast test suite with coverage (skip slow tests, ~3 min)
+pytest tests/ -m "not slow" --cov=. --cov-report=term-missing
+
+# Full test suite with coverage (includes slow tests, ~15 min)
 pytest tests/ --cov=. --cov-report=term-missing
 
-# Unit tests with coverage threshold
-pytest tests/unit/ --cov=. --cov-fail-under=85
+# Unit + fast integration with coverage threshold
+pytest tests/unit/ tests/fast_integration/ --cov=. --cov-fail-under=75
 ```
 
 ### Debugging Failed Tests
@@ -305,6 +354,9 @@ pytest tests/ --lf -v
 
 # Stop on first failure for debugging
 pytest tests/ -x --tb=long
+
+# Debug specific slow test
+pytest tests/slow_integration/test_full_flow.py -x --tb=long -s
 ```
 
 ## Coverage Targets
@@ -326,14 +378,27 @@ pytest tests/ --cov=. --cov-report=html
 
 ## Continuous Integration
 
-For CI/CD pipelines:
+### CI Pipeline Strategies
 
+**Fast Feedback Pipeline** (runs on every commit, < 3 min):
 ```bash
-# Fast test run (skip slow tests)
-pytest tests/ -m "not slow" --cov=. --cov-fail-under=80
+# Unit + fast integration only
+pytest tests/unit/ tests/fast_integration/ --cov=. --cov-fail-under=75
+```
 
-# Full test suite
-pytest tests/ --cov=. --cov-fail-under=75
+**Comprehensive Pipeline** (runs on PR/nightly, ~15 min):
+```bash
+# All tests including slow integration
+pytest tests/ --cov=. --cov-fail-under=80
+```
+
+**Using Test Markers**:
+```bash
+# Skip slow tests (fast CI pipeline)
+pytest tests/ -m "not slow" --cov=. --cov-fail-under=75
+
+# Run only slow tests (comprehensive validation)
+pytest tests/ -m slow -v
 ```
 
 ## Adding New Tests

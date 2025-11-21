@@ -4,7 +4,9 @@ import json
 import shutil
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 from huggingface_hub import HfFolder
 
@@ -19,8 +21,25 @@ def _has_hf_token():
     return HfFolder.get_token() is not None
 
 
+@pytest.mark.slow
 class TestMCPIndexing:
     """Test that follows the exact same path as the MCP index_directory tool."""
+
+    @pytest.fixture(autouse=True)
+    def mock_embedder(self):
+        """Mock SentenceTransformer to prevent model downloads."""
+
+        def mock_encode(sentences, show_progress_bar=False):
+            if isinstance(sentences, str):
+                return np.ones(768, dtype=np.float32) * 0.5
+            else:
+                return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
+
+        with patch("embeddings.embedder.SentenceTransformer") as mock_st:
+            mock_model = MagicMock()
+            mock_model.encode.side_effect = mock_encode
+            mock_st.return_value = mock_model
+            yield mock_st
 
     @pytest.fixture
     def test_project_path(self):
@@ -33,7 +52,6 @@ class TestMCPIndexing:
         with tempfile.TemporaryDirectory() as temp_dir:
             yield Path(temp_dir) / "test_storage"
 
-    @pytest.mark.skipif(not _has_hf_token(), reason="HuggingFace token not available")
     def test_mcp_index_directory_path(self, test_project_path, mock_storage_dir):
         """Test indexing following the exact MCP tool implementation path."""
 

@@ -26,10 +26,11 @@ class TestMCPServerImport:
 class TestGetterFunctions:
     """Test MCP server getter functions return proper values."""
 
+    @patch("graph.graph_storage.CodeGraphStorage")
     @patch("mcp_server.server.CodeIndexManager")
     @patch("mcp_server.server.get_project_storage_dir")
     def test_get_index_manager_returns_value(
-        self, mock_get_storage, mock_index_manager_class
+        self, mock_get_storage, mock_index_manager_class, mock_graph_storage
     ):
         """Test that get_index_manager() returns a CodeIndexManager instance.
 
@@ -53,6 +54,11 @@ class TestGetterFunctions:
         )  # Mock / operator
 
         mock_get_storage.return_value = mock_storage_dir
+
+        # Mock CodeGraphStorage to prevent production directory pollution
+        mock_graph_instance = MagicMock()
+        mock_graph_storage.return_value = mock_graph_instance
+
         mock_manager_instance = MagicMock()
         mock_index_manager_class.return_value = mock_manager_instance
 

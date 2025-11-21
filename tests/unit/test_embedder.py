@@ -2,10 +2,10 @@
 
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-import requests  # Added for ConnectionError, HTTPError
 
 # Add project root to path to allow imports
 project_root = Path(__file__).parent.parent.parent
@@ -20,15 +20,32 @@ supported_models = list(MODEL_REGISTRY.keys())
 
 
 @pytest.mark.parametrize("model_name", supported_models)
-def test_model_loading_and_embedding(model_name: str):
+@patch("embeddings.embedder.SentenceTransformer")
+def test_model_loading_and_embedding(mock_sentence_transformer, model_name: str):
     """
     Tests that each supported model can be loaded and can create embeddings
     of the correct dimension.
     """
+    # Get model config to determine expected dimension
+    model_config = MODEL_REGISTRY.get(model_name, {})
+    expected_dimension = model_config.get("dimension", 768)
+
+    # Mock the SentenceTransformer to avoid downloading models
+    def mock_encode(sentences, show_progress_bar=False):
+        """Mock encode that handles both single string and batch inputs."""
+        if isinstance(sentences, str):
+            # Single string input -> return 1D array
+            return np.ones(expected_dimension, dtype=np.float32) * 0.5
+        else:
+            # Batch input (list/array) -> return 2D array
+            return np.ones((len(sentences), expected_dimension), dtype=np.float32) * 0.5
+
+    mock_model = MagicMock()
+    mock_model.encode.side_effect = mock_encode
+    mock_sentence_transformer.return_value = mock_model
+
     try:
         embedder = CodeEmbedder(model_name=model_name)
-        model_config = embedder._get_model_config()
-        expected_dimension = model_config.get("dimension")
 
         assert embedder.model is not None, f"Model {model_name} failed to load."
 
@@ -67,18 +84,12 @@ def test_model_loading_and_embedding(model_name: str):
 
     except ImportError as e:
         pytest.skip(f"Skipping test for {model_name} due to missing dependency: {e}")
-    except (
-        FileNotFoundError,
-        OSError,
-        requests.exceptions.ConnectionError,
-        requests.exceptions.HTTPError,
-    ) as e:
-        pytest.skip(f"Skipping test for {model_name} due to network/file error: {e}")
     except Exception as e:
         pytest.fail(f"An unexpected error occurred while testing {model_name}: {e}")
 
 
-def test_prefixing_logic():
+@patch("embeddings.embedder.SentenceTransformer")
+def test_prefixing_logic(mock_sentence_transformer):
     """
     Tests that the prefixing logic is correctly applied based on model config.
     """
@@ -91,6 +102,9 @@ def test_prefixing_logic():
             MockSentenceTransformer.encoded_input = sentences
             # Return a dummy embedding of the correct shape
             return np.zeros((len(sentences), 768))
+
+    # Setup mock to avoid downloading models
+    mock_sentence_transformer.return_value = MockSentenceTransformer()
 
     # 1. Test with a model that has a passage_prefix (gemma)
     embedder_gemma = CodeEmbedder(model_name="google/embeddinggemma-300m")

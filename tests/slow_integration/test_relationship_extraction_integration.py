@@ -113,6 +113,7 @@ def indexed_project(temp_project, session_embedder):
     return indexer, chunks
 
 
+@pytest.mark.slow
 class TestPhase3RelationshipExtraction:
     """Test suite for Phase 3 relationship extraction."""
 
@@ -175,37 +176,6 @@ class TestPhase3RelationshipExtraction:
 
         print(
             f"\nSuccessfully extracted {len(relationship_types)} relationship types: {relationship_types}"
-        )
-
-    @pytest.mark.skip(
-        reason="IMPORTS extraction needs module-level chunks (future work)"
-    )
-    def test_imports_extracted(self, indexed_project):
-        """Verify IMPORTS relationships are extracted.
-
-        SKIPPED: Module-level imports require creating module-level chunks or
-        full-file extraction before chunking. This is planned for future work.
-        """
-        indexer, chunks = indexed_project
-
-        # Find module-level chunk (should have imports)
-        import_relationships = []
-        for chunk in chunks:
-            if chunk.relationships:
-                for rel in chunk.relationships:
-                    if rel.relationship_type == RelationshipType.IMPORTS:
-                        import_relationships.append(rel)
-
-        assert len(import_relationships) > 0, "Expected to find import relationships"
-
-        # Check for expected imports
-        import_targets = {rel.target_name for rel in import_relationships}
-        assert (
-            "os" in import_targets or "sys" in import_targets
-        ), f"Expected standard library imports, found: {import_targets}"
-
-        print(
-            f"\nFound {len(import_relationships)} import relationships: {import_targets}"
         )
 
     def test_inheritance_extracted(self, indexed_project):
@@ -587,6 +557,7 @@ def indexed_project_priority2(temp_project_priority2, session_embedder):
     return indexer, chunks
 
 
+@pytest.mark.slow
 class TestPriority2RelationshipExtraction:
     """Test suite for Priority 2 relationship extraction."""
 
