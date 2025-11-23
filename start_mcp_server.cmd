@@ -349,12 +349,11 @@ goto search_config_menu
 echo.
 echo === Performance Tools ===
 echo.
-echo   1. Open Benchmark Runner ^(Comprehensive^)
-echo   2. Auto-Tune Search Parameters
-echo   3. Memory Usage Report
-echo   4. Back to Main Menu
+echo   1. Auto-Tune Search Parameters
+echo   2. Memory Usage Report
+echo   3. Back to Main Menu
 echo.
-set /p perf_choice="Select option (1-4): "
+set /p perf_choice="Select option (1-3): "
 
 REM Handle empty input gracefully
 if not defined perf_choice (
@@ -366,12 +365,11 @@ if "!perf_choice!"=="" (
     goto performance_menu
 )
 
-if "!perf_choice!"=="1" goto run_full_benchmarks
-if "!perf_choice!"=="2" goto auto_tune_direct
-if "!perf_choice!"=="3" goto memory_report
-if "!perf_choice!"=="4" goto menu_restart
+if "!perf_choice!"=="1" goto auto_tune_direct
+if "!perf_choice!"=="2" goto memory_report
+if "!perf_choice!"=="3" goto menu_restart
 
-echo [ERROR] Invalid choice. Please select 1-4.
+echo [ERROR] Invalid choice. Please select 1-3.
 pause
 cls
 goto performance_menu
@@ -1050,13 +1048,6 @@ pause
 goto search_config_menu
 
 REM Performance Functions
-:run_full_benchmarks
-echo.
-echo [INFO] Launching Comprehensive Benchmark Runner...
-echo [NOTE] This will open the full benchmark suite with multiple options
-call run_benchmarks.bat
-goto menu_restart
-
 :auto_tune_direct
 echo.
 echo [INFO] Auto-Tune Search Parameters

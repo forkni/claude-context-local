@@ -521,43 +521,31 @@ find_connections(symbol_name="UserService", exclude_dirs=["tests/"])
 
 ## Model Selection Guide
 
-### General-Purpose Models
+### Available Models (4 total)
 
-| Model | Dimensions | VRAM | MTEB Score | Best For |
-|-------|------------|------|------------|----------|
-| EmbeddingGemma-300m | 768 | 4-8GB | ~58-60 | Default, fast |
-| BGE-M3 ⭐ | 1024 | 8-16GB | 61.85 | General text, baseline |
-| Qwen3-0.6B | 1024 | ~2.3GB | 75.42 | Best value (+21.9% vs BGE-M3) |
-| Qwen3-4B | 2560 | ~15GB | 80.07 | Highest quality (+29.5% vs BGE-M3) |
-
-### Code-Specific Models ⭐ RECOMMENDED FOR CODE SEARCH
-
-| Model | Dimensions | VRAM | CoIR Score | Languages | Best For |
-|-------|------------|------|------------|-----------|----------|
-| **Qodo-Embed-1-1.5B** ⭐ | 1536 | 4-6GB | **68.53** | 9 (Python, C++) | Best code retrieval accuracy/size |
-| Jina-v2-Code | 768 | 2-4GB | - | **31** | GLSL support, multi-language |
-| Qodo-Embed-1-7B | 3584 | 14-20GB | **71.5** | 9 (Python, C++) | Highest code accuracy |
-
-**CoIR Benchmark**: Code Information Retrieval (specialized for code, not general MTEB)
-
-**GLSL Note**: No model explicitly trained for GLSL. Use **Jina-v2-Code** (31 languages, highest coverage probability) or **Qodo-1.5B** (treat GLSL as C++).
+| Model | Type | Dimensions | VRAM | Best For |
+|-------|------|------------|------|----------|
+| **BGE-M3** ⭐ | General | 1024 | 3-4GB | Production baseline, hybrid search support |
+| **Qwen3-0.6B** | General | 1024 | 2.3GB | Best value, high efficiency |
+| **CodeRankEmbed** | Code | 768 | 2GB | Code-specific retrieval (CSN: 77.9 MRR) |
+| **EmbeddingGemma-300m** | General | 768 | 4-8GB | Default model, fast and efficient |
 
 ### Switching Models
 
 **Environment Variable Examples:**
 
 ```bash
-# General-purpose
+# General-purpose (recommended)
 set CLAUDE_EMBEDDING_MODEL=BAAI/bge-m3
 
-# Code-specific (recommended)
-set CLAUDE_EMBEDDING_MODEL=Qodo/Qodo-Embed-1-1.5B
+# Code-specific
+set CLAUDE_EMBEDDING_MODEL=nomic-ai/CodeRankEmbed
 
-# GLSL support
-set CLAUDE_EMBEDDING_MODEL=jinaai/jina-embeddings-v2-base-code
+# High efficiency
+set CLAUDE_EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
 
-# Best quality
-set CLAUDE_EMBEDDING_MODEL=Qwen/Qwen3-Embedding-4B
+# Default (fast)
+set CLAUDE_EMBEDDING_MODEL=google/embeddinggemma-300m
 ```
 
 **Interactive Selection**:
@@ -569,24 +557,22 @@ start_mcp_server.bat → 3 (Search Config) → 4 (Select Model)
 **Python Command**:
 
 ```python
-.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding_model_name = 'Qodo/Qodo-Embed-1-1.5B'; mgr.save_config(cfg)"
+.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding_model_name = 'BAAI/bge-m3'; mgr.save_config(cfg)"
 ```
 
 **✨ Instant Model Switching**: <150ms with no re-indexing (see Per-Model Index Storage section)
 
 ### Model Recommendations
 
-**For Code Projects (Python, C++, GLSL):**
+**For Code Projects:**
 
-- ✅ **Qodo-Embed-1-1.5B** - Best code retrieval (CoIR: 68.53), 4-6GB VRAM
-- ✅ **Jina-v2-Code** - 31 languages including GLSL-adjacent, 2-4GB VRAM
-- ✅ **Multi-model deployment** - Run both simultaneously (~10GB total)
+- ✅ **CodeRankEmbed** - Code-specific retrieval (CSN: 77.9 MRR, CoIR: 60.1 NDCG@10), 2GB VRAM
+- ✅ **BGE-M3** - General-purpose with hybrid search support, 3-4GB VRAM
 
 **For General Text/Documents:**
 
-- ✅ **Qwen3-0.6B** - Best value (MTEB: 75.42), 2.3GB VRAM
-- ✅ **Qwen3-4B** - Highest quality (MTEB: 80.07), 15GB VRAM
-- ✅ **BGE-M3** - Production baseline (MTEB: 61.85), 3-4GB VRAM
+- ✅ **Qwen3-0.6B** - Best value, high efficiency, 2.3GB VRAM
+- ✅ **BGE-M3** - Production baseline, 3-4GB VRAM
 
 ### Detailed Research
 

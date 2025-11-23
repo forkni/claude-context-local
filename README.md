@@ -421,47 +421,29 @@ This repository's own `CLAUDE.md` demonstrates advanced usage with:
 
 ## Running Benchmarks
 
-The project includes comprehensive benchmarking tools to validate performance:
-
-### Quick Start
-
-```bash
-# Windows - Interactive benchmark menu
-run_benchmarks.bat
-```
-
-**Available Options:**
-
-1. **Token Efficiency Benchmark** (~10 seconds)
-   - Validates 98.6% token reduction vs traditional file reading
-   - Results saved to: `benchmark_results/token_efficiency/`
-
-2. **Search Method Comparison** (~2-3 minutes)
-   - Automatically compares all 3 search methods (hybrid, BM25, semantic)
-   - Uses current project directory for realistic evaluation
-   - Results saved to: `benchmark_results/method_comparison/`
-   - Generates comparison report with winner declaration
-
-3. **Auto-Tune Search Parameters** (~2 minutes)
-   - Optimize BM25/Dense weights for your codebase
-   - Tests 3 strategic configurations
-   - Results saved to: `benchmark_results/tuning/`
-
-4. **Run All Benchmarks** (~4-5 minutes)
-   - Complete test suite including auto-tuning
-   - Comprehensive results across all metrics
+The project includes benchmarking tools to validate performance:
 
 ### Command Line Usage
 
 ```bash
-# Method comparison (recommended)
-.venv\Scripts\python.exe evaluation/run_evaluation.py method-comparison --project "." --k 5
-
-# Token efficiency evaluation
+# Token efficiency evaluation (recommended first test, ~10 seconds)
 .venv\Scripts\python.exe evaluation/run_evaluation.py token-efficiency
+
+# Method comparison (~2-3 minutes)
+.venv\Scripts\python.exe evaluation/run_evaluation.py method-comparison --project "." --k 5
 
 # Force CPU usage (if GPU issues)
 .venv\Scripts\python.exe evaluation/run_evaluation.py token-efficiency --cpu
+```
+
+### Auto-Tune Search Parameters
+
+Access via `start_mcp_server.bat` → **4 (Performance Tools)** → **1 (Auto-Tune)**
+
+Or run directly:
+
+```bash
+.venv\Scripts\python.exe tools/auto_tune_search.py --project "." --apply
 ```
 
 Results are saved to `benchmark_results/` directory (gitignored for privacy).
@@ -629,8 +611,7 @@ claude-context-local/
 ├── start_mcp_server.bat              # Main launcher (Windows)
 ├── install-windows.bat               # Primary installer (Windows)
 ├── verify-installation.bat           # Installation verification
-├── verify-hf-auth.bat                # HuggingFace auth verification
-└── run_benchmarks.bat                # Benchmark launcher
+└── verify-hf-auth.bat                # HuggingFace auth verification
 ```
 
 ### Data flow

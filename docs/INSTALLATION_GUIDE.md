@@ -576,11 +576,9 @@ After successful installation, verify system performance and validate token effi
 ### Quick Performance Test
 
 ```bash
-# Interactive benchmark menu (Recommended)
-run_benchmarks.bat
+# Token efficiency test (Recommended, ~10 seconds)
+.venv\Scripts\python.exe evaluation/run_evaluation.py token-efficiency --max-instances 1
 ```
-
-Select **Option 1: Token Efficiency Benchmark** for a quick validation (~10 seconds).
 
 **Expected Results:**
 
