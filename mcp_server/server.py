@@ -95,6 +95,20 @@ def get_storage_dir() -> Path:
     return _storage_dir
 
 
+def set_current_project(project_path: str) -> None:
+    """Set the current project path.
+
+    This function MUST be used instead of directly setting _current_project
+    from other modules, because Python imports create copies of module-level
+    variables, not references.
+    """
+    global _current_project
+    _current_project = project_path
+    logger.info(
+        f"Current project set to: {Path(project_path).name if project_path else None}"
+    )
+
+
 def get_project_storage_dir(project_path: str, model_key: str = None) -> Path:
     """Get or create project-specific storage directory with per-model dimension suffix.
 

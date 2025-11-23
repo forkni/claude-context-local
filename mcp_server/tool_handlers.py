@@ -27,6 +27,7 @@ from mcp_server.server import (
     get_project_storage_dir,
     get_searcher,
     get_storage_dir,
+    set_current_project,
 )
 from mcp_server.tools.code_relationship_analyzer import CodeRelationshipAnalyzer
 from search.config import (
@@ -271,8 +272,6 @@ async def handle_switch_project(arguments: Dict[str, Any]) -> dict:
     project_path = arguments["project_path"]
 
     try:
-        global _current_project, _index_manager, _searcher
-
         project_path = Path(project_path).resolve()
         if not project_path.exists():
             return {"error": f"Project path does not exist: {project_path}"}
@@ -280,8 +279,8 @@ async def handle_switch_project(arguments: Dict[str, Any]) -> dict:
         # Cleanup previous resources
         _cleanup_previous_resources()
 
-        # Set new project
-        _current_project = str(project_path)
+        # Set new project using setter function (required for cross-module globals)
+        set_current_project(str(project_path))
 
         # Verify project is indexed
         project_dir = get_project_storage_dir(str(project_path))

@@ -5,13 +5,14 @@ CLI wrapper for batch files to switch between indexed projects.
 """
 
 import argparse
+import asyncio
 import sys
 from pathlib import Path
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from mcp_server.server import switch_project
+from mcp_server.tool_handlers import handle_switch_project
 
 
 def main():
@@ -46,7 +47,7 @@ def main():
         print("[INFO] Switching project...")
         print()
 
-        result = switch_project(str(project_path))
+        result = asyncio.run(handle_switch_project({"project_path": str(project_path)}))
 
         # Display results
         print()
