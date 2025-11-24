@@ -34,7 +34,7 @@
 - 🧠 **Multi-model query routing with 100% accuracy (5.3GB VRAM for 3 models)**
 - 🛠️ **15 MCP tools for Claude Code integration (search, index, configure)**
 
-An intelligent code search system that uses Google's EmbeddingGemma, BAAI's BGE-M3, and specialized code models with automatic intelligent routing. Advanced multi-language chunking provides semantic search capabilities across 22 file extensions and 11 programming languages, integrated with Claude Code via MCP (Model Context Protocol).
+An intelligent code search system that uses Google's EmbeddingGemma, BAAI's BGE-M3, and specialized code models with automatic intelligent routing. Advanced multi-language chunking provides semantic search capabilities across 19 file extensions and 9 programming languages, integrated with Claude Code via MCP (Model Context Protocol).
 
 ## Status
 
@@ -76,8 +76,8 @@ An intelligent code search system that uses Google's EmbeddingGemma, BAAI's BGE-
 
 ### 🚀 **Core Features**
 
-- **Multi-language support**: 11 programming languages with 22 file extensions
-- **Intelligent chunking**: AST-based (Python) + tree-sitter (JS/TS/JSX/TSX/Svelte/Go/Java/Rust/C/C++/C#/GLSL)
+- **Multi-language support**: 9 programming languages with 19 file extensions
+- **Intelligent chunking**: AST-based (Python) + tree-sitter (JS/TS/Go/Rust/C/C++/C#/GLSL)
 - **Semantic search**: Natural language queries to find code across all languages
 - **Rich metadata**: File paths, folder structure, semantic tags, language-specific info
 - **MCP integration**: 15 tools for Claude Code with human-readable JSON output - search, index, configure, and monitor
@@ -521,10 +521,11 @@ For detailed configuration options, see [Hybrid Search Configuration Guide](docs
 
 ```
 claude-context-local/
-├── chunking/                         # Multi-language chunking (22 extensions)
+├── chunking/                         # Multi-language chunking (19 extensions)
 │   ├── multi_language_chunker.py     # Unified orchestrator (Python AST + tree-sitter)
 │   ├── python_ast_chunker.py         # Python-specific chunking (rich metadata)
-│   └── tree_sitter.py                # Tree-sitter: JS/TS/JSX/TSX/Svelte/Go/Java/Rust/C/C++/C#/GLSL
+│   ├── tree_sitter.py                # Main chunker: delegates to language modules
+│   └── languages/                    # Modular language chunkers (9 languages)
 ├── embeddings/
 │   └── embedder.py                   # EmbeddingGemma; device=auto (CUDA→MPS→CPU); offline cache
 ├── graph/                            # Call graph extraction & analysis
@@ -997,23 +998,21 @@ The following MCP tools are available in Claude Code:
 
 ### Supported Languages & Extensions
 
-**Fully Supported (22 extensions across 10+ languages):**
+**Fully Supported (19 extensions across 9 languages):**
 
 | Language | Extensions |
 |----------|------------|
 | **Python** | `.py` |
-| **JavaScript** | `.js`, `.jsx` |
+| **JavaScript** | `.js` |
 | **TypeScript** | `.ts`, `.tsx` |
-| **Java** | `.java` |
 | **Go** | `.go` |
 | **Rust** | `.rs` |
 | **C** | `.c` |
 | **C++** | `.cpp`, `.cc`, `.cxx`, `.c++` |
 | **C#** | `.cs` |
-| **Svelte** | `.svelte` |
 | **GLSL** | `.glsl`, `.frag`, `.vert`, `.comp`, `.geom`, `.tesc`, `.tese` |
 
-**Total**: **22 file extensions** across **11 programming languages**
+**Total**: **19 file extensions** across **9 programming languages**
 
 ## Storage
 

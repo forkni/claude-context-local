@@ -74,6 +74,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - All 40 hybrid/multi-hop tests passing
   - **No re-indexing required** - internal refactoring only
 
+- **Tree-Sitter Chunker Refactoring (Phase 4.1)** - Split `tree_sitter.py` into modular language files
+  - Created `chunking/languages/` package with 10 files:
+    - `base.py` - TreeSitterChunk dataclass + LanguageChunker ABC
+    - `python.py`, `javascript.py`, `typescript.py`, `go.py`, `rust.py`
+    - `c.py`, `cpp.py`, `csharp.py`, `glsl.py`
+  - Reduced `tree_sitter.py` from 1,154 to 275 lines (-76%)
+  - Removed deprecated languages: Svelte, Java, JSX (kept 9 languages)
+  - Backwards-compatible: chunkers support both direct and factory instantiation
+  - All 11 tree_sitter tests passing
+  - **No re-indexing required** - internal refactoring only
+
 ---
 
 ## [0.5.15] - 2025-11-19
