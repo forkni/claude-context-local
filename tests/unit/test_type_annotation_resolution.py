@@ -7,14 +7,16 @@ Tests the extraction and resolution of type annotations for method calls.
 import ast
 
 from graph.call_graph_extractor import PythonCallGraphExtractor
+from graph.resolvers import TypeResolver
 
 
 class TestExtractTypeAnnotations:
-    """Tests for _extract_type_annotations() method."""
+    """Tests for TypeResolver.extract_type_annotations() method."""
 
     def setup_method(self):
         """Set up test fixtures."""
         self.extractor = PythonCallGraphExtractor()
+        self.type_resolver = TypeResolver()
 
     def test_extract_simple_type_annotation(self):
         """Test extraction of simple type annotation."""
@@ -25,7 +27,7 @@ def process(extractor: ExceptionExtractor):
         tree = ast.parse(code)
         func_node = tree.body[0]
 
-        annotations = self.extractor._extract_type_annotations(func_node)
+        annotations = self.type_resolver.extract_type_annotations(func_node)
 
         assert "extractor" in annotations
         assert annotations["extractor"] == "ExceptionExtractor"
@@ -39,7 +41,7 @@ def process(extractor: graph.ExceptionExtractor):
         tree = ast.parse(code)
         func_node = tree.body[0]
 
-        annotations = self.extractor._extract_type_annotations(func_node)
+        annotations = self.type_resolver.extract_type_annotations(func_node)
 
         assert "extractor" in annotations
         # Should return just the class name for resolution
@@ -54,7 +56,7 @@ def process(extractor: Optional[ExceptionExtractor]):
         tree = ast.parse(code)
         func_node = tree.body[0]
 
-        annotations = self.extractor._extract_type_annotations(func_node)
+        annotations = self.type_resolver.extract_type_annotations(func_node)
 
         assert "extractor" in annotations
         assert annotations["extractor"] == "ExceptionExtractor"
@@ -68,7 +70,7 @@ def process(extractors: List[ExceptionExtractor]):
         tree = ast.parse(code)
         func_node = tree.body[0]
 
-        annotations = self.extractor._extract_type_annotations(func_node)
+        annotations = self.type_resolver.extract_type_annotations(func_node)
 
         assert "extractors" in annotations
         assert annotations["extractors"] == "ExceptionExtractor"
@@ -82,7 +84,7 @@ def process(extractor: "ExceptionExtractor"):
         tree = ast.parse(code)
         func_node = tree.body[0]
 
-        annotations = self.extractor._extract_type_annotations(func_node)
+        annotations = self.type_resolver.extract_type_annotations(func_node)
 
         assert "extractor" in annotations
         assert annotations["extractor"] == "ExceptionExtractor"
@@ -96,7 +98,7 @@ def process(extractor: ExceptionExtractor, handler: ErrorHandler, count: int):
         tree = ast.parse(code)
         func_node = tree.body[0]
 
-        annotations = self.extractor._extract_type_annotations(func_node)
+        annotations = self.type_resolver.extract_type_annotations(func_node)
 
         assert len(annotations) == 3
         assert annotations["extractor"] == "ExceptionExtractor"
@@ -112,7 +114,7 @@ def process(*, extractor: ExceptionExtractor):
         tree = ast.parse(code)
         func_node = tree.body[0]
 
-        annotations = self.extractor._extract_type_annotations(func_node)
+        annotations = self.type_resolver.extract_type_annotations(func_node)
 
         assert "extractor" in annotations
         assert annotations["extractor"] == "ExceptionExtractor"
@@ -126,7 +128,7 @@ def process(extractor: ExceptionExtractor, /):
         tree = ast.parse(code)
         func_node = tree.body[0]
 
-        annotations = self.extractor._extract_type_annotations(func_node)
+        annotations = self.type_resolver.extract_type_annotations(func_node)
 
         assert "extractor" in annotations
         assert annotations["extractor"] == "ExceptionExtractor"
@@ -140,7 +142,7 @@ def process(*args: ExceptionExtractor):
         tree = ast.parse(code)
         func_node = tree.body[0]
 
-        annotations = self.extractor._extract_type_annotations(func_node)
+        annotations = self.type_resolver.extract_type_annotations(func_node)
 
         assert "args" in annotations
         assert annotations["args"] == "ExceptionExtractor"
@@ -154,7 +156,7 @@ def process(**kwargs: ExceptionExtractor):
         tree = ast.parse(code)
         func_node = tree.body[0]
 
-        annotations = self.extractor._extract_type_annotations(func_node)
+        annotations = self.type_resolver.extract_type_annotations(func_node)
 
         assert "kwargs" in annotations
         assert annotations["kwargs"] == "ExceptionExtractor"
@@ -168,17 +170,17 @@ def process(extractor, handler):
         tree = ast.parse(code)
         func_node = tree.body[0]
 
-        annotations = self.extractor._extract_type_annotations(func_node)
+        annotations = self.type_resolver.extract_type_annotations(func_node)
 
         assert annotations == {}
 
 
 class TestAnnotationToString:
-    """Tests for _annotation_to_string() method."""
+    """Tests for TypeResolver.annotation_to_string() method."""
 
     def setup_method(self):
         """Set up test fixtures."""
-        self.extractor = PythonCallGraphExtractor()
+        self.type_resolver = TypeResolver()
 
     def test_annotation_to_string_name(self):
         """Test conversion of simple Name annotation."""
@@ -186,7 +188,7 @@ class TestAnnotationToString:
         tree = ast.parse(code)
         annotation = tree.body[0].args.args[0].annotation
 
-        result = self.extractor._annotation_to_string(annotation)
+        result = self.type_resolver.annotation_to_string(annotation)
 
         assert result == "MyClass"
 
@@ -196,7 +198,7 @@ class TestAnnotationToString:
         tree = ast.parse(code)
         annotation = tree.body[0].args.args[0].annotation
 
-        result = self.extractor._annotation_to_string(annotation)
+        result = self.type_resolver.annotation_to_string(annotation)
 
         assert result == "MyClass"
 
@@ -206,7 +208,7 @@ class TestAnnotationToString:
         tree = ast.parse(code)
         annotation = tree.body[0].args.args[0].annotation
 
-        result = self.extractor._annotation_to_string(annotation)
+        result = self.type_resolver.annotation_to_string(annotation)
 
         assert result == "MyClass"
 
@@ -216,7 +218,7 @@ class TestAnnotationToString:
         tree = ast.parse(code)
         annotation = tree.body[0].args.args[0].annotation
 
-        result = self.extractor._annotation_to_string(annotation)
+        result = self.type_resolver.annotation_to_string(annotation)
 
         assert result == "MyClass"
 
@@ -226,7 +228,7 @@ class TestAnnotationToString:
         tree = ast.parse(code)
         annotation = tree.body[0].args.args[0].annotation
 
-        result = self.extractor._annotation_to_string(annotation)
+        result = self.type_resolver.annotation_to_string(annotation)
 
         assert result == "MyClass"
 
@@ -236,7 +238,7 @@ class TestAnnotationToString:
         tree = ast.parse(code)
         annotation = tree.body[0].args.args[0].annotation
 
-        result = self.extractor._annotation_to_string(annotation)
+        result = self.type_resolver.annotation_to_string(annotation)
 
         assert result == "MyClass"
 
@@ -246,7 +248,7 @@ class TestAnnotationToString:
         tree = ast.parse(code)
         annotation = tree.body[0].args.args[0].annotation
 
-        result = self.extractor._annotation_to_string(annotation)
+        result = self.type_resolver.annotation_to_string(annotation)
 
         assert result == "MyClass"
 
@@ -256,7 +258,7 @@ class TestAnnotationToString:
         tree = ast.parse(code)
         annotation = tree.body[0].args.args[0].annotation
 
-        result = self.extractor._annotation_to_string(annotation)
+        result = self.type_resolver.annotation_to_string(annotation)
 
         assert result == "MyClass"
 
@@ -266,7 +268,7 @@ class TestAnnotationToString:
         tree = ast.parse(code)
         annotation = tree.body[0].args.args[0].annotation
 
-        result = self.extractor._annotation_to_string(annotation)
+        result = self.type_resolver.annotation_to_string(annotation)
 
         assert result is None
 
@@ -276,7 +278,7 @@ class TestAnnotationToString:
         tree = ast.parse(code)
         annotation = tree.body[0].args.args[0].annotation
 
-        result = self.extractor._annotation_to_string(annotation)
+        result = self.type_resolver.annotation_to_string(annotation)
 
         assert result is None
 

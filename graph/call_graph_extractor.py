@@ -10,6 +10,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from .resolvers import AssignmentTracker, ImportResolver, TypeResolver
+
 
 @dataclass
 class CallEdge:
@@ -99,12 +101,16 @@ class PythonCallGraphExtractor(CallGraphExtractor):
         self._class_bases: Dict[str, List[str]] = (
             {}
         )  # class_name -> list of base classes
-        # Type annotation tracking for parameter type resolution (Phase 2)
+
+        # Initialize resolvers (Phase 2, 3, 4 extraction)
+        self._type_resolver = TypeResolver()
+        self._import_resolver = ImportResolver()
+        self._assignment_tracker = AssignmentTracker()
+
+        # Type annotation tracking - populated by resolvers
         self._type_annotations: Dict[str, str] = {}  # param_name -> type_name
-        # Import tracking for import-based resolution (Phase 4)
+        # Import tracking - populated by import resolver
         self._imports: Dict[str, str] = {}  # imported_name/alias -> qualified_name
-        # Cache for file imports to avoid re-reading
-        self._file_imports_cache: Dict[str, Dict[str, str]] = {}  # file_path -> imports
 
     def extract_calls(
         self, code: str, chunk_metadata: Dict[str, Any]
@@ -149,23 +155,28 @@ class PythonCallGraphExtractor(CallGraphExtractor):
 
         # Extract imports for type resolution (Phase 4)
         # Read from full file (not just chunk) to get all module-level imports
-        # Must be done BEFORE local assignments since _infer_type_from_call uses _imports
+        # Must be done BEFORE local assignments since assignment tracker uses imports
         file_path = chunk_metadata.get("file_path", "")
         if file_path:
-            self._imports = self._read_file_imports(file_path)
+            self._imports = self._import_resolver.read_file_imports(file_path)
         else:
             # Fall back to extracting imports from chunk code (limited)
-            self._imports = self._extract_imports(tree)
+            self._imports = self._import_resolver.extract_imports(tree)
+
+        # Update assignment tracker with current imports for alias resolution
+        self._assignment_tracker.set_imports(self._imports)
 
         # Extract type annotations from function definition (Phase 2)
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                self._type_annotations = self._extract_type_annotations(node)
+                self._type_annotations = self._type_resolver.extract_type_annotations(
+                    node
+                )
                 break  # Only process the top-level function
 
         # Extract type information from local assignments (Phase 3)
         # Note: Local assignments can shadow parameter annotations for same-named variables
-        local_assignments = self._extract_local_assignments(tree)
+        local_assignments = self._assignment_tracker.extract_local_assignments(tree)
         self._type_annotations.update(local_assignments)
 
         calls = []
@@ -204,322 +215,6 @@ class PythonCallGraphExtractor(CallGraphExtractor):
         if bases:
             return bases[0]
         return None
-
-    def _extract_type_annotations(self, func_node: ast.FunctionDef) -> Dict[str, str]:
-        """
-        Extract parameter type annotations from a function definition.
-
-        Args:
-            func_node: AST FunctionDef or AsyncFunctionDef node
-
-        Returns:
-            Dictionary mapping parameter names to type names
-        """
-        annotations = {}
-
-        # Extract from positional arguments
-        for arg in func_node.args.args:
-            if arg.annotation:
-                type_name = self._annotation_to_string(arg.annotation)
-                if type_name:
-                    annotations[arg.arg] = type_name
-
-        # Extract from keyword-only arguments
-        for arg in func_node.args.kwonlyargs:
-            if arg.annotation:
-                type_name = self._annotation_to_string(arg.annotation)
-                if type_name:
-                    annotations[arg.arg] = type_name
-
-        # Extract from positional-only arguments (Python 3.8+)
-        for arg in func_node.args.posonlyargs:
-            if arg.annotation:
-                type_name = self._annotation_to_string(arg.annotation)
-                if type_name:
-                    annotations[arg.arg] = type_name
-
-        # Extract from *args
-        if func_node.args.vararg and func_node.args.vararg.annotation:
-            type_name = self._annotation_to_string(func_node.args.vararg.annotation)
-            if type_name:
-                annotations[func_node.args.vararg.arg] = type_name
-
-        # Extract from **kwargs
-        if func_node.args.kwarg and func_node.args.kwarg.annotation:
-            type_name = self._annotation_to_string(func_node.args.kwarg.annotation)
-            if type_name:
-                annotations[func_node.args.kwarg.arg] = type_name
-
-        return annotations
-
-    def _annotation_to_string(self, annotation: ast.AST) -> Optional[str]:
-        """
-        Convert an AST annotation node to a string type name.
-
-        Handles:
-        - Simple names: MyClass
-        - Attributes: module.MyClass (returns MyClass)
-        - Subscripts: Optional[MyClass], List[MyClass] (returns MyClass)
-        - Constants: "MyClass" (forward references)
-
-        Args:
-            annotation: AST node representing a type annotation
-
-        Returns:
-            Type name string or None if not resolvable
-        """
-        if isinstance(annotation, ast.Name):
-            # Simple type: MyClass
-            return annotation.id
-
-        elif isinstance(annotation, ast.Attribute):
-            # Qualified type: module.MyClass -> MyClass
-            # We return just the class name for resolution
-            return annotation.attr
-
-        elif isinstance(annotation, ast.Subscript):
-            # Generic type: Optional[X], List[X], Union[X, Y]
-            if isinstance(annotation.value, ast.Name):
-                container = annotation.value.id
-
-                # Extract inner type from container types
-                if container in (
-                    "Optional",
-                    "List",
-                    "Set",
-                    "Tuple",
-                    "Sequence",
-                    "Iterable",
-                    "Iterator",
-                    "Collection",
-                    "Type",
-                ):
-                    return self._annotation_to_string(annotation.slice)
-
-                # Handle Union - try to get first non-None type
-                if container == "Union":
-                    if isinstance(annotation.slice, ast.Tuple):
-                        for elt in annotation.slice.elts:
-                            # Skip None type
-                            if isinstance(elt, ast.Constant) and elt.value is None:
-                                continue
-                            if isinstance(elt, ast.Name) and elt.id == "None":
-                                continue
-                            result = self._annotation_to_string(elt)
-                            if result:
-                                return result
-                    else:
-                        return self._annotation_to_string(annotation.slice)
-
-            # Unresolvable generic (Dict, Callable, etc.)
-            return None
-
-        elif isinstance(annotation, ast.Constant):
-            # Forward reference: "MyClass"
-            if isinstance(annotation.value, str):
-                # Extract class name from string (handle "module.Class")
-                return annotation.value.split(".")[-1]
-            return None
-
-        # Unresolvable annotation type
-        return None
-
-    def _extract_local_assignments(self, tree: ast.AST) -> Dict[str, str]:
-        """
-        Extract type information from local variable assignments.
-
-        Handles:
-        - Constructor calls: x = MyClass()
-        - Annotated assignments: x: MyClass = value
-        - Named expressions: if (x := MyClass()):
-        - Attribute assignments: self.handler = Handler()
-        - With statement assignments: with Context() as ctx:
-
-        Args:
-            tree: AST tree to analyze
-
-        Returns:
-            Dictionary mapping variable names to inferred type names
-        """
-        assignments: Dict[str, str] = {}
-
-        for node in ast.walk(tree):
-            # Handle simple assignments: x = MyClass()
-            if isinstance(node, ast.Assign):
-                if isinstance(node.value, ast.Call):
-                    type_name = self._infer_type_from_call(node.value)
-                    if type_name:
-                        for target in node.targets:
-                            if isinstance(target, ast.Name):
-                                # Simple variable: x = MyClass()
-                                assignments[target.id] = type_name
-                            elif isinstance(target, ast.Attribute):
-                                # Attribute assignment: self.handler = Handler()
-                                # Only track self.attr and cls.attr
-                                if isinstance(target.value, ast.Name):
-                                    if target.value.id in ("self", "cls"):
-                                        attr_key = f"{target.value.id}.{target.attr}"
-                                        assignments[attr_key] = type_name
-
-            # Handle annotated assignments: x: MyClass = value
-            elif isinstance(node, ast.AnnAssign):
-                if isinstance(node.target, ast.Name):
-                    type_name = self._annotation_to_string(node.annotation)
-                    if type_name:
-                        assignments[node.target.id] = type_name
-
-            # Handle named expressions (walrus operator): if (x := MyClass()):
-            elif isinstance(node, ast.NamedExpr):
-                if isinstance(node.value, ast.Call):
-                    type_name = self._infer_type_from_call(node.value)
-                    if type_name and isinstance(node.target, ast.Name):
-                        assignments[node.target.id] = type_name
-
-            # Handle with statement: with Context() as ctx:
-            elif isinstance(node, ast.With):
-                for item in node.items:
-                    if item.optional_vars and isinstance(item.context_expr, ast.Call):
-                        type_name = self._infer_type_from_call(item.context_expr)
-                        if type_name and isinstance(item.optional_vars, ast.Name):
-                            assignments[item.optional_vars.id] = type_name
-
-        return assignments
-
-    def _infer_type_from_call(self, call_node: ast.Call) -> Optional[str]:
-        """
-        Infer type from a Call node (constructor or factory call).
-
-        Handles:
-        - Simple constructor: MyClass() -> "MyClass"
-        - Qualified constructor: module.MyClass() -> "MyClass"
-        - Aliased import: H() where H is alias for Handler -> "Handler"
-
-        Args:
-            call_node: AST Call node
-
-        Returns:
-            Type name or None if not inferable
-        """
-        func = call_node.func
-
-        if isinstance(func, ast.Name):
-            # Simple constructor: MyClass() or aliased H()
-            name = func.id
-            # Check if this is an imported name (possibly aliased)
-            if name in self._imports:
-                # Get the qualified name and extract the actual class name
-                # e.g., "x.Handler" -> "Handler"
-                qualified = self._imports[name]
-                return qualified.split(".")[-1]
-            return name
-
-        elif isinstance(func, ast.Attribute):
-            # Qualified constructor: module.MyClass() -> MyClass
-            return func.attr
-
-        # Factory method or other complex call - cannot infer
-        return None
-
-    def _extract_imports(self, tree: ast.AST) -> Dict[str, str]:
-        """
-        Extract import mappings from AST.
-
-        Handles:
-        - import os                    -> {"os": "os"}
-        - import os.path               -> {"os": "os.path"}
-        - from x import Y              -> {"Y": "x.Y"}
-        - from x import Y as Z         -> {"Z": "x.Y"}
-        - from . import helper         -> {"helper": ".helper"}
-        - from ..utils import Parser   -> {"Parser": "..utils.Parser"}
-        - from x import *              -> {}  (cannot resolve)
-
-        Args:
-            tree: AST tree to analyze
-
-        Returns:
-            Dictionary mapping imported names/aliases to qualified names
-        """
-        imports: Dict[str, str] = {}
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                # import os, import os.path, import x as y
-                for alias in node.names:
-                    # Use alias if provided, otherwise first component
-                    local_name = (
-                        alias.asname if alias.asname else alias.name.split(".")[0]
-                    )
-                    imports[local_name] = alias.name
-
-            elif isinstance(node, ast.ImportFrom):
-                # from x import Y, from x import Y as Z
-                module = node.module or ""
-                # Handle relative imports: from . import x, from .. import y
-                prefix = "." * node.level if node.level else ""
-                full_module = f"{prefix}{module}" if module else prefix
-
-                for alias in node.names:
-                    if alias.name == "*":
-                        # Star import - cannot resolve specific names
-                        self.logger.debug(
-                            f"Star import from '{full_module}' cannot be resolved"
-                        )
-                        continue
-
-                    local_name = alias.asname if alias.asname else alias.name
-                    # Build qualified name
-                    if module:
-                        # Has module name: from .utils import Parser -> .utils.Parser
-                        qualified = f"{full_module}.{alias.name}"
-                    elif prefix:
-                        # Pure relative: from . import helper -> .helper
-                        qualified = f"{prefix}{alias.name}"
-                    else:
-                        # Absolute: from package import Class -> package.Class
-                        qualified = alias.name
-                    imports[local_name] = qualified
-
-        return imports
-
-    def _read_file_imports(self, file_path: str) -> Dict[str, str]:
-        """
-        Read and extract imports from a full file.
-
-        This method reads the entire file (not just the chunk code) to extract
-        all import statements, enabling resolution of types used in method chunks.
-
-        Args:
-            file_path: Path to the source file
-
-        Returns:
-            Dictionary mapping imported names to qualified names,
-            or empty dict if file cannot be read
-        """
-        # Check cache first
-        if file_path in self._file_imports_cache:
-            return self._file_imports_cache[file_path]
-
-        imports: Dict[str, str] = {}
-
-        if not file_path:
-            return imports
-
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                file_content = f.read()
-
-            tree = ast.parse(file_content)
-            imports = self._extract_imports(tree)
-
-            # Cache the result
-            self._file_imports_cache[file_path] = imports
-
-        except (OSError, SyntaxError) as e:
-            self.logger.debug(f"Could not read imports from {file_path}: {e}")
-            # Cache empty result to avoid repeated failures
-            self._file_imports_cache[file_path] = {}
-
-        return imports
 
     def _extract_call_from_node(
         self, node: ast.Call, chunk_id: str

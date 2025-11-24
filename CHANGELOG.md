@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Persistent Project Selection** - Project choice survives server restarts
+  - New `mcp_server/project_persistence.py` - Save/load selection to JSON
+  - New `scripts/get_current_project.py` - Display helper for batch menu
+  - Server startup restores last project automatically (stdio + SSE)
+  - MCP tools and batch menu stay synchronized bidirectionally
+  - Storage: `~/.claude_code_search/project_selection.json`
+  - Menu now displays current project in Runtime Status section
+
 ### Fixed
 
 - **Git Workflow Scripts** - Critical bug fix for C: drive scanning issue
@@ -45,6 +55,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Proper cleanup: `popd` at all exit points
   - Unix command replacements: `head -1` → Batch loop, `wmic` → PowerShell `Get-Date`
   - Added comments with guide references for maintainability
+
+- **Graph Module Refactoring (Phase 7.1)** - Extracted resolvers from call_graph_extractor.py
+  - Created `graph/resolvers/` directory with 3 resolver classes:
+    - `TypeResolver` (~130 lines) - Type annotation extraction and parsing
+    - `AssignmentTracker` (~115 lines) - Local variable assignment tracking
+    - `ImportResolver` (~100 lines) - Import statement extraction with caching
+  - Reduced `call_graph_extractor.py` from 732 to ~400 lines
+  - Updated unit tests to use resolver classes directly
+  - All 87 unit + integration tests passing
+  - **No re-indexing required** - internal refactoring only
+
+- **Multi-Hop Search Refactoring (Phase 4.2)** - Extracted 3 helper methods from `_multi_hop_search_internal`
+  - `_validate_multi_hop_params()` - Parameter validation (~27 lines)
+  - `_expand_from_initial_results()` - Hop expansion logic (~70 lines)
+  - `_apply_post_expansion_filters()` - Post-expansion filtering (~38 lines)
+  - Main method reduced from 197 to ~100 lines (orchestrator pattern)
+  - All 40 hybrid/multi-hop tests passing
+  - **No re-indexing required** - internal refactoring only
 
 ---
 

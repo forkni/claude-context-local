@@ -34,7 +34,11 @@ from mcp.types import (  # noqa: E402
 
 # Project imports
 from embeddings.embedder import CodeEmbedder  # noqa: E402
-from search.config import get_search_config  # noqa: E402
+from mcp_server.project_persistence import (  # noqa: E402
+    load_project_selection,
+)
+from mcp_server.state import get_state  # noqa: E402
+from search.config import MODEL_POOL_CONFIG, get_search_config  # noqa: E402
 from search.hybrid_searcher import HybridSearcher  # noqa: E402
 from search.indexer import CodeIndexManager  # noqa: E402
 from search.searcher import IntelligentSearcher  # noqa: E402
@@ -70,12 +74,7 @@ _multi_model_enabled = os.getenv("CLAUDE_MULTI_MODEL_ENABLED", "true").lower() i
     "yes",
 )
 
-# Multi-model pool configuration
-MODEL_POOL_CONFIG = {
-    "qwen3": "Qwen/Qwen3-Embedding-0.6B",
-    "bge_m3": "BAAI/bge-m3",
-    "coderankembed": "nomic-ai/CodeRankEmbed",
-}
+# Multi-model pool configuration imported from search.config
 
 
 # ============================================================================
@@ -92,6 +91,8 @@ def get_storage_dir() -> Path:
         )
         _storage_dir = Path(storage_path)
         _storage_dir.mkdir(parents=True, exist_ok=True)
+        # Sync to ApplicationState
+        get_state().storage_dir = _storage_dir
     return _storage_dir
 
 
@@ -101,9 +102,13 @@ def set_current_project(project_path: str) -> None:
     This function MUST be used instead of directly setting _current_project
     from other modules, because Python imports create copies of module-level
     variables, not references.
+
+    Also syncs to ApplicationState for gradual migration.
     """
     global _current_project
     _current_project = project_path
+    # Sync to ApplicationState
+    get_state().current_project = project_path
     logger.info(
         f"Current project set to: {Path(project_path).name if project_path else None}"
     )
@@ -205,6 +210,7 @@ def initialize_model_pool(lazy_load: bool = True) -> None:
         lazy_load: If True, models are loaded on first access. If False, all models loaded immediately.
     """
     global _embedders, _multi_model_enabled
+    state = get_state()
 
     if not _multi_model_enabled:
         logger.info("Multi-model routing disabled - using single model mode")
@@ -217,6 +223,7 @@ def initialize_model_pool(lazy_load: bool = True) -> None:
         # Initialize empty slots - models will load on first get_embedder() call
         for model_key in MODEL_POOL_CONFIG.keys():
             _embedders[model_key] = None
+            state.embedders[model_key] = None  # Sync to state
         logger.info(
             f"Model pool initialized in lazy mode: {list(MODEL_POOL_CONFIG.keys())}"
         )
@@ -226,9 +233,9 @@ def initialize_model_pool(lazy_load: bool = True) -> None:
         for model_key, model_name in MODEL_POOL_CONFIG.items():
             try:
                 logger.info(f"Loading {model_key} ({model_name})...")
-                _embedders[model_key] = CodeEmbedder(
-                    model_name=model_name, cache_dir=str(cache_dir)
-                )
+                embedder = CodeEmbedder(model_name=model_name, cache_dir=str(cache_dir))
+                _embedders[model_key] = embedder
+                state.set_embedder(model_key, embedder)  # Sync to state
                 logger.info(f"✓ {model_key} loaded successfully")
             except Exception as e:
                 logger.error(f"✗ Failed to load {model_key}: {e}")
@@ -251,6 +258,7 @@ def get_embedder(model_key: str = None) -> CodeEmbedder:
         CodeEmbedder instance for the specified model.
     """
     global _embedders, _multi_model_enabled
+    state = get_state()
 
     cache_dir = get_storage_dir() / "models"
     cache_dir.mkdir(exist_ok=True)
@@ -292,9 +300,9 @@ def get_embedder(model_key: str = None) -> CodeEmbedder:
             model_name = MODEL_POOL_CONFIG[model_key]
             logger.info(f"Lazy loading {model_key} ({model_name})...")
             try:
-                _embedders[model_key] = CodeEmbedder(
-                    model_name=model_name, cache_dir=str(cache_dir)
-                )
+                embedder = CodeEmbedder(model_name=model_name, cache_dir=str(cache_dir))
+                _embedders[model_key] = embedder
+                state.set_embedder(model_key, embedder)  # Sync to state
                 logger.info(f"✓ {model_key} loaded successfully")
             except Exception as e:
                 logger.error(f"✗ Failed to load {model_key}: {e}")
@@ -323,9 +331,9 @@ def get_embedder(model_key: str = None) -> CodeEmbedder:
                 model_name = "google/embeddinggemma-300m"
                 logger.info(f"Falling back to default model: {model_name}")
 
-            _embedders["default"] = CodeEmbedder(
-                model_name=model_name, cache_dir=str(cache_dir)
-            )
+            embedder = CodeEmbedder(model_name=model_name, cache_dir=str(cache_dir))
+            _embedders["default"] = embedder
+            state.set_embedder("default", embedder)  # Sync to state
             logger.info("Embedder initialized successfully")
 
         return _embedders["default"]
@@ -334,9 +342,11 @@ def get_embedder(model_key: str = None) -> CodeEmbedder:
 def _maybe_start_model_preload() -> None:
     """Preload the embedding model in the background to avoid cold-start delays."""
     global _model_preload_task_started
-    if _model_preload_task_started:
+    state = get_state()
+    if _model_preload_task_started or state.model_preload_task_started:
         return
     _model_preload_task_started = True
+    state.model_preload_task_started = True  # Sync to state
 
     async def _preload():
         try:
@@ -359,6 +369,7 @@ def _maybe_start_model_preload() -> None:
 def _cleanup_previous_resources():
     """Cleanup previous project resources to free memory."""
     global _index_manager, _searcher, _embedders
+    state = get_state()
     try:
         if _index_manager is not None:
             if (
@@ -367,9 +378,11 @@ def _cleanup_previous_resources():
             ):
                 _index_manager._metadata_db.close()
             _index_manager = None
+            state.index_manager = None  # Sync to state
             logger.info("Previous index manager cleaned up")
         if _searcher is not None:
             _searcher = None
+            state.searcher = None  # Sync to state
             logger.info("Previous searcher cleaned up")
 
         # Cleanup all embedders in the pool
@@ -383,6 +396,7 @@ def _cleanup_previous_resources():
                     except Exception as e:
                         logger.warning(f"Failed to cleanup {model_key}: {e}")
             _embedders.clear()
+            state.clear_embedders()  # Sync to state
             logger.info(f"Cleaned up {cleanup_count} embedder(s) from pool")
 
         try:
@@ -400,6 +414,7 @@ def _cleanup_previous_resources():
 def get_index_manager(project_path: str = None) -> CodeIndexManager:
     """Get index manager for specific project or current project."""
     global _index_manager, _current_project
+    state = get_state()
     if project_path is None:
         if _current_project is None:
             project_path = str(PROJECT_ROOT)
@@ -414,6 +429,7 @@ def get_index_manager(project_path: str = None) -> CodeIndexManager:
         )
         _cleanup_previous_resources()
         _current_project = project_path
+        state.current_project = project_path  # Sync to state
     if _index_manager is None:
         project_dir = get_project_storage_dir(project_path)
         index_dir = project_dir / "index"
@@ -424,6 +440,7 @@ def get_index_manager(project_path: str = None) -> CodeIndexManager:
         project_id = project_dir.name.rsplit("_", 1)[0]  # Remove dimension suffix
 
         _index_manager = CodeIndexManager(str(index_dir), project_id=project_id)
+        state.index_manager = _index_manager  # Sync to state
         logger.info(
             f"Index manager initialized for project: {Path(project_path).name} (ID: {project_id})"
         )
@@ -438,6 +455,7 @@ def get_searcher(project_path: str = None, model_key: str = None):
         model_key: Model key for routing (None = use config default)
     """
     global _searcher, _current_project, _current_model_key
+    state = get_state()
     if project_path is None and _current_project is None:
         project_path = str(PROJECT_ROOT)
         logger.info(f"No active project found. Using server directory: {project_path}")
@@ -449,6 +467,7 @@ def get_searcher(project_path: str = None, model_key: str = None):
         or _searcher is None
     ):
         _current_project = project_path or _current_project
+        state.current_project = _current_project  # Sync to state
         config = get_search_config()
         logger.info(
             f"[GET_SEARCHER] Initializing searcher for project: {_current_project}"
@@ -499,6 +518,8 @@ def get_searcher(project_path: str = None, model_key: str = None):
 
         # Track which model this searcher was initialized with
         _current_model_key = model_key
+        state.current_model_key = model_key  # Sync to state
+        state.searcher = _searcher  # Sync to state
         logger.info(
             f"Searcher initialized for project: {Path(_current_project).name if _current_project else 'unknown'}"
         )
@@ -712,13 +733,22 @@ if __name__ == "__main__":
                 logger.info("SERVER STARTUP: Initializing global state")
                 logger.info("=" * 60)
 
-                # Set default project if specified
+                # Set default project: env var > persistent selection > none
                 default_project = os.getenv("CLAUDE_DEFAULT_PROJECT", None)
                 if default_project:
                     _current_project = str(Path(default_project).resolve())
-                    logger.info(f"[INIT] Default project: {_current_project}")
+                    logger.info(f"[INIT] Default project (env): {_current_project}")
                 else:
-                    logger.info("[INIT] No default project")
+                    # Try to restore from persistent selection
+                    selection = load_project_selection()
+                    if selection:
+                        restored_path = selection["last_project_path"]
+                        set_current_project(restored_path)
+                        logger.info(
+                            f"[INIT] Restored project: {Path(restored_path).name}"
+                        )
+                    else:
+                        logger.info("[INIT] No default project")
 
                 # Initialize model pool in lazy mode
                 if _multi_model_enabled and not _model_preload_task_started:
@@ -786,13 +816,22 @@ if __name__ == "__main__":
                 logger.info("=" * 60)
 
                 try:
-                    # Set default project if specified
+                    # Set default project: env var > persistent selection > none
                     default_project = os.getenv("CLAUDE_DEFAULT_PROJECT", None)
                     if default_project:
                         _current_project = str(Path(default_project).resolve())
-                        logger.info(f"[INIT] Default project: {_current_project}")
+                        logger.info(f"[INIT] Default project (env): {_current_project}")
                     else:
-                        logger.info("[INIT] No default project")
+                        # Try to restore from persistent selection
+                        selection = load_project_selection()
+                        if selection:
+                            restored_path = selection["last_project_path"]
+                            set_current_project(restored_path)
+                            logger.info(
+                                f"[INIT] Restored project: {Path(restored_path).name}"
+                            )
+                        else:
+                            logger.info("[INIT] No default project")
 
                     # Initialize model pool in lazy mode
                     if _multi_model_enabled and not _model_preload_task_started:

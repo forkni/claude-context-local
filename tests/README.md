@@ -194,7 +194,7 @@ Fast tests that validate individual components in isolation:
 - **Core Infrastructure**: Merkle trees, incremental indexing, search configuration
 - **Evaluation**: Token efficiency measurement, evaluation framework
 - **MCP Integration**: Server tools, import validation
-- **Call Graph Resolution**: Import-based resolution, type annotations, assignment tracking
+- **Call Graph Resolution**: Import-based resolution (`ImportResolver`), type annotations (`TypeResolver`), assignment tracking (`AssignmentTracker`)
 
 ### Fast Integration Tests (77 tests, ~2 min)
 

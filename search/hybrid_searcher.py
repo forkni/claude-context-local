@@ -14,6 +14,7 @@ except ImportError:
     torch = None
 
 from .bm25_index import BM25Index
+from .filters import matches_directory_filter
 from .indexer import CodeIndexManager
 from .reranker import RRFReranker, SearchResult
 
@@ -576,6 +577,146 @@ class HybridSearcher:
 
         return results
 
+    def _validate_multi_hop_params(
+        self, hops: int, expansion_factor: float
+    ) -> Tuple[int, float]:
+        """
+        Validate and sanitize multi-hop search parameters.
+
+        Args:
+            hops: Number of search hops requested
+            expansion_factor: Expansion factor per hop
+
+        Returns:
+            Tuple of (validated_hops, validated_expansion_factor)
+        """
+        validated_hops = hops
+        validated_expansion = expansion_factor
+
+        if hops < 1:
+            self._logger.warning(f"Invalid hops={hops}, using 1")
+            validated_hops = 1
+
+        if expansion_factor < 0 or expansion_factor > 2.0:
+            self._logger.warning(
+                f"Invalid expansion_factor={expansion_factor}, using 0.3"
+            )
+            validated_expansion = 0.3
+
+        return validated_hops, validated_expansion
+
+    def _expand_from_initial_results(
+        self,
+        initial_results: List,
+        all_chunk_ids: set,
+        all_results: Dict,
+        expansion_k: int,
+        hops: int,
+        k: int,
+    ) -> Dict[int, float]:
+        """
+        Expand search results by finding similar chunks for each initial result.
+
+        Args:
+            initial_results: Results from initial search (hop 1)
+            all_chunk_ids: Set of already discovered chunk IDs (modified in-place)
+            all_results: Dict of chunk_id -> result (modified in-place)
+            expansion_k: Number of similar chunks to find per result
+            hops: Total number of hops to perform
+            k: Original k value for limiting expansion sources
+
+        Returns:
+            Dict mapping hop number to duration in seconds
+        """
+        from .reranker import SearchResult as RerankerSearchResult
+
+        expansion_timings = {}
+
+        for hop in range(2, hops + 1):
+            hop_start = time.time()
+            hop_discovered = 0
+
+            # Expand from top initial results only (not from previously expanded)
+            source_results = initial_results[:k]
+
+            for result in source_results:
+                try:
+                    # Find similar chunks to this result
+                    similar_chunks = self.find_similar_to_chunk(
+                        chunk_id=result.chunk_id,
+                        k=expansion_k,
+                    )
+
+                    # Add new chunks
+                    for sim_result in similar_chunks:
+                        chunk_id = sim_result.chunk_id
+                        if chunk_id not in all_chunk_ids:
+                            all_chunk_ids.add(chunk_id)
+                            # Convert to reranker.SearchResult format
+                            reranker_result = RerankerSearchResult(
+                                chunk_id=chunk_id,
+                                score=sim_result.similarity_score,
+                                metadata=sim_result.__dict__,
+                                source="multi_hop",
+                            )
+                            all_results[chunk_id] = reranker_result
+                            hop_discovered += 1
+
+                except Exception as e:
+                    self._logger.warning(
+                        f"[MULTI_HOP] Failed to find similar chunks for {result.chunk_id}: {e}"
+                    )
+                    continue
+
+            expansion_timings[hop] = time.time() - hop_start
+
+            self._logger.info(
+                f"[MULTI_HOP] Hop {hop}: Discovered {hop_discovered} new chunks "
+                f"(total: {len(all_results)}, {expansion_timings[hop] * 1000:.1f}ms)"
+            )
+
+        return expansion_timings
+
+    def _apply_post_expansion_filters(
+        self,
+        all_results: Dict,
+        initial_results_count: int,
+        filters: Optional[Dict[str, Any]],
+    ) -> Dict:
+        """
+        Apply filters to expanded results.
+
+        Args:
+            all_results: Dict of chunk_id -> result
+            initial_results_count: Number of initial results (before expansion)
+            filters: Optional filters to apply
+
+        Returns:
+            Filtered results dict
+        """
+        if not filters or len(all_results) <= initial_results_count:
+            return all_results
+
+        filtered_results = {}
+        for chunk_id, result in all_results.items():
+            # Get metadata from dense index
+            metadata_entry = self.dense_index.metadata_db.get(chunk_id)
+            if metadata_entry:
+                metadata = metadata_entry.get("metadata", {})
+                if self.dense_index._matches_filters(metadata, filters):
+                    filtered_results[chunk_id] = result
+            else:
+                # Keep results without metadata (shouldn't happen)
+                filtered_results[chunk_id] = result
+
+        removed_count = len(all_results) - len(filtered_results)
+        self._logger.info(
+            f"[MULTI_HOP] Applied filters: {len(filtered_results)} results remain "
+            f"({removed_count} removed)"
+        )
+
+        return filtered_results
+
     def _multi_hop_search_internal(
         self,
         query: str,
@@ -608,22 +749,14 @@ class HybridSearcher:
         Returns:
             List of SearchResult objects with discovered related code
         """
-
         # Validate parameters
-        if hops < 1:
-            self._logger.warning(f"Invalid hops={hops}, using 1")
-            hops = 1
-        if expansion_factor < 0 or expansion_factor > 2.0:
-            self._logger.warning(
-                f"Invalid expansion_factor={expansion_factor}, using 0.3"
-            )
-            expansion_factor = 0.3
+        hops, expansion_factor = self._validate_multi_hop_params(hops, expansion_factor)
 
         # Initialize timing tracker
         timings = {
             "total": time.time(),
             "hop_1": 0,
-            "expansion": {},  # {hop: duration}
+            "expansion": {},
             "rerank": 0,
         }
 
@@ -632,15 +765,11 @@ class HybridSearcher:
             f"(k={k}, expansion={expansion_factor}, mode={search_mode})"
         )
 
-        # Hop 1: Initial query-based search (use single-hop to avoid recursion)
-        # Use configurable multiplier from config
+        # Hop 1: Initial query-based search
         from .config import SearchConfigManager
 
         config = SearchConfigManager().load_config()
-        initial_k_multiplier = config.multi_hop_initial_k_multiplier
-        initial_k = int(
-            k * initial_k_multiplier
-        )  # Get more initial results for better expansion
+        initial_k = int(k * config.multi_hop_initial_k_multiplier)
 
         hop1_start = time.time()
         initial_results = self._single_hop_search(
@@ -651,7 +780,6 @@ class HybridSearcher:
             min_bm25_score=min_bm25_score,
             filters=filters,
         )
-
         timings["hop_1"] = time.time() - hop1_start
 
         if not initial_results:
@@ -663,8 +791,7 @@ class HybridSearcher:
             f"({timings['hop_1'] * 1000:.1f}ms)"
         )
 
-        # Track all discovered chunks (avoid duplicates)
-        # Note: HybridSearcher.search() returns reranker.SearchResult with chunk_id
+        # Track all discovered chunks
         all_chunk_ids = {r.chunk_id for r in initial_results}
         all_results = {r.chunk_id: r for r in initial_results}
 
@@ -672,76 +799,23 @@ class HybridSearcher:
         if hops == 1:
             return initial_results[:k]
 
-        # Hop 2+: Expand from each initial result
+        # Hop 2+: Expand from initial results
         expansion_k = max(1, int(k * expansion_factor))
+        timings["expansion"] = self._expand_from_initial_results(
+            initial_results=initial_results,
+            all_chunk_ids=all_chunk_ids,
+            all_results=all_results,
+            expansion_k=expansion_k,
+            hops=hops,
+            k=k,
+        )
 
-        for hop in range(2, hops + 1):
-            hop_start = time.time()
-            hop_discovered = 0
-
-            # Expand from top initial results only (not from previously expanded)
-            source_results = initial_results[:k]  # Use top k as expansion sources
-
-            for result in source_results:
-                try:
-                    # Find similar chunks to this result
-                    # find_similar_to_chunk returns searcher.SearchResult with chunk_id
-                    similar_chunks = self.find_similar_to_chunk(
-                        chunk_id=result.chunk_id,
-                        k=expansion_k,
-                    )
-
-                    # Add new chunks
-                    for sim_result in similar_chunks:
-                        # Get chunk_id from searcher.SearchResult
-                        chunk_id = sim_result.chunk_id
-                        if chunk_id not in all_chunk_ids:
-                            all_chunk_ids.add(chunk_id)
-                            # Convert to reranker.SearchResult format
-                            from .reranker import SearchResult as RerankerSearchResult
-
-                            reranker_result = RerankerSearchResult(
-                                chunk_id=chunk_id,
-                                score=sim_result.similarity_score,
-                                metadata=sim_result.__dict__,
-                                source="multi_hop",
-                            )
-                            all_results[chunk_id] = reranker_result
-                            hop_discovered += 1
-
-                except Exception as e:
-                    self._logger.warning(
-                        f"[MULTI_HOP] Failed to find similar chunks for {result.chunk_id}: {e}"
-                    )
-                    continue
-
-            timings["expansion"][hop] = time.time() - hop_start
-
-            self._logger.info(
-                f"[MULTI_HOP] Hop {hop}: Discovered {hop_discovered} new chunks "
-                f"(total: {len(all_results)}, {timings['expansion'][hop] * 1000:.1f}ms)"
-            )
-
-        # Apply filters to all expanded results (not just initial)
-        if filters and len(all_results) > len(initial_results):
-            filtered_results = {}
-            for chunk_id, result in all_results.items():
-                # Get metadata from dense index
-                metadata_entry = self.dense_index.metadata_db.get(chunk_id)
-                if metadata_entry:
-                    metadata = metadata_entry.get("metadata", {})
-                    if self.dense_index._matches_filters(metadata, filters):
-                        filtered_results[chunk_id] = result
-                else:
-                    # Keep results without metadata (shouldn't happen)
-                    filtered_results[chunk_id] = result
-
-            removed_count = len(all_results) - len(filtered_results)
-            all_results = filtered_results
-            self._logger.info(
-                f"[MULTI_HOP] Applied filters: {len(all_results)} results remain "
-                f"({removed_count} removed)"
-            )
+        # Apply filters to expanded results
+        all_results = self._apply_post_expansion_filters(
+            all_results=all_results,
+            initial_results_count=len(initial_results),
+            filters=filters,
+        )
 
         # Re-rank all discovered results by query relevance
         self._logger.info(
@@ -917,39 +991,6 @@ class HybridSearcher:
             self._logger.error(f"BM25 search failed: {e}")
             return []
 
-    def _matches_directory_filter(
-        self, relative_path: str, include_dirs: list = None, exclude_dirs: list = None
-    ) -> bool:
-        """Check if a file path matches directory filters.
-
-        Args:
-            relative_path: File path relative to project root
-            include_dirs: If provided, path must start with one of these
-            exclude_dirs: If provided, path must NOT start with any of these
-
-        Returns:
-            True if path passes both filters
-        """
-        # Normalize path separators
-        normalized_path = relative_path.replace("\\", "/")
-
-        # Check exclusions first (fast reject)
-        if exclude_dirs:
-            for dir_pattern in exclude_dirs:
-                pattern = dir_pattern.rstrip("/") + "/"
-                if normalized_path.startswith(pattern):
-                    return False
-
-        # Check inclusions (must match at least one)
-        if include_dirs:
-            for dir_pattern in include_dirs:
-                pattern = dir_pattern.rstrip("/") + "/"
-                if normalized_path.startswith(pattern):
-                    return True
-            return False  # No include pattern matched
-
-        return True  # No include filter, not excluded
-
     def _matches_bm25_filters(self, metadata: Dict, filters: Dict) -> bool:
         """Check if BM25 result metadata matches filters."""
         for key, value in filters.items():
@@ -958,7 +999,7 @@ class HybridSearcher:
                 include_dirs = filters.get("include_dirs")
                 exclude_dirs = filters.get("exclude_dirs")
                 relative_path = metadata.get("relative_path", "")
-                if not self._matches_directory_filter(
+                if not matches_directory_filter(
                     relative_path, include_dirs, exclude_dirs
                 ):
                     return False

@@ -10,10 +10,11 @@ Complete guide to advanced features in claude-context-local MCP server.
 4. [Multi-Model Batch Indexing](#multi-model-batch-indexing)
 5. [Per-Model Index Storage](#per-model-index-storage)
 6. [Directory Filtering](#directory-filtering)
-7. [Model Selection Guide](#model-selection-guide)
-8. [Symbol ID Lookups (Phase 1.1)](#symbol-id-lookups-phase-11)
-9. [AI Guidance Messages (Phase 1.2)](#ai-guidance-messages-phase-12)
-10. [Dependency Analysis (Phase 1.3)](#dependency-analysis-phase-13)
+7. [Persistent Project Selection](#persistent-project-selection)
+8. [Model Selection Guide](#model-selection-guide)
+9. [Symbol ID Lookups (Phase 1.1)](#symbol-id-lookups-phase-11)
+10. [AI Guidance Messages (Phase 1.2)](#ai-guidance-messages-phase-12)
+11. [Dependency Analysis (Phase 1.3)](#dependency-analysis-phase-13)
 
 ---
 
@@ -50,6 +51,16 @@ set CLAUDE_ENABLE_MULTI_HOP=false
 **See**: `analysis/MULTI_HOP_RECOMMENDATIONS.md` for full testing results
 
 **Note**: `search_code()` automatically uses multi-hop when enabled - no API changes needed. When filters (`file_pattern`, `chunk_type`) are specified, they are applied to both initial results AND expanded results to maintain consistency.
+
+### Internal Architecture (v0.5.16)
+
+The multi-hop search pipeline is implemented via 3 helper methods in `HybridSearcher`:
+
+- `_validate_multi_hop_params()` - Parameter validation with fallback defaults
+- `_expand_from_initial_results()` - Hop 2+ expansion logic with timing
+- `_apply_post_expansion_filters()` - Post-expansion directory/file filtering
+
+This orchestrator pattern keeps the main `_multi_hop_search_internal()` at ~100 lines.
 
 ---
 
@@ -516,6 +527,53 @@ find_connections(symbol_name="UserService", exclude_dirs=["tests/"])
 
 - **find_connections callers**: `exclude_dirs` applies to symbol resolution only, not caller lookup (preserves test coverage visibility)
 - **Large classes**: Semantic search may not find very large class definitions; use `chunk_id` for direct lookup
+
+---
+
+## Persistent Project Selection
+
+**Feature**: Last-used project automatically restored on server restart (v0.5.16+)
+
+### How It Works
+
+1. **On project switch** (MCP tool or menu): Selection saved to disk
+2. **On server startup**: Last project restored automatically
+3. **Menu displays**: Current project shown in Runtime Status section
+
+### Storage
+
+```
+~/.claude_code_search/project_selection.json
+```
+
+```json
+{
+  "last_project_path": "F:/RD_PROJECTS/COMPONENTS/claude-context-local",
+  "last_model_key": null,
+  "updated_at": "2025-11-24T12:30:00"
+}
+```
+
+### Bidirectional Sync
+
+- **MCP → Menu**: `switch_project` tool saves selection, menu reflects change
+- **Menu → MCP**: Batch menu switch saves selection, next MCP call uses it
+- **Server restart**: Both MCP tools and menu show same restored project
+
+### Related Files
+
+| File | Purpose |
+|------|---------|
+| `mcp_server/project_persistence.py` | Save/load functions |
+| `scripts/get_current_project.py` | Display helper for batch menu |
+| `start_mcp_server.cmd` | Shows current project in Runtime Status |
+
+### Environment Variable Override
+
+```bash
+# Override persistent selection with env var (takes priority)
+set CLAUDE_DEFAULT_PROJECT=C:\Projects\MyProject
+```
 
 ---
 
@@ -1181,7 +1239,7 @@ graph TD
 
 - `mcp_server/tools/impact_analysis.py`: Graph traversal + similarity search
 - `mcp_server/tool_handlers.py`: MCP tool wrapper
-- `indexing/call_graph_extractor.py`: Python AST call extraction
+- `graph/call_graph_extractor.py`: Python AST call extraction + resolvers
 
 **Call Graph Storage**:
 
@@ -1434,16 +1492,23 @@ def process():
 
 ### Implementation Details
 
-**Core Files**:
+**Core Files** (v0.5.16+):
 
-- `graph/call_graph_extractor.py`: AST traversal + type extraction
-  - `_extract_type_annotations()`: Scans function parameters (Phase 2)
-  - `_extract_local_assignments()`: Tracks variable assignments (Phase 3)
-  - `_infer_type_from_call()`: Infers type from Call nodes (Phase 3)
-  - `_annotation_to_string()`: Converts AST annotations to strings
-  - `_extract_imports()`: Extracts import mappings from AST (Phase 4)
-  - `_read_file_imports()`: Reads full file for module-level imports (Phase 4)
+- `graph/call_graph_extractor.py`: Core AST traversal (~400 lines)
   - `_get_call_name()`: Resolution priority chain
+  - Uses resolver instances for type/import/assignment resolution
+
+- `graph/resolvers/type_resolver.py`: Type annotation resolution
+  - `extract_type_annotations()`: Scans function parameters (Phase 2)
+  - `annotation_to_string()`: Converts AST annotations to strings
+
+- `graph/resolvers/assignment_tracker.py`: Variable tracking
+  - `extract_local_assignments()`: Tracks variable assignments (Phase 3)
+  - `infer_type_from_call()`: Infers type from Call nodes (Phase 3)
+
+- `graph/resolvers/import_resolver.py`: Import tracking
+  - `extract_imports()`: Extracts import mappings from AST (Phase 4)
+  - `read_file_imports()`: Reads full file for module-level imports (Phase 4)
 
 **Resolution Priority** (highest to lowest):
 

@@ -81,6 +81,7 @@ An intelligent code search system that uses Google's EmbeddingGemma, BAAI's BGE-
 - **Semantic search**: Natural language queries to find code across all languages
 - **Rich metadata**: File paths, folder structure, semantic tags, language-specific info
 - **MCP integration**: 15 tools for Claude Code with human-readable JSON output - search, index, configure, and monitor
+- **Persistent project selection**: Last-used project restored on server restart with bidirectional menu/MCP sync
 - **Local processing**: All embeddings stored locally, no API calls required
 - **Fast search**: FAISS for efficient similarity search with GPU acceleration support
 - **Incremental indexing**: 5-10x faster updates with Merkle tree change detection
@@ -526,6 +527,10 @@ claude-context-local/
 │   └── tree_sitter.py                # Tree-sitter: JS/TS/JSX/TSX/Svelte/Go/Java/Rust/C/C++/C#/GLSL
 ├── embeddings/
 │   └── embedder.py                   # EmbeddingGemma; device=auto (CUDA→MPS→CPU); offline cache
+├── graph/                            # Call graph extraction & analysis
+│   ├── call_graph_extractor.py       # Python AST call extraction
+│   ├── graph_storage.py              # NetworkX storage with JSON persistence
+│   └── resolvers/                    # Type, import, assignment resolvers
 ├── search/
 │   ├── indexer.py                    # FAISS index (CPU by default; GPU when available)
 │   ├── searcher.py                   # Intelligent ranking & filters

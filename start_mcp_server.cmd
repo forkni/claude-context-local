@@ -1156,6 +1156,8 @@ if exist ".venv\Scripts\python.exe" (
     if errorlevel 1 (
         echo Model: embeddinggemma-300m ^| Status: Loading...
     )
+    REM Display current project selection
+    .\.venv\Scripts\python.exe scripts\get_current_project.py 2>nul
 ) else (
     echo Runtime: Python | Status: Not installed
 )

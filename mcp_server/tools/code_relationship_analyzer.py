@@ -8,6 +8,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Set
 
+from search.filters import matches_directory_filter
+
 logger = logging.getLogger(__name__)
 
 # Builtin types that should not be searched for in uses_type resolution
@@ -359,7 +361,7 @@ class CodeRelationshipAnalyzer:
                         caller_dict = self._result_to_dict(caller_result, caller_id)
                         # Apply exclude_dirs filter
                         file_path = caller_dict.get("file", "")
-                        if self._matches_directory_filter(file_path, exclude_dirs):
+                        if matches_directory_filter(file_path, None, exclude_dirs):
                             direct_callers.append(caller_dict)
                     else:
                         stale_caller_count += 1
@@ -419,8 +421,8 @@ class CodeRelationshipAnalyzer:
                                     result_dict = self._result_to_dict(result, next_id)
                                     # Apply exclude_dirs filter
                                     file_path = result_dict.get("file", "")
-                                    if self._matches_directory_filter(
-                                        file_path, exclude_dirs
+                                    if matches_directory_filter(
+                                        file_path, None, exclude_dirs
                                     ):
                                         current_level.append(result_dict)
                                 else:
@@ -504,31 +506,6 @@ class CodeRelationshipAnalyzer:
             instantiated_by=graph_relationships.get("instantiated_by", []),
             stale_chunk_count=stale_caller_count + stale_indirect_count,
         )
-
-    def _matches_directory_filter(
-        self, file_path: str, exclude_dirs: list = None
-    ) -> bool:
-        """Check if file path should be included based on directory filters.
-
-        Args:
-            file_path: The file path to check
-            exclude_dirs: List of directory prefixes to exclude
-
-        Returns:
-            True if the file should be included, False if it should be filtered out
-        """
-        if not exclude_dirs:
-            return True
-
-        # Normalize path separators
-        normalized_path = file_path.replace("\\", "/")
-
-        for dir_pattern in exclude_dirs:
-            pattern = dir_pattern.rstrip("/") + "/"
-            if normalized_path.startswith(pattern) or f"/{pattern}" in normalized_path:
-                return False
-
-        return True
 
     def _result_to_dict(self, result, chunk_id: str) -> Dict[str, Any]:
         """Convert search result to dict format."""

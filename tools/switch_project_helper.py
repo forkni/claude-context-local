@@ -57,6 +57,7 @@ def main():
 
         if result.get("success"):
             print("[OK] Project switched successfully")
+            print("[OK] Selection saved (will persist across restarts)")
             print()
             print(f"Message: {result.get('message', 'Unknown')}")
 

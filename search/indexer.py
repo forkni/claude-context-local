@@ -25,6 +25,7 @@ except ImportError:
     torch = None
 
 from embeddings.embedder import EmbeddingResult
+from search.filters import matches_directory_filter
 
 # Import graph storage for call graph (Phase 1)
 try:
@@ -475,39 +476,6 @@ class CodeIndexManager:
 
         return results
 
-    def _matches_directory_filter(
-        self, relative_path: str, include_dirs: list = None, exclude_dirs: list = None
-    ) -> bool:
-        """Check if a file path matches directory filters.
-
-        Args:
-            relative_path: File path relative to project root
-            include_dirs: If provided, path must start with one of these
-            exclude_dirs: If provided, path must NOT start with any of these
-
-        Returns:
-            True if path passes both filters
-        """
-        # Normalize path separators
-        normalized_path = relative_path.replace("\\", "/")
-
-        # Check exclusions first (fast reject)
-        if exclude_dirs:
-            for dir_pattern in exclude_dirs:
-                pattern = dir_pattern.rstrip("/") + "/"
-                if normalized_path.startswith(pattern):
-                    return False
-
-        # Check inclusions (must match at least one)
-        if include_dirs:
-            for dir_pattern in include_dirs:
-                pattern = dir_pattern.rstrip("/") + "/"
-                if normalized_path.startswith(pattern):
-                    return True
-            return False  # No include pattern matched
-
-        return True  # No include filter, not excluded
-
     def _matches_filters(
         self, metadata: Dict[str, Any], filters: Dict[str, Any]
     ) -> bool:
@@ -518,7 +486,7 @@ class CodeIndexManager:
                 include_dirs = filters.get("include_dirs")
                 exclude_dirs = filters.get("exclude_dirs")
                 relative_path = metadata.get("relative_path", "")
-                if not self._matches_directory_filter(
+                if not matches_directory_filter(
                     relative_path, include_dirs, exclude_dirs
                 ):
                     return False

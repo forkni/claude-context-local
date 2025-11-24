@@ -210,7 +210,7 @@ pytest tests/ --durations=10
 - **Core Infrastructure**: Merkle trees, incremental indexing, search configuration
 - **Evaluation Framework**: Token efficiency measurement, evaluation components
 - **MCP Integration**: Server tools, import validation
-- **Call Graph Resolution**: Import-based resolution, type annotations, assignment tracking (v0.5.12-v0.5.15)
+- **Call Graph Resolution**: Import-based resolution (`ImportResolver`), type annotations (`TypeResolver`), assignment tracking (`AssignmentTracker`) - v0.5.12-v0.5.16
 
 **Characteristics**:
 

@@ -14,12 +14,11 @@ from chunking.multi_language_chunker import MultiLanguageChunker
 
 # Import guidance and tools
 from mcp_server.guidance import add_system_message
+from mcp_server.project_persistence import save_project_selection
 
 # Import server globals and helpers
 from mcp_server.server import (
-    MODEL_POOL_CONFIG,
     _cleanup_previous_resources,
-    _current_project,
     _embedders,
     _multi_model_enabled,
     get_embedder,
@@ -29,8 +28,10 @@ from mcp_server.server import (
     get_storage_dir,
     set_current_project,
 )
+from mcp_server.state import get_state
 from mcp_server.tools.code_relationship_analyzer import CodeRelationshipAnalyzer
 from search.config import (
+    MODEL_POOL_CONFIG,
     MODEL_REGISTRY,
     SearchConfigManager,
     get_config_manager,
@@ -148,7 +149,7 @@ async def handle_list_projects(arguments: Dict[str, Any]) -> dict:
             "projects": projects,
             "total_projects": len(projects),
             "total_indices": total_indices,
-            "current_project": _current_project,
+            "current_project": get_state().current_project,
         }
     except Exception as e:
         logger.error(f"Error listing projects: {e}")
@@ -282,6 +283,9 @@ async def handle_switch_project(arguments: Dict[str, Any]) -> dict:
         # Set new project using setter function (required for cross-module globals)
         set_current_project(str(project_path))
 
+        # Save selection for persistence across server restarts
+        save_project_selection(str(project_path))
+
         # Verify project is indexed
         project_dir = get_project_storage_dir(str(project_path))
         index_dir = project_dir / "index"
@@ -308,20 +312,24 @@ async def handle_switch_project(arguments: Dict[str, Any]) -> dict:
 async def handle_clear_index(arguments: Dict[str, Any]) -> dict:
     """Clear the entire search index."""
     try:
-        if _current_project is None:
+        current_project = get_state().current_project
+        if current_project is None:
             return {"error": "No active project to clear"}
 
         index_manager = get_index_manager()
         index_manager.clear_index()
 
-        # Cleanup in-memory state
+        # Cleanup in-memory state (both globals and ApplicationState)
         global _index_manager, _searcher
+        state = get_state()
         _index_manager = None
         _searcher = None
+        state.index_manager = None
+        state.searcher = None
 
         return {
             "success": True,
-            "message": f"Index cleared for project: {Path(_current_project).name}",
+            "message": f"Index cleared for project: {Path(current_project).name}",
         }
     except Exception as e:
         logger.error(f"Clear index failed: {e}", exc_info=True)
@@ -386,9 +394,11 @@ async def handle_configure_search_mode(arguments: Dict[str, Any]) -> dict:
 
             config_manager.save_config(config)
 
-            # Reset searcher to pick up new config
+            # Reset searcher to pick up new config (both globals and ApplicationState)
             global _searcher
+            state = get_state()
             _searcher = None
+            state.searcher = None
 
             return {
                 "success": True,
@@ -424,11 +434,15 @@ async def handle_switch_embedding_model(arguments: Dict[str, Any]) -> dict:
         config.embedding_model_name = model_name
         config_manager.save_config(config)
 
-        # Reset embedders to force reload
+        # Reset embedders to force reload (both globals and ApplicationState)
         global _embedders, _index_manager, _searcher
+        state = get_state()
         _embedders.clear()
         _index_manager = None
         _searcher = None
+        state.clear_embedders()
+        state.index_manager = None
+        state.searcher = None
 
         return {
             "success": True,
@@ -486,9 +500,261 @@ async def handle_find_similar_code(arguments: Dict[str, Any]) -> dict:
 # ============================================================================
 
 
+# ----------------------------------------------------------------------------
+# Search Code Helper Functions (extracted for clarity)
+# ----------------------------------------------------------------------------
+
+
+def _handle_chunk_id_lookup(chunk_id: str) -> dict:
+    """Handle direct O(1) chunk lookup by chunk_id.
+
+    Args:
+        chunk_id: The chunk identifier to look up directly
+
+    Returns:
+        dict: Response with single result or error
+    """
+    logger.info(f"[DIRECT_LOOKUP] chunk_id='{chunk_id}'")
+
+    try:
+        searcher = get_searcher()
+        result = searcher.get_by_chunk_id(chunk_id)
+
+        if result is None:
+            return {
+                "error": "Chunk not found",
+                "message": f"No chunk found with ID: {chunk_id}",
+                "chunk_id": chunk_id,
+            }
+
+        # Format SearchResult to JSON-serializable dict
+        formatted_result = {
+            "file": result.metadata.get("file", ""),
+            "lines": f"{result.metadata.get('start_line', 0)}-{result.metadata.get('end_line', 0)}",
+            "kind": result.metadata.get("chunk_type", "unknown"),
+            "score": round(result.score, 2),
+            "chunk_id": result.chunk_id,
+        }
+
+        # Add graph data if available
+        index_manager = _get_index_manager_from_searcher(searcher)
+        if index_manager and index_manager.graph_storage is not None:
+            graph_data = _get_graph_data_for_chunk(index_manager, chunk_id)
+            if graph_data:
+                formatted_result["graph"] = graph_data
+
+        # Build response
+        response = {
+            "query": None,
+            "chunk_id": chunk_id,
+            "results": [formatted_result],
+            "routing": None,
+        }
+
+        # Add AI guidance
+        response = add_system_message(
+            response, tool_name="search_code", query=None, chunk_id=chunk_id
+        )
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Direct lookup failed: {e}", exc_info=True)
+        return {"error": str(e), "chunk_id": chunk_id}
+
+
+def _route_query_to_model(
+    query: str, use_routing: bool, model_key: str | None
+) -> tuple[str | None, dict | None]:
+    """Route query to optimal embedding model.
+
+    Args:
+        query: The search query
+        use_routing: Whether to use automatic model routing
+        model_key: User-specified model override (None for auto)
+
+    Returns:
+        tuple: (selected_model_key, routing_info_dict)
+    """
+    if _multi_model_enabled and use_routing and model_key is None:
+        router = QueryRouter(enable_logging=True)
+        decision = router.route(query)
+        return decision.model_key, {
+            "model_selected": decision.model_key,
+            "confidence": decision.confidence,
+            "reason": decision.reason,
+            "scores": decision.scores,
+        }
+    elif model_key is not None:
+        return model_key, {
+            "model_selected": model_key,
+            "confidence": 1.0,
+            "reason": "User-specified override",
+        }
+    return None, None
+
+
+def _check_auto_reindex(
+    project_path: str, selected_model_key: str | None, max_age_minutes: int
+) -> bool:
+    """Check if auto-reindex is needed and perform if necessary.
+
+    Args:
+        project_path: Path to the project
+        selected_model_key: The selected model key for embeddings
+        max_age_minutes: Maximum age of index before reindex
+
+    Returns:
+        bool: True if reindex was performed
+    """
+    config = get_search_config()
+    if config.enable_hybrid_search:
+        project_storage = get_project_storage_dir(project_path)
+        storage_dir = project_storage / "index"
+        indexer = HybridSearcher(
+            storage_dir=str(storage_dir),
+            embedder=get_embedder(selected_model_key),
+            bm25_weight=config.bm25_weight,
+            dense_weight=config.dense_weight,
+        )
+    else:
+        indexer = get_index_manager(project_path)
+
+    embedder = get_embedder(selected_model_key)
+    chunker = MultiLanguageChunker(project_path)
+    incremental_indexer = IncrementalIndexer(
+        indexer=indexer, embedder=embedder, chunker=chunker
+    )
+
+    reindex_result = incremental_indexer.auto_reindex_if_needed(
+        project_path, max_age_minutes=max_age_minutes
+    )
+
+    return reindex_result.files_modified > 0 or reindex_result.files_added > 0
+
+
+def _get_index_manager_from_searcher(searcher) -> CodeIndexManager | None:
+    """Extract index_manager from searcher (handles different searcher types).
+
+    Args:
+        searcher: HybridSearcher or IntelligentSearcher instance
+
+    Returns:
+        CodeIndexManager or None
+    """
+    if hasattr(searcher, "index_manager"):
+        return searcher.index_manager
+    elif hasattr(searcher, "dense_index"):
+        return searcher.dense_index
+    return None
+
+
+def _get_graph_data_for_chunk(
+    index_manager: CodeIndexManager, chunk_id: str
+) -> dict | None:
+    """Get graph relationship data for a chunk.
+
+    Args:
+        index_manager: The index manager with graph storage
+        chunk_id: The chunk to get graph data for
+
+    Returns:
+        dict with 'calls' and 'called_by' lists, or None
+    """
+    try:
+        calls = index_manager.graph_storage.get_callees(chunk_id)
+        called_by = index_manager.graph_storage.get_callers(chunk_id)
+
+        if calls or called_by:
+            return {
+                "calls": calls if calls else [],
+                "called_by": called_by if called_by else [],
+            }
+    except Exception as e:
+        logger.debug(f"Failed to get graph data for {chunk_id}: {e}")
+    return None
+
+
+def _format_search_results(results: list) -> list[dict]:
+    """Format search results to JSON-serializable dicts.
+
+    Args:
+        results: List of SearchResult objects
+
+    Returns:
+        List of formatted result dictionaries
+    """
+    formatted_results = []
+    for result in results:
+        if hasattr(result, "relative_path"):
+            # IntelligentSearcher result format
+            item = {
+                "file": result.relative_path,
+                "lines": f"{result.start_line}-{result.end_line}",
+                "kind": result.chunk_type,
+                "score": round(result.similarity_score, 2),
+                "chunk_id": result.chunk_id,
+            }
+            if hasattr(result, "name") and result.name:
+                item["name"] = result.name
+        else:
+            # HybridSearcher result format
+            item = {
+                "file": result.metadata.get("relative_path", ""),
+                "lines": f"{result.metadata.get('start_line', 0)}-{result.metadata.get('end_line', 0)}",
+                "kind": result.metadata.get("chunk_type", "unknown"),
+                "score": round(result.score, 2),
+                "chunk_id": result.chunk_id,
+            }
+        formatted_results.append(item)
+    return formatted_results
+
+
+def _enrich_results_with_graph_data(
+    results: list[dict], index_manager: CodeIndexManager | None
+) -> list[dict]:
+    """Add graph relationship data to search results.
+
+    Args:
+        results: List of formatted result dicts
+        index_manager: Index manager with graph storage
+
+    Returns:
+        Results with graph data added where available
+    """
+    if not index_manager or index_manager.graph_storage is None:
+        return results
+
+    for item in results:
+        chunk_id = item.get("chunk_id")
+        if chunk_id:
+            graph_data = _get_graph_data_for_chunk(index_manager, chunk_id)
+            if graph_data:
+                item["graph"] = graph_data
+
+    return results
+
+
+# ----------------------------------------------------------------------------
+# Main Search Handler
+# ----------------------------------------------------------------------------
+
+
 async def handle_search_code(arguments: Dict[str, Any]) -> dict:
-    """Search code with natural language query - MOST COMPLEX TOOL."""
-    # Extract all arguments
+    """Search code with natural language query.
+
+    Supports two modes:
+    1. Direct chunk_id lookup (O(1) - fast path)
+    2. Semantic/hybrid search by query (normal path)
+
+    Uses extracted helper functions for clarity:
+    - _handle_chunk_id_lookup(): Direct lookups
+    - _route_query_to_model(): Model routing decisions
+    - _check_auto_reindex(): Index freshness checks
+    - _format_search_results(): Result formatting
+    - _enrich_results_with_graph_data(): Graph relationship enrichment
+    """
+    # Extract arguments
     query = arguments.get("query")
     chunk_id = arguments.get("chunk_id")
     k = arguments.get("k", 5)
@@ -505,67 +771,9 @@ async def handle_search_code(arguments: Dict[str, Any]) -> dict:
             "message": "Provide either query OR chunk_id, not both",
         }
 
-    # FAST PATH: Direct chunk_id lookup (no search needed)
+    # FAST PATH: Direct chunk_id lookup
     if chunk_id:
-        logger.info(f"[DIRECT_LOOKUP] chunk_id='{chunk_id}'")
-
-        try:
-            searcher = get_searcher()
-            result = searcher.get_by_chunk_id(chunk_id)
-
-            if result is None:
-                return {
-                    "error": "Chunk not found",
-                    "message": f"No chunk found with ID: {chunk_id}",
-                    "chunk_id": chunk_id,
-                }
-
-            # Format SearchResult to JSON-serializable dict
-            formatted_result = {
-                "file": result.metadata.get("file", ""),
-                "lines": f"{result.metadata.get('start_line', 0)}-{result.metadata.get('end_line', 0)}",
-                "kind": result.metadata.get("chunk_type", "unknown"),
-                "score": round(result.score, 2),
-                "chunk_id": result.chunk_id,
-            }
-
-            # Add graph data if available
-            index_manager = None
-            if hasattr(searcher, "index_manager"):
-                index_manager = searcher.index_manager
-            elif hasattr(searcher, "dense_index"):
-                index_manager = searcher.dense_index
-
-            if index_manager and index_manager.graph_storage is not None:
-                try:
-                    calls = index_manager.graph_storage.get_callees(chunk_id)
-                    called_by = index_manager.graph_storage.get_callers(chunk_id)
-
-                    if calls or called_by:
-                        formatted_result["graph"] = {
-                            "calls": calls if calls else [],
-                            "called_by": called_by if called_by else [],
-                        }
-                except Exception as e:
-                    logger.debug(f"Failed to get graph data for {chunk_id}: {e}")
-
-            # Convert single result to list format
-            response = {
-                "query": None,
-                "chunk_id": chunk_id,
-                "results": [formatted_result],
-                "routing": None,
-            }
-
-            # Add AI guidance
-            response = add_system_message(
-                response, tool_name="search_code", query=None, chunk_id=chunk_id
-            )
-
-            return response
-        except Exception as e:
-            logger.error(f"Direct lookup failed: {e}", exc_info=True)
-            return {"error": str(e), "chunk_id": chunk_id}
+        return _handle_chunk_id_lookup(chunk_id)
 
     # NORMAL PATH: Search by query
     search_mode = arguments.get("search_mode", "auto")
@@ -583,53 +791,17 @@ async def handle_search_code(arguments: Dict[str, Any]) -> dict:
 
     try:
         # Phase 1: Model Routing
-        selected_model_key = None
-        routing_info = None
+        selected_model_key, routing_info = _route_query_to_model(
+            query, use_routing, model_key
+        )
 
-        if _multi_model_enabled and use_routing and model_key is None:
-            router = QueryRouter(enable_logging=True)
-            decision = router.route(query)
-            selected_model_key = decision.model_key
-            routing_info = {
-                "model_selected": decision.model_key,
-                "confidence": decision.confidence,
-                "reason": decision.reason,
-                "scores": decision.scores,
-            }
-        elif model_key is not None:
-            selected_model_key = model_key
-            routing_info = {
-                "model_selected": model_key,
-                "confidence": 1.0,
-                "reason": "User-specified override",
-            }
-
-        # Phase 2: Auto-reindex if needed
-        if auto_reindex and _current_project:
-            config = get_search_config()
-            if config.enable_hybrid_search:
-                project_storage = get_project_storage_dir(_current_project)
-                storage_dir = project_storage / "index"
-                indexer = HybridSearcher(
-                    storage_dir=str(storage_dir),
-                    embedder=get_embedder(selected_model_key),
-                    bm25_weight=config.bm25_weight,
-                    dense_weight=config.dense_weight,
-                )
-            else:
-                indexer = get_index_manager(_current_project)
-
-            embedder = get_embedder(selected_model_key)
-            chunker = MultiLanguageChunker(_current_project)
-            incremental_indexer = IncrementalIndexer(
-                indexer=indexer, embedder=embedder, chunker=chunker
+        # Phase 2: Auto-reindex if needed (must stay inline due to global _searcher)
+        current_project = get_state().current_project
+        if auto_reindex and current_project:
+            reindexed = _check_auto_reindex(
+                current_project, selected_model_key, max_age_minutes
             )
-
-            reindex_result = incremental_indexer.auto_reindex_if_needed(
-                _current_project, max_age_minutes=max_age_minutes
-            )
-
-            if reindex_result.files_modified > 0 or reindex_result.files_added > 0:
+            if reindexed:
                 global _searcher
                 _searcher = None
 
@@ -649,7 +821,7 @@ async def handle_search_code(arguments: Dict[str, Any]) -> dict:
             return {
                 "error": "No indexed project found",
                 "message": "You must index a project before searching",
-                "current_project": _current_project or "None",
+                "current_project": current_project or "None",
             }
 
         # Build filters
@@ -688,56 +860,17 @@ async def handle_search_code(arguments: Dict[str, Any]) -> dict:
                 filters=filters if filters else None,
             )
 
-        # Phase 4: Format results
-        formatted_results = []
-        for result in results:
-            if hasattr(result, "relative_path"):
-                item = {
-                    "file": result.relative_path,
-                    "lines": f"{result.start_line}-{result.end_line}",
-                    "kind": result.chunk_type,
-                    "score": round(result.similarity_score, 2),
-                    "chunk_id": result.chunk_id,
-                }
-                if hasattr(result, "name") and result.name:
-                    item["name"] = result.name
-            else:
-                item = {
-                    "file": result.metadata.get("relative_path", ""),
-                    "lines": f"{result.metadata.get('start_line', 0)}-{result.metadata.get('end_line', 0)}",
-                    "kind": result.metadata.get("chunk_type", "unknown"),
-                    "score": round(result.score, 2),
-                    "chunk_id": result.chunk_id,
-                }
+        # Phase 4: Format results (using helper)
+        formatted_results = _format_search_results(results)
 
-            formatted_results.append(item)
-
-        # Phase 5: Enrich with graph data
-        index_manager = None
-        if hasattr(searcher, "index_manager"):
-            index_manager = searcher.index_manager
-        elif hasattr(searcher, "dense_index"):
-            index_manager = searcher.dense_index
-
-        if index_manager and index_manager.graph_storage is not None:
-            for item in formatted_results:
-                chunk_id = item.get("chunk_id")
-                if chunk_id:
-                    try:
-                        calls = index_manager.graph_storage.get_callees(chunk_id)
-                        called_by = index_manager.graph_storage.get_callers(chunk_id)
-
-                        if calls or called_by:
-                            item["graph"] = {
-                                "calls": calls if calls else [],
-                                "called_by": called_by if called_by else [],
-                            }
-                    except Exception as e:
-                        logger.debug(f"Failed to get graph data for {chunk_id}: {e}")
+        # Phase 5: Enrich with graph data (using helpers)
+        index_manager = _get_index_manager_from_searcher(searcher)
+        formatted_results = _enrich_results_with_graph_data(
+            formatted_results, index_manager
+        )
 
         # Build response
         response = {"query": query, "results": formatted_results}
-
         if routing_info:
             response["routing"] = routing_info
 
@@ -753,8 +886,267 @@ async def handle_search_code(arguments: Dict[str, Any]) -> dict:
         return {"error": str(e)}
 
 
+# ----------------------------------------------------------------------------
+# Index Directory Helper Functions
+# ----------------------------------------------------------------------------
+
+
+def _create_indexer_for_model(
+    model_key: str | None, directory_path: str, index_dir: Path
+) -> tuple:
+    """Create indexer and embedder for a specific model.
+
+    Args:
+        model_key: The model key (e.g., 'qwen3', 'bge_m3') or None for default
+        directory_path: Path to the project directory
+        index_dir: Path to store the index
+
+    Returns:
+        tuple: (indexer, embedder, chunker)
+    """
+    config = get_search_config()
+    chunker = MultiLanguageChunker(directory_path)
+    embedder = get_embedder(model_key)
+
+    if config.enable_hybrid_search:
+        # Get project_id from index_dir parent
+        project_dir = index_dir.parent
+        project_id = project_dir.name.rsplit("_", 1)[0]  # Remove dimension suffix
+
+        indexer = HybridSearcher(
+            storage_dir=str(index_dir),
+            embedder=embedder,
+            bm25_weight=config.bm25_weight,
+            dense_weight=config.dense_weight,
+            rrf_k=config.rrf_k_parameter,
+            max_workers=2,
+            bm25_use_stopwords=config.bm25_use_stopwords,
+            bm25_use_stemming=config.bm25_use_stemming,
+            project_id=project_id,
+        )
+    else:
+        project_dir = index_dir.parent
+        project_id = project_dir.name.rsplit("_", 1)[0]
+        indexer = CodeIndexManager(str(index_dir), project_id=project_id)
+
+    return indexer, embedder, chunker
+
+
+def _run_indexing(
+    indexer, embedder, chunker, directory_path: str, incremental: bool
+) -> dict:
+    """Run the indexing process and return results.
+
+    Args:
+        indexer: HybridSearcher or CodeIndexManager
+        embedder: Embedding model
+        chunker: Code chunker
+        directory_path: Path to index
+        incremental: Whether to do incremental indexing
+
+    Returns:
+        dict: Indexing results with files/chunks counts and timing
+    """
+    from datetime import datetime
+
+    incremental_indexer = IncrementalIndexer(
+        indexer=indexer, embedder=embedder, chunker=chunker
+    )
+
+    start_time = datetime.now()
+
+    if incremental:
+        result = incremental_indexer.incremental_index(directory_path)
+    else:
+        result = incremental_indexer.incremental_index(directory_path, force_full=True)
+
+    elapsed = (datetime.now() - start_time).total_seconds()
+
+    return {
+        "files_added": result.files_added,
+        "files_modified": result.files_modified,
+        "files_removed": result.files_removed,
+        "chunks_added": result.chunks_added,
+        "time_taken": round(elapsed, 2),
+    }
+
+
+def _build_index_response(
+    results: list[dict], directory_path: str, multi_model: bool, incremental: bool
+) -> dict:
+    """Build the final index response.
+
+    Args:
+        results: List of per-model indexing results
+        directory_path: The indexed directory
+        multi_model: Whether multi-model mode was used
+        incremental: Whether incremental mode was used
+
+    Returns:
+        dict: Complete response with success status and statistics
+    """
+    if multi_model:
+        total_time = sum(r["time_taken"] for r in results)
+        total_files_added = sum(r["files_added"] for r in results)
+        total_chunks_added = sum(r["chunks_added"] for r in results)
+
+        return {
+            "success": True,
+            "multi_model": True,
+            "project": str(directory_path),
+            "models_indexed": len(results),
+            "results": results,
+            "total_time": round(total_time, 2),
+            "total_files_added": total_files_added,
+            "total_chunks_added": total_chunks_added,
+            "mode": "incremental" if incremental else "full",
+        }
+    else:
+        # Single model - results has one item
+        r = results[0]
+        return {
+            "success": True,
+            "multi_model": False,
+            "project": str(directory_path),
+            "files_added": r["files_added"],
+            "files_modified": r["files_modified"],
+            "files_removed": r["files_removed"],
+            "chunks_added": r["chunks_added"],
+            "time_taken": r["time_taken"],
+            "mode": "incremental" if incremental else "full",
+        }
+
+
+def _index_with_all_models(directory_path: Path, incremental: bool) -> list[dict]:
+    """Index a project with all models in MODEL_POOL_CONFIG.
+
+    Args:
+        directory_path: Resolved path to the project directory
+        incremental: Whether to use incremental indexing
+
+    Returns:
+        list: Results for each model with timing and statistics
+    """
+    from datetime import datetime
+
+    results = []
+    original_config = get_search_config()
+    original_model = original_config.embedding_model_name
+
+    # Clear global state for clean model switching
+    global _index_manager, _searcher
+
+    try:
+        for model_key, model_name in MODEL_POOL_CONFIG.items():
+            logger.info(f"Indexing with model: {model_name} ({model_key})")
+
+            # Switch to this model temporarily
+            config_mgr = SearchConfigManager()
+            config = config_mgr.load_config()
+            config.embedding_model_name = model_name
+
+            # Update dimension from registry
+            if model_name in MODEL_REGISTRY:
+                config.model_dimension = MODEL_REGISTRY[model_name]["dimension"]
+
+            config_mgr.save_config(config)
+
+            # Invalidate global config cache to force reload from disk
+            from search import config as config_module
+
+            config_module._config_manager = None
+
+            # Clear cached components to force reload with new model
+            _index_manager = None
+            _searcher = None
+
+            # Get project storage for this model
+            project_dir = get_project_storage_dir(str(directory_path))
+            index_dir = project_dir / "index"
+            index_dir.mkdir(exist_ok=True)
+
+            # Initialize components for this model
+            chunker = MultiLanguageChunker(str(directory_path))
+            embedder = get_embedder(model_key)
+
+            # Create fresh indexer instance directly (bypass global cache)
+            config = get_search_config()
+            if config.enable_hybrid_search:
+                project_id = project_dir.name.rsplit("_", 1)[0]
+                indexer = HybridSearcher(
+                    storage_dir=str(index_dir),
+                    embedder=embedder,
+                    bm25_weight=config.bm25_weight,
+                    dense_weight=config.dense_weight,
+                    rrf_k=config.rrf_k_parameter,
+                    max_workers=2,
+                    bm25_use_stopwords=config.bm25_use_stopwords,
+                    bm25_use_stemming=config.bm25_use_stemming,
+                    project_id=project_id,
+                )
+                logger.info(f"Created HybridSearcher for {model_name} at {index_dir}")
+            else:
+                project_id = project_dir.name.rsplit("_", 1)[0]
+                indexer = CodeIndexManager(str(index_dir), project_id=project_id)
+                logger.info(f"Created CodeIndexManager for {model_name} at {index_dir}")
+
+            # Create incremental indexer and run
+            incremental_indexer = IncrementalIndexer(
+                indexer=indexer, embedder=embedder, chunker=chunker
+            )
+
+            start_time = datetime.now()
+            if incremental:
+                result = incremental_indexer.incremental_index(str(directory_path))
+            else:
+                result = incremental_indexer.incremental_index(
+                    str(directory_path), force_full=True
+                )
+            elapsed = (datetime.now() - start_time).total_seconds()
+
+            results.append(
+                {
+                    "model": model_name,
+                    "model_key": model_key,
+                    "dimension": config.model_dimension,
+                    "files_added": result.files_added,
+                    "files_modified": result.files_modified,
+                    "files_removed": result.files_removed,
+                    "chunks_added": result.chunks_added,
+                    "time_taken": round(elapsed, 2),
+                }
+            )
+            logger.info(f"Completed indexing with {model_name} in {elapsed:.2f}s")
+
+    finally:
+        # Restore original model
+        config_mgr = SearchConfigManager()
+        config = config_mgr.load_config()
+        config.embedding_model_name = original_model
+        config_mgr.save_config(config)
+
+        # Clear cached components
+        _index_manager = None
+        _searcher = None
+        logger.info(f"Restored original model: {original_model}")
+
+    return results
+
+
+# ----------------------------------------------------------------------------
+# Main Index Handler
+# ----------------------------------------------------------------------------
+
+
 async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
-    """Index a directory for code search with multi-model support."""
+    """Index a directory for code search with multi-model support.
+
+    Uses extracted helper functions for clarity:
+    - _index_with_all_models(): Multi-model batch indexing
+    - _create_indexer_for_model(): Create indexer/embedder for a model
+    - _run_indexing(): Execute the indexing process
+    - _build_index_response(): Format the final response
+    """
     directory_path = arguments["directory_path"]
     arguments.get("project_name")
     incremental = arguments.get("incremental", True)
@@ -769,165 +1161,21 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
     )
 
     try:
-        from datetime import datetime
 
         directory_path = Path(directory_path).resolve()
         if not directory_path.exists():
             return {"error": f"Directory does not exist: {directory_path}"}
 
-        # Set as current project
-        global _current_project
-        _current_project = str(directory_path)
+        # Set as current project (using setter for proper cross-module sync)
+        set_current_project(str(directory_path))
 
         # Multi-model batch indexing
         if multi_model and _multi_model_enabled:
             logger.info(f"Multi-model batch indexing for: {directory_path}")
-
-            results = []
-            original_config = get_search_config()
-            original_model = original_config.embedding_model_name
-
-            # Clear global state for clean model switching
-            global _index_manager, _searcher
-
-            try:
-                for model_key, model_name in MODEL_POOL_CONFIG.items():
-                    logger.info(f"Indexing with model: {model_name} ({model_key})")
-
-                    # Switch to this model temporarily
-                    config_mgr = SearchConfigManager()
-                    config = config_mgr.load_config()
-                    config.embedding_model_name = model_name
-
-                    # Update dimension from registry
-                    if model_name in MODEL_REGISTRY:
-                        config.model_dimension = MODEL_REGISTRY[model_name]["dimension"]
-
-                    config_mgr.save_config(config)
-
-                    # Invalidate global config cache to force reload from disk
-                    # This ensures get_project_storage_dir() sees the updated model
-                    from search import config as config_module
-
-                    config_module._config_manager = None
-
-                    # Clear cached components to force reload with new model
-                    global _index_manager, _searcher
-                    _index_manager = None
-                    _searcher = None
-
-                    # Get project storage for this model
-                    project_dir = get_project_storage_dir(str(directory_path))
-                    index_dir = project_dir / "index"
-                    index_dir.mkdir(exist_ok=True)
-
-                    # Initialize components for this model
-                    chunker = MultiLanguageChunker(str(directory_path))
-                    embedder = get_embedder(
-                        model_key
-                    )  # Get embedder for specific model
-
-                    # Create fresh indexer instance directly (bypass global cache)
-                    # This ensures the storage path is correct for the current model
-                    config = get_search_config()
-                    if config.enable_hybrid_search:
-                        # Create fresh HybridSearcher with correct storage path
-                        storage_dir = index_dir  # Already set on line 721
-                        project_id = project_dir.name.rsplit("_", 1)[
-                            0
-                        ]  # Remove dimension suffix
-
-                        indexer = HybridSearcher(
-                            storage_dir=str(storage_dir),
-                            embedder=embedder,
-                            bm25_weight=config.bm25_weight,
-                            dense_weight=config.dense_weight,
-                            rrf_k=config.rrf_k_parameter,
-                            max_workers=2,
-                            bm25_use_stopwords=config.bm25_use_stopwords,
-                            bm25_use_stemming=config.bm25_use_stemming,
-                            project_id=project_id,
-                        )
-                        logger.info(
-                            f"Created fresh HybridSearcher for {model_name} at {storage_dir}"
-                        )
-                    else:
-                        # Create fresh CodeIndexManager with correct storage path
-                        project_id = project_dir.name.rsplit("_", 1)[
-                            0
-                        ]  # Remove dimension suffix
-                        indexer = CodeIndexManager(
-                            str(index_dir), project_id=project_id
-                        )
-                        logger.info(
-                            f"Created fresh CodeIndexManager for {model_name} at {index_dir}"
-                        )
-
-                    # Create incremental indexer with fresh components
-                    incremental_indexer = IncrementalIndexer(
-                        indexer=indexer, embedder=embedder, chunker=chunker
-                    )
-
-                    # Index with this model
-                    start_time = datetime.now()
-
-                    if incremental:
-                        result = incremental_indexer.incremental_index(
-                            str(directory_path)
-                        )
-                    else:
-                        result = incremental_indexer.incremental_index(
-                            str(directory_path), force_full=True
-                        )
-
-                    elapsed = (datetime.now() - start_time).total_seconds()
-
-                    results.append(
-                        {
-                            "model": model_name,
-                            "model_key": model_key,
-                            "dimension": config.model_dimension,
-                            "files_added": result.files_added,
-                            "files_modified": result.files_modified,
-                            "files_removed": result.files_removed,
-                            "chunks_added": result.chunks_added,
-                            "time_taken": round(elapsed, 2),
-                        }
-                    )
-
-                    logger.info(
-                        f"Completed indexing with {model_name} in {elapsed:.2f}s"
-                    )
-
-            finally:
-                # Restore original model
-                config_mgr = SearchConfigManager()
-                config = config_mgr.load_config()
-                config.embedding_model_name = original_model
-                config_mgr.save_config(config)
-
-                # Clear cached components
-                _index_manager = None
-                _searcher = None
-
-                logger.info(f"Restored original model: {original_model}")
-
-            # Calculate totals
-            total_time = sum(r["time_taken"] for r in results)
-            total_files_added = sum(r["files_added"] for r in results)
-            total_chunks_added = sum(r["chunks_added"] for r in results)
-
-            return {
-                "success": True,
-                "multi_model": True,
-                "project": str(directory_path),
-                "models_indexed": len(results),
-                "results": results,
-                "total_time": round(total_time, 2),
-                "total_files_added": total_files_added,
-                "total_chunks_added": total_chunks_added,
-                "mode": "incremental" if incremental else "full",
-            }
+            results = _index_with_all_models(directory_path, incremental)
+            return _build_index_response(
+                results, str(directory_path), multi_model=True, incremental=incremental
+            )
 
         # Single model indexing (original behavior)
         else:
@@ -938,47 +1186,30 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
             index_dir = project_dir / "index"
             index_dir.mkdir(exist_ok=True)
 
-            # Initialize components
+            # Initialize components using cached getter functions
             chunker = MultiLanguageChunker(str(directory_path))
             embedder = get_embedder()
-
-            # Get index manager
             searcher_instance = get_searcher(str(directory_path))
 
             config = get_search_config()
-            if config.enable_hybrid_search:
-                indexer = searcher_instance
-            else:
-                indexer = get_index_manager(str(directory_path))
-
-            # Create incremental indexer
-            incremental_indexer = IncrementalIndexer(
-                indexer=indexer, embedder=embedder, chunker=chunker
+            indexer = (
+                searcher_instance
+                if config.enable_hybrid_search
+                else get_index_manager(str(directory_path))
             )
 
-            # Index the directory
-            start_time = datetime.now()
+            # Run indexing (using helper)
+            result = _run_indexing(
+                indexer, embedder, chunker, str(directory_path), incremental
+            )
 
-            if incremental:
-                result = incremental_indexer.incremental_index(str(directory_path))
-            else:
-                result = incremental_indexer.incremental_index(
-                    str(directory_path), force_full=True
-                )
-
-            elapsed = (datetime.now() - start_time).total_seconds()
-
-            return {
-                "success": True,
-                "multi_model": False,
-                "project": str(directory_path),
-                "files_added": result.files_added,
-                "files_modified": result.files_modified,
-                "files_removed": result.files_removed,
-                "chunks_added": result.chunks_added,
-                "time_taken": round(elapsed, 2),
-                "mode": "incremental" if incremental else "full",
-            }
+            # Build response (using helper)
+            return _build_index_response(
+                [result],
+                str(directory_path),
+                multi_model=False,
+                incremental=incremental,
+            )
 
     except Exception as e:
         logger.error(f"Indexing failed: {e}", exc_info=True)

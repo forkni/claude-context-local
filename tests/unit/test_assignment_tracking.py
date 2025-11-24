@@ -7,6 +7,7 @@ Tests the extraction and resolution of types from local variable assignments.
 import ast
 
 from graph.call_graph_extractor import PythonCallGraphExtractor
+from graph.resolvers import AssignmentTracker
 
 
 class TestSimpleAssignmentTracking:
@@ -566,11 +567,11 @@ class MyClass:
 
 
 class TestExtractLocalAssignments:
-    """Direct tests for _extract_local_assignments() method."""
+    """Direct tests for AssignmentTracker.extract_local_assignments() method."""
 
     def setup_method(self):
         """Set up test fixtures."""
-        self.extractor = PythonCallGraphExtractor()
+        self.assignment_tracker = AssignmentTracker()
 
     def test_simple_assignment_extraction(self):
         """Test direct extraction of simple assignments."""
@@ -579,7 +580,7 @@ x = MyClass()
 y = OtherClass()
 """
         tree = ast.parse(code)
-        assignments = self.extractor._extract_local_assignments(tree)
+        assignments = self.assignment_tracker.extract_local_assignments(tree)
 
         assert "x" in assignments
         assert assignments["x"] == "MyClass"
@@ -593,7 +594,7 @@ x: MyClass = get_value()
 y: OtherClass
 """
         tree = ast.parse(code)
-        assignments = self.extractor._extract_local_assignments(tree)
+        assignments = self.assignment_tracker.extract_local_assignments(tree)
 
         assert "x" in assignments
         assert assignments["x"] == "MyClass"
@@ -607,7 +608,7 @@ self.handler = Handler()
 cls.instance = Instance()
 """
         tree = ast.parse(code)
-        assignments = self.extractor._extract_local_assignments(tree)
+        assignments = self.assignment_tracker.extract_local_assignments(tree)
 
         assert "self.handler" in assignments
         assert assignments["self.handler"] == "Handler"
@@ -621,7 +622,7 @@ with Manager() as mgr:
     pass
 """
         tree = ast.parse(code)
-        assignments = self.extractor._extract_local_assignments(tree)
+        assignments = self.assignment_tracker.extract_local_assignments(tree)
 
         assert "mgr" in assignments
         assert assignments["mgr"] == "Manager"
@@ -633,18 +634,18 @@ if (x := Creator()):
     pass
 """
         tree = ast.parse(code)
-        assignments = self.extractor._extract_local_assignments(tree)
+        assignments = self.assignment_tracker.extract_local_assignments(tree)
 
         assert "x" in assignments
         assert assignments["x"] == "Creator"
 
 
 class TestInferTypeFromCall:
-    """Direct tests for _infer_type_from_call() method."""
+    """Direct tests for AssignmentTracker.infer_type_from_call() method."""
 
     def setup_method(self):
         """Set up test fixtures."""
-        self.extractor = PythonCallGraphExtractor()
+        self.assignment_tracker = AssignmentTracker()
 
     def test_simple_constructor(self):
         """Test type inference from simple constructor."""
@@ -652,7 +653,7 @@ class TestInferTypeFromCall:
         tree = ast.parse(code)
         call_node = tree.body[0].value
 
-        type_name = self.extractor._infer_type_from_call(call_node)
+        type_name = self.assignment_tracker.infer_type_from_call(call_node)
         assert type_name == "MyClass"
 
     def test_qualified_constructor(self):
@@ -661,7 +662,7 @@ class TestInferTypeFromCall:
         tree = ast.parse(code)
         call_node = tree.body[0].value
 
-        type_name = self.extractor._infer_type_from_call(call_node)
+        type_name = self.assignment_tracker.infer_type_from_call(call_node)
         assert type_name == "MyClass"
 
     def test_factory_method_returns_none(self):
@@ -670,7 +671,7 @@ class TestInferTypeFromCall:
         tree = ast.parse(code)
         call_node = tree.body[0].value
 
-        type_name = self.extractor._infer_type_from_call(call_node)
+        type_name = self.assignment_tracker.infer_type_from_call(call_node)
         assert type_name == "create_instance"  # Function name, not class
 
     def test_method_call_returns_attr(self):
@@ -679,6 +680,6 @@ class TestInferTypeFromCall:
         tree = ast.parse(code)
         call_node = tree.body[0].value
 
-        type_name = self.extractor._infer_type_from_call(call_node)
+        type_name = self.assignment_tracker.infer_type_from_call(call_node)
         # Returns the method name, not class
         assert type_name == "get_handler"

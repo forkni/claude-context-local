@@ -7,6 +7,14 @@ from dataclasses import asdict, dataclass
 from typing import Any, Dict, Optional
 
 # Model registry with specifications
+# Multi-model pool configuration for query routing
+# Maps model keys to full model names in MODEL_REGISTRY
+MODEL_POOL_CONFIG = {
+    "qwen3": "Qwen/Qwen3-Embedding-0.6B",
+    "bge_m3": "BAAI/bge-m3",
+    "coderankembed": "nomic-ai/CodeRankEmbed",
+}
+
 MODEL_REGISTRY = {
     "google/embeddinggemma-300m": {
         "dimension": 768,

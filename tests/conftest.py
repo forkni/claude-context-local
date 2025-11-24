@@ -70,15 +70,30 @@ def pytest_collection_modifyitems(config: Any, items: List[Any]) -> None:
 
 @pytest.fixture(autouse=True)
 def reset_global_state() -> Generator[None, None, None]:
-    """Reset global state before each test."""
-    # Reset MCP server global state
+    """Reset global state before each test.
+
+    Uses the centralized ApplicationState.reset() for clean state management.
+    Also resets the module-level globals for backward compatibility during migration.
+    """
+    # Reset MCP server global state via ApplicationState
+    try:
+        from mcp_server.state import reset_state
+
+        reset_state()
+    except ImportError:
+        pass  # Module might not be available in some tests
+
+    # Also reset module-level globals directly (backward compatibility)
     try:
         import mcp_server.server as server_module
 
-        server_module._embedder = None
+        server_module._embedders = {}
         server_module._index_manager = None
         server_module._searcher = None
         server_module._storage_dir = None
+        server_module._current_project = None
+        server_module._current_model_key = None
+        server_module._model_preload_task_started = False
     except ImportError:
         pass  # Module might not be available in some tests
 
