@@ -298,12 +298,25 @@ def get_embedder(model_key: str = None) -> CodeEmbedder:
         # Lazy load model if not already loaded
         if model_key not in _embedders or _embedders[model_key] is None:
             model_name = MODEL_POOL_CONFIG[model_key]
-            logger.info(f"Lazy loading {model_key} ({model_name})...")
+            # Check if this is the first model being loaded (cold start)
+            is_first_load = not any(_embedders.values())
+            if is_first_load:
+                logger.info(
+                    f"[FIRST USE] Loading embedding model {model_key} ({model_name})... "
+                    f"This is a one-time initialization (~5-10s). Subsequent searches will be fast."
+                )
+            else:
+                logger.info(f"Lazy loading {model_key} ({model_name})...")
             try:
                 embedder = CodeEmbedder(model_name=model_name, cache_dir=str(cache_dir))
                 _embedders[model_key] = embedder
                 state.set_embedder(model_key, embedder)  # Sync to state
-                logger.info(f"✓ {model_key} loaded successfully")
+                if is_first_load:
+                    logger.info(
+                        f"✓ {model_key} loaded successfully. Ready for fast searches!"
+                    )
+                else:
+                    logger.info(f"✓ {model_key} loaded successfully")
             except Exception as e:
                 logger.error(f"✗ Failed to load {model_key}: {e}")
                 # Fallback to bge_m3 if available
@@ -750,13 +763,18 @@ if __name__ == "__main__":
                     else:
                         logger.info("[INIT] No default project")
 
-                # Initialize model pool in lazy mode
-                if _multi_model_enabled and not _model_preload_task_started:
-                    initialize_model_pool(lazy_load=True)
-                    logger.info(
-                        f"[INIT] Model pool initialized: {list(MODEL_POOL_CONFIG.keys())}"
-                    )
-                    _model_preload_task_started = True
+                # Defer model pool initialization (Phase 3A optimization)
+                # Models will load on first search/index operation (saves 3-4GB VRAM at startup)
+                # if _multi_model_enabled and not _model_preload_task_started:
+                #     initialize_model_pool(lazy_load=True)
+                #     logger.info(
+                #         f"[INIT] Model pool initialized: {list(MODEL_POOL_CONFIG.keys())}"
+                #     )
+                #     _model_preload_task_started = True
+                logger.info("[INIT] Model loading deferred until first use (lazy mode)")
+                logger.info(
+                    f"[INIT] Available models: {list(MODEL_POOL_CONFIG.keys())}"
+                )
 
                 # Log storage directory
                 storage = get_storage_dir()

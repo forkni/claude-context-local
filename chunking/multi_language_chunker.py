@@ -89,13 +89,10 @@ class MultiLanguageChunker:
     SUPPORTED_EXTENSIONS = {
         ".py",  # Python
         ".js",  # JavaScript
-        ".jsx",  # JSX
         ".ts",  # TypeScript
         ".tsx",  # TSX
-        ".svelte",  # Svelte
         ".go",  # Go
         ".rs",  # Rust
-        ".java",  # Java
         ".c",  # C
         ".cpp",  # C++
         ".cc",  # C++

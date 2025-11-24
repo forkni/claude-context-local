@@ -33,8 +33,10 @@ This guide covers the complete installation process for the Claude Context MCP s
   - Dependencies and cache: ~500 MB
 - **Memory**: 4GB RAM minimum, 8GB+ recommended
 - **GPU** (optional): NVIDIA GPU with CUDA 11.8+ or 12.x support
-  - Single-model mode: 2-4 GB VRAM
-  - Multi-model mode (v0.5.4+): 6-8 GB VRAM minimum (5.3 GB for 3 models)
+  - **Startup VRAM (v0.5.17+)**: 0 MB (lazy loading enabled)
+  - **After first search**: 1.5-2 GB VRAM (single model) or 5.3 GB VRAM (multi-model)
+  - Single-model mode: 2-4 GB VRAM total
+  - Multi-model mode (v0.5.4+): 6-8 GB VRAM recommended (5.3 GB for 3 models after first search)
   - RTX 3060 12GB: Comfortable for multi-model (7 GB headroom)
   - RTX 4090 24GB: Excellent for multi-model (19 GB headroom)
 
@@ -841,6 +843,75 @@ if platform.system() == "Windows" and transport == "sse":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 ```
 
+
+####  8. First Search is Slow (5-10 seconds)
+
+**Symptom**: First search after server startup takes 8-15 seconds
+
+**Root Cause**: **Normal behavior** - Lazy model loading (v0.5.17+)
+
+**What's Happening**:
+
+- Models load on-demand (not at startup) to reduce startup VRAM from 4.86GB to 0 MB
+- **First search**: 5-10s model loading + 3-5s search = 8-15s total
+- **Subsequent searches**: 3-5s (models stay loaded in memory)
+- **After cleanup**: Next search requires 5-10s reload (one-time)
+
+**Verification**:
+
+```powershell
+# 1. Check VRAM before first search
+/get_memory_status  
+# Output: {"allocated_vram_mb": 0, "models_loaded": 0}
+
+# 2. Run first search (slow, loads models)
+/search_code "authentication"  
+# Takes 8-15s - THIS IS NORMAL
+
+# 3. Check VRAM after first search
+/get_memory_status
+# Output: {"allocated_vram_mb": 1500-5300, "models_loaded": 1-3}
+
+# 4. Run second search (fast, models cached)
+/search_code "error handling"
+# Takes 3-5s - models already loaded
+```
+
+**This is EXPECTED behavior, not a bug**:
+
+✅ **Benefits**:
+- **Zero startup VRAM**: 0 MB vs 4.86GB (100% reduction)
+- **5-10x faster startup**: 3-5s vs 15-30s server start
+- **Instant server ready**: No waiting for model loading
+
+⏱️ **Trade-off**:
+- **First search delay**: 5-10s one-time model loading per session
+- **After cleanup**: Models reload on next search (5-10s)
+
+**To free memory after use**:
+
+```powershell
+/cleanup_resources  
+# Unloads models, returns to 0 MB VRAM
+# Next search will reload models (5-10s)
+```
+
+**Performance Timeline**:
+
+```
+Server startup:              0 MB VRAM, ready in 3-5s
+       ↓ First search:       8-15s (includes 5-10s model load)
+       ↓ Models loaded:      1.5-5.3 GB VRAM
+       ↓ Searches:           3-5s per search (fast)
+       ↓ cleanup_resources:  Returns to 0 MB
+       ↓ Next search:        8-15s (models reload)
+```
+
+**Related Documentation**:
+- Performance expectations: See "Runtime Performance (v0.5.17+)" section above
+- Manual cleanup: See `/cleanup_resources` in MCP_TOOLS_REFERENCE.md
+- Memory management: Use `/get_memory_status` to monitor VRAM
+
 ### Debug Commands
 
 ```bash
@@ -857,6 +928,65 @@ python -c "import torch; print('GPU memory:', torch.cuda.get_device_properties(0
 ## Performance Optimization
 
 ### GPU Acceleration
+
+### Runtime Performance (v0.5.17+)
+
+**Lazy Model Loading**: Embedding models load on-demand during first search, not at server startup.
+
+#### Startup Performance
+
+- **Server startup**: 3-5 seconds (fast, no models loaded)
+- **VRAM at startup**: 0 MB (models load on first search)
+- **Import time**: ~3s (without model loading overhead)
+
+#### Search Performance
+
+| Phase | VRAM | Time | What's Happening |
+|-------|------|------|------------------|
+| Server startup | 0 MB | 3-5s | Fast startup, no models |
+| First search (cold) | 0 MB → 1.5-5.3 GB | 8-15s | 5-10s model load + 3-5s search |
+| Subsequent searches (warm) | 1.5-5.3 GB | 3-5s | Models cached, instant search |
+| After `/cleanup_resources` | 0 MB | N/A | Models unloaded |
+
+#### Memory Usage Lifecycle
+
+```
+Startup (server starts):              0 MB VRAM (lazy loading)
+↓ First search triggers model load:   5-10s loading time
+↓ Models loaded in memory:            1.5-5.3 GB VRAM (depends on config)
+↓ Search operations:                  3-5s per search (fast)
+↓ Manual cleanup (/cleanup_resources): Returns to 0 MB baseline
+↓ Next search after cleanup:          5-10s reload (one-time)
+```
+
+#### When Models Load
+
+- **First `/search_code` query** per session (5-10s delay)
+- **First `/index_directory` operation** per session
+- **After `/cleanup_resources`** (next search reloads models)
+
+#### Optimization Benefits
+
+**Completed Optimizations (v0.5.17+)**:
+
+1. **ThreadPool Reuse** - 71.8% faster parallel search (5.7ms per 50 tasks)
+2. **Query Embedding Cache** - 2-3x faster multi-hop search (eliminates redundant GPU computation)
+3. **Lazy Model Loading** - 100% startup VRAM reduction, 5-10x faster startup
+
+**Performance Tips**:
+
+- **First search is slow**: This is normal (5-10s model loading), not a bug
+- **Subsequent searches are fast**: Models stay loaded (3-5s per search)
+- **Free memory when done**: Use `/cleanup_resources` to unload models
+- **Check memory usage**: Use `/get_memory_status` to monitor VRAM
+
+**Trade-offs**:
+
+- ✅ **Benefit**: Instant server startup (3-5s vs 15-30s)
+- ✅ **Benefit**: Zero startup VRAM (0 MB vs 4.86GB)
+- ⏱️ **Trade-off**: First search has 5-10s model load delay
+- ⏱️ **Trade-off**: Models reload after cleanup (5-10s)
+
 
 1. **CUDA Setup**
    - Install NVIDIA drivers (latest)

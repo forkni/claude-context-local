@@ -1,12 +1,13 @@
 """Hybrid search orchestrator combining BM25 + dense search with GPU awareness."""
 
-import concurrent.futures
 import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
 
 try:
     import torch
@@ -435,6 +436,7 @@ class HybridSearcher:
         use_parallel: bool = True,
         min_bm25_score: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
+        query_embedding: Optional[np.ndarray] = None,
     ) -> List[SearchResult]:
         """
         Internal single-hop search implementation (direct query matching).
@@ -446,6 +448,7 @@ class HybridSearcher:
             use_parallel: Whether to run BM25 and dense search in parallel
             min_bm25_score: Minimum BM25 score threshold
             filters: Optional filters for dense search
+            query_embedding: Pre-computed query embedding (optional, for caching)
 
         Returns:
             Search results from single-hop search
@@ -464,7 +467,7 @@ class HybridSearcher:
 
         elif search_mode == "semantic":
             # Dense-only search
-            dense_results = self._search_dense(query, k, filters)
+            dense_results = self._search_dense(query, k, filters, query_embedding)
             # Convert dense results to SearchResult format
             final_results = self._convert_dense_to_search_results(dense_results)
             rerank_time = 0.0  # No reranking for single mode
@@ -475,12 +478,12 @@ class HybridSearcher:
             if use_parallel and not self._is_shutdown:
                 # Parallel execution
                 bm25_results, dense_results = self._parallel_search(
-                    query, search_k, min_bm25_score, filters
+                    query, search_k, min_bm25_score, filters, query_embedding
                 )
             else:
                 # Sequential execution
                 bm25_results, dense_results = self._sequential_search(
-                    query, search_k, min_bm25_score, filters
+                    query, search_k, min_bm25_score, filters, query_embedding
                 )
 
             # Rerank results
@@ -765,6 +768,19 @@ class HybridSearcher:
             f"(k={k}, expansion={expansion_factor}, mode={search_mode})"
         )
 
+        # Pre-compute query embedding once for reuse (optimization)
+        query_embedding = None
+        if search_mode in ("semantic", "hybrid") and self.embedder:
+            try:
+                query_embedding = self.embedder.embed_query(query)
+                self._logger.debug(
+                    "[MULTI_HOP] Pre-computed query embedding for caching"
+                )
+            except Exception as e:
+                self._logger.warning(
+                    f"[MULTI_HOP] Failed to pre-compute embedding: {e}"
+                )
+
         # Hop 1: Initial query-based search
         from .config import SearchConfigManager
 
@@ -779,6 +795,7 @@ class HybridSearcher:
             use_parallel=use_parallel,
             min_bm25_score=min_bm25_score,
             filters=filters,
+            query_embedding=query_embedding,
         )
         timings["hop_1"] = time.time() - hop1_start
 
@@ -828,6 +845,7 @@ class HybridSearcher:
             results=list(all_results.values()),
             k=k,
             search_mode=search_mode,
+            query_embedding=query_embedding,
         )
 
         timings["rerank"] = time.time() - rerank_start
@@ -849,7 +867,12 @@ class HybridSearcher:
         return final_results
 
     def _rerank_by_query(
-        self, query: str, results: List, k: int, search_mode: str = "hybrid"
+        self,
+        query: str,
+        results: List,
+        k: int,
+        search_mode: str = "hybrid",
+        query_embedding: Optional[np.ndarray] = None,
     ) -> List:
         """
         Re-rank results by computing fresh relevance scores against the original query.
@@ -869,8 +892,9 @@ class HybridSearcher:
         # For semantic/hybrid modes: re-score using dense similarity
         if search_mode in ("semantic", "hybrid") and self.embedder:
             try:
-                # Get query embedding
-                query_embedding = self.embedder.embed_query(query)
+                # Get query embedding (use cached if provided)
+                if query_embedding is None:
+                    query_embedding = self.embedder.embed_query(query)
 
                 # Re-score each result by cosine similarity to query
                 import numpy as np
@@ -908,21 +932,24 @@ class HybridSearcher:
         k: int,
         min_bm25_score: float,
         filters: Optional[Dict[str, Any]],
+        query_embedding: Optional[np.ndarray] = None,
     ) -> Tuple[List[Tuple], List[Tuple]]:
-        """Execute BM25 and dense search in parallel."""
+        """Execute BM25 and dense search in parallel using shared thread pool."""
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-                # Submit both searches
-                bm25_future = executor.submit(
-                    self._search_bm25, query, k, min_bm25_score, filters
-                )
-                dense_future = executor.submit(self._search_dense, query, k, filters)
+            # Reuse existing thread pool instead of creating new one per search
+            # This avoids ~1-2ms overhead of ThreadPoolExecutor creation
+            bm25_future = self._thread_pool.submit(
+                self._search_bm25, query, k, min_bm25_score, filters
+            )
+            dense_future = self._thread_pool.submit(
+                self._search_dense, query, k, filters, query_embedding
+            )
 
-                # Wait for results
-                bm25_results = bm25_future.result()
-                dense_results = dense_future.result()
+            # Wait for results with timeout to prevent deadlocks
+            bm25_results = bm25_future.result(timeout=30.0)
+            dense_results = dense_future.result(timeout=30.0)
 
-                return bm25_results, dense_results
+            return bm25_results, dense_results
 
         except Exception as e:
             self._logger.warning(
@@ -936,10 +963,11 @@ class HybridSearcher:
         k: int,
         min_bm25_score: float,
         filters: Optional[Dict[str, Any]],
+        query_embedding: Optional[np.ndarray] = None,
     ) -> Tuple[List[Tuple], List[Tuple]]:
         """Execute BM25 and dense search sequentially."""
         bm25_results = self._search_bm25(query, k, min_bm25_score, filters)
-        dense_results = self._search_dense(query, k, filters)
+        dense_results = self._search_dense(query, k, filters, query_embedding)
         return bm25_results, dense_results
 
     def _search_bm25(
@@ -1023,28 +1051,36 @@ class HybridSearcher:
                     return False
         return True
 
-    def _search_dense(self, query: str, k: int, filters: Optional[Dict]) -> List[Tuple]:
+    def _search_dense(
+        self,
+        query: str,
+        k: int,
+        filters: Optional[Dict],
+        query_embedding: Optional[np.ndarray] = None,
+    ) -> List[Tuple]:
         """Search using dense vector index."""
         start_time = time.time()
         try:
-            # Use stored embedder or create one if not provided
-            if self.embedder is None:
-                self._logger.warning(
-                    "No embedder provided to HybridSearcher, creating new instance"
-                )
-                from pathlib import Path
+            # Only compute embedding if not provided (caching optimization)
+            if query_embedding is None:
+                # Use stored embedder or create one if not provided
+                if self.embedder is None:
+                    self._logger.warning(
+                        "No embedder provided to HybridSearcher, creating new instance"
+                    )
+                    from pathlib import Path
 
-                from embeddings.embedder import CodeEmbedder
+                    from embeddings.embedder import CodeEmbedder
 
-                # Use same cache directory as main embedder
-                cache_dir = Path.home() / ".claude_code_search" / "models"
-                cache_dir.mkdir(parents=True, exist_ok=True)
-                self.embedder = CodeEmbedder(cache_dir=str(cache_dir))
-                self._logger.info(
-                    "Created new CodeEmbedder instance for semantic search"
-                )
+                    # Use same cache directory as main embedder
+                    cache_dir = Path.home() / ".claude_code_search" / "models"
+                    cache_dir.mkdir(parents=True, exist_ok=True)
+                    self.embedder = CodeEmbedder(cache_dir=str(cache_dir))
+                    self._logger.info(
+                        "Created new CodeEmbedder instance for semantic search"
+                    )
 
-            query_embedding = self.embedder.embed_query(query)
+                query_embedding = self.embedder.embed_query(query)
 
             # Search in dense index
             results = self.dense_index.search(query_embedding, k, filters)

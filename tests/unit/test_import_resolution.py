@@ -452,7 +452,7 @@ import os
 from typing import List
 """
         tree = ast.parse(code)
-        imports = self.extractor._extract_imports(tree)
+        imports = self.extractor._import_resolver.extract_imports(tree)
 
         assert "os" in imports
         assert imports["os"] == "os"
@@ -466,7 +466,7 @@ import numpy as np
 from collections import defaultdict as dd
 """
         tree = ast.parse(code)
-        imports = self.extractor._extract_imports(tree)
+        imports = self.extractor._import_resolver.extract_imports(tree)
 
         assert "np" in imports
         assert imports["np"] == "numpy"
@@ -481,7 +481,7 @@ from ..utils import Parser
 from ... import base
 """
         tree = ast.parse(code)
-        imports = self.extractor._extract_imports(tree)
+        imports = self.extractor._import_resolver.extract_imports(tree)
 
         assert "helper" in imports
         assert imports["helper"] == ".helper"
@@ -496,7 +496,7 @@ from ... import base
 from typing import List, Dict, Optional
 """
         tree = ast.parse(code)
-        imports = self.extractor._extract_imports(tree)
+        imports = self.extractor._import_resolver.extract_imports(tree)
 
         assert "List" in imports
         assert imports["List"] == "typing.List"
@@ -511,7 +511,7 @@ from typing import List, Dict, Optional
 from module import *
 """
         tree = ast.parse(code)
-        imports = self.extractor._extract_imports(tree)
+        imports = self.extractor._import_resolver.extract_imports(tree)
 
         # Star import should not add any entries
         assert len(imports) == 0
@@ -523,7 +523,7 @@ import os.path
 import a.b.c
 """
         tree = ast.parse(code)
-        imports = self.extractor._extract_imports(tree)
+        imports = self.extractor._import_resolver.extract_imports(tree)
 
         # First component is the local name
         assert "os" in imports
@@ -665,14 +665,15 @@ from handlers import Handler as H
 x = H()
 """
         tree = ast.parse(code)
-        self.extractor._imports = self.extractor._extract_imports(tree)
+        imports = self.extractor._import_resolver.extract_imports(tree)
+        self.extractor._assignment_tracker.set_imports(imports)
 
         # Now test type inference
         call_code = "H()"
         call_tree = ast.parse(call_code)
         call_node = call_tree.body[0].value
 
-        type_name = self.extractor._infer_type_from_call(call_node)
+        type_name = self.extractor._assignment_tracker.infer_type_from_call(call_node)
         assert type_name == "Handler"
 
     def test_non_imported_uses_bare_name(self):
@@ -682,7 +683,7 @@ x = H()
         call_tree = ast.parse(call_code)
         call_node = call_tree.body[0].value
 
-        type_name = self.extractor._infer_type_from_call(call_node)
+        type_name = self.extractor._assignment_tracker.infer_type_from_call(call_node)
         assert type_name == "MyClass"
 
 
@@ -708,14 +709,14 @@ def process():
 
         try:
             # First call
-            imports1 = self.extractor._read_file_imports(temp_path)
+            imports1 = self.extractor._import_resolver.read_file_imports(temp_path)
             assert "ErrorHandler" in imports1
 
             # Check cache
-            assert temp_path in self.extractor._file_imports_cache
+            assert temp_path in self.extractor._import_resolver._file_imports_cache
 
             # Second call should use cache
-            imports2 = self.extractor._read_file_imports(temp_path)
+            imports2 = self.extractor._import_resolver.read_file_imports(temp_path)
             assert imports1 == imports2
         finally:
             os.unlink(temp_path)

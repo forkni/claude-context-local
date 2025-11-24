@@ -194,15 +194,32 @@ set CLAUDE_MULTI_MODEL_ENABLED=false
 | **BGE-M3** | Workflow, configuration | "configuration loading", "embedding workflow", "incremental indexing" | 37.5% (3/8) | ~2.3 GB |
 | **CodeRankEmbed** | Specialized algorithms | "Merkle tree detection", "RRF reranking" | 25.0% (2/8) | ~0.6 GB |
 
-**Total VRAM**: 5.3 GB for all 3 models (verified on RTX 4090)
+**Total VRAM**: 5.3 GB for all 3 models (v0.5.17+ lazy loading)
+
+**Startup (lazy loading enabled)**:
+- **VRAM at startup**: 0 MB (models load on first search)
+- **First search**: 5-10s one-time model loading delay
+- **After first search**: 5.3 GB VRAM (all 3 models loaded)
+
+**Loaded State Breakdown**:
+- **Qwen3-0.6B**: ~2.4 GB (1024d embeddings)
+- **BGE-M3**: ~2.3 GB (1024d embeddings)
+- **CodeRankEmbed**: ~0.6 GB (768d embeddings)
+- **Total**: 5.3 GB (vs 2.3 GB single-model)
+
+**Memory Management**:
+- Use `/cleanup_resources` to unload models and return to 0 MB
+- Models reload automatically on next search (5-10s)
 
 ### Performance Impact
 
-- **VRAM Usage**: 5.3 GB total (vs 2.3 GB single-model)
+- **Startup**: 0 MB VRAM, 3-5s server start (vs 4.86GB, 15-30s)
+- **First search**: 8-15s total (5-10s model load + 3-5s search)
+- **Subsequent searches**: 3-5s (models stay loaded)
 - **Routing Overhead**: <1ms per query (negligible)
 - **Quality Improvement**: +15-25% for specialized queries vs single-model
 - **Routing Accuracy**: 100% on 8 ground truth verification queries
-- **Load Time**: ~5 seconds for all 3 models (from cache, first load only)
+
 
 ### Routing Transparency
 

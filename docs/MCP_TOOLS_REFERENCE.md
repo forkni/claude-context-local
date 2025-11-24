@@ -140,11 +140,18 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 
 ## Performance Metrics
 
-| Metric | Traditional Reading | Semantic Search | Improvement |
-|--------|---------------------|-----------------|-------------|
-| Tokens | 5,600 | 400 | 93% reduction |
-| Speed | 30-60s | 3-5s | 10x faster |
-| Accuracy | Hit-or-miss | Targeted | Precision |
+| Metric | Traditional Reading | Semantic Search (First) | Semantic Search (Cached) | Improvement |
+|--------|---------------------|-------------------------|--------------------------|-------------|
+| Tokens | 5,600 | 400 | 400 | 93% reduction |
+| Speed | 30-60s | 8-15s (includes 5-10s model load) | 3-5s | 3-10x faster |
+| VRAM | 0 MB | 0 MB → 1.5-5.3 GB (on-demand) | 1.5-5.3 GB | Lazy loading |
+| Accuracy | Hit-or-miss | Targeted | Targeted | Precision |
+
+**Performance Notes (v0.5.17+)**:
+- **Startup**: 3-5s server start, 0 MB VRAM (models load on first search)
+- **First search per session**: 8-15s total (5-10s one-time model loading + 3-5s search)
+- **Subsequent searches**: 3-5s (models stay loaded in memory)
+- **Manual cleanup**: Use `/cleanup_resources` to unload models and return to 0 MB VRAM
 
 ---
 
@@ -192,6 +199,111 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 # Routing transparency - every search shows which model was used
 # Output includes: "routing": {"model_selected": "qwen3", "confidence": 0.08, "reason": "..."}
 ```
+
+---
+
+## cleanup_resources - Manual Memory Cleanup
+
+**Tool**: `cleanup_resources`  
+**Priority**: 🔧 Maintenance  
+**Purpose**: Free model memory, GPU cache, and index data
+
+### When to Use
+
+- After indexing large projects (free VRAM)
+- When switching between multiple projects
+- Before intensive GPU operations
+- If you notice high VRAM usage (check with `/get_memory_status`)
+- To return to baseline 0 MB VRAM state
+
+### What It Does
+
+1. **Unloads all embedding models** from VRAM (returns to 0 MB baseline)
+2. **Clears GPU cache** (`torch.cuda.empty_cache()`)
+3. **Clears FAISS index data** from memory
+4. **Runs Python garbage collection** (7000+ objects typically)
+5. **Returns memory statistics** (models unloaded, GPU freed, objects collected)
+
+### Parameters
+
+**None** - No parameters required
+
+### Usage Examples
+
+```bash
+# Basic usage - free all memory
+/cleanup_resources
+# Output: {"success": true, "message": "Resources cleaned up successfully"}
+
+# Check memory before cleanup
+/get_memory_status
+# Output: {"allocated_vram_mb": 5300, "models_loaded": 3}
+
+# Clean up resources
+/cleanup_resources
+
+# Check memory after cleanup  
+/get_memory_status
+# Output: {"allocated_vram_mb": 0, "models_loaded": 0}
+```
+
+### Common Workflow
+
+```bash
+# 1. Index large project (uses memory)
+/index_directory "C:\LargeProject"
+
+# 2. Perform searches (models loaded, ~5.3 GB VRAM)
+/search_code "authentication"
+/search_code "database connection"
+
+# 3. Done with project - free memory
+/cleanup_resources  
+# ✓ Models unloaded
+# ✓ GPU cache freed
+# ✓ Index data cleared
+# ✓ 7000+ objects garbage collected
+
+# 4. Switch to different project
+/switch_project "C:\AnotherProject"
+
+# 5. Next search will reload models (5-10s)
+/search_code "error handling"  # Triggers model load
+```
+
+### Performance Impact
+
+| Metric | Value | Notes |
+|--------|-------|-------|
+| **VRAM freed** | Returns to 0 MB | Baseline state |
+| **Operation time** | 1-2s | Fast cleanup |
+| **Next search** | +5-10s delay | One-time model reload |
+| **Recommended frequency** | After project switches | Or when memory constrained |
+
+### Memory Lifecycle (v0.5.17+)
+
+```
+Server startup:              0 MB VRAM (lazy loading)
+       ↓ First search:       5-10s model loading
+       ↓ Models loaded:      1.5-5.3 GB VRAM (depending on config)
+       ↓ Searches:           3-5s per search
+       ↓ cleanup_resources:  Returns to 0 MB
+       ↓ Next search:        5-10s model reload (one-time)
+```
+
+### Benefits
+
+- **Free VRAM**: Return to baseline 0 MB state
+- **Multi-project workflow**: Clean slate between projects
+- **GPU memory management**: Prevent OOM errors
+- **Debugging**: Clear state for troubleshooting
+
+### Notes
+
+- **Automatic on exit**: Resources automatically cleaned on server shutdown
+- **Models reload automatically**: Next search triggers 5-10s load (normal behavior)
+- **No data loss**: Index files remain on disk, only in-memory state cleared
+- **Safe operation**: Can run anytime without breaking functionality
 
 ---
 

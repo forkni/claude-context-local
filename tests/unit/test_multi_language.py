@@ -24,11 +24,8 @@ class TestMultiLanguageChunker:
         """Test that all required extensions are supported."""
         assert chunker.is_supported("test.py")
         assert chunker.is_supported("test.js")
-        assert chunker.is_supported("test.jsx")
         assert chunker.is_supported("test.ts")
         assert chunker.is_supported("test.tsx")
-        assert chunker.is_supported("test.svelte")
-        assert chunker.is_supported("test.java")
         assert chunker.is_supported("test.go")
         assert chunker.is_supported("test.c")
         assert chunker.is_supported("test.cpp")
@@ -71,16 +68,6 @@ class TestMultiLanguageChunker:
         chunk_types = {chunk.chunk_type for chunk in chunks}
         assert any(t in chunk_types for t in ["class", "interface", "function"])
 
-    def test_chunk_jsx_file(self, chunker, test_data_dir):
-        """Test chunking JSX file."""
-        file_path = test_data_dir / "Component.jsx"
-        chunks = chunker.chunk_file(str(file_path))
-
-        assert len(chunks) > 0
-        # Should find React components
-        chunk_names = {chunk.name for chunk in chunks if chunk.name}
-        assert "Counter" in chunk_names or "UserCard" in chunk_names
-
     def test_chunk_tsx_file(self, chunker, test_data_dir):
         """Test chunking TSX file."""
         file_path = test_data_dir / "Component.tsx"
@@ -90,31 +77,6 @@ class TestMultiLanguageChunker:
         # Should find TypeScript React components
         chunk_names = {chunk.name for chunk in chunks if chunk.name}
         assert any(name in chunk_names for name in ["TypedCounter", "UserList"])
-
-    def test_chunk_svelte_file(self, chunker, test_data_dir):
-        """Test chunking Svelte file."""
-        file_path = test_data_dir / "App.svelte"
-        chunks = chunker.chunk_file(str(file_path))
-
-        assert len(chunks) > 0
-        # Should find script and style blocks
-        chunk_types = {chunk.chunk_type for chunk in chunks}
-        assert "script" in chunk_types or "style" in chunk_types or len(chunks) > 0
-
-    def test_chunk_java_file(self, chunker, test_data_dir):
-        """Test chunking Java file."""
-        file_path = test_data_dir / "Calculator.java"
-        chunks = chunker.chunk_file(str(file_path))
-
-        assert len(chunks) > 0
-        # Should find class, methods, interface, and enum
-        chunk_names = {chunk.name for chunk in chunks if chunk.name}
-        chunk_types = {chunk.chunk_type for chunk in chunks}
-
-        assert "Calculator" in chunk_names
-        assert "MathOperations" in chunk_names
-        assert "Operation" in chunk_names
-        assert any(t in chunk_types for t in ["class", "interface", "enum"])
 
     def test_chunk_go_file(self, chunker, test_data_dir):
         """Test chunking Go file."""
