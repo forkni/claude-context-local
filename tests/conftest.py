@@ -112,6 +112,71 @@ def reset_global_state() -> Generator[None, None, None]:
     pass
 
 
+@pytest.fixture(scope="session", autouse=True)
+def preserve_original_project_selection() -> Generator[None, None, None]:
+    """Preserve and restore original project selection across test session.
+
+    Saves the user's original project selection before any tests run,
+    then restores it after all tests complete. This prevents tests from
+    leaving the MCP server in a different project state.
+
+    Runs once at session start (save), yields to run all tests,
+    then runs once at session end (restore).
+    """
+    from mcp_server.project_persistence import (
+        clear_project_selection,
+        load_project_selection,
+        save_project_selection,
+    )
+
+    # Save original state BEFORE any tests run
+    original_selection = load_project_selection()
+    original_server_project = None
+
+    try:
+        import mcp_server.server as server_module
+
+        original_server_project = getattr(server_module, "_current_project", None)
+    except ImportError:
+        pass  # Module might not be available
+
+    yield  # Let all tests run
+
+    # Restore original state AFTER all tests complete
+    try:
+        if original_selection:
+            # Restore saved selection
+            save_project_selection(
+                original_selection["last_project_path"],
+                model_key=original_selection.get("last_model_key"),
+            )
+
+            # Also restore server module global (use setter for cross-module sync)
+            try:
+                import mcp_server.server as server_module
+
+                if hasattr(server_module, "set_current_project"):
+                    server_module.set_current_project(
+                        original_selection["last_project_path"]
+                    )
+            except ImportError:
+                pass
+        else:
+            # No original selection - clear to None (clean state)
+            clear_project_selection()
+
+            try:
+                import mcp_server.server as server_module
+
+                if hasattr(server_module, "set_current_project"):
+                    server_module.set_current_project(None)
+            except ImportError:
+                pass
+    except Exception as e:
+        # Don't fail tests if restoration fails, just log it
+        print(f"Warning: Failed to restore original project selection: {e}")
+
+
 # Test fixtures
 @pytest.fixture
 def temp_project_dir() -> Generator[Path, None, None]:
