@@ -320,7 +320,7 @@ class CodeIndexManager:
             )
 
         # Initialize index if needed
-        if self._index is None:
+        if self.index is None:
             # Default to flat index for better recall - only use IVF for very large datasets
             index_type = "ivf" if num_new_vectors > 10000 else "flat"
             self.create_index(embedding_dim, index_type)
@@ -405,7 +405,7 @@ class CodeIndexManager:
 
     def _maybe_move_index_to_gpu(self) -> None:
         """Move the current index to GPU if supported. No-op if already on GPU or unsupported."""
-        if self._index is None or self._on_gpu:
+        if self.index is None or self._on_gpu:
             return
         if not self._gpu_is_available():
             return
@@ -566,7 +566,7 @@ class CodeIndexManager:
             return []
 
         index_id = metadata_entry["index_id"]
-        if self._index is None or index_id >= self._index.ntotal:
+        if self.index is None or index_id >= self.index.ntotal:
             return []
 
         # Get the embedding for this chunk
@@ -649,6 +649,9 @@ class CodeIndexManager:
         if not file_paths:
             return 0
 
+        # Force lazy loading of index and chunk_ids before accessing _chunk_ids
+        _ = self.index
+
         chunks_to_remove_ids = set()
         chunks_to_remove_positions = []
 
@@ -685,7 +688,7 @@ class CodeIndexManager:
 
         try:
             # Rebuild FAISS index without removed chunks
-            if self._index is not None and self._index.ntotal > 0:
+            if self.index is not None and self.index.ntotal > 0:
                 # Get positions to keep (all except those being removed)
                 positions_to_remove_set = set(chunks_to_remove_positions)
                 positions_to_keep = [
@@ -810,7 +813,7 @@ class CodeIndexManager:
 
     def save_index(self):
         """Save the FAISS index and chunk IDs to disk."""
-        if self._index is not None:
+        if self.index is not None:
             try:
                 index_to_write = self._index
                 # If on GPU, convert to CPU before saving
@@ -889,7 +892,7 @@ class CodeIndexManager:
             bool: True if index was loaded successfully or already exists, False otherwise
         """
         # Index is already loaded in __init__, so just check if it exists
-        if self._index is not None and len(self._chunk_ids) > 0:
+        if self.index is not None and len(self._chunk_ids) > 0:
             return True
 
         # Try to reload if index file exists but index is None
@@ -1100,7 +1103,7 @@ class CodeIndexManager:
         issues = []
 
         # Check if index exists
-        if self._index is None:
+        if self.index is None:
             if len(self._chunk_ids) > 0:
                 issues.append(
                     f"FAISS index is None but chunk_ids list has {len(self._chunk_ids)} entries"
