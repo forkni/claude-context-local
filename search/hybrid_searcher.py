@@ -573,12 +573,13 @@ class HybridSearcher:
         Returns:
             List of SearchResult objects with similar chunks
         """
-        from .searcher import SearchResult
-
         # Use dense index for semantic similarity
         similar_chunks = self.dense_index.get_similar_chunks(chunk_id, k)
 
         # Convert to SearchResult format expected by MCP tool
+        # Import here to avoid circular dependency
+        from .searcher import SearchResult
+
         results = []
         for cid, similarity, metadata in similar_chunks:
             result = SearchResult(

@@ -606,17 +606,20 @@ class CodeIndexManager:
         if index is None or index.ntotal == 0:
             return {cid: [] for cid in chunk_ids}
 
-        # Collect embeddings and valid chunk_ids
+        # Collect embeddings and track original -> variant mapping
         embeddings = []
         valid_chunk_ids = []
+        original_to_variant = {}  # Track mapping for correct key lookup
 
-        for chunk_id in chunk_ids:
+        for original_chunk_id in chunk_ids:
             # Try all path variants to handle Windows/Unix differences
             metadata_entry = None
-            for variant in self.get_chunk_id_variants(chunk_id):
+            resolved_chunk_id = original_chunk_id  # Default to original
+
+            for variant in self.get_chunk_id_variants(original_chunk_id):
                 metadata_entry = self.metadata_db.get(variant)
                 if metadata_entry:
-                    chunk_id = variant  # Use the variant that worked
+                    resolved_chunk_id = variant  # Use the variant that worked
                     break
 
             if not metadata_entry:
@@ -629,7 +632,8 @@ class CodeIndexManager:
             # Get the embedding for this chunk
             embedding = self._index.reconstruct(index_id)
             embeddings.append(embedding)
-            valid_chunk_ids.append(chunk_id)
+            valid_chunk_ids.append(resolved_chunk_id)
+            original_to_variant[original_chunk_id] = resolved_chunk_id
 
         if not embeddings:
             return {cid: [] for cid in chunk_ids}
@@ -642,8 +646,10 @@ class CodeIndexManager:
         search_k = min(k + 1, index.ntotal)
         similarities, indices = index.search(query_embeddings, search_k)
 
-        # Process results for each query
+        # Process results - key by original chunk_id for correct caller lookup
         results_dict = {}
+        variant_to_original = {v: k for k, v in original_to_variant.items()}
+
         for i, query_chunk_id in enumerate(valid_chunk_ids):
             query_results = []
 
@@ -667,7 +673,9 @@ class CodeIndexManager:
                 if len(query_results) >= k:
                     break
 
-            results_dict[query_chunk_id] = query_results
+            # Key by ORIGINAL chunk_id, not variant
+            original_key = variant_to_original.get(query_chunk_id, query_chunk_id)
+            results_dict[original_key] = query_results
 
         # Add empty results for invalid chunk_ids
         for chunk_id in chunk_ids:
