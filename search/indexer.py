@@ -578,6 +578,108 @@ class CodeIndexManager:
         # Filter out the original chunk
         return [(cid, sim, meta) for cid, sim, meta in results if cid != chunk_id][:k]
 
+    def get_similar_chunks_batched(
+        self, chunk_ids: List[str], k: int = 5
+    ) -> Dict[str, List[Tuple[str, float, Dict[str, Any]]]]:
+        """
+        Find chunks similar to multiple chunks in a single batched FAISS search.
+
+        This is significantly faster than calling get_similar_chunks() multiple times,
+        as it performs a single batched FAISS search instead of N individual searches.
+
+        Args:
+            chunk_ids: List of chunk IDs to find similar chunks for
+            k: Number of similar chunks to return per query
+
+        Returns:
+            Dict mapping chunk_id -> list of (chunk_id, similarity, metadata) tuples
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        if not chunk_ids:
+            return {}
+
+        # Use property to trigger lazy loading
+        index = self.index
+        if index is None or index.ntotal == 0:
+            return {cid: [] for cid in chunk_ids}
+
+        # Collect embeddings and valid chunk_ids
+        embeddings = []
+        valid_chunk_ids = []
+
+        for chunk_id in chunk_ids:
+            # Try all path variants to handle Windows/Unix differences
+            metadata_entry = None
+            for variant in self.get_chunk_id_variants(chunk_id):
+                metadata_entry = self.metadata_db.get(variant)
+                if metadata_entry:
+                    chunk_id = variant  # Use the variant that worked
+                    break
+
+            if not metadata_entry:
+                continue
+
+            index_id = metadata_entry["index_id"]
+            if index_id >= index.ntotal:
+                continue
+
+            # Get the embedding for this chunk
+            embedding = self._index.reconstruct(index_id)
+            embeddings.append(embedding)
+            valid_chunk_ids.append(chunk_id)
+
+        if not embeddings:
+            return {cid: [] for cid in chunk_ids}
+
+        # Perform batched search
+        query_embeddings = np.array(embeddings, dtype=np.float32)
+        faiss.normalize_L2(query_embeddings)
+
+        # Search for k+1 to account for excluding the query chunk itself
+        search_k = min(k + 1, index.ntotal)
+        similarities, indices = index.search(query_embeddings, search_k)
+
+        # Process results for each query
+        results_dict = {}
+        for i, query_chunk_id in enumerate(valid_chunk_ids):
+            query_results = []
+
+            for similarity, index_id in zip(similarities[i], indices[i], strict=False):
+                if index_id == -1:  # No more results
+                    break
+
+                chunk_id = self._chunk_ids[index_id]
+
+                # Skip the original chunk
+                if chunk_id == query_chunk_id:
+                    continue
+
+                metadata_entry = self.metadata_db.get(chunk_id)
+                if metadata_entry is None:
+                    continue
+
+                metadata = metadata_entry["metadata"]
+                query_results.append((chunk_id, float(similarity), metadata))
+
+                if len(query_results) >= k:
+                    break
+
+            results_dict[query_chunk_id] = query_results
+
+        # Add empty results for invalid chunk_ids
+        for chunk_id in chunk_ids:
+            if chunk_id not in results_dict:
+                results_dict[chunk_id] = []
+
+        logger.debug(
+            f"Batched search: {len(chunk_ids)} queries, {len(valid_chunk_ids)} valid"
+        )
+
+        return results_dict
+
     def remove_file_chunks(
         self, file_path: str, project_name: Optional[str] = None
     ) -> int:

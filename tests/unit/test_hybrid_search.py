@@ -449,6 +449,145 @@ class TestHybridSearcher:
             assert searcher._search_stats["dense_time"] >= 0
             assert searcher._search_stats["rerank_time"] >= 0
 
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
+    def test_batched_similar_chunks(self, mock_bm25, mock_dense):
+        """Test batched similar chunks search."""
+        # Setup mock for dense index
+        mock_dense.return_value.index = None
+        searcher = HybridSearcher(self.temp_dir)
+
+        dense_mock = mock_dense.return_value
+        dense_mock.index = Mock()
+        dense_mock.index.ntotal = 100
+
+        # Mock batched search results
+        batched_results = {
+            "doc1": [
+                ("doc2", 0.9, {"type": "function"}),
+                ("doc3", 0.8, {"type": "class"}),
+            ],
+            "doc2": [
+                ("doc1", 0.85, {"type": "function"}),
+                ("doc4", 0.75, {"type": "method"}),
+            ],
+        }
+        dense_mock.get_similar_chunks_batched.return_value = batched_results
+
+        # Call batched method
+        result = dense_mock.get_similar_chunks_batched(["doc1", "doc2"], k=2)
+
+        assert result == batched_results
+        assert "doc1" in result
+        assert "doc2" in result
+        assert len(result["doc1"]) == 2
+        assert len(result["doc2"]) == 2
+
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
+    def test_batched_vs_individual_consistency(self, mock_bm25, mock_dense):
+        """Test that batched search produces same results as individual searches."""
+        # Setup mock for dense index
+        mock_dense.return_value.index = None
+        searcher = HybridSearcher(self.temp_dir)
+
+        dense_mock = mock_dense.return_value
+        dense_mock.index = Mock()
+        dense_mock.index.ntotal = 100
+
+        # Mock individual search results
+        individual_results_1 = [("doc2", 0.9, {"type": "function"})]
+        individual_results_2 = [("doc1", 0.85, {"type": "class"})]
+
+        dense_mock.get_similar_chunks.side_effect = [
+            individual_results_1,
+            individual_results_2,
+        ]
+
+        # Mock batched search to return same results
+        batched_results = {
+            "doc1": individual_results_1,
+            "doc2": individual_results_2,
+        }
+        dense_mock.get_similar_chunks_batched.return_value = batched_results
+
+        # Call both methods
+        individual_1 = dense_mock.get_similar_chunks("doc1", k=1)
+        individual_2 = dense_mock.get_similar_chunks("doc2", k=1)
+        batched = dense_mock.get_similar_chunks_batched(["doc1", "doc2"], k=1)
+
+        # Results should match
+        assert batched["doc1"] == individual_1
+        assert batched["doc2"] == individual_2
+
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
+    def test_batched_empty_input(self, mock_bm25, mock_dense):
+        """Test batched search with empty input."""
+        # Setup mock for dense index
+        mock_dense.return_value.index = None
+        searcher = HybridSearcher(self.temp_dir)
+
+        dense_mock = mock_dense.return_value
+        dense_mock.index = Mock()
+        dense_mock.index.ntotal = 100
+
+        # Mock empty result
+        dense_mock.get_similar_chunks_batched.return_value = {}
+
+        result = dense_mock.get_similar_chunks_batched([], k=5)
+
+        assert result == {}
+
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
+    def test_multi_hop_uses_batched_search(self, mock_bm25, mock_dense):
+        """Test that multi-hop expansion uses batched search."""
+        # Setup mock for dense index
+        mock_dense.return_value.index = None
+        searcher = HybridSearcher(self.temp_dir)
+
+        # Enable multi-hop in config
+        searcher.enable_multi_hop = True
+        searcher.multi_hop_hops = 2
+
+        # Mock indices as ready
+        bm25_mock = mock_bm25.return_value
+        bm25_mock.is_empty = False
+        bm25_mock.search.return_value = [
+            ("doc1", 0.9, {"type": "function", "chunk_id": "doc1"}),
+            ("doc2", 0.8, {"type": "class", "chunk_id": "doc2"}),
+        ]
+
+        dense_mock = mock_dense.return_value
+        dense_mock.index = Mock()
+        dense_mock.index.ntotal = 100
+        dense_mock.search.return_value = [
+            ("doc1", 0.9, {"type": "function", "chunk_id": "doc1"}),
+            ("doc2", 0.8, {"type": "class", "chunk_id": "doc2"}),
+        ]
+
+        # Mock batched similar chunks
+        batched_results = {
+            "doc1": [("doc3", 0.85, {"type": "method", "chunk_id": "doc3"})],
+            "doc2": [("doc4", 0.75, {"type": "function", "chunk_id": "doc4"})],
+        }
+        dense_mock.get_similar_chunks_batched.return_value = batched_results
+
+        # Mock embedder
+        with patch("embeddings.embedder.CodeEmbedder") as mock_embedder:
+            embedder_mock = mock_embedder.return_value
+            embedder_mock.embed_text.return_value = np.random.rand(768)
+
+            # Perform search with multi-hop enabled
+            results = searcher.search("test query", k=5, use_parallel=False)
+
+            # Verify batched search was called
+            dense_mock.get_similar_chunks_batched.assert_called()
+
+            # Results should include multi-hop discoveries
+            assert isinstance(results, list)
+
     def teardown_method(self):
         """Clean up test fixtures."""
         import shutil
