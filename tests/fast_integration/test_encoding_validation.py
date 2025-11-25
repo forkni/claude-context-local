@@ -9,8 +9,8 @@ from pathlib import Path
 
 
 def test_file_encoding() -> None:
-    """Test encoding validation using test_all_files function."""
-    success = test_all_files()
+    """Test encoding validation using _all_files_check function."""
+    success = _all_files_check()
     assert success, "Encoding validation failed for some files"
 
 
@@ -104,7 +104,7 @@ def _test_file_encoding_detailed(file_path: Path) -> dict:
     return result
 
 
-def test_all_files():
+def _all_files_check():
     """Test all relevant files for encoding issues."""
     project_root = Path(__file__).parent.parent
 

@@ -90,19 +90,18 @@ def test_direct_indexing(tmp_path):
         }
         print(f"   Metadata that would be saved: {metadata}")
 
-        return {
-            "all_files": all_files,
-            "supported_files": supported_files,
-            "chunks": all_chunks,
-            "metadata": metadata,
-        }
+        # Validate results
+        assert len(all_files) > 0, "Should find at least one file"
+        assert len(supported_files) > 0, "Should find at least one supported file"
+        assert len(all_chunks) > 0, "Should generate at least one chunk"
+        print("\n[SUCCESS] Direct indexing test passed")
 
     except Exception as e:
         print(f"ERROR: {e}")
         import traceback
 
         traceback.print_exc()
-        return None
+        pytest.fail(f"Direct indexing test failed: {e}")
 
 
 @pytest.mark.slow

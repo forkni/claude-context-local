@@ -1300,5 +1300,5 @@ class CodeIndexManager:
 
     def __del__(self):
         """Cleanup when object is destroyed."""
-        if self._metadata_db is not None:
+        if hasattr(self, "_metadata_db") and self._metadata_db is not None:
             self._metadata_db.close()

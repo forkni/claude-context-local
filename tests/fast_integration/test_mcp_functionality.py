@@ -10,8 +10,8 @@ import sys
 from pathlib import Path
 
 
-def test_mcp_imports():
-    """Test that all MCP server modules can be imported."""
+def _mcp_imports_check():
+    """Check that all MCP server modules can be imported."""
     print("Testing MCP server imports...")
 
     try:
@@ -32,8 +32,13 @@ def test_mcp_imports():
         return False
 
 
-def test_index_status():
-    """Test get_index_status function."""
+def test_mcp_imports():
+    """Test that all MCP server modules can be imported."""
+    assert _mcp_imports_check(), "MCP import check failed"
+
+
+def _index_status_check():
+    """Check get_index_status function."""
     print("\nTesting index status...")
 
     try:
@@ -56,8 +61,13 @@ def test_index_status():
         return False
 
 
-def test_chunking_core():
-    """Test core chunking functionality."""
+def test_index_status():
+    """Test get_index_status function."""
+    assert _index_status_check(), "Index status check failed"
+
+
+def _chunking_core_check():
+    """Check core chunking functionality."""
     print("\nTesting chunking functionality...")
 
     try:
@@ -95,6 +105,11 @@ class TestClass:
         return False
 
 
+def test_chunking_core():
+    """Test core chunking functionality."""
+    assert _chunking_core_check(), "Chunking core check failed"
+
+
 def main():
     """Run all functionality tests."""
     print("=" * 60)
@@ -102,9 +117,9 @@ def main():
     print("=" * 60)
 
     tests = [
-        ("Import Test", test_mcp_imports),
-        ("Index Status Test", test_index_status),
-        ("Chunking Test", test_chunking_core),
+        ("Import Test", _mcp_imports_check),
+        ("Index Status Test", _index_status_check),
+        ("Chunking Test", _chunking_core_check),
     ]
 
     passed = 0
