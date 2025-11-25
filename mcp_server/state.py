@@ -40,6 +40,9 @@ class ApplicationState:
     # Model management
     embedders: Dict[str, Any] = field(default_factory=dict)
     current_model_key: Optional[str] = None
+    current_index_model_key: Optional[str] = (
+        None  # Track index manager's model (Phase 1 fix)
+    )
     model_preload_task_started: bool = False
 
     # Search components (lazy-initialized)
@@ -63,6 +66,7 @@ class ApplicationState:
         """
         self.embedders = {}
         self.current_model_key = None
+        self.current_index_model_key = None
         self.model_preload_task_started = False
         self.index_manager = None
         self.searcher = None
@@ -97,6 +101,7 @@ class ApplicationState:
             model_key: Model key (e.g., 'qwen3', 'bge_m3')
         """
         self.current_model_key = model_key
+        self.current_index_model_key = None  # Force index reload on model switch
         # Searcher needs to be recreated with new model
         self.searcher = None
 

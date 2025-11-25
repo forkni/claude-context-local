@@ -68,6 +68,43 @@ def pytest_collection_modifyitems(config: Any, items: List[Any]) -> None:
             item.add_marker(pytest.mark.mcp)
 
 
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Clean up stale Merkle snapshots after test session completes.
+
+    Runs silently after all tests, removing orphaned merkle snapshots
+    that were created by tests but no longer have corresponding project indices.
+    Only outputs on errors/timeouts.
+
+    Args:
+        session: pytest session object
+        exitstatus: Exit status code (0=passed, 1=some tests failed, 2=interrupted, etc.)
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    # Only run cleanup if tests passed or had some failures (not on collection errors)
+    if exitstatus in (0, 1):  # 0=passed, 1=some tests failed
+        cleanup_script = (
+            Path(__file__).parent.parent / "tools" / "cleanup_stale_snapshots.py"
+        )
+
+        if cleanup_script.exists():
+            try:
+                # Run cleanup in non-interactive mode (auto-confirm deletion)
+                subprocess.run(
+                    [sys.executable, str(cleanup_script), "--auto"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                # Silent on success - no output
+            except subprocess.TimeoutExpired:
+                print("\n[Cleanup] Warning: Snapshot cleanup timed out")
+            except Exception as e:
+                print(f"\n[Cleanup] Warning: Snapshot cleanup failed: {e}")
+
+
 @pytest.fixture(autouse=True)
 def reset_global_state() -> Generator[None, None, None]:
     """Reset global state before each test.
@@ -131,12 +168,12 @@ def preserve_original_project_selection() -> Generator[None, None, None]:
 
     # Save original state BEFORE any tests run
     original_selection = load_project_selection()
-    original_server_project = None
 
     try:
         import mcp_server.server as server_module
 
-        original_server_project = getattr(server_module, "_current_project", None)
+        # Note: Original project state is tracked via original_selection
+        _ = getattr(server_module, "_current_project", None)  # Check availability
     except ImportError:
         pass  # Module might not be available
 

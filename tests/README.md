@@ -297,6 +297,14 @@ Global pytest configuration including:
 - Path configuration
 - Temporary directory management
 
+### Automatic Cleanup
+
+Stale merkle snapshots are automatically cleaned up after each pytest run via the `pytest_sessionfinish` hook in `conftest.py`. This prevents test artifacts from accumulating in `~/.claude_code_search/merkle/`.
+
+**Manual cleanup**: `python tools/cleanup_stale_snapshots.py`
+
+For complete details, see [TESTING_GUIDE.md](./TESTING_GUIDE.md#automatic-merkle-snapshot-cleanup).
+
 ### Key Test Patterns
 
 #### Mocking Expensive Operations

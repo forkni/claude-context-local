@@ -760,6 +760,128 @@ ls -la ~/.claude_code_search/merkle/
   - `tests/unit/test_incremental_indexer.py` (line 119)
   - `tests/slow_integration/test_direct_indexing.py` (line 117)
 
+## Automatic Merkle Snapshot Cleanup
+
+### Overview
+
+After each pytest session, stale merkle snapshots are automatically cleaned up via the `pytest_sessionfinish` hook. This prevents orphaned test artifacts from accumulating in `~/.claude_code_search/merkle/`.
+
+**Why This Matters:**
+- Tests create merkle snapshots for incremental indexing
+- Test cleanup removes project directories but not merkle files
+- Without automatic cleanup, orphaned snapshots accumulate over time
+- Manual cleanup is error-prone and easy to forget
+
+### How It Works
+
+The cleanup system runs automatically after every pytest session:
+
+1. **Automatic trigger**: Runs after every pytest session (unit, integration, or full suite)
+2. **Silent operation**: No output on success, only warnings on errors/timeouts
+3. **Safe cleanup**: Only removes snapshots without corresponding project indices
+4. **Timeout protection**: 30-second timeout to prevent blocking test completion
+
+### Implementation Details
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| **Hook** | `tests/conftest.py` → `pytest_sessionfinish()` | Triggers cleanup after tests |
+| **Script** | `tools/cleanup_stale_snapshots.py` | Identifies and removes stale snapshots |
+| **Mode** | `--auto` flag | Silent non-interactive execution |
+| **Exit codes** | 0 (passed) or 1 (some failures) | Only runs on test completion |
+
+**Hook Implementation** (`tests/conftest.py` lines 71-103):
+```python
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Clean up stale Merkle snapshots after test session completes."""
+    if exitstatus in (0, 1):
+        cleanup_script = Path(__file__).parent.parent / "tools" / "cleanup_stale_snapshots.py"
+        subprocess.run([sys.executable, str(cleanup_script), "--auto"],
+                      capture_output=True, timeout=30)
+```
+
+### Manual Cleanup
+
+For manual cleanup or debugging:
+
+```bash
+# Interactive mode (shows details, asks for confirmation)
+.venv/Scripts/python.exe tools/cleanup_stale_snapshots.py
+
+# Auto mode (silent, for scripts/CI)
+.venv/Scripts/python.exe tools/cleanup_stale_snapshots.py --auto
+```
+
+**Interactive mode output:**
+```
+======================================================================
+Merkle Snapshot Cleanup Utility
+======================================================================
+
+Scanning for stale snapshots...
+Found 50 stale snapshot files (49.5 KB)
+
+Stale snapshots by project:
+----------------------------------------------------------------------
+
+Project ID: abc123...
+  Models: qwen3, bge-m3
+  Dimensions: 768d, 1024d
+  Files: 4
+  ...
+
+Delete all stale snapshots? [y/N]:
+```
+
+### Troubleshooting
+
+If cleanup warnings appear after tests:
+
+- **`[Cleanup] Warning: Snapshot cleanup timed out`**
+  - Cleanup took >30 seconds
+  - Many stale files (run manual cleanup to see count)
+  - Solution: Run `python tools/cleanup_stale_snapshots.py` manually
+
+- **`[Cleanup] Warning: Snapshot cleanup failed: <error>`**
+  - Script failed to execute
+  - Check Python path and permissions
+  - Solution: Verify `.venv/Scripts/python.exe` exists
+
+### Verification
+
+To verify cleanup is working correctly:
+
+```bash
+# Check stale snapshots before test run
+ls ~/.claude_code_search/merkle/
+
+# Run tests (cleanup runs automatically after)
+pytest tests/unit/test_merkle.py -v
+
+# Verify stale files were removed
+ls ~/.claude_code_search/merkle/
+```
+
+**Expected behavior:**
+- Before tests: May see orphaned snapshots from previous runs
+- After tests: Only snapshots for currently indexed projects remain
+
+### Disabling Automatic Cleanup
+
+If needed for debugging, you can temporarily disable the hook:
+
+1. **Comment out hook** in `tests/conftest.py`:
+   ```python
+   # def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+   #     """Clean up stale Merkle snapshots after test session completes."""
+   #     ...
+   ```
+
+2. **Or skip specific tests** that create many snapshots:
+   ```bash
+   pytest tests/ -k "not merkle" -v
+   ```
+
 ## Coverage Requirements
 
 ### Target Coverage by Component

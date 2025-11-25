@@ -180,6 +180,9 @@ class HybridSearcher:
             "parallel_efficiency": 0.0,
         }
 
+        # Dimension validation (safety check)
+        self._validate_dimensions()
+
     def __enter__(self):
         return self
 
@@ -193,6 +196,24 @@ class HybridSearcher:
                 self._thread_pool.shutdown(wait=True)
                 self._is_shutdown = True
                 self._logger.info("HybridSearcher shut down")
+
+    def _validate_dimensions(self):
+        """Validate that index and embedder dimensions match."""
+        if self.dense_index.index is not None and self.embedder is not None:
+            try:
+                index_dim = self.dense_index.index.d
+                model_info = self.embedder.get_model_info()
+                embedder_dim = model_info.get("embedding_dimension")
+
+                if embedder_dim and index_dim != embedder_dim:
+                    raise ValueError(
+                        f"FATAL: Dimension mismatch between index ({index_dim}d) "
+                        f"and embedder ({embedder_dim}d for {self.embedder.model_name}). "
+                        f"This indicates a bug in model routing. "
+                        f"The index was likely loaded for a different model."
+                    )
+            except (AttributeError, KeyError) as e:
+                self._logger.debug(f"Could not validate dimensions: {e}")
 
     @property
     def is_ready(self) -> bool:

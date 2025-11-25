@@ -53,7 +53,8 @@ logger = logging.getLogger(__name__)
 async def handle_get_index_status(arguments: Dict[str, Any]) -> dict:
     """Get current status and statistics of the search index."""
     try:
-        index_manager = get_index_manager()
+        state = get_state()
+        index_manager = get_index_manager(model_key=state.current_model_key)
         stats = index_manager.get_stats()
 
         # Collect model info
@@ -185,7 +186,8 @@ async def handle_get_memory_status(arguments: Dict[str, Any]) -> dict:
         # Index memory estimate
         index_memory = {}
         try:
-            index_manager = get_index_manager()
+            state = get_state()
+            index_manager = get_index_manager(model_key=state.current_model_key)
             if index_manager and index_manager.index:
                 ntotal = index_manager.index.ntotal
                 dimension = index_manager.index.d
@@ -312,11 +314,12 @@ async def handle_switch_project(arguments: Dict[str, Any]) -> dict:
 async def handle_clear_index(arguments: Dict[str, Any]) -> dict:
     """Clear the entire search index."""
     try:
-        current_project = get_state().current_project
+        state = get_state()
+        current_project = state.current_project
         if current_project is None:
             return {"error": "No active project to clear"}
 
-        index_manager = get_index_manager()
+        index_manager = get_index_manager(model_key=state.current_model_key)
         index_manager.clear_index()
 
         # Cleanup in-memory state (both globals and ApplicationState)
@@ -527,14 +530,9 @@ def _handle_chunk_id_lookup(chunk_id: str) -> dict:
                 "chunk_id": chunk_id,
             }
 
-        # Format SearchResult to JSON-serializable dict
-        formatted_result = {
-            "file": result.metadata.get("file", ""),
-            "lines": f"{result.metadata.get('start_line', 0)}-{result.metadata.get('end_line', 0)}",
-            "kind": result.metadata.get("chunk_type", "unknown"),
-            "score": round(result.score, 2),
-            "chunk_id": result.chunk_id,
-        }
+        # Reuse existing formatting function for consistency
+        formatted_results = _format_search_results([result])
+        formatted_result = formatted_results[0]
 
         # Add graph data if available
         index_manager = _get_index_manager_from_searcher(searcher)
@@ -609,7 +607,9 @@ def _check_auto_reindex(
     """
     config = get_search_config()
     if config.enable_hybrid_search:
-        project_storage = get_project_storage_dir(project_path)
+        project_storage = get_project_storage_dir(
+            project_path, model_key=selected_model_key
+        )
         storage_dir = project_storage / "index"
         indexer = HybridSearcher(
             storage_dir=str(storage_dir),
@@ -618,7 +618,7 @@ def _check_auto_reindex(
             dense_weight=config.dense_weight,
         )
     else:
-        indexer = get_index_manager(project_path)
+        indexer = get_index_manager(project_path, model_key=selected_model_key)
 
     embedder = get_embedder(selected_model_key)
     chunker = MultiLanguageChunker(project_path)

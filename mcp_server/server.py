@@ -65,6 +65,9 @@ _embedders = {}  # model_key -> CodeEmbedder instance
 _index_manager = None
 _searcher = None
 _current_model_key = None  # Track which model the searcher was initialized with
+_current_index_model_key = (
+    None  # Track which model the index manager was initialized with
+)
 _storage_dir = None
 _current_project = None
 _model_preload_task_started = False
@@ -85,6 +88,12 @@ _multi_model_enabled = os.getenv("CLAUDE_MULTI_MODEL_ENABLED", "true").lower() i
 def get_storage_dir() -> Path:
     """Get or create base storage directory."""
     global _storage_dir
+    state = get_state()
+
+    # Incremental migration: prefer state, fall back to global
+    if state.storage_dir is not None:
+        return state.storage_dir
+
     if _storage_dir is None:
         storage_path = os.getenv(
             "CODE_SEARCH_STORAGE", str(Path.home() / ".claude_code_search")
@@ -92,7 +101,7 @@ def get_storage_dir() -> Path:
         _storage_dir = Path(storage_path)
         _storage_dir.mkdir(parents=True, exist_ok=True)
         # Sync to ApplicationState
-        get_state().storage_dir = _storage_dir
+        state.storage_dir = _storage_dir
     return _storage_dir
 
 
@@ -212,7 +221,13 @@ def initialize_model_pool(lazy_load: bool = True) -> None:
     global _embedders, _multi_model_enabled
     state = get_state()
 
-    if not _multi_model_enabled:
+    # Incremental migration: prefer state, fall back to global
+    multi_model_enabled = (
+        state.multi_model_enabled
+        if hasattr(state, "multi_model_enabled")
+        else _multi_model_enabled
+    )
+    if not multi_model_enabled:
         logger.info("Multi-model routing disabled - using single model mode")
         return
 
@@ -222,8 +237,9 @@ def initialize_model_pool(lazy_load: bool = True) -> None:
     if lazy_load:
         # Initialize empty slots - models will load on first get_embedder() call
         for model_key in MODEL_POOL_CONFIG.keys():
+            # Write to both (incremental migration)
             _embedders[model_key] = None
-            state.embedders[model_key] = None  # Sync to state
+            state.embedders[model_key] = None
         logger.info(
             f"Model pool initialized in lazy mode: {list(MODEL_POOL_CONFIG.keys())}"
         )
@@ -234,14 +250,17 @@ def initialize_model_pool(lazy_load: bool = True) -> None:
             try:
                 logger.info(f"Loading {model_key} ({model_name})...")
                 embedder = CodeEmbedder(model_name=model_name, cache_dir=str(cache_dir))
+                # Write to both (incremental migration)
                 _embedders[model_key] = embedder
-                state.set_embedder(model_key, embedder)  # Sync to state
+                state.set_embedder(model_key, embedder)
                 logger.info(f"✓ {model_key} loaded successfully")
             except Exception as e:
                 logger.error(f"✗ Failed to load {model_key}: {e}")
                 _embedders[model_key] = None
 
-        loaded_count = sum(1 for e in _embedders.values() if e is not None)
+        # Incremental migration: prefer state, fall back to global
+        embedders = state.embedders if state.embedders else _embedders
+        loaded_count = sum(1 for e in embedders.values() if e is not None)
         logger.info(
             f"Model pool loaded: {loaded_count}/{len(MODEL_POOL_CONFIG)} models ready"
         )
@@ -263,8 +282,15 @@ def get_embedder(model_key: str = None) -> CodeEmbedder:
     cache_dir = get_storage_dir() / "models"
     cache_dir.mkdir(exist_ok=True)
 
+    # Incremental migration: prefer state, fall back to global
+    multi_model_enabled = (
+        state.multi_model_enabled
+        if hasattr(state, "multi_model_enabled")
+        else _multi_model_enabled
+    )
+
     # Multi-model mode
-    if _multi_model_enabled:
+    if multi_model_enabled:
         # Determine which model to use
         if model_key is None:
             # Try to get from config, fallback to bge_m3
@@ -295,11 +321,14 @@ def get_embedder(model_key: str = None) -> CodeEmbedder:
             )
             model_key = "bge_m3"  # Fallback to most reliable model
 
+        # Incremental migration: prefer state, fall back to global
+        embedders = state.embedders if state.embedders else _embedders
+
         # Lazy load model if not already loaded
-        if model_key not in _embedders or _embedders[model_key] is None:
+        if model_key not in embedders or embedders[model_key] is None:
             model_name = MODEL_POOL_CONFIG[model_key]
             # Check if this is the first model being loaded (cold start)
-            is_first_load = not any(_embedders.values())
+            is_first_load = not any(embedders.values())
             if is_first_load:
                 logger.info(
                     f"[FIRST USE] Loading embedding model {model_key} ({model_name})... "
@@ -309,8 +338,9 @@ def get_embedder(model_key: str = None) -> CodeEmbedder:
                 logger.info(f"Lazy loading {model_key} ({model_name})...")
             try:
                 embedder = CodeEmbedder(model_name=model_name, cache_dir=str(cache_dir))
+                # Write to both (incremental migration)
                 _embedders[model_key] = embedder
-                state.set_embedder(model_key, embedder)  # Sync to state
+                state.set_embedder(model_key, embedder)
                 if is_first_load:
                     logger.info(
                         f"✓ {model_key} loaded successfully. Ready for fast searches!"
@@ -322,19 +352,22 @@ def get_embedder(model_key: str = None) -> CodeEmbedder:
                 # Fallback to bge_m3 if available
                 if (
                     model_key != "bge_m3"
-                    and "bge_m3" in _embedders
-                    and _embedders["bge_m3"] is not None
+                    and "bge_m3" in embedders
+                    and embedders["bge_m3"] is not None
                 ):
                     logger.warning("Falling back to bge_m3")
-                    return _embedders["bge_m3"]
+                    return embedders["bge_m3"]
                 raise
 
-        return _embedders[model_key]
+        return embedders[model_key]
 
     # Single-model mode (legacy fallback)
     else:
+        # Incremental migration: prefer state, fall back to global
+        embedders = state.embedders if state.embedders else _embedders
+
         # Use old singleton pattern with "default" key
-        if "default" not in _embedders or _embedders["default"] is None:
+        if "default" not in embedders or embedders["default"] is None:
             try:
                 config = get_search_config()
                 model_name = config.embedding_model_name
@@ -345,21 +378,27 @@ def get_embedder(model_key: str = None) -> CodeEmbedder:
                 logger.info(f"Falling back to default model: {model_name}")
 
             embedder = CodeEmbedder(model_name=model_name, cache_dir=str(cache_dir))
+            # Write to both (incremental migration)
             _embedders["default"] = embedder
-            state.set_embedder("default", embedder)  # Sync to state
+            state.set_embedder("default", embedder)
             logger.info("Embedder initialized successfully")
 
-        return _embedders["default"]
+        return embedders["default"]
 
 
 def _maybe_start_model_preload() -> None:
     """Preload the embedding model in the background to avoid cold-start delays."""
     global _model_preload_task_started
     state = get_state()
-    if _model_preload_task_started or state.model_preload_task_started:
+
+    # Incremental migration: prefer state, fall back to global
+    preload_started = state.model_preload_task_started or _model_preload_task_started
+    if preload_started:
         return
+
+    # Write to both (incremental migration)
     _model_preload_task_started = True
-    state.model_preload_task_started = True  # Sync to state
+    state.model_preload_task_started = True
 
     async def _preload():
         try:
@@ -384,32 +423,41 @@ def _cleanup_previous_resources():
     global _index_manager, _searcher, _embedders
     state = get_state()
     try:
-        if _index_manager is not None:
+        # Incremental migration: prefer state, fall back to global
+        index_manager = state.index_manager or _index_manager
+        if index_manager is not None:
             if (
-                hasattr(_index_manager, "_metadata_db")
-                and _index_manager._metadata_db is not None
+                hasattr(index_manager, "_metadata_db")
+                and index_manager._metadata_db is not None
             ):
-                _index_manager._metadata_db.close()
+                index_manager._metadata_db.close()
+            # Write to both (incremental migration)
             _index_manager = None
-            state.index_manager = None  # Sync to state
+            state.index_manager = None
             logger.info("Previous index manager cleaned up")
-        if _searcher is not None:
+
+        # Incremental migration: prefer state, fall back to global
+        searcher = state.searcher or _searcher
+        if searcher is not None:
+            # Write to both (incremental migration)
             _searcher = None
-            state.searcher = None  # Sync to state
+            state.searcher = None
             logger.info("Previous searcher cleaned up")
 
-        # Cleanup all embedders in the pool
-        if _embedders:
+        # Incremental migration: prefer state, fall back to global
+        embedders = state.embedders if state.embedders else _embedders
+        if embedders:
             cleanup_count = 0
-            for model_key, embedder in list(_embedders.items()):
+            for model_key, embedder in list(embedders.items()):
                 if embedder is not None:
                     try:
                         embedder.cleanup()
                         cleanup_count += 1
                     except Exception as e:
                         logger.warning(f"Failed to cleanup {model_key}: {e}")
+            # Write to both (incremental migration)
             _embedders.clear()
-            state.clear_embedders()  # Sync to state
+            state.clear_embedders()
             logger.info(f"Cleaned up {cleanup_count} embedder(s) from pool")
 
         try:
@@ -424,40 +472,70 @@ def _cleanup_previous_resources():
         logger.warning(f"Error during resource cleanup: {e}")
 
 
-def get_index_manager(project_path: str = None) -> CodeIndexManager:
-    """Get index manager for specific project or current project."""
-    global _index_manager, _current_project
+def get_index_manager(
+    project_path: str = None, model_key: str = None
+) -> CodeIndexManager:
+    """Get index manager for specific project or current project.
+
+    Args:
+        project_path: Path to the project (None = use current project)
+        model_key: Model key for routing (None = use config default)
+    """
+    global _index_manager, _current_project, _current_index_model_key
     state = get_state()
+
+    # Incremental migration: prefer state, fall back to global
     if project_path is None:
-        if _current_project is None:
+        if state.current_project is None and _current_project is None:
             project_path = str(PROJECT_ROOT)
             logger.info(
                 f"No active project found. Using server directory: {project_path}"
             )
         else:
-            project_path = _current_project
-    if _current_project != project_path:
-        logger.info(
-            f"Switching project from '{_current_project}' to '{Path(project_path).name}'"
-        )
+            project_path = state.current_project or _current_project
+
+    # Invalidate cache if project or model changed
+    current_proj = state.current_project or _current_project
+    current_idx_model = state.current_index_model_key or _current_index_model_key
+
+    if current_proj != project_path or current_idx_model != model_key:
+        if current_proj != project_path:
+            logger.info(
+                f"Switching project from '{current_proj}' to '{Path(project_path).name}'"
+            )
+        if current_idx_model != model_key:
+            logger.info(
+                f"Switching index model from '{current_idx_model}' to '{model_key}'"
+            )
         _cleanup_previous_resources()
+
+        # Write to both state and global (incremental migration)
         _current_project = project_path
-        state.current_project = project_path  # Sync to state
-    if _index_manager is None:
-        project_dir = get_project_storage_dir(project_path)
+        _current_index_model_key = model_key
+        state.current_project = project_path
+        state.current_index_model_key = model_key
+        _index_manager = None  # Force re-initialization
+        state.index_manager = None
+
+    # Use state if available, otherwise use global
+    if state.index_manager is None and _index_manager is None:
+        project_dir = get_project_storage_dir(project_path, model_key=model_key)
         index_dir = project_dir / "index"
         index_dir.mkdir(exist_ok=True)
 
         # Extract project_id from storage directory name
-        # Format: projectname_hash_dimension (e.g., claude-context-local_caf2e75a_1024d)
+        # Format: projectname_hash_modelslug_dimension (e.g., claude-context-local_caf2e75a_qwen3_1024d)
         project_id = project_dir.name.rsplit("_", 1)[0]  # Remove dimension suffix
 
+        # Write to both (incremental migration)
         _index_manager = CodeIndexManager(str(index_dir), project_id=project_id)
-        state.index_manager = _index_manager  # Sync to state
+        state.index_manager = _index_manager
         logger.info(
-            f"Index manager initialized for project: {Path(project_path).name} (ID: {project_id})"
+            f"Index manager initialized for project: {Path(project_path).name} (ID: {project_id}, model_key: {model_key})"
         )
-    return _index_manager
+
+    # Return from state if available, otherwise global
+    return state.index_manager or _index_manager
 
 
 def get_searcher(project_path: str = None, model_key: str = None):
@@ -469,18 +547,30 @@ def get_searcher(project_path: str = None, model_key: str = None):
     """
     global _searcher, _current_project, _current_model_key
     state = get_state()
-    if project_path is None and _current_project is None:
+
+    # Incremental migration: prefer state, fall back to global
+    if (
+        project_path is None
+        and state.current_project is None
+        and _current_project is None
+    ):
         project_path = str(PROJECT_ROOT)
         logger.info(f"No active project found. Using server directory: {project_path}")
 
     # Invalidate cache if project or model changed
+    current_proj = state.current_project or _current_project
+    current_mdl = state.current_model_key or _current_model_key
+
     if (
-        _current_project != project_path
-        or _current_model_key != model_key
-        or _searcher is None
+        current_proj != project_path
+        or current_mdl != model_key
+        or (state.searcher is None and _searcher is None)
     ):
-        _current_project = project_path or _current_project
-        state.current_project = _current_project  # Sync to state
+        # Write to both (incremental migration)
+        _current_project = project_path or current_proj
+        _current_model_key = model_key
+        state.current_project = _current_project
+        state.current_model_key = model_key
         config = get_search_config()
         logger.info(
             f"[GET_SEARCHER] Initializing searcher for project: {_current_project}"
@@ -498,6 +588,7 @@ def get_searcher(project_path: str = None, model_key: str = None):
                 0
             ]  # Remove dimension suffix
 
+            # Write to both (incremental migration)
             _searcher = HybridSearcher(
                 storage_dir=str(storage_dir),
                 embedder=get_embedder(model_key),
@@ -507,9 +598,10 @@ def get_searcher(project_path: str = None, model_key: str = None):
                 max_workers=2,
                 project_id=project_id,
             )
+            state.searcher = _searcher
             try:
                 existing_index_manager = get_index_manager(
-                    project_path or _current_project
+                    project_path or _current_project, model_key=model_key
                 )
                 if (
                     existing_index_manager.index
@@ -524,19 +616,20 @@ def get_searcher(project_path: str = None, model_key: str = None):
                 f"HybridSearcher initialized (BM25: {config.bm25_weight}, Dense: {config.dense_weight})"
             )
         else:
+            # Write to both (incremental migration)
             _searcher = IntelligentSearcher(
-                get_index_manager(project_path), get_embedder(model_key)
+                get_index_manager(project_path, model_key=model_key),
+                get_embedder(model_key),
             )
+            state.searcher = _searcher
             logger.info("IntelligentSearcher initialized (semantic-only mode)")
 
-        # Track which model this searcher was initialized with
-        _current_model_key = model_key
-        state.current_model_key = model_key  # Sync to state
-        state.searcher = _searcher  # Sync to state
         logger.info(
             f"Searcher initialized for project: {Path(_current_project).name if _current_project else 'unknown'}"
         )
-    return _searcher
+
+    # Return from state if available, otherwise global
+    return state.searcher or _searcher
 
 
 # ============================================================================
@@ -740,6 +833,7 @@ if __name__ == "__main__":
             async def run_stdio_server():
                 """Run stdio server with proper lifecycle management."""
                 global _current_project, _model_preload_task_started
+                state = get_state()
 
                 # Initialize global state BEFORE starting server
                 logger.info("=" * 60)
@@ -749,14 +843,17 @@ if __name__ == "__main__":
                 # Set default project: env var > persistent selection > none
                 default_project = os.getenv("CLAUDE_DEFAULT_PROJECT", None)
                 if default_project:
-                    _current_project = str(Path(default_project).resolve())
-                    logger.info(f"[INIT] Default project (env): {_current_project}")
+                    project_path = str(Path(default_project).resolve())
+                    # Write to both (incremental migration)
+                    _current_project = project_path
+                    state.current_project = project_path
+                    logger.info(f"[INIT] Default project (env): {project_path}")
                 else:
                     # Try to restore from persistent selection
                     selection = load_project_selection()
                     if selection:
                         restored_path = selection["last_project_path"]
-                        set_current_project(restored_path)
+                        set_current_project(restored_path)  # Already writes to both
                         logger.info(
                             f"[INIT] Restored project: {Path(restored_path).name}"
                         )
@@ -828,6 +925,7 @@ if __name__ == "__main__":
             async def app_lifespan(app):
                 """Application lifecycle - initialize global state ONCE before accepting connections."""
                 global _current_project, _embedders, _model_preload_task_started
+                state = get_state()
 
                 logger.info("=" * 60)
                 logger.info("APPLICATION STARTUP: Initializing global state")
@@ -837,28 +935,43 @@ if __name__ == "__main__":
                     # Set default project: env var > persistent selection > none
                     default_project = os.getenv("CLAUDE_DEFAULT_PROJECT", None)
                     if default_project:
-                        _current_project = str(Path(default_project).resolve())
-                        logger.info(f"[INIT] Default project (env): {_current_project}")
+                        project_path = str(Path(default_project).resolve())
+                        # Write to both (incremental migration)
+                        _current_project = project_path
+                        state.current_project = project_path
+                        logger.info(f"[INIT] Default project (env): {project_path}")
                     else:
                         # Try to restore from persistent selection
                         selection = load_project_selection()
                         if selection:
                             restored_path = selection["last_project_path"]
-                            set_current_project(restored_path)
+                            set_current_project(restored_path)  # Already writes to both
                             logger.info(
                                 f"[INIT] Restored project: {Path(restored_path).name}"
                             )
                         else:
                             logger.info("[INIT] No default project")
 
+                    # Incremental migration: prefer state, fall back to global
+                    multi_model_enabled = (
+                        state.multi_model_enabled
+                        if hasattr(state, "multi_model_enabled")
+                        else _multi_model_enabled
+                    )
+                    preload_started = (
+                        state.model_preload_task_started or _model_preload_task_started
+                    )
+
                     # Initialize model pool in lazy mode
-                    if _multi_model_enabled and not _model_preload_task_started:
+                    if multi_model_enabled and not preload_started:
                         initialize_model_pool(lazy_load=True)
                         logger.info(
                             f"[INIT] Model pool initialized: {list(MODEL_POOL_CONFIG.keys())}"
                         )
+                        # Write to both (incremental migration)
                         _model_preload_task_started = True
-                    elif _multi_model_enabled:
+                        state.model_preload_task_started = True
+                    elif multi_model_enabled:
                         logger.info("[INIT] Model pool already initialized")
                     else:
                         logger.info("[INIT] Single-model mode enabled")
