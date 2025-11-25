@@ -64,6 +64,7 @@ class SearchConfig:
     embedding_model_name: str = "google/embeddinggemma-300m"
     model_dimension: int = 768
     embedding_batch_size: int = 128  # Dynamic based on model, see MODEL_REGISTRY
+    query_cache_size: int = 128  # LRU cache size for query embeddings
 
     # Search Mode Configuration
     default_search_mode: str = "hybrid"  # hybrid, semantic, bm25, auto
@@ -76,6 +77,10 @@ class SearchConfig:
     # Performance Settings
     use_parallel_search: bool = True
     max_parallel_workers: int = 2
+
+    # Parallel Chunking Configuration
+    enable_parallel_chunking: bool = True  # Enable parallel file chunking
+    max_chunking_workers: int = 4  # ThreadPoolExecutor workers for chunking
 
     # BM25 Configuration
     bm25_k_parameter: int = 100
@@ -196,12 +201,18 @@ class SearchConfigManager:
         env_mapping = {
             "CLAUDE_EMBEDDING_MODEL": ("embedding_model_name", str),
             "CLAUDE_EMBEDDING_BATCH_SIZE": ("embedding_batch_size", int),
+            "CLAUDE_QUERY_CACHE_SIZE": ("query_cache_size", int),
             "CLAUDE_SEARCH_MODE": ("default_search_mode", str),
             "CLAUDE_ENABLE_HYBRID": ("enable_hybrid_search", self._bool_from_env),
             "CLAUDE_BM25_WEIGHT": ("bm25_weight", float),
             "CLAUDE_DENSE_WEIGHT": ("dense_weight", float),
             "CLAUDE_BM25_USE_STEMMING": ("bm25_use_stemming", self._bool_from_env),
             "CLAUDE_USE_PARALLEL": ("use_parallel_search", self._bool_from_env),
+            "CLAUDE_ENABLE_PARALLEL_CHUNKING": (
+                "enable_parallel_chunking",
+                self._bool_from_env,
+            ),
+            "CLAUDE_MAX_CHUNKING_WORKERS": ("max_chunking_workers", int),
             "CLAUDE_PREFER_GPU": ("prefer_gpu", self._bool_from_env),
             "CLAUDE_GPU_THRESHOLD": ("gpu_memory_threshold", float),
             "CLAUDE_AUTO_REINDEX": ("enable_auto_reindex", self._bool_from_env),

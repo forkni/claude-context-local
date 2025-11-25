@@ -818,3 +818,191 @@ class TestIncrementalIndexer:
         import shutil
 
         shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+
+class TestParallelChunking:
+    """Test parallel file chunking functionality."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.project_path = Path(self.temp_dir) / "test_project"
+        self.project_path.mkdir(parents=True, exist_ok=True)
+
+        # Create multiple test files
+        self.test_files = {
+            "file1.py": "def func1(): pass",
+            "file2.py": "def func2(): pass",
+            "file3.py": "def func3(): pass",
+            "file4.py": "def func4(): pass",
+            "file5.py": "def func5(): pass",
+        }
+
+        for filename, content in self.test_files.items():
+            (self.project_path / filename).write_text(content)
+
+    def test_chunk_files_parallel_enabled(self):
+        """Test parallel chunking when enabled."""
+        # Create indexer with mocked components
+        mock_indexer = Mock()
+        mock_embedder = Mock()
+        mock_snapshot_manager = Mock()
+
+        indexer = IncrementalIndexer(
+            indexer=mock_indexer,
+            embedder=mock_embedder,
+            chunker=None,  # Use real chunker
+            snapshot_manager=mock_snapshot_manager,
+        )
+        indexer.enable_parallel_chunking = True
+        indexer.max_chunking_workers = 2
+
+        file_paths = list(self.test_files.keys())
+
+        # Chunk files
+        chunks = indexer._chunk_files_parallel(str(self.project_path), file_paths)
+
+        # Verify all files were chunked
+        assert len(chunks) >= len(file_paths)
+        assert all(isinstance(chunk, object) for chunk in chunks)
+
+    def test_chunk_files_parallel_disabled(self):
+        """Test sequential chunking when parallel is disabled."""
+        # Create indexer with mocked components
+        indexer = IncrementalIndexer(
+            indexer=Mock(),
+            embedder=Mock(),
+            chunker=None,  # Use real chunker
+            snapshot_manager=Mock(),
+        )
+        indexer.enable_parallel_chunking = False
+
+        file_paths = list(self.test_files.keys())
+
+        # Chunk files
+        chunks = indexer._chunk_files_parallel(str(self.project_path), file_paths)
+
+        # Verify all files were chunked
+        assert len(chunks) >= len(file_paths)
+
+    def test_chunk_files_single_file_fallback(self):
+        """Test that single file falls back to sequential processing."""
+        indexer = IncrementalIndexer(
+            indexer=Mock(),
+            embedder=Mock(),
+            chunker=None,  # Use real chunker
+            snapshot_manager=Mock(),
+        )
+        indexer.enable_parallel_chunking = True
+        indexer.max_chunking_workers = 4
+
+        # Single file - should fall back to sequential
+        file_paths = ["file1.py"]
+
+        chunks = indexer._chunk_files_parallel(str(self.project_path), file_paths)
+
+        # Should still work
+        assert len(chunks) >= 1
+
+    def test_chunk_files_error_handling(self):
+        """Test error handling in parallel chunking."""
+        indexer = IncrementalIndexer(
+            indexer=Mock(),
+            embedder=Mock(),
+            chunker=None,  # Use real chunker
+            snapshot_manager=Mock(),
+        )
+        indexer.enable_parallel_chunking = True
+        indexer.max_chunking_workers = 2
+
+        # Include a non-existent file
+        file_paths = list(self.test_files.keys()) + ["nonexistent.py"]
+
+        # Should handle error gracefully
+        chunks = indexer._chunk_files_parallel(str(self.project_path), file_paths)
+
+        # Should still get chunks from valid files
+        assert len(chunks) >= len(self.test_files)
+
+    def test_parallel_vs_sequential_same_results(self):
+        """Test that parallel and sequential produce same results."""
+        indexer = IncrementalIndexer(
+            indexer=Mock(),
+            embedder=Mock(),
+            chunker=None,  # Use real chunker
+            snapshot_manager=Mock(),
+        )
+        file_paths = list(self.test_files.keys())
+
+        # Get results with parallel enabled
+        indexer.enable_parallel_chunking = True
+        indexer.max_chunking_workers = 2
+        parallel_chunks = indexer._chunk_files_parallel(
+            str(self.project_path), file_paths
+        )
+
+        # Get results with parallel disabled
+        indexer.enable_parallel_chunking = False
+        sequential_chunks = indexer._chunk_files_parallel(
+            str(self.project_path), file_paths
+        )
+
+        # Should produce same number of chunks
+        assert len(parallel_chunks) == len(sequential_chunks)
+
+        # Sort chunks by file path and content for comparison
+        parallel_sorted = sorted(
+            parallel_chunks, key=lambda c: (c.file_path, c.content)
+        )
+        sequential_sorted = sorted(
+            sequential_chunks, key=lambda c: (c.file_path, c.content)
+        )
+
+        # Verify same chunks produced
+        for p_chunk, s_chunk in zip(parallel_sorted, sequential_sorted, strict=False):
+            assert p_chunk.content == s_chunk.content
+            assert p_chunk.file_path == s_chunk.file_path
+
+    def test_configuration_loading(self):
+        """Test that parallel chunking configuration is loaded from config."""
+        with patch("search.incremental_indexer.get_search_config") as mock_config:
+            mock_config_obj = Mock()
+            mock_config_obj.enable_parallel_chunking = False
+            mock_config_obj.max_chunking_workers = 8
+            mock_config.return_value = mock_config_obj
+
+            indexer = IncrementalIndexer(
+                indexer=Mock(),
+                embedder=Mock(),
+                chunker=None,
+                snapshot_manager=Mock(),
+            )
+
+            assert indexer.enable_parallel_chunking is False
+            assert indexer.max_chunking_workers == 8
+
+    def test_max_workers_configuration(self):
+        """Test different worker configurations."""
+        indexer = IncrementalIndexer(
+            indexer=Mock(),
+            embedder=Mock(),
+            chunker=None,  # Use real chunker
+            snapshot_manager=Mock(),
+        )
+        file_paths = list(self.test_files.keys())
+
+        # Test with different worker counts
+        for workers in [1, 2, 4]:
+            indexer.enable_parallel_chunking = True
+            indexer.max_chunking_workers = workers
+
+            chunks = indexer._chunk_files_parallel(str(self.project_path), file_paths)
+
+            # Should work with any worker count
+            assert len(chunks) >= len(self.test_files)
+
+    def teardown_method(self):
+        """Clean up test fixtures."""
+        import shutil
+
+        shutil.rmtree(self.temp_dir, ignore_errors=True)

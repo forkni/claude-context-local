@@ -146,3 +146,312 @@ def test_prefixing_logic(mock_sentence_transformer):
 
     # Clean up the temporary model
     del MODEL_REGISTRY["test/query-prefix-model"]
+
+
+@patch("embeddings.embedder.SentenceTransformer")
+def test_query_cache_hits_and_misses(mock_sentence_transformer):
+    """Test that query cache correctly tracks hits and misses."""
+
+    # Mock the model's encode method
+    def mock_encode(sentences, show_progress_bar=False):
+        return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
+
+    mock_model = MagicMock()
+    mock_model.encode.side_effect = mock_encode
+    mock_sentence_transformer.return_value = mock_model
+
+    embedder = CodeEmbedder(model_name="BAAI/bge-m3")
+
+    # Initial state - no cache hits or misses
+    stats = embedder.get_cache_stats()
+    assert stats["hits"] == 0
+    assert stats["misses"] == 0
+    assert stats["cache_size"] == 0
+
+    # First query - should be a cache miss
+    query1 = "test query"
+    embedding1 = embedder.embed_query(query1)
+    stats = embedder.get_cache_stats()
+    assert stats["hits"] == 0
+    assert stats["misses"] == 1
+    assert stats["cache_size"] == 1
+
+    # Same query again - should be a cache hit
+    embedding2 = embedder.embed_query(query1)
+    stats = embedder.get_cache_stats()
+    assert stats["hits"] == 1
+    assert stats["misses"] == 1
+    assert stats["cache_size"] == 1
+
+    # Verify embeddings are the same
+    assert np.allclose(embedding1, embedding2)
+
+    # Different query - should be another cache miss
+    query2 = "different query"
+    embedding3 = embedder.embed_query(query2)
+    stats = embedder.get_cache_stats()
+    assert stats["hits"] == 1
+    assert stats["misses"] == 2
+    assert stats["cache_size"] == 2
+
+    # Verify embeddings are different queries but same values (mock returns same)
+    assert np.allclose(embedding1, embedding3)
+
+    # First query again - should be another cache hit
+    _ = embedder.embed_query(query1)
+    stats = embedder.get_cache_stats()
+    assert stats["hits"] == 2
+    assert stats["misses"] == 2
+    assert stats["cache_size"] == 2
+
+
+@patch("embeddings.embedder.SentenceTransformer")
+def test_query_cache_lru_eviction(mock_sentence_transformer):
+    """Test that LRU eviction works when cache is full."""
+    # Mock the model's encode method
+    call_count = [0]
+
+    def mock_encode(sentences, show_progress_bar=False):
+        call_count[0] += 1
+        # Return different embeddings for each call to distinguish cache hits
+        return np.ones((len(sentences), 768), dtype=np.float32) * call_count[0]
+
+    mock_model = MagicMock()
+    mock_model.encode.side_effect = mock_encode
+    mock_sentence_transformer.return_value = mock_model
+
+    # Create embedder with small cache size for testing
+    embedder = CodeEmbedder(model_name="BAAI/bge-m3")
+    embedder._query_cache_size = 3  # Small cache for testing
+
+    # Fill cache with 3 queries
+    query1 = "query 1"
+    query2 = "query 2"
+    query3 = "query 3"
+
+    _ = embedder.embed_query(query1)  # call_count=1
+    _ = embedder.embed_query(query2)  # call_count=2
+    _ = embedder.embed_query(query3)  # call_count=3
+
+    stats = embedder.get_cache_stats()
+    assert stats["cache_size"] == 3
+    assert stats["misses"] == 3
+    assert call_count[0] == 3
+
+    # Add 4th query - should evict query1 (oldest)
+    query4 = "query 4"
+    _ = embedder.embed_query(query4)  # call_count=4
+
+    stats = embedder.get_cache_stats()
+    assert stats["cache_size"] == 3  # Still max size
+    assert stats["misses"] == 4
+    assert call_count[0] == 4
+
+    # Query 1 should be evicted - should trigger new encode call
+    _ = embedder.embed_query(query1)  # call_count=5
+    stats = embedder.get_cache_stats()
+    assert stats["hits"] == 0  # Still no hits (query1 was evicted)
+    assert stats["misses"] == 5
+    assert call_count[0] == 5
+
+    # Now cache has: query3, query4, query1 (query2 was evicted when query1 was re-added)
+    # Query 3 should still be cached - should be a cache hit
+    embedding3_cached = embedder.embed_query(query3)
+    stats = embedder.get_cache_stats()
+    assert stats["hits"] == 1  # First cache hit
+    assert stats["misses"] == 5
+    assert call_count[0] == 5  # No new encode call
+    assert np.allclose(embedding3, embedding3_cached)
+
+
+@patch("embeddings.embedder.SentenceTransformer")
+def test_query_cache_key_deterministic(mock_sentence_transformer):
+    """Test that cache key generation is deterministic."""
+
+    # Mock the model's encode method
+    def mock_encode(sentences, show_progress_bar=False):
+        return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
+
+    mock_model = MagicMock()
+    mock_model.encode.side_effect = mock_encode
+    mock_sentence_transformer.return_value = mock_model
+
+    embedder = CodeEmbedder(model_name="BAAI/bge-m3")
+
+    query = "test query"
+    model_config = embedder._get_model_config()
+
+    # Generate multiple keys for same query - should be identical
+    key1 = embedder._get_query_cache_key(query, model_config)
+    key2 = embedder._get_query_cache_key(query, model_config)
+    key3 = embedder._get_query_cache_key(query, model_config)
+
+    assert key1 == key2 == key3
+
+    # Different query should generate different key
+    different_query = "different query"
+    key4 = embedder._get_query_cache_key(different_query, model_config)
+
+    assert key1 != key4
+
+
+@patch("embeddings.embedder.SentenceTransformer")
+def test_query_cache_stats_accuracy(mock_sentence_transformer):
+    """Test that cache statistics are accurate."""
+
+    # Mock the model's encode method
+    def mock_encode(sentences, show_progress_bar=False):
+        return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
+
+    mock_model = MagicMock()
+    mock_model.encode.side_effect = mock_encode
+    mock_sentence_transformer.return_value = mock_model
+
+    embedder = CodeEmbedder(model_name="BAAI/bge-m3")
+
+    # Initial stats
+    stats = embedder.get_cache_stats()
+    assert stats["hits"] == 0
+    assert stats["misses"] == 0
+    assert stats["hit_rate"] == "0.0%"
+    assert stats["cache_size"] == 0
+    assert stats["max_size"] == 128
+
+    # Execute some queries
+    embedder.embed_query("query 1")
+    embedder.embed_query("query 2")
+    embedder.embed_query("query 1")  # Hit
+    embedder.embed_query("query 3")
+    embedder.embed_query("query 2")  # Hit
+    embedder.embed_query("query 1")  # Hit
+
+    # Verify stats
+    stats = embedder.get_cache_stats()
+    assert stats["hits"] == 3
+    assert stats["misses"] == 3
+    assert stats["hit_rate"] == "50.0%"  # 3 hits out of 6 total
+    assert stats["cache_size"] == 3
+    assert stats["max_size"] == 128
+
+
+@patch("embeddings.embedder.SentenceTransformer")
+def test_query_cache_clear(mock_sentence_transformer):
+    """Test that clear_query_cache properly resets cache state."""
+
+    # Mock the model's encode method
+    def mock_encode(sentences, show_progress_bar=False):
+        return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
+
+    mock_model = MagicMock()
+    mock_model.encode.side_effect = mock_encode
+    mock_sentence_transformer.return_value = mock_model
+
+    embedder = CodeEmbedder(model_name="BAAI/bge-m3")
+
+    # Add some queries to cache
+    embedder.embed_query("query 1")
+    embedder.embed_query("query 2")
+    embedder.embed_query("query 1")  # Hit
+
+    # Verify cache has data
+    stats = embedder.get_cache_stats()
+    assert stats["hits"] == 1
+    assert stats["misses"] == 2
+    assert stats["cache_size"] == 2
+
+    # Clear cache
+    embedder.clear_query_cache()
+
+    # Verify cache is empty
+    stats = embedder.get_cache_stats()
+    assert stats["hits"] == 0
+    assert stats["misses"] == 0
+    assert stats["hit_rate"] == "0.0%"
+    assert stats["cache_size"] == 0
+    assert stats["max_size"] == 128
+
+    # Query again - should be a miss (cache was cleared)
+    embedder.embed_query("query 1")
+    stats = embedder.get_cache_stats()
+    assert stats["hits"] == 0
+    assert stats["misses"] == 1
+    assert stats["cache_size"] == 1
+
+
+@patch("embeddings.embedder.SentenceTransformer")
+def test_query_cache_different_models(mock_sentence_transformer):
+    """Test that cache handles different model configurations correctly."""
+
+    # Mock the model's encode method
+    def mock_encode(sentences, show_progress_bar=False):
+        return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
+
+    mock_model = MagicMock()
+    mock_model.encode.side_effect = mock_encode
+    mock_sentence_transformer.return_value = mock_model
+
+    # Create two embedders with different models
+    embedder1 = CodeEmbedder(model_name="BAAI/bge-m3")
+    embedder2 = CodeEmbedder(model_name="google/embeddinggemma-300m")
+
+    query = "test query"
+
+    # Same query on different models should produce different cache keys
+    model_config1 = embedder1._get_model_config()
+    model_config2 = embedder2._get_model_config()
+
+    key1 = embedder1._get_query_cache_key(query, model_config1)
+    key2 = embedder2._get_query_cache_key(query, model_config2)
+
+    assert (
+        key1 != key2
+    ), "Different models should produce different cache keys for same query"
+
+    # Each embedder should have independent cache
+    embedder1.embed_query(query)
+    embedder2.embed_query(query)
+
+    stats1 = embedder1.get_cache_stats()
+    stats2 = embedder2.get_cache_stats()
+
+    assert stats1["cache_size"] == 1
+    assert stats2["cache_size"] == 1
+    assert stats1["misses"] == 1
+    assert stats2["misses"] == 1
+
+
+@patch("embeddings.embedder.SentenceTransformer")
+def test_query_cache_with_task_instruction(mock_sentence_transformer):
+    """Test that cache correctly handles models with task_instruction prefix."""
+    # Mock the model's encode method
+    encoded_queries = []
+
+    def mock_encode(sentences, show_progress_bar=False):
+        encoded_queries.append(sentences[0])
+        return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
+
+    mock_model = MagicMock()
+    mock_model.encode.side_effect = mock_encode
+    mock_sentence_transformer.return_value = mock_model
+
+    # Use existing model with task_instruction (CodeRankEmbed)
+    embedder = CodeEmbedder(model_name="nomic-ai/CodeRankEmbed")
+
+    query = "test query"
+
+    # First call - should encode with task instruction
+    embedding1 = embedder.embed_query(query)
+    assert len(encoded_queries) == 1
+    assert encoded_queries[0].startswith(
+        "Represent this query for searching relevant code"
+    )
+    assert "test query" in encoded_queries[0]
+
+    # Second call - should hit cache
+    embedding2 = embedder.embed_query(query)
+    assert len(encoded_queries) == 1  # No new encode call
+    assert np.allclose(embedding1, embedding2)
+
+    stats = embedder.get_cache_stats()
+    assert stats["hits"] == 1
+    assert stats["misses"] == 1

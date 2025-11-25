@@ -3,6 +3,7 @@
 import ast
 import logging
 import textwrap
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Optional
 
@@ -424,13 +425,19 @@ class MultiLanguageChunker:
         return code_chunks
 
     def chunk_directory(
-        self, directory_path: str, extensions: Optional[List[str]] = None
+        self,
+        directory_path: str,
+        extensions: Optional[List[str]] = None,
+        enable_parallel: bool = True,
+        max_workers: int = 4,
     ) -> List[CodeChunk]:
         """Chunk all supported files in a directory.
 
         Args:
             directory_path: Path to directory
             extensions: Optional list of extensions to process (default: all supported)
+            enable_parallel: Enable parallel file chunking (default: True)
+            max_workers: Number of ThreadPoolExecutor workers (default: 4)
 
         Returns:
             List of CodeChunk objects from all files
@@ -448,19 +455,75 @@ class MultiLanguageChunker:
         else:
             valid_extensions = self.SUPPORTED_EXTENSIONS
 
-        # Find all files with supported extensions
+        # Collect all file paths first
+        file_paths = []
         for ext in valid_extensions:
             for file_path in dir_path.rglob(f"*{ext}"):
                 # Skip common large/build/tooling directories
                 if any(part in self.DEFAULT_IGNORED_DIRS for part in file_path.parts):
                     continue
+                file_paths.append(file_path)
 
+        logger.info(f"Found {len(file_paths)} files to chunk")
+
+        # Process files in parallel or sequentially
+        if enable_parallel and len(file_paths) > 1:
+            all_chunks = self._chunk_files_parallel(file_paths, max_workers)
+        else:
+            all_chunks = self._chunk_files_sequential(file_paths)
+
+        logger.info(f"Total chunks from directory: {len(all_chunks)}")
+        return all_chunks
+
+    def _chunk_files_sequential(self, file_paths: List[Path]) -> List[CodeChunk]:
+        """Chunk files sequentially (backward compatibility).
+
+        Args:
+            file_paths: List of file paths to chunk
+
+        Returns:
+            List of CodeChunk objects from all files
+        """
+        all_chunks = []
+        for file_path in file_paths:
+            try:
+                chunks = self.chunk_file(str(file_path))
+                all_chunks.extend(chunks)
+                logger.debug(f"Chunked {len(chunks)} from {file_path}")
+            except Exception as e:
+                logger.warning(f"Failed to chunk {file_path}: {e}")
+        return all_chunks
+
+    def _chunk_files_parallel(
+        self, file_paths: List[Path], max_workers: int
+    ) -> List[CodeChunk]:
+        """Chunk files in parallel using ThreadPoolExecutor.
+
+        Args:
+            file_paths: List of file paths to chunk
+            max_workers: Number of ThreadPoolExecutor workers
+
+        Returns:
+            List of CodeChunk objects from all files
+        """
+        all_chunks = []
+
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all chunking tasks
+            future_to_path = {
+                executor.submit(self.chunk_file, str(file_path)): file_path
+                for file_path in file_paths
+            }
+
+            # Collect results as they complete
+            for future in as_completed(future_to_path):
+                file_path = future_to_path[future]
                 try:
-                    chunks = self.chunk_file(str(file_path))
+                    chunks = future.result()
                     all_chunks.extend(chunks)
                     logger.debug(f"Chunked {len(chunks)} from {file_path}")
                 except Exception as e:
                     logger.warning(f"Failed to chunk {file_path}: {e}")
 
-        logger.info(f"Total chunks from directory: {len(all_chunks)}")
         return all_chunks

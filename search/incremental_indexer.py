@@ -2,16 +2,19 @@
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from chunking.multi_language_chunker import MultiLanguageChunker
+from chunking.python_ast_chunker import CodeChunk
 from embeddings.embedder import CodeEmbedder
 from merkle.change_detector import ChangeDetector, FileChanges
 from merkle.merkle_dag import MerkleDAG
 from merkle.snapshot_manager import SnapshotManager
 
+from .config import get_search_config
 from .indexer import CodeIndexManager as Indexer
 
 logger = logging.getLogger(__name__)
@@ -67,6 +70,59 @@ class IncrementalIndexer:
         self.chunker = chunker or MultiLanguageChunker()
         self.snapshot_manager = snapshot_manager or SnapshotManager()
         self.change_detector = ChangeDetector(self.snapshot_manager)
+
+        # Load parallel chunking configuration
+        config = get_search_config()
+        self.enable_parallel_chunking = config.enable_parallel_chunking
+        self.max_chunking_workers = config.max_chunking_workers
+
+    def _chunk_files_parallel(
+        self, project_path: str, file_paths: List[str]
+    ) -> List[CodeChunk]:
+        """Chunk files in parallel or sequentially based on configuration.
+
+        Args:
+            project_path: Root project path
+            file_paths: List of relative file paths to chunk
+
+        Returns:
+            List of CodeChunk objects from all files
+        """
+        all_chunks = []
+
+        # Use parallel chunking if enabled and there are multiple files
+        if self.enable_parallel_chunking and len(file_paths) > 1:
+            with ThreadPoolExecutor(max_workers=self.max_chunking_workers) as executor:
+                # Submit all chunking tasks
+                future_to_path = {}
+                for file_path in file_paths:
+                    full_path = Path(project_path) / file_path
+                    future = executor.submit(self.chunker.chunk_file, str(full_path))
+                    future_to_path[future] = file_path
+
+                # Collect results as they complete
+                for future in as_completed(future_to_path):
+                    file_path = future_to_path[future]
+                    try:
+                        chunks = future.result()
+                        if chunks:
+                            all_chunks.extend(chunks)
+                            logger.debug(f"Chunked {file_path}: {len(chunks)} chunks")
+                    except Exception as e:
+                        logger.warning(f"Failed to chunk {file_path}: {e}")
+        else:
+            # Sequential chunking (fallback or single file)
+            for file_path in file_paths:
+                full_path = Path(project_path) / file_path
+                try:
+                    chunks = self.chunker.chunk_file(str(full_path))
+                    if chunks:
+                        all_chunks.extend(chunks)
+                        logger.debug(f"Chunked {file_path}: {len(chunks)} chunks")
+                except Exception as e:
+                    logger.warning(f"Failed to chunk {file_path}: {e}")
+
+        return all_chunks
 
     def detect_changes(self, project_path: str) -> Tuple[FileChanges, MerkleDAG]:
         """Detect changes in project since last snapshot.
@@ -337,18 +393,22 @@ class IncrementalIndexer:
                 logger.info(f"  Supported: {sf}")
 
             # Collect all chunks first, then embed in a single pass for efficiency
-            all_chunks = []
-            for file_path in supported_files:
-                full_path = Path(project_path) / file_path
-                try:
-                    chunks = self.chunker.chunk_file(str(full_path))
-                    if chunks:
-                        all_chunks.extend(chunks)
-                        logger.info(f"Chunked {file_path}: {len(chunks)} chunks")
-                    else:
-                        logger.warning(f"No chunks generated for {file_path}")
-                except Exception as e:
-                    logger.warning(f"Failed to chunk {file_path}: {e}")
+            # Use parallel chunking for improved performance
+            logger.info(
+                f"Chunking files (parallel={'enabled' if self.enable_parallel_chunking else 'disabled'}, workers={self.max_chunking_workers})"
+            )
+            all_chunks = self._chunk_files_parallel(project_path, supported_files)
+
+            # Log any files that didn't produce chunks
+            files_with_chunks = sum(
+                1
+                for f in supported_files
+                if any(c.file_path == str(Path(project_path) / f) for c in all_chunks)
+            )
+            if files_with_chunks < len(supported_files):
+                logger.warning(
+                    f"{len(supported_files) - files_with_chunks} files produced no chunks"
+                )
 
             logger.info(f"Total chunks collected: {len(all_chunks)}")
 
@@ -507,15 +567,11 @@ class IncrementalIndexer:
         ]
 
         # Collect all chunks first, then embed in a single pass
-        chunks_to_embed = []
-        for file_path in supported_files:
-            full_path = Path(project_path) / file_path
-            try:
-                chunks = self.chunker.chunk_file(str(full_path))
-                if chunks:
-                    chunks_to_embed.extend(chunks)
-            except Exception as e:
-                logger.warning(f"Failed to chunk {file_path}: {e}")
+        # Use parallel chunking for improved performance
+        logger.info(
+            f"[INCREMENTAL] Chunking {len(supported_files)} files (parallel={'enabled' if self.enable_parallel_chunking else 'disabled'})"
+        )
+        chunks_to_embed = self._chunk_files_parallel(project_path, supported_files)
 
         all_embedding_results = []
         if chunks_to_embed:

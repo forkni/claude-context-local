@@ -808,22 +808,36 @@ async def handle_search_code(arguments: Dict[str, Any]) -> dict:
         # Phase 3: Execute search (pass routing decision to get correct model index)
         searcher = get_searcher(model_key=selected_model_key)
 
-        # Check if index ready
+        # Check if index ready - support both HybridSearcher and IntelligentSearcher
         total_chunks = 0
-        if hasattr(searcher, "index_manager"):
+        is_ready = False
+
+        # Option 1: HybridSearcher (has is_ready property and dense_index)
+        if hasattr(searcher, "is_ready"):
+            is_ready = searcher.is_ready
+            if hasattr(searcher, "dense_index") and searcher.dense_index:
+                if (
+                    hasattr(searcher.dense_index, "index")
+                    and searcher.dense_index.index
+                ):
+                    total_chunks = searcher.dense_index.index.ntotal
+        # Option 2: IntelligentSearcher (has index_manager)
+        elif hasattr(searcher, "index_manager") and searcher.index_manager:
             stats = searcher.index_manager.get_stats()
             total_chunks = stats.get("total_chunks", 0)
+            is_ready = total_chunks > 0
+        # Option 3: Direct stats method
         elif hasattr(searcher, "get_stats"):
             stats = searcher.get_stats()
             total_chunks = stats.get("total_chunks", 0)
+            is_ready = total_chunks > 0
 
-        if total_chunks == 0:
+        if not is_ready or total_chunks == 0:
             return {
                 "error": "No indexed project found",
                 "message": "You must index a project before searching",
                 "current_project": current_project or "None",
             }
-
         # Build filters
         filters = {}
         if file_pattern:
