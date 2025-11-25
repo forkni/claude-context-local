@@ -5,7 +5,7 @@ Tests basic MCP server import and functionality without full workflow.
 """
 # ruff: noqa: I001
 
-import json
+import asyncio
 import sys
 from pathlib import Path
 
@@ -15,12 +15,12 @@ def _mcp_imports_check():
     print("Testing MCP server imports...")
 
     try:
-        from mcp_server.server import find_similar_code  # noqa: F401
-        from mcp_server.server import get_index_status  # noqa: F401
-        from mcp_server.server import index_directory  # noqa: F401
-        from mcp_server.server import list_projects  # noqa: F401
-        from mcp_server.server import search_code  # noqa: F401
-        from mcp_server.server import switch_project  # noqa: F401
+        from mcp_server.tool_handlers import handle_find_similar_code  # noqa: F401
+        from mcp_server.tool_handlers import handle_get_index_status  # noqa: F401
+        from mcp_server.tool_handlers import handle_index_directory  # noqa: F401
+        from mcp_server.tool_handlers import handle_list_projects  # noqa: F401
+        from mcp_server.tool_handlers import handle_search_code  # noqa: F401
+        from mcp_server.tool_handlers import handle_switch_project  # noqa: F401
 
         print("[OK] MCP server functions imported successfully")
         return True
@@ -42,16 +42,15 @@ def _index_status_check():
     print("\nTesting index status...")
 
     try:
-        from mcp_server.server import get_index_status
+        from mcp_server.tool_handlers import handle_get_index_status
 
-        result = get_index_status()
+        result = asyncio.run(handle_get_index_status({}))
 
-        # Parse result
-        data = json.loads(result)
-        print(f"[OK] Index status retrieved: {len(data)} keys")
+        # result is already a dict, no parsing needed
+        print(f"[OK] Index status retrieved: {len(result)} keys")
 
-        if "index_statistics" in data:
-            stats = data["index_statistics"]
+        if "index_statistics" in result:
+            stats = result["index_statistics"]
             print(f"     Total chunks: {stats.get('total_chunks', 0)}")
             print(f"     Total files: {stats.get('total_files', 0)}")
 
@@ -72,7 +71,7 @@ def _chunking_core_check():
 
     try:
         # Create a simple test
-        import tempfile
+        from tempfile import TemporaryDirectory
 
         from chunking.multi_language_chunker import MultiLanguageChunker
 
@@ -87,17 +86,15 @@ class TestClass:
         self.value = 42
 '''
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(test_code)
-            f.flush()
+        with TemporaryDirectory() as tmpdir:
+            test_file = Path(tmpdir) / "test.py"
+            test_file.write_text(test_code)
 
-            chunker = MultiLanguageChunker(Path(f.name).parent)
-            chunks = chunker.chunk_file(f.name)
+            chunker = MultiLanguageChunker(Path(tmpdir))
+            chunks = chunker.chunk_file(str(test_file))
 
             print(f"[OK] Chunking test completed: {len(chunks)} chunks generated")
-
-            # Clean up
-            Path(f.name).unlink()
+            # Auto cleanup when context exits
 
         return True
     except Exception as e:

@@ -19,8 +19,6 @@ from mcp_server.project_persistence import save_project_selection
 # Import server globals and helpers
 from mcp_server.server import (
     _cleanup_previous_resources,
-    _embedders,
-    _multi_model_enabled,
     get_embedder,
     get_index_manager,
     get_project_storage_dir,
@@ -59,9 +57,9 @@ async def handle_get_index_status(arguments: Dict[str, Any]) -> dict:
 
         # Collect model info
         model_info = {}
-        if _multi_model_enabled:
+        if state.multi_model_enabled:
             loaded_models = []
-            for model_key, embedder in _embedders.items():
+            for model_key, embedder in state.embedders.items():
                 if embedder is not None:
                     info = embedder.get_model_info()
                     info["model_key"] = model_key
@@ -72,8 +70,8 @@ async def handle_get_index_status(arguments: Dict[str, Any]) -> dict:
                 "total_loaded": len(loaded_models),
             }
         else:
-            if "default" in _embedders and _embedders["default"] is not None:
-                model_info = _embedders["default"].get_model_info()
+            if "default" in state.embedders and state.embedders["default"] is not None:
+                model_info = state.embedders["default"].get_model_info()
                 model_info["multi_model_mode"] = False
 
         return {
@@ -234,7 +232,7 @@ async def handle_get_search_config_status(arguments: Dict[str, Any]) -> dict:
             "rrf_k": config.rrf_k_parameter,
             "use_parallel": config.use_parallel_search,
             "embedding_model": config.embedding_model_name,
-            "multi_model_enabled": _multi_model_enabled,
+            "multi_model_enabled": get_state().multi_model_enabled,
         }
     except Exception as e:
         logger.error(f"Config status check failed: {e}", exc_info=True)
@@ -322,11 +320,8 @@ async def handle_clear_index(arguments: Dict[str, Any]) -> dict:
         index_manager = get_index_manager(model_key=state.current_model_key)
         index_manager.clear_index()
 
-        # Cleanup in-memory state (both globals and ApplicationState)
-        global _index_manager, _searcher
+        # Cleanup in-memory state
         state = get_state()
-        _index_manager = None
-        _searcher = None
         state.index_manager = None
         state.searcher = None
 
@@ -353,7 +348,7 @@ async def handle_configure_query_routing(arguments: Dict[str, Any]) -> dict:
             # This would require restarting the server to take effect
             return {
                 "warning": "multi_model_enabled requires server restart",
-                "current_value": _multi_model_enabled,
+                "current_value": get_state().multi_model_enabled,
                 "message": "Set CLAUDE_MULTI_MODEL_ENABLED environment variable",
             }
 
@@ -397,10 +392,8 @@ async def handle_configure_search_mode(arguments: Dict[str, Any]) -> dict:
 
             config_manager.save_config(config)
 
-            # Reset searcher to pick up new config (both globals and ApplicationState)
-            global _searcher
+            # Reset searcher to pick up new config
             state = get_state()
-            _searcher = None
             state.searcher = None
 
             return {
@@ -437,12 +430,8 @@ async def handle_switch_embedding_model(arguments: Dict[str, Any]) -> dict:
         config.embedding_model_name = model_name
         config_manager.save_config(config)
 
-        # Reset embedders to force reload (both globals and ApplicationState)
-        global _embedders, _index_manager, _searcher
+        # Reset embedders to force reload
         state = get_state()
-        _embedders.clear()
-        _index_manager = None
-        _searcher = None
         state.clear_embedders()
         state.index_manager = None
         state.searcher = None
@@ -574,7 +563,7 @@ def _route_query_to_model(
     Returns:
         tuple: (selected_model_key, routing_info_dict)
     """
-    if _multi_model_enabled and use_routing and model_key is None:
+    if get_state().multi_model_enabled and use_routing and model_key is None:
         router = QueryRouter(enable_logging=True)
         decision = router.route(query)
         return decision.model_key, {
@@ -795,15 +784,14 @@ async def handle_search_code(arguments: Dict[str, Any]) -> dict:
             query, use_routing, model_key
         )
 
-        # Phase 2: Auto-reindex if needed (must stay inline due to global _searcher)
+        # Phase 2: Auto-reindex if needed
         current_project = get_state().current_project
         if auto_reindex and current_project:
             reindexed = _check_auto_reindex(
                 current_project, selected_model_key, max_age_minutes
             )
             if reindexed:
-                global _searcher
-                _searcher = None
+                get_state().searcher = None
 
         # Phase 3: Execute search (pass routing decision to get correct model index)
         searcher = get_searcher(model_key=selected_model_key)
@@ -1047,9 +1035,6 @@ def _index_with_all_models(directory_path: Path, incremental: bool) -> list[dict
     original_config = get_search_config()
     original_model = original_config.embedding_model_name
 
-    # Clear global state for clean model switching
-    global _index_manager, _searcher
-
     try:
         for model_key, model_name in MODEL_POOL_CONFIG.items():
             logger.info(f"Indexing with model: {model_name} ({model_key})")
@@ -1071,8 +1056,9 @@ def _index_with_all_models(directory_path: Path, incremental: bool) -> list[dict
             config_module._config_manager = None
 
             # Clear cached components to force reload with new model
-            _index_manager = None
-            _searcher = None
+            state = get_state()
+            state.index_manager = None
+            state.searcher = None
 
             # Get project storage for this model
             project_dir = get_project_storage_dir(str(directory_path))
@@ -1140,8 +1126,9 @@ def _index_with_all_models(directory_path: Path, incremental: bool) -> list[dict
         config_mgr.save_config(config)
 
         # Clear cached components
-        _index_manager = None
-        _searcher = None
+        state = get_state()
+        state.index_manager = None
+        state.searcher = None
         logger.info(f"Restored original model: {original_model}")
 
     return results
@@ -1168,7 +1155,7 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
 
     # Auto-detect multi-model mode if not explicitly specified
     if multi_model is None:
-        multi_model = _multi_model_enabled
+        multi_model = get_state().multi_model_enabled
 
     logger.info(
         f"[INDEX] directory={directory_path}, incremental={incremental}, multi_model={multi_model}"
@@ -1184,7 +1171,7 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
         set_current_project(str(directory_path))
 
         # Multi-model batch indexing
-        if multi_model and _multi_model_enabled:
+        if multi_model and get_state().multi_model_enabled:
             logger.info(f"Multi-model batch indexing for: {directory_path}")
             results = _index_with_all_models(directory_path, incremental)
             return _build_index_response(

@@ -40,10 +40,6 @@ class TestGetterFunctions:
         # Import here after mocks are set up
         import mcp_server.server as server
 
-        # Reset global state
-        server._index_manager = None
-        server._current_project = None
-
         # Set up mocks - create a proper Path mock with mkdir method
         mock_storage_dir = MagicMock(spec=Path)
         mock_storage_dir.name = "project_abc123_1024d"

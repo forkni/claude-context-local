@@ -12,13 +12,44 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 
 
+@pytest.fixture
+def test_glsl_dir(tmp_path):
+    """Create a temporary GLSL test directory with sample files."""
+    glsl_dir = tmp_path / "test_glsl"
+    glsl_dir.mkdir()
+
+    # Create a simple GLSL fragment shader
+    (glsl_dir / "test.frag").write_text(
+        """#version 330 core
+out vec4 FragColor;
+
+void main() {
+    FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+}
+"""
+    )
+
+    # Create a simple GLSL vertex shader
+    (glsl_dir / "test.vert").write_text(
+        """#version 330 core
+layout (location = 0) in vec3 aPos;
+
+void main() {
+    gl_Position = vec4(aPos, 1.0);
+}
+"""
+    )
+
+    return glsl_dir
+
+
 @pytest.mark.slow
-def test_direct_indexing(tmp_path):
+def test_direct_indexing(tmp_path, test_glsl_dir):
     """Test the incremental indexer directly."""
     from chunking.multi_language_chunker import MultiLanguageChunker
     from search.indexer import CodeIndexManager
 
-    project_path = str(Path(__file__).parent.parent.parent / "test_glsl_dir")
+    project_path = str(test_glsl_dir)
     project_name = "DirectTest"
 
     print("TESTING DIRECT INCREMENTAL INDEXING")
@@ -105,7 +136,7 @@ def test_direct_indexing(tmp_path):
 
 
 @pytest.mark.slow
-def test_incremental_indexer_class(tmp_path):
+def test_incremental_indexer_class(tmp_path, test_glsl_dir):
     """Test the IncrementalIndexer class directly."""
     print("\n\nTESTING INCREMENTAL INDEXER CLASS")
     print("=" * 60)
@@ -120,7 +151,7 @@ def test_incremental_indexer_class(tmp_path):
         # Create with explicit snapshot_manager to avoid dependency issues
         indexer = IncrementalIndexer(snapshot_manager=snapshot_manager)
 
-        project_path = str(Path(__file__).parent.parent.parent / "test_glsl_dir")
+        project_path = str(test_glsl_dir)
 
         # Force a full index
         print("Calling incremental_index with force_full=True")

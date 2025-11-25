@@ -120,20 +120,6 @@ def reset_global_state() -> Generator[None, None, None]:
     except ImportError:
         pass  # Module might not be available in some tests
 
-    # Also reset module-level globals directly (backward compatibility)
-    try:
-        import mcp_server.server as server_module
-
-        server_module._embedders = {}
-        server_module._index_manager = None
-        server_module._searcher = None
-        server_module._storage_dir = None
-        server_module._current_project = None
-        server_module._current_model_key = None
-        server_module._model_preload_task_started = False
-    except ImportError:
-        pass  # Module might not be available in some tests
-
     # Reset config manager cache to ensure clean state
     try:
         from search.config import get_config_manager
