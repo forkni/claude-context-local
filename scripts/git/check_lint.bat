@@ -42,7 +42,8 @@ set "ERRORS_FOUND=0"
 REM [1/4] Check with Ruff
 echo [1/4] Running ruff...
 REM [Guide 1.6] Quote paths to executables
-call ".venv\Scripts\ruff.exe" check .
+REM Exclude tests/test_data and _archive to avoid checking archived/test fixtures
+call ".venv\Scripts\ruff.exe" check . --extend-exclude "tests/test_data" --extend-exclude "_archive"
 if %ERRORLEVEL% NEQ 0 (
     echo ✗ Ruff found issues
     set "ERRORS_FOUND=1"
@@ -53,7 +54,7 @@ echo.
 
 REM [2/4] Check with Black
 echo [2/4] Running black...
-call ".venv\Scripts\black.exe" --check .
+call ".venv\Scripts\black.exe" --check . --extend-exclude "tests/test_data" --extend-exclude "_archive"
 if %ERRORLEVEL% NEQ 0 (
     echo ✗ Black found formatting issues
     set "ERRORS_FOUND=1"
@@ -64,7 +65,7 @@ echo.
 
 REM [3/4] Check with isort
 echo [3/4] Running isort...
-call ".venv\Scripts\isort.exe" --check-only .
+call ".venv\Scripts\isort.exe" --check-only . --skip-glob "tests/test_data/*" --skip-glob "_archive/*"
 if %ERRORLEVEL% NEQ 0 (
     echo ✗ isort found import sorting issues
     set "ERRORS_FOUND=1"

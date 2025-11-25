@@ -17,7 +17,8 @@ echo.
 REM [1/4] Fix imports with isort
 echo [1/4] Fixing import order with isort...
 REM [Guide 1.6] Quote paths
-call ".venv\Scripts\isort.exe" .
+REM Exclude tests/test_data to avoid fixing test fixtures with intentional errors
+call ".venv\Scripts\isort.exe" . --skip-glob "tests/test_data/*" --skip-glob "_archive/*"
 if %ERRORLEVEL% EQU 0 (
     echo ✓ isort completed
 ) else (
@@ -27,7 +28,7 @@ echo.
 
 REM [2/4] Fix formatting with Black
 echo [2/4] Fixing code formatting with black...
-call ".venv\Scripts\black.exe" .
+call ".venv\Scripts\black.exe" . --extend-exclude "tests/test_data" --extend-exclude "_archive"
 if %ERRORLEVEL% EQU 0 (
     echo ✓ black completed
 ) else (
@@ -37,7 +38,7 @@ echo.
 
 REM [3/4] Fix issues with Ruff
 echo [3/4] Fixing code issues with ruff...
-call ".venv\Scripts\ruff.exe" check . --fix --unsafe-fixes
+call ".venv\Scripts\ruff.exe" check . --fix --unsafe-fixes --extend-exclude "tests/test_data" --extend-exclude "_archive"
 if %ERRORLEVEL% EQU 0 (
     echo ✓ ruff completed
 ) else (

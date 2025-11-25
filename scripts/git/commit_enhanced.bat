@@ -200,11 +200,12 @@ echo [4/7] Checking code quality...
 REM Always run Python lint checks (ruff, black, isort)
 set "PYTHON_LINT_ERROR=0"
 REM [Guide 1.6] Quote paths
-call ".venv\Scripts\ruff.exe" check . >nul 2>&1
+REM Exclude tests/test_data to avoid checking test fixtures with intentional errors
+call ".venv\Scripts\ruff.exe" check . --extend-exclude "tests/test_data" --extend-exclude "_archive" >nul 2>&1
 if %ERRORLEVEL% NEQ 0 set "PYTHON_LINT_ERROR=1"
-call ".venv\Scripts\black.exe" --check . >nul 2>&1
+call ".venv\Scripts\black.exe" --check . --extend-exclude "tests/test_data" --extend-exclude "_archive" >nul 2>&1
 if %ERRORLEVEL% NEQ 0 set "PYTHON_LINT_ERROR=1"
-call ".venv\Scripts\isort.exe" --check-only . >nul 2>&1
+call ".venv\Scripts\isort.exe" --check-only . --skip-glob "tests/test_data/*" --skip-glob "_archive/*" >nul 2>&1
 if %ERRORLEVEL% NEQ 0 set "PYTHON_LINT_ERROR=1"
 
 REM Check markdownlint unless --skip-md-lint is set
@@ -223,9 +224,9 @@ if !PYTHON_LINT_ERROR! EQU 1 (
     if !NON_INTERACTIVE! EQU 1 (
         echo [Non-interactive mode] Auto-fixing Python lint issues...
         echo:
-        call ".venv\Scripts\isort.exe" . >nul 2>&1
-        call ".venv\Scripts\black.exe" . >nul 2>&1
-        call ".venv\Scripts\ruff.exe" check --fix . >nul 2>&1
+        call ".venv\Scripts\isort.exe" . --skip-glob "tests/test_data/*" --skip-glob "_archive/*" >nul 2>&1
+        call ".venv\Scripts\black.exe" . --extend-exclude "tests/test_data" --extend-exclude "_archive" >nul 2>&1
+        call ".venv\Scripts\ruff.exe" check --fix . --extend-exclude "tests/test_data" --extend-exclude "_archive" >nul 2>&1
         echo:
         echo Restaging fixed files...
         git add .
@@ -233,7 +234,7 @@ if !PYTHON_LINT_ERROR! EQU 1 (
 
         REM Re-check Python lint
         set "PYTHON_LINT_ERROR=0"
-        call ".venv\Scripts\ruff.exe" check . >nul 2>&1
+        call ".venv\Scripts\ruff.exe" check . --extend-exclude "tests/test_data" --extend-exclude "_archive" >nul 2>&1
         if %ERRORLEVEL% NEQ 0 (
             echo [X] Python lint errors remain after auto-fix
             popd && exit /b 1
@@ -242,9 +243,9 @@ if !PYTHON_LINT_ERROR! EQU 1 (
         set /p "FIX_LINT=Auto-fix Python lint issues? (yes/no): "
         if /i "!FIX_LINT!" == "yes" (
             echo:
-            call ".venv\Scripts\isort.exe" . >nul 2>&1
-            call ".venv\Scripts\black.exe" . >nul 2>&1
-            call ".venv\Scripts\ruff.exe" check --fix . >nul 2>&1
+            call ".venv\Scripts\isort.exe" . --skip-glob "tests/test_data/*" --skip-glob "_archive/*" >nul 2>&1
+            call ".venv\Scripts\black.exe" . --extend-exclude "tests/test_data" --extend-exclude "_archive" >nul 2>&1
+            call ".venv\Scripts\ruff.exe" check --fix . --extend-exclude "tests/test_data" --extend-exclude "_archive" >nul 2>&1
             echo:
             echo Restaging fixed files...
             git add .

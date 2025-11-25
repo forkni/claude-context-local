@@ -3,6 +3,7 @@
 MCP Server Functionality Test
 Tests basic MCP server import and functionality without full workflow.
 """
+# ruff: noqa: I001
 
 import json
 import sys
@@ -14,14 +15,12 @@ def test_mcp_imports():
     print("Testing MCP server imports...")
 
     try:
-        from mcp_server.server import (
-            find_similar_code,  # noqa: F401
-            get_index_status,  # noqa: F401
-            index_directory,  # noqa: F401
-            list_projects,  # noqa: F401
-            search_code,  # noqa: F401
-            switch_project,  # noqa: F401
-        )
+        from mcp_server.server import find_similar_code  # noqa: F401
+        from mcp_server.server import get_index_status  # noqa: F401
+        from mcp_server.server import index_directory  # noqa: F401
+        from mcp_server.server import list_projects  # noqa: F401
+        from mcp_server.server import search_code  # noqa: F401
+        from mcp_server.server import switch_project  # noqa: F401
 
         print("[OK] MCP server functions imported successfully")
         return True
