@@ -492,19 +492,8 @@ def get_searcher(project_path: str = None, model_key: str = None):
                 max_workers=2,
                 project_id=project_id,
             )
-            try:
-                existing_index_manager = get_index_manager(
-                    project_path or state.current_project, model_key=model_key
-                )
-                if (
-                    existing_index_manager.index
-                    and existing_index_manager.index.ntotal > 0
-                ):
-                    logger.info(
-                        "Attempting to populate HybridSearcher with existing dense index data"
-                    )
-            except Exception as e:
-                logger.warning(f"Could not check existing indices: {e}")
+            # REMOVED: get_index_manager() call that was causing state corruption
+            # The HybridSearcher already loads existing indices during initialization
             logger.info(
                 f"HybridSearcher initialized (BM25: {config.bm25_weight}, Dense: {config.dense_weight})"
             )
