@@ -323,6 +323,7 @@ class TestComprehensiveSearch:
 ```
 
 **Benefits**:
+
 - Skip slow tests during development: `pytest tests/ -m "not slow"`
 - Run only slow tests for comprehensive validation: `pytest tests/ -m slow`
 - Separate fast CI pipeline from comprehensive nightly builds
@@ -330,18 +331,21 @@ class TestComprehensiveSearch:
 ### CI/CD Optimization Strategy
 
 **Fast CI Pipeline** (< 3 minutes):
+
 ```bash
 # Run unit + fast integration only
 pytest tests/unit/ tests/fast_integration/ --cov=. --cov-fail-under=75
 ```
 
 **Comprehensive CI Pipeline** (10-15 minutes):
+
 ```bash
 # Run all tests including slow integration
 pytest tests/ --cov=. --cov-fail-under=80
 ```
 
 **Development Workflow**:
+
 ```bash
 # Quick validation during development (< 3 min)
 pytest tests/unit/ tests/fast_integration/ -x
@@ -356,6 +360,7 @@ pytest tests/ -v
 ### When to Add Tests to Each Tier
 
 **Unit Tests** (`tests/unit/`):
+
 - Testing individual functions, classes, or modules
 - All external dependencies mocked
 - No file system operations (or using in-memory alternatives)
@@ -363,6 +368,7 @@ pytest tests/ -v
 - Execution time < 1 second
 
 **Fast Integration Tests** (`tests/fast_integration/`):
+
 - Quick end-to-end workflows with mocked slow operations
 - File system operations using `tmp_path` fixture
 - Mocked model loading (avoid downloading 4GB+ models)
@@ -371,6 +377,7 @@ pytest tests/ -v
 - Execution time < 5 seconds
 
 **Slow Integration Tests** (`tests/slow_integration/`):
+
 - Complete workflows with real embeddings and models
 - Large codebase indexing and search
 - Multi-hop search, hybrid search with real data
@@ -644,6 +651,7 @@ def test_with_graph_storage(tmp_path):
 ```
 
 **Bad Example (Production Pollution)**:
+
 ```python
 def test_with_graph_storage_bad():
     """WRONG: Creates data in production directory."""
@@ -670,6 +678,7 @@ def snapshot_manager(tmp_path: Path):
 ```
 
 **Usage Example**:
+
 ```python
 def test_with_fixture(graph_storage):
     """Use provided fixtures for automatic isolation."""
@@ -767,6 +776,7 @@ ls -la ~/.claude_code_search/merkle/
 After each pytest session, stale merkle snapshots are automatically cleaned up via the `pytest_sessionfinish` hook. This prevents orphaned test artifacts from accumulating in `~/.claude_code_search/merkle/`.
 
 **Why This Matters:**
+
 - Tests create merkle snapshots for incremental indexing
 - Test cleanup removes project directories but not merkle files
 - Without automatic cleanup, orphaned snapshots accumulate over time
@@ -791,6 +801,7 @@ The cleanup system runs automatically after every pytest session:
 | **Exit codes** | 0 (passed) or 1 (some failures) | Only runs on test completion |
 
 **Hook Implementation** (`tests/conftest.py` lines 71-103):
+
 ```python
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     """Clean up stale Merkle snapshots after test session completes."""
@@ -813,6 +824,7 @@ For manual cleanup or debugging:
 ```
 
 **Interactive mode output:**
+
 ```
 ======================================================================
 Merkle Snapshot Cleanup Utility
@@ -863,6 +875,7 @@ ls ~/.claude_code_search/merkle/
 ```
 
 **Expected behavior:**
+
 - Before tests: May see orphaned snapshots from previous runs
 - After tests: Only snapshots for currently indexed projects remain
 
@@ -871,6 +884,7 @@ ls ~/.claude_code_search/merkle/
 If needed for debugging, you can temporarily disable the hook:
 
 1. **Comment out hook** in `tests/conftest.py`:
+
    ```python
    # def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
    #     """Clean up stale Merkle snapshots after test session completes."""
@@ -878,6 +892,7 @@ If needed for debugging, you can temporarily disable the hook:
    ```
 
 2. **Or skip specific tests** that create many snapshots:
+
    ```bash
    pytest tests/ -k "not merkle" -v
    ```
@@ -1102,6 +1117,7 @@ pytest tests/ -n auto --dist=loadfile
 ### CI Pipeline Strategies
 
 **Fast Feedback Pipeline** (runs on every commit, < 3 min):
+
 - Unit tests (82 tests, ~5s)
 - Fast integration tests (77 tests, ~2 min)
 - Coverage check with 75% threshold
@@ -1109,6 +1125,7 @@ pytest tests/ -n auto --dist=loadfile
 - **Purpose**: Quick feedback for developers
 
 **Comprehensive Pipeline** (runs on PR/nightly, ~15 min):
+
 - All unit tests
 - All fast integration tests
 - All slow integration tests (67 tests)

@@ -55,6 +55,23 @@ async def handle_get_index_status(arguments: Dict[str, Any]) -> dict:
         index_manager = get_index_manager(model_key=state.current_model_key)
         stats = index_manager.get_stats()
 
+        # Include hybrid searcher sync status
+        # Use get_search_config() to check if hybrid is enabled
+        config = get_search_config()
+        if config.enable_hybrid_search:
+            try:
+                # Initialize searcher if needed (lazy init)
+                searcher = get_searcher()
+                if isinstance(searcher, HybridSearcher):
+                    hybrid_stats = searcher.get_stats()
+                    # Only add if these keys exist (HybridSearcher-specific)
+                    if "bm25_documents" in hybrid_stats:
+                        stats["bm25_documents"] = hybrid_stats.get("bm25_documents")
+                        stats["dense_vectors"] = hybrid_stats.get("dense_vectors")
+                        stats["synced"] = hybrid_stats.get("synced")
+            except Exception as e:
+                logger.warning(f"Could not get hybrid searcher stats: {e}")
+
         # Collect model info
         model_info = {}
         if state.multi_model_enabled:

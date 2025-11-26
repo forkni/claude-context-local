@@ -61,8 +61,18 @@ WHEN NOT TO USE:
                 },
                 "chunk_type": {
                     "type": "string",
-                    "enum": ["function", "class", "method"],
-                    "description": 'Filter by code structure - "function", "class", "method", or None for all',
+                    "enum": [
+                        "function",
+                        "class",
+                        "method",
+                        "module",
+                        "decorated_definition",
+                        "interface",
+                        "enum",
+                        "struct",
+                        "type",
+                    ],
+                    "description": "Filter by code structure type (function, class, method, module, decorated_definition, interface, enum, struct, type), or None for all",
                 },
                 "include_context": {
                     "type": "boolean",

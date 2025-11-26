@@ -455,7 +455,7 @@ class TestHybridSearcher:
         """Test batched similar chunks search."""
         # Setup mock for dense index
         mock_dense.return_value.index = None
-        searcher = HybridSearcher(self.temp_dir)
+        HybridSearcher(self.temp_dir)
 
         dense_mock = mock_dense.return_value
         dense_mock.index = Mock()
@@ -489,7 +489,7 @@ class TestHybridSearcher:
         """Test that batched search produces same results as individual searches."""
         # Setup mock for dense index
         mock_dense.return_value.index = None
-        searcher = HybridSearcher(self.temp_dir)
+        HybridSearcher(self.temp_dir)
 
         dense_mock = mock_dense.return_value
         dense_mock.index = Mock()
@@ -526,7 +526,7 @@ class TestHybridSearcher:
         """Test batched search with empty input."""
         # Setup mock for dense index
         mock_dense.return_value.index = None
-        searcher = HybridSearcher(self.temp_dir)
+        HybridSearcher(self.temp_dir)
 
         dense_mock = mock_dense.return_value
         dense_mock.index = Mock()

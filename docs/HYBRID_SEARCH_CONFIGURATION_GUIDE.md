@@ -197,17 +197,20 @@ set CLAUDE_MULTI_MODEL_ENABLED=false
 **Total VRAM**: 5.3 GB for all 3 models (v0.5.17+ lazy loading)
 
 **Startup (lazy loading enabled)**:
+
 - **VRAM at startup**: 0 MB (models load on first search)
 - **First search**: 5-10s one-time model loading delay
 - **After first search**: 5.3 GB VRAM (all 3 models loaded)
 
 **Loaded State Breakdown**:
+
 - **Qwen3-0.6B**: ~2.4 GB (1024d embeddings)
 - **BGE-M3**: ~2.3 GB (1024d embeddings)
 - **CodeRankEmbed**: ~0.6 GB (768d embeddings)
 - **Total**: 5.3 GB (vs 2.3 GB single-model)
 
 **Memory Management**:
+
 - Use `/cleanup_resources` to unload models and return to 0 MB
 - Models reload automatically on next search (5-10s)
 
@@ -219,7 +222,6 @@ set CLAUDE_MULTI_MODEL_ENABLED=false
 - **Routing Overhead**: <1ms per query (negligible)
 - **Quality Improvement**: +15-25% for specialized queries vs single-model
 - **Routing Accuracy**: 100% on 8 ground truth verification queries
-
 
 ### Routing Transparency
 

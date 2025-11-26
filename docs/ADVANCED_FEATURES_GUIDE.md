@@ -204,11 +204,13 @@ Keywords: "merkle", "rrf", "reranking", "tree structure", "hybrid search", "rank
 **Multi-Model Pool** (v0.5.17+ with lazy loading):
 
 **Startup (lazy loading enabled)**:
+
 - **VRAM at startup**: 0 MB (models load on first search)
 - **First search delay**: 5-10s one-time model loading
 - **After first search**: 5.3 GB VRAM (all 3 models loaded)
 
 **Loaded State** (all 3 models in memory):
+
 - **Total VRAM**: 5.3 GB (on RTX 4090 with 25.8 GB capacity)
 - **Qwen3-0.6B**: ~2.4 GB
 - **BGE-M3**: ~2.3 GB (additional)
@@ -216,20 +218,20 @@ Keywords: "merkle", "rrf", "reranking", "tree structure", "hybrid search", "rank
 - **Headroom**: 20.5 GB (79.5% free)
 
 **Minimum Requirements**:
+
 - RTX 3060 12GB: Comfortable (7 GB headroom)
 - RTX 3070 8GB: Tight fit (3 GB headroom)
 - RTX 4060 8GB: Tight fit (3 GB headroom)
 - RTX 4090 24GB: Excellent (19 GB headroom)
 
 **Memory Management**:
+
 - **Lazy loading**: Models load on-demand (0 MB startup VRAM)
 - **Manual cleanup**: Use `/cleanup_resources` to unload models and return to 0 MB
 - **Models reload**: Automatically on next search after cleanup (5-10s)
 - **Automatic cleanup**: When switching projects
 
-
 ### Performance Metrics
-
 
 **Routing Accuracy** (tested on 8 verification queries):
 
@@ -237,11 +239,11 @@ Keywords: "merkle", "rrf", "reranking", "tree structure", "hybrid search", "rank
 - **Routing overhead**: <1ms per query (negligible)
 
 **Startup Performance (v0.5.17+)**:
+
 - **Startup**: 0 MB VRAM, 3-5s server start (lazy loading)
 - **First search**: 8-15s total (5-10s model loading + 3-5s search)
 - **Subsequent searches**: 3-5s (models stay loaded)
 - **Model load time** (when needed): 5-10 seconds for all 3 models
-
 
 **Expected Quality Improvements** (vs single BGE-M3):
 

@@ -843,8 +843,7 @@ if platform.system() == "Windows" and transport == "sse":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 ```
 
-
-####  8. First Search is Slow (5-10 seconds)
+#### 8. First Search is Slow (5-10 seconds)
 
 **Symptom**: First search after server startup takes 8-15 seconds
 
@@ -880,11 +879,13 @@ if platform.system() == "Windows" and transport == "sse":
 **This is EXPECTED behavior, not a bug**:
 
 ✅ **Benefits**:
+
 - **Zero startup VRAM**: 0 MB vs 4.86GB (100% reduction)
 - **5-10x faster startup**: 3-5s vs 15-30s server start
 - **Instant server ready**: No waiting for model loading
 
 ⏱️ **Trade-off**:
+
 - **First search delay**: 5-10s one-time model loading per session
 - **After cleanup**: Models reload on next search (5-10s)
 
@@ -908,6 +909,7 @@ Server startup:              0 MB VRAM, ready in 3-5s
 ```
 
 **Related Documentation**:
+
 - Performance expectations: See "Runtime Performance (v0.5.17+)" section above
 - Manual cleanup: See `/cleanup_resources` in MCP_TOOLS_REFERENCE.md
 - Memory management: Use `/get_memory_status` to monitor VRAM
@@ -986,7 +988,6 @@ Startup (server starts):              0 MB VRAM (lazy loading)
 - ✅ **Benefit**: Zero startup VRAM (0 MB vs 4.86GB)
 - ⏱️ **Trade-off**: First search has 5-10s model load delay
 - ⏱️ **Trade-off**: Models reload after cleanup (5-10s)
-
 
 1. **CUDA Setup**
    - Install NVIDIA drivers (latest)

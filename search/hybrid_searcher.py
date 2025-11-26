@@ -162,6 +162,14 @@ class HybridSearcher:
             f"[INIT] Ready status: BM25={not self.bm25_index.is_empty}, Dense={dense_count > 0}, Overall={self.is_ready}"
         )
 
+        # Check for index mismatch (early warning system)
+        if isinstance(total_bm25, int) and isinstance(dense_count, int):
+            if abs(total_bm25 - dense_count) > 10:
+                self._logger.warning(
+                    f"[INIT] INDEX MISMATCH DETECTED: BM25={total_bm25}, Dense={dense_count}. "
+                    f"Consider re-indexing to synchronize indices."
+                )
+
         self.reranker = RRFReranker(k=rrf_k)
         self.gpu_monitor = GPUMemoryMonitor()
 
@@ -266,6 +274,7 @@ class HybridSearcher:
             "total_chunks": total_chunks,
             "bm25_documents": bm25_count,
             "dense_vectors": dense_count,
+            "synced": bm25_count == dense_count,
             "is_ready": self.is_ready,
             "bm25_ready": not self.bm25_index.is_empty,
             "dense_ready": dense_count > 0,

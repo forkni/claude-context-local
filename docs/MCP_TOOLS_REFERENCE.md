@@ -35,7 +35,7 @@ This modular reference can be embedded in any project instructions for Claude Co
 | **file_pattern** | string | Substring match on file path | Any string (e.g., "auth", "test_", "utils/") |
 | **include_dirs** | array | Only search in these directories (prefix match) | `["src/", "lib/"]` |
 | **exclude_dirs** | array | Exclude from search (prefix match) | `["tests/", "vendor/", "node_modules/"]` |
-| **chunk_type** | string | Filter by code structure type | `"function"`, `"class"`, `"method"`, `"module"`, `"decorated_definition"` |
+| **chunk_type** | string | Filter by code structure type | `"function"`, `"class"`, `"method"`, `"module"`, `"decorated_definition"`, `"interface"`, `"enum"`, `"struct"`, `"type"` |
 
 ### Directory Filtering (v0.5.9+)
 
@@ -148,6 +148,7 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 | Accuracy | Hit-or-miss | Targeted | Targeted | Precision |
 
 **Performance Notes (v0.5.17+)**:
+
 - **Startup**: 3-5s server start, 0 MB VRAM (models load on first search)
 - **First search per session**: 8-15s total (5-10s one-time model loading + 3-5s search)
 - **Subsequent searches**: 3-5s (models stay loaded in memory)

@@ -389,18 +389,21 @@ pytest tests/ --cov=. --cov-report=html
 ### CI Pipeline Strategies
 
 **Fast Feedback Pipeline** (runs on every commit, < 3 min):
+
 ```bash
 # Unit + fast integration only
 pytest tests/unit/ tests/fast_integration/ --cov=. --cov-fail-under=75
 ```
 
 **Comprehensive Pipeline** (runs on PR/nightly, ~15 min):
+
 ```bash
 # All tests including slow integration
 pytest tests/ --cov=. --cov-fail-under=80
 ```
 
 **Using Test Markers**:
+
 ```bash
 # Skip slow tests (fast CI pipeline)
 pytest tests/ -m "not slow" --cov=. --cov-fail-under=75
