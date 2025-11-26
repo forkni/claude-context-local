@@ -785,7 +785,7 @@ REM Search Configuration Functions
 echo.
 echo [INFO] Current Search Configuration:
 if exist ".venv\Scripts\python.exe" (
-    .\.venv\Scripts\python.exe -c "import os; from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding_model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = os.getenv('CLAUDE_MULTI_MODEL_ENABLED', '').lower() in ('true', '1'); print(f'  Embedding Model: {model_short} ({dim}d, {vram})'); print('  Multi-Model Routing:', 'Enabled (BGE-M3 + Qwen3 + CodeRankEmbed)' if multi_enabled else 'Disabled'); print('  Search Mode:', config.default_search_mode); print('  Hybrid Search:', 'Enabled' if config.enable_hybrid_search else 'Disabled'); print('  BM25 Weight:', config.bm25_weight); print('  Dense Weight:', config.dense_weight); print('  Prefer GPU:', config.prefer_gpu); print('  Parallel Search:', 'Enabled' if config.use_parallel_search else 'Disabled')"
+    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding_model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); print(f'  Embedding Model: {model_short} ({dim}d, {vram})'); print('  Multi-Model Routing:', 'Enabled' if config.multi_model_enabled else 'Disabled'); print('  Search Mode:', config.default_search_mode); print('  Hybrid Search:', 'Enabled' if config.enable_hybrid_search else 'Disabled'); print('  BM25 Weight:', config.bm25_weight); print('  Dense Weight:', config.dense_weight); print('  Prefer GPU:', config.prefer_gpu); print('  Parallel Search:', 'Enabled' if config.use_parallel_search else 'Disabled')"
     if "!ERRORLEVEL!" neq "0" (
         echo Error loading configuration
         echo Using defaults: hybrid mode, BM25=0.4, Dense=0.6
@@ -824,9 +824,13 @@ if "!mode_choice!"=="4" set "SEARCH_MODE=auto"
 
 if defined SEARCH_MODE (
     echo [INFO] Setting search mode to: !SEARCH_MODE!
-    REM Here you would call a configuration script or set environment variable
-    set "CLAUDE_SEARCH_MODE=!SEARCH_MODE!"
-    echo [OK] Search mode updated for this session
+    REM Persist to config file via Python
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.default_search_mode = '!SEARCH_MODE!'; cfg.enable_hybrid_search = '!SEARCH_MODE!' in ['hybrid', 'auto']; mgr.save_config(cfg); print('[OK] Search mode saved to config file')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+        set "CLAUDE_SEARCH_MODE=!SEARCH_MODE!"
+        echo [INFO] Set as environment variable for this session only
+    )
 ) else (
     echo [ERROR] Invalid choice
 )
@@ -837,7 +841,9 @@ goto search_config_menu
 echo.
 echo [INFO] Configure search weights ^(must sum to 1.0^)
 echo.
-echo   Current: BM25=0.4, Dense=0.6 ^(default^)
+REM Show current values from config
+.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print(f'   Current: BM25={cfg.bm25_weight}, Dense={cfg.dense_weight}')" 2>nul
+if errorlevel 1 echo    Current: BM25=0.4, Dense=0.6 ^(default^)
 echo.
 set /p bm25_weight="Enter BM25 weight (0.0-1.0, or press Enter to cancel): "
 
@@ -851,10 +857,15 @@ REM Handle empty input - cancel and go back
 if not defined dense_weight goto search_config_menu
 if "!dense_weight!"=="" goto search_config_menu
 
-echo [INFO] Weights set - BM25: %bm25_weight%, Dense: %dense_weight%
-set "CLAUDE_BM25_WEIGHT=%bm25_weight%"
-set "CLAUDE_DENSE_WEIGHT=%dense_weight%"
-echo [OK] Configuration saved for current session
+echo [INFO] Saving weights - BM25: %bm25_weight%, Dense: %dense_weight%
+REM Persist to config file via Python
+.\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.bm25_weight = float('%bm25_weight%'); cfg.dense_weight = float('%dense_weight%'); mgr.save_config(cfg); print('[OK] Weights saved to config file')" 2>nul
+if errorlevel 1 (
+    echo [ERROR] Failed to save configuration
+    set "CLAUDE_BM25_WEIGHT=%bm25_weight%"
+    set "CLAUDE_DENSE_WEIGHT=%dense_weight%"
+    echo [INFO] Set as environment variables for this session only
+)
 pause
 goto search_config_menu
 
@@ -944,10 +955,13 @@ echo Performance: 15-25%% quality improvement on complex queries
 echo.
 set /p confirm_multi="Enable multi-model routing? (y/N): "
 if /i "!confirm_multi!"=="y" (
-    set CLAUDE_MULTI_MODEL_ENABLED=true
-    echo [OK] Multi-model routing enabled for this session
-    echo [INFO] To make permanent, add to environment variables:
-    echo [INFO]   set CLAUDE_MULTI_MODEL_ENABLED=true
+    REM Persist to config file via Python
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.multi_model_enabled = True; mgr.save_config(cfg); print('[OK] Multi-model routing enabled and saved to config')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save to config file
+        set CLAUDE_MULTI_MODEL_ENABLED=true
+        echo [INFO] Set as environment variable for this session only
+    )
 ) else (
     echo [INFO] Cancelled
 )
@@ -1038,12 +1052,18 @@ echo [INFO] Resetting to default configuration:
 echo   - Search Mode: hybrid
 echo   - BM25 Weight: 0.4
 echo   - Dense Weight: 0.6
+echo   - Multi-Model: true
 echo   - GPU: auto
-set "CLAUDE_SEARCH_MODE=hybrid"
-set "CLAUDE_BM25_WEIGHT=0.4"
-set "CLAUDE_DENSE_WEIGHT=0.6"
-set "CLAUDE_ENABLE_HYBRID=true"
-echo [OK] Configuration reset
+REM Persist defaults to config file via Python
+.\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager, SearchConfig; mgr = SearchConfigManager(); cfg = SearchConfig(); mgr.save_config(cfg); print('[OK] Configuration reset to defaults and saved')" 2>nul
+if errorlevel 1 (
+    echo [ERROR] Failed to reset config file
+    set "CLAUDE_SEARCH_MODE=hybrid"
+    set "CLAUDE_BM25_WEIGHT=0.4"
+    set "CLAUDE_DENSE_WEIGHT=0.6"
+    set "CLAUDE_ENABLE_HYBRID=true"
+    echo [INFO] Reset environment variables for this session only
+)
 pause
 goto search_config_menu
 

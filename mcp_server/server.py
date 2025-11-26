@@ -713,6 +713,16 @@ if __name__ == "__main__":
                 """Run stdio server with proper lifecycle management."""
                 state = get_state()
 
+                # Sync multi_model_enabled from config file (with env override)
+                from search.config import get_config_manager
+
+                try:
+                    config_manager = get_config_manager()
+                    config = config_manager.load_config()
+                    state.sync_from_config(config)
+                except Exception as e:
+                    logger.warning(f"[INIT] Config sync failed (using defaults): {e}")
+
                 # Initialize global state BEFORE starting server
                 logger.info("=" * 60)
                 logger.info("SERVER STARTUP: Initializing global state")
@@ -801,6 +811,16 @@ if __name__ == "__main__":
             async def app_lifespan(app):
                 """Application lifecycle - initialize global state ONCE before accepting connections."""
                 state = get_state()
+
+                # Sync multi_model_enabled from config file (with env override)
+                from search.config import get_config_manager
+
+                try:
+                    config_manager = get_config_manager()
+                    config = config_manager.load_config()
+                    state.sync_from_config(config)
+                except Exception as e:
+                    logger.warning(f"[INIT] Config sync failed (using defaults): {e}")
 
                 logger.info("=" * 60)
                 logger.info("APPLICATION STARTUP: Initializing global state")

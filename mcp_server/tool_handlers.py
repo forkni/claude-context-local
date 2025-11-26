@@ -243,7 +243,7 @@ async def handle_get_search_config_status(arguments: Dict[str, Any]) -> dict:
     try:
         config = get_search_config()
         return {
-            "search_mode": "hybrid" if config.enable_hybrid_search else "semantic",
+            "search_mode": config.default_search_mode,
             "bm25_weight": config.bm25_weight,
             "dense_weight": config.dense_weight,
             "rrf_k": config.rrf_k_parameter,
@@ -359,30 +359,39 @@ async def handle_configure_query_routing(arguments: Dict[str, Any]) -> dict:
 
     try:
         config_manager = get_config_manager()
-        config_manager.load_config()
+        config = config_manager.load_config()
+        changes = {}
 
         if enable_multi_model is not None:
-            # This would require restarting the server to take effect
-            return {
-                "warning": "multi_model_enabled requires server restart",
-                "current_value": get_state().multi_model_enabled,
-                "message": "Set CLAUDE_MULTI_MODEL_ENABLED environment variable",
-            }
+            # Persist to config file
+            config.multi_model_enabled = enable_multi_model
+            changes["multi_model_enabled"] = enable_multi_model
 
-        changes = {}
+            # Update runtime state
+            state = get_state()
+            state.multi_model_enabled = enable_multi_model
+
+            # Save config
+            config_manager.save_config(config)
+
         if default_model is not None:
             if default_model in MODEL_POOL_CONFIG:
                 changes["default_model"] = default_model
+                # Note: default_model is runtime-only for now
             else:
                 return {"error": f"Invalid model: {default_model}"}
 
         if confidence_threshold is not None:
             changes["confidence_threshold"] = confidence_threshold
+            # Note: confidence_threshold is runtime-only for now
 
         return {
             "success": True,
             "changes": changes,
-            "message": "Configuration updated (some changes may require restart)",
+            "message": "Configuration updated and persisted",
+            "current_state": {
+                "multi_model_enabled": get_state().multi_model_enabled,
+            },
         }
     except Exception as e:
         logger.error(f"Configure routing failed: {e}", exc_info=True)
@@ -402,6 +411,7 @@ async def handle_configure_search_mode(arguments: Dict[str, Any]) -> dict:
 
         # Update config
         if search_mode in ["hybrid", "semantic", "bm25", "auto"]:
+            config.default_search_mode = search_mode
             config.enable_hybrid_search = search_mode in ["hybrid", "auto"]
             config.bm25_weight = bm25_weight
             config.dense_weight = dense_weight

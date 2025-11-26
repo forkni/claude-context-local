@@ -78,6 +78,9 @@ class SearchConfig:
     use_parallel_search: bool = True
     max_parallel_workers: int = 2
 
+    # Multi-Model Routing Configuration
+    multi_model_enabled: bool = True  # Enable intelligent query routing across models
+
     # Parallel Chunking Configuration
     enable_parallel_chunking: bool = True  # Enable parallel file chunking
     max_chunking_workers: int = 4  # ThreadPoolExecutor workers for chunking
@@ -226,6 +229,10 @@ class SearchConfigManager:
             ),
             "CLAUDE_DEFAULT_K": ("default_k", int),
             "CLAUDE_MAX_K": ("max_k", int),
+            "CLAUDE_MULTI_MODEL_ENABLED": (
+                "multi_model_enabled",
+                self._bool_from_env,
+            ),
         }
 
         config_dict = {}

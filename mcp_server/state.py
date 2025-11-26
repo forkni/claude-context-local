@@ -19,7 +19,10 @@ Usage:
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
+
+if TYPE_CHECKING:
+    from search.config import SearchConfig
 
 
 @dataclass
@@ -72,10 +75,37 @@ class ApplicationState:
         self.searcher = None
         self.storage_dir = None
         self.current_project = None
-        # Re-read from environment
-        self.multi_model_enabled = os.getenv(
-            "CLAUDE_MULTI_MODEL_ENABLED", "true"
-        ).lower() in ("true", "1", "yes")
+        # Re-read from config with env override
+        self._reset_multi_model_from_config()
+
+    def _reset_multi_model_from_config(self) -> None:
+        """Reset multi_model_enabled from config file with env override."""
+        try:
+            from search.config import get_search_config
+
+            config = get_search_config()
+            self.sync_from_config(config)
+        except Exception:
+            # Fallback to env var if config unavailable
+            self.multi_model_enabled = os.getenv(
+                "CLAUDE_MULTI_MODEL_ENABLED", "true"
+            ).lower() in ("true", "1", "yes")
+
+    def sync_from_config(self, config: "SearchConfig") -> None:
+        """Sync multi_model_enabled from config file.
+
+        Environment variable CLAUDE_MULTI_MODEL_ENABLED overrides config file.
+        Called during server startup in app_lifespan().
+
+        Args:
+            config: SearchConfig instance to sync from
+        """
+        # Environment variable takes precedence over config file
+        env_value = os.getenv("CLAUDE_MULTI_MODEL_ENABLED")
+        if env_value is not None:
+            self.multi_model_enabled = env_value.lower() in ("true", "1", "yes")
+        else:
+            self.multi_model_enabled = config.multi_model_enabled
 
     def switch_project(self, path: str) -> None:
         """Switch to a different project.

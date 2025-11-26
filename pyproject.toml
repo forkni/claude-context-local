@@ -153,6 +153,8 @@ exclude = [
     "dist",
     "__pycache__",
     "tests/test_data",  # Sample code for testing, not production code
+    "*.cmd",  # Batch files
+    "*.bat",  # Batch files
 ]
 
 [tool.ruff.lint]

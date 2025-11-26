@@ -185,5 +185,5 @@ def _all_files_check():
 
 
 if __name__ == "__main__":
-    success = test_all_files()
+    success = _all_files_check()
     sys.exit(0 if success else 1)
