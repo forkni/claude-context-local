@@ -15,6 +15,7 @@ Complete guide to advanced features in claude-context-local MCP server.
 9. [Symbol ID Lookups (Phase 1.1)](#symbol-id-lookups-phase-11)
 10. [AI Guidance Messages (Phase 1.2)](#ai-guidance-messages-phase-12)
 11. [Dependency Analysis (Phase 1.3)](#dependency-analysis-phase-13)
+12. [Self-Healing Index Sync](#self-healing-index-sync)
 
 ---
 
@@ -1541,6 +1542,71 @@ def process():
 - Qualified chunk IDs stored in: `chunks_metadata.json`
 - Call relationships in: `call_graph.json`
 - Format: `{"ClassName.method": {"calls": ["OtherClass.method"], "called_by": [...]}}`
+
+---
+
+## Self-Healing Index Sync
+
+**Feature**: Automatic BM25 synchronization during incremental indexing when significant desync is detected
+
+**Version**: v0.5.17+
+
+### Problem Solved
+
+Historical desync between BM25 and dense indices can occur when:
+- BM25 was added after initial dense indexing
+- Index corruption or partial updates
+- Migration from older versions
+
+Incremental indexing only processes **changed files**, leaving unchanged files desynced.
+
+### How It Works
+
+1. After incremental index completes, system checks BM25 vs Dense counts
+2. If desync exceeds **10% threshold**, auto-sync triggers
+3. BM25 is rebuilt from dense index metadata (`content` field)
+4. Result reported in `IncrementalIndexResult.bm25_resynced`
+
+### Configuration
+
+**Enabled by default** - no configuration needed
+
+**Threshold**: 10% (hardcoded - avoids resync for minor discrepancies)
+
+### Example Log Output
+
+```
+[INCREMENTAL] Index saved
+[INCREMENTAL] Significant desync detected: BM25=1891, Dense=4401 (57.0% difference)
+[INCREMENTAL] Auto-syncing BM25 from dense metadata...
+[RESYNC] Found 4401 documents to sync
+[RESYNC] BM25 rebuilt: 4401 documents
+[INCREMENTAL] BM25 resync complete: 4401 documents
+```
+
+### When Full Re-index is Still Needed
+
+| Scenario | Auto-Sync Sufficient | Full Re-index Needed |
+|----------|---------------------|---------------------|
+| New files added | ✅ | ❌ |
+| Files modified | ✅ | ❌ |
+| Files removed | ✅ | ❌ |
+| Historical desync | ✅ | ❌ |
+| Chunking algorithm changed | ❌ | ✅ |
+| Embedding model upgraded | ❌ | ✅ |
+| Index corruption suspected | ❌ | ✅ |
+
+### API Changes
+
+`IncrementalIndexResult` dataclass now includes:
+- `bm25_resynced: bool` - Whether resync was triggered
+- `bm25_resync_count: int` - Number of documents synced
+
+### Performance
+
+- **Detection**: Negligible (<1ms)
+- **Resync**: ~5 seconds for 4000+ documents
+- **Only runs when needed**: No impact on normal operations
 
 ---
 

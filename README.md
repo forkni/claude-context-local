@@ -86,6 +86,7 @@ An intelligent code search system that uses Google's EmbeddingGemma, BAAI's BGE-
 - **Fast search**: FAISS for efficient similarity search with GPU acceleration support
 - **Incremental indexing**: 5-10x faster updates with Merkle tree change detection
 - **Batch removal optimization**: 600-1000x faster when removing many files during incremental updates
+- **Self-healing hybrid indices**: Automatic BM25 resync when desync >10% detected during incremental indexing
 
 ## Why this
 

@@ -42,6 +42,8 @@ class TestIncrementalIndexResult:
             time_taken=1.5,
             success=True,
             error="Test error",
+            bm25_resynced=True,
+            bm25_resync_count=100,
         )
 
         result_dict = result.to_dict()
@@ -55,6 +57,8 @@ class TestIncrementalIndexResult:
             "time_taken": 1.5,
             "success": True,
             "error": "Test error",
+            "bm25_resynced": True,
+            "bm25_resync_count": 100,
         }
 
         assert result_dict == expected
@@ -812,6 +816,124 @@ class TestIncrementalIndexer:
             assert result.success is False
             # The error message will be from _full_index, which returns "Recovery failed"
             assert "Recovery failed" in result.error or "failed" in result.error.lower()
+
+    def test_auto_sync_triggered_when_desync_exceeds_threshold(self):
+        """Test auto-sync triggered when desync > 10%."""
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+        # Mock snapshot exists with changes so auto-sync code is reached
+        self.mock_snapshot_manager.has_snapshot.return_value = True
+
+        mock_changes = Mock()
+        mock_changes.has_changes.return_value = True
+        mock_changes.added = []
+        mock_changes.removed = []
+        mock_changes.modified = ["modified.py"]  # At least one change
+        mock_dag = Mock()
+        mock_dag.get_all_files.return_value = ["modified.py"]
+        indexer.change_detector.detect_changes_from_snapshot = Mock(
+            return_value=(mock_changes, mock_dag)
+        )
+
+        # Mock chunking and embedding
+        self.mock_chunker.is_supported.return_value = True
+        mock_chunk = Mock()
+        mock_chunk.content = "test content"
+        self.mock_chunker.chunk_file.return_value = [mock_chunk]
+
+        mock_embedding_result = Mock()
+        mock_embedding_result.metadata = {}
+        self.mock_embedder.embed_chunks.return_value = [mock_embedding_result]
+
+        # Mock indexer with significant desync (>10%)
+        # Dense: 100, BM25: 85 => 15% difference
+        self.mock_indexer.get_stats.return_value = {
+            "bm25_documents": 85,
+            "dense_vectors": 100,
+            "total_chunks": 100,
+        }
+        self.mock_indexer.resync_bm25_from_dense = Mock(return_value=100)
+
+        result = indexer.incremental_index(str(self.project_path), "test_project")
+
+        assert result.success is True
+        assert result.bm25_resynced is True
+        assert result.bm25_resync_count == 100
+        self.mock_indexer.resync_bm25_from_dense.assert_called_once()
+
+    def test_auto_sync_not_triggered_when_desync_below_threshold(self):
+        """Test auto-sync NOT triggered when desync < 10%."""
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+        self.mock_snapshot_manager.has_snapshot.return_value = True
+
+        mock_changes = Mock()
+        mock_changes.has_changes.return_value = False
+        mock_dag = Mock()
+        mock_dag.get_all_files.return_value = []
+        indexer.change_detector.detect_changes_from_snapshot = Mock(
+            return_value=(mock_changes, mock_dag)
+        )
+
+        # Mock indexer with small desync (<10%)
+        # Dense: 100, BM25: 95 => 5% difference
+        self.mock_indexer.get_stats.return_value = {
+            "bm25_documents": 95,
+            "dense_vectors": 100,
+            "total_chunks": 100,
+        }
+        self.mock_indexer.resync_bm25_from_dense = Mock(return_value=100)
+
+        result = indexer.incremental_index(str(self.project_path), "test_project")
+
+        assert result.success is True
+        assert result.bm25_resynced is False
+        assert result.bm25_resync_count == 0
+        self.mock_indexer.resync_bm25_from_dense.assert_not_called()
+
+    def test_auto_sync_not_triggered_when_counts_equal(self):
+        """Test auto-sync NOT triggered when BM25 and dense counts are equal."""
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+        self.mock_snapshot_manager.has_snapshot.return_value = True
+
+        mock_changes = Mock()
+        mock_changes.has_changes.return_value = False
+        mock_dag = Mock()
+        mock_dag.get_all_files.return_value = []
+        indexer.change_detector.detect_changes_from_snapshot = Mock(
+            return_value=(mock_changes, mock_dag)
+        )
+
+        # Mock indexer with synced counts
+        self.mock_indexer.get_stats.return_value = {
+            "bm25_documents": 100,
+            "dense_vectors": 100,
+            "total_chunks": 100,
+        }
+        self.mock_indexer.resync_bm25_from_dense = Mock(return_value=100)
+
+        result = indexer.incremental_index(str(self.project_path), "test_project")
+
+        assert result.success is True
+        assert result.bm25_resynced is False
+        assert result.bm25_resync_count == 0
+        self.mock_indexer.resync_bm25_from_dense.assert_not_called()
 
     def teardown_method(self):
         """Clean up test fixtures."""

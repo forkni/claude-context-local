@@ -1349,6 +1349,55 @@ class HybridSearcher:
             self._logger.error(f"[SAVE] Failed to save indices: {e}")
             raise
 
+    def resync_bm25_from_dense(self) -> int:
+        """
+        Rebuild BM25 index from dense index metadata.
+        Called automatically when desync detected during incremental indexing.
+
+        Returns:
+            Number of documents synced to BM25
+        """
+        self._logger.info("[RESYNC] Starting BM25 resync from dense metadata...")
+
+        # Get all chunk IDs from dense index
+        if (
+            not hasattr(self.dense_index, "_chunk_ids")
+            or not self.dense_index._chunk_ids
+        ):
+            self._logger.warning("[RESYNC] No chunks in dense index")
+            return 0
+
+        documents = []
+        doc_ids = []
+        metadata = {}
+
+        for chunk_id in self.dense_index._chunk_ids:
+            entry = self.dense_index.metadata_db.get(chunk_id)
+            if entry:
+                content = entry["metadata"].get("content", "")
+                if content:
+                    documents.append(content)
+                    doc_ids.append(chunk_id)
+                    metadata[chunk_id] = entry["metadata"]
+
+        if not documents:
+            self._logger.error("[RESYNC] No content found in dense metadata")
+            return 0
+
+        self._logger.info(f"[RESYNC] Found {len(documents)} documents to sync")
+
+        # Rebuild BM25 index
+        self.bm25_index = BM25Index(
+            str(self.storage_dir / "bm25"),
+            use_stopwords=self.bm25_use_stopwords,
+            use_stemming=self.bm25_use_stemming,
+        )
+        self.bm25_index.index_documents(documents, doc_ids, metadata)
+        self.bm25_index.save()
+
+        self._logger.info(f"[RESYNC] BM25 rebuilt: {self.bm25_index.size} documents")
+        return self.bm25_index.size
+
     def load_indices(self) -> bool:
         """Load both BM25 and dense indices."""
         try:

@@ -247,6 +247,7 @@ docs/*
 !docs/TESTING_GUIDE.md
 !docs/VSCODE_SETUP.md
 !docs/PRE_COMMIT_HOOKS.md
+!docs/VERSION_HISTORY.md
 
 # Development-only documentation (local-only)
 # - AUTOMATED_GIT_WORKFLOW.md (Claude orchestration guide - development only)

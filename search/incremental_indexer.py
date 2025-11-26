@@ -32,6 +32,8 @@ class IncrementalIndexResult:
     time_taken: float
     success: bool
     error: Optional[str] = None
+    bm25_resynced: bool = False
+    bm25_resync_count: int = 0
 
     def to_dict(self) -> Dict:
         """Convert to dictionary."""
@@ -44,6 +46,8 @@ class IncrementalIndexResult:
             "time_taken": self.time_taken,
             "success": self.success,
             "error": self.error,
+            "bm25_resynced": self.bm25_resynced,
+            "bm25_resync_count": self.bm25_resync_count,
         }
 
 
@@ -228,6 +232,8 @@ class IncrementalIndexer:
                     chunks_removed=0,
                     time_taken=time.time() - start_time,
                     success=True,
+                    bm25_resynced=False,
+                    bm25_resync_count=0,
                 )
 
             # Log changes
@@ -290,6 +296,42 @@ class IncrementalIndexer:
             self.indexer.save_index()
             logger.info("[INCREMENTAL] Index saved")
 
+            # Auto-sync BM25 if significant desync detected (>10% difference)
+            bm25_resynced = False
+            bm25_resync_count = 0
+            DESYNC_THRESHOLD = 0.10  # 10% threshold - affects search quality noticeably
+
+            if hasattr(self.indexer, "get_stats") and hasattr(
+                self.indexer, "resync_bm25_from_dense"
+            ):
+                try:
+                    stats = self.indexer.get_stats()
+                    bm25_count = stats.get("bm25_documents", 0)
+                    dense_count = stats.get("dense_vectors", 0)
+
+                    # Ensure counts are integers (not Mock objects in tests)
+                    if (
+                        isinstance(bm25_count, int)
+                        and isinstance(dense_count, int)
+                        and dense_count > 0
+                    ):
+                        desync_ratio = abs(dense_count - bm25_count) / dense_count
+                        if desync_ratio > DESYNC_THRESHOLD:
+                            logger.warning(
+                                f"[INCREMENTAL] Significant desync detected: BM25={bm25_count}, "
+                                f"Dense={dense_count} ({desync_ratio:.1%} difference)"
+                            )
+                            logger.info(
+                                "[INCREMENTAL] Auto-syncing BM25 from dense metadata..."
+                            )
+                            bm25_resync_count = self.indexer.resync_bm25_from_dense()
+                            bm25_resynced = True
+                            logger.info(
+                                f"[INCREMENTAL] BM25 resync complete: {bm25_resync_count} documents"
+                            )
+                except Exception as e:
+                    logger.debug(f"[INCREMENTAL] BM25 sync check skipped: {e}")
+
             # Clear GPU cache to free intermediate tensors from embedding batches
             try:
                 import gc
@@ -312,6 +354,8 @@ class IncrementalIndexer:
                 chunks_removed=chunks_removed,
                 time_taken=time.time() - start_time,
                 success=True,
+                bm25_resynced=bm25_resynced,
+                bm25_resync_count=bm25_resync_count,
             )
 
         except Exception as e:
@@ -344,6 +388,8 @@ class IncrementalIndexer:
                     time_taken=time.time() - start_time,
                     success=False,
                     error=f"Incremental indexing failed: {e}. Recovery attempt also failed: {recovery_error}",
+                    bm25_resynced=False,
+                    bm25_resync_count=0,
                 )
 
     def _full_index(
@@ -460,6 +506,42 @@ class IncrementalIndexer:
             self.indexer.save_index()
             logger.info("[INCREMENTAL] Index saved")
 
+            # Auto-sync BM25 if significant desync detected (>10% difference)
+            bm25_resynced = False
+            bm25_resync_count = 0
+            DESYNC_THRESHOLD = 0.10  # 10% threshold - affects search quality noticeably
+
+            if hasattr(self.indexer, "get_stats") and hasattr(
+                self.indexer, "resync_bm25_from_dense"
+            ):
+                try:
+                    stats = self.indexer.get_stats()
+                    bm25_count = stats.get("bm25_documents", 0)
+                    dense_count = stats.get("dense_vectors", 0)
+
+                    # Ensure counts are integers (not Mock objects in tests)
+                    if (
+                        isinstance(bm25_count, int)
+                        and isinstance(dense_count, int)
+                        and dense_count > 0
+                    ):
+                        desync_ratio = abs(dense_count - bm25_count) / dense_count
+                        if desync_ratio > DESYNC_THRESHOLD:
+                            logger.warning(
+                                f"[FULL_INDEX] Significant desync detected: BM25={bm25_count}, "
+                                f"Dense={dense_count} ({desync_ratio:.1%} difference)"
+                            )
+                            logger.info(
+                                "[FULL_INDEX] Auto-syncing BM25 from dense metadata..."
+                            )
+                            bm25_resync_count = self.indexer.resync_bm25_from_dense()
+                            bm25_resynced = True
+                            logger.info(
+                                f"[FULL_INDEX] BM25 resync complete: {bm25_resync_count} documents"
+                            )
+                except Exception as e:
+                    logger.debug(f"[FULL_INDEX] BM25 sync check skipped: {e}")
+
             # Clear GPU cache to free intermediate tensors from embedding batches
             try:
                 import gc
@@ -482,6 +564,8 @@ class IncrementalIndexer:
                 chunks_removed=0,
                 time_taken=time.time() - start_time,
                 success=True,
+                bm25_resynced=bm25_resynced,
+                bm25_resync_count=bm25_resync_count,
             )
 
         except Exception as e:
@@ -495,6 +579,8 @@ class IncrementalIndexer:
                 time_taken=time.time() - start_time,
                 success=False,
                 error=str(e),
+                bm25_resynced=False,
+                bm25_resync_count=0,
             )
 
     def _remove_old_chunks(self, changes: FileChanges, project_name: str) -> int:
@@ -676,4 +762,6 @@ class IncrementalIndexer:
                 chunks_removed=0,
                 time_taken=time.time() - start_time,
                 success=True,
+                bm25_resynced=False,
+                bm25_resync_count=0,
             )
