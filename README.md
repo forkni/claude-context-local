@@ -20,7 +20,7 @@
 ███████╗╚██████╔╝╚██████╗██║  ██║███████╗
 ```
 
-**Local-first semantic code search for Claude Code.** Hybrid search combining semantic understanding with text matching, running 100% locally using EmbeddingGemma or BGE-M3. No API keys, no costs, your code never leaves your machine.
+**Local-first semantic code search for Claude Code.** Hybrid search combining semantic understanding with text matching, running 100% locally with multi-model routing (Qwen3, BGE-M3, CodeRankEmbed). No API keys, no costs, your code never leaves your machine.
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows-blue.svg)](https://www.microsoft.com/windows)
