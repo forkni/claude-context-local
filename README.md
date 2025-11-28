@@ -40,56 +40,42 @@
 
 ### 1. Install
 
-```powershell
-# Clone repository
+```
 git clone https://github.com/forkni/claude-context-local.git
 cd claude-context-local
-
-# Run installer (auto-detects CUDA)
-install-windows.cmd
-
-# Verify installation
-verify-installation.cmd
 ```
 
-**Installer features**: Smart CUDA detection, one-click setup, dependency verification.
+Double-click `install-windows.cmd` and follow the prompts:
 
-> **Note**: HuggingFace authentication required. Get your token at [https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+1. **System Detection** - Automatic Python and CUDA/GPU detection
+2. **Installation** - Select "Auto-Install" (recommended)
+3. **HuggingFace Token** - Enter your token when prompted ([get token](https://huggingface.co/settings/tokens))
+4. **Claude Code Setup** - Automatic MCP server registration
 
-### 2. Configure Claude Code
+### 2. Launch Server
 
-```powershell
-# Register MCP server with Claude Code
-.\scripts\batch\manual_configure.bat
+Double-click `start_mcp_server.cmd` to open the interactive menu:
+
+```
+=== Claude Context MCP Server Launcher ===
+
+  1. Quick Start Server      ← Select this
+  2. Installation & Setup
+  3. Search Configuration
+  4. Performance Tools
+  5. Project Management
+  6. Advanced Options
+  7. Help & Documentation
 ```
 
-### 3. Start the MCP Server
+### 3. Use in Claude Code
 
-```powershell
-# Interactive menu with 7 options
-start_mcp_server.cmd
-
-# Or use direct launchers:
-scripts\batch\start_mcp_debug.bat   # Debug mode
-scripts\batch\start_mcp_simple.bat  # Simple mode
 ```
-
-**Menu options**: Quick start server (SSE), project management (index/reindex), search configuration, advanced tools.
-
-### 4. Use in Claude Code
-
-```bash
-# Index your project (one-time)
 /index_directory "C:\path\to\your\project"
 
-# Search with natural language
 /search_code "authentication functions"
 /search_code "error handling patterns"
 /search_code "database connection setup"
-
-# Check status
-/get_index_status
-/get_memory_status
 ```
 
 **That's it!** You're now searching your code semantically with 93-97% fewer tokens.
