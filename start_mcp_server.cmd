@@ -315,7 +315,7 @@ echo.
 echo === Search Configuration ===
 echo.
 echo   1. View Current Configuration
-echo   2. Set Search Mode ^(Hybrid/Semantic/BM25/Auto^)
+echo   2. Set Search Mode ^(Hybrid/Semantic/BM25^)
 echo   3. Configure Search Weights ^(BM25 vs Dense^)
 echo   4. Select Embedding Model
 echo   5. Configure Parallel Search
@@ -808,10 +808,9 @@ echo Available Search Modes:
 echo   1. Hybrid ^(BM25 + Semantic, Recommended^)
 echo   2. Semantic Only ^(Dense vector search^)
 echo   3. BM25 Only ^(Text-based search^)
-echo   4. Auto ^(System chooses best^)
 echo   0. Back to Search Configuration
 echo.
-set /p mode_choice="Select mode (0-4): "
+set /p mode_choice="Select mode (0-3): "
 
 REM Handle empty input or back option
 if not defined mode_choice goto search_config_menu
@@ -822,12 +821,11 @@ set "SEARCH_MODE="
 if "!mode_choice!"=="1" set "SEARCH_MODE=hybrid"
 if "!mode_choice!"=="2" set "SEARCH_MODE=semantic"
 if "!mode_choice!"=="3" set "SEARCH_MODE=bm25"
-if "!mode_choice!"=="4" set "SEARCH_MODE=auto"
 
 if defined SEARCH_MODE (
     echo [INFO] Setting search mode to: !SEARCH_MODE!
     REM Persist to config file via Python
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.default_search_mode = '!SEARCH_MODE!'; cfg.enable_hybrid_search = '!SEARCH_MODE!' in ['hybrid', 'auto']; mgr.save_config(cfg); print('[OK] Search mode saved to config file')" 2>nul
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.default_search_mode = '!SEARCH_MODE!'; cfg.enable_hybrid_search = '!SEARCH_MODE!' == 'hybrid'; mgr.save_config(cfg); print('[OK] Search mode saved to config file')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
         set "CLAUDE_SEARCH_MODE=!SEARCH_MODE!"

@@ -76,7 +76,7 @@ search_code("your natural language query", k=5, search_mode="hybrid")
 
 ### 🔴 Essential Tools (Use First)
 
-#### 1. `search_code(query OR chunk_id, k=5, search_mode="auto", model_key=None, use_routing=True, file_pattern=None, include_dirs=None, exclude_dirs=None, chunk_type=None, include_context=True, auto_reindex=True, max_age_minutes=5)`
+#### 1. `search_code(query OR chunk_id, k=5, search_mode="hybrid", model_key=None, use_routing=True, file_pattern=None, include_dirs=None, exclude_dirs=None, chunk_type=None, include_context=True, auto_reindex=True, max_age_minutes=5)`
 
 **Purpose**: Find code with natural language queries OR direct symbol lookup (40-45% token savings vs file reading)
 
@@ -85,7 +85,7 @@ search_code("your natural language query", k=5, search_mode="hybrid")
 - `query` (optional): Natural language description of what you're looking for
 - `chunk_id` (optional): Direct chunk ID for O(1) lookup (format: "file:lines:type:name")
 - `k` (default: 5): Number of results to return
-- `search_mode` (default: "auto"): Search method - "auto", "hybrid", "semantic", or "bm25"
+- `search_mode` (default: "hybrid"): Search method - "hybrid", "semantic", or "bm25"
 - `model_key` (optional): Force specific model - "qwen3", "bge_m3", or "coderankembed"
 - `use_routing` (default: True): Enable multi-model query routing
 - `file_pattern` (optional): Filter by filename/path pattern (e.g., "auth", "models")
