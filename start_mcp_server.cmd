@@ -42,7 +42,7 @@ if "%~1"=="" (
 
     echo What would you like to do?
     echo.
-    echo   1. Quick Start Server ^(Default Settings^)
+    echo   1. Quick Start Server
     echo   2. Installation ^& Setup
     echo   3. Search Configuration
     echo   4. Performance Tools
@@ -67,7 +67,7 @@ if "%~1"=="" (
         goto start
     )
 
-    if "!choice!"=="1" goto start_server
+    if "!choice!"=="1" goto start_server_dual_sse
     if "!choice!"=="2" goto installation_menu
     if "!choice!"=="3" goto search_config_menu
     if "!choice!"=="4" goto performance_menu
@@ -1273,7 +1273,7 @@ echo   - Official Anthropic Low-Level MCP SDK migration ^(production-grade^)
 echo   - Natural query support: Simple queries work without keywords
 echo   - GPU memory logging: Detailed VRAM tracking during model loading
 echo   - Multi-hop search timing: Cold 1.7-3.7s, cached 17-117ms ^(60-140x faster^)
-echo   - All 14/14 tools fully operational
+echo   - All 15/15 tools fully operational
 echo.
 echo Quick Start:
 echo   1. Run: install-windows.bat ^(first time setup^)
@@ -1304,8 +1304,8 @@ echo     - MCP_TOOLS_REFERENCE.md: MCP tools documentation
 echo     - TESTING_GUIDE.md: Test suite documentation
 echo     - GIT_WORKFLOW.md: Git automation scripts
 echo.
-echo The MCP server communicates via JSON-RPC with Claude Code.
-echo This is normal - the server waits for commands from Claude.
+echo The MCP server runs on http://localhost:8765/sse by default.
+echo Use menu option 1 to start the SSE server for Claude Code.
 echo.
 pause
 goto menu_restart

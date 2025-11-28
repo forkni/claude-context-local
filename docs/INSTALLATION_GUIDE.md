@@ -753,7 +753,7 @@ uv sync  # This will install correct transformers version
 ```powershell
 # Option 1: Via interactive menu
 start_mcp_server.bat
-# Select: 1 - Quick Start Server → 2 - SSE Transport
+# Select: 1 - Quick Start Server (launches SSE directly)
 
 # Option 2: Direct launcher
 scripts\batch\start_mcp_sse.bat

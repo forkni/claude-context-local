@@ -1,13 +1,25 @@
 """Global pytest configuration and fixtures."""
 
-import shutil
-import sys
-import tempfile
-from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional
+import warnings
 
-import numpy as np
-import pytest
+# Suppress FAISS SWIG warnings at import time (before pytest/FAISS imports)
+warnings.filterwarnings(
+    "ignore", message=".*builtin type SwigPy.*", category=DeprecationWarning
+)
+warnings.filterwarnings(
+    "ignore",
+    message=".*builtin type.*has no __module__ attribute.*",
+    category=DeprecationWarning,
+)
+
+import shutil  # noqa: E402
+import sys  # noqa: E402
+import tempfile  # noqa: E402
+from pathlib import Path  # noqa: E402
+from typing import Any, Dict, Generator, List, Optional  # noqa: E402
+
+import numpy as np  # noqa: E402
+import pytest  # noqa: E402
 
 # Add the package to Python path for testing
 project_root = Path(__file__).parent
@@ -36,6 +48,13 @@ except ImportError:
 
 def pytest_configure(config: Any) -> None:
     """Configure pytest with custom markers."""
+    import warnings
+
+    # Suppress FAISS SWIG warnings at import time (before pytest filterwarnings apply)
+    warnings.filterwarnings(
+        "ignore", message=".*builtin type.*", category=DeprecationWarning
+    )
+
     config.addinivalue_line("markers", "unit: Unit tests")
     config.addinivalue_line("markers", "integration: Integration tests")
     config.addinivalue_line("markers", "slow: Slow running tests")

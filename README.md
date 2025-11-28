@@ -1,16 +1,28 @@
 # Claude Context Local
 
 ```
- ██████╗ ██╗       █████╗  ██╗   ██╗ ██████╗  ███████╗
-██╔════╝ ██║      ██╔══██╗ ██║   ██║ ██╔══██╗ ██╔════╝
-██║      ██║      ███████║ ██║   ██║ ██║  ██║ █████╗
-██║      ██║      ██╔══██║ ██║   ██║ ██║  ██║ ██╔══╝
-╚██████╗ ███████╗ ██║  ██║ ╚██████╔╝ ██████╔╝ ███████╗
+ ██████╗ ██╗      █████╗ ██╗   ██╗██████╗ ███████╗
+██╔════╝ ██║     ██╔══██╗██║   ██║██╔══██╗██╔════╝
+██║      ██║     ███████║██║   ██║██║  ██║█████╗
+██║      ██║     ██╔══██║██║   ██║██║  ██║██╔══╝
+╚██████╗ ███████╗██║  ██║╚██████╔╝██████╔╝███████╗
+
+ ██████╗ ██████╗ ███╗   ██╗████████╗███████╗██╗  ██╗████████╗
+██╔════╝██╔═══██╗████╗  ██║╚══██╔══╝██╔════╝╚██╗██╔╝╚══██╔══╝
+██║     ██║   ██║██╔██╗ ██║   ██║   █████╗   ╚███╔╝    ██║
+██║     ██║   ██║██║╚██╗██║   ██║   ██╔══╝   ██╔██╗    ██║
+╚██████╗╚██████╔╝██║ ╚████║   ██║   ███████╗██╔╝ ██╗   ██║
+
+██╗      ██████╗  ██████╗ █████╗ ██╗
+██║     ██╔═══██╗██╔════╝██╔══██╗██║
+██║     ██║   ██║██║     ███████║██║
+██║     ██║   ██║██║     ██╔══██║██║
+███████╗╚██████╔╝╚██████╗██║  ██║███████╗
 ```
 
 **Local-first semantic code search for Claude Code.** Hybrid search combining semantic understanding with text matching, running 100% locally using EmbeddingGemma or BGE-M3. No API keys, no costs, your code never leaves your machine.
 
-[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows-blue.svg)](https://www.microsoft.com/windows)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
 
@@ -62,7 +74,7 @@ scripts\batch\start_mcp_debug.bat   # Debug mode
 scripts\batch\start_mcp_simple.bat  # Simple mode
 ```
 
-**Menu options**: Quick start server (stdio/SSE), project management (index/reindex), search configuration, advanced tools.
+**Menu options**: Quick start server (SSE), project management (index/reindex), search configuration, advanced tools.
 
 ### 4. Use in Claude Code
 
@@ -220,7 +232,7 @@ set CLAUDE_MULTI_MODEL_ENABLED=true
 |-------|------------|------|----------|
 | **EmbeddingGemma-300m** (default) | 768 | 4-8GB | Fast, efficient, smaller projects |
 | **BGE-M3** | 1024 | 8-16GB | Higher accuracy (+13.6% F1), production |
-| **Qwen3-0.6B** | 1024 | 2.3GB | Multi-model routing |
+| **Qwen3-0.6B** | 1024 | 2.3GB | Routing pool, high efficiency |
 | **CodeRankEmbed** | 768 | 2GB | Code-specific retrieval |
 
 **Instant model switching**: <150ms with per-model index storage - no re-indexing needed!
@@ -308,7 +320,7 @@ See [Git Workflow](docs/GIT_WORKFLOW.md) for contribution guidelines.
 
 ## License
 
-Licensed under the GNU General Public License v3.0 (GPL-3.0). See the [LICENSE](LICENSE) file for details.
+Licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE) file for details.
 
 ## Inspiration
 
