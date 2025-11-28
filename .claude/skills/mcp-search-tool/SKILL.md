@@ -76,16 +76,21 @@ search_code("your natural language query", k=5, search_mode="hybrid")
 
 ### 🔴 Essential Tools (Use First)
 
-#### 1. `search_code(query, k=5, search_mode="hybrid", file_pattern=None, chunk_type=None, include_context=True, auto_reindex=True, max_age_minutes=5)`
+#### 1. `search_code(query OR chunk_id, k=5, search_mode="auto", model_key=None, use_routing=True, file_pattern=None, include_dirs=None, exclude_dirs=None, chunk_type=None, include_context=True, auto_reindex=True, max_age_minutes=5)`
 
-**Purpose**: Find code with natural language queries (40-45% token savings vs file reading)
+**Purpose**: Find code with natural language queries OR direct symbol lookup (40-45% token savings vs file reading)
 
 **Parameters**:
 
-- `query` (required): Natural language description of what you're looking for
+- `query` (optional): Natural language description of what you're looking for
+- `chunk_id` (optional): Direct chunk ID for O(1) lookup (format: "file:lines:type:name")
 - `k` (default: 5): Number of results to return
-- `search_mode` (default: "hybrid"): Search method - "hybrid", "semantic", "bm25", or "auto"
-- `file_pattern` (optional): Filter by filename/path pattern (e.g., "Scripts/", "wrapper_td")
+- `search_mode` (default: "auto"): Search method - "auto", "hybrid", "semantic", or "bm25"
+- `model_key` (optional): Force specific model - "qwen3", "bge_m3", or "coderankembed"
+- `use_routing` (default: True): Enable multi-model query routing
+- `file_pattern` (optional): Filter by filename/path pattern (e.g., "auth", "models")
+- `include_dirs` (optional): Only search in these directories (e.g., ["src/", "lib/"])
+- `exclude_dirs` (optional): Exclude from search (e.g., ["tests/", "vendor/"])
 - `chunk_type` (optional): Filter by code structure - "function", "class", "method", or None for all
 - `include_context` (default: True): Include similar chunks and relationships
 - `auto_reindex` (default: True): Automatically reindex if index is stale
@@ -207,12 +212,12 @@ configure_search_mode("hybrid", 0.4, 0.6, true)
 
 - `enable_multi_model` (optional): Enable/disable multi-model mode
 - `default_model` (optional): Set default model ("qwen3", "bge_m3", "coderankembed")
-- `confidence_threshold` (optional): Minimum confidence for routing (0.0-1.0, default: 0.3)
+- `confidence_threshold` (optional): Minimum confidence for routing (0.0-1.0, default: 0.05)
 
 **Example**:
 
 ```bash
-configure_query_routing(enable_multi_model=True, default_model="qwen3", confidence_threshold=0.4)
+configure_query_routing(enable_multi_model=True, default_model="qwen3", confidence_threshold=0.05)
 ```
 
 ### 🔵 Advanced Tools
@@ -249,8 +254,10 @@ find_similar_code("src/auth.py:10-50:function:authenticate", k=5)
 
 **Available Models**:
 
-- **EmbeddingGemma-300m**: 768d, 4-8GB VRAM, fast
-- **BGE-M3**: 1024d, 8-16GB VRAM, +3-6% accuracy
+- **BGE-M3** ⭐: 1024d, 3-4GB VRAM, production baseline
+- **Qwen3-0.6B**: 1024d, 2.3GB VRAM, best value & high efficiency
+- **CodeRankEmbed**: 768d, 2GB VRAM, code-specific retrieval
+- **EmbeddingGemma-300m**: 768d, 4-8GB VRAM, default model (fast)
 
 #### 12. `switch_embedding_model(model_name)`
 
@@ -270,6 +277,39 @@ switch_embedding_model("BAAI/bge-m3")
 
 # Switch back to Gemma for speed
 switch_embedding_model("google/embeddinggemma-300m")
+```
+
+#### Lazy Loading Performance (v0.5.17+)
+
+**VRAM Lifecycle**:
+- **Startup**: 0 MB VRAM (lazy loading enabled)
+- **First search**: 8-15s total (5-10s one-time model loading + 3-5s search)
+- **Subsequent searches**: 3-5s (models stay loaded in memory)
+- **After first search**: 5.3 GB VRAM total (all 3 models loaded for multi-model routing)
+- **After cleanup**: 0 MB VRAM (manual cleanup with `cleanup_resources()`)
+
+**Key Behavior**:
+- Models load on-demand during first search operation
+- Once loaded, models remain in memory for fast subsequent searches
+- Use `cleanup_resources()` to free VRAM when switching projects or when memory is low
+- Startup time: 3-5s (no model loading overhead)
+
+**Example Workflow**:
+```bash
+# Startup: 0 MB VRAM
+get_memory_status()  # Shows 0 MB VRAM
+
+# First search: 8-15s (includes model loading)
+search_code("authentication functions")  # 5-10s model load + 3-5s search
+
+# Subsequent searches: 3-5s (models already loaded)
+search_code("database connections")  # Fast, no loading
+
+# Check memory after searches
+get_memory_status()  # Shows ~5.3 GB VRAM (3 models loaded)
+
+# Free memory when done
+cleanup_resources()  # Returns to 0 MB VRAM
 ```
 
 ### 🟣 Memory Management Tools
@@ -302,6 +342,8 @@ switch_embedding_model("google/embeddinggemma-300m")
 - `exclude_dirs` (optional): Directories to exclude from symbol resolution and caller lookup (e.g., ["tests/"])
 
 **Returns**: Structured report with direct callers, indirect callers, similar code, and dependency graph
+
+**Call Graph Accuracy** (v0.5.15+): ~90% accuracy for Python projects with import resolution, self/super resolution, type annotation tracking, and assignment tracking
 
 **Use When**:
 
@@ -499,6 +541,14 @@ clear_index()          # Full reset (requires re-indexing)
 - **Incremental**: 10-50x faster (only changed files)
 - **Batch removal**: 600-1000x faster (large deletions)
 
+### Runtime Performance (v0.5.17+)
+
+- **Startup**: 3-5s, 0 MB VRAM (lazy loading enabled)
+- **First search**: 8-15s total (5-10s one-time model loading + 3-5s search)
+- **Subsequent searches**: 3-5s (models cached in memory)
+- **VRAM after first search**: ~5.3 GB (multi-model routing with 3 models loaded)
+- **Cleanup**: Returns to 0 MB VRAM with `cleanup_resources()`
+
 ### Quality Metrics (Validated)
 
 - **Precision**: 44.4%
@@ -542,20 +592,24 @@ clear_index()          # Full reset (requires re-indexing)
 2. Cleanup: `cleanup_resources()`
 3. Switch to smaller model: `switch_embedding_model("google/embeddinggemma-300m")`
 
-## Examples for TouchDesigner Projects
+### Self-Healing Index Sync (v0.5.17+)
 
-### Example 1: Finding Callback Functions
+**Automatic Maintenance**: The system automatically detects and repairs BM25 index desynchronization (>10% threshold) during incremental indexing. Typical sync time: ~5 seconds for 4000+ documents. No manual intervention required.
+
+## Examples for Python Projects
+
+### Example 1: Finding Authentication Functions
 
 ```bash
 # 1. Verify project context
 list_projects()
-switch_project("D:\Users\alexk\FORKNI\STREAM_DIFFUSION\STREAM_DIFFUSION_CUDA_0.2.99_CUDA_13")
+switch_project("/path/to/your/project")
 
-# 2. Search for callbacks
-search_code("StreamDiffusionExt callback functions", file_pattern="Scripts/", chunk_type="function", k=10)
+# 2. Search for authentication functions
+search_code("user authentication login password validation", file_pattern="auth", chunk_type="function", k=10)
 ```
 
-### Example 2: Understanding Pipeline Components
+### Example 2: Understanding Database Connection Setup
 
 ```bash
 # 1. Verify context
@@ -563,7 +617,7 @@ get_index_status()
 
 # 2. Use semantic search for conceptual understanding
 configure_search_mode("semantic", 0.3, 0.7)
-search_code("pipeline initialization and setup", k=15)
+search_code("database connection initialization setup pool", k=15)
 ```
 
 ### Example 3: Finding Specific Class Implementation
@@ -571,28 +625,28 @@ search_code("pipeline initialization and setup", k=15)
 ```bash
 # 1. Use BM25 for exact class name
 configure_search_mode("bm25", 0.8, 0.2)
-search_code("StreamDiffusionExt class", chunk_type="class")
+search_code("UserModel class", chunk_type="class")
 
 # 2. Find similar implementations
-find_similar_code("Scripts/streamdiffusionTD__Text__main_sdtd__td.py:10-100:class:StreamDiffusionExt", k=5)
+find_similar_code("models/user.py:10-100:class:UserModel", k=5)
 ```
 
-### Example 4: Analyzing Token Merging
+### Example 4: Analyzing API Request Handling
 
 ```bash
 # 1. Use hybrid for balanced search
 configure_search_mode("hybrid", 0.4, 0.6)
-search_code("tomesd token merging spatial algorithms", k=10)
+search_code("API request handler middleware validation", k=10)
 
 # 2. Get multi-hop context (automatic)
 # Multi-hop will discover: implementation, configuration, integration points
 ```
 
-### Example 5: Debugging Performance Issues
+### Example 5: Debugging Query Performance
 
 ```bash
 # 1. Find performance-related code
-search_code("performance optimization cook time", file_pattern="Scripts/", k=15)
+search_code("database query optimization performance caching", include_dirs=["src/", "lib/"], k=15)
 
 # 2. Check memory usage
 get_memory_status()
