@@ -41,6 +41,7 @@ Complete version history and feature timeline for claude-context-local MCP serve
 ### Why This Matters
 
 Solves historical desync issue where BM25 index had fewer documents than dense index due to:
+
 - BM25 being added after initial dense indexing
 - Old bugs that have since been fixed
 - Migration from older versions without BM25

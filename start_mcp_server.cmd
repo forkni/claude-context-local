@@ -1260,12 +1260,12 @@ echo.
 echo This server enables hybrid semantic code search in Claude Code.
 echo.
 echo Key Features:
-echo   - 14 MCP Tools: Index, search, configure, manage projects
-echo   - Low-Level MCP SDK: Official Anthropic implementation ^(v0.5.5^)
+echo   - 15 MCP Tools: Index, search, configure, manage projects
+echo   - Low-Level MCP SDK: Official Anthropic implementation ^(v0.5.16^)
 echo   - Multi-Model Routing: BGE-M3 + Qwen3 + CodeRankEmbed ^(optional^)
 echo   - Hybrid Search: BM25 + Semantic for optimal accuracy
 echo   - 93-97%% Token Reduction: Validated benchmark results
-echo   - Multi-language Support: 11 languages, 22 extensions
+echo   - Multi-language Support: 9 languages, 19 extensions
 echo   - Local Processing: No API calls, complete privacy
 echo.
 echo What's New in v0.5.5 ^(2025-11-15^):

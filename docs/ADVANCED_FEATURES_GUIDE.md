@@ -1554,6 +1554,7 @@ def process():
 ### Problem Solved
 
 Historical desync between BM25 and dense indices can occur when:
+
 - BM25 was added after initial dense indexing
 - Index corruption or partial updates
 - Migration from older versions
@@ -1599,6 +1600,7 @@ Incremental indexing only processes **changed files**, leaving unchanged files d
 ### API Changes
 
 `IncrementalIndexResult` dataclass now includes:
+
 - `bm25_resynced: bool` - Whether resync was triggered
 - `bm25_resync_count: int` - Number of documents synced
 
