@@ -80,6 +80,7 @@ class SearchConfig:
 
     # Multi-Model Routing Configuration
     multi_model_enabled: bool = True  # Enable intelligent query routing across models
+    routing_default_model: str = "coderankembed"  # Default model key for routing
 
     # Parallel Chunking Configuration
     enable_parallel_chunking: bool = True  # Enable parallel file chunking
@@ -233,6 +234,7 @@ class SearchConfigManager:
                 "multi_model_enabled",
                 self._bool_from_env,
             ),
+            "CLAUDE_ROUTING_DEFAULT_MODEL": ("routing_default_model", str),
         }
 
         config_dict = {}

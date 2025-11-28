@@ -50,12 +50,12 @@ if "%~1"=="" (
     echo   6. Advanced Options
     echo   7. Help ^& Documentation
     echo   M. Quick Model Switch ^(Code vs General^)
-    echo   8. Exit
+    echo   0. Exit
     echo.
 
     REM Ensure we have a valid choice
     set choice=
-    set /p choice="Select option (1-8, M): "
+    set /p choice="Select option (0-7, M): "
 
     REM Handle empty input or Ctrl+C gracefully
     if not defined choice (
@@ -76,9 +76,9 @@ if "%~1"=="" (
     if "!choice!"=="7" goto show_help
     if /i "!choice!"=="M" goto quick_model_switch
     if /i "!choice!"=="m" goto quick_model_switch
-    if "!choice!"=="8" goto exit_cleanly
+    if "!choice!"=="0" goto exit_cleanly
 
-    echo [ERROR] Invalid choice: "%choice%". Please select 1-8 or M.
+    echo [ERROR] Invalid choice: "%choice%". Please select 0-7 or M.
     echo.
     echo Press any key to try again...
     pause >nul
@@ -285,9 +285,9 @@ echo   1. Run Full Installation ^(install-windows.bat^)
 echo   2. Verify Installation Status
 echo   3. Configure Claude Code Integration
 echo   4. Check CUDA/CPU Mode
-echo   5. Back to Main Menu
+echo   0. Back to Main Menu
 echo.
-set /p inst_choice="Select option (1-5): "
+set /p inst_choice="Select option (0-4): "
 
 REM Handle empty input gracefully
 if not defined inst_choice (
@@ -303,9 +303,9 @@ if "!inst_choice!"=="1" goto run_installer
 if "!inst_choice!"=="2" goto verify_install
 if "!inst_choice!"=="3" goto configure_claude
 if "!inst_choice!"=="4" goto check_system
-if "!inst_choice!"=="5" goto menu_restart
+if "!inst_choice!"=="0" goto menu_restart
 
-echo [ERROR] Invalid choice. Please select 1-5.
+echo [ERROR] Invalid choice. Please select 0-4.
 pause
 cls
 goto installation_menu
@@ -318,10 +318,11 @@ echo   1. View Current Configuration
 echo   2. Set Search Mode ^(Hybrid/Semantic/BM25/Auto^)
 echo   3. Configure Search Weights ^(BM25 vs Dense^)
 echo   4. Select Embedding Model
-echo   5. Reset to Defaults
-echo   6. Back to Main Menu
+echo   5. Configure Parallel Search
+echo   6. Reset to Defaults
+echo   0. Back to Main Menu
 echo.
-set /p search_choice="Select option (1-6): "
+set /p search_choice="Select option (0-6): "
 
 REM Handle empty input gracefully
 if not defined search_choice (
@@ -337,10 +338,11 @@ if "!search_choice!"=="1" goto view_config
 if "!search_choice!"=="2" goto set_search_mode
 if "!search_choice!"=="3" goto set_weights
 if "!search_choice!"=="4" goto select_embedding_model
-if "!search_choice!"=="5" goto reset_config
-if "!search_choice!"=="6" goto menu_restart
+if "!search_choice!"=="5" goto configure_parallel_search
+if "!search_choice!"=="6" goto reset_config
+if "!search_choice!"=="0" goto menu_restart
 
-echo [ERROR] Invalid choice. Please select 1-6.
+echo [ERROR] Invalid choice. Please select 0-6.
 pause
 cls
 goto search_config_menu
@@ -351,9 +353,9 @@ echo === Performance Tools ===
 echo.
 echo   1. Auto-Tune Search Parameters
 echo   2. Memory Usage Report
-echo   3. Back to Main Menu
+echo   0. Back to Main Menu
 echo.
-set /p perf_choice="Select option (1-3): "
+set /p perf_choice="Select option (0-2): "
 
 REM Handle empty input gracefully
 if not defined perf_choice (
@@ -367,9 +369,9 @@ if "!perf_choice!"=="" (
 
 if "!perf_choice!"=="1" goto auto_tune_direct
 if "!perf_choice!"=="2" goto memory_report
-if "!perf_choice!"=="3" goto menu_restart
+if "!perf_choice!"=="0" goto menu_restart
 
-echo [ERROR] Invalid choice. Please select 1-3.
+echo [ERROR] Invalid choice. Please select 0-2.
 pause
 cls
 goto performance_menu
@@ -392,13 +394,13 @@ echo   4. List Indexed Projects
 echo   5. Clear Project Indexes
 echo   6. View Storage Statistics
 echo   7. Switch to Project
-echo   8. Back to Main Menu
+echo   0. Back to Main Menu
 echo.
 if "%MULTI_MODEL_STATUS%"=="Enabled" (
     echo   Note: Indexing will update ALL models ^(Qwen3, BGE-M3, CodeRankEmbed^)
     echo.
 )
-set /p pm_choice="Select option (1-8): "
+set /p pm_choice="Select option (0-7): "
 
 REM Handle empty input gracefully
 if not defined pm_choice (
@@ -417,9 +419,9 @@ if "!pm_choice!"=="4" goto list_projects_menu
 if "!pm_choice!"=="5" goto clear_project_indexes
 if "!pm_choice!"=="6" goto storage_stats
 if "!pm_choice!"=="7" goto switch_to_project
-if "!pm_choice!"=="8" goto menu_restart
+if "!pm_choice!"=="0" goto menu_restart
 
-echo [ERROR] Invalid choice. Please select 1-8.
+echo [ERROR] Invalid choice. Please select 0-7.
 pause
 cls
 goto project_management_menu
@@ -433,9 +435,9 @@ echo   2. Run Unit Tests
 echo   3. Run Fast Integration Tests (77 tests, ~2 min)
 echo   4. Run Slow Integration Tests (67 tests, ~10 min)
 echo   5. Run Regression Tests
-echo   6. Back to Main Menu
+echo   0. Back to Main Menu
 echo.
-set /p adv_choice="Select option (1-6): "
+set /p adv_choice="Select option (0-5): "
 
 REM Handle empty input gracefully
 if not defined adv_choice (
@@ -452,9 +454,9 @@ if "!adv_choice!"=="2" goto run_unit_tests
 if "!adv_choice!"=="3" goto run_fast_integration_tests
 if "!adv_choice!"=="4" goto run_slow_integration_tests
 if "!adv_choice!"=="5" goto run_regression_tests
-if "!adv_choice!"=="6" goto menu_restart
+if "!adv_choice!"=="0" goto menu_restart
 
-echo [ERROR] Invalid choice. Please select 1-6.
+echo [ERROR] Invalid choice. Please select 0-5.
 pause
 cls
 goto advanced_menu
@@ -964,6 +966,58 @@ if /i "!confirm_multi!"=="y" (
     )
 ) else (
     echo [INFO] Cancelled
+)
+pause
+goto search_config_menu
+
+:configure_parallel_search
+echo.
+echo === Configure Parallel Search ===
+echo.
+echo Parallel search executes BM25 and Dense vector search simultaneously.
+echo.
+echo NOTE: Hybrid search combines two search methods:
+echo   - BM25: Keyword/text matching ^(fast, precise for exact terms^)
+echo   - Dense: Semantic vector search ^(understands meaning/context^)
+echo.
+echo When Parallel Search is:
+echo   - Enabled: Both run at the same time ^(faster, ~15-30ms savings^)
+echo   - Disabled: Run sequentially ^(lower CPU/GPU usage^)
+echo.
+echo Recommendation: Keep ENABLED unless you have resource constraints.
+echo.
+echo Current Setting:
+.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Parallel Search:', 'Enabled' if cfg.use_parallel_search else 'Disabled')" 2>nul
+echo.
+echo   1. Enable Parallel Search
+echo   2. Disable Parallel Search
+echo   0. Back to Search Configuration
+echo.
+set /p parallel_choice="Select option (0-2): "
+
+if not defined parallel_choice goto search_config_menu
+if "!parallel_choice!"=="" goto search_config_menu
+if "!parallel_choice!"=="0" goto search_config_menu
+
+if "!parallel_choice!"=="1" (
+    echo.
+    echo [INFO] Enabling parallel search...
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.use_parallel_search = True; mgr.save_config(cfg); print('[OK] Parallel search enabled and saved')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    )
+)
+if "!parallel_choice!"=="2" (
+    echo.
+    echo [INFO] Disabling parallel search...
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.use_parallel_search = False; mgr.save_config(cfg); print('[OK] Parallel search disabled and saved')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    )
+)
+
+if not "!parallel_choice!"=="1" if not "!parallel_choice!"=="2" (
+    echo [ERROR] Invalid choice. Please select 0-2.
 )
 pause
 goto search_config_menu

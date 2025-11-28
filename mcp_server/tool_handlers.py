@@ -376,8 +376,12 @@ async def handle_configure_query_routing(arguments: Dict[str, Any]) -> dict:
 
         if default_model is not None:
             if default_model in MODEL_POOL_CONFIG:
+                # Persist to config file
+                config.routing_default_model = default_model
                 changes["default_model"] = default_model
-                # Note: default_model is runtime-only for now
+
+                # Save config
+                config_manager.save_config(config)
             else:
                 return {"error": f"Invalid model: {default_model}"}
 
