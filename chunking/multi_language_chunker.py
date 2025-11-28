@@ -1,13 +1,86 @@
 """Multi-language chunker that combines AST and tree-sitter approaches."""
 
+import ast
 import logging
+import textwrap
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Optional
 
 from .python_ast_chunker import CodeChunk
 from .tree_sitter import TreeSitterChunk, TreeSitterChunker
 
+# Import call graph extractor for Python (Phase 1)
+try:
+    from graph.call_graph_extractor import CallGraphExtractorFactory
+    from graph.relationship_extractors.decorator_extractor import DecoratorExtractor
+    from graph.relationship_extractors.exception_extractor import ExceptionExtractor
+    from graph.relationship_extractors.import_extractor import ImportExtractor
+    from graph.relationship_extractors.inheritance_extractor import InheritanceExtractor
+    from graph.relationship_extractors.instantiation_extractor import (
+        InstantiationExtractor,
+    )
+    from graph.relationship_extractors.type_extractor import TypeAnnotationExtractor
+
+    CALL_GRAPH_AVAILABLE = True
+except ImportError:
+    CALL_GRAPH_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
+
+
+def _smart_dedent(code: str) -> str:
+    """Dedent code using the 'if True:' wrapper technique.
+
+    This is the industry-standard solution (used by Scrapy, Numba)
+    that handles ALL edge cases including:
+    - Flush-left string continuations
+    - Mixed tabs/spaces
+    - Blank lines without whitespace
+    - Decorators and nested structures
+
+    Args:
+        code: Source code string with potential leading indentation
+
+    Returns:
+        Dedented code that can be parsed by ast.parse()
+    """
+    if not code or not code.strip():
+        return code
+
+    # Strip leading/trailing blank lines
+    lines = code.split("\n")
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    if not lines:
+        return code
+
+    code = "\n".join(lines)
+
+    # Try standard dedent first (handles simple cases)
+    dedented = textwrap.dedent(code)
+
+    # Test if it parses
+    try:
+        ast.parse(dedented)
+        return dedented
+    except SyntaxError:
+        pass
+
+    # Fallback: wrap with "if True:" to create valid indented block
+    # This handles flush-left content, mixed indentation, etc.
+    indented = textwrap.indent(dedented, "    ")
+    wrapped = "if True:\n" + indented
+
+    try:
+        ast.parse(wrapped)
+        return wrapped
+    except SyntaxError:
+        # If still fails, return original - let extractor handle error
+        return code
 
 
 class MultiLanguageChunker:
@@ -17,13 +90,10 @@ class MultiLanguageChunker:
     SUPPORTED_EXTENSIONS = {
         ".py",  # Python
         ".js",  # JavaScript
-        ".jsx",  # JSX
         ".ts",  # TypeScript
         ".tsx",  # TSX
-        ".svelte",  # Svelte
         ".go",  # Go
         ".rs",  # Rust
-        ".java",  # Java
         ".c",  # C
         ".cpp",  # C++
         ".cc",  # C++
@@ -50,6 +120,7 @@ class MultiLanguageChunker:
         "env",
         ".env",
         ".direnv",
+        "site-packages",  # Python package installations
         "node_modules",
         ".pnpm-store",
         ".yarn",
@@ -87,6 +158,7 @@ class MultiLanguageChunker:
         "bin",
         "obj",
         "_archive",
+        "backups",  # Development backup directories
     }
 
     def __init__(self, root_path: Optional[str] = None):
@@ -99,6 +171,34 @@ class MultiLanguageChunker:
         # Use AST chunker for Python (more mature implementation)
         # Use tree-sitter for other languages
         self.tree_sitter_chunker = TreeSitterChunker()
+
+        # Initialize call graph extractor for Python (Phase 1)
+        self.call_graph_extractor = None
+        if CALL_GRAPH_AVAILABLE:
+            try:
+                self.call_graph_extractor = CallGraphExtractorFactory.create("python")
+                logger.info("Call graph extraction enabled for Python")
+            except Exception as e:
+                logger.warning(f"Failed to initialize call graph extractor: {e}")
+
+        # Initialize Phase 3 relationship extractors
+        self.relationship_extractors = []
+        try:
+            self.relationship_extractors = [
+                # Priority 1 (Foundation)
+                InheritanceExtractor(),
+                TypeAnnotationExtractor(),
+                ImportExtractor(),
+                # Priority 2 (Core)
+                DecoratorExtractor(),
+                ExceptionExtractor(),
+                InstantiationExtractor(),
+            ]
+            logger.info(
+                f"Phase 3: Initialized {len(self.relationship_extractors)} relationship extractors"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to initialize Phase 3 extractors: {e}")
 
     def is_supported(self, file_path: str) -> bool:
         """Check if file type is supported.
@@ -202,12 +302,15 @@ class MultiLanguageChunker:
 
             chunk_type = chunk_type_map.get(tchunk.node_type, tchunk.node_type)
 
-            # Extract parent name and adjust chunk type for methods
-            parent_name = tchunk.metadata.get("parent_name")
+            # Extract parent class from chunk (prefer explicit field, fallback to metadata)
+            parent_name = tchunk.parent_class or tchunk.metadata.get("parent_name")
 
             # If we have a parent_name and it's a function, it's actually a method
             if parent_name and chunk_type == "function":
                 chunk_type = "method"
+
+            # Build qualified name for methods/functions inside classes
+            qualified_name = f"{parent_name}.{name}" if parent_name and name else name
 
             # Build folder structure from file path
             path = Path(file_path)
@@ -257,20 +360,84 @@ class MultiLanguageChunker:
                 imports=[],  # Tree-sitter doesn't extract imports yet
                 complexity_score=0,  # Not calculated for tree-sitter chunks
                 tags=tags,
+                language=tchunk.language,
             )
+
+            # Build chunk_id for relationship extraction (Phase 1 + Phase 3)
+            # Normalize path to forward slashes (cross-platform)
+            normalized_path = str(chunk.relative_path).replace("\\", "/")
+            chunk_id = (
+                f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk_type}"
+            )
+            # Use qualified name (ClassName.method_name) for better disambiguation
+            if qualified_name:
+                chunk_id += f":{qualified_name}"
+            chunk_metadata = {
+                "chunk_id": chunk_id,
+                "file_path": chunk.relative_path,
+                "name": name,
+                "chunk_type": chunk_type,
+                "parent_class": parent_name,  # For self/super call resolution
+            }
+
+            # Extract call graph for Python chunks (Phase 1)
+            if (
+                self.call_graph_extractor is not None
+                and tchunk.language == "python"
+                and chunk_type in ("function", "method")
+            ):
+                try:
+                    # Extract function calls from this chunk
+                    calls = self.call_graph_extractor.extract_calls(
+                        tchunk.content, chunk_metadata
+                    )
+                    chunk.calls = calls
+
+                    if calls:
+                        logger.debug(f"Extracted {len(calls)} calls from {chunk_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to extract calls for {name}: {e}")
+
+            # Phase 3: Extract all relationship types (for ALL Python chunks)
+            if tchunk.language == "python" and self.relationship_extractors:
+                try:
+                    all_relationships = []
+                    # Use smart_dedent to properly dedent nested code
+                    # Handles blank lines correctly while preserving relative indentation
+                    dedented_content = _smart_dedent(tchunk.content)
+                    for extractor in self.relationship_extractors:
+                        edges = extractor.extract(dedented_content, chunk_metadata)
+                        all_relationships.extend(edges)
+
+                    chunk.relationships = all_relationships
+
+                    if all_relationships:
+                        logger.debug(
+                            f"Extracted {len(all_relationships)} Phase 3 relationships from {chunk_id}"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to extract Phase 3 relationships for {name}: {e}"
+                    )
 
             code_chunks.append(chunk)
 
         return code_chunks
 
     def chunk_directory(
-        self, directory_path: str, extensions: Optional[List[str]] = None
+        self,
+        directory_path: str,
+        extensions: Optional[List[str]] = None,
+        enable_parallel: bool = True,
+        max_workers: int = 4,
     ) -> List[CodeChunk]:
         """Chunk all supported files in a directory.
 
         Args:
             directory_path: Path to directory
             extensions: Optional list of extensions to process (default: all supported)
+            enable_parallel: Enable parallel file chunking (default: True)
+            max_workers: Number of ThreadPoolExecutor workers (default: 4)
 
         Returns:
             List of CodeChunk objects from all files
@@ -288,19 +455,75 @@ class MultiLanguageChunker:
         else:
             valid_extensions = self.SUPPORTED_EXTENSIONS
 
-        # Find all files with supported extensions
+        # Collect all file paths first
+        file_paths = []
         for ext in valid_extensions:
             for file_path in dir_path.rglob(f"*{ext}"):
                 # Skip common large/build/tooling directories
                 if any(part in self.DEFAULT_IGNORED_DIRS for part in file_path.parts):
                     continue
+                file_paths.append(file_path)
 
+        logger.info(f"Found {len(file_paths)} files to chunk")
+
+        # Process files in parallel or sequentially
+        if enable_parallel and len(file_paths) > 1:
+            all_chunks = self._chunk_files_parallel(file_paths, max_workers)
+        else:
+            all_chunks = self._chunk_files_sequential(file_paths)
+
+        logger.info(f"Total chunks from directory: {len(all_chunks)}")
+        return all_chunks
+
+    def _chunk_files_sequential(self, file_paths: List[Path]) -> List[CodeChunk]:
+        """Chunk files sequentially (backward compatibility).
+
+        Args:
+            file_paths: List of file paths to chunk
+
+        Returns:
+            List of CodeChunk objects from all files
+        """
+        all_chunks = []
+        for file_path in file_paths:
+            try:
+                chunks = self.chunk_file(str(file_path))
+                all_chunks.extend(chunks)
+                logger.debug(f"Chunked {len(chunks)} from {file_path}")
+            except Exception as e:
+                logger.warning(f"Failed to chunk {file_path}: {e}")
+        return all_chunks
+
+    def _chunk_files_parallel(
+        self, file_paths: List[Path], max_workers: int
+    ) -> List[CodeChunk]:
+        """Chunk files in parallel using ThreadPoolExecutor.
+
+        Args:
+            file_paths: List of file paths to chunk
+            max_workers: Number of ThreadPoolExecutor workers
+
+        Returns:
+            List of CodeChunk objects from all files
+        """
+        all_chunks = []
+
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all chunking tasks
+            future_to_path = {
+                executor.submit(self.chunk_file, str(file_path)): file_path
+                for file_path in file_paths
+            }
+
+            # Collect results as they complete
+            for future in as_completed(future_to_path):
+                file_path = future_to_path[future]
                 try:
-                    chunks = self.chunk_file(str(file_path))
+                    chunks = future.result()
                     all_chunks.extend(chunks)
                     logger.debug(f"Chunked {len(chunks)} from {file_path}")
                 except Exception as e:
                     logger.warning(f"Failed to chunk {file_path}: {e}")
 
-        logger.info(f"Total chunks from directory: {len(all_chunks)}")
         return all_chunks

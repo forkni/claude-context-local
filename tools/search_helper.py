@@ -5,7 +5,6 @@ Interactive tool for searching code using semantic search.
 """
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -45,8 +44,7 @@ class CodeSearchHelper:
     def show_status(self):
         """Show current index status."""
         try:
-            status_result = get_index_status()
-            status_data = json.loads(status_result)
+            status_data = get_index_status()
 
             if "error" in status_data:
                 print(f"[ERROR] Status check failed: {status_data['error']}")
@@ -69,8 +67,7 @@ class CodeSearchHelper:
     def show_projects(self):
         """Show available indexed projects."""
         try:
-            projects_result = list_projects()
-            projects_data = json.loads(projects_result)
+            projects_data = list_projects()
 
             if "error" in projects_data:
                 print(f"[ERROR] Failed to list projects: {projects_data['error']}")
@@ -186,11 +183,9 @@ class CodeSearchHelper:
         try:
             print(f"Searching for: '{query}'...")
 
-            result = search_code(
+            result_data = search_code(
                 query=query, k=k, include_context=True, auto_reindex=True
             )
-
-            result_data = json.loads(result)
 
             if "error" in result_data:
                 print(f"[ERROR] Search failed: {result_data['error']}")
@@ -240,8 +235,7 @@ class CodeSearchHelper:
         try:
             print(f"Finding code similar to: {chunk_id}")
 
-            result = find_similar_code(chunk_id, k=5)
-            result_data = json.loads(result)
+            result_data = find_similar_code(chunk_id, k=5)
 
             if "error" in result_data:
                 print(f"[ERROR] Similar search failed: {result_data['error']}")

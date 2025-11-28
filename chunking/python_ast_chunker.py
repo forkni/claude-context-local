@@ -2,7 +2,10 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
+
+if TYPE_CHECKING:
+    from graph.call_graph_extractor import CallEdge
 
 
 @dataclass
@@ -30,6 +33,14 @@ class CodeChunk:
     complexity_score: int = 0  # estimated complexity
     tags: List[str] = None  # semantic tags like 'database', 'auth', 'error_handling'
 
+    # Call graph metadata (Phase 1: Python only)
+    calls: Optional[List["CallEdge"]] = None  # function calls made by this chunk
+
+    # Phase 3: Comprehensive relationship tracking
+    relationships: Optional[List] = (
+        None  # All relationship types (RelationshipEdge objects)
+    )
+
     # Evaluation framework compatibility
     language: str = "python"  # programming language
     chunk_id: Optional[str] = None  # unique identifier for evaluation
@@ -41,6 +52,8 @@ class CodeChunk:
             self.imports = []
         if self.tags is None:
             self.tags = []
+        if self.calls is None:
+            self.calls = []
 
         # Extract folder structure from path
         if self.file_path and not self.folder_structure:

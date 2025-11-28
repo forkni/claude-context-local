@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 class SearchResult:
     """Unified search result format."""
 
-    doc_id: str
+    chunk_id: str
     score: float
     metadata: Dict[str, Any]
     source: str = "unknown"  # "bm25", "dense", "hybrid"
@@ -83,48 +83,48 @@ class RRFReranker:
             zip(results_lists, weights, strict=False)
         ):
             for rank, result in enumerate(results, 1):  # Rank starts from 1
-                doc_id = result.doc_id
+                chunk_id = result.chunk_id
 
                 # Calculate RRF score contribution from this list
                 rrf_contribution = weight * (1.0 / (self.k + rank))
 
                 # Add to total RRF score
-                if doc_id in rrf_scores:
-                    rrf_scores[doc_id] += rrf_contribution
+                if chunk_id in rrf_scores:
+                    rrf_scores[chunk_id] += rrf_contribution
                 else:
-                    rrf_scores[doc_id] = rrf_contribution
+                    rrf_scores[chunk_id] = rrf_contribution
 
                 # Store the result (use the one with highest original score)
                 if (
-                    doc_id not in doc_results
-                    or result.score > doc_results[doc_id].score
+                    chunk_id not in doc_results
+                    or result.score > doc_results[chunk_id].score
                 ):
                     # Create a copy with updated information
                     combined_result = SearchResult(
-                        doc_id=result.doc_id,
+                        chunk_id=result.chunk_id,
                         score=result.score,  # Keep original score
                         metadata=result.metadata,
                         source="hybrid",
                         rank=rank,
                     )
-                    doc_results[doc_id] = combined_result
+                    doc_results[chunk_id] = combined_result
 
                 # Track list appearances
-                if doc_id not in list_appearances:
-                    list_appearances[doc_id] = []
-                list_appearances[doc_id].append(list_idx)
+                if chunk_id not in list_appearances:
+                    list_appearances[chunk_id] = []
+                list_appearances[chunk_id].append(list_idx)
 
         # Sort by RRF score (descending)
         sorted_docs = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
 
         # Create final results with RRF scores
         final_results = []
-        for rank, (doc_id, rrf_score) in enumerate(sorted_docs[:max_results], 1):
-            result = doc_results[doc_id]
+        for rank, (chunk_id, rrf_score) in enumerate(sorted_docs[:max_results], 1):
+            result = doc_results[chunk_id]
 
             # Update metadata with RRF information
             result.metadata["rrf_score"] = rrf_score
-            result.metadata["appears_in_lists"] = len(list_appearances[doc_id])
+            result.metadata["appears_in_lists"] = len(list_appearances[chunk_id])
             result.metadata["final_rank"] = rank
 
             final_results.append(result)
@@ -148,8 +148,8 @@ class RRFReranker:
         Simple reranking for BM25 + dense vector results.
 
         Args:
-            bm25_results: BM25 results as (doc_id, score, metadata)
-            dense_results: Dense results as (doc_id, score, metadata)
+            bm25_results: BM25 results as (chunk_id, score, metadata)
+            dense_results: Dense results as (chunk_id, score, metadata)
             max_results: Maximum results to return
             bm25_weight: Weight for BM25 results (0.0 to 1.0)
             dense_weight: Weight for dense results (0.0 to 1.0)
@@ -159,13 +159,17 @@ class RRFReranker:
         """
         # Convert tuples to SearchResult objects
         bm25_search_results = [
-            SearchResult(doc_id=doc_id, score=score, metadata=metadata, source="bm25")
-            for doc_id, score, metadata in bm25_results
+            SearchResult(
+                chunk_id=chunk_id, score=score, metadata=metadata, source="bm25"
+            )
+            for chunk_id, score, metadata in bm25_results
         ]
 
         dense_search_results = [
-            SearchResult(doc_id=doc_id, score=score, metadata=metadata, source="dense")
-            for doc_id, score, metadata in dense_results
+            SearchResult(
+                chunk_id=chunk_id, score=score, metadata=metadata, source="dense"
+            )
+            for chunk_id, score, metadata in dense_results
         ]
 
         # Use main rerank method

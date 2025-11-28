@@ -38,6 +38,9 @@ class IntelligentSearcher:
         self.embedder = embedder
         self._logger = logging.getLogger(__name__)
 
+        # Dimension validation (safety check)
+        self._validate_dimensions()
+
         # Query patterns for intent detection
         self.query_patterns = {
             "function_search": [
@@ -93,6 +96,29 @@ class IntelligentSearcher:
                 r"integration.*test",
             ],
         }
+
+    def _validate_dimensions(self):
+        """Validate that index and embedder dimensions match."""
+        if self.index_manager.index is not None and self.embedder is not None:
+            try:
+                index_dim = self.index_manager.index.d
+                model_info = self.embedder.get_model_info()
+                embedder_dim = model_info.get("embedding_dimension")
+
+                if embedder_dim and index_dim != embedder_dim:
+                    raise ValueError(
+                        f"FATAL: Dimension mismatch between index ({index_dim}d) "
+                        f"and embedder ({embedder_dim}d for {self.embedder.model_name}). "
+                        f"This indicates a bug in model routing. "
+                        f"The index was likely loaded for a different model."
+                    )
+            except (AttributeError, KeyError) as e:
+                self._logger.debug(f"Could not validate dimensions: {e}")
+
+    @property
+    def graph_storage(self):
+        """Access graph storage from index manager."""
+        return getattr(self.index_manager, "graph_storage", None)
 
     def search(
         self,
@@ -454,6 +480,29 @@ class IntelligentSearcher:
             results.append(result)
 
         return results
+
+    def get_by_chunk_id(self, chunk_id: str):
+        """
+        Direct lookup by chunk_id (unambiguous, no search needed).
+
+        Args:
+            chunk_id: Format "file.py:10-20:function:name"
+
+        Returns:
+            SearchResult if found, None otherwise
+        """
+        metadata = self.index_manager.get_chunk_by_id(chunk_id)
+        if not metadata:
+            return None
+
+        # Create SearchResult with score 1.0 (exact match)
+        result = self._create_search_result(
+            chunk_id,
+            similarity=1.0,
+            metadata=metadata,
+            context_depth=2,  # Include full context for direct lookups
+        )
+        return result
 
     def get_search_suggestions(self, partial_query: str) -> List[str]:
         """Generate search suggestions based on indexed content."""

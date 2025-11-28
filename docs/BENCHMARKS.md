@@ -10,19 +10,13 @@ All metrics are derived from controlled evaluation using a standardized test dat
 
 To reproduce these results or validate performance on your system:
 
-### Quick Start (Interactive Menu)
+### Quick Start
 
-```bash
-# Windows - Interactive benchmark menu
-run_benchmarks.bat
-```
-
-**Available Options:**
+**Available Benchmarks:**
 
 1. **Token Efficiency Benchmark** (~10 seconds) - Validates 99.9% token reduction
 2. **Search Method Comparison** (~2-3 minutes) - Compares all 3 search methods (hybrid, BM25, semantic)
 3. **Auto-Tune Search Parameters** (~2 minutes) - Optimize BM25/Dense weights for your codebase
-4. **Run All Benchmarks** (~4-5 minutes) - Complete performance suite including auto-tuning
 
 ### Command Line Interface
 
@@ -129,9 +123,9 @@ RECOMMENDED CONFIGURATION:
 ### Usage
 
 ```bash
-# Interactive menu (recommended)
-run_benchmarks.bat
-# Select option 3: Auto-Tune Search Parameters
+# Via main menu
+start_mcp_server.bat
+# Select 4 (Performance Tools) → 1 (Auto-Tune Search Parameters)
 
 # Command line with automatic application
 .venv\Scripts\python.exe tools\auto_tune_search.py --project "." --apply

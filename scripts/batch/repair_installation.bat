@@ -49,7 +49,7 @@ echo.
 echo [INFO] This will delete all Merkle snapshots
 echo [INFO] Next indexing will perform a full reindex
 echo.
-set SNAPSHOT_DIR=%USERPROFILE%\.claude_code_search\merkle
+set "SNAPSHOT_DIR=%USERPROFILE%\.claude_code_search\merkle"
 
 if not exist "%SNAPSHOT_DIR%" (
     echo [INFO] No snapshot directory found: %SNAPSHOT_DIR%
@@ -85,7 +85,7 @@ if /i not "!confirm!"=="y" (
     goto main_menu
 )
 
-set INDEX_DIR=%USERPROFILE%\.claude_code_search\projects
+set "INDEX_DIR=%USERPROFILE%\.claude_code_search\projects"
 
 if not exist "%INDEX_DIR%" (
     echo [INFO] No index directory found: %INDEX_DIR%

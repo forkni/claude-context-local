@@ -6,32 +6,116 @@ This modular reference can be embedded in any project instructions for Claude Co
 
 ---
 
-## Available MCP Tools (13)
+## Available MCP Tools (15)
 
 | Tool | Priority | Purpose | Parameters |
 |------|----------|---------|------------|
-| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language | query, k=5, search_mode, file_pattern, chunk_type |
-| **index_directory** | 🔴 **SETUP** | Index project (one-time) | directory_path, project_name, incremental=True |
-| find_similar_code | Secondary | Find alternative implementations | chunk_id, k=5 |
-| configure_search_mode | Config | Set search mode & weights | search_mode, bm25_weight=0.4, dense_weight=0.6 |
+| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=5, search_mode="auto", model_key, use_routing=True, file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5 |
+| **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (~90% accuracy with import resolution) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs |
+| **index_directory** | 🔴 **SETUP** | Index project (multi-model support) | directory_path (required), project_name, incremental=True, multi_model=auto |
+| find_similar_code | Secondary | Find alternative implementations | chunk_id (required), k=5 |
+| configure_search_mode | Config | Set search mode & weights | search_mode="hybrid", bm25_weight=0.4, dense_weight=0.6, enable_parallel=True |
+| configure_query_routing | Config | Configure multi-model routing (v0.5.4+) | enable_multi_model, default_model, confidence_threshold=0.05 |
 | get_search_config_status | Config | View current configuration | *(no parameters)* |
-| get_index_status | Status | Check index health | *(no parameters)* |
+| get_index_status | Status | Check index health & model info | *(no parameters)* |
 | get_memory_status | Monitor | Check RAM/VRAM usage | *(no parameters)* |
-| list_projects | Management | Show indexed projects | *(no parameters)* |
-| switch_project | Management | Change active project | project_path |
-| clear_index | Reset | Delete current index | *(no parameters)* |
-| cleanup_resources | Cleanup | Free memory/caches | *(no parameters)* |
+| list_projects | Management | Show indexed projects grouped by path | *(no parameters)* |
+| switch_project | Management | Change active project | project_path (required) |
+| clear_index | Reset | Delete current index (all dimensions) | *(no parameters)* |
+| cleanup_resources | Cleanup | Free memory/caches (GPU + index) | *(no parameters)* |
 | list_embedding_models | Model | View available embedding models | *(no parameters)* |
-| switch_embedding_model | Model | Switch embedding model | model_name |
+| switch_embedding_model | Model | Switch embedding model (instant <150ms) | model_name (required) |
+
+---
+
+## Filter Parameters for search_code
+
+| Parameter | Type | Description | Valid Values |
+|-----------|------|-------------|--------------|
+| **file_pattern** | string | Substring match on file path | Any string (e.g., "auth", "test_", "utils/") |
+| **include_dirs** | array | Only search in these directories (prefix match) | `["src/", "lib/"]` |
+| **exclude_dirs** | array | Exclude from search (prefix match) | `["tests/", "vendor/", "node_modules/"]` |
+| **chunk_type** | string | Filter by code structure type | `"function"`, `"class"`, `"method"`, `"module"`, `"decorated_definition"`, `"interface"`, `"enum"`, `"struct"`, `"type"` |
+
+### Directory Filtering (v0.5.9+)
+
+**Path Matching**: Uses prefix matching with normalized separators (`\` → `/`)
+
+```python
+# Only search in source directories
+search_code("auth handler", include_dirs=["src/", "lib/"])
+
+# Exclude tests and vendor
+search_code("database connection", exclude_dirs=["tests/", "vendor/"])
+
+# Combine both
+search_code("user model", include_dirs=["src/"], exclude_dirs=["src/tests/"])
+```
+
+**For find_connections**: Use `exclude_dirs` to filter symbol resolution:
+
+```python
+# Find production code, not test doubles
+find_connections(symbol_name="UserService", exclude_dirs=["tests/"])
+```
+
+**Note**: In `find_connections`, `exclude_dirs` applies to symbol resolution only. Callers are not filtered (to preserve test coverage visibility).
+
+### Filter Examples
+
+```bash
+# Find functions in test files only
+/search_code "authentication" --file_pattern "test_"
+
+# Find only classes
+/search_code "user model" --chunk_type "class"
+
+# Find methods in specific module
+/search_code "database" --file_pattern "models" --chunk_type "method"
+```
+
+### Filter Best Practices
+
+**⚠️ Post-Filtering Behavior**: Filters apply AFTER search, not during.
+
+**Implications**:
+
+- Query must find semantically relevant code first
+- Filter then removes non-matching results
+- Generic queries may return 0 results if initial search doesn't find matching files
+
+**Examples**:
+
+| Query | Filter | Expected Result |
+|-------|--------|-----------------|
+| `"test"` | `indexer` | ❌ 0 results (query too generic) |
+| `"index directory embedding"` | `indexer` | ✅ Results from indexer files |
+| `"search implementation"` | `hybrid` | ✅ Results from hybrid_searcher.py |
+
+**Recommendation**: Use specific, descriptive queries when filtering:
+
+- ❌ `"test"` with `file_pattern="indexer"` → Too generic
+- ✅ `"incremental index file update"` with `file_pattern="indexer"` → Specific query
+
+**Multi-Hop Note**: Filters are applied to both initial results AND expanded results to maintain consistency.
 
 ---
 
 ## Essential Workflow
 
+**Discovery & Exploration**:
+
 ```
-1. index_directory("C:\path\to\project")   # One-time setup
-2. search_code("what you need")             # Find code instantly
-3. Read tool ONLY after search              # Edit specific files
+1. index_directory("C:\path\to\project")          # One-time setup
+2. search_code("what you need")                    # Find code instantly
+3. find_connections(chunk_id)                      # Analyze impact/dependencies
+4. Read tool ONLY after search                     # Edit specific files
+```
+
+**Direct Symbol Lookup** (when you have chunk_id from previous search):
+
+```
+search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 ```
 
 ---
@@ -56,11 +140,19 @@ This modular reference can be embedded in any project instructions for Claude Co
 
 ## Performance Metrics
 
-| Metric | Traditional Reading | Semantic Search | Improvement |
-|--------|---------------------|-----------------|-------------|
-| Tokens | 5,600 | 400 | 93% reduction |
-| Speed | 30-60s | 3-5s | 10x faster |
-| Accuracy | Hit-or-miss | Targeted | Precision |
+| Metric | Traditional Reading | Semantic Search (First) | Semantic Search (Cached) | Improvement |
+|--------|---------------------|-------------------------|--------------------------|-------------|
+| Tokens | 5,600 | 400 | 400 | 93% reduction |
+| Speed | 30-60s | 8-15s (includes 5-10s model load) | 3-5s | 3-10x faster |
+| VRAM | 0 MB | 0 MB → 1.5-5.3 GB (on-demand) | 1.5-5.3 GB | Lazy loading |
+| Accuracy | Hit-or-miss | Targeted | Targeted | Precision |
+
+**Performance Notes (v0.5.17+)**:
+
+- **Startup**: 3-5s server start, 0 MB VRAM (models load on first search)
+- **First search per session**: 8-15s total (5-10s one-time model loading + 3-5s search)
+- **Subsequent searches**: 3-5s (models stay loaded in memory)
+- **Manual cleanup**: Use `/cleanup_resources` to unload models and return to 0 MB VRAM
 
 ---
 
@@ -85,7 +177,677 @@ This modular reference can be embedded in any project instructions for Claude Co
 # Model management
 /list_embedding_models
 /switch_embedding_model "BAAI/bge-m3"
+
+# Multi-model routing configuration (v0.5.4+)
+/configure_query_routing true                       # Enable multi-model mode (default)
+/configure_query_routing false                      # Disable multi-model (single-model fallback)
+/configure_query_routing true "qwen3" 0.05          # Enable + set default model + confidence threshold (default)
+/configure_query_routing None "bge_m3" None         # Just change default model (keep multi-model enabled)
+
+# Multi-model search usage
+/search_code "Merkle tree detection"                # Auto-routes to optimal model (CodeRankEmbed)
+/search_code "error handling" --model_key "qwen3"   # Force specific model override
+/search_code "configuration" --use_routing False    # Disable routing for this query (use default)
+
+# Natural query routing examples (v0.5.5+)
+# Natural language queries now work without keyword stuffing
+/search_code "error handling"                       # Routes to Qwen3 (implementation focus)
+/search_code "configuration loading"                # Routes to BGE-M3 (workflow focus)
+/search_code "merkle tree"                          # Routes to CodeRankEmbed (specialized algorithm)
+/search_code "algorithm implementation"             # Routes to Qwen3 (confidence ~0.12)
+/search_code "initialization process"               # Routes to BGE-M3 (confidence ~0.11)
+
+# Routing transparency - every search shows which model was used
+# Output includes: "routing": {"model_selected": "qwen3", "confidence": 0.08, "reason": "..."}
 ```
+
+---
+
+## cleanup_resources - Manual Memory Cleanup
+
+**Tool**: `cleanup_resources`  
+**Priority**: 🔧 Maintenance  
+**Purpose**: Free model memory, GPU cache, and index data
+
+### When to Use
+
+- After indexing large projects (free VRAM)
+- When switching between multiple projects
+- Before intensive GPU operations
+- If you notice high VRAM usage (check with `/get_memory_status`)
+- To return to baseline 0 MB VRAM state
+
+### What It Does
+
+1. **Unloads all embedding models** from VRAM (returns to 0 MB baseline)
+2. **Clears GPU cache** (`torch.cuda.empty_cache()`)
+3. **Clears FAISS index data** from memory
+4. **Runs Python garbage collection** (7000+ objects typically)
+5. **Returns memory statistics** (models unloaded, GPU freed, objects collected)
+
+### Parameters
+
+**None** - No parameters required
+
+### Usage Examples
+
+```bash
+# Basic usage - free all memory
+/cleanup_resources
+# Output: {"success": true, "message": "Resources cleaned up successfully"}
+
+# Check memory before cleanup
+/get_memory_status
+# Output: {"allocated_vram_mb": 5300, "models_loaded": 3}
+
+# Clean up resources
+/cleanup_resources
+
+# Check memory after cleanup  
+/get_memory_status
+# Output: {"allocated_vram_mb": 0, "models_loaded": 0}
+```
+
+### Common Workflow
+
+```bash
+# 1. Index large project (uses memory)
+/index_directory "C:\LargeProject"
+
+# 2. Perform searches (models loaded, ~5.3 GB VRAM)
+/search_code "authentication"
+/search_code "database connection"
+
+# 3. Done with project - free memory
+/cleanup_resources  
+# ✓ Models unloaded
+# ✓ GPU cache freed
+# ✓ Index data cleared
+# ✓ 7000+ objects garbage collected
+
+# 4. Switch to different project
+/switch_project "C:\AnotherProject"
+
+# 5. Next search will reload models (5-10s)
+/search_code "error handling"  # Triggers model load
+```
+
+### Performance Impact
+
+| Metric | Value | Notes |
+|--------|-------|-------|
+| **VRAM freed** | Returns to 0 MB | Baseline state |
+| **Operation time** | 1-2s | Fast cleanup |
+| **Next search** | +5-10s delay | One-time model reload |
+| **Recommended frequency** | After project switches | Or when memory constrained |
+
+### Memory Lifecycle (v0.5.17+)
+
+```
+Server startup:              0 MB VRAM (lazy loading)
+       ↓ First search:       5-10s model loading
+       ↓ Models loaded:      1.5-5.3 GB VRAM (depending on config)
+       ↓ Searches:           3-5s per search
+       ↓ cleanup_resources:  Returns to 0 MB
+       ↓ Next search:        5-10s model reload (one-time)
+```
+
+### Benefits
+
+- **Free VRAM**: Return to baseline 0 MB state
+- **Multi-project workflow**: Clean slate between projects
+- **GPU memory management**: Prevent OOM errors
+- **Debugging**: Clear state for troubleshooting
+
+### Notes
+
+- **Automatic on exit**: Resources automatically cleaned on server shutdown
+- **Models reload automatically**: Next search triggers 5-10s load (normal behavior)
+- **No data loss**: Index files remain on disk, only in-memory state cleared
+- **Safe operation**: Can run anytime without breaking functionality
+
+---
+
+## Query Enhancement for Optimal Routing
+
+### Why Query Enhancement Matters
+
+The multi-model routing system uses keyword matching to select optimal embedding models. Natural language queries often produce **low confidence scores (0.05-0.15)**, causing fallback to the default model even when a specialized model would perform better.
+
+**Solution**: Claude Code should enhance queries with routing keywords before sending to MCP search.
+
+### Enhancement Protocol for Claude Code
+
+When calling `search_code()`, Claude Code should analyze user intent and expand queries:
+
+**1. Classify Query Intent & Add Domain Keywords**
+
+| User Query About | Add These Keywords | Route To |
+|------------------|-------------------|----------|
+| Error handling, exceptions | `error handling exception try except pattern` | Qwen3 |
+| Implementation, algorithms | `implementation algorithm function pattern` | Qwen3 |
+| Async/concurrent code | `async await coroutine concurrent implementation` | Qwen3 |
+| Configuration, setup | `configuration loading initialization workflow setup` | BGE-M3 |
+| Workflows, processes | `workflow process pipeline flow` | BGE-M3 |
+| Vector search, FAISS | `faiss vector similarity embedding dense` | BGE-M3 |
+| Trees, graphs, DAGs | `merkle tree graph structure binary dag` | CodeRankEmbed |
+| Ranking, fusion | `rrf reranking reciprocal rank fusion` | CodeRankEmbed |
+
+**2. Expand Natural Language to Technical Terms**
+
+| User Says | Expand To | Reason |
+|-----------|-----------|--------|
+| "find error code" | `"error handling exception try except pattern"` | Add domain keywords |
+| "config stuff" | `"configuration loading initialization setup workflow"` | Clarify vague terms |
+| "tree search" | `"merkle tree binary graph structure search"` | Disambiguate "tree" |
+| "async code" | `"async await coroutine asyncio concurrent implementation"` | Add technical terms |
+| "database setup" | `"database connection initialization configuration setup"` | Add setup keywords |
+| "how errors handled" | `"error handling exception try except implementation"` | Add intent keywords |
+
+**3. Use Model Override for Low Confidence Scenarios**
+
+When confidence would be <0.10, explicitly specify the model:
+
+```python
+# Instead of hoping for correct routing:
+search_code("handle errors")  # Low confidence, may default to BGE-M3
+
+# Enhance query AND override model:
+search_code("error handling exception try except pattern", model_key="qwen3")
+```
+
+### Quick Reference: Model Selection
+
+| Model | Best For | Key Triggers |
+|-------|----------|--------------|
+| **Qwen3** | Implementation, algorithms, error handling, async | `implement`, `algorithm`, `error`, `exception`, `async`, `pattern` |
+| **BGE-M3** | Configuration, workflows, vector search | `config`, `workflow`, `setup`, `faiss`, `vector`, `embedding` |
+| **CodeRankEmbed** | Data structures, specialized algorithms | `merkle`, `tree`, `graph`, `rrf`, `rerank`, `fusion` |
+
+### Example: Complete Enhancement Flow
+
+**User request**: "Find where errors are caught in the codebase"
+
+**Claude Code enhancement**:
+
+```
+1. Intent: Error handling implementation
+2. Expanded query: "error handling exception try except catch pattern"
+3. Expected routing: Qwen3 (implementation focus)
+4. Call: search_code("error handling exception try except catch pattern")
+```
+
+**Alternative with model override** (for guaranteed routing):
+
+```
+search_code("error handling exception try except", model_key="qwen3")
+```
+
+### Benefits of Enhancement
+
+1. **Higher confidence scores**: 0.05 → 0.15+ with added keywords
+2. **Correct model selection**: Queries route to optimal model
+3. **Better results**: Specialized models outperform default by 15-25%
+4. **Zero latency**: No additional API calls (Claude Code is the LLM)
+
+---
+
+## Symbol ID Lookup Examples (Phase 1.1)
+
+**Feature**: O(1) unambiguous symbol retrieval using chunk IDs from previous search results.
+
+**Format**: `"file.py:start-end:type:name"`
+
+**Examples**:
+
+```
+# Direct lookup (no semantic search overhead)
+/search_code --chunk_id "auth.py:15-42:function:login"
+/search_code --chunk_id "models.py:100-150:class:User"
+/search_code --chunk_id "utils.py:50-75:function:validate_email"
+
+# Use chunk_id from previous search results
+# Step 1: Semantic search returns chunk_id in results
+/search_code "authentication functions"
+# Result includes: "chunk_id": "auth.py:15-42:function:login"
+
+# Step 2: Direct lookup for unambiguous retrieval
+/search_code --chunk_id "auth.py:15-42:function:login"
+```
+
+**Benefits**:
+
+- **O(1) retrieval**: No semantic search overhead
+- **Unambiguous**: Exact symbol match, no ranking needed
+- **Tool chaining**: Use chunk_id from search → find_connections → read file
+- **AI-suggested**: System messages guide you to use chunk_id when available
+
+---
+
+## Dependency Analysis Examples (Phase 1.3)
+
+**Tool**: `find_connections` - Multi-hop dependency graph analysis
+
+**Purpose**: Understand code impact before refactoring/modification.
+
+**Accuracy**: ~90% for Python method calls with call graph resolution:
+
+- Phase 1: Self/super calls (v0.5.12)
+- Phase 2: Type annotations (v0.5.13)
+- Phase 3: Assignment tracking (v0.5.14)
+- Phase 4: Import resolution (v0.5.15)
+
+**Examples**:
+
+```
+# Analyze function dependencies
+/find_connections "auth.py:15-42:function:login"
+
+# Or search by symbol name (may be ambiguous)
+/find_connections --symbol_name "authenticate_user"
+
+# Control traversal depth (default: 3)
+/find_connections "auth.py:15-42:function:login" --max_depth 5
+```
+
+**Output Includes**:
+
+- **Direct callers**: Functions that call this symbol
+- **Indirect callers**: Multi-hop call chains (depth 1-N)
+- **Similar code**: Semantically related implementations
+- **Impact severity**: Low/Medium/High based on caller count
+- **Dependency graph**: Visual representation (Mermaid format)
+
+**Example Output**:
+
+```json
+{
+  "symbol": "authenticate_user",
+  "chunk_id": "auth.py:15-42:function:login",
+  "direct_callers": [
+    {"chunk_id": "api.py:100-120:function:login_endpoint", "name": "login_endpoint"}
+  ],
+  "indirect_callers": {
+    "depth_2": [
+      {"chunk_id": "routes.py:50-70:function:auth_route", "name": "auth_route"}
+    ]
+  },
+  "similar_code": [
+    {"chunk_id": "oauth.py:30-55:function:oauth_login", "similarity": 0.87}
+  ],
+  "impact_summary": {
+    "direct_callers": 2,
+    "total_connected": 5,
+    "severity": "Medium",
+    "recommendation": "Review callers before modification"
+  },
+  "dependency_graph": "graph TD\n  authenticate_user --> login_endpoint\n  ..."
+}
+```
+
+**Use Cases**:
+
+- **Before refactoring**: Check what code depends on target function
+- **Impact assessment**: Understand blast radius of breaking changes
+- **Code navigation**: Discover related functionality
+- **Documentation**: Generate dependency diagrams
+
+**System Message Integration**: Results include AI guidance on next steps (e.g., "Consider reading api.py to review direct caller implementation").
+
+---
+
+### Graph-Based Relationships (v0.5.6+)
+
+**Feature**: `find_connections` now includes detailed relationship analysis for inheritance, type usage, and imports.
+
+⚠️ **Re-indexing required**: Projects indexed before v0.5.6 need re-indexing for Phase 3 relationships to populate.
+
+**Additional Output Fields**:
+
+| Field | Description | Output Format |
+|-------|-------------|---------------|
+| `parent_classes` | Classes this class inherits from | Name-only (may include chunk_id if resolved) |
+| `child_classes` | Classes that inherit from this class | Full chunk details |
+| `uses_types` | Types used in this function/method | Name-only (type names) |
+| `used_as_type_in` | Functions/methods that use this as a type | Full chunk details |
+| `imports` | Modules/symbols imported by this code | Name-only (module paths) |
+| `imported_by` | Code that imports this symbol | Full chunk details |
+
+**Forward Relationships** (this chunk is the source):
+
+```json
+{
+  "parent_classes": [
+    {
+      "target_name": "BaseModel",
+      "relationship_type": "inherits",
+      "line": 10,
+      "confidence": 1.0,
+      "note": "Type resolution not implemented - showing name only"
+    }
+  ],
+  "uses_types": [
+    {
+      "target_name": "User",
+      "relationship_type": "uses_type",
+      "line": 15,
+      "confidence": 1.0,
+      "metadata": {"annotation_location": "parameter"}
+    },
+    {
+      "target_name": "int",
+      "relationship_type": "uses_type",
+      "line": 15,
+      "confidence": 1.0,
+      "metadata": {"annotation_location": "return"}
+    }
+  ],
+  "imports": [
+    {
+      "target_name": "typing.List",
+      "relationship_type": "imports",
+      "line": 1,
+      "confidence": 1.0,
+      "metadata": {"import_type": "from"}
+    }
+  ]
+}
+```
+
+**Reverse Relationships** (this chunk is the target):
+
+```json
+{
+  "child_classes": [
+    {
+      "chunk_id": "models.py:40-60:class:DerivedModel",
+      "file": "models.py",
+      "lines": "40-60",
+      "kind": "class",
+      "source_name": "DerivedModel",
+      "relationship_type": "inherits",
+      "line": 40,
+      "confidence": 1.0
+    }
+  ],
+  "used_as_type_in": [
+    {
+      "chunk_id": "service.py:10-20:function:process_user",
+      "file": "service.py",
+      "lines": "10-20",
+      "kind": "function",
+      "source_name": "process_user",
+      "relationship_type": "uses_type",
+      "line": 10,
+      "confidence": 1.0
+    }
+  ],
+  "imported_by": [
+    {
+      "chunk_id": "main.py:1-50:function:main",
+      "file": "main.py",
+      "lines": "1-50",
+      "kind": "function",
+      "source_name": "main",
+      "relationship_type": "imports",
+      "line": 1,
+      "confidence": 1.0
+    }
+  ]
+}
+```
+
+**Known Limitations**:
+
+1. **Forward relationships** (parent_classes, uses_types, imports):
+   - Return **type/module names only**, not full chunk_ids
+   - Cannot provide file location or line details for external types (stdlib, builtins)
+   - Example: `"int"`, `"User"`, `"typing.List"` are names, not resolvable symbols
+
+2. **Type resolution**:
+   - If a type is defined in the project, we show the name but cannot currently resolve it to the defining chunk_id
+   - Future enhancement: TypeResolver will map names → chunk_ids for in-project symbols
+
+3. **External dependencies**:
+   - Standard library imports (`os`, `sys`) and builtins (`int`, `str`) are tracked but not resolvable
+   - Shown with relationship type but no file/chunk information
+
+4. **Graceful degradation**:
+   - If source chunk lookup fails, partial info returned with `"note"` field explaining limitation
+   - Example: `{"source_chunk_id": "...", "note": "Source chunk not found in index"}`
+
+**Best Practices**:
+
+- ✅ Use `chunk_id` parameter for unambiguous lookup (preferred)
+- ✅ Check both forward and reverse relationships for complete picture
+- ✅ For forward relationships, expect name-only output (this is by design)
+- ✅ For reverse relationships, expect full chunk details (file, lines, kind)
+- ⚠️ Be aware that external types (stdlib, builtins) won't have chunk_ids
+
+---
+
+### Call Graph Resolution (v0.5.12+)
+
+**Feature**: Improved method call resolution for accurate dependency tracking.
+
+**Problem Solved**: Before v0.5.12, calls like `self.method()` or `obj.method()` couldn't be traced to their actual definitions, causing false positives and missed connections in `find_connections`.
+
+**Resolution Features**:
+
+| Version | Feature | Accuracy |
+|---------|---------|----------|
+| v0.5.12 | Qualified chunk_ids + self/super resolution | ~70% |
+| v0.5.13 | + Type annotation resolution | ~80% |
+| v0.5.14 | + Assignment tracking | ~85-90% |
+| v0.5.15 | + Import resolution | ~90% |
+
+**Qualified Chunk IDs for Methods**:
+
+Methods are now stored with their class context:
+
+```python
+class UserService:
+    def get_user(self, id):  # chunk_id: "service.py:5-10:method:UserService.get_user"
+        pass
+
+class AdminService:
+    def get_user(self, id):  # chunk_id: "service.py:15-20:method:AdminService.get_user"
+        pass
+```
+
+**Self/Super Resolution**:
+
+```python
+class DataProcessor:
+    def process(self):
+        self.validate()     # Resolves to "DataProcessor.validate"
+        super().cleanup()   # Resolves to "BaseProcessor.cleanup"
+```
+
+**Type Annotation Resolution** (v0.5.13):
+
+```python
+def process_order(order: Order, payment: PaymentGateway):
+    order.validate()           # Resolves to "Order.validate"
+    payment.charge(amount)     # Resolves to "PaymentGateway.charge"
+```
+
+**Example - Finding Method Callers**:
+
+```bash
+# Find all callers of a specific method (qualified name)
+/find_connections "service.py:5-10:method:UserService.get_user"
+
+# Output now shows callers through typed parameters:
+# - api/handlers.py:25 process_request(svc: UserService) → svc.get_user()
+# - tests/test_user.py:10 test via self.service.get_user()
+```
+
+**Requirements**:
+
+- **Re-indexing required**: Projects indexed before v0.5.12 need re-indexing
+- **Python only**: Type resolution currently Python-specific
+- See `docs/ADVANCED_FEATURES_GUIDE.md#call-graph-resolution-v0512` for full details
+
+---
+
+## AI Guidance Messages (Phase 1.2)
+
+**Feature**: Context-aware tool chaining suggestions automatically added to MCP responses.
+
+**How It Works**:
+
+- All MCP tools return optional `system_message` field
+- Contains AI-readable guidance for intelligent tool chaining
+- Non-intrusive (separate from main results)
+- Tool-specific recommendations
+
+**Example - search_code() with chunk_id available**:
+
+```json
+{
+  "results": [...],
+  "system_message": "💡 TIP: Use chunk_id 'auth.py:15-42:function:login' with find_connections() to analyze dependencies, or with search_code(chunk_id=...) for O(1) direct lookup."
+}
+```
+
+**Example - find_connections() with high impact**:
+
+```json
+{
+  "direct_callers": [...],
+  "impact_summary": {"severity": "High"},
+  "system_message": "⚠️ HIGH IMPACT: This function has 8 direct callers. Consider: 1) Review all callers before modification 2) Use search_code(chunk_id=...) to read each caller 3) Plan backward-compatible changes"
+}
+```
+
+**Example - index_directory() completion**:
+
+```json
+{
+  "success": true,
+  "chunks_added": 1199,
+  "system_message": "✅ Indexing complete! Try: search_code('your query') to find code, or find_connections(chunk_id) to analyze dependencies."
+}
+```
+
+**Benefits**:
+
+- **Intelligent workflows**: AI learns optimal tool sequences
+- **Reduced user friction**: Suggestions appear automatically
+- **Context-aware**: Messages adapt to result content
+- **Non-intrusive**: Doesn't pollute main response data
+
+**Tool Coverage**:
+
+- `search_code`: Suggests chunk_id usage when available
+- `find_connections`: Impact severity warnings + next steps
+- `index_directory`: Post-indexing workflow suggestions
+- `find_similar_code`: Chunk chaining recommendations
+
+---
+
+## Multi-Model Batch Indexing
+
+**Feature**: Automatically index projects with all models in the pool (Qwen3, BGE-M3, CodeRankEmbed)
+
+**Status**: ✅ **Production-Ready** (auto-enabled when `CLAUDE_MULTI_MODEL_ENABLED=true`)
+
+### How It Works
+
+When multi-model mode is enabled, `index_directory` automatically indexes with **all 3 models** sequentially:
+
+1. **Qwen3-0.6B** (1024d) - Best for implementation & algorithms
+2. **BGE-M3** (1024d) - Best for workflow & configuration
+3. **CodeRankEmbed** (768d) - Best for specialized algorithms
+
+### Parameters
+
+- `directory_path` (string, required): Absolute path to project root
+- `project_name` (string, optional): Custom name (defaults to directory name)
+- `incremental` (boolean, default: true): Use incremental indexing if snapshot exists
+- `multi_model` (boolean, default: auto): Index for all models
+  - `null` (default): Auto-detect from `CLAUDE_MULTI_MODEL_ENABLED`
+  - `true`: Force multi-model indexing (all 3 models)
+  - `false`: Force single-model indexing (current model only)
+
+### Usage Examples
+
+**Automatic Multi-Model** (default when multi-model enabled):
+
+```bash
+/index_directory "C:\Projects\MyProject"
+# Indexes with all 3 models automatically
+```
+
+**Explicit Control**:
+
+```bash
+# Force multi-model (even if disabled)
+/index_directory "C:\Projects\MyProject" --multi_model true
+
+# Force single-model (even if enabled)
+/index_directory "C:\Projects\MyProject" --multi_model false
+```
+
+### Response Format
+
+**Multi-Model Response**:
+
+```json
+{
+  "success": true,
+  "multi_model": true,
+  "project": "C:\\Projects\\MyProject",
+  "models_indexed": 3,
+  "results": [
+    {
+      "model": "BAAI/bge-m3",
+      "model_key": "bge_m3",
+      "dimension": 1024,
+      "files_added": 40,
+      "files_modified": 14,
+      "files_removed": 8,
+      "chunks_added": 1199,
+      "time_taken": 28.5
+    },
+    // ... results for other models
+  ],
+  "total_time": 82.3,
+  "total_files_added": 120,
+  "total_chunks_added": 3597,
+  "mode": "incremental"
+}
+```
+
+**Single-Model Response**:
+
+```json
+{
+  "success": true,
+  "multi_model": false,
+  "project": "C:\\Projects\\MyProject",
+  "files_added": 40,
+  "files_modified": 14,
+  "files_removed": 8,
+  "chunks_added": 1199,
+  "time_taken": 28.5,
+  "mode": "incremental"
+}
+```
+
+### Performance
+
+- **Sequential Indexing**: 3x time (e.g., 30s → 90s)
+- **Acceptable**: Indexing is infrequent (one-time per project + updates)
+- **Future Optimization**: Parallel chunking planned (2x speedup)
+
+### Benefits
+
+✅ **Single operation** updates all models
+✅ **Optimal search quality** across all query types
+✅ **Per-model isolation** maintained
+✅ **Smart defaults** (auto-enable with multi-model mode)
 
 ---
 
@@ -93,6 +855,8 @@ This modular reference can be embedded in any project instructions for Claude Co
 
 - ✅ **ALWAYS** use `search_code()` for exploration/understanding
 - ✅ **ALWAYS** index before searching: `index_directory(path)`
+- ✅ **USE** `chunk_id` for O(1) lookups when available (follow system messages)
+- ✅ **USE** `find_connections()` before modifying code (impact analysis)
 - ❌ **NEVER** read files without searching first
 - ❌ **NEVER** use `Glob()` or `grep` for code exploration
 

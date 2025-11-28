@@ -170,14 +170,13 @@ def index_project(
         print("[INFO] Forcing full reindex (bypassing Merkle snapshot)")
 
     # Use the MCP server's index_directory function
-    result = index_directory(
+    result_data = index_directory(
         str(project_path),
         project_name=f"Proj_{project_path.name}",
         incremental=not force_full,
     )
 
     try:
-        result_data = json.loads(result)
         if "error" not in result_data:
             print("[OK] Indexing completed successfully!")
             print(f"   Files processed: {result_data.get('files_added', 0)}")

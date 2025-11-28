@@ -2,16 +2,19 @@
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from chunking.multi_language_chunker import MultiLanguageChunker
+from chunking.python_ast_chunker import CodeChunk
 from embeddings.embedder import CodeEmbedder
 from merkle.change_detector import ChangeDetector, FileChanges
 from merkle.merkle_dag import MerkleDAG
 from merkle.snapshot_manager import SnapshotManager
 
+from .config import get_search_config
 from .indexer import CodeIndexManager as Indexer
 
 logger = logging.getLogger(__name__)
@@ -29,6 +32,8 @@ class IncrementalIndexResult:
     time_taken: float
     success: bool
     error: Optional[str] = None
+    bm25_resynced: bool = False
+    bm25_resync_count: int = 0
 
     def to_dict(self) -> Dict:
         """Convert to dictionary."""
@@ -41,6 +46,8 @@ class IncrementalIndexResult:
             "time_taken": self.time_taken,
             "success": self.success,
             "error": self.error,
+            "bm25_resynced": self.bm25_resynced,
+            "bm25_resync_count": self.bm25_resync_count,
         }
 
 
@@ -68,6 +75,59 @@ class IncrementalIndexer:
         self.snapshot_manager = snapshot_manager or SnapshotManager()
         self.change_detector = ChangeDetector(self.snapshot_manager)
 
+        # Load parallel chunking configuration
+        config = get_search_config()
+        self.enable_parallel_chunking = config.enable_parallel_chunking
+        self.max_chunking_workers = config.max_chunking_workers
+
+    def _chunk_files_parallel(
+        self, project_path: str, file_paths: List[str]
+    ) -> List[CodeChunk]:
+        """Chunk files in parallel or sequentially based on configuration.
+
+        Args:
+            project_path: Root project path
+            file_paths: List of relative file paths to chunk
+
+        Returns:
+            List of CodeChunk objects from all files
+        """
+        all_chunks = []
+
+        # Use parallel chunking if enabled and there are multiple files
+        if self.enable_parallel_chunking and len(file_paths) > 1:
+            with ThreadPoolExecutor(max_workers=self.max_chunking_workers) as executor:
+                # Submit all chunking tasks
+                future_to_path = {}
+                for file_path in file_paths:
+                    full_path = Path(project_path) / file_path
+                    future = executor.submit(self.chunker.chunk_file, str(full_path))
+                    future_to_path[future] = file_path
+
+                # Collect results as they complete
+                for future in as_completed(future_to_path):
+                    file_path = future_to_path[future]
+                    try:
+                        chunks = future.result()
+                        if chunks:
+                            all_chunks.extend(chunks)
+                            logger.debug(f"Chunked {file_path}: {len(chunks)} chunks")
+                    except Exception as e:
+                        logger.warning(f"Failed to chunk {file_path}: {e}")
+        else:
+            # Sequential chunking (fallback or single file)
+            for file_path in file_paths:
+                full_path = Path(project_path) / file_path
+                try:
+                    chunks = self.chunker.chunk_file(str(full_path))
+                    if chunks:
+                        all_chunks.extend(chunks)
+                        logger.debug(f"Chunked {file_path}: {len(chunks)} chunks")
+                except Exception as e:
+                    logger.warning(f"Failed to chunk {file_path}: {e}")
+
+        return all_chunks
+
     def detect_changes(self, project_path: str) -> Tuple[FileChanges, MerkleDAG]:
         """Detect changes in project since last snapshot.
 
@@ -78,6 +138,32 @@ class IncrementalIndexer:
             Tuple of (FileChanges, current MerkleDAG)
         """
         return self.change_detector.detect_changes_from_snapshot(project_path)
+
+    def _is_supported_file(self, project_path: str, file_path: str) -> bool:
+        """Check if file is supported for indexing.
+
+        Args:
+            project_path: Root project path
+            file_path: Relative file path
+
+        Returns:
+            True if file is supported and not in ignored directories
+        """
+        full_path = Path(project_path) / file_path
+
+        # Check if file extension is supported
+        if not self.chunker.is_supported(str(full_path)):
+            return False
+
+        # Check if file is in ignored directory
+        from chunking.multi_language_chunker import MultiLanguageChunker
+
+        ignored_dirs = MultiLanguageChunker.DEFAULT_IGNORED_DIRS
+
+        if any(part in ignored_dirs for part in Path(file_path).parts):
+            return False
+
+        return True
 
     def incremental_index(
         self,
@@ -113,6 +199,31 @@ class IncrementalIndexer:
 
             if not changes.has_changes():
                 logger.info(f"No changes detected in {project_name}")
+                # Even with no changes, save current statistics
+                all_files = list(current_dag.get_all_files())
+                supported_files = [
+                    f for f in all_files if self._is_supported_file(project_path, f)
+                ]
+
+                total_chunks = 0
+                if hasattr(self.indexer, "get_stats"):
+                    stats = self.indexer.get_stats()
+                    total_chunks = stats.get("total_chunks", 0)
+                elif hasattr(self.indexer, "get_index_size"):
+                    total_chunks = self.indexer.get_index_size()
+
+                metadata = {
+                    "project_name": project_name,
+                    "incremental_update": True,
+                    "files_added": 0,
+                    "files_removed": 0,
+                    "files_modified": 0,
+                    "total_files": len(all_files),
+                    "supported_files": len(supported_files),
+                    "chunks_indexed": total_chunks,
+                }
+                self.snapshot_manager.save_snapshot(current_dag, metadata)
+
                 return IncrementalIndexResult(
                     files_added=0,
                     files_removed=0,
@@ -121,6 +232,8 @@ class IncrementalIndexer:
                     chunks_removed=0,
                     time_taken=time.time() - start_time,
                     success=True,
+                    bm25_resynced=False,
+                    bm25_resync_count=0,
                 )
 
             # Log changes
@@ -133,15 +246,48 @@ class IncrementalIndexer:
             chunks_removed = self._remove_old_chunks(changes, project_name)
             chunks_added = self._add_new_chunks(changes, project_path, project_name)
 
+            # Validate index consistency after operations
+            if hasattr(self.indexer, "validate_index_consistency"):
+                logger.info("[INCREMENTAL] Validating index consistency...")
+                is_valid, issues = self.indexer.validate_index_consistency()
+                if not is_valid:
+                    logger.error(
+                        f"[INCREMENTAL] Index validation failed with {len(issues)} issues. "
+                        "Triggering full re-index to recover."
+                    )
+                    # Clear corrupted index and do full re-index
+                    logger.warning("[INCREMENTAL] Clearing corrupted index...")
+                    self.indexer.clear_index()
+                    logger.info("[INCREMENTAL] Performing full re-index as recovery...")
+                    return self._full_index(project_path, project_name, start_time)
+
             # Update snapshot
+            # After processing changes, calculate cumulative stats
+            all_files = list(current_dag.get_all_files())
+            supported_files = [
+                f for f in all_files if self._is_supported_file(project_path, f)
+            ]
+
+            total_chunks = 0
+            if hasattr(self.indexer, "get_stats"):
+                stats = self.indexer.get_stats()
+                total_chunks = stats.get("total_chunks", 0)
+            elif hasattr(self.indexer, "get_index_size"):
+                total_chunks = self.indexer.get_index_size()
+
             self.snapshot_manager.save_snapshot(
                 current_dag,
                 {
                     "project_name": project_name,
                     "incremental_update": True,
+                    # Delta stats (what changed)
                     "files_added": len(changes.added),
                     "files_removed": len(changes.removed),
                     "files_modified": len(changes.modified),
+                    # Cumulative stats (current totals)
+                    "total_files": len(all_files),
+                    "supported_files": len(supported_files),
+                    "chunks_indexed": total_chunks,
                 },
             )
 
@@ -149,6 +295,42 @@ class IncrementalIndexer:
             logger.info("[INCREMENTAL] Saving index...")
             self.indexer.save_index()
             logger.info("[INCREMENTAL] Index saved")
+
+            # Auto-sync BM25 if significant desync detected (>10% difference)
+            bm25_resynced = False
+            bm25_resync_count = 0
+            DESYNC_THRESHOLD = 0.10  # 10% threshold - affects search quality noticeably
+
+            if hasattr(self.indexer, "get_stats") and hasattr(
+                self.indexer, "resync_bm25_from_dense"
+            ):
+                try:
+                    stats = self.indexer.get_stats()
+                    bm25_count = stats.get("bm25_documents", 0)
+                    dense_count = stats.get("dense_vectors", 0)
+
+                    # Ensure counts are integers (not Mock objects in tests)
+                    if (
+                        isinstance(bm25_count, int)
+                        and isinstance(dense_count, int)
+                        and dense_count > 0
+                    ):
+                        desync_ratio = abs(dense_count - bm25_count) / dense_count
+                        if desync_ratio > DESYNC_THRESHOLD:
+                            logger.warning(
+                                f"[INCREMENTAL] Significant desync detected: BM25={bm25_count}, "
+                                f"Dense={dense_count} ({desync_ratio:.1%} difference)"
+                            )
+                            logger.info(
+                                "[INCREMENTAL] Auto-syncing BM25 from dense metadata..."
+                            )
+                            bm25_resync_count = self.indexer.resync_bm25_from_dense()
+                            bm25_resynced = True
+                            logger.info(
+                                f"[INCREMENTAL] BM25 resync complete: {bm25_resync_count} documents"
+                            )
+                except Exception as e:
+                    logger.debug(f"[INCREMENTAL] BM25 sync check skipped: {e}")
 
             # Clear GPU cache to free intermediate tensors from embedding batches
             try:
@@ -172,20 +354,43 @@ class IncrementalIndexer:
                 chunks_removed=chunks_removed,
                 time_taken=time.time() - start_time,
                 success=True,
+                bm25_resynced=bm25_resynced,
+                bm25_resync_count=bm25_resync_count,
             )
 
         except Exception as e:
             logger.error(f"Incremental indexing failed: {e}")
-            return IncrementalIndexResult(
-                files_added=0,
-                files_removed=0,
-                files_modified=0,
-                chunks_added=0,
-                chunks_removed=0,
-                time_taken=time.time() - start_time,
-                success=False,
-                error=str(e),
+            import traceback
+
+            logger.error(traceback.format_exc())
+
+            # Attempt recovery via full re-index
+            logger.warning(
+                "[INCREMENTAL] Attempting recovery via full re-index due to error..."
             )
+            try:
+                # Clear potentially corrupted index
+                self.indexer.clear_index()
+                # Attempt full re-index as recovery
+                return self._full_index(project_path, project_name, start_time)
+            except Exception as recovery_error:
+                logger.error(
+                    f"Recovery via full re-index also failed: {recovery_error}"
+                )
+                logger.error(traceback.format_exc())
+                # Return failure result with both errors
+                return IncrementalIndexResult(
+                    files_added=0,
+                    files_removed=0,
+                    files_modified=0,
+                    chunks_added=0,
+                    chunks_removed=0,
+                    time_taken=time.time() - start_time,
+                    success=False,
+                    error=f"Incremental indexing failed: {e}. Recovery attempt also failed: {recovery_error}",
+                    bm25_resynced=False,
+                    bm25_resync_count=0,
+                )
 
     def _full_index(
         self, project_path: str, project_name: str, start_time: float
@@ -201,6 +406,13 @@ class IncrementalIndexer:
             IncrementalIndexResult
         """
         try:
+            # Delete old Merkle snapshot for current model only (preserves other models)
+            logger.info(
+                f"[FULL_INDEX] Deleting old snapshot for current model: {project_name}"
+            )
+            self.snapshot_manager.delete_snapshot(project_path)
+            logger.info("[FULL_INDEX] Deleted old snapshot for current model")
+
             # Clear existing index
             self.indexer.clear_index()
 
@@ -227,18 +439,22 @@ class IncrementalIndexer:
                 logger.info(f"  Supported: {sf}")
 
             # Collect all chunks first, then embed in a single pass for efficiency
-            all_chunks = []
-            for file_path in supported_files:
-                full_path = Path(project_path) / file_path
-                try:
-                    chunks = self.chunker.chunk_file(str(full_path))
-                    if chunks:
-                        all_chunks.extend(chunks)
-                        logger.info(f"Chunked {file_path}: {len(chunks)} chunks")
-                    else:
-                        logger.warning(f"No chunks generated for {file_path}")
-                except Exception as e:
-                    logger.warning(f"Failed to chunk {file_path}: {e}")
+            # Use parallel chunking for improved performance
+            logger.info(
+                f"Chunking files (parallel={'enabled' if self.enable_parallel_chunking else 'disabled'}, workers={self.max_chunking_workers})"
+            )
+            all_chunks = self._chunk_files_parallel(project_path, supported_files)
+
+            # Log any files that didn't produce chunks
+            files_with_chunks = sum(
+                1
+                for f in supported_files
+                if any(c.file_path == str(Path(project_path) / f) for c in all_chunks)
+            )
+            if files_with_chunks < len(supported_files):
+                logger.warning(
+                    f"{len(supported_files) - files_with_chunks} files produced no chunks"
+                )
 
             logger.info(f"Total chunks collected: {len(all_chunks)}")
 
@@ -290,6 +506,42 @@ class IncrementalIndexer:
             self.indexer.save_index()
             logger.info("[INCREMENTAL] Index saved")
 
+            # Auto-sync BM25 if significant desync detected (>10% difference)
+            bm25_resynced = False
+            bm25_resync_count = 0
+            DESYNC_THRESHOLD = 0.10  # 10% threshold - affects search quality noticeably
+
+            if hasattr(self.indexer, "get_stats") and hasattr(
+                self.indexer, "resync_bm25_from_dense"
+            ):
+                try:
+                    stats = self.indexer.get_stats()
+                    bm25_count = stats.get("bm25_documents", 0)
+                    dense_count = stats.get("dense_vectors", 0)
+
+                    # Ensure counts are integers (not Mock objects in tests)
+                    if (
+                        isinstance(bm25_count, int)
+                        and isinstance(dense_count, int)
+                        and dense_count > 0
+                    ):
+                        desync_ratio = abs(dense_count - bm25_count) / dense_count
+                        if desync_ratio > DESYNC_THRESHOLD:
+                            logger.warning(
+                                f"[FULL_INDEX] Significant desync detected: BM25={bm25_count}, "
+                                f"Dense={dense_count} ({desync_ratio:.1%} difference)"
+                            )
+                            logger.info(
+                                "[FULL_INDEX] Auto-syncing BM25 from dense metadata..."
+                            )
+                            bm25_resync_count = self.indexer.resync_bm25_from_dense()
+                            bm25_resynced = True
+                            logger.info(
+                                f"[FULL_INDEX] BM25 resync complete: {bm25_resync_count} documents"
+                            )
+                except Exception as e:
+                    logger.debug(f"[FULL_INDEX] BM25 sync check skipped: {e}")
+
             # Clear GPU cache to free intermediate tensors from embedding batches
             try:
                 import gc
@@ -312,6 +564,8 @@ class IncrementalIndexer:
                 chunks_removed=0,
                 time_taken=time.time() - start_time,
                 success=True,
+                bm25_resynced=bm25_resynced,
+                bm25_resync_count=bm25_resync_count,
             )
 
         except Exception as e:
@@ -325,6 +579,8 @@ class IncrementalIndexer:
                 time_taken=time.time() - start_time,
                 success=False,
                 error=str(e),
+                bm25_resynced=False,
+                bm25_resync_count=0,
             )
 
     def _remove_old_chunks(self, changes: FileChanges, project_name: str) -> int:
@@ -338,15 +594,36 @@ class IncrementalIndexer:
             Number of chunks removed
         """
         files_to_remove = self.change_detector.get_files_to_remove(changes)
-        chunks_removed = 0
 
-        for file_path in files_to_remove:
-            # Remove from metadata
-            removed = self.indexer.remove_file_chunks(file_path, project_name)
-            chunks_removed += removed
-            logger.debug(f"Removed {removed} chunks from {file_path}")
-
-        return chunks_removed
+        # Use batch removal for efficiency (single pass instead of one per file)
+        # This has been fixed to properly handle FAISS vector removal and index reconstruction
+        if hasattr(self.indexer, "remove_multiple_files") and files_to_remove:
+            try:
+                chunks_removed = self.indexer.remove_multiple_files(
+                    set(files_to_remove), project_name
+                )
+                logger.info(
+                    f"Batch removed {chunks_removed} chunks from {len(files_to_remove)} files"
+                )
+                return chunks_removed
+            except Exception as e:
+                logger.error(f"Batch removal failed: {e}")
+                logger.warning("Falling back to individual file removal")
+                # Fall back to individual removal on error
+                chunks_removed = 0
+                for file_path in files_to_remove:
+                    removed = self.indexer.remove_file_chunks(file_path, project_name)
+                    chunks_removed += removed
+                    logger.debug(f"Removed {removed} chunks from {file_path}")
+                return chunks_removed
+        else:
+            # Fallback to individual removal if batch method not available
+            chunks_removed = 0
+            for file_path in files_to_remove:
+                removed = self.indexer.remove_file_chunks(file_path, project_name)
+                chunks_removed += removed
+                logger.debug(f"Removed {removed} chunks from {file_path}")
+            return chunks_removed
 
     def _add_new_chunks(
         self, changes: FileChanges, project_path: str, project_name: str
@@ -376,15 +653,11 @@ class IncrementalIndexer:
         ]
 
         # Collect all chunks first, then embed in a single pass
-        chunks_to_embed = []
-        for file_path in supported_files:
-            full_path = Path(project_path) / file_path
-            try:
-                chunks = self.chunker.chunk_file(str(full_path))
-                if chunks:
-                    chunks_to_embed.extend(chunks)
-            except Exception as e:
-                logger.warning(f"Failed to chunk {file_path}: {e}")
+        # Use parallel chunking for improved performance
+        logger.info(
+            f"[INCREMENTAL] Chunking {len(supported_files)} files (parallel={'enabled' if self.enable_parallel_chunking else 'disabled'})"
+        )
+        chunks_to_embed = self._chunk_files_parallel(project_path, supported_files)
 
         all_embedding_results = []
         if chunks_to_embed:
@@ -489,4 +762,6 @@ class IncrementalIndexer:
                 chunks_removed=0,
                 time_taken=time.time() - start_time,
                 success=True,
+                bm25_resynced=False,
+                bm25_resync_count=0,
             )

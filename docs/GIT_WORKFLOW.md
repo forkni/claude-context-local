@@ -82,7 +82,6 @@ Automatically blocks commits containing local-only files:
 These files exist only on the development branch:
 
 - **docs/VSCODE_SETUP.md** - VSCode configuration and Ruff setup
-- **docs/TESTING_GUIDE.md** - Test suite documentation
 - **docs/PRE_COMMIT_HOOKS.md** - Pre-commit hook documentation
 - **docs/GPU_MEMORY_LEAK_FIX.md** - GPU memory optimization details
 - **docs/PER_MODEL_INDICES_IMPLEMENTATION.md** - Per-model index technical details
@@ -90,6 +89,8 @@ These files exist only on the development branch:
 - **docs/Current_State.md** - Current development state tracking
 - **docs/GIT_WORKFLOW_ENHANCEMENT_PLAN.md** - Workflow enhancement planning
 - **docs/GIT_WORKFLOW_CRITICAL_REVIEW.md** - Critical workflow review
+
+**Note**: Testing documentation moved to `tests/TESTING_GUIDE.md` (production-ready, available on all branches).
 
 These are automatically excluded from main branch via `.gitattributes` merge strategy.
 

@@ -24,12 +24,21 @@ This guide covers the complete installation process for the Claude Context MCP s
 
 - **Python**: 3.11+ (tested with Python 3.11.1)
 - **Operating System**: Windows 10/11
-- **Disk Space**: 2-3 GB free space
+- **Disk Space**: 4-6 GB free space
   - EmbeddingGemma model: ~1.3 GB
+  - BGE-M3 model: ~2.3 GB
+  - Qwen3-0.6B model: ~2.4 GB (optional, for multi-model routing)
+  - CodeRankEmbed model: ~0.6 GB (optional, for multi-model routing)
   - PyTorch with CUDA: ~2.4 GB
   - Dependencies and cache: ~500 MB
 - **Memory**: 4GB RAM minimum, 8GB+ recommended
 - **GPU** (optional): NVIDIA GPU with CUDA 11.8+ or 12.x support
+  - **Startup VRAM (v0.5.17+)**: 0 MB (lazy loading enabled)
+  - **After first search**: 1.5-2 GB VRAM (single model) or 5.3 GB VRAM (multi-model)
+  - Single-model mode: 2-4 GB VRAM total
+  - Multi-model mode (v0.5.4+): 6-8 GB VRAM recommended (5.3 GB for 3 models after first search)
+  - RTX 3060 12GB: Comfortable for multi-model (7 GB headroom)
+  - RTX 4090 24GB: Excellent for multi-model (19 GB headroom)
 
 > **Windows Focus**: This system is optimized for Windows environments with automated installers and comprehensive verification tools.
 
@@ -204,6 +213,8 @@ The Windows installer (`install-windows.bat`) automatically configures Claude Co
 2. **MCP Server Registration**: Registers the code-search MCP server with Claude Code
 3. **Configuration Verification**: Tests the configuration after setup
 4. **Error Recovery**: Offers retry option if configuration fails
+
+**Note on Authentication**: This MCP server does not require OAuth authentication. If Claude Code's `/mcp` menu shows an 'Authenticate' option for the code-search server, it can be safely ignored - no authentication is needed. This is a standard Claude Code UI element that appears for all MCP servers.
 
 ### Manual Configuration
 
@@ -569,11 +580,9 @@ After successful installation, verify system performance and validate token effi
 ### Quick Performance Test
 
 ```bash
-# Interactive benchmark menu (Recommended)
-run_benchmarks.bat
+# Token efficiency test (Recommended, ~10 seconds)
+.venv\Scripts\python.exe evaluation/run_evaluation.py token-efficiency --max-instances 1
 ```
-
-Select **Option 1: Token Efficiency Benchmark** for a quick validation (~10 seconds).
 
 **Expected Results:**
 
@@ -656,8 +665,27 @@ scripts\batch\repair_installation.bat
 
 - Bypasses Merkle tree snapshot checking
 - Performs full reindex of all files
-- Automatically deletes stale snapshots
+- Automatically deletes stale snapshots (v0.5.1+)
 - Useful after git operations or file system changes
+
+#### Advanced Cleanup Utilities
+
+For manual cleanup of orphaned snapshots and indices:
+
+```powershell
+# Clean up orphaned Merkle snapshots
+.venv\Scripts\python.exe tools\cleanup_stale_snapshots.py
+
+# Clean up orphaned project indices
+.venv\Scripts\python.exe tools\cleanup_orphaned_projects.py
+```
+
+**When to Use:**
+
+- `cleanup_stale_snapshots.py` - Removes Merkle snapshots for deleted projects or old model dimensions
+- `cleanup_orphaned_projects.py` - Removes project indices that no longer have source directories
+
+These utilities are interactive and will show you what will be deleted before proceeding.
 
 ### Common Issues
 
@@ -713,6 +741,181 @@ uv sync  # This will install correct transformers version
 
 **Root Cause**: Standard transformers 4.51.3 doesn't include gemma3_text architecture. The v4.56.0-Embedding-Gemma-preview branch includes the required support.
 
+#### 5. MCP stdio Transport Issues
+
+**Symptoms**: Claude Code 2.0.22+ experiencing stdio-related bugs:
+
+- Issue #3426: stdio transport parsing errors
+- Issue #768: MCP connection failures
+- Issue #3487: stdio buffer overflow
+- Issue #3369: stdio deadlocks
+
+**Solution**: Use SSE Transport as alternative
+
+```powershell
+# Option 1: Via interactive menu
+start_mcp_server.bat
+# Select: 1 - Quick Start Server (launches SSE directly)
+
+# Option 2: Direct launcher
+scripts\batch\start_mcp_sse.bat
+
+# Option 3: Manual start (development)
+.venv\Scripts\python.exe -m mcp_server.server --transport sse
+```
+
+**SSE Transport Features:**
+
+- Runs on `http://localhost:8765/sse`
+- Automatic port conflict detection
+- Auto-kill for processes on port 8765
+- All 15 MCP tools available
+- Identical functionality to stdio
+- <10ms latency overhead
+
+**When to Use SSE:**
+
+- Claude Code version 2.0.22 or later
+- Experiencing stdio connection issues
+- Need more reliable transport
+- Debugging MCP communication
+
+**When to Use stdio:**
+
+- Default Claude Code integration
+- No stdio bugs experienced
+- Standard MCP workflow
+
+#### 6. Port Conflicts (SSE Transport)
+
+**Error**: `Port 8765 is already in use`
+
+**Automatic Resolution**: SSE launcher detects and offers to kill conflicting process
+
+**Manual Resolution**:
+
+```powershell
+# Find process using port 8765
+netstat -ano | findstr :8765
+
+# Kill process (replace PID with actual process ID)
+powershell -Command "Stop-Process -Id <PID> -Force"
+```
+
+**Prevention**: Only run one SSE server instance at a time
+
+#### 7. WinError 64 - SSE Transport Connection Issues
+
+**Error**: `OSError: [WinError 64] The specified network name is no longer available`
+
+**Symptoms**:
+
+- SSE server starts successfully but shows WinError 64 in logs
+- Server accepts initial connections but becomes unresponsive
+- Error occurs in asyncio event loop: `asyncio.windows_events.py`
+
+**Root Cause**: Windows asyncio ProactorEventLoop bug where socket errors incorrectly close the listening socket ([Python issue #93821](https://github.com/python/cpython/issues/93821))
+
+**Solution**: **Automatically fixed in v0.5.2+**
+
+The MCP server now automatically detects Windows and uses SelectorEventLoop instead of ProactorEventLoop when running SSE transport. No user action required.
+
+**Verification**: Check server logs for confirmation message:
+
+```
+Windows detected: Using SelectorEventLoop for SSE transport (WinError 64 fix)
+```
+
+**Additional Mitigation** (Windows Console QuickEdit Mode):
+
+If you still experience connection issues, disable QuickEdit mode in Windows console:
+
+1. Right-click console window title bar → Properties
+2. Uncheck "QuickEdit Mode" under "Edit Options"
+3. Click OK and restart the SSE server
+
+**Why this helps**: QuickEdit mode can pause console output when text is selected, causing connection timeouts.
+
+**Manual Workaround** (for older versions < 0.5.2):
+
+```python
+# Add before mcp.run() in mcp_server/server.py
+if platform.system() == "Windows" and transport == "sse":
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+```
+
+#### 8. First Search is Slow (5-10 seconds)
+
+**Symptom**: First search after server startup takes 8-15 seconds
+
+**Root Cause**: **Normal behavior** - Lazy model loading (v0.5.17+)
+
+**What's Happening**:
+
+- Models load on-demand (not at startup) to reduce startup VRAM from 4.86GB to 0 MB
+- **First search**: 5-10s model loading + 3-5s search = 8-15s total
+- **Subsequent searches**: 3-5s (models stay loaded in memory)
+- **After cleanup**: Next search requires 5-10s reload (one-time)
+
+**Verification**:
+
+```powershell
+# 1. Check VRAM before first search
+/get_memory_status  
+# Output: {"allocated_vram_mb": 0, "models_loaded": 0}
+
+# 2. Run first search (slow, loads models)
+/search_code "authentication"  
+# Takes 8-15s - THIS IS NORMAL
+
+# 3. Check VRAM after first search
+/get_memory_status
+# Output: {"allocated_vram_mb": 1500-5300, "models_loaded": 1-3}
+
+# 4. Run second search (fast, models cached)
+/search_code "error handling"
+# Takes 3-5s - models already loaded
+```
+
+**This is EXPECTED behavior, not a bug**:
+
+✅ **Benefits**:
+
+- **Zero startup VRAM**: 0 MB vs 4.86GB (100% reduction)
+- **5-10x faster startup**: 3-5s vs 15-30s server start
+- **Instant server ready**: No waiting for model loading
+
+⏱️ **Trade-off**:
+
+- **First search delay**: 5-10s one-time model loading per session
+- **After cleanup**: Models reload on next search (5-10s)
+
+**To free memory after use**:
+
+```powershell
+/cleanup_resources  
+# Unloads models, returns to 0 MB VRAM
+# Next search will reload models (5-10s)
+```
+
+**Performance Timeline**:
+
+```
+Server startup:              0 MB VRAM, ready in 3-5s
+       ↓ First search:       8-15s (includes 5-10s model load)
+       ↓ Models loaded:      1.5-5.3 GB VRAM
+       ↓ Searches:           3-5s per search (fast)
+       ↓ cleanup_resources:  Returns to 0 MB
+       ↓ Next search:        8-15s (models reload)
+```
+
+**Related Documentation**:
+
+- Performance expectations: See "Runtime Performance (v0.5.17+)" section above
+- Manual cleanup: See `/cleanup_resources` in MCP_TOOLS_REFERENCE.md
+- Memory management: Use `/get_memory_status` to monitor VRAM
+
 ### Debug Commands
 
 ```bash
@@ -729,6 +932,64 @@ python -c "import torch; print('GPU memory:', torch.cuda.get_device_properties(0
 ## Performance Optimization
 
 ### GPU Acceleration
+
+### Runtime Performance (v0.5.17+)
+
+**Lazy Model Loading**: Embedding models load on-demand during first search, not at server startup.
+
+#### Startup Performance
+
+- **Server startup**: 3-5 seconds (fast, no models loaded)
+- **VRAM at startup**: 0 MB (models load on first search)
+- **Import time**: ~3s (without model loading overhead)
+
+#### Search Performance
+
+| Phase | VRAM | Time | What's Happening |
+|-------|------|------|------------------|
+| Server startup | 0 MB | 3-5s | Fast startup, no models |
+| First search (cold) | 0 MB → 1.5-5.3 GB | 8-15s | 5-10s model load + 3-5s search |
+| Subsequent searches (warm) | 1.5-5.3 GB | 3-5s | Models cached, instant search |
+| After `/cleanup_resources` | 0 MB | N/A | Models unloaded |
+
+#### Memory Usage Lifecycle
+
+```
+Startup (server starts):              0 MB VRAM (lazy loading)
+↓ First search triggers model load:   5-10s loading time
+↓ Models loaded in memory:            1.5-5.3 GB VRAM (depends on config)
+↓ Search operations:                  3-5s per search (fast)
+↓ Manual cleanup (/cleanup_resources): Returns to 0 MB baseline
+↓ Next search after cleanup:          5-10s reload (one-time)
+```
+
+#### When Models Load
+
+- **First `/search_code` query** per session (5-10s delay)
+- **First `/index_directory` operation** per session
+- **After `/cleanup_resources`** (next search reloads models)
+
+#### Optimization Benefits
+
+**Completed Optimizations (v0.5.17+)**:
+
+1. **ThreadPool Reuse** - 71.8% faster parallel search (5.7ms per 50 tasks)
+2. **Query Embedding Cache** - 2-3x faster multi-hop search (eliminates redundant GPU computation)
+3. **Lazy Model Loading** - 100% startup VRAM reduction, 5-10x faster startup
+
+**Performance Tips**:
+
+- **First search is slow**: This is normal (5-10s model loading), not a bug
+- **Subsequent searches are fast**: Models stay loaded (3-5s per search)
+- **Free memory when done**: Use `/cleanup_resources` to unload models
+- **Check memory usage**: Use `/get_memory_status` to monitor VRAM
+
+**Trade-offs**:
+
+- ✅ **Benefit**: Instant server startup (3-5s vs 15-30s)
+- ✅ **Benefit**: Zero startup VRAM (0 MB vs 4.86GB)
+- ⏱️ **Trade-off**: First search has 5-10s model load delay
+- ⏱️ **Trade-off**: Models reload after cleanup (5-10s)
 
 1. **CUDA Setup**
    - Install NVIDIA drivers (latest)
