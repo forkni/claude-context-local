@@ -2,15 +2,49 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2025-11-26)
+## Current Status: All Features Operational (2025-11-28)
 
-- **Version**: 0.5.17
+- **Version**: 0.6.0
 - **Status**: Production-ready
 - **Test Coverage**: 545 unit tests + integration tests (100% pass rate)
 - **Index Quality**: 109 active files, 1,199 chunks (site-packages excluded, BGE-M3 1024d, ~24 MB)
 - **Token Reduction**: 93-97% maintained
 - **Call Graph Resolution**: Phase 4 complete (~90% accuracy)
 - **Refactoring**: Phase 7.1 complete (resolver extraction)
+
+---
+
+## v0.6.0 - Production Release (2025-11-28)
+
+### Status: PRODUCTION-READY ✅
+
+**Major release consolidating v0.5.16-v0.5.17 improvements**
+
+### Highlights
+
+- **Self-Healing BM25 Sync** - Automatic index synchronization
+- **Persistent Project Selection** - Survives server restarts
+- **Graph Resolver Extraction** - Cleaner architecture (Phase 7.1)
+- **Tree-Sitter Modularization** - 76% code reduction (Phase 4.1)
+- **Multi-Hop Search Refactoring** - Orchestrator pattern (Phase 4.2)
+- **Batch Script Compliance** - 56 violations fixed across 15 files
+- **Git Workflow Fixes** - Critical C: drive scanning bug resolved
+
+### Key Changes (cumulative from v0.5.16-v0.5.17)
+
+- Self-healing BM25/Dense index synchronization during incremental indexing
+- Project persistence across server restarts
+- Graph resolvers extracted to `graph/resolvers/` module
+- Tree-sitter chunker split into `chunking/languages/` package
+- Multi-hop search helper methods extracted
+- All batch scripts BATCH_STYLE_GUIDE.md compliant
+- Git workflow scripts use explicit Windows tool paths
+
+### Test Coverage
+
+- 545+ unit tests (100% pass rate)
+- All 15 MCP tools operational
+- No re-indexing required
 
 ---
 

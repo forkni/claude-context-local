@@ -9,7 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+*No unreleased changes yet.*
+
+---
+
+## [0.6.0] - 2025-11-28
+
 ### Added
+
+- **Self-Healing BM25 Sync** - Automatic BM25/Dense index synchronization
+  - Auto-detects desync exceeding 10% threshold during incremental indexing
+  - Rebuilds BM25 from dense index metadata automatically
+  - New method: `HybridSearcher.resync_bm25_from_dense()`
+  - New result fields: `bm25_resynced`, `bm25_resync_count`
 
 - **Persistent Project Selection** - Project choice survives server restarts
   - New `mcp_server/project_persistence.py` - Save/load selection to JSON
@@ -772,6 +784,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **v0.6.0** - Release: Self-healing BM25, persistent projects, batch compliance (2025-11-28)
 - **v0.5.15** - Phase 4: Import-Based Resolution (~90% accuracy) (2025-11-19)
 - **v0.5.14** - Phase 3: Assignment Tracking (2025-11-19)
 - **v0.5.13** - Phase 2: Type Annotation Resolution (2025-11-19)

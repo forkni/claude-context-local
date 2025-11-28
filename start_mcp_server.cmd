@@ -1259,36 +1259,28 @@ echo This server enables hybrid semantic code search in Claude Code.
 echo.
 echo Key Features:
 echo   - 15 MCP Tools: Index, search, configure, manage projects
-echo   - Low-Level MCP SDK: Official Anthropic implementation ^(v0.5.16^)
+echo   - Low-Level MCP SDK: Official Anthropic implementation
 echo   - Multi-Model Routing: BGE-M3 + Qwen3 + CodeRankEmbed ^(optional^)
 echo   - Hybrid Search: BM25 + Semantic for optimal accuracy
 echo   - 93-97%% Token Reduction: Validated benchmark results
 echo   - Multi-language Support: 9 languages, 19 extensions
 echo   - Local Processing: No API calls, complete privacy
 echo.
-echo What's New in v0.5.5 ^(2025-11-15^):
-echo   - Official Anthropic Low-Level MCP SDK migration ^(production-grade^)
-echo   - Natural query support: Simple queries work without keywords
-echo   - GPU memory logging: Detailed VRAM tracking during model loading
-echo   - Multi-hop search timing: Cold 1.7-3.7s, cached 17-117ms ^(60-140x faster^)
-echo   - All 15/15 tools fully operational
-echo.
 echo Quick Start:
-echo   1. Run: install-windows.bat ^(first time setup^)
-echo   2. Verify: verify-installation.bat ^(test installation^)
+echo   1. Run: install-windows.cmd ^(first time setup^)
+echo   2. Verify: verify-installation.cmd ^(test installation^)
 echo   3. Configure: scripts\batch\manual_configure.bat
 echo   4. Index: /index_directory "your-project-path"
 echo   5. Search: /search_code "your query"
 echo.
 echo Interactive Menu Usage:
-echo   start_mcp_server.bat          - Launch interactive menu ^(8 options^)
-echo   start_mcp_server.bat --help   - Show this help
-echo   start_mcp_server.bat --debug  - Start with debug logging
+echo   start_mcp_server.cmd          - Launch interactive menu ^(8 options^)
+echo   start_mcp_server.cmd --help   - Show this help
+echo   start_mcp_server.cmd --debug  - Start with debug logging
 echo.
 echo Documentation:
 echo   Root Directory:
 echo     - README.md: Complete setup guide and quick start
-echo     - CLAUDE.md: Development context and advanced usage
 echo.
 echo   docs/ Directory:
 echo     - DOCUMENTATION_INDEX.md: Master reference guide
