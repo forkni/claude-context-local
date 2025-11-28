@@ -52,9 +52,25 @@ Double-click `install-windows.cmd` and follow the prompts:
 3. **HuggingFace Token** - Enter your token when prompted ([get token](https://huggingface.co/settings/tokens))
 4. **Claude Code Setup** - Automatic MCP server registration
 
-### 2. Launch Server
+### 2. Index Your Project
 
-Double-click `start_mcp_server.cmd` to open the interactive menu:
+Double-click `start_mcp_server.cmd` and select **5. Project Management**:
+
+```
+=== Project Management ===
+
+  1. Index New Project       ← Select this
+  2. Re-index Existing Project
+  3. Force Re-index Project
+  4. List Indexed Projects
+  ...
+```
+
+Enter your project path when prompted (e.g., `C:\Projects\MyApp`).
+
+### 3. Start Server
+
+Return to main menu and select **1. Quick Start Server**:
 
 ```
 === Claude Context MCP Server Launcher ===
@@ -62,17 +78,12 @@ Double-click `start_mcp_server.cmd` to open the interactive menu:
   1. Quick Start Server      ← Select this
   2. Installation & Setup
   3. Search Configuration
-  4. Performance Tools
-  5. Project Management
-  6. Advanced Options
-  7. Help & Documentation
+  ...
 ```
 
-### 3. Use in Claude Code
+### 4. Use in Claude Code
 
 ```
-/index_directory "C:\path\to\your\project"
-
 /search_code "authentication functions"
 /search_code "error handling patterns"
 /search_code "database connection setup"
