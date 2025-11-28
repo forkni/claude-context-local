@@ -1,6 +1,6 @@
 """Tool registry for low-level MCP server.
 
-Contains JSON schemas for all 14 tools following MCP specification.
+Contains JSON schemas for all 15 tools following MCP specification.
 """
 
 from typing import Any, Dict

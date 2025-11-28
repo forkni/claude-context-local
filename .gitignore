@@ -1,5 +1,10 @@
 # Claude Code user settings (local-only)
-.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/mcp-search-tool/
+.claude/skills/mcp-search-tool/*
+!.claude/skills/mcp-search-tool/SKILL.md
 
 # Development workflow (keep in development branch only)
 .githooks/

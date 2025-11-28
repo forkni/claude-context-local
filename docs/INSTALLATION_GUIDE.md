@@ -214,6 +214,8 @@ The Windows installer (`install-windows.bat`) automatically configures Claude Co
 3. **Configuration Verification**: Tests the configuration after setup
 4. **Error Recovery**: Offers retry option if configuration fails
 
+**Note on Authentication**: This MCP server does not require OAuth authentication. If Claude Code's `/mcp` menu shows an 'Authenticate' option for the code-search server, it can be safely ignored - no authentication is needed. This is a standard Claude Code UI element that appears for all MCP servers.
+
 ### Manual Configuration
 
 If automatic configuration fails or you need to reconfigure:

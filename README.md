@@ -81,60 +81,93 @@ Return to main menu and select **1. Quick Start Server**:
   ...
 ```
 
-### 4. Use in Claude Code
+### 4. Connect in Claude Code
 
-```
-/search_code "authentication functions"
-/search_code "error handling patterns"
-/search_code "database connection setup"
-```
+After the server starts, connect in Claude Code:
+
+1. Type `/mcp` in Claude Code
+2. Select **Reconnect** next to `code-search`
+3. Wait for "Connected" confirmation
+
+### 5. Start Searching
+
+Now simply ask Claude Code natural questions about your codebase:
+
+- "Find authentication functions in my project"
+- "Show me error handling patterns"
+- "Where is the database connection setup?"
+
+Claude Code will automatically use the semantic search tools to find relevant code.
 
 **That's it!** You're now searching your code semantically with 93-97% fewer tokens.
+
+## How It Works
+
+### Claude Code Integration
+
+When connected via `/mcp` → Reconnect, Claude Code gains access to 15 semantic search tools exposed as `mcp__code-search__*` functions.
+
+A [**SKILL.md**](.claude/skills/mcp-search-tool/SKILL.md) file in the repository provides Claude with workflow guidance for optimal tool usage, including project context validation and search mode selection.
+
+### Natural Language Queries
+
+Simply ask questions about your code. Claude Code automatically selects and uses the appropriate MCP tools:
+
+| Your Question | Claude Code Uses |
+|---------------|------------------|
+| "Find authentication functions" | `search_code("authentication functions")` |
+| "What calls the login function?" | `find_connections(symbol_name="login")` |
+| "Show similar code to this handler" | `find_similar_code(chunk_id)` |
+
+> **Tip: Forcing MCP Tool Usage**
+>
+> If Claude doesn't automatically use the search tools, include these phrases:
+> - "Use the **code-search MCP tools** to find..."
+> - "**Search the indexed codebase** for..."
+> - "Use **semantic search** to locate..."
+> - "**Query the code index** for..."
+>
+> Example: "Use the code-search MCP tools to find all error handling patterns"
 
 ## Core Usage
 
 ### Index Project
 
+Ask Claude Code to index your project:
+- "Index the project at C:\Projects\MyApp"
+- "Re-index the current project to pick up new changes"
+
+Or use the interactive menu:
 ```bash
-# Index new project
-/index_directory "C:\Projects\MyApp"
-
-# Re-index (incremental, fast)
-start_mcp_server.cmd → 2 (Project Management) → 2 (Re-index)
-
-# Force full reindex
-start_mcp_server.cmd → 2 (Project Management) → 3 (Force Reindex)
+start_mcp_server.cmd → 5 (Project Management)
+  → 1 (Index New Project) or 2 (Re-index Existing) or 3 (Force Re-index)
 ```
 
 ### Search Code
 
-```bash
-# Natural language queries
-/search_code "user authentication logic"
-/search_code "error handling try except"
-/search_code "async database queries"
+Ask Claude Code naturally:
+- "Find the user authentication logic in my code"
+- "Show me all error handling patterns with try except"
+- "Where are the async database queries defined?"
 
-# With filters
-/search_code "auth handler" --exclude_dirs '["tests/", "vendor/"]'
+For precise control with filters:
+- "Search for auth handlers excluding the tests and vendor directories"
+- "Find similar code to the login function in auth.py"
 
-# Find similar code
-/find_similar_code "auth.py:15-42:function:login"
-
-# Analyze dependencies
-/find_connections "utils.py:50-100:function:process_data"
-```
+To analyze dependencies:
+- "What code depends on the process_data function in utils.py?"
+- "Show me all functions that call the login handler"
 
 ### Configure Search
 
+Ask Claude Code to adjust settings:
+- "Configure search mode to hybrid with 0.4 BM25 and 0.6 dense weights"
+- "Show me the current search configuration"
+- "Switch the embedding model to BGE-M3"
+
+Or use the interactive menu:
 ```bash
-# Set hybrid mode (recommended)
-/configure_search_mode "hybrid" 0.4 0.6
-
-# Check configuration
-/get_search_config_status
-
-# Switch models
-/switch_embedding_model "BAAI/bge-m3"
+start_mcp_server.cmd → 3 (Search Configuration)
 ```
 
 ## Search Modes
@@ -148,31 +181,33 @@ start_mcp_server.cmd → 2 (Project Management) → 3 (Force Reindex)
 
 **Configuration**: See [Hybrid Search Configuration Guide](docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md)
 
-## Available MCP Tools
+## MCP Tool Reference (For Claude Code)
+
+These tools are available to Claude Code as `mcp__code-search__*` functions. You don't invoke them directly - Claude Code uses them automatically when you ask relevant questions. The [SKILL.md](.claude/skills/mcp-search-tool/SKILL.md) file guides Claude's tool usage for optimal results.
 
 ### Core Search
 
-- `/search_code` - Main semantic/hybrid search
-- `/index_directory` - Index project for searching
-- `/find_similar_code` - Find code similar to chunk
-- `/find_connections` - Dependency & impact analysis
+- `search_code` - Main semantic/hybrid search
+- `index_directory` - Index project for searching
+- `find_similar_code` - Find code similar to chunk
+- `find_connections` - Dependency & impact analysis
 
 ### Configuration
 
-- `/configure_search_mode` - Set hybrid search parameters
-- `/configure_query_routing` - Configure multi-model routing
-- `/get_search_config_status` - View current configuration
-- `/list_embedding_models` - List available models
-- `/switch_embedding_model` - Switch between models
+- `configure_search_mode` - Set hybrid search parameters
+- `configure_query_routing` - Configure multi-model routing
+- `get_search_config_status` - View current configuration
+- `list_embedding_models` - List available models
+- `switch_embedding_model` - Switch between models
 
 ### Management
 
-- `/get_index_status` - Check index statistics
-- `/get_memory_status` - Monitor RAM/VRAM usage
-- `/cleanup_resources` - Free memory and caches
-- `/clear_index` - Reset search index
-- `/list_projects` - List indexed projects
-- `/switch_project` - Switch between projects
+- `get_index_status` - Check index statistics
+- `get_memory_status` - Monitor RAM/VRAM usage
+- `cleanup_resources` - Free memory and caches
+- `clear_index` - Reset search index
+- `list_projects` - List indexed projects
+- `switch_project` - Switch between projects
 
 **Complete reference**: [MCP Tools Reference](docs/MCP_TOOLS_REFERENCE.md)
 
