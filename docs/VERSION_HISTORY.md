@@ -336,7 +336,7 @@ Old internal methods → New resolver methods:
 - Default search mode changed to hybrid
 - Query routing keywords expanded
 - Codebase cleanup: 26 files archived (38% reduction)
-- Tool count updated: 14 2192 15 MCP tools
+- Tool count updated: 14 → 15 MCP tools
 
 ### Documentation
 

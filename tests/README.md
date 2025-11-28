@@ -6,13 +6,13 @@ This directory contains comprehensive tests for the Claude Context MCP semantic 
 
 ## Test Status
 
-**Current Status**: ✅ All tests passing (as of 2025-11-20)
+**Current Status**: ✅ All tests passing (as of 2025-11-28)
 
-- **Unit Tests**: 82 tests passing (16 files, < 1s each)
-- **Fast Integration Tests**: 77 tests passing (11 files, < 5s each)
-- **Slow Integration Tests**: 67 tests passing (10 files, > 10s each)
+- **Unit Tests**: 557 tests passing (16 files, < 1s each)
+- **Fast Integration Tests**: 79 tests passing (11 files, < 5s each)
+- **Slow Integration Tests**: 76 tests passing (10 files, > 10s each)
 - **Regression Tests**: 1 test (15 checks) passing
-- **Total**: 227 tests (38 files)
+- **Total**: 713 tests (38 files)
 - **Execution Time**: Unit ~5s, Fast Integration ~2 min, Slow Integration ~10 min
 
 ### Recent Updates (2025-11-20)

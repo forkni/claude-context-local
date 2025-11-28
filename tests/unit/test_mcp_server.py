@@ -1,13 +1,9 @@
 """Unit tests for MCP server functionality."""
 
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-# Mock FastMCP to avoid dependency issues in tests
-sys.modules["mcp.server.fastmcp"] = MagicMock()
 
 
 class TestMCPServerImport:
@@ -76,5 +72,5 @@ class TestGetterFunctions:
 
 
 # Note: Most MCP server functionality is tested in integration tests
-# where the actual decorators and FastMCP framework are working properly.
+# where the actual tool handlers and MCP framework are working properly.
 # Unit tests here would just be testing mocks, not real functionality.

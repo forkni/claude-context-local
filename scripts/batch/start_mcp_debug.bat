@@ -11,7 +11,7 @@ echo [DEBUG] =======================================
 echo [DEBUG] Project Directory: %CD%
 echo [DEBUG] Python Path: .venv\Scripts\python.exe
 echo [DEBUG] Server Module: mcp_server.server
-echo [DEBUG] NOTE: Using low-level MCP SDK (migrated from FastMCP)
+echo [DEBUG] NOTE: Using official Anthropic Low-Level MCP SDK
 echo.
 
 REM Check prerequisites

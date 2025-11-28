@@ -444,7 +444,7 @@
     {
       "id": 26,
       "category": "graph_aware",
-      "query": "FastMCP tool decorators and their implementations",
+      "query": "MCP tool decorators and their implementations",
       "description": "Tests decorator pattern + implementation linkage",
       "expected_top_files": [
         "mcp_server/server.py"

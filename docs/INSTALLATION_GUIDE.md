@@ -767,7 +767,7 @@ scripts\batch\start_mcp_sse.bat
 - Runs on `http://localhost:8765/sse`
 - Automatic port conflict detection
 - Auto-kill for processes on port 8765
-- All 13 MCP tools available
+- All 15 MCP tools available
 - Identical functionality to stdio
 - <10ms latency overhead
 

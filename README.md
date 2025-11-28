@@ -34,7 +34,7 @@
 - **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
 - **15 MCP Tools**: Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
 
-**Status**: ✅ Production-ready | 352 passing tests | All 15 MCP tools operational | Windows 10/11
+**Status**: ✅ Production-ready | 700+ passing tests | All 15 MCP tools operational | Windows 10/11
 
 ## Quick Start
 
@@ -252,7 +252,7 @@ claude-context-local/
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 352 passing tests (unit + integration)
+└── tests/             # 700+ tests (unit + integration)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -301,7 +301,7 @@ scripts\batch\repair_installation.bat
 
 ### Development
 
-- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (352 passing)
+- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (700+ passing)
 - [Git Workflow](docs/GIT_WORKFLOW.md) - Contributing guidelines
 - [Version History](docs/VERSION_HISTORY.md) - Changelog
 
@@ -322,8 +322,17 @@ See [Git Workflow](docs/GIT_WORKFLOW.md) for contribution guidelines.
 
 Licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE) file for details.
 
-## Inspiration
+## Inspiration & Acknowledgments
 
-This Windows-focused fork was adapted from [FarhanAliRaza/claude-context-local](https://github.com/FarhanAliRaza/claude-context-local), which provides cross-platform support for Linux and macOS.
+This project draws inspiration from several excellent semantic code search implementations:
 
-Both projects draw inspiration from [zilliztech/claude-context](https://github.com/zilliztech/claude-context).
+| Project | Author | Key Contribution |
+|---------|--------|------------------|
+| [claude-context](https://github.com/zilliztech/claude-context) | Zilliz | Original concept, cloud-based architecture, hybrid search with Milvus |
+| [claude-context-local](https://github.com/FarhanAliRaza/claude-context-local) | Farhan Ali Raza | Local-first approach, cross-platform support |
+| [chunkhound](https://github.com/chunkhound/chunkhound) | ChunkHound | Real-time indexing with watchdog, extensive language support (30+) |
+| [codanna](https://github.com/bartolli/codanna) | Bartolli | High-performance Rust implementation, memory-mapped storage, profile system |
+
+This Windows-focused implementation builds upon these foundations while adding unique capabilities including multi-model query routing, per-model index storage, and Python call graph analysis.
+
+I am grateful to these projects and their maintainers for pioneering semantic code search for AI assistants.

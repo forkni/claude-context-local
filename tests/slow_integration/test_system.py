@@ -25,7 +25,6 @@ def test_critical_imports():
         "tree_sitter",
         "sqlitedict",
         "mcp",
-        "fastmcp",
         "rich",
         "click",
     ]
@@ -290,7 +289,7 @@ def main():
         print("=" * 60)
         print("\n[INFO] Next steps:")
         print(
-            "1. Wait for dependencies to finish installing (uv add sentence-transformers faiss-cpu mcp fastmcp)"
+            "1. Wait for dependencies to finish installing (uv add sentence-transformers faiss-cpu mcp)"
         )
         print(
             "2. Index your first codebase: ./scripts/index_codebase.py /path/to/python/project"
