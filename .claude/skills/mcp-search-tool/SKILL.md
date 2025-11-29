@@ -525,7 +525,7 @@ clear_index()          # Full reset (requires re-indexing)
 
 - **Traditional file reading**: ~5,600 tokens
 - **Semantic search**: ~400 tokens
-- **Savings**: **93% reduction** (40-45% in practice)
+- **Savings**: **85-95% reduction** (validated benchmark)
 - **Speed**: **5-10x faster** discovery
 
 ### Search Performance (Validated)

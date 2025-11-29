@@ -1262,7 +1262,7 @@ echo   - 15 MCP Tools: Index, search, configure, manage projects
 echo   - Low-Level MCP SDK: Official Anthropic implementation
 echo   - Multi-Model Routing: BGE-M3 + Qwen3 + CodeRankEmbed ^(optional^)
 echo   - Hybrid Search: BM25 + Semantic for optimal accuracy
-echo   - 93-97%% Token Reduction: Validated benchmark results
+echo   - 85-95%% Token Reduction: Validated benchmark results
 echo   - Multi-language Support: 9 languages, 19 extensions
 echo   - Local Processing: No API calls, complete privacy
 echo.
