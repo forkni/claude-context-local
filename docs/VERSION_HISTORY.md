@@ -8,7 +8,7 @@ Complete version history and feature timeline for claude-context-local MCP serve
 - **Status**: Production-ready
 - **Test Coverage**: 545 unit tests + integration tests (100% pass rate)
 - **Index Quality**: 109 active files, 1,199 chunks (site-packages excluded, BGE-M3 1024d, ~24 MB)
-- **Token Reduction**: 93-97% maintained
+- **Token Reduction**: 85-95% (validated benchmark)
 - **Call Graph Resolution**: Phase 4 complete (~90% accuracy)
 - **Refactoring**: Phase 7.1 complete (resolver extraction)
 

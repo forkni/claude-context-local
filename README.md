@@ -29,7 +29,7 @@
 ## Highlights
 
 - **Hybrid Search**: BM25 + semantic fusion (44.4% precision, 100% MRR) - [benchmarks](docs/BENCHMARKS.md)
-- **93-97% Token Reduction**: Semantic search vs traditional file reading - [performance analysis](docs/BENCHMARKS.md)
+- **85-95% Token Reduction**: Semantic search vs traditional file reading - [benchmark](docs/BENCHMARKS.md)
 - **Multi-Model Routing**: Intelligent query routing (Qwen3, BGE-M3, CodeRankEmbed) with 100% accuracy - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md)
 - **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
 - **15 MCP Tools**: Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
@@ -99,7 +99,7 @@ Now simply ask Claude Code natural questions about your codebase:
 
 Claude Code will automatically use the semantic search tools to find relevant code.
 
-**That's it!** You're now searching your code semantically with 93-97% fewer tokens.
+**That's it!** You're now searching your code semantically with 85-95% fewer tokens.
 
 ## How It Works
 
@@ -122,6 +122,7 @@ Simply ask questions about your code. Claude Code automatically selects and uses
 > **Tip: Forcing MCP Tool Usage**
 >
 > If Claude doesn't automatically use the search tools, include these phrases:
+>
 > - "Use the **code-search MCP tools** to find..."
 > - "**Search the indexed codebase** for..."
 > - "Use **semantic search** to locate..."
@@ -134,10 +135,12 @@ Simply ask questions about your code. Claude Code automatically selects and uses
 ### Index Project
 
 Ask Claude Code to index your project:
+
 - "Index the project at C:\Projects\MyApp"
 - "Re-index the current project to pick up new changes"
 
 Or use the interactive menu:
+
 ```bash
 start_mcp_server.cmd → 5 (Project Management)
   → 1 (Index New Project) or 2 (Re-index Existing) or 3 (Force Re-index)
@@ -146,26 +149,31 @@ start_mcp_server.cmd → 5 (Project Management)
 ### Search Code
 
 Ask Claude Code naturally:
+
 - "Find the user authentication logic in my code"
 - "Show me all error handling patterns with try except"
 - "Where are the async database queries defined?"
 
 For precise control with filters:
+
 - "Search for auth handlers excluding the tests and vendor directories"
 - "Find similar code to the login function in auth.py"
 
 To analyze dependencies:
+
 - "What code depends on the process_data function in utils.py?"
 - "Show me all functions that call the login handler"
 
 ### Configure Search
 
 Ask Claude Code to adjust settings:
+
 - "Configure search mode to hybrid with 0.4 BM25 and 0.6 dense weights"
 - "Show me the current search configuration"
 - "Switch the embedding model to BGE-M3"
 
 Or use the interactive menu:
+
 ```bash
 start_mcp_server.cmd → 3 (Search Configuration)
 ```

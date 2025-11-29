@@ -586,7 +586,7 @@ After successful installation, verify system performance and validate token effi
 
 **Expected Results:**
 
-- ✅ **Token Savings**: 98.6% reduction vs traditional file reading
+- ✅ **Token Savings**: 85-95% reduction vs traditional file reading
 - ✅ **GPU Acceleration**: 8.6x faster indexing (with CUDA GPU)
 - ✅ **Search Quality**: High precision on test scenarios
 
@@ -1017,7 +1017,7 @@ Startup (server starts):              0 MB VRAM (lazy loading)
 
 - **Traditional file reading**: ~5,600 tokens for 3 files
 - **Semantic search**: ~400 tokens for targeted results
-- **Reduction**: 93% fewer tokens used
+- **Reduction**: 85-95% fewer tokens used
 - **Speed**: 5-10x faster than loading full files
 
 ## Maintenance
