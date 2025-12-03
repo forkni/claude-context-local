@@ -2,15 +2,67 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2025-11-28)
+## Current Status: All Features Operational (2025-12-03)
 
-- **Version**: 0.6.0
+- **Version**: 0.6.2
 - **Status**: Production-ready
 - **Test Coverage**: 545 unit tests + integration tests (100% pass rate)
 - **Index Quality**: 109 active files, 1,199 chunks (site-packages excluded, BGE-M3 1024d, ~24 MB)
 - **Token Reduction**: 85-95% (validated benchmark)
 - **Call Graph Resolution**: Phase 4 complete (~90% accuracy)
 - **Refactoring**: Phase 7.1 complete (resolver extraction)
+
+---
+
+## v0.6.2 - UX Improvements & Bug Fixes (2025-12-03)
+
+### Status: PRODUCTION-READY ✅
+
+**Enhanced indexing UX with progress bars and fixed critical bugs**
+
+### Highlights
+
+- **Progress Bars** - Real-time visual feedback during chunking and embedding
+- **Directory Filtering Fix** - `include_dirs` now works correctly
+- **Targeted Snapshot Deletion** - Only deletes matching model snapshots
+- **Improved Project Lists** - Shows model/dimension for disambiguation
+
+### Key Changes
+
+- **Progress Bar for Chunking** - Shows real-time progress during file chunking
+  - `Chunking files... 100% (21/21 files)`
+  - Works with both parallel and sequential modes
+  - Force terminal mode for batch script compatibility
+- **Progress Bar for Embedding** - Shows progress during longest phase
+  - `Embedding... 100% (3/3 batches)`
+  - Model warmup prevents log interference
+- **include_dirs Filter Fix** - Root directory no longer blocked by filters
+  - Fixed 0 files found when using `include_dirs`
+  - Root directory skipped from filter matching
+- **Targeted Snapshot Deletion** - New `delete_snapshot_by_slug()` method
+  - Deletes only matching model/dimension snapshot
+  - Preserves other model snapshots (e.g., keeps `coderank_768d` when deleting `bge-m3_1024d`)
+- **Model/Dimension Display** - Clear project list shows model info
+  - `claude-context-local [bge-m3 1024d]`
+  - Disambiguates duplicate project names
+
+### Bug Fixes
+
+- Fixed unescaped parenthesis causing spurious error messages in clear index
+- Fixed `delete_all_snapshots()` deleting all model variants instead of specific one
+- Fixed `include_dirs` filter blocking root directory traversal
+- Fixed progress bar not rendering in batch scripts
+- Fixed model loading logs interfering with progress bar display
+
+### Commits
+
+- `083ab61` - Fix clear index logic bugs (snapshot deletion + display)
+- `2e69ace` - Fix include_dirs filter blocking root directory
+- `0e9c8e8` - Display model/dimension in clear project list
+- `43d94d0` - Add progress bar for file chunking
+- `1d9d098` - Force terminal mode for chunking progress bar
+- `33ace99` - Add progress bar for embedding generation
+- `81e1d42` - Warm up model before progress bar
 
 ---
 
