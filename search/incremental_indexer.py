@@ -7,6 +7,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+)
+
 from chunking.multi_language_chunker import MultiLanguageChunker
 from chunking.python_ast_chunker import CodeChunk
 from embeddings.embedder import CodeEmbedder
@@ -116,27 +124,49 @@ class IncrementalIndexer:
                     future = executor.submit(self.chunker.chunk_file, str(full_path))
                     future_to_path[future] = file_path
 
-                # Collect results as they complete
-                for future in as_completed(future_to_path):
-                    file_path = future_to_path[future]
+                # Collect results as they complete with progress bar
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    TaskProgressColumn(),
+                    TextColumn("({task.completed}/{task.total} files)"),
+                    transient=True,
+                ) as progress:
+                    task = progress.add_task("Chunking files...", total=len(file_paths))
+                    for future in as_completed(future_to_path):
+                        file_path = future_to_path[future]
+                        try:
+                            chunks = future.result()
+                            if chunks:
+                                all_chunks.extend(chunks)
+                                logger.debug(f"Chunked {file_path}: {len(chunks)} chunks")
+                        except Exception as e:
+                            logger.warning(f"Failed to chunk {file_path}: {e}")
+                        finally:
+                            progress.update(task, advance=1)
+        else:
+            # Sequential chunking (fallback or single file)
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TextColumn("({task.completed}/{task.total} files)"),
+                transient=True,
+            ) as progress:
+                task = progress.add_task("Chunking files...", total=len(file_paths))
+                for file_path in file_paths:
+                    full_path = Path(project_path) / file_path
                     try:
-                        chunks = future.result()
+                        chunks = self.chunker.chunk_file(str(full_path))
                         if chunks:
                             all_chunks.extend(chunks)
                             logger.debug(f"Chunked {file_path}: {len(chunks)} chunks")
                     except Exception as e:
                         logger.warning(f"Failed to chunk {file_path}: {e}")
-        else:
-            # Sequential chunking (fallback or single file)
-            for file_path in file_paths:
-                full_path = Path(project_path) / file_path
-                try:
-                    chunks = self.chunker.chunk_file(str(full_path))
-                    if chunks:
-                        all_chunks.extend(chunks)
-                        logger.debug(f"Chunked {file_path}: {len(chunks)} chunks")
-                except Exception as e:
-                    logger.warning(f"Failed to chunk {file_path}: {e}")
+                    finally:
+                        progress.update(task, advance=1)
 
         return all_chunks
 
