@@ -7,7 +7,6 @@ Supports multi-model indexing when CLAUDE_MULTI_MODEL_ENABLED=true.
 
 import argparse
 import asyncio
-import os
 import sys
 import time
 from pathlib import Path
@@ -66,13 +65,18 @@ def main():
         else:
             mode_desc = "Force (full reindex, bypass snapshot)"
 
-    # Check multi-model mode
-    multi_model_env = os.getenv("CLAUDE_MULTI_MODEL_ENABLED", "true").lower() in (
-        "true",
-        "1",
-        "yes",
-    )
-    multi_model = args.multi_model if args.multi_model else None  # None = auto-detect
+    # Check multi-model mode from config file (priority) or environment
+    from search.config import get_search_config
+
+    config = get_search_config()
+    multi_model_config = config.multi_model_enabled  # From search_config.json
+
+    # CLI flag overrides, then config, then env var fallback
+    if args.multi_model:
+        multi_model = True  # Explicit --multi-model flag
+    else:
+        # Use config file setting (user's menu selection)
+        multi_model = multi_model_config
 
     # Parse directory filters
     include_dirs = None
@@ -90,7 +94,7 @@ def main():
     print(f"Path: {project_path}")
     print(f"Mode: {mode_desc}")
     print(f"Incremental: {incremental}")
-    if multi_model or (multi_model is None and multi_model_env):
+    if multi_model:
         print("Multi-Model: Enabled (Qwen3, BGE-M3, CodeRankEmbed)")
     else:
         print("Multi-Model: Disabled (single model only)")
