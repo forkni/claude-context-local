@@ -715,8 +715,9 @@ if "!INDEX_RESULT!" neq "0" (
     )
 )
 
-REM Clear the Merkle snapshots (all dimensions)
-.\.venv\Scripts\python.exe -c "from merkle.snapshot_manager import SnapshotManager; sm = SnapshotManager(); deleted = sm.delete_all_snapshots(r'%PROJECT_PATH%'); print(f'Snapshots: cleared {deleted} files')" 2>&1
+REM Clear the Merkle snapshot (matching model/dimension only)
+REM Parse model_slug and dimension from PROJECT_HASH
+.\.venv\Scripts\python.exe -c "project_hash = '%PROJECT_HASH%'; parts = project_hash.rsplit('_', 2); model_slug = parts[-2]; dimension = int(parts[-1].rstrip('d')); from merkle.snapshot_manager import SnapshotManager; sm = SnapshotManager(); deleted = sm.delete_snapshot_by_slug(r'%PROJECT_PATH%', model_slug, dimension); print(f'Snapshot: cleared {deleted} files ({model_slug} {dimension}d)')" 2>&1
 set "SNAPSHOT_RESULT=!ERRORLEVEL!"
 
 echo.
@@ -724,7 +725,7 @@ REM Report results
 if "!INDEX_RESULT!"=="0" (
     if "!SNAPSHOT_RESULT!"=="0" (
         echo [OK] Project index cleared: %PROJECT_NAME%
-        echo [OK] Merkle snapshots cleared (all dimensions)
+        echo [OK] Merkle snapshot cleared
     ) else (
         echo [OK] Index cleared but snapshot clearing failed
         echo [INFO] This is usually not critical
@@ -952,7 +953,7 @@ if "!model_choice!"=="5" (
 if defined SELECTED_MODEL (
     echo.
     echo [INFO] Configuring model: !SELECTED_MODEL!
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding_model_name = '!SELECTED_MODEL!'; mgr.save_config(cfg); print('[OK] Model configuration saved')" 2>nul
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding_model_name = '!SELECTED_MODEL!'; cfg.multi_model_enabled = False; mgr.save_config(cfg); print('[OK] Model configuration saved')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
@@ -964,7 +965,7 @@ if defined SELECTED_MODEL (
         if /i "!reindex_now!"=="y" (
             echo [INFO] Clearing old indexes and Merkle snapshots...
             .\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; from merkle.snapshot_manager import SnapshotManager; import shutil; import json; storage = get_storage_dir(); sm = SnapshotManager(); cleared = 0; projects = list((storage / 'projects').glob('*/project_info.json')); [sm.delete_all_snapshots(json.load(open(p))['project_path']) or shutil.rmtree(p.parent) if p.exists() and (cleared := cleared + 1) else None for p in projects]; print(f'[OK] Cleared indexes and snapshots for {cleared} projects')" 2>nul
-            echo [OK] Indexes and Merkle snapshots cleared (all dimensions). Re-index projects via: /index_directory "path"
+            echo [OK] Indexes and Merkle snapshots cleared ^(all dimensions^). Re-index projects via: /index_directory "path"
         )
     )
 ) else (
@@ -1109,7 +1110,7 @@ if defined SELECTED_MODEL (
     echo.
 
     REM Use Python to switch model
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager, MODEL_REGISTRY; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding_model_name = '!SELECTED_MODEL!'; cfg.model_dimension = MODEL_REGISTRY['!SELECTED_MODEL!']['dimension']; mgr.save_config(cfg); print('[OK] Model switched successfully'); print(f'[INFO] Dimension: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"dimension\"]}d'); print(f'[INFO] VRAM: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"vram_gb\"]}')" 2>nul
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager, MODEL_REGISTRY; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding_model_name = '!SELECTED_MODEL!'; cfg.model_dimension = MODEL_REGISTRY['!SELECTED_MODEL!']['dimension']; cfg.multi_model_enabled = False; mgr.save_config(cfg); print('[OK] Model switched successfully'); print(f'[INFO] Dimension: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"dimension\"]}d'); print(f'[INFO] VRAM: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"vram_gb\"]}')" 2>nul
 
     if errorlevel 1 (
         echo [ERROR] Failed to switch model

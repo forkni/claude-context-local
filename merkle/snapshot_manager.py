@@ -248,6 +248,42 @@ class SnapshotManager:
         if metadata_path.exists():
             metadata_path.unlink()
 
+    def delete_snapshot_by_slug(
+        self, project_path: str, model_slug: str, dimension: int
+    ) -> int:
+        """Delete snapshot for a specific model/dimension only.
+
+        This deletes only the snapshot matching the exact model_slug and dimension,
+        leaving other model variants intact.
+
+        Args:
+            project_path: Path to project
+            model_slug: Model slug (e.g., 'bge-m3', 'coderank')
+            dimension: Model dimension (e.g., 768, 1024)
+
+        Returns:
+            Number of files deleted (0-2: snapshot + metadata)
+        """
+        project_id = self.get_project_id(project_path)
+        deleted_count = 0
+
+        snapshot_file = (
+            self.storage_dir / f"{project_id}_{model_slug}_{dimension}d_snapshot.json"
+        )
+        metadata_file = (
+            self.storage_dir / f"{project_id}_{model_slug}_{dimension}d_metadata.json"
+        )
+
+        if snapshot_file.exists():
+            snapshot_file.unlink()
+            deleted_count += 1
+
+        if metadata_file.exists():
+            metadata_file.unlink()
+            deleted_count += 1
+
+        return deleted_count
+
     def delete_all_snapshots(self, project_path: str) -> int:
         """Delete ALL dimension snapshots and metadata for a project.
 
