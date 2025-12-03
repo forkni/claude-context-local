@@ -12,6 +12,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+)
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -608,84 +616,97 @@ class CodeEmbedder:
         model_config = self._get_model_config()
         passage_prefix = model_config.get("passage_prefix", "")
 
-        # Process in batches for efficiency
-        for i in range(0, len(chunks), batch_size):
-            batch = chunks[i : i + batch_size]
+        # Process in batches for efficiency with progress bar
+        console = Console(force_terminal=True)
+        total_batches = (len(chunks) + batch_size - 1) // batch_size
 
-            # Prepend passage prefix if it exists
-            if passage_prefix:
-                batch_contents = [
-                    passage_prefix + self.create_embedding_content(chunk)
-                    for chunk in batch
-                ]
-            else:
-                batch_contents = [
-                    self.create_embedding_content(chunk) for chunk in batch
-                ]
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TextColumn("({task.completed}/{task.total} batches)"),
+            console=console,
+            transient=False,
+        ) as progress:
+            task = progress.add_task("Embedding...", total=total_batches)
+            for i in range(0, len(chunks), batch_size):
+                batch = chunks[i : i + batch_size]
 
-            # Generate embeddings for batch
-            batch_embeddings = self.model.encode(
-                batch_contents,
-                show_progress_bar=False,
-            )
+                # Prepend passage prefix if it exists
+                if passage_prefix:
+                    batch_contents = [
+                        passage_prefix + self.create_embedding_content(chunk)
+                        for chunk in batch
+                    ]
+                else:
+                    batch_contents = [
+                        self.create_embedding_content(chunk) for chunk in batch
+                    ]
 
-            # Create results
-            for _j, (chunk, embedding) in enumerate(
-                zip(batch, batch_embeddings, strict=False)
-            ):
-                # Normalize path separators for cross-platform consistency
-                normalized_path = str(chunk.relative_path).replace("\\", "/")
-                chunk_id = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
-                # Build qualified name for methods/functions inside classes
-                qualified_name = (
-                    f"{chunk.parent_name}.{chunk.name}"
-                    if chunk.parent_name and chunk.name
-                    else chunk.name
+                # Generate embeddings for batch
+                batch_embeddings = self.model.encode(
+                    batch_contents,
+                    show_progress_bar=False,
                 )
-                if qualified_name:
-                    chunk_id += f":{qualified_name}"
 
-                metadata = {
-                    "file_path": chunk.file_path,
-                    "relative_path": chunk.relative_path,
-                    "folder_structure": chunk.folder_structure,
-                    "chunk_type": chunk.chunk_type,
-                    "start_line": chunk.start_line,
-                    "end_line": chunk.end_line,
-                    "name": chunk.name,
-                    "parent_name": chunk.parent_name,
-                    "docstring": chunk.docstring,
-                    "decorators": chunk.decorators,
-                    "imports": chunk.imports,
-                    "complexity_score": chunk.complexity_score,
-                    "tags": chunk.tags,
-                    "content": chunk.content,  # Full content for accurate token counting
-                    "content_preview": (
-                        chunk.content[:200] + "..."
-                        if len(chunk.content) > 200
-                        else chunk.content
-                    ),
-                    # Call graph data (Phase 1: Python only)
-                    "calls": (
-                        [call.to_dict() for call in chunk.calls] if chunk.calls else []
-                    ),
-                    # Phase 3: Relationship edges (all relationship types)
-                    "relationships": (
-                        [rel.to_dict() for rel in chunk.relationships]
-                        if chunk.relationships
-                        else []
-                    ),
-                    "language": getattr(chunk, "language", "python"),
-                }
-
-                results.append(
-                    EmbeddingResult(
-                        embedding=embedding, chunk_id=chunk_id, metadata=metadata
+                # Create results
+                for _j, (chunk, embedding) in enumerate(
+                    zip(batch, batch_embeddings, strict=False)
+                ):
+                    # Normalize path separators for cross-platform consistency
+                    normalized_path = str(chunk.relative_path).replace("\\", "/")
+                    chunk_id = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
+                    # Build qualified name for methods/functions inside classes
+                    qualified_name = (
+                        f"{chunk.parent_name}.{chunk.name}"
+                        if chunk.parent_name and chunk.name
+                        else chunk.name
                     )
-                )
+                    if qualified_name:
+                        chunk_id += f":{qualified_name}"
 
-            if i + batch_size < len(chunks):
-                self._logger.info(f"Processed {i + batch_size}/{len(chunks)} chunks")
+                    metadata = {
+                        "file_path": chunk.file_path,
+                        "relative_path": chunk.relative_path,
+                        "folder_structure": chunk.folder_structure,
+                        "chunk_type": chunk.chunk_type,
+                        "start_line": chunk.start_line,
+                        "end_line": chunk.end_line,
+                        "name": chunk.name,
+                        "parent_name": chunk.parent_name,
+                        "docstring": chunk.docstring,
+                        "decorators": chunk.decorators,
+                        "imports": chunk.imports,
+                        "complexity_score": chunk.complexity_score,
+                        "tags": chunk.tags,
+                        "content": chunk.content,  # Full content for accurate token counting
+                        "content_preview": (
+                            chunk.content[:200] + "..."
+                            if len(chunk.content) > 200
+                            else chunk.content
+                        ),
+                        # Call graph data (Phase 1: Python only)
+                        "calls": (
+                            [call.to_dict() for call in chunk.calls] if chunk.calls else []
+                        ),
+                        # Phase 3: Relationship edges (all relationship types)
+                        "relationships": (
+                            [rel.to_dict() for rel in chunk.relationships]
+                            if chunk.relationships
+                            else []
+                        ),
+                        "language": getattr(chunk, "language", "python"),
+                    }
+
+                    results.append(
+                        EmbeddingResult(
+                            embedding=embedding, chunk_id=chunk_id, metadata=metadata
+                        )
+                    )
+
+                # Update progress bar
+                progress.update(task, advance=1)
 
         self._logger.info("Embedding generation completed")
         return results
