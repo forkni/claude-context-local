@@ -137,8 +137,8 @@ class MerkleDAG:
         if path.is_dir() and self.directory_filter:
             try:
                 relative_path = str(path.relative_to(self.root_path))
-                # Add trailing slash for directory matching
-                if not self.directory_filter.matches(relative_path + "/"):
+                # Root directory should never be filtered - only its contents
+                if relative_path != "." and not self.directory_filter.matches(relative_path + "/"):
                     return True
             except ValueError:
                 # Path not under root, ignore it
