@@ -616,6 +616,12 @@ class CodeEmbedder:
         model_config = self._get_model_config()
         passage_prefix = model_config.get("passage_prefix", "")
 
+        # Ensure model is loaded before starting progress bar
+        # (model loads lazily on first encode() call - causes log interference)
+        if not hasattr(self, "_model_warmed_up") or not self._model_warmed_up:
+            self.model.encode(["warmup"], show_progress_bar=False)
+            self._model_warmed_up = True
+
         # Process in batches for efficiency with progress bar
         console = Console(force_terminal=True)
         total_batches = (len(chunks) + batch_size - 1) // batch_size
