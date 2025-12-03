@@ -26,6 +26,74 @@ except Exception:
 from chunking.python_ast_chunker import CodeChunk
 
 
+def calculate_optimal_batch_size(
+    embedding_dim: int = 768,
+    min_batch: int = 32,
+    max_batch: int = 512,
+    memory_fraction: float = 0.7,
+) -> int:
+    """Calculate optimal batch size based on available GPU VRAM.
+
+    Automatically detects GPU memory and computes the maximum batch size
+    that fits in available VRAM, accounting for model activations and overhead.
+
+    Args:
+        embedding_dim: Embedding dimension (768 or 1024)
+        min_batch: Minimum batch size (safety floor, default: 32)
+        max_batch: Maximum batch size (avoid fragmentation, default: 512)
+        memory_fraction: Fraction of available VRAM to use (default: 0.7 = 70%)
+
+    Returns:
+        Optimal batch size clamped between min_batch and max_batch
+
+    Examples:
+        >>> # RTX 4090 (24GB VRAM) with 768d embeddings
+        >>> calculate_optimal_batch_size(768)
+        512  # Capped at max_batch
+
+        >>> # RTX 3060 (12GB VRAM) with 1024d embeddings
+        >>> calculate_optimal_batch_size(1024)
+        210  # Calculated from available VRAM
+    """
+    if not torch or not torch.cuda.is_available():
+        return min_batch  # CPU fallback
+
+    try:
+        # Get available GPU memory
+        free_memory, total_memory = torch.cuda.mem_get_info()
+
+        # Estimate memory per sample:
+        # - Input tokens (avg 512 tokens * 4 bytes) = 2KB
+        # - Embedding output (embedding_dim * 4 bytes) = 3-4KB
+        # - Model activations (varies, ~10x embedding size) = 30-40KB
+        # - Overhead and safety factor 2x
+        # Total: ~150KB for 768d, ~200KB for 1024d
+        bytes_per_sample = embedding_dim * 4 * 50
+
+        # Calculate batch size from available memory
+        usable_memory = free_memory * memory_fraction
+        optimal_batch = int(usable_memory / bytes_per_sample)
+
+        # Clamp to reasonable range
+        result = max(min_batch, min(optimal_batch, max_batch))
+
+        # Log the calculation for debugging
+        logger = logging.getLogger(__name__)
+        logger.info(
+            f"[DYNAMIC_BATCH] GPU memory: {free_memory / 1024**3:.2f}GB free / "
+            f"{total_memory / 1024**3:.2f}GB total, "
+            f"optimal batch size: {result} (dim={embedding_dim}, "
+            f"fraction={memory_fraction})"
+        )
+
+        return result
+
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.warning(f"[DYNAMIC_BATCH] Failed to calculate optimal batch size: {e}")
+        return min_batch  # Fallback on error
+
+
 @dataclass
 class EmbeddingResult:
     """Result of embedding generation."""
@@ -506,10 +574,28 @@ class CodeEmbedder:
             from search.config import get_search_config
 
             config = get_search_config()
-            batch_size = config.embedding_batch_size
-            self._logger.info(
-                f"Using batch size {batch_size} from config for {len(chunks)} chunks"
-            )
+
+            # Try dynamic GPU-based batch size first
+            if (
+                config.enable_dynamic_batch_size
+                and config.prefer_gpu
+                and torch
+                and torch.cuda.is_available()
+            ):
+                batch_size = calculate_optimal_batch_size(
+                    embedding_dim=config.model_dimension,
+                    min_batch=config.dynamic_batch_min,
+                    max_batch=config.dynamic_batch_max,
+                    memory_fraction=config.gpu_memory_threshold,
+                )
+                self._logger.info(
+                    f"Using dynamic GPU-optimized batch size {batch_size} for {len(chunks)} chunks"
+                )
+            else:
+                batch_size = config.embedding_batch_size
+                self._logger.info(
+                    f"Using static batch size {batch_size} from config for {len(chunks)} chunks"
+                )
         else:
             self._logger.info(
                 f"Using explicit batch size {batch_size} for {len(chunks)} chunks"

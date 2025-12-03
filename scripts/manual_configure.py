@@ -78,27 +78,46 @@ class ClaudeConfigManager:
             return False
 
     def create_mcp_server_config(
-        self, command: str, args: list = None, env: Dict[str, str] = None
+        self,
+        transport_type: str = "sse",
+        url: str = None,
+        command: str = None,
+        args: list = None,
+        env: Dict[str, str] = None,
     ) -> Dict[str, Any]:
-        """Create MCP server configuration structure."""
-        config = {"type": "stdio", "command": command}
+        """Create MCP server configuration structure.
 
-        # Always include args field, even if empty (required by Claude Code)
-        if args is not None:
-            config["args"] = args
+        Args:
+            transport_type: "sse" or "stdio"
+            url: URL for SSE transport
+            command: Command path for stdio transport
+            args: Arguments for stdio transport
+            env: Environment variables for stdio transport
+        """
+        if transport_type == "sse":
+            return {"type": "sse", "url": url or "http://localhost:8765/sse"}
         else:
-            config["args"] = []
+            # stdio mode
+            config = {"type": "stdio", "command": command}
 
-        # Always include env field if provided (recommended by Claude Code)
-        if env:
-            config["env"] = env
+            # Always include args field, even if empty (required by Claude Code)
+            if args is not None:
+                config["args"] = args
+            else:
+                config["args"] = []
 
-        return config
+            # Always include env field if provided (recommended by Claude Code)
+            if env:
+                config["env"] = env
+
+            return config
 
     def add_mcp_server(
         self,
         name: str,
-        command: str,
+        transport_type: str = "sse",
+        url: str = None,
+        command: str = None,
         args: list = None,
         env: Dict[str, str] = None,
         global_scope: bool = True,
@@ -111,15 +130,21 @@ class ClaudeConfigManager:
 
         print("\n=== Claude Code MCP Manual Configuration ===")
         print(f"Server Name: {name}")
-        print(f"Command: {command}")
-        if args:
-            print(f"Arguments: {' '.join(args)}")
-        if env:
-            print("Environment Variables:")
-            for key, value in env.items():
-                # Show truncated path for readability
-                display_value = value if len(value) < 60 else f"{value[:57]}..."
-                print(f"  {key}: {display_value}")
+        print(f"Transport: {transport_type.upper()}")
+
+        if transport_type == "sse":
+            print(f"URL: {url or 'http://localhost:8765/sse'}")
+        else:
+            print(f"Command: {command}")
+            if args:
+                print(f"Arguments: {' '.join(args)}")
+            if env:
+                print("Environment Variables:")
+                for key, value in env.items():
+                    # Show truncated path for readability
+                    display_value = value if len(value) < 60 else f"{value[:57]}..."
+                    print(f"  {key}: {display_value}")
+
         print(f"Config File: {config_path}")
         print(
             f"Scope: {'Global (all projects)' if global_scope else 'Project-specific'}"
@@ -151,7 +176,13 @@ class ClaudeConfigManager:
                 return False
 
         # Create server config
-        server_config = self.create_mcp_server_config(command, args, env)
+        server_config = self.create_mcp_server_config(
+            transport_type=transport_type,
+            url=url,
+            command=command,
+            args=args,
+            env=env,
+        )
 
         # Show configuration details if verbose mode
         if verbose:
@@ -199,37 +230,49 @@ class ClaudeConfigManager:
         print("\n=== Configuration Validation ===")
         validation_passed = True
 
-        # Check required fields
-        if not server.get("command"):
-            print("[ERROR] Missing 'command' field")
-            validation_passed = False
-        else:
-            print(f"[OK] Command: {server['command']}")
+        # Check transport type
+        transport_type = server.get("type", "stdio")
+        print(f"[INFO] Transport type: {transport_type}")
 
-        # Check for args field (should always be present, even if empty)
-        if "args" not in server:
-            print(
-                "[WARNING] Missing 'args' field (should be present, even if empty array)"
-            )
+        if transport_type == "sse":
+            # Validate SSE configuration
+            if not server.get("url"):
+                print("[ERROR] Missing 'url' field for SSE transport")
+                validation_passed = False
+            else:
+                print(f"[OK] URL: {server['url']}")
         else:
-            if server["args"]:
-                print(f"[OK] Args: {' '.join(server['args'])}")
+            # Validate stdio configuration
+            if not server.get("command"):
+                print("[ERROR] Missing 'command' field")
+                validation_passed = False
             else:
-                print("[OK] Args: [] (empty)")
+                print(f"[OK] Command: {server['command']}")
 
-        if not server.get("env"):
-            print("[WARNING] Missing 'env' field - environment variables not set")
-        else:
-            env = server["env"]
-            if "PYTHONPATH" in env:
-                print(f"[OK] PYTHONPATH: {env['PYTHONPATH']}")
+            # Check for args field (should always be present, even if empty)
+            if "args" not in server:
+                print(
+                    "[WARNING] Missing 'args' field (should be present, even if empty array)"
+                )
             else:
-                print("[WARNING] PYTHONPATH not set")
+                if server["args"]:
+                    print(f"[OK] Args: {' '.join(server['args'])}")
+                else:
+                    print("[OK] Args: [] (empty)")
 
-            if "PYTHONUNBUFFERED" in env:
-                print(f"[OK] PYTHONUNBUFFERED: {env['PYTHONUNBUFFERED']}")
+            if not server.get("env"):
+                print("[WARNING] Missing 'env' field - environment variables not set")
             else:
-                print("[WARNING] PYTHONUNBUFFERED not set")
+                env = server["env"]
+                if "PYTHONPATH" in env:
+                    print(f"[OK] PYTHONPATH: {env['PYTHONPATH']}")
+                else:
+                    print("[WARNING] PYTHONPATH not set")
+
+                if "PYTHONUNBUFFERED" in env:
+                    print(f"[OK] PYTHONUNBUFFERED: {env['PYTHONUNBUFFERED']}")
+                else:
+                    print("[WARNING] PYTHONUNBUFFERED not set")
 
         if validation_passed:
             print("\n[OK] Configuration is valid!")
@@ -294,31 +337,18 @@ def main():
         manager.validate_config(config_path)
         return
 
-    # Determine paths
-    wrapper_script = project_dir / "scripts" / "batch" / "mcp_server_wrapper.bat"
-    python_path = project_dir / ".venv" / "Scripts" / "python.exe"
+    # Setup SSE configuration (matches Quick Start Server)
+    sse_url = "http://localhost:8765/sse"
 
-    # Validate paths exist
-    if not wrapper_script.exists():
-        print(f"[ERROR] Wrapper script not found: {wrapper_script}")
-        sys.exit(1)
+    print(f"\n[INFO] Configuring SSE transport: {sse_url}")
+    print("[INFO] Make sure the MCP server is running via 'Quick Start Server' menu")
+    print()
 
-    if not python_path.exists():
-        print(f"[WARNING] Python executable not found: {python_path}")
-        print("[INFO] Proceeding with wrapper script method...")
-
-    # Setup configuration
-    command = str(wrapper_script)
-    # MCP servers typically need transport specification
-    args_list = ["--transport", "stdio"]
-    env_vars = {"PYTHONPATH": str(project_dir), "PYTHONUNBUFFERED": "1"}
-
-    # Add server
+    # Add server with SSE transport
     success = manager.add_mcp_server(
         name="code-search",
-        command=command,
-        args=args_list,
-        env=env_vars,
+        transport_type="sse",
+        url=sse_url,
         global_scope=global_scope,
         force=args.force,
         verbose=args.verbose,

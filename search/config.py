@@ -22,21 +22,21 @@ MODEL_REGISTRY = {
         "passage_prefix": "Retrieval-document: ",
         "description": "Default model, fast and efficient",
         "vram_gb": "4-8GB",
-        "recommended_batch_size": 128,  # Conservative for 8GB VRAM
+        "fallback_batch_size": 128,  # Used when dynamic sizing disabled
     },
     "BAAI/bge-m3": {
         "dimension": 1024,
         "max_context": 8192,
         "description": "Recommended upgrade, hybrid search support",
         "vram_gb": "3-4GB",
-        "recommended_batch_size": 256,  # Optimal for 16GB+ VRAM
+        "fallback_batch_size": 256,  # Used when dynamic sizing disabled
     },
     "Qwen/Qwen3-Embedding-0.6B": {
         "dimension": 1024,
         "max_context": 32768,
         "description": "High-efficiency model with excellent performance-to-size ratio",
         "vram_gb": "2.3GB",
-        "recommended_batch_size": 256,
+        "fallback_batch_size": 256,
     },
     # Code-specific models (optimized for Python, C++, and programming languages)
     "nomic-ai/CodeRankEmbed": {
@@ -44,7 +44,7 @@ MODEL_REGISTRY = {
         "max_context": 8192,
         "description": "Code-specific embedding model (CSN: 77.9 MRR, CoIR: 60.1 NDCG@10)",
         "vram_gb": "2GB",
-        "recommended_batch_size": 128,
+        "fallback_batch_size": 128,
         "model_type": "code-specific",
         "task_instruction": "Represent this query for searching relevant code",  # Required query prefix
         "trust_remote_code": True,
@@ -102,6 +102,11 @@ class SearchConfig:
     prefer_gpu: bool = True
     gpu_memory_threshold: float = 0.8
 
+    # Dynamic Batch Sizing (GPU-based optimization)
+    enable_dynamic_batch_size: bool = True  # Enable GPU-based auto-sizing
+    dynamic_batch_min: int = 32  # Minimum batch size for safety
+    dynamic_batch_max: int = 512  # Maximum batch size to avoid fragmentation
+
     # Auto-reindexing
     enable_auto_reindex: bool = True
     max_index_age_minutes: float = 5.0
@@ -134,7 +139,7 @@ class SearchConfig:
                 # Only auto-set batch size if not explicitly provided
                 if "embedding_batch_size" not in data:
                     data["embedding_batch_size"] = model_config.get(
-                        "recommended_batch_size", 128
+                        "fallback_batch_size", 128
                     )
 
         # Filter only known fields to avoid TypeError
@@ -219,6 +224,12 @@ class SearchConfigManager:
             "CLAUDE_MAX_CHUNKING_WORKERS": ("max_chunking_workers", int),
             "CLAUDE_PREFER_GPU": ("prefer_gpu", self._bool_from_env),
             "CLAUDE_GPU_THRESHOLD": ("gpu_memory_threshold", float),
+            "CLAUDE_DYNAMIC_BATCH_ENABLED": (
+                "enable_dynamic_batch_size",
+                self._bool_from_env,
+            ),
+            "CLAUDE_DYNAMIC_BATCH_MIN": ("dynamic_batch_min", int),
+            "CLAUDE_DYNAMIC_BATCH_MAX": ("dynamic_batch_max", int),
             "CLAUDE_AUTO_REINDEX": ("enable_auto_reindex", self._bool_from_env),
             "CLAUDE_MAX_INDEX_AGE": ("max_index_age_minutes", float),
             "CLAUDE_ENABLE_MULTI_HOP": ("enable_multi_hop", self._bool_from_env),

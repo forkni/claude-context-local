@@ -266,7 +266,9 @@ async def handle_list_embedding_models(arguments: Dict[str, Any]) -> dict:
                     "name": model_name,
                     "dimension": config["dimension"],
                     "description": config.get("description", ""),
-                    "recommended_batch_size": config.get("recommended_batch_size", 128),
+                    "recommended_batch_size": config.get(
+                        "fallback_batch_size", 128
+                    ),  # API compatibility: reads from fallback_batch_size
                 }
             )
 
@@ -991,7 +993,11 @@ def _run_indexing(
     from datetime import datetime
 
     incremental_indexer = IncrementalIndexer(
-        indexer=indexer, embedder=embedder, chunker=chunker, include_dirs=include_dirs, exclude_dirs=exclude_dirs
+        indexer=indexer,
+        embedder=embedder,
+        chunker=chunker,
+        include_dirs=include_dirs,
+        exclude_dirs=exclude_dirs,
     )
 
     start_time = datetime.now()
@@ -1238,7 +1244,9 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
             )
             # Call again with filters to save them
             project_dir = get_project_storage_dir(
-                str(directory_path), include_dirs=include_dirs, exclude_dirs=exclude_dirs
+                str(directory_path),
+                include_dirs=include_dirs,
+                exclude_dirs=exclude_dirs,
             )
 
         # Set as current project (using setter for proper cross-module sync)
@@ -1279,7 +1287,13 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
 
             # Run indexing (using helper)
             result = _run_indexing(
-                indexer, embedder, chunker, str(directory_path), incremental, include_dirs, exclude_dirs
+                indexer,
+                embedder,
+                chunker,
+                str(directory_path),
+                incremental,
+                include_dirs,
+                exclude_dirs,
             )
 
             # Build response (using helper)

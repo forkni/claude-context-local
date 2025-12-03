@@ -4,6 +4,13 @@
 # NOTE: Last matching pattern wins! Specific patterns must come AFTER general patterns.
 
 # ============================================================================
+# LINE ENDINGS
+# ============================================================================
+
+# Shell scripts must use LF line endings (fix for bash shebang interpretation)
+*.sh text eol=lf
+
+# ============================================================================
 # GENERAL PATTERNS (APPLY FIRST)
 # Use "diff3" strategy for better conflict resolution
 # ============================================================================
