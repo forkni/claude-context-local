@@ -105,7 +105,7 @@ class SearchConfig:
     # Dynamic Batch Sizing (GPU-based optimization)
     enable_dynamic_batch_size: bool = True  # Enable GPU-based auto-sizing
     dynamic_batch_min: int = 32  # Minimum batch size for safety
-    dynamic_batch_max: int = 512  # Maximum batch size to avoid fragmentation
+    dynamic_batch_max: int = 384  # Maximum batch size (safer for 8-16GB GPUs)
 
     # Auto-reindexing
     enable_auto_reindex: bool = True

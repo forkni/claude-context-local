@@ -1225,24 +1225,35 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
         if not directory_path.exists():
             return {"error": f"Directory does not exist: {directory_path}"}
 
-        # Check if project already exists (immutability of filters)
+        # Check if project already exists and handle filter immutability
         # First call without filters to check existence
         project_dir = get_project_storage_dir(str(directory_path))
         project_info_file = project_dir / "project_info.json"
 
-        if project_info_file.exists():
-            # Load stored filters (immutable after creation)
+        # Check if user provided new filters (non-None and non-empty)
+        user_provided_filters = (
+            (include_dirs is not None and len(include_dirs) > 0)
+            or (exclude_dirs is not None and len(exclude_dirs) > 0)
+        )
+
+        if project_info_file.exists() and not user_provided_filters:
+            # Load stored filters ONLY if user didn't provide new ones
             with open(project_info_file) as f:
                 project_info = json.load(f)
             include_dirs = project_info.get("include_dirs")
             exclude_dirs = project_info.get("exclude_dirs")
-            logger.info("[INDEX] Using stored directory filters (immutable)")
+            logger.info("[INDEX] Using stored directory filters")
         else:
-            # New project - save filters to project_info.json
-            logger.info(
-                f"[INDEX] New project with filters: include={include_dirs}, exclude={exclude_dirs}"
-            )
-            # Call again with filters to save them
+            # New project OR user provided new filters - save/update filters
+            if project_info_file.exists():
+                logger.info(
+                    f"[INDEX] Overwriting filters: include={include_dirs}, exclude={exclude_dirs}"
+                )
+            else:
+                logger.info(
+                    f"[INDEX] New project with filters: include={include_dirs}, exclude={exclude_dirs}"
+                )
+            # Save filters to project_info.json
             project_dir = get_project_storage_dir(
                 str(directory_path),
                 include_dirs=include_dirs,
