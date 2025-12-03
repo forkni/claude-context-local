@@ -34,6 +34,14 @@ def main():
         action="store_true",
         help="Index for all models in pool (Qwen3, BGE-M3, CodeRankEmbed). Auto-detects if not specified.",
     )
+    parser.add_argument(
+        "--include-dirs",
+        help='Comma-separated directories to include (e.g., "src,lib"). Immutable after project creation.',
+    )
+    parser.add_argument(
+        "--exclude-dirs",
+        help='Comma-separated directories to exclude (e.g., "tests,vendor"). Immutable after project creation.',
+    )
 
     args = parser.parse_args()
 
@@ -66,6 +74,15 @@ def main():
     )
     multi_model = args.multi_model if args.multi_model else None  # None = auto-detect
 
+    # Parse directory filters
+    include_dirs = None
+    if args.include_dirs:
+        include_dirs = [d.strip() for d in args.include_dirs.split(",") if d.strip()]
+
+    exclude_dirs = None
+    if args.exclude_dirs:
+        exclude_dirs = [d.strip() for d in args.exclude_dirs.split(",") if d.strip()]
+
     # Display configuration
     print("=" * 70)
     print("PROJECT INDEXING")
@@ -77,6 +94,10 @@ def main():
         print("Multi-Model: Enabled (Qwen3, BGE-M3, CodeRankEmbed)")
     else:
         print("Multi-Model: Disabled (single model only)")
+    if include_dirs:
+        print(f"Include dirs: {include_dirs}")
+    if exclude_dirs:
+        print(f"Exclude dirs: {exclude_dirs}")
     print("=" * 70)
     print()
 
@@ -94,6 +115,8 @@ def main():
                     "directory_path": str(project_path),
                     "incremental": incremental,
                     "multi_model": multi_model,
+                    "include_dirs": include_dirs,
+                    "exclude_dirs": exclude_dirs,
                 }
             )
         )

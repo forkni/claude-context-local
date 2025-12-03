@@ -139,6 +139,16 @@ PROCESS:
                     "type": "boolean",
                     "description": "Index for all models in pool (Qwen3, BGE-M3, CodeRankEmbed). Default: auto-detect from CLAUDE_MULTI_MODEL_ENABLED environment variable",
                 },
+                "include_dirs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": 'Only index files in these directories (e.g., ["src/", "lib/"]). Uses path prefix matching. Immutable after project creation.',
+                },
+                "exclude_dirs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": 'Exclude these directories from indexing (e.g., ["tests/", "vendor/"]). Uses path prefix matching. Immutable after project creation.',
+                },
             },
             "required": ["directory_path"],
         },

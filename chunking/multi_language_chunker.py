@@ -161,16 +161,28 @@ class MultiLanguageChunker:
         "backups",  # Development backup directories
     }
 
-    def __init__(self, root_path: Optional[str] = None):
+    def __init__(
+        self,
+        root_path: Optional[str] = None,
+        include_dirs: Optional[list] = None,
+        exclude_dirs: Optional[list] = None,
+    ):
         """Initialize multi-language chunker.
 
         Args:
             root_path: Optional root path for relative path calculation
+            include_dirs: Optional list of directories to include
+            exclude_dirs: Optional list of directories to exclude
         """
         self.root_path = root_path
         # Use AST chunker for Python (more mature implementation)
         # Use tree-sitter for other languages
         self.tree_sitter_chunker = TreeSitterChunker()
+
+        # Initialize directory filter for index-time filtering
+        from search.filters import DirectoryFilter
+
+        self.directory_filter = DirectoryFilter(include_dirs, exclude_dirs)
 
         # Initialize call graph extractor for Python (Phase 1)
         self.call_graph_extractor = None
@@ -463,6 +475,23 @@ class MultiLanguageChunker:
                 if any(part in self.DEFAULT_IGNORED_DIRS for part in file_path.parts):
                     continue
                 file_paths.append(file_path)
+
+        # Apply custom directory filters (include_dirs/exclude_dirs)
+        if self.root_path and self.directory_filter:
+            root = Path(self.root_path)
+            filtered_paths = []
+            for file_path in file_paths:
+                try:
+                    relative_path = str(file_path.relative_to(root))
+                    if self.directory_filter.matches(relative_path):
+                        filtered_paths.append(file_path)
+                except ValueError:
+                    # File not under root, skip it
+                    continue
+            logger.info(
+                f"Applied directory filters: {len(file_paths)} files -> {len(filtered_paths)} files"
+            )
+            file_paths = filtered_paths
 
         logger.info(f"Found {len(file_paths)} files to chunk")
 

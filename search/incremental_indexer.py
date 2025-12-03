@@ -60,6 +60,8 @@ class IncrementalIndexer:
         embedder: Optional[CodeEmbedder] = None,
         chunker: Optional[MultiLanguageChunker] = None,
         snapshot_manager: Optional[SnapshotManager] = None,
+        include_dirs: Optional[list] = None,
+        exclude_dirs: Optional[list] = None,
     ):
         """Initialize incremental indexer.
 
@@ -68,12 +70,22 @@ class IncrementalIndexer:
             embedder: Embedder instance
             chunker: Code chunker instance
             snapshot_manager: Snapshot manager instance
+            include_dirs: Optional list of directories to include
+            exclude_dirs: Optional list of directories to exclude
         """
         self.indexer = indexer or Indexer()
         self.embedder = embedder or CodeEmbedder()
         self.chunker = chunker or MultiLanguageChunker()
         self.snapshot_manager = snapshot_manager or SnapshotManager()
-        self.change_detector = ChangeDetector(self.snapshot_manager)
+
+        # Store directory filters for MerkleDAG creation
+        self.include_dirs = include_dirs
+        self.exclude_dirs = exclude_dirs
+
+        # Create change detector with filters
+        self.change_detector = ChangeDetector(
+            self.snapshot_manager, include_dirs, exclude_dirs
+        )
 
         # Load parallel chunking configuration
         config = get_search_config()
@@ -417,7 +429,7 @@ class IncrementalIndexer:
             self.indexer.clear_index()
 
             # Build DAG for all files
-            dag = MerkleDAG(project_path)
+            dag = MerkleDAG(project_path, self.include_dirs, self.exclude_dirs)
             dag.build()
             all_files = dag.get_all_files()
 

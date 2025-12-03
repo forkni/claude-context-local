@@ -42,15 +42,23 @@ class MerkleNode:
 class MerkleDAG:
     """Merkle DAG for tracking file system changes."""
 
-    def __init__(self, root_path: str):
+    def __init__(self, root_path: str, include_dirs=None, exclude_dirs=None):
         """Initialize Merkle DAG for a directory tree.
 
         Args:
             root_path: Root directory to track
+            include_dirs: Optional list of directories to include
+            exclude_dirs: Optional list of directories to exclude
         """
         self.root_path = Path(root_path).resolve()
         self.nodes: Dict[str, MerkleNode] = {}
         self.root_node: Optional[MerkleNode] = None
+
+        # Initialize directory filter for custom include/exclude dirs
+        from search.filters import DirectoryFilter
+
+        self.directory_filter = DirectoryFilter(include_dirs, exclude_dirs)
+
         self.ignore_patterns: Set[str] = {
             "__pycache__",
             ".git",
@@ -123,6 +131,17 @@ class MerkleDAG:
                 if name.endswith(pattern[1:]):
                     return True
             elif name == pattern:
+                return True
+
+        # Apply custom directory filters (for directories only)
+        if path.is_dir() and self.directory_filter:
+            try:
+                relative_path = str(path.relative_to(self.root_path))
+                # Add trailing slash for directory matching
+                if not self.directory_filter.matches(relative_path + "/"):
+                    return True
+            except ValueError:
+                # Path not under root, ignore it
                 return True
 
         return False

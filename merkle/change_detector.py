@@ -45,13 +45,22 @@ class FileChanges:
 class ChangeDetector:
     """Detects changes between Merkle DAGs."""
 
-    def __init__(self, snapshot_manager: SnapshotManager = None):
+    def __init__(
+        self,
+        snapshot_manager: SnapshotManager = None,
+        include_dirs: List[str] = None,
+        exclude_dirs: List[str] = None,
+    ):
         """Initialize change detector.
 
         Args:
             snapshot_manager: Snapshot manager instance
+            include_dirs: Optional list of directories to include
+            exclude_dirs: Optional list of directories to exclude
         """
         self.snapshot_manager = snapshot_manager or SnapshotManager()
+        self.include_dirs = include_dirs
+        self.exclude_dirs = exclude_dirs
 
     def detect_changes(self, old_dag: MerkleDAG, new_dag: MerkleDAG) -> FileChanges:
         """Detect file changes between two Merkle DAGs.
@@ -100,7 +109,7 @@ class ChangeDetector:
             Tuple of (FileChanges, current MerkleDAG)
         """
         # Build current DAG
-        current_dag = MerkleDAG(project_path)
+        current_dag = MerkleDAG(project_path, self.include_dirs, self.exclude_dirs)
 
         # Add snapshot directory to ignore patterns if it's inside the project
         snapshot_dir = self.snapshot_manager.storage_dir
@@ -143,7 +152,7 @@ class ChangeDetector:
             return True
 
         # Build current DAG
-        current_dag = MerkleDAG(project_path)
+        current_dag = MerkleDAG(project_path, self.include_dirs, self.exclude_dirs)
 
         # Add snapshot directory to ignore patterns if it's inside the project
         snapshot_dir = self.snapshot_manager.storage_dir

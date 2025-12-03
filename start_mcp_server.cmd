@@ -499,13 +499,46 @@ if not exist "%new_project_path%\*" (
     goto index_new_project
 )
 
+REM Prompt for directory filters (optional)
+echo.
+echo === Directory Filters (Optional) ===
+echo.
+echo You can include or exclude specific directories from indexing.
+echo This reduces indexing time by skipping unwanted folders.
+echo.
+echo Examples:
+echo   Include: src,lib
+echo   Exclude: tests,vendor,docs
+echo.
+set /p include_filter="Include directories (comma-separated, Enter=all): "
+set /p exclude_filter="Exclude directories (comma-separated, Enter=none): "
+
+REM Build filter arguments
+set "filter_args="
+if defined include_filter if not "%include_filter%"=="" (
+    set "filter_args=--include-dirs "%include_filter%""
+)
+if defined exclude_filter if not "%exclude_filter%"=="" (
+    if defined filter_args (
+        set "filter_args=%filter_args% --exclude-dirs "%exclude_filter%""
+    ) else (
+        set "filter_args=--exclude-dirs "%exclude_filter%""
+    )
+)
+
 echo.
 echo [INFO] Indexing new project: %new_project_path%
 echo [INFO] This will create a new index and Merkle snapshot
 echo [INFO] Mode: New (first-time full index)
+if defined include_filter if not "%include_filter%"=="" (
+    echo [INFO] Include dirs: %include_filter%
+)
+if defined exclude_filter if not "%exclude_filter%"=="" (
+    echo [INFO] Exclude dirs: %exclude_filter%
+)
 echo.
 
-.\.venv\Scripts\python.exe tools\batch_index.py --path "%new_project_path%" --mode new
+.\.venv\Scripts\python.exe tools\batch_index.py --path "%new_project_path%" --mode new %filter_args%
 pause
 goto menu_restart
 
@@ -766,7 +799,7 @@ goto menu_restart
 :configure_claude
 echo.
 echo [INFO] Configuring Claude Code integration...
-powershell -ExecutionPolicy Bypass -File "scripts\batch\manual_configure.bat" -Global
+call scripts\batch\manual_configure.bat
 if "!ERRORLEVEL!" neq "0" (
     echo [ERROR] Configuration failed
 ) else (

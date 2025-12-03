@@ -966,7 +966,13 @@ def _create_indexer_for_model(
 
 
 def _run_indexing(
-    indexer, embedder, chunker, directory_path: str, incremental: bool
+    indexer,
+    embedder,
+    chunker,
+    directory_path: str,
+    incremental: bool,
+    include_dirs=None,
+    exclude_dirs=None,
 ) -> dict:
     """Run the indexing process and return results.
 
@@ -976,6 +982,8 @@ def _run_indexing(
         chunker: Code chunker
         directory_path: Path to index
         incremental: Whether to do incremental indexing
+        include_dirs: Optional list of directories to include
+        exclude_dirs: Optional list of directories to exclude
 
     Returns:
         dict: Indexing results with files/chunks counts and timing
@@ -983,7 +991,7 @@ def _run_indexing(
     from datetime import datetime
 
     incremental_indexer = IncrementalIndexer(
-        indexer=indexer, embedder=embedder, chunker=chunker
+        indexer=indexer, embedder=embedder, chunker=chunker, include_dirs=include_dirs, exclude_dirs=exclude_dirs
     )
 
     start_time = datetime.now()
@@ -1050,12 +1058,16 @@ def _build_index_response(
         }
 
 
-def _index_with_all_models(directory_path: Path, incremental: bool) -> list[dict]:
+def _index_with_all_models(
+    directory_path: Path, incremental: bool, include_dirs=None, exclude_dirs=None
+) -> list[dict]:
     """Index a project with all models in MODEL_POOL_CONFIG.
 
     Args:
         directory_path: Resolved path to the project directory
         incremental: Whether to use incremental indexing
+        include_dirs: Optional list of directories to include
+        exclude_dirs: Optional list of directories to exclude
 
     Returns:
         list: Results for each model with timing and statistics
@@ -1097,7 +1109,9 @@ def _index_with_all_models(directory_path: Path, incremental: bool) -> list[dict
             index_dir.mkdir(exist_ok=True)
 
             # Initialize components for this model
-            chunker = MultiLanguageChunker(str(directory_path))
+            chunker = MultiLanguageChunker(
+                str(directory_path), include_dirs, exclude_dirs
+            )
             embedder = get_embedder(model_key)
 
             # Create fresh indexer instance directly (bypass global cache)
@@ -1123,7 +1137,11 @@ def _index_with_all_models(directory_path: Path, incremental: bool) -> list[dict
 
             # Create incremental indexer and run
             incremental_indexer = IncrementalIndexer(
-                indexer=indexer, embedder=embedder, chunker=chunker
+                indexer=indexer,
+                embedder=embedder,
+                chunker=chunker,
+                include_dirs=include_dirs,
+                exclude_dirs=exclude_dirs,
             )
 
             start_time = datetime.now()
@@ -1183,6 +1201,8 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
     arguments.get("project_name")
     incremental = arguments.get("incremental", True)
     multi_model = arguments.get("multi_model", None)  # None = auto-detect
+    include_dirs = arguments.get("include_dirs")
+    exclude_dirs = arguments.get("exclude_dirs")
 
     # Auto-detect multi-model mode if not explicitly specified
     if multi_model is None:
@@ -1193,10 +1213,33 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
     )
 
     try:
+        import json
 
         directory_path = Path(directory_path).resolve()
         if not directory_path.exists():
             return {"error": f"Directory does not exist: {directory_path}"}
+
+        # Check if project already exists (immutability of filters)
+        # First call without filters to check existence
+        project_dir = get_project_storage_dir(str(directory_path))
+        project_info_file = project_dir / "project_info.json"
+
+        if project_info_file.exists():
+            # Load stored filters (immutable after creation)
+            with open(project_info_file) as f:
+                project_info = json.load(f)
+            include_dirs = project_info.get("include_dirs")
+            exclude_dirs = project_info.get("exclude_dirs")
+            logger.info("[INDEX] Using stored directory filters (immutable)")
+        else:
+            # New project - save filters to project_info.json
+            logger.info(
+                f"[INDEX] New project with filters: include={include_dirs}, exclude={exclude_dirs}"
+            )
+            # Call again with filters to save them
+            project_dir = get_project_storage_dir(
+                str(directory_path), include_dirs=include_dirs, exclude_dirs=exclude_dirs
+            )
 
         # Set as current project (using setter for proper cross-module sync)
         set_current_project(str(directory_path))
@@ -1204,7 +1247,9 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
         # Multi-model batch indexing
         if multi_model and get_state().multi_model_enabled:
             logger.info(f"Multi-model batch indexing for: {directory_path}")
-            results = _index_with_all_models(directory_path, incremental)
+            results = _index_with_all_models(
+                directory_path, incremental, include_dirs, exclude_dirs
+            )
             return _build_index_response(
                 results, str(directory_path), multi_model=True, incremental=incremental
             )
@@ -1219,7 +1264,9 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
             index_dir.mkdir(exist_ok=True)
 
             # Initialize components using cached getter functions
-            chunker = MultiLanguageChunker(str(directory_path))
+            chunker = MultiLanguageChunker(
+                str(directory_path), include_dirs, exclude_dirs
+            )
             embedder = get_embedder()
             searcher_instance = get_searcher(str(directory_path))
 
@@ -1232,7 +1279,7 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
 
             # Run indexing (using helper)
             result = _run_indexing(
-                indexer, embedder, chunker, str(directory_path), incremental
+                indexer, embedder, chunker, str(directory_path), incremental, include_dirs, exclude_dirs
             )
 
             # Build response (using helper)

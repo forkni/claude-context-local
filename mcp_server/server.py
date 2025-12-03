@@ -89,12 +89,16 @@ def set_current_project(project_path: str) -> None:
     )
 
 
-def get_project_storage_dir(project_path: str, model_key: str = None) -> Path:
+def get_project_storage_dir(
+    project_path: str, model_key: str = None, include_dirs=None, exclude_dirs=None
+) -> Path:
     """Get or create project-specific storage directory with per-model dimension suffix.
 
     Args:
         project_path: Path to the project
         model_key: Model key for routing (None = use config default)
+        include_dirs: Optional list of directories to include during indexing
+        exclude_dirs: Optional list of directories to exclude during indexing
     """
     base_dir = get_storage_dir()
     import hashlib
@@ -155,6 +159,8 @@ def get_project_storage_dir(project_path: str, model_key: str = None) -> Path:
             "embedding_model": model_name,
             "model_dimension": dimension,
             "created_at": datetime.now().isoformat(),
+            "include_dirs": include_dirs,
+            "exclude_dirs": exclude_dirs,
         }
         with open(project_info_file, "w") as f:
             json.dump(project_info, f, indent=2)
