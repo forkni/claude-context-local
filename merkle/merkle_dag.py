@@ -280,6 +280,9 @@ class MerkleDAG:
             "root_node": self.root_node.to_dict() if self.root_node else None,
             "file_count": sum(1 for n in self.nodes.values() if n.is_file),
             "total_size": sum(n.size for n in self.nodes.values() if n.is_file),
+            # Serialize directory filters for incremental indexing
+            "include_dirs": self.directory_filter.include_dirs if self.directory_filter else None,
+            "exclude_dirs": self.directory_filter.exclude_dirs if self.directory_filter else None,
         }
 
     @classmethod
@@ -292,7 +295,12 @@ class MerkleDAG:
         Returns:
             MerkleDAG instance
         """
-        dag = cls(data["root_path"])
+        # Restore directory filters from serialized snapshot
+        dag = cls(
+            data["root_path"],
+            include_dirs=data.get("include_dirs"),
+            exclude_dirs=data.get("exclude_dirs"),
+        )
         if data["root_node"]:
             dag.root_node = MerkleNode.from_dict(data["root_node"])
 
