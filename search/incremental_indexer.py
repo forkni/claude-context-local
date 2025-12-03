@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from rich.console import Console
 from rich.progress import (
     BarColumn,
     Progress,
@@ -125,13 +126,15 @@ class IncrementalIndexer:
                     future_to_path[future] = file_path
 
                 # Collect results as they complete with progress bar
+                console = Console(force_terminal=True)
                 with Progress(
                     SpinnerColumn(),
                     TextColumn("[progress.description]{task.description}"),
                     BarColumn(),
                     TaskProgressColumn(),
                     TextColumn("({task.completed}/{task.total} files)"),
-                    transient=True,
+                    console=console,
+                    transient=False,
                 ) as progress:
                     task = progress.add_task("Chunking files...", total=len(file_paths))
                     for future in as_completed(future_to_path):
@@ -147,13 +150,15 @@ class IncrementalIndexer:
                             progress.update(task, advance=1)
         else:
             # Sequential chunking (fallback or single file)
+            console = Console(force_terminal=True)
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
                 TaskProgressColumn(),
                 TextColumn("({task.completed}/{task.total} files)"),
-                transient=True,
+                console=console,
+                transient=False,
             ) as progress:
                 task = progress.add_task("Chunking files...", total=len(file_paths))
                 for file_path in file_paths:
