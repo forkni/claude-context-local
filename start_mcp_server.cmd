@@ -621,8 +621,11 @@ if errorlevel 1 (
 REM Display projects
 echo Select project to clear index:
 echo.
-for /f "tokens=1,2,3 delims=|" %%a in (%TEMP_PROJECTS%) do (
-    echo   %%a. %%b
+for /f "tokens=1,2,3,4 delims=|" %%a in (%TEMP_PROJECTS%) do (
+    REM Parse model_slug and dimension from PROJECT_HASH (format: name_hash_slug_NNNd)
+    for /f "tokens=3,4 delims=_" %%m in ("%%d") do (
+        echo   %%a. %%b [%%m %%n]
+    )
     echo      Path: %%c
     echo.
 )
