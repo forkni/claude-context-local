@@ -291,6 +291,11 @@ tests/integration/test_graph_search.py
 nul
 *.bat.bak
 
+# Accidental output files from batch script redirection failures
+# (created when %LOGFILE% or %REPORTFILE% variables aren't properly set)
+Commit
+Workflow
+
 # Maintenance and cleanup scripts (local-only)
 scripts/cleanup_powershell_refs_apply.py
 scripts/cleanup_powershell_refs_preview.py

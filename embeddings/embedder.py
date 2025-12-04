@@ -423,14 +423,14 @@ class CodeEmbedder:
             model_source = str(local_model_dir) if local_model_dir else self.model_name
 
             # Build constructor kwargs
-            # Note: SentenceTransformers deprecated model_kwargs["torch_dtype"] in favor of direct dtype param
+            # Note: SentenceTransformers 5.x uses model_kwargs["torch_dtype"] for dtype specification
             constructor_kwargs = {
                 "cache_folder": self.cache_dir,
                 "device": resolved_device,
                 "trust_remote_code": True,  # Required for some models like Qodo
             }
             if torch_dtype is not None:
-                constructor_kwargs["dtype"] = torch_dtype
+                constructor_kwargs["model_kwargs"] = {"torch_dtype": torch_dtype}
 
             self._model = SentenceTransformer(model_source, **constructor_kwargs)
 
@@ -461,7 +461,7 @@ class CodeEmbedder:
                         "trust_remote_code": True,
                     }
                     if torch_dtype is not None:
-                        fallback_kwargs["dtype"] = torch_dtype
+                        fallback_kwargs["model_kwargs"] = {"torch_dtype": torch_dtype}
 
                     self._model = SentenceTransformer(
                         self.model_name,  # Use model name, not local path
