@@ -1261,7 +1261,7 @@ REM System Status Functions
 :show_system_status
 echo [Runtime Status]
 if exist ".venv\Scripts\python.exe" (
-    .\.venv\Scripts\python.exe -c "import os; from search.config import get_search_config, MODEL_REGISTRY; multi_enabled = os.getenv('CLAUDE_MULTI_MODEL_ENABLED', '').lower() in ('true', '1'); cfg = get_search_config(); model = cfg.embedding_model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); marker = '[MULTI-MODEL]' if multi_enabled else '[SINGLE]'; print(f'Model: {marker} {model_short} ({dim}d, {vram})'); print('Multi-model routing: BGE-M3 + Qwen3 + CodeRankEmbed (5.3GB)') if multi_enabled else print('Tip: Press M for Quick Model Switch')" 2>nul
+    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding_model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = cfg.multi_model_enabled; print('Model: [MULTI] BGE-M3 + Qwen3 + CodeRankEmbed (5.3GB total)') if multi_enabled else print(f'Model: [SINGLE] {model_short} ({dim}d, {vram})'); print('       Active routing across all 3 models') if multi_enabled else print('Tip: Press M for Quick Model Switch')" 2>nul
     if errorlevel 1 (
         echo Model: embeddinggemma-300m ^| Status: Loading...
     )
