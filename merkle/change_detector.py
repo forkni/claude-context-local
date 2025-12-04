@@ -1,11 +1,14 @@
 """Detects changes between Merkle tree snapshots."""
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 from .merkle_dag import MerkleDAG
 from .snapshot_manager import SnapshotManager
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -108,8 +111,38 @@ class ChangeDetector:
         Returns:
             Tuple of (FileChanges, current MerkleDAG)
         """
-        # Build current DAG
-        current_dag = MerkleDAG(project_path, self.include_dirs, self.exclude_dirs)
+        # Load previous snapshot first to potentially inherit filters
+        old_dag = self.snapshot_manager.load_snapshot(project_path)
+
+        # Determine filters to use for current DAG
+        include_dirs = self.include_dirs
+        exclude_dirs = self.exclude_dirs
+
+        # If we have a snapshot with filters but none were provided to the detector,
+        # inherit filters from the snapshot to ensure consistent comparison
+        if old_dag is not None:
+            if (
+                include_dirs is None
+                and old_dag.directory_filter
+                and old_dag.directory_filter.include_dirs
+            ):
+                include_dirs = old_dag.directory_filter.include_dirs
+                logger.debug(
+                    f"[CHANGE_DETECTOR] Inheriting include_dirs from snapshot: {include_dirs}"
+                )
+
+            if (
+                exclude_dirs is None
+                and old_dag.directory_filter
+                and old_dag.directory_filter.exclude_dirs
+            ):
+                exclude_dirs = old_dag.directory_filter.exclude_dirs
+                logger.debug(
+                    f"[CHANGE_DETECTOR] Inheriting exclude_dirs from snapshot: {exclude_dirs}"
+                )
+
+        # Build current DAG with inherited or provided filters
+        current_dag = MerkleDAG(project_path, include_dirs, exclude_dirs)
 
         # Add snapshot directory to ignore patterns if it's inside the project
         snapshot_dir = self.snapshot_manager.storage_dir
@@ -121,9 +154,6 @@ class ChangeDetector:
             pass
 
         current_dag.build()
-
-        # Load previous snapshot
-        old_dag = self.snapshot_manager.load_snapshot(project_path)
 
         if old_dag is None:
             # No previous snapshot, treat all files as added
@@ -151,8 +181,27 @@ class ChangeDetector:
         if old_dag is None:
             return True
 
-        # Build current DAG
-        current_dag = MerkleDAG(project_path, self.include_dirs, self.exclude_dirs)
+        # Determine filters to use for current DAG
+        include_dirs = self.include_dirs
+        exclude_dirs = self.exclude_dirs
+
+        # Inherit filters from snapshot if none were provided
+        if (
+            include_dirs is None
+            and old_dag.directory_filter
+            and old_dag.directory_filter.include_dirs
+        ):
+            include_dirs = old_dag.directory_filter.include_dirs
+
+        if (
+            exclude_dirs is None
+            and old_dag.directory_filter
+            and old_dag.directory_filter.exclude_dirs
+        ):
+            exclude_dirs = old_dag.directory_filter.exclude_dirs
+
+        # Build current DAG with inherited or provided filters
+        current_dag = MerkleDAG(project_path, include_dirs, exclude_dirs)
 
         # Add snapshot directory to ignore patterns if it's inside the project
         snapshot_dir = self.snapshot_manager.storage_dir

@@ -472,6 +472,68 @@ class TestChangeDetector(TestCase):
         assert "changed.py" in files_to_remove  # Modified files need old chunks removed
         assert "new.py" not in files_to_remove
 
+    def test_filter_inheritance_from_snapshot(self):
+        """Test that filters are inherited from snapshot when not provided."""
+        # Create additional test directory that should be excluded
+        (self.test_path / "tests").mkdir()
+        (self.test_path / "tests" / "test_module.py").write_text("# test file")
+
+        # Create initial DAG with exclude_dirs filter
+        dag_with_filters = MerkleDAG(
+            str(self.test_path), include_dirs=None, exclude_dirs=["tests"]
+        )
+        dag_with_filters.build()
+
+        # Save snapshot (will include filters in serialization)
+        self.snapshot_manager.save_snapshot(dag_with_filters)
+
+        # Get file count with filters applied
+        files_with_filters = dag_with_filters.get_all_files()
+
+        # Verify test file is excluded
+        test_file_found = any("test_module.py" in f for f in files_with_filters)
+        assert not test_file_found, "Test file should be excluded from filtered DAG"
+
+        # Create detector WITHOUT filters (simulating incremental indexing
+        # where filters aren't explicitly provided)
+        detector_no_filters = ChangeDetector(
+            self.snapshot_manager, include_dirs=None, exclude_dirs=None
+        )
+
+        # Detect changes from snapshot - should inherit filters
+        changes, current_dag = detector_no_filters.detect_changes_from_snapshot(
+            str(self.test_path)
+        )
+
+        # Get files from current DAG
+        current_files = current_dag.get_all_files()
+
+        # Verify filters were inherited - test file should still be excluded
+        test_file_in_current = any("test_module.py" in f for f in current_files)
+        assert (
+            not test_file_in_current
+        ), "Test file should be excluded in current DAG (filters inherited)"
+
+        # Verify file counts match (no false "added" files)
+        assert len(current_files) == len(
+            files_with_filters
+        ), f"File count mismatch: {len(current_files)} vs {len(files_with_filters)}"
+
+        # Verify no changes detected (both DAGs should have same filtered files)
+        assert not changes.has_changes(), (
+            f"Expected no changes, but detected: "
+            f"added={len(changes.added)}, removed={len(changes.removed)}, "
+            f"modified={len(changes.modified)}"
+        )
+
+        # Verify filter inheritance was applied
+        assert (
+            current_dag.directory_filter is not None
+        ), "Current DAG should have directory filter"
+        assert current_dag.directory_filter.exclude_dirs == [
+            "tests"
+        ], "Exclude dirs should be inherited from snapshot"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
