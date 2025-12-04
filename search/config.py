@@ -80,7 +80,7 @@ class SearchConfig:
 
     # Multi-Model Routing Configuration
     multi_model_enabled: bool = True  # Enable intelligent query routing across models
-    routing_default_model: str = "coderankembed"  # Default model key for routing
+    routing_default_model: str = "bge_m3"  # Default model key for routing (most balanced)
 
     # Parallel Chunking Configuration
     enable_parallel_chunking: bool = True  # Enable parallel file chunking
