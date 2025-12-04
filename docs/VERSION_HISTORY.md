@@ -4,7 +4,7 @@ Complete version history and feature timeline for claude-context-local MCP serve
 
 ## Current Status: All Features Operational (2025-12-03)
 
-- **Version**: 0.6.2
+- **Version**: 0.6.1
 - **Status**: Production-ready
 - **Test Coverage**: 545 unit tests + integration tests (100% pass rate)
 - **Index Quality**: 109 active files, 1,199 chunks (site-packages excluded, BGE-M3 1024d, ~24 MB)
@@ -14,7 +14,7 @@ Complete version history and feature timeline for claude-context-local MCP serve
 
 ---
 
-## v0.6.2 - UX Improvements & Bug Fixes (2025-12-03)
+## v0.6.1 - UX Improvements & Bug Fixes (2025-12-03)
 
 ### Status: PRODUCTION-READY ✅
 

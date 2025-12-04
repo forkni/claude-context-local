@@ -13,6 +13,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.1] - 2025-12-03
+
+### Added
+
+- **Progress Bar for Chunking** - Real-time visual feedback during file chunking
+  - Shows: `Chunking files... 100% (21/21 files)`
+  - Force terminal mode (`Console(force_terminal=True)`) for batch script compatibility
+  - Works with both parallel and sequential chunking modes
+  - File: `search/incremental_indexer.py`
+
+- **Progress Bar for Embedding** - Progress during longest indexing phase (~15 seconds)
+  - Shows: `Embedding... 100% (3/3 batches)`
+  - Model warmup prevents log interference
+  - File: `embeddings/embedder.py`
+
+- **Model/Dimension Display in Project List** - Clear project identification
+  - Format: `claude-context-local [bge-m3 1024d]`
+  - Disambiguates duplicate project names with different models
+  - File: `start_mcp_server.cmd`
+
+- **Targeted Snapshot Deletion** - New `delete_snapshot_by_slug()` method
+  - Only deletes matching model/dimension snapshot
+  - Preserves other model variants (e.g., keeps `coderank_768d` when deleting `bge-m3_1024d`)
+  - File: `merkle/snapshot_manager.py`
+
+### Fixed
+
+- **include_dirs Filter Root Directory Bug** - Fixed 0 files found when using `include_dirs`
+  - Root cause: Root directory `"."` was incorrectly filtered, blocking tree traversal
+  - Fix: Added root directory exception in `merkle/merkle_dag.py:141`
+  - Result: `include_dirs` filter now works correctly for all directories
+
+- **Snapshot Deletion Logic** - Fixed clearing one model's index deleting ALL model snapshots
+  - Root cause: `delete_all_snapshots()` used glob pattern matching all dimensions
+  - Fix: Created targeted `delete_snapshot_by_slug()` method
+  - Result: Clearing specific model index preserves other model indices
+
+- **Display Bug in Clear Index** - Fixed unescaped parenthesis causing spurious error messages
+  - Root cause: Unescaped `)` in batch script ended if block prematurely
+  - Fix: Removed parenthetical text from echo statement
+  - Result: Clean output when clearing indices
+
+- **Progress Bar Terminal Compatibility** - Fixed progress bar not rendering in batch scripts
+  - Root cause: Rich Console auto-detection failed in batch environment
+  - Fix: Added `Console(force_terminal=True)` and `transient=False`
+  - Result: Progress bars display correctly in all environments
+
+- **Model Loading Interference** - Fixed model loading logs interleaving with progress bar
+  - Root cause: Model first load triggers verbose transformers logging
+  - Fix: Added model warmup (`self.model.encode(["warmup"], show_progress_bar=False)`) before progress bar starts
+  - Result: Clean progress bar display without log interference
+
+---
+
 ## [0.6.0] - 2025-11-28
 
 ### Added
@@ -698,70 +752,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
-
----
-
-## [0.5.7] - 2025-11-18
-
-### Fixed
-
-- **Multi-hop Filter Propagation** - Filters now apply to both initial and expanded results
-  - **Root cause**: Multi-hop expansion (Hop 2+) called `find_similar_to_chunk` without passing filters
-  - **Fix**: Added post-expansion filtering in `search/hybrid_searcher.py:725-744`
-  - **Result**: `file_pattern` and `chunk_type` filters work correctly across all hops
-
-- **find_similar_code Path Variant Lookup** - Fixed 0 results bug for path-based queries
-  - **Root cause**: Strict path matching failed when chunk_id used different separators
-  - **Fix**: Added path variant lookup in `search/indexer.py:542-555`
-  - **Result**: `find_similar_code()` now finds chunks regardless of path format
-
-- **Query Routing Confidence Calculation** - Better scoring for natural language queries
-  - **Root cause**: Old calculation did not account for keyword weights properly
-  - **Fix**: New calculation in `search/query_router.py:275-279`
-  - **Result**: Natural queries trigger routing more effectively
-
-- **Dual SSE Server Verification Timing** - Fixed false negatives in server startup checks
-  - **Root cause**: 3-second timeout too short for server initialization
-  - **Fix**: Increased timeout to 5 seconds in `scripts/batch/start_both_sse_servers.bat:92`
-
-- **Parse Error Logging** - Suppressed verbose parse errors to DEBUG level
-  - **Files**: Type/import/inheritance extractors in `graph/relationship_extractors/`
-  - **Result**: Cleaner logs during normal operation
-
-- **Phase 3 Relationship Extraction** - All semantic chunk types now contribute to relationship graphs
-  - Extended indexer to allow classes, structs, interfaces, enums, traits, impl blocks, constants, variables
-  - Fixed HybridSearcher graph access path in `code_relationship_analyzer.py`
-  - `find_connections()` now returns complete relationship data
-  - **Re-indexing required** for projects indexed before this fix
-
-### Changed
-
-- **Default Search Mode** - Changed from `semantic` to `hybrid` for better filter hit rate
-  - BM25 keyword matching improves filter results compared to semantic-only
-
-- **Query Routing Keywords** - Expanded keyword variants for better routing
-  - Added: async, await, vector, matrix and other domain-specific terms
-
-- **Codebase Cleanup** - 26 files archived (38% reduction)
-  - Moved deprecated/backup files to `_archive/` directories
-
-- **Tool Count** - Updated from 14 to 15 MCP tools
-  - Added `find_connections` tool for dependency analysis
-
-### Added
-
-- **Filter Best Practices Documentation** - Post-filtering behavior explained
-  - Added to: `docs/MCP_TOOLS_REFERENCE.md`, `docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md`
-
-- **Phase 1 Features Documentation** - Complete user-facing documentation
-  - Symbol ID lookups, AI Guidance messages, Dependency analysis
-  - File: `docs/ADVANCED_FEATURES_GUIDE.md`
-
-- **MCP Tools Test Plan** - 55 test queries across 6 categories
-
----
-
 ## [0.5.6] - 2025-11-17
 
 ### Fixed
@@ -784,7 +774,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **v0.6.1** - UX Improvements: Progress bars, filter fixes, targeted snapshot deletion (2025-12-03)
 - **v0.6.0** - Release: Self-healing BM25, persistent projects, batch compliance (2025-11-28)
+- **v0.5.16** - Graph Resolver Extraction, persistent project selection, multi-hop refactoring (2025-11-24)
 - **v0.5.15** - Phase 4: Import-Based Resolution (~90% accuracy) (2025-11-19)
 - **v0.5.14** - Phase 3: Assignment Tracking (2025-11-19)
 - **v0.5.13** - Phase 2: Type Annotation Resolution (2025-11-19)
