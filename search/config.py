@@ -102,6 +102,10 @@ class SearchConfig:
     prefer_gpu: bool = True
     gpu_memory_threshold: float = 0.8
 
+    # Precision Configuration (fp16/bf16 for faster inference)
+    enable_fp16: bool = True  # Enable fp16 for GPU (30-50% faster inference)
+    prefer_bf16: bool = True  # Prefer bf16 on Ampere+ GPUs (better accuracy than fp16)
+
     # Dynamic Batch Sizing (GPU-based optimization)
     enable_dynamic_batch_size: bool = True  # Enable GPU-based auto-sizing
     dynamic_batch_min: int = 32  # Minimum batch size for safety

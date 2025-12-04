@@ -29,6 +29,7 @@ What are you trying to do?
 ```
 
 **⚠️ CRITICAL**: For ANY query about callers, dependencies, or code flow:
+
 1. First: `search_code()` to get chunk_id
 2. Then: `find_connections(chunk_id)` for relationships
 
@@ -180,6 +181,7 @@ search_code(
 ### Filter Selection Guide
 
 **When to use `chunk_type`:**
+
 - Looking for class definition → `chunk_type="class"`
 - Looking for standalone function → `chunk_type="function"`
 - Looking for method inside class → `chunk_type="method"`
@@ -187,22 +189,26 @@ search_code(
 - Looking for module-level code → `chunk_type="module"`
 
 **When to use `include_dirs`:**
+
 - Know which module contains the code (e.g., `["embeddings/"]`, `["search/"]`)
 - Want to exclude test files (use `exclude_dirs=["tests/"]` instead)
 - Narrowing search to specific component
 
 **⚠️ FILTER CAVEAT**: `include_dirs` and filters apply **POST-search**. Common pitfalls:
+
 - **Generic query + strict filter = 0 results**
   - Example: `search_code("manager", include_dirs=["embeddings/"])` → 0 results (query too generic)
   - Fix: Make query more specific: `search_code("embedding model manager class", include_dirs=["embeddings/"])` ✅
 - **OR**: Remove `include_dirs` filter and let semantic search find all matches first
 
 **When to use `exclude_dirs`:**
+
 - Getting too many test file results → `exclude_dirs=["tests/"]`
 - Getting vendor/third-party noise → `exclude_dirs=["vendor/", "node_modules/"]`
 - Want implementation, not examples → `exclude_dirs=["examples/", "docs/"]`
 
 **When to use `file_pattern`:**
+
 - Know partial filename → `file_pattern="indexer"` for files containing "indexer"
 - Searching specific file type → `file_pattern=".py"` (redundant if using `type`)
 
@@ -278,6 +284,7 @@ search_code("embedding model manager class", file_pattern="embed")  # Better
 ### Anti-Patterns to Avoid
 
 ❌ **Don't use Grep for relationship queries**
+
 ```python
 # Bad: Manual grep for callers
 Grep(pattern="\\.chunk_file\\(")
@@ -287,6 +294,7 @@ find_connections(chunk_id="chunking/multi_language_chunker.py:...:function:chunk
 ```
 
 ❌ **Don't read entire file for one function**
+
 ```python
 # Bad: Read 1000+ line file
 Read(file_path="mcp_server/tool_handlers.py")
@@ -296,6 +304,7 @@ search_code(chunk_id="mcp_server/tool_handlers.py:763-919:function:handle_search
 ```
 
 ❌ **Don't search without filters when you know the type**
+
 ```python
 # Bad: Generic search, gets tests
 search_code("EmbeddingManager")
@@ -411,6 +420,7 @@ find_connections(chunk_id="auth.py:10-50:function:login", max_depth=5)
 ```
 
 **2-Step Workflow for Relationship Queries**:
+
 ```bash
 # Step 1: Find the symbol
 result = search_code("chunk_file function", chunk_type="function")
@@ -565,6 +575,7 @@ switch_embedding_model("google/embeddinggemma-300m")
 #### Lazy Loading Performance (v0.5.17+)
 
 **VRAM Lifecycle**:
+
 - **Startup**: 0 MB VRAM (lazy loading enabled)
 - **First search**: 8-15s total (5-10s one-time model loading + 3-5s search)
 - **Subsequent searches**: 3-5s (models stay loaded in memory)
@@ -572,12 +583,14 @@ switch_embedding_model("google/embeddinggemma-300m")
 - **After cleanup**: 0 MB VRAM (manual cleanup with `cleanup_resources()`)
 
 **Key Behavior**:
+
 - Models load on-demand during first search operation
 - Once loaded, models remain in memory for fast subsequent searches
 - Use `cleanup_resources()` to free VRAM when switching projects or when memory is low
 - Startup time: 3-5s (no model loading overhead)
 
 **Example Workflow**:
+
 ```bash
 # Startup: 0 MB VRAM
 get_memory_status()  # Shows 0 MB VRAM
@@ -907,6 +920,7 @@ get_memory_status()
 **Problem**: You need to find all code that calls a specific function.
 
 **❌ Wrong Approach** (Manual Grep + Multiple Reads):
+
 ```bash
 # Bad: Manual grep for callers
 Grep(pattern="\\.chunk_file\\(")
@@ -918,6 +932,7 @@ Read(file_path="file3.py")
 ```
 
 **✅ Correct Approach** (2-Step Workflow):
+
 ```bash
 # Step 1: Find the function
 result = search_code("chunk_file function", chunk_type="function")
@@ -937,6 +952,7 @@ find_connections(
 **Problem**: Trace the complete flow from entry point to implementation.
 
 **✅ Correct Approach**:
+
 ```bash
 # Step 1: Find entry point
 result = search_code("handle_call_tool function", chunk_type="decorated_definition")
@@ -953,6 +969,7 @@ find_connections(chunk_id=chunk_id, max_depth=5, exclude_dirs=["tests/"])
 **Problem**: Find all code that depends on a class/module.
 
 **✅ Correct Approach**:
+
 ```bash
 # Option 1: Using chunk_id (preferred)
 result = search_code("QueryRouter class", chunk_type="class")
@@ -972,6 +989,7 @@ find_connections(symbol_name="QueryRouter", exclude_dirs=["tests/"])
 **Problem**: Before modifying a function, understand its impact.
 
 **✅ Correct Approach**:
+
 ```bash
 # Step 1: Find the function you want to modify
 result = search_code("incremental_index function", chunk_type="function")
@@ -987,6 +1005,7 @@ find_connections(chunk_id=chunk_id, max_depth=3)
 ```
 
 **Token Savings Summary**:
+
 - Finding callers: 60% fewer tokens vs Grep + Read
 - Tracing flow: 50% fewer tokens vs manual tracing
 - Finding dependencies: 50% fewer tokens vs import tracing
