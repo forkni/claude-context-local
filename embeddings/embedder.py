@@ -419,25 +419,40 @@ class CodeEmbedder:
         # Determine precision (fp16/bf16) for GPU inference
         torch_dtype = self._get_torch_dtype()
 
-        try:
-            model_source = str(local_model_dir) if local_model_dir else self.model_name
+        # Step 4a: Use PyTorch backend only
+        model_source = str(local_model_dir) if local_model_dir else self.model_name
+        model_kwargs_dict = {}
 
+        # Add torch_dtype for PyTorch backend
+        if torch_dtype is not None:
+            model_kwargs_dict["torch_dtype"] = torch_dtype
+
+        try:
             # Build constructor kwargs
-            # Note: SentenceTransformers 5.x uses model_kwargs["torch_dtype"] for dtype specification
             constructor_kwargs = {
                 "cache_folder": self.cache_dir,
                 "device": resolved_device,
                 "trust_remote_code": True,  # Required for some models like Qodo
             }
-            if torch_dtype is not None:
-                constructor_kwargs["model_kwargs"] = {"torch_dtype": torch_dtype}
+
+            # Add model_kwargs if any options (e.g., torch_dtype)
+            if model_kwargs_dict:
+                constructor_kwargs["model_kwargs"] = model_kwargs_dict
+
+            # Debug: Log constructor args
+            self._logger.debug(
+                f"SentenceTransformer constructor kwargs: {constructor_kwargs}"
+            )
 
             self._model = SentenceTransformer(model_source, **constructor_kwargs)
 
             self.device = resolved_device
+
+            # Build detailed info string
             precision_info = f" ({torch_dtype})" if torch_dtype else " (fp32 default)"
+
             self._logger.info(
-                f"Model loaded successfully on device: {self._model.device}{precision_info}"
+                f"Model loaded successfully on device: {self._model.device} [backend=pytorch]{precision_info}"
             )
             self._log_gpu_memory("AFTER_LOAD")
 
@@ -460,8 +475,10 @@ class CodeEmbedder:
                         "device": resolved_device,
                         "trust_remote_code": True,
                     }
-                    if torch_dtype is not None:
-                        fallback_kwargs["model_kwargs"] = {"torch_dtype": torch_dtype}
+
+                    # Preserve model_kwargs (e.g., torch_dtype)
+                    if model_kwargs_dict:
+                        fallback_kwargs["model_kwargs"] = model_kwargs_dict
 
                     self._model = SentenceTransformer(
                         self.model_name,  # Use model name, not local path

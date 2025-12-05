@@ -80,7 +80,9 @@ class SearchConfig:
 
     # Multi-Model Routing Configuration
     multi_model_enabled: bool = True  # Enable intelligent query routing across models
-    routing_default_model: str = "bge_m3"  # Default model key for routing (most balanced)
+    routing_default_model: str = (
+        "bge_m3"  # Default model key for routing (most balanced)
+    )
 
     # Parallel Chunking Configuration
     enable_parallel_chunking: bool = True  # Enable parallel file chunking
@@ -228,6 +230,8 @@ class SearchConfigManager:
             "CLAUDE_MAX_CHUNKING_WORKERS": ("max_chunking_workers", int),
             "CLAUDE_PREFER_GPU": ("prefer_gpu", self._bool_from_env),
             "CLAUDE_GPU_THRESHOLD": ("gpu_memory_threshold", float),
+            "CLAUDE_ENABLE_FP16": ("enable_fp16", self._bool_from_env),
+            "CLAUDE_PREFER_BF16": ("prefer_bf16", self._bool_from_env),
             "CLAUDE_DYNAMIC_BATCH_ENABLED": (
                 "enable_dynamic_batch_size",
                 self._bool_from_env,
