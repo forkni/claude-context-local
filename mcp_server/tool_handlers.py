@@ -627,11 +627,31 @@ def _check_auto_reindex(
     Returns:
         bool: True if reindex was performed
     """
+    # Load filters from project_info.json to ensure consistent filtering
+    import json
+
+    project_storage = get_project_storage_dir(
+        project_path, model_key=selected_model_key
+    )
+    project_info_file = project_storage / "project_info.json"
+
+    include_dirs = None
+    exclude_dirs = None
+    if project_info_file.exists():
+        try:
+            with open(project_info_file) as f:
+                project_info = json.load(f)
+            include_dirs = project_info.get("include_dirs")
+            exclude_dirs = project_info.get("exclude_dirs")
+            if include_dirs or exclude_dirs:
+                logger.debug(
+                    f"[AUTO_REINDEX] Loaded filters: include={include_dirs}, exclude={exclude_dirs}"
+                )
+        except Exception as e:
+            logger.warning(f"[AUTO_REINDEX] Failed to load filters: {e}")
+
     config = get_search_config()
     if config.enable_hybrid_search:
-        project_storage = get_project_storage_dir(
-            project_path, model_key=selected_model_key
-        )
         storage_dir = project_storage / "index"
         indexer = HybridSearcher(
             storage_dir=str(storage_dir),
@@ -645,7 +665,11 @@ def _check_auto_reindex(
     embedder = get_embedder(selected_model_key)
     chunker = MultiLanguageChunker(project_path)
     incremental_indexer = IncrementalIndexer(
-        indexer=indexer, embedder=embedder, chunker=chunker
+        indexer=indexer,
+        embedder=embedder,
+        chunker=chunker,
+        include_dirs=include_dirs,
+        exclude_dirs=exclude_dirs,
     )
 
     reindex_result = incremental_indexer.auto_reindex_if_needed(

@@ -935,6 +935,96 @@ class TestIncrementalIndexer:
         assert result.bm25_resync_count == 0
         self.mock_indexer.resync_bm25_from_dense.assert_not_called()
 
+    def test_filter_persistence_in_full_index(self):
+        """Test that filters are preserved when _full_index is triggered."""
+        # Create indexer WITH filters
+        include_dirs = ["src/", "lib/"]
+        exclude_dirs = ["tests/", "benchmarks/"]
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+            include_dirs=include_dirs,
+            exclude_dirs=exclude_dirs,
+        )
+
+        # Mock that no snapshot exists (triggers full index path)
+        self.mock_snapshot_manager.has_snapshot.return_value = False
+
+        # Mock save_snapshot to verify filters are saved
+        saved_dag = None
+
+        def capture_dag(dag, metadata):
+            nonlocal saved_dag
+            saved_dag = dag
+
+        self.mock_snapshot_manager.save_snapshot = Mock(side_effect=capture_dag)
+
+        # Trigger full index via incremental_index
+        result = indexer.incremental_index(str(self.project_path), "test_project")
+
+        # Verify operation succeeded
+        assert result.success is True
+
+        # Verify the indexer retained filters
+        assert indexer.include_dirs == include_dirs
+        assert indexer.exclude_dirs == exclude_dirs
+
+        # Verify the DAG was created with filters
+        assert saved_dag is not None
+        assert saved_dag.directory_filter is not None
+        assert saved_dag.directory_filter.include_dirs == include_dirs
+        assert saved_dag.directory_filter.exclude_dirs == exclude_dirs
+
+    def test_filter_recovery_from_snapshot_in_full_index(self):
+        """Test that filters are recovered from snapshot if not passed to indexer."""
+        from search.filters import DirectoryFilter
+
+        # Create indexer WITHOUT filters
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+            include_dirs=None,  # No filters passed!
+            exclude_dirs=None,
+        )
+
+        # Create a mock snapshot WITH filters
+        include_dirs = ["src/", "lib/"]
+        exclude_dirs = ["tests/"]
+        mock_dag = Mock()
+        mock_dag.directory_filter = DirectoryFilter(include_dirs, exclude_dirs)
+
+        self.mock_snapshot_manager.load_snapshot.return_value = mock_dag
+        self.mock_snapshot_manager.has_snapshot.return_value = False  # Triggers full index
+
+        # Mock save_snapshot
+        saved_dag = None
+
+        def capture_dag(dag, metadata):
+            nonlocal saved_dag
+            saved_dag = dag
+
+        self.mock_snapshot_manager.save_snapshot = Mock(side_effect=capture_dag)
+
+        # Trigger full index
+        result = indexer.incremental_index(str(self.project_path), "test_project")
+
+        # Verify operation succeeded
+        assert result.success is True
+
+        # Verify filters were recovered from snapshot
+        assert indexer.include_dirs == include_dirs
+        assert indexer.exclude_dirs == exclude_dirs
+
+        # Verify the new DAG was created with recovered filters
+        assert saved_dag is not None
+        assert saved_dag.directory_filter is not None
+        assert saved_dag.directory_filter.include_dirs == include_dirs
+        assert saved_dag.directory_filter.exclude_dirs == exclude_dirs
+
     def teardown_method(self):
         """Clean up test fixtures."""
         import shutil

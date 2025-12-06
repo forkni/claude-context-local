@@ -453,6 +453,22 @@ class IncrementalIndexer:
             IncrementalIndexResult
         """
         try:
+            # Defense in depth: Load filters from snapshot before deleting it
+            # This handles cases where filters weren't passed during IncrementalIndexer creation
+            if self.include_dirs is None and self.exclude_dirs is None:
+                old_snapshot = self.snapshot_manager.load_snapshot(project_path)
+                if old_snapshot and old_snapshot.directory_filter:
+                    if old_snapshot.directory_filter.include_dirs:
+                        self.include_dirs = old_snapshot.directory_filter.include_dirs
+                        logger.info(
+                            f"[FULL_INDEX] Recovered include_dirs from snapshot: {self.include_dirs}"
+                        )
+                    if old_snapshot.directory_filter.exclude_dirs:
+                        self.exclude_dirs = old_snapshot.directory_filter.exclude_dirs
+                        logger.info(
+                            f"[FULL_INDEX] Recovered exclude_dirs from snapshot: {self.exclude_dirs}"
+                        )
+
             # Delete old Merkle snapshot for current model only (preserves other models)
             logger.info(
                 f"[FULL_INDEX] Deleting old snapshot for current model: {project_name}"
