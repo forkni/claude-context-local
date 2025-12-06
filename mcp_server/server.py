@@ -167,6 +167,45 @@ def get_project_storage_dir(
     return project_dir
 
 
+def update_project_filters(
+    project_path: str, include_dirs=None, exclude_dirs=None, model_key: str | None = None
+) -> None:
+    """Update filters in project_info.json after filter change with full reindex.
+
+    Args:
+        project_path: Path to the project
+        include_dirs: New include_dirs filter
+        exclude_dirs: New exclude_dirs filter
+        model_key: Optional model key to update specific model's project_info
+    """
+    project_storage = get_project_storage_dir(project_path, model_key=model_key)
+    project_info_file = project_storage / "project_info.json"
+
+    if not project_info_file.exists():
+        logger.warning(
+            f"[PROJECT_INFO] Cannot update filters - project_info.json not found"
+        )
+        return
+
+    try:
+        with open(project_info_file) as f:
+            project_info = json.load(f)
+
+        # Update filter fields
+        project_info["include_dirs"] = include_dirs
+        project_info["exclude_dirs"] = exclude_dirs
+
+        # Write back updated info
+        with open(project_info_file, "w") as f:
+            json.dump(project_info, f, indent=2)
+
+        logger.info(
+            f"[PROJECT_INFO] Updated filters: include={include_dirs}, exclude={exclude_dirs}"
+        )
+    except Exception as e:
+        logger.warning(f"[PROJECT_INFO] Failed to update filters: {e}")
+
+
 def ensure_project_indexed(project_path: str) -> bool:
     """Check if project is indexed, auto-index only for non-server directories."""
     try:

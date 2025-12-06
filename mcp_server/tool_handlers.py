@@ -1254,35 +1254,55 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
         project_dir = get_project_storage_dir(str(directory_path))
         project_info_file = project_dir / "project_info.json"
 
-        # Check if user provided new filters (non-None and non-empty)
-        user_provided_filters = (
-            (include_dirs is not None and len(include_dirs) > 0)
-            or (exclude_dirs is not None and len(exclude_dirs) > 0)
-        )
-
-        if project_info_file.exists() and not user_provided_filters:
-            # Load stored filters ONLY if user didn't provide new ones
+        # Load stored filters if project exists
+        stored_include = None
+        stored_exclude = None
+        if project_info_file.exists():
             with open(project_info_file) as f:
                 project_info = json.load(f)
-            include_dirs = project_info.get("include_dirs")
-            exclude_dirs = project_info.get("exclude_dirs")
-            logger.info("[INDEX] Using stored directory filters")
-        else:
-            # New project OR user provided new filters - save/update filters
-            if project_info_file.exists():
-                logger.info(
-                    f"[INDEX] Overwriting filters: include={include_dirs}, exclude={exclude_dirs}"
-                )
-            else:
-                logger.info(
-                    f"[INDEX] New project with filters: include={include_dirs}, exclude={exclude_dirs}"
-                )
-            # Save filters to project_info.json
+            stored_include = project_info.get("include_dirs")
+            stored_exclude = project_info.get("exclude_dirs")
+
+        # Determine effective filters
+        # If user didn't provide filters, use stored filters (auto-reindex case)
+        effective_include = (
+            include_dirs if include_dirs is not None else stored_include
+        )
+        effective_exclude = (
+            exclude_dirs if exclude_dirs is not None else stored_exclude
+        )
+
+        # Check for filter change
+        filters_changed = project_info_file.exists() and (
+            effective_include != stored_include or effective_exclude != stored_exclude
+        )
+
+        # Force full reindex if filters changed during incremental
+        if filters_changed and incremental:
+            logger.warning(
+                f"[FILTER_CHANGE] Filters changed, forcing full reindex\n"
+                f"  Old: include={stored_include}, exclude={stored_exclude}\n"
+                f"  New: include={effective_include}, exclude={effective_exclude}"
+            )
+            incremental = False  # Force full reindex
+
+        # Use effective filters for indexing
+        include_dirs = effective_include
+        exclude_dirs = effective_exclude
+
+        # Save/update filters in project_info.json
+        if not project_info_file.exists() or filters_changed:
+            # First time or filters changed - create/update project storage with new filters
             project_dir = get_project_storage_dir(
                 str(directory_path),
                 include_dirs=include_dirs,
                 exclude_dirs=exclude_dirs,
             )
+            if filters_changed:
+                # Also update all model-specific project_info.json files
+                from mcp_server.server import update_project_filters
+
+                update_project_filters(str(directory_path), include_dirs, exclude_dirs)
 
         # Set as current project (using setter for proper cross-module sync)
         set_current_project(str(directory_path))
