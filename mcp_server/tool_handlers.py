@@ -1298,10 +1298,20 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
                 include_dirs=include_dirs,
                 exclude_dirs=exclude_dirs,
             )
-            if filters_changed:
-                # Also update all model-specific project_info.json files
-                from mcp_server.server import update_project_filters
 
+            # Update all model-specific project_info.json files
+            # (needed for both first index AND filter changes in multi-model setup)
+            from mcp_server.server import update_project_filters
+            from search.config import MODEL_POOL_CONFIG
+
+            if get_state().multi_model_enabled:
+                # Update each model's project_info.json
+                for model_key in MODEL_POOL_CONFIG.keys():
+                    update_project_filters(
+                        str(directory_path), include_dirs, exclude_dirs, model_key=model_key
+                    )
+            else:
+                # Single model - update default model's project_info
                 update_project_filters(str(directory_path), include_dirs, exclude_dirs)
 
         # Set as current project (using setter for proper cross-module sync)
