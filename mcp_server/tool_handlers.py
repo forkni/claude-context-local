@@ -644,7 +644,7 @@ def _check_auto_reindex(
             include_dirs = project_info.get("include_dirs")
             exclude_dirs = project_info.get("exclude_dirs")
             if include_dirs or exclude_dirs:
-                logger.debug(
+                logger.info(
                     f"[AUTO_REINDEX] Loaded filters: include={include_dirs}, exclude={exclude_dirs}"
                 )
         except Exception as e:

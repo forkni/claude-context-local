@@ -1515,7 +1515,11 @@ class HybridSearcher:
                 use_stemming=self.bm25_use_stemming,
             )
 
-            # Clear dense index by recreating it (preserve project_id for graph storage)
+            # Clear dense index - MUST delete files before recreating
+            if self.dense_index is not None:
+                self.dense_index.clear_index()
+
+            # Recreate with clean state (preserve project_id for graph storage)
             self.dense_index = CodeIndexManager(
                 str(self.storage_dir), project_id=self.project_id
             )
