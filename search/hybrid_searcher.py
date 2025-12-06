@@ -1345,9 +1345,38 @@ class HybridSearcher:
             self._logger.info("[SAVE] === END POST-SAVE STATE ===")
 
             self._logger.info("[SAVE] Hybrid indices saved successfully")
+
+            # Validate sync after save
+            self.validate_index_sync()
+
         except Exception as e:
             self._logger.error(f"[SAVE] Failed to save indices: {e}")
             raise
+
+    def validate_index_sync(self) -> bool:
+        """Validate BM25 and Dense indices are synchronized.
+
+        Checks if both indices have the same number of documents. If desynchronization
+        is detected, logs a warning with the counts.
+
+        Returns:
+            True if indices are synced, False otherwise
+        """
+        bm25_count = len(self.bm25_index._doc_ids) if self.bm25_index else 0
+        dense_count = (
+            self.dense_index._index.ntotal
+            if self.dense_index and self.dense_index._index
+            else 0
+        )
+
+        if bm25_count != dense_count:
+            self._logger.warning(
+                f"[SYNC_CHECK] Index desync detected: BM25={bm25_count}, Dense={dense_count}"
+            )
+            return False
+
+        self._logger.info(f"[SYNC_CHECK] Indices synced at {bm25_count} documents")
+        return True
 
     def resync_bm25_from_dense(self) -> int:
         """
