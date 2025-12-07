@@ -578,5 +578,123 @@ def test_symbol_name_extraction(impact_analyzer, mock_graph, mock_searcher):
     assert len(result["used_as_type_in"]) == 1
 
 
+# ============================================================================
+# EXCLUDE_DIRS FILTER TESTS (Issue #4)
+# ============================================================================
+
+
+def test_analyze_impact_filters_similar_code_by_exclude_dirs(
+    impact_analyzer, mock_searcher, mock_graph
+):
+    """Test that similar_code results respect exclude_dirs filter (Issue #4)."""
+    target_id = "src/main.py:10-20:function:process"
+
+    # Mock direct callers (empty for this test)
+    mock_graph.get_callers.return_value = []
+    mock_graph.get_callees.return_value = []
+
+    # Mock similar_code results - some from tests/, some from src/
+    mock_similar_1 = Mock()
+    mock_similar_1.chunk_id = "tests/test_main.py:5-15:function:test_process"
+    mock_similar_1.file_path = "tests/test_main.py"
+    mock_similar_1.relative_path = "tests/test_main.py"
+    mock_similar_1.start_line = 5
+    mock_similar_1.end_line = 15
+    mock_similar_1.chunk_type = "function"
+    mock_similar_1.similarity_score = 0.95
+
+    mock_similar_2 = Mock()
+    mock_similar_2.chunk_id = "src/utils.py:30-40:function:helper"
+    mock_similar_2.file_path = "src/utils.py"
+    mock_similar_2.relative_path = "src/utils.py"
+    mock_similar_2.start_line = 30
+    mock_similar_2.end_line = 40
+    mock_similar_2.chunk_type = "function"
+    mock_similar_2.similarity_score = 0.85
+
+    mock_searcher.find_similar_to_chunk.return_value = [
+        mock_similar_1,
+        mock_similar_2,
+    ]
+
+    # Execute with exclude_dirs
+    report = impact_analyzer.analyze_impact(
+        chunk_id=target_id, exclude_dirs=["tests/"]
+    )
+
+    # Verify: Only src/ result should be included, tests/ should be filtered out
+    assert len(report.similar_code) == 1
+    assert report.similar_code[0]["file"] == "src/utils.py"
+    assert "tests/" not in report.similar_code[0]["file"]
+
+
+def test_extract_relationships_filters_by_exclude_dirs(
+    impact_analyzer, mock_graph, mock_searcher
+):
+    """Test that _extract_relationships applies exclude_dirs filter to all relationship types (Issue #4)."""
+    chunk_id = "src/models.py:10-30:class:Parent"
+
+    # Setup graph with relationships pointing to both src/ and tests/ files
+    child_in_src = "src/child.py:40-60:class:ChildSrc"
+    child_in_tests = "tests/test_child.py:10-30:class:ChildTest"
+
+    mock_graph.get_callees.return_value = []
+    mock_graph.get_callers.side_effect = lambda target: {
+        chunk_id: [],
+        "Parent": [child_in_src, child_in_tests],
+    }.get(target, [])
+
+    # Edge data for both children
+    mock_graph.get_edge_data.side_effect = lambda source, target: {
+        (child_in_src, "Parent"): {
+            "relationship_type": "inherits",
+            "line_number": 40,
+            "confidence": 1.0,
+        },
+        (child_in_tests, "Parent"): {
+            "relationship_type": "inherits",
+            "line_number": 10,
+            "confidence": 1.0,
+        },
+    }.get((source, target))
+
+    # Mock chunk lookups
+    mock_child_src = Mock()
+    mock_child_src.chunk_id = child_in_src
+    mock_child_src.metadata = {
+        "file": "src/child.py",
+        "start_line": 40,
+        "end_line": 60,
+        "chunk_type": "class",
+    }
+    mock_child_src.name = "ChildSrc"
+
+    mock_child_tests = Mock()
+    mock_child_tests.chunk_id = child_in_tests
+    mock_child_tests.metadata = {
+        "file": "tests/test_child.py",
+        "start_line": 10,
+        "end_line": 30,
+        "chunk_type": "class",
+    }
+    mock_child_tests.name = "ChildTest"
+
+    mock_searcher.get_by_chunk_id.side_effect = lambda cid: {
+        child_in_src: mock_child_src,
+        child_in_tests: mock_child_tests,
+    }.get(cid)
+
+    # Execute with exclude_dirs
+    result = impact_analyzer._extract_relationships(chunk_id, exclude_dirs=["tests/"])
+
+    # Verify: Only src/ child should be included, tests/ child filtered out
+    assert "child_classes" in result
+    assert len(result["child_classes"]) == 1
+    assert result["child_classes"][0]["file"] == "src/child.py"
+    # Ensure tests/ file is not in results
+    for rel in result["child_classes"]:
+        assert "tests/" not in rel.get("file", "")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

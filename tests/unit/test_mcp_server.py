@@ -74,3 +74,229 @@ class TestGetterFunctions:
 # Note: Most MCP server functionality is tested in integration tests
 # where the actual tool handlers and MCP framework are working properly.
 # Unit tests here would just be testing mocks, not real functionality.
+
+
+class TestToolHandlers:
+    """Test MCP tool handlers return correct data."""
+
+    @pytest.mark.asyncio
+    @patch("mcp_server.tool_handlers.get_search_config")
+    async def test_get_search_config_includes_auto_reindex_fields(
+        self, mock_get_search_config
+    ):
+        """Verify config status returns auto_reindex settings (Issue #3)."""
+        from mcp_server.tool_handlers import handle_get_search_config_status
+
+        # Mock config with auto_reindex fields
+        mock_config = MagicMock()
+        mock_config.default_search_mode = "hybrid"
+        mock_config.bm25_weight = 0.4
+        mock_config.dense_weight = 0.6
+        mock_config.rrf_k_parameter = 60
+        mock_config.use_parallel_search = True
+        mock_config.embedding_model_name = "BAAI/bge-m3"
+        mock_config.enable_auto_reindex = True
+        mock_config.max_index_age_minutes = 5.0
+        mock_get_search_config.return_value = mock_config
+
+        # Call handler
+        with patch("mcp_server.tool_handlers.get_state") as mock_get_state:
+            mock_state = MagicMock()
+            mock_state.multi_model_enabled = False
+            mock_get_state.return_value = mock_state
+
+            result = await handle_get_search_config_status({})
+
+        # Verify auto_reindex fields are present
+        assert "auto_reindex_enabled" in result
+        assert "max_index_age_minutes" in result
+        assert isinstance(result["auto_reindex_enabled"], bool)
+        assert isinstance(result["max_index_age_minutes"], (int, float))
+        assert result["auto_reindex_enabled"] is True
+        assert result["max_index_age_minutes"] == 5.0
+
+    @pytest.mark.asyncio
+    @patch("mcp_server.tool_handlers.SnapshotManager")
+    @patch("mcp_server.tool_handlers.get_storage_dir")
+    @patch("mcp_server.tool_handlers.get_search_config")
+    @patch("mcp_server.tool_handlers.get_index_manager")
+    @patch("mcp_server.tool_handlers.get_state")
+    async def test_get_index_status_includes_last_indexed_time(
+        self,
+        mock_get_state,
+        mock_get_index_manager,
+        mock_get_search_config,
+        mock_get_storage_dir,
+        mock_snapshot_manager_class,
+    ):
+        """Verify get_index_status returns last_indexed_time from Merkle metadata (Issue #2)."""
+        from mcp_server.tool_handlers import handle_get_index_status
+
+        # Mock state
+        mock_state = MagicMock()
+        mock_state.current_project = "/mock/project/path"
+        mock_state.current_model_key = "default"
+        mock_state.multi_model_enabled = False
+        mock_state.embedders = {"default": None}
+        mock_get_state.return_value = mock_state
+
+        # Mock index manager
+        mock_manager = MagicMock()
+        mock_manager.get_stats.return_value = {
+            "total_chunks": 100,
+            "index_size": 100,
+            "embedding_dimension": 768,
+        }
+        mock_get_index_manager.return_value = mock_manager
+
+        # Mock search config
+        mock_config = MagicMock()
+        mock_config.enable_hybrid_search = False
+        mock_get_search_config.return_value = mock_config
+
+        # Mock storage dir
+        mock_get_storage_dir.return_value = Path("/mock/storage")
+
+        # Mock SnapshotManager
+        mock_snapshot_mgr = MagicMock()
+        mock_snapshot_mgr.load_metadata.return_value = {
+            "last_snapshot": "2025-12-06T10:30:00",
+            "project_path": "/mock/project/path",
+        }
+        mock_snapshot_manager_class.return_value = mock_snapshot_mgr
+
+        # Call handler
+        result = await handle_get_index_status({})
+
+        # Verify last_indexed_time is present
+        assert "last_indexed_time" in result
+        assert result["last_indexed_time"] == "2025-12-06T10:30:00"
+        assert "current_project" in result
+        assert result["current_project"] == "/mock/project/path"
+
+        # Verify SnapshotManager was called
+        mock_snapshot_manager_class.assert_called_once()
+        mock_snapshot_mgr.load_metadata.assert_called_once_with("/mock/project/path")
+
+    @pytest.mark.asyncio
+    @patch("mcp_server.tool_handlers.get_search_config")
+    async def test_get_search_config_includes_multi_hop_and_stemming_fields(
+        self, mock_get_search_config
+    ):
+        """Verify config status returns multi-hop and stemming settings."""
+        from mcp_server.tool_handlers import handle_get_search_config_status
+
+        # Mock config with multi-hop and stemming fields
+        mock_config = MagicMock()
+        mock_config.default_search_mode = "hybrid"
+        mock_config.bm25_weight = 0.4
+        mock_config.dense_weight = 0.6
+        mock_config.rrf_k_parameter = 60
+        mock_config.use_parallel_search = True
+        mock_config.embedding_model_name = "BAAI/bge-m3"
+        mock_config.enable_auto_reindex = True
+        mock_config.max_index_age_minutes = 5.0
+        mock_config.bm25_use_stemming = True
+        mock_config.enable_multi_hop = True
+        mock_config.multi_hop_count = 2
+        mock_config.multi_hop_expansion = 0.3
+        mock_get_search_config.return_value = mock_config
+
+        # Call handler
+        with patch("mcp_server.tool_handlers.get_state") as mock_get_state:
+            mock_state = MagicMock()
+            mock_state.multi_model_enabled = False
+            mock_get_state.return_value = mock_state
+
+            result = await handle_get_search_config_status({})
+
+        # Verify multi-hop and stemming fields are present
+        assert "bm25_use_stemming" in result
+        assert "multi_hop_enabled" in result
+        assert "multi_hop_count" in result
+        assert "multi_hop_expansion" in result
+        assert isinstance(result["bm25_use_stemming"], bool)
+        assert isinstance(result["multi_hop_enabled"], bool)
+        assert isinstance(result["multi_hop_count"], int)
+        assert isinstance(result["multi_hop_expansion"], float)
+        assert result["bm25_use_stemming"] is True
+        assert result["multi_hop_enabled"] is True
+        assert result["multi_hop_count"] == 2
+        assert result["multi_hop_expansion"] == 0.3
+
+    @pytest.mark.asyncio
+    @patch("mcp_server.tool_handlers.get_state")
+    async def test_list_embedding_models_includes_vram(self, mock_get_state):
+        """Verify list_embedding_models includes vram_gb field."""
+        from mcp_server.tool_handlers import handle_list_embedding_models
+
+        # Mock state
+        mock_state = MagicMock()
+        mock_get_state.return_value = mock_state
+
+        # Mock get_search_config
+        with patch("mcp_server.tool_handlers.get_search_config") as mock_get_config:
+            mock_config = MagicMock()
+            mock_config.embedding_model_name = "BAAI/bge-m3"
+            mock_get_config.return_value = mock_config
+
+            # Call handler
+            result = await handle_list_embedding_models({})
+
+        # Verify vram_gb field is present in all models
+        assert "models" in result
+        assert len(result["models"]) > 0
+        for model in result["models"]:
+            assert "vram_gb" in model
+            assert model["vram_gb"] is not None
+
+    @pytest.mark.asyncio
+    @patch("torch.cuda.is_available", return_value=True)
+    @patch("torch.cuda.device_count", return_value=1)
+    @patch("torch.cuda.memory_allocated", return_value=2147483648)
+    @patch("torch.cuda.memory_reserved", return_value=3221225472)
+    @patch("torch.cuda.get_device_name", return_value="NVIDIA GeForce RTX 4090")
+    @patch("torch.cuda.get_device_properties")
+    @patch("torch.cuda.get_device_capability", return_value=(8, 9))
+    @patch("mcp_server.tool_handlers.get_state")
+    async def test_get_memory_status_includes_gpu_details(
+        self,
+        mock_get_state,
+        mock_capability,
+        mock_properties,
+        mock_device_name,
+        mock_reserved,
+        mock_allocated,
+        mock_device_count,
+        mock_cuda_available,
+    ):
+        """Verify memory status returns GPU hardware details."""
+        from mcp_server.tool_handlers import handle_get_memory_status
+
+        # Mock GPU properties
+        mock_props = MagicMock()
+        mock_props.total_memory = 25769803776  # 24 GB
+        mock_properties.return_value = mock_props
+
+        # Mock state
+        mock_state = MagicMock()
+        mock_state.current_project = "/mock/project"
+        mock_state.current_model_key = "default"
+        mock_state.embedders = {}
+        mock_get_state.return_value = mock_state
+
+        # Call handler
+        result = await handle_get_memory_status({})
+
+        # Verify GPU hardware details are present
+        assert "gpu_memory" in result
+        gpu = result["gpu_memory"]
+        assert "gpu_0" in gpu
+        gpu_0 = gpu["gpu_0"]
+        assert "device_name" in gpu_0
+        assert "device_id" in gpu_0
+        assert "total_vram_gb" in gpu_0
+        assert "compute_capability" in gpu_0
+        assert "utilization_percent" in gpu_0
+        assert gpu_0["device_name"] == "NVIDIA GeForce RTX 4090"
+        assert gpu_0["compute_capability"] == "8.9"

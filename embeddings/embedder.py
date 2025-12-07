@@ -143,6 +143,9 @@ class CodeEmbedder:
         self._cache_hits = 0
         self._cache_misses = 0
 
+        # Issue #6: Track per-model VRAM usage
+        self._model_vram_usage: Dict[str, float] = {}  # model_key -> VRAM MB
+
         # Setup logging
         logging.basicConfig(level=logging.INFO)
 
@@ -416,6 +419,13 @@ class CodeEmbedder:
         resolved_device = self._resolve_device(self.device)
         self._log_gpu_memory("BEFORE_LOAD")
 
+        # Track VRAM before loading model
+        import torch
+
+        vram_before = 0
+        if torch.cuda.is_available():
+            vram_before = torch.cuda.memory_allocated()
+
         # Determine precision (fp16/bf16) for GPU inference
         torch_dtype = self._get_torch_dtype()
 
@@ -456,6 +466,15 @@ class CodeEmbedder:
             )
             self._log_gpu_memory("AFTER_LOAD")
 
+            # Track VRAM usage for this model
+            if torch.cuda.is_available():
+                vram_after = torch.cuda.memory_allocated()
+                vram_used_mb = (vram_after - vram_before) / (1024 * 1024)
+                self._model_vram_usage[self.model_name] = round(vram_used_mb, 1)
+                self._logger.info(
+                    f"Model VRAM usage: {vram_used_mb:.1f} MB ({self.model_name})"
+                )
+
         except Exception as e:
             # Step 5: Fallback - If loading from cache failed, try network download
             if local_model_dir:
@@ -489,6 +508,15 @@ class CodeEmbedder:
                         "[FALLBACK SUCCESS] Downloaded fresh model from HuggingFace"
                     )
                     self._log_gpu_memory("AFTER_FALLBACK_LOAD")
+
+                    # Track VRAM usage for this model (fallback path)
+                    if torch.cuda.is_available():
+                        vram_after = torch.cuda.memory_allocated()
+                        vram_used_mb = (vram_after - vram_before) / (1024 * 1024)
+                        self._model_vram_usage[self.model_name] = round(vram_used_mb, 1)
+                        self._logger.info(
+                            f"Model VRAM usage: {vram_used_mb:.1f} MB ({self.model_name})"
+                        )
                 except Exception as e2:
                     # Both cache and network download failed
                     raise RuntimeError(
@@ -937,6 +965,14 @@ class CodeEmbedder:
             "device": str(self._model.device),
             "status": "loaded",
         }
+
+    def get_vram_usage(self) -> Dict[str, float]:
+        """Return per-model VRAM usage in MB.
+
+        Returns:
+            Dictionary mapping model names to VRAM usage in MB.
+        """
+        return dict(self._model_vram_usage)
 
     def cleanup(self):
         """Clean up model from memory to free GPU/CPU resources."""

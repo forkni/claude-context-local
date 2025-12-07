@@ -443,11 +443,16 @@ class CodeRelationshipAnalyzer:
             for result in similar_results:
                 # Both SearchResult types now use chunk_id
                 result_id = result.chunk_id
-                if result_id != target_id:
+                # Use relative_path first for proper directory filtering
+                file_path = result.relative_path or result.file_path
+                # Apply exclude_dirs filter
+                if result_id != target_id and matches_directory_filter(
+                    file_path, None, exclude_dirs
+                ):
                     # Convert searcher.SearchResult to dict (has direct attributes, not metadata)
                     similar_dict = {
                         "chunk_id": result_id,
-                        "file": result.file_path or result.relative_path,
+                        "file": file_path,
                         "lines": f"{result.start_line}-{result.end_line}",
                         "kind": result.chunk_type,
                         "score": round(result.similarity_score, 2),
@@ -457,7 +462,7 @@ class CodeRelationshipAnalyzer:
             logger.warning(f"Failed to find similar code: {e}")
 
         # Step 5: Extract graph relationships (inheritance, type usage, imports)
-        graph_relationships = self._extract_relationships(target_id)
+        graph_relationships = self._extract_relationships(target_id, exclude_dirs)
 
         # Step 6: Build dependency graph
         dependency_graph = {target_id: [c["chunk_id"] for c in direct_callers]}
@@ -580,12 +585,15 @@ class CodeRelationshipAnalyzer:
                 "kind": getattr(result, "chunk_type", "unknown"),
             }
 
-    def _extract_relationships(self, chunk_id: str) -> Dict[str, List[Dict[str, Any]]]:
+    def _extract_relationships(
+        self, chunk_id: str, exclude_dirs: List[str] | None = None
+    ) -> Dict[str, List[Dict[str, Any]]]:
         """
         Extract graph-based relationships (inheritance, type usage, imports) for a chunk.
 
         Args:
             chunk_id: Chunk ID to analyze
+            exclude_dirs: Optional list of directories to exclude from results
 
         Returns:
             Dict mapping relationship field names to lists of relationship dicts
@@ -612,6 +620,13 @@ class CodeRelationshipAnalyzer:
                 result[forward_field] = []
             if reverse_field:
                 result[reverse_field] = []
+
+        def _should_include_relationship(file_path: str) -> bool:
+            """Check if file should be included based on exclude_dirs filter."""
+            # Empty files (external/builtin types) are always included
+            if not file_path:
+                return True
+            return matches_directory_filter(file_path, None, exclude_dirs)
 
         try:
             # Debug logging for Phase 3 relationship extraction
@@ -646,23 +661,25 @@ class CodeRelationshipAnalyzer:
                             if rel_type in ["uses_type", "imports"]:
                                 # Skip builtin/primitive types - they won't be in the index
                                 if rel_type == "uses_type" and target in BUILTIN_TYPES:
-                                    result[forward_field].append(
-                                        {
-                                            "chunk_id": "",
-                                            "target_name": target,
-                                            "relationship_type": rel_type,
-                                            "file": "",
-                                            "lines": "",
-                                            "kind": "builtin",
-                                            "line": edge_data.get("line_number")
-                                            or edge_data.get("line", 0),
-                                            "confidence": edge_data.get(
-                                                "confidence", 1.0
-                                            ),
-                                            "metadata": edge_data.get("metadata", {}),
-                                            "note": "Python builtin type (not searchable)",
-                                        }
-                                    )
+                                    # Builtins have empty file path, always included
+                                    if _should_include_relationship(""):
+                                        result[forward_field].append(
+                                            {
+                                                "chunk_id": "",
+                                                "target_name": target,
+                                                "relationship_type": rel_type,
+                                                "file": "",
+                                                "lines": "",
+                                                "kind": "builtin",
+                                                "line": edge_data.get("line_number")
+                                                or edge_data.get("line", 0),
+                                                "confidence": edge_data.get(
+                                                    "confidence", 1.0
+                                                ),
+                                                "metadata": edge_data.get("metadata", {}),
+                                                "note": "Python builtin type (not searchable)",
+                                            }
+                                        )
                                     continue
 
                                 # Try to find a chunk matching this type/module name
@@ -703,48 +720,49 @@ class CodeRelationshipAnalyzer:
 
                                 if target_chunk:
                                     # Resolved to a chunk
-                                    result[forward_field].append(
-                                        {
-                                            "chunk_id": target_chunk.chunk_id,
-                                            "target_name": target,
-                                            "relationship_type": rel_type,
-                                            "file": getattr(
-                                                target_chunk, "file_path", ""
-                                            )
-                                            or getattr(
-                                                target_chunk, "relative_path", ""
-                                            ),
-                                            "lines": f"{getattr(target_chunk, 'start_line', 0)}-{getattr(target_chunk, 'end_line', 0)}",
-                                            "kind": getattr(
-                                                target_chunk, "chunk_type", "unknown"
-                                            ),
-                                            "line": edge_data.get("line_number")
-                                            or edge_data.get("line", 0),
-                                            "confidence": edge_data.get(
-                                                "confidence", 1.0
-                                            ),
-                                            "metadata": edge_data.get("metadata", {}),
-                                        }
-                                    )
+                                    file_path = getattr(
+                                        target_chunk, "file_path", ""
+                                    ) or getattr(target_chunk, "relative_path", "")
+                                    if _should_include_relationship(file_path):
+                                        result[forward_field].append(
+                                            {
+                                                "chunk_id": target_chunk.chunk_id,
+                                                "target_name": target,
+                                                "relationship_type": rel_type,
+                                                "file": file_path,
+                                                "lines": f"{getattr(target_chunk, 'start_line', 0)}-{getattr(target_chunk, 'end_line', 0)}",
+                                                "kind": getattr(
+                                                    target_chunk, "chunk_type", "unknown"
+                                                ),
+                                                "line": edge_data.get("line_number")
+                                                or edge_data.get("line", 0),
+                                                "confidence": edge_data.get(
+                                                    "confidence", 1.0
+                                                ),
+                                                "metadata": edge_data.get("metadata", {}),
+                                            }
+                                        )
                                 else:
                                     # Couldn't resolve - external or built-in type
-                                    result[forward_field].append(
-                                        {
-                                            "chunk_id": "",
-                                            "target_name": target,
-                                            "relationship_type": rel_type,
-                                            "file": "",
-                                            "lines": "",
-                                            "kind": "external",
-                                            "line": edge_data.get("line_number")
-                                            or edge_data.get("line", 0),
-                                            "confidence": edge_data.get(
-                                                "confidence", 1.0
-                                            ),
-                                            "metadata": edge_data.get("metadata", {}),
-                                            "note": "Type not found in index (external or built-in)",
-                                        }
-                                    )
+                                    # External types have empty file path, always included
+                                    if _should_include_relationship(""):
+                                        result[forward_field].append(
+                                            {
+                                                "chunk_id": "",
+                                                "target_name": target,
+                                                "relationship_type": rel_type,
+                                                "file": "",
+                                                "lines": "",
+                                                "kind": "external",
+                                                "line": edge_data.get("line_number")
+                                                or edge_data.get("line", 0),
+                                                "confidence": edge_data.get(
+                                                    "confidence", 1.0
+                                                ),
+                                                "metadata": edge_data.get("metadata", {}),
+                                                "note": "Type not found in index (external or built-in)",
+                                            }
+                                        )
                             else:
                                 # For inherits, target is ALSO a name (not chunk_id)
                                 # Try to look it up, but fall back to name-only if not found
@@ -767,23 +785,25 @@ class CodeRelationshipAnalyzer:
                                             ),
                                         }
                                     )
-                                    result[forward_field].append(info)
+                                    if _should_include_relationship(info.get("file", "")):
+                                        result[forward_field].append(info)
                                 else:
                                     # Target is a name (expected case for inherits)
-                                    # Store with graceful degradation
-                                    result[forward_field].append(
-                                        {
-                                            "target_name": target,
-                                            "relationship_type": rel_type,
-                                            "line": edge_data.get("line_number")
-                                            or edge_data.get("line", 0),
-                                            "confidence": edge_data.get(
-                                                "confidence", 1.0
-                                            ),
-                                            "metadata": edge_data.get("metadata", {}),
-                                            "note": "Type resolution not implemented - showing name only",
-                                        }
-                                    )
+                                    # Store with graceful degradation (no file info)
+                                    if _should_include_relationship(""):
+                                        result[forward_field].append(
+                                            {
+                                                "target_name": target,
+                                                "relationship_type": rel_type,
+                                                "line": edge_data.get("line_number")
+                                                or edge_data.get("line", 0),
+                                                "confidence": edge_data.get(
+                                                    "confidence", 1.0
+                                                ),
+                                                "metadata": edge_data.get("metadata", {}),
+                                                "note": "Type resolution not implemented - showing name only",
+                                            }
+                                        )
                 except Exception as e:
                     logger.debug(
                         f"Failed to process outgoing edge {chunk_id} -> {target}: {e}"
@@ -854,23 +874,26 @@ class CodeRelationshipAnalyzer:
                                         "confidence": edge_data.get("confidence", 1.0),
                                     }
                                 )
-                                result[reverse_field].append(info)
+                                if _should_include_relationship(info.get("file", "")):
+                                    result[reverse_field].append(info)
                             else:
                                 # Graceful degradation: source lookup failed
                                 # This shouldn't happen for valid graphs, but handle it
                                 logger.debug(
                                     f"Could not find chunk for source {source} in reverse relationship"
                                 )
-                                result[reverse_field].append(
-                                    {
-                                        "source_chunk_id": source,
-                                        "relationship_type": rel_type,
-                                        "line": edge_data.get("line_number")
-                                        or edge_data.get("line", 0),
-                                        "confidence": edge_data.get("confidence", 1.0),
-                                        "note": "Source chunk not found in index",
-                                    }
-                                )
+                                # No file info, always include
+                                if _should_include_relationship(""):
+                                    result[reverse_field].append(
+                                        {
+                                            "source_chunk_id": source,
+                                            "relationship_type": rel_type,
+                                            "line": edge_data.get("line_number")
+                                            or edge_data.get("line", 0),
+                                            "confidence": edge_data.get("confidence", 1.0),
+                                            "note": "Source chunk not found in index",
+                                        }
+                                    )
                 except Exception as e:
                     logger.debug(
                         f"Failed to process incoming edge {source} -> {chunk_id}/{symbol_name}: {e}"

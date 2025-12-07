@@ -662,6 +662,38 @@ class TestHybridSearcher:
         # Should only sync the chunk with valid content
         assert count == 1
 
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
+    def test_clear_index_clears_both_indices(self, mock_bm25, mock_dense):
+        """Test clear_index recreates both BM25 and dense indices."""
+        # Setup mocks to return different instances each time
+        mock_bm25.side_effect = [Mock(name="BM25_1"), Mock(name="BM25_2")]
+        mock_dense_instance_1 = Mock(name="Dense_1")
+        mock_dense_instance_1.index = None
+        mock_dense_instance_2 = Mock(name="Dense_2")
+        mock_dense_instance_2.index = None
+        mock_dense.side_effect = [mock_dense_instance_1, mock_dense_instance_2]
+
+        searcher = HybridSearcher(self.temp_dir)
+
+        # Store original instances
+        original_bm25 = searcher.bm25_index
+        original_dense = searcher.dense_index
+
+        # Clear indices
+        searcher.clear_index()
+
+        # Verify BM25 recreated (new instance)
+        assert searcher.bm25_index is not original_bm25
+        # BM25Index constructor should be called twice (init + clear)
+        assert mock_bm25.call_count == 2
+
+        # Verify dense cleared and recreated
+        original_dense.clear_index.assert_called_once()
+        assert searcher.dense_index is not original_dense
+        # CodeIndexManager should be called twice (init + clear)
+        assert mock_dense.call_count == 2
+
     def teardown_method(self):
         """Clean up test fixtures."""
         import shutil
