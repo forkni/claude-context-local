@@ -59,55 +59,13 @@ class MerkleDAG:
 
         self.directory_filter = DirectoryFilter(include_dirs, exclude_dirs)
 
-        self.ignore_patterns: Set[str] = {
-            "__pycache__",
-            ".git",
-            ".hg",
-            ".svn",
-            ".venv",
-            "venv",
-            "env",
-            ".env",
-            ".direnv",
-            "site-packages",  # Python package installations
-            "node_modules",
-            ".pnpm-store",
-            ".yarn",
-            ".pytest_cache",
-            ".mypy_cache",
-            ".ruff_cache",
-            ".pytype",
-            ".ipynb_checkpoints",
-            "build",
-            "dist",
-            "out",
-            "public",
-            ".next",
-            ".nuxt",
-            ".svelte-kit",
-            ".angular",
-            ".astro",
-            ".vite",
-            ".cache",
-            ".parcel-cache",
-            ".turbo",
-            "coverage",
-            ".coverage",
-            ".nyc_output",
-            ".gradle",
-            ".idea",
-            ".vscode",
-            ".docusaurus",
-            ".vercel",
-            ".serverless",
-            ".terraform",
-            ".mvn",
-            ".tox",
-            "target",
-            "bin",
-            "obj",
-            "_archive",  # Historical content excluded from indexing
-            "backups",  # Development backup directories
+        # Import default ignored directories from canonical source
+        from chunking.multi_language_chunker import MultiLanguageChunker
+
+        # Combine default ignored directories with file-specific patterns
+        self.ignore_patterns: Set[str] = set(
+            MultiLanguageChunker.DEFAULT_IGNORED_DIRS
+        ) | {
             "*.pyc",
             "*.pyo",
             ".DS_Store",
@@ -138,7 +96,9 @@ class MerkleDAG:
             try:
                 relative_path = str(path.relative_to(self.root_path))
                 # Root directory should never be filtered - only its contents
-                if relative_path != "." and not self.directory_filter.matches(relative_path + "/"):
+                if relative_path != "." and not self.directory_filter.matches(
+                    relative_path + "/"
+                ):
                     return True
             except ValueError:
                 # Path not under root, ignore it
@@ -281,8 +241,12 @@ class MerkleDAG:
             "file_count": sum(1 for n in self.nodes.values() if n.is_file),
             "total_size": sum(n.size for n in self.nodes.values() if n.is_file),
             # Serialize directory filters for incremental indexing
-            "include_dirs": self.directory_filter.include_dirs if self.directory_filter else None,
-            "exclude_dirs": self.directory_filter.exclude_dirs if self.directory_filter else None,
+            "include_dirs": (
+                self.directory_filter.include_dirs if self.directory_filter else None
+            ),
+            "exclude_dirs": (
+                self.directory_filter.exclude_dirs if self.directory_filter else None
+            ),
         }
 
     @classmethod

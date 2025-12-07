@@ -157,8 +157,6 @@ class MultiLanguageChunker:
         "target",
         "bin",
         "obj",
-        "_archive",
-        "backups",  # Development backup directories
     }
 
     def __init__(

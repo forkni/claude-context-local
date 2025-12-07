@@ -743,7 +743,9 @@ class BM25Index:
         if not self._doc_ids or not file_paths:
             return 0
 
-        self._logger.info(f"[BM25_REMOVE] Checking {len(file_paths)} files against {len(self._doc_ids)} docs")
+        self._logger.info(
+            f"[BM25_REMOVE] Checking {len(file_paths)} files against {len(self._doc_ids)} docs"
+        )
 
         # Track indices to remove
         indices_to_remove_set = set()
@@ -766,7 +768,9 @@ class BM25Index:
             self._logger.info("No BM25 documents found to remove")
             return 0
 
-        self._logger.info(f"[BM25_REMOVE] Found {len(indices_to_remove_set)} docs to remove")
+        self._logger.info(
+            f"[BM25_REMOVE] Found {len(indices_to_remove_set)} docs to remove"
+        )
 
         removed_count = len(indices_to_remove_set)
         self._logger.info(

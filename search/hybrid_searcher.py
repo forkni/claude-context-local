@@ -83,7 +83,7 @@ class HybridSearcher:
             max_workers: Maximum thread pool workers for parallel execution
             bm25_use_stopwords: Whether BM25 should filter stopwords
             bm25_use_stemming: Whether BM25 should use Snowball stemming
-            project_id: Project identifier for graph storage (Phase 1: Python call graphs)
+            project_id: Project identifier for graph storage
         """
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
@@ -91,7 +91,7 @@ class HybridSearcher:
         # Store embedder for semantic search
         self.embedder = embedder
 
-        # Store project_id for graph storage (Phase 1)
+        # Store project_id for graph storage
         self.project_id = project_id
 
         # Weights
@@ -290,7 +290,7 @@ class HybridSearcher:
         """
         Direct lookup by chunk_id (unambiguous, no search needed).
 
-        Phase 1.1 Feature: Enables O(1) symbol lookups using chunk_id from previous results.
+        Enables O(1) symbol lookups using chunk_id from previous results.
 
         Args:
             chunk_id: Format "file.py:10-20:function:name"

@@ -129,3 +129,42 @@ class DirectoryFilter:
 
     def __repr__(self) -> str:
         return f"DirectoryFilter(include_dirs={self.include_dirs}, exclude_dirs={self.exclude_dirs})"
+
+
+def get_effective_filters(project_info: dict) -> tuple:
+    """Resolve default + user-defined filters from project_info.
+
+    Uses current DEFAULT_IGNORED_DIRS for runtime filtering (always up-to-date),
+    even though project_info.json stores a snapshot for transparency.
+
+    Args:
+        project_info: Dictionary containing filter information from project_info.json
+
+    Returns:
+        Tuple of (effective_include_dirs, effective_exclude_dirs)
+        - effective_include_dirs: List of include directories or None
+        - effective_exclude_dirs: List of exclude directories or None
+
+    Migration Compatibility:
+        - Supports old structure (include_dirs, exclude_dirs)
+        - Supports new structure (user_included_dirs, user_excluded_dirs, default_excluded_dirs)
+    """
+    from chunking.multi_language_chunker import MultiLanguageChunker
+
+    # Check for old structure (backward compatibility)
+    if "exclude_dirs" in project_info and "user_excluded_dirs" not in project_info:
+        # Old structure: treat as user-defined only
+        include_dirs = project_info.get("include_dirs")
+        exclude_dirs = project_info.get("exclude_dirs")
+        return include_dirs, exclude_dirs
+
+    # New structure: resolve default + user-defined
+    # Resolve exclude dirs - use CURRENT defaults (not stored snapshot)
+    exclude_dirs = list(MultiLanguageChunker.DEFAULT_IGNORED_DIRS)
+    if project_info.get("user_excluded_dirs"):
+        exclude_dirs.extend(project_info["user_excluded_dirs"])
+
+    # Resolve include dirs (no default includes currently)
+    include_dirs = project_info.get("user_included_dirs") or []
+
+    return include_dirs or None, exclude_dirs or None

@@ -618,9 +618,7 @@ def test_analyze_impact_filters_similar_code_by_exclude_dirs(
     ]
 
     # Execute with exclude_dirs
-    report = impact_analyzer.analyze_impact(
-        chunk_id=target_id, exclude_dirs=["tests/"]
-    )
+    report = impact_analyzer.analyze_impact(chunk_id=target_id, exclude_dirs=["tests/"])
 
     # Verify: Only src/ result should be included, tests/ should be filtered out
     assert len(report.similar_code) == 1

@@ -43,9 +43,7 @@ class ApplicationState:
     # Model management
     embedders: Dict[str, Any] = field(default_factory=dict)
     current_model_key: Optional[str] = None
-    current_index_model_key: Optional[str] = (
-        None  # Track index manager's model (Phase 1 fix)
-    )
+    current_index_model_key: Optional[str] = None  # Track index manager's model
     model_preload_task_started: bool = False
 
     # Search components (lazy-initialized)

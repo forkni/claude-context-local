@@ -25,7 +25,13 @@ class TestSemanticSearch:
     def mock_embedder(self):
         """Mock SentenceTransformer to prevent model downloads."""
 
-        def mock_encode(sentences, show_progress_bar=False, convert_to_tensor=False, device=None, **kwargs):
+        def mock_encode(
+            sentences,
+            show_progress_bar=False,
+            convert_to_tensor=False,
+            device=None,
+            **kwargs,
+        ):
             if isinstance(sentences, str):
                 return np.ones(768, dtype=np.float32) * 0.5
             else:

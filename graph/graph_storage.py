@@ -132,10 +132,10 @@ class CodeGraphStorage:
 
     def add_relationship_edge(self, edge: "RelationshipEdge") -> None:
         """
-        Add a relationship edge to the graph (Phase 3).
+        Add a relationship edge to the graph.
 
         This is the new unified method for adding any type of relationship edge.
-        It replaces add_call_edge() for Phase 3 code.
+        It replaces add_call_edge().
 
         Args:
             edge: RelationshipEdge object with all relationship data
@@ -153,7 +153,7 @@ class CodeGraphStorage:
         # Normalize source_id path separators to forward slashes (cross-platform)
         normalized_source = edge.source_id.replace("\\", "/")
 
-        # CRITICAL FIX: Create lightweight node for target_name if it doesn't exist
+        # Create lightweight node for target_name if it doesn't exist
         # This enables queries like get_callers("BaseRelationshipExtractor") to work
         #
         # Background: Edges use symbol names as targets (e.g., "BaseRelationshipExtractor")
@@ -193,10 +193,10 @@ class CodeGraphStorage:
             List of caller chunk IDs
         """
         # Normalize path separators to forward slashes for consistent lookup
-        # Fixes Issue 2: Query path normalization mismatch
+        # Query path normalization mismatch
         normalized_chunk_id = chunk_id.replace("\\", "/")
 
-        # Debug logging for Phase 3 relationship queries
+        # Debug logging for relationship queries
         self.logger.debug(
             f"[GET_CALLERS] {chunk_id} → normalized: {normalized_chunk_id}"
         )
@@ -226,7 +226,7 @@ class CodeGraphStorage:
             List of callee chunk IDs or names
         """
         # Normalize path separators to forward slashes for consistent lookup
-        # Fixes Issue 2: Query path normalization mismatch
+        # Query path normalization mismatch
         normalized_chunk_id = chunk_id.replace("\\", "/")
 
         if normalized_chunk_id not in self.graph:
@@ -253,7 +253,7 @@ class CodeGraphStorage:
             Set of related chunk IDs
         """
         # Normalize path separators to forward slashes for consistent lookup
-        # Fixes Issue 2: Query path normalization mismatch
+        # Query path normalization mismatch
         normalized_chunk_id = chunk_id.replace("\\", "/")
 
         if normalized_chunk_id not in self.graph:
@@ -304,7 +304,7 @@ class CodeGraphStorage:
             Node data dictionary or None if not found
         """
         # Normalize path separators to forward slashes for consistent lookup
-        # Fixes Issue 2: Query path normalization mismatch
+        # Query path normalization mismatch
         normalized_chunk_id = chunk_id.replace("\\", "/")
 
         if normalized_chunk_id not in self.graph:
@@ -325,7 +325,7 @@ class CodeGraphStorage:
             Guaranteed to have 'relationship_type' and 'line_number' fields (with defaults).
         """
         # Normalize path separators to forward slashes for consistent lookup
-        # Fixes Issue 2: Query path normalization mismatch
+        # Query path normalization mismatch
         normalized_caller = caller_id.replace("\\", "/")
         normalized_callee = callee_id.replace("\\", "/")
 

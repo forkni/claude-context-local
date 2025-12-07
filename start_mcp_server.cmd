@@ -6,7 +6,10 @@ title Claude Context MCP Server Launcher
 REM Get the current directory where the batch file is located
 set "PROJECT_DIR=%~dp0"
 if "%PROJECT_DIR:~-1%"=="\" set "PROJECT_DIR=%PROJECT_DIR:~0,-1%"
-cd /d "%PROJECT_DIR%"
+pushd "%PROJECT_DIR%" || (
+    echo [ERROR] Failed to change to project directory
+    exit /b 1
+)
 
 echo === Claude Context MCP Server Launcher ===
 echo [Hybrid Search Enabled - All Modes Operational]
@@ -105,15 +108,16 @@ echo NOTE: SSE Transport Options:
 echo   - Option 1 ^(stdio^): Default MCP mode for Claude Code
 echo   - Option 2 ^(Single SSE^): HTTP server on port 8765 for MCP access
 echo.
+set transport_choice=
 set /p transport_choice="Select transport (0-2): "
 
 REM Handle empty input or back option
 if not defined transport_choice goto menu_restart
-if "%transport_choice%"=="" goto menu_restart
-if "%transport_choice%"=="0" goto menu_restart
+if "!transport_choice!"=="" goto menu_restart
+if "!transport_choice!"=="0" goto menu_restart
 
-if "%transport_choice%"=="1" goto start_server_stdio
-if "%transport_choice%"=="2" goto start_server_dual_sse
+if "!transport_choice!"=="1" goto start_server_stdio
+if "!transport_choice!"=="2" goto start_server_dual_sse
 
 echo [ERROR] Invalid choice. Please select 0-2.
 pause
@@ -287,6 +291,7 @@ echo   3. Configure Claude Code Integration
 echo   4. Check CUDA/CPU Mode
 echo   0. Back to Main Menu
 echo.
+set inst_choice=
 set /p inst_choice="Select option (0-4): "
 
 REM Handle empty input gracefully
@@ -322,6 +327,7 @@ echo   5. Configure Parallel Search
 echo   6. Reset to Defaults
 echo   0. Back to Main Menu
 echo.
+set search_choice=
 set /p search_choice="Select option (0-6): "
 
 REM Handle empty input gracefully
@@ -355,6 +361,7 @@ echo   1. Auto-Tune Search Parameters
 echo   2. Memory Usage Report
 echo   0. Back to Main Menu
 echo.
+set perf_choice=
 set /p perf_choice="Select option (0-2): "
 
 REM Handle empty input gracefully
@@ -391,15 +398,16 @@ echo   1. Index New Project
 echo   2. Re-index Existing Project ^(Incremental^)
 echo   3. Force Re-index Existing Project ^(Full^)
 echo   4. List Indexed Projects
-echo   5. Clear Project Indexes
-echo   6. View Storage Statistics
-echo   7. Switch to Project
+echo   5. Switch to Project
+echo   6. Clear Project Indexes
+echo   7. View Storage Statistics
 echo   0. Back to Main Menu
 echo.
 if "%MULTI_MODEL_STATUS%"=="Enabled" (
     echo   Note: Indexing will update ALL models ^(Qwen3, BGE-M3, CodeRankEmbed^)
     echo.
 )
+set pm_choice=
 set /p pm_choice="Select option (0-7): "
 
 REM Handle empty input gracefully
@@ -416,9 +424,9 @@ if "!pm_choice!"=="1" goto index_new_project
 if "!pm_choice!"=="2" goto reindex_existing_project
 if "!pm_choice!"=="3" goto force_reindex_project
 if "!pm_choice!"=="4" goto list_projects_menu
-if "!pm_choice!"=="5" goto clear_project_indexes
-if "!pm_choice!"=="6" goto storage_stats
-if "!pm_choice!"=="7" goto switch_to_project
+if "!pm_choice!"=="5" goto switch_to_project
+if "!pm_choice!"=="6" goto clear_project_indexes
+if "!pm_choice!"=="7" goto storage_stats
 if "!pm_choice!"=="0" goto menu_restart
 
 echo [ERROR] Invalid choice. Please select 0-7.
@@ -437,6 +445,7 @@ echo   4. Run Slow Integration Tests (67 tests, ~10 min)
 echo   5. Run Regression Tests
 echo   0. Back to Main Menu
 echo.
+set adv_choice=
 set /p adv_choice="Select option (0-5): "
 
 REM Handle empty input gracefully
@@ -473,11 +482,12 @@ echo   C:\Projects\MyProject
 echo   D:\Code\WebApp
 echo   F:\Development\TouchDesigner\MyToeFile
 echo.
+set new_project_path=
 set /p new_project_path="Project path (or press Enter to cancel): "
 
 REM Handle cancel
 if not defined new_project_path goto project_management_menu
-if "%new_project_path%"=="" goto project_management_menu
+if "!new_project_path!"=="" goto project_management_menu
 
 REM Remove quotes if present
 set new_project_path=%new_project_path:"=%
@@ -510,35 +520,37 @@ echo Examples:
 echo   Include: src,lib
 echo   Exclude: tests,vendor,docs
 echo.
+set include_filter=
+set exclude_filter=
 set /p include_filter="Include directories (comma-separated, Enter=all): "
 set /p exclude_filter="Exclude directories (comma-separated, Enter=none): "
 
 REM Build filter arguments
 set "filter_args="
-if defined include_filter if not "%include_filter%"=="" (
-    set "filter_args=--include-dirs "%include_filter%""
+if defined include_filter if not "!include_filter!"=="" (
+    set "filter_args=--include-dirs "!include_filter!""
 )
-if defined exclude_filter if not "%exclude_filter%"=="" (
+if defined exclude_filter if not "!exclude_filter!"=="" (
     if defined filter_args (
-        set "filter_args=%filter_args% --exclude-dirs "%exclude_filter%""
+        set "filter_args=!filter_args! --exclude-dirs "!exclude_filter!""
     ) else (
-        set "filter_args=--exclude-dirs "%exclude_filter%""
+        set "filter_args=--exclude-dirs "!exclude_filter!""
     )
 )
 
 echo.
-echo [INFO] Indexing new project: %new_project_path%
+echo [INFO] Indexing new project: !new_project_path!
 echo [INFO] This will create a new index and Merkle snapshot
 echo [INFO] Mode: New (first-time full index)
-if defined include_filter if not "%include_filter%"=="" (
-    echo [INFO] Include dirs: %include_filter%
+if defined include_filter if not "!include_filter!"=="" (
+    echo [INFO] Include dirs: !include_filter!
 )
-if defined exclude_filter if not "%exclude_filter%"=="" (
-    echo [INFO] Exclude dirs: %exclude_filter%
+if defined exclude_filter if not "!exclude_filter!"=="" (
+    echo [INFO] Exclude dirs: !exclude_filter!
 )
 echo.
 
-.\.venv\Scripts\python.exe tools\batch_index.py --path "%new_project_path%" --mode new %filter_args%
+.\.venv\Scripts\python.exe tools\batch_index.py --path "!new_project_path!" --mode new !filter_args!
 pause
 goto menu_restart
 
@@ -632,6 +644,7 @@ for /f "tokens=1,2,3,4 delims=|" %%a in (%TEMP_PROJECTS%) do (
 echo   0. Cancel
 
 echo.
+set project_choice=
 set /p project_choice="Select project number to clear (0 to cancel): "
 
 REM Handle cancel or empty input
@@ -639,11 +652,11 @@ if not defined project_choice (
     del "%TEMP_PROJECTS%" 2>nul
     goto project_management_menu
 )
-if "%project_choice%"=="" (
+if "!project_choice!"=="" (
     del "%TEMP_PROJECTS%" 2>nul
     goto project_management_menu
 )
-if "%project_choice%"=="0" (
+if "!project_choice!"=="0" (
     del "%TEMP_PROJECTS%" 2>nul
     goto project_management_menu
 )
@@ -653,7 +666,7 @@ set "PROJECT_HASH="
 set "PROJECT_NAME="
 set "PROJECT_PATH="
 for /f "tokens=1,2,3,4 delims=|" %%a in (%TEMP_PROJECTS%) do (
-    if "%%a"=="%project_choice%" (
+    if "%%a"=="!project_choice!" (
         set "PROJECT_NAME=%%b"
         set "PROJECT_PATH=%%c"
         set "PROJECT_HASH=%%d"
@@ -676,11 +689,12 @@ echo [WARNING] You are about to delete the index for:
 echo   Project: %PROJECT_NAME%
 echo   Hash: %PROJECT_HASH%
 echo.
+set confirm_delete=
 set /p confirm_delete="Are you sure? (y/N): "
 
 if not defined confirm_delete goto project_management_menu
-if "%confirm_delete%"=="" goto project_management_menu
-if /i not "%confirm_delete%"=="y" goto project_management_menu
+if "!confirm_delete!"=="" goto project_management_menu
+if /i not "!confirm_delete!"=="y" goto project_management_menu
 
 REM Delete the specific project
 echo.
@@ -702,6 +716,7 @@ if "!INDEX_RESULT!" neq "0" (
     echo.
     echo [ERROR] Index is locked by another process
     echo.
+    set retry=
     set /p retry="Try force cleanup? (Will close Python processes) (y/N): "
     if /i "!retry!"=="y" (
         echo [INFO] Attempting force cleanup...
@@ -847,6 +862,7 @@ echo   2. Semantic Only ^(Dense vector search^)
 echo   3. BM25 Only ^(Text-based search^)
 echo   0. Back to Search Configuration
 echo.
+set mode_choice=
 set /p mode_choice="Select mode (0-3): "
 
 REM Handle empty input or back option
@@ -882,12 +898,14 @@ REM Show current values from config
 .\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print(f'   Current: BM25={cfg.bm25_weight}, Dense={cfg.dense_weight}')" 2>nul
 if errorlevel 1 echo    Current: BM25=0.4, Dense=0.6 ^(default^)
 echo.
+set bm25_weight=
 set /p bm25_weight="Enter BM25 weight (0.0-1.0, or press Enter to cancel): "
 
 REM Handle empty input - cancel and go back
 if not defined bm25_weight goto search_config_menu
 if "!bm25_weight!"=="" goto search_config_menu
 
+set dense_weight=
 set /p dense_weight="Enter Dense weight (0.0-1.0, or press Enter to cancel): "
 
 REM Handle empty input - cancel and go back
@@ -938,6 +956,7 @@ echo.
 echo IMPORTANT: BGE-M3 validated 100%% identical to code-specific models
 echo in hybrid search mode ^(30-query test, Nov 2025^). Choose by VRAM.
 echo.
+set model_choice=
 set /p model_choice="Select model (0-5): "
 
 if not defined model_choice goto search_config_menu
@@ -964,6 +983,7 @@ if defined SELECTED_MODEL (
         echo [WARNING] Existing indexes need to be rebuilt for the new model
         echo [INFO] Next time you index a project, it will use: !SELECTED_MODEL!
         echo.
+        set reindex_now=
         set /p reindex_now="Clear old indexes now? (y/N): "
         if /i "!reindex_now!"=="y" (
             echo [INFO] Clearing old indexes and Merkle snapshots...
@@ -990,6 +1010,7 @@ echo Total VRAM: 5.3GB
 echo Routing Accuracy: 100%% ^(validated^)
 echo Performance: 15-25%% quality improvement on complex queries
 echo.
+set confirm_multi=
 set /p confirm_multi="Enable multi-model routing? (y/N): "
 if /i "!confirm_multi!"=="y" (
     REM Persist to config file via Python
@@ -1028,6 +1049,7 @@ echo   1. Enable Parallel Search
 echo   2. Disable Parallel Search
 echo   0. Back to Search Configuration
 echo.
+set parallel_choice=
 set /p parallel_choice="Select option (0-2): "
 
 if not defined parallel_choice goto search_config_menu
@@ -1085,6 +1107,7 @@ echo.
 echo   A. View All Models ^(full registry^)
 echo   0. Back to Main Menu
 echo.
+set model_choice=
 set /p model_choice="Select model (0-3, M, A): "
 
 REM Handle empty input or back
@@ -1168,11 +1191,12 @@ echo   - Provide recommended settings
 echo.
 echo Estimated time: ~2 minutes
 echo.
+set confirm=
 set /p confirm="Continue with auto-tuning? (y/N): "
 REM Handle empty input - treat as "no"
 if not defined confirm goto performance_menu
-if "%confirm%"=="" goto performance_menu
-if /i not "%confirm%"=="y" goto performance_menu
+if "!confirm!"=="" goto performance_menu
+if /i not "!confirm!"=="y" goto performance_menu
 
 echo.
 echo [INFO] Starting auto-tuning process...
@@ -1374,6 +1398,7 @@ for /f "tokens=1,2,3,4 delims=|" %%a in (%TEMP_PROJECTS%) do (
 )
 echo   0. Cancel
 echo.
+set project_choice=
 set /p project_choice="Select project number (0 to cancel): "
 
 REM Handle cancel
@@ -1381,11 +1406,11 @@ if not defined project_choice (
     del "%TEMP_PROJECTS%" 2>nul
     exit /b 1
 )
-if "%project_choice%"=="" (
+if "!project_choice!"=="" (
     del "%TEMP_PROJECTS%" 2>nul
     exit /b 1
 )
-if "%project_choice%"=="0" (
+if "!project_choice!"=="0" (
     del "%TEMP_PROJECTS%" 2>nul
     exit /b 1
 )
@@ -1395,7 +1420,7 @@ set "SELECTED_PROJECT_NAME="
 set "SELECTED_PROJECT_PATH="
 set "SELECTED_PROJECT_MODELS="
 for /f "tokens=1,2,3,4 delims=|" %%a in (%TEMP_PROJECTS%) do (
-    if "%%a"=="%project_choice%" (
+    if "%%a"=="!project_choice!" (
         set "SELECTED_PROJECT_NAME=%%b"
         set "SELECTED_PROJECT_PATH=%%c"
         set "SELECTED_PROJECT_MODELS=%%d"

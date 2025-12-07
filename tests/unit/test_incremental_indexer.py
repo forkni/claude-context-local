@@ -998,7 +998,9 @@ class TestIncrementalIndexer:
         mock_dag.directory_filter = DirectoryFilter(include_dirs, exclude_dirs)
 
         self.mock_snapshot_manager.load_snapshot.return_value = mock_dag
-        self.mock_snapshot_manager.has_snapshot.return_value = False  # Triggers full index
+        self.mock_snapshot_manager.has_snapshot.return_value = (
+            False  # Triggers full index
+        )
 
         # Mock save_snapshot
         saved_dag = None

@@ -105,7 +105,13 @@ class Database:
         """Test full indexing of a codebase."""
 
         # Mock the model to prevent downloads
-        def mock_encode(sentences, show_progress_bar=False, convert_to_tensor=False, device=None, **kwargs):
+        def mock_encode(
+            sentences,
+            show_progress_bar=False,
+            convert_to_tensor=False,
+            device=None,
+            **kwargs,
+        ):
             if isinstance(sentences, str):
                 return np.ones(768, dtype=np.float32) * 0.5
             else:
@@ -175,7 +181,13 @@ class Database:
         """Test incremental indexing when files are modified."""
 
         # Mock the model to prevent downloads
-        def mock_encode(sentences, show_progress_bar=False, convert_to_tensor=False, device=None, **kwargs):
+        def mock_encode(
+            sentences,
+            show_progress_bar=False,
+            convert_to_tensor=False,
+            device=None,
+            **kwargs,
+        ):
             if isinstance(sentences, str):
                 return np.ones(768, dtype=np.float32) * 0.5
             else:
@@ -239,7 +251,13 @@ class Calculator:
         """Test incremental indexing when files are added."""
 
         # Mock the model to prevent downloads
-        def mock_encode(sentences, show_progress_bar=False, convert_to_tensor=False, device=None, **kwargs):
+        def mock_encode(
+            sentences,
+            show_progress_bar=False,
+            convert_to_tensor=False,
+            device=None,
+            **kwargs,
+        ):
             if isinstance(sentences, str):
                 return np.ones(768, dtype=np.float32) * 0.5
             else:
@@ -292,7 +310,13 @@ class NewClass:
         """Test incremental indexing when files are deleted."""
 
         # Mock the model to prevent downloads
-        def mock_encode(sentences, show_progress_bar=False, convert_to_tensor=False, device=None, **kwargs):
+        def mock_encode(
+            sentences,
+            show_progress_bar=False,
+            convert_to_tensor=False,
+            device=None,
+            **kwargs,
+        ):
             if isinstance(sentences, str):
                 return np.ones(768, dtype=np.float32) * 0.5
             else:

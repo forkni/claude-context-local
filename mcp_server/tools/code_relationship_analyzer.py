@@ -84,7 +84,7 @@ class ImpactReport:
     unique_files: Set[str]  # Set of unique files affected
     dependency_graph: Dict[str, List[str]]  # Graph representation
 
-    # Phase 3: Relationship fields
+    # Relationship fields
     parent_classes: List[Dict[str, Any]] = field(
         default_factory=list
     )  # Classes this inherits from
@@ -104,7 +104,7 @@ class ImpactReport:
         default_factory=list
     )  # Files that import this
 
-    # Phase 3b: Priority 2 relationship fields (decorators, exceptions, instantiation)
+    # Priority 2 relationship fields (decorators, exceptions, instantiation)
     decorates: List[Dict[str, Any]] = field(
         default_factory=list
     )  # Decorators applied by this code
@@ -141,14 +141,14 @@ class ImpactReport:
             "file_count": len(self.unique_files),
             "affected_files": sorted(self.unique_files),
             "dependency_graph": self.dependency_graph,
-            # Phase 3: Relationship fields
+            # Relationship fields
             "parent_classes": self.parent_classes,
             "child_classes": self.child_classes,
             "uses_types": self.uses_types,
             "used_as_type_in": self.used_as_type_in,
             "imports": self.imports,
             "imported_by": self.imported_by,
-            # Phase 3b: Priority 2 relationships
+            # Priority 2 relationships
             "decorates": self.decorates,
             "decorated_by": self.decorated_by,
             "exceptions_raised": self.exceptions_raised,
@@ -604,7 +604,7 @@ class CodeRelationshipAnalyzer:
             return {}
 
         # Normalize chunk_id path separators to forward slashes for consistent queries
-        # Fixes Issue 2: Query path normalization mismatch (defense-in-depth)
+        # Query path normalization mismatch (defense-in-depth)
         # Note: graph_storage.py methods also normalize, but doing it here ensures
         # symbol_name extraction works correctly
         # Un-double-escape first (MCP JSON transport), then normalize to forward slashes
@@ -629,7 +629,7 @@ class CodeRelationshipAnalyzer:
             return matches_directory_filter(file_path, None, exclude_dirs)
 
         try:
-            # Debug logging for Phase 3 relationship extraction
+            # Debug logging for relationship extraction
             logger.debug(f"[EXTRACT_REL] _extract_relationships({chunk_id})")
             logger.debug(f"  [EXTRACT_REL] Graph loaded: {self.graph is not None}")
             if self.graph:
@@ -676,7 +676,9 @@ class CodeRelationshipAnalyzer:
                                                 "confidence": edge_data.get(
                                                     "confidence", 1.0
                                                 ),
-                                                "metadata": edge_data.get("metadata", {}),
+                                                "metadata": edge_data.get(
+                                                    "metadata", {}
+                                                ),
                                                 "note": "Python builtin type (not searchable)",
                                             }
                                         )
@@ -732,14 +734,18 @@ class CodeRelationshipAnalyzer:
                                                 "file": file_path,
                                                 "lines": f"{getattr(target_chunk, 'start_line', 0)}-{getattr(target_chunk, 'end_line', 0)}",
                                                 "kind": getattr(
-                                                    target_chunk, "chunk_type", "unknown"
+                                                    target_chunk,
+                                                    "chunk_type",
+                                                    "unknown",
                                                 ),
                                                 "line": edge_data.get("line_number")
                                                 or edge_data.get("line", 0),
                                                 "confidence": edge_data.get(
                                                     "confidence", 1.0
                                                 ),
-                                                "metadata": edge_data.get("metadata", {}),
+                                                "metadata": edge_data.get(
+                                                    "metadata", {}
+                                                ),
                                             }
                                         )
                                 else:
@@ -759,7 +765,9 @@ class CodeRelationshipAnalyzer:
                                                 "confidence": edge_data.get(
                                                     "confidence", 1.0
                                                 ),
-                                                "metadata": edge_data.get("metadata", {}),
+                                                "metadata": edge_data.get(
+                                                    "metadata", {}
+                                                ),
                                                 "note": "Type not found in index (external or built-in)",
                                             }
                                         )
@@ -785,7 +793,9 @@ class CodeRelationshipAnalyzer:
                                             ),
                                         }
                                     )
-                                    if _should_include_relationship(info.get("file", "")):
+                                    if _should_include_relationship(
+                                        info.get("file", "")
+                                    ):
                                         result[forward_field].append(info)
                                 else:
                                     # Target is a name (expected case for inherits)
@@ -800,7 +810,9 @@ class CodeRelationshipAnalyzer:
                                                 "confidence": edge_data.get(
                                                     "confidence", 1.0
                                                 ),
-                                                "metadata": edge_data.get("metadata", {}),
+                                                "metadata": edge_data.get(
+                                                    "metadata", {}
+                                                ),
                                                 "note": "Type resolution not implemented - showing name only",
                                             }
                                         )
@@ -890,7 +902,9 @@ class CodeRelationshipAnalyzer:
                                             "relationship_type": rel_type,
                                             "line": edge_data.get("line_number")
                                             or edge_data.get("line", 0),
-                                            "confidence": edge_data.get("confidence", 1.0),
+                                            "confidence": edge_data.get(
+                                                "confidence", 1.0
+                                            ),
                                             "note": "Source chunk not found in index",
                                         }
                                     )

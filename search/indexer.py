@@ -27,7 +27,7 @@ except ImportError:
 from embeddings.embedder import EmbeddingResult
 from search.filters import matches_directory_filter
 
-# Import graph storage for call graph (Phase 1)
+# Import graph storage for call graph
 try:
     from graph.graph_storage import CodeGraphStorage
 
@@ -351,7 +351,7 @@ class CodeIndexManager:
                 "metadata": result.metadata,
             }
 
-            # Populate call graph (Phase 1: Python only)
+            # Populate call graph
             if self.graph_storage is not None:
                 self._add_to_graph(chunk_id, result.metadata)
                 self._logger.debug(

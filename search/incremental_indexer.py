@@ -143,7 +143,9 @@ class IncrementalIndexer:
                             chunks = future.result()
                             if chunks:
                                 all_chunks.extend(chunks)
-                                logger.debug(f"Chunked {file_path}: {len(chunks)} chunks")
+                                logger.debug(
+                                    f"Chunked {file_path}: {len(chunks)} chunks"
+                                )
                         except Exception as e:
                             logger.warning(f"Failed to chunk {file_path}: {e}")
                         finally:
@@ -659,7 +661,7 @@ class IncrementalIndexer:
         files_to_remove = self.change_detector.get_files_to_remove(changes)
 
         # Use batch removal for efficiency (single pass instead of one per file)
-        # This has been fixed to properly handle FAISS vector removal and index reconstruction
+        # Handles FAISS vector removal and index reconstruction
         if hasattr(self.indexer, "remove_multiple_files") and files_to_remove:
             try:
                 chunks_removed = self.indexer.remove_multiple_files(

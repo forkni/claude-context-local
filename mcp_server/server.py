@@ -4,9 +4,9 @@ AUTO-GENERATED from FastMCP backup.
 DO NOT EDIT MANUALLY - regenerate with tools/build_lowlevel_server.py
 
 Migrated from FastMCP to official MCP SDK for:
-- Explicit lifecycle management (fixes project_id=None bug)
-- Predictable state initialization (fixes SSE race conditions)
-- Better production reliability (official Anthropic implementation)
+- Explicit lifecycle management
+- Predictable state initialization
+- Better production reliability
 """
 
 import asyncio
@@ -152,6 +152,9 @@ def get_project_storage_dir(
     )
     project_info_file = project_dir / "project_info.json"
     if not project_info_file.exists():
+        # Import default excluded dirs for transparency
+        from chunking.multi_language_chunker import MultiLanguageChunker
+
         project_info = {
             "project_name": project_name,
             "project_path": str(project_path),
@@ -159,8 +162,10 @@ def get_project_storage_dir(
             "embedding_model": model_name,
             "model_dimension": dimension,
             "created_at": datetime.now().isoformat(),
-            "include_dirs": include_dirs,
-            "exclude_dirs": exclude_dirs,
+            "default_excluded_dirs": sorted(MultiLanguageChunker.DEFAULT_IGNORED_DIRS),
+            "user_excluded_dirs": exclude_dirs,
+            "default_included_dirs": None,
+            "user_included_dirs": include_dirs,
         }
         with open(project_info_file, "w") as f:
             json.dump(project_info, f, indent=2)
@@ -168,7 +173,10 @@ def get_project_storage_dir(
 
 
 def update_project_filters(
-    project_path: str, include_dirs=None, exclude_dirs=None, model_key: str | None = None
+    project_path: str,
+    include_dirs=None,
+    exclude_dirs=None,
+    model_key: str | None = None,
 ) -> None:
     """Update filters in project_info.json after filter change with full reindex.
 
@@ -183,7 +191,7 @@ def update_project_filters(
 
     if not project_info_file.exists():
         logger.warning(
-            f"[PROJECT_INFO] Cannot update filters - project_info.json not found"
+            "[PROJECT_INFO] Cannot update filters - project_info.json not found"
         )
         return
 
@@ -191,16 +199,27 @@ def update_project_filters(
         with open(project_info_file) as f:
             project_info = json.load(f)
 
-        # Update filter fields
-        project_info["include_dirs"] = include_dirs
-        project_info["exclude_dirs"] = exclude_dirs
+        # Update default excluded dirs snapshot for transparency
+        from chunking.multi_language_chunker import MultiLanguageChunker
+
+        project_info["default_excluded_dirs"] = sorted(
+            MultiLanguageChunker.DEFAULT_IGNORED_DIRS
+        )
+
+        # Update user-defined filter fields
+        project_info["user_included_dirs"] = include_dirs
+        project_info["user_excluded_dirs"] = exclude_dirs
+
+        # Clean up old field names (migration)
+        project_info.pop("include_dirs", None)
+        project_info.pop("exclude_dirs", None)
 
         # Write back updated info
         with open(project_info_file, "w") as f:
             json.dump(project_info, f, indent=2)
 
         logger.info(
-            f"[PROJECT_INFO] Updated filters: include={include_dirs}, exclude={exclude_dirs}"
+            f"[PROJECT_INFO] Updated filters: user_include={include_dirs}, user_exclude={exclude_dirs}"
         )
     except Exception as e:
         logger.warning(f"[PROJECT_INFO] Failed to update filters: {e}")
@@ -552,7 +571,7 @@ def get_searcher(project_path: str = None, model_key: str = None):
 
 
 # ============================================================================
-# CRITICAL FIX: Explicit lifecycle management
+# Explicit lifecycle management
 # ============================================================================
 # Server instance will be created without custom lifespan
 # Global state initialization happens in Starlette app_lifespan below
@@ -786,7 +805,7 @@ if __name__ == "__main__":
                     else:
                         logger.info("[INIT] No default project")
 
-                # Defer model pool initialization (Phase 3A optimization)
+                # Defer model pool initialization
                 # Models will load on first search/index operation (saves 3-4GB VRAM at startup)
                 # if state.multi_model_enabled and not state.model_preload_task_started:
                 #     initialize_model_pool(lazy_load=True)

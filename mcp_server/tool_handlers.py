@@ -12,7 +12,6 @@ from typing import Any, Dict
 
 # Import dependencies
 from chunking.multi_language_chunker import MultiLanguageChunker
-from merkle.snapshot_manager import SnapshotManager
 
 # Import guidance and tools
 from mcp_server.guidance import add_system_message
@@ -30,6 +29,7 @@ from mcp_server.server import (
 )
 from mcp_server.state import get_state
 from mcp_server.tools.code_relationship_analyzer import CodeRelationshipAnalyzer
+from merkle.snapshot_manager import SnapshotManager
 from search.config import (
     MODEL_POOL_CONFIG,
     MODEL_REGISTRY,
@@ -208,21 +208,25 @@ async def handle_get_memory_status(arguments: Dict[str, Any]) -> dict:
             for i in range(torch.cuda.device_count()):
                 allocated = torch.cuda.memory_allocated(i) / (1024**3)
                 reserved = torch.cuda.memory_reserved(i) / (1024**3)
-                total_vram = torch.cuda.get_device_properties(i).total_memory / (1024**3)
+                total_vram = torch.cuda.get_device_properties(i).total_memory / (
+                    1024**3
+                )
 
                 gpu_memory[f"gpu_{i}"] = {
                     "allocated_gb": round(allocated, 2),
                     "reserved_gb": round(reserved, 2),
-                    # Issue #5: Add GPU hardware details
+                    # Add GPU hardware details
                     "device_name": torch.cuda.get_device_name(i),
                     "device_id": i,
                     "total_vram_gb": round(total_vram, 1),
                     "compute_capability": ".".join(
                         map(str, torch.cuda.get_device_capability(i))
                     ),
-                    "utilization_percent": round((allocated / total_vram * 100), 1)
-                    if total_vram > 0
-                    else 0,
+                    "utilization_percent": (
+                        round((allocated / total_vram * 100), 1)
+                        if total_vram > 0
+                        else 0
+                    ),
                 }
 
         # Index memory estimate
@@ -292,10 +296,10 @@ async def handle_get_search_config_status(arguments: Dict[str, Any]) -> dict:
             "multi_model_enabled": get_state().multi_model_enabled,
             "auto_reindex_enabled": config.enable_auto_reindex,
             "max_index_age_minutes": config.max_index_age_minutes,
-            "bm25_use_stemming": config.bm25_use_stemming,  # Issue #8
-            "multi_hop_enabled": config.enable_multi_hop,  # Issue #8
-            "multi_hop_count": config.multi_hop_count,  # Issue #8
-            "multi_hop_expansion": config.multi_hop_expansion,  # Issue #8
+            "bm25_use_stemming": config.bm25_use_stemming,
+            "multi_hop_enabled": config.enable_multi_hop,
+            "multi_hop_count": config.multi_hop_count,
+            "multi_hop_expansion": config.multi_hop_expansion,
         }
     except Exception as e:
         logger.error(f"Config status check failed: {e}", exc_info=True)
@@ -326,7 +330,7 @@ async def handle_list_embedding_models(arguments: Dict[str, Any]) -> dict:
                     "recommended_batch_size": config.get(
                         "fallback_batch_size", 128
                     ),  # API compatibility: reads from fallback_batch_size
-                    "vram_gb": config.get("vram_gb", "Unknown"),  # Issue #7
+                    "vram_gb": config.get("vram_gb", "Unknown"),
                     "max_context": config.get("max_context"),  # Token capacity
                     "loaded": is_loaded,  # Whether model is in memory
                 }
@@ -730,8 +734,11 @@ def _check_auto_reindex(
         try:
             with open(project_info_file) as f:
                 project_info = json.load(f)
-            include_dirs = project_info.get("include_dirs")
-            exclude_dirs = project_info.get("exclude_dirs")
+
+            # Resolve effective filters (default + user-defined)
+            from search.filters import get_effective_filters
+
+            include_dirs, exclude_dirs = get_effective_filters(project_info)
             if include_dirs or exclude_dirs:
                 logger.info(
                     f"[AUTO_REINDEX] Loaded filters: include={include_dirs}, exclude={exclude_dirs}"
@@ -1354,12 +1361,8 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
 
         # Determine effective filters
         # If user didn't provide filters, use stored filters (auto-reindex case)
-        effective_include = (
-            include_dirs if include_dirs is not None else stored_include
-        )
-        effective_exclude = (
-            exclude_dirs if exclude_dirs is not None else stored_exclude
-        )
+        effective_include = include_dirs if include_dirs is not None else stored_include
+        effective_exclude = exclude_dirs if exclude_dirs is not None else stored_exclude
 
         # Check for filter change
         filters_changed = project_info_file.exists() and (
@@ -1397,7 +1400,10 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
                 # Update each model's project_info.json
                 for model_key in MODEL_POOL_CONFIG.keys():
                     update_project_filters(
-                        str(directory_path), include_dirs, exclude_dirs, model_key=model_key
+                        str(directory_path),
+                        include_dirs,
+                        exclude_dirs,
+                        model_key=model_key,
                     )
             else:
                 # Single model - update default model's project_info

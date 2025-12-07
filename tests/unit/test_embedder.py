@@ -31,7 +31,13 @@ def test_model_loading_and_embedding(mock_sentence_transformer, model_name: str)
     expected_dimension = model_config.get("dimension", 768)
 
     # Mock the SentenceTransformer to avoid downloading models
-    def mock_encode(sentences, show_progress_bar=False, convert_to_tensor=False, device=None, **kwargs):
+    def mock_encode(
+        sentences,
+        show_progress_bar=False,
+        convert_to_tensor=False,
+        device=None,
+        **kwargs,
+    ):
         """Mock encode that handles both single string and batch inputs."""
         if isinstance(sentences, str):
             # Single string input -> return 1D array
@@ -98,7 +104,14 @@ def test_prefixing_logic(mock_sentence_transformer):
     class MockSentenceTransformer:
         encoded_input = None
 
-        def encode(self, sentences, show_progress_bar=False, convert_to_tensor=False, device=None, **kwargs):
+        def encode(
+            self,
+            sentences,
+            show_progress_bar=False,
+            convert_to_tensor=False,
+            device=None,
+            **kwargs,
+        ):
             MockSentenceTransformer.encoded_input = sentences
             # Return a dummy embedding of the correct shape
             return np.zeros((len(sentences), 768))
@@ -153,7 +166,13 @@ def test_query_cache_hits_and_misses(mock_sentence_transformer):
     """Test that query cache correctly tracks hits and misses."""
 
     # Mock the model's encode method
-    def mock_encode(sentences, show_progress_bar=False, convert_to_tensor=False, device=None, **kwargs):
+    def mock_encode(
+        sentences,
+        show_progress_bar=False,
+        convert_to_tensor=False,
+        device=None,
+        **kwargs,
+    ):
         return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
 
     mock_model = MagicMock()
@@ -211,7 +230,13 @@ def test_query_cache_lru_eviction(mock_sentence_transformer):
     # Mock the model's encode method
     call_count = [0]
 
-    def mock_encode(sentences, show_progress_bar=False, convert_to_tensor=False, device=None, **kwargs):
+    def mock_encode(
+        sentences,
+        show_progress_bar=False,
+        convert_to_tensor=False,
+        device=None,
+        **kwargs,
+    ):
         call_count[0] += 1
         # Return different embeddings for each call to distinguish cache hits
         return np.ones((len(sentences), 768), dtype=np.float32) * call_count[0]
@@ -268,7 +293,13 @@ def test_query_cache_key_deterministic(mock_sentence_transformer):
     """Test that cache key generation is deterministic."""
 
     # Mock the model's encode method
-    def mock_encode(sentences, show_progress_bar=False, convert_to_tensor=False, device=None, **kwargs):
+    def mock_encode(
+        sentences,
+        show_progress_bar=False,
+        convert_to_tensor=False,
+        device=None,
+        **kwargs,
+    ):
         return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
 
     mock_model = MagicMock()
@@ -299,7 +330,13 @@ def test_query_cache_stats_accuracy(mock_sentence_transformer):
     """Test that cache statistics are accurate."""
 
     # Mock the model's encode method
-    def mock_encode(sentences, show_progress_bar=False, convert_to_tensor=False, device=None, **kwargs):
+    def mock_encode(
+        sentences,
+        show_progress_bar=False,
+        convert_to_tensor=False,
+        device=None,
+        **kwargs,
+    ):
         return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
 
     mock_model = MagicMock()
@@ -338,7 +375,13 @@ def test_query_cache_clear(mock_sentence_transformer):
     """Test that clear_query_cache properly resets cache state."""
 
     # Mock the model's encode method
-    def mock_encode(sentences, show_progress_bar=False, convert_to_tensor=False, device=None, **kwargs):
+    def mock_encode(
+        sentences,
+        show_progress_bar=False,
+        convert_to_tensor=False,
+        device=None,
+        **kwargs,
+    ):
         return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
 
     mock_model = MagicMock()
@@ -382,7 +425,13 @@ def test_query_cache_different_models(mock_sentence_transformer):
     """Test that cache handles different model configurations correctly."""
 
     # Mock the model's encode method
-    def mock_encode(sentences, show_progress_bar=False, convert_to_tensor=False, device=None, **kwargs):
+    def mock_encode(
+        sentences,
+        show_progress_bar=False,
+        convert_to_tensor=False,
+        device=None,
+        **kwargs,
+    ):
         return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
 
     mock_model = MagicMock()
@@ -425,7 +474,13 @@ def test_query_cache_with_task_instruction(mock_sentence_transformer):
     # Mock the model's encode method
     encoded_queries = []
 
-    def mock_encode(sentences, show_progress_bar=False, convert_to_tensor=False, device=None, **kwargs):
+    def mock_encode(
+        sentences,
+        show_progress_bar=False,
+        convert_to_tensor=False,
+        device=None,
+        **kwargs,
+    ):
         encoded_queries.append(sentences[0])
         return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
 

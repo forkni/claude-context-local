@@ -143,7 +143,7 @@ class CodeEmbedder:
         self._cache_hits = 0
         self._cache_misses = 0
 
-        # Issue #6: Track per-model VRAM usage
+        # Track per-model VRAM usage
         self._model_vram_usage: Dict[str, float] = {}  # model_key -> VRAM MB
 
         # Setup logging
@@ -682,9 +682,9 @@ class CodeEmbedder:
                 if len(chunk.content) > 200
                 else chunk.content
             ),
-            # Call graph data (Phase 1: Python only)
+            # Call graph data
             "calls": [call.to_dict() for call in chunk.calls] if chunk.calls else [],
-            # Phase 3: Relationship edges (all relationship types)
+            # Relationship edges
             "relationships": (
                 [rel.to_dict() for rel in chunk.relationships]
                 if chunk.relationships

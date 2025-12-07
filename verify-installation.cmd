@@ -11,7 +11,10 @@ if not defined VERIFY_PERSISTENT_MODE (
 )
 
 set "PROJECT_DIR=%~dp0"
-cd /d "%PROJECT_DIR%"
+pushd "%PROJECT_DIR%" || (
+    echo [ERROR] Failed to change to project directory
+    exit /b 1
+)
 
 REM Run the Python verification script
 .venv\Scripts\python.exe scripts\verify_installation.py
@@ -19,4 +22,5 @@ REM Run the Python verification script
 REM Capture exit code
 set "EXIT_CODE=%ERRORLEVEL%"
 
+popd
 exit /b %EXIT_CODE%

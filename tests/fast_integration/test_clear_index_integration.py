@@ -10,12 +10,12 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
+from mcp_server.state import get_state
 from mcp_server.tool_handlers import (
     handle_clear_index,
     handle_get_index_status,
     handle_index_directory,
 )
-from mcp_server.state import get_state
 
 
 def _create_test_project(project_dir: Path):
@@ -23,7 +23,8 @@ def _create_test_project(project_dir: Path):
     project_dir.mkdir(parents=True, exist_ok=True)
 
     test_file = project_dir / "test_module.py"
-    test_file.write_text('''
+    test_file.write_text(
+        '''
 def hello_world():
     """Simple test function."""
     return "Hello, World!"
@@ -32,12 +33,14 @@ class TestClass:
     """Simple test class."""
     def method(self):
         return 42
-''')
+'''
+    )
 
 
 @pytest.fixture
 def mock_embedder():
     """Mock embedder to avoid GPU/model requirements."""
+
     def mock_encode(sentences, **kwargs):
         if isinstance(sentences, str):
             return np.random.rand(768).astype(np.float32)
@@ -61,11 +64,13 @@ async def test_clear_index_clears_bm25_and_dense(mock_embedder):
         _create_test_project(project_dir)
 
         # Step 1: Index project
-        result = await handle_index_directory({
-            "directory_path": str(project_dir),
-            "incremental": False,
-            "multi_model": False,
-        })
+        result = await handle_index_directory(
+            {
+                "directory_path": str(project_dir),
+                "incremental": False,
+                "multi_model": False,
+            }
+        )
         assert "error" not in result, f"Index failed: {result}"
 
         # Step 2: Verify non-zero counts
@@ -99,11 +104,13 @@ async def test_clear_index_persists_after_searcher_recreation(mock_embedder):
         _create_test_project(project_dir)
 
         # Step 1: Index project
-        result = await handle_index_directory({
-            "directory_path": str(project_dir),
-            "incremental": False,
-            "multi_model": False,
-        })
+        result = await handle_index_directory(
+            {
+                "directory_path": str(project_dir),
+                "incremental": False,
+                "multi_model": False,
+            }
+        )
         assert "error" not in result, f"Index failed: {result}"
 
         # Step 2: Verify initial counts > 0
@@ -116,7 +123,7 @@ async def test_clear_index_persists_after_searcher_recreation(mock_embedder):
 
         # Step 3: Force save to disk (simulate real indexing behavior)
         state = get_state()
-        if state.searcher and hasattr(state.searcher, 'bm25_index'):
+        if state.searcher and hasattr(state.searcher, "bm25_index"):
             state.searcher.bm25_index.save()
 
         # Step 4: Clear index
@@ -132,9 +139,10 @@ async def test_clear_index_persists_after_searcher_recreation(mock_embedder):
         stats2 = status2.get("index_statistics", {})
 
         # THIS IS THE KEY ASSERTION - BM25 should NOT reload from disk
-        assert stats2.get("bm25_documents", -1) == 0, \
-            f"BM25 reloaded from disk after clear: {stats2.get('bm25_documents')} docs (expected 0)"
-        assert stats2.get("dense_vectors", -1) == 0, \
-            "Dense should stay cleared"
-        assert stats2.get("synced", False) is True, \
-            "Indices should be synced after clear"
+        assert (
+            stats2.get("bm25_documents", -1) == 0
+        ), f"BM25 reloaded from disk after clear: {stats2.get('bm25_documents')} docs (expected 0)"
+        assert stats2.get("dense_vectors", -1) == 0, "Dense should stay cleared"
+        assert (
+            stats2.get("synced", False) is True
+        ), "Indices should be synced after clear"
