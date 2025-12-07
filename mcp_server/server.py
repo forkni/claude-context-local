@@ -241,7 +241,8 @@ def initialize_model_pool(lazy_load: bool = True) -> None:
     if lazy_load:
         # Initialize empty slots - models will load on first get_embedder() call
         for model_key in MODEL_POOL_CONFIG.keys():
-            state.embedders[model_key] = None
+            if model_key not in state.embedders:
+                state.embedders[model_key] = None
         logger.info(
             f"Model pool initialized in lazy mode: {list(MODEL_POOL_CONFIG.keys())}"
         )
@@ -410,17 +411,11 @@ def _cleanup_previous_resources():
             state.searcher = None
             logger.info("Previous searcher cleaned up")
 
-        if state.embedders:
-            cleanup_count = 0
-            for model_key, embedder in list(state.embedders.items()):
-                if embedder is not None:
-                    try:
-                        embedder.cleanup()
-                        cleanup_count += 1
-                    except Exception as e:
-                        logger.warning(f"Failed to cleanup {model_key}: {e}")
-            state.clear_embedders()
-            logger.info(f"Cleaned up {cleanup_count} embedder(s) from pool")
+        # NOTE: Embedder pool is NOT cleared here to preserve:
+        # - Multi-model routing capability
+        # - Per-model VRAM tracking
+        # - Instant model switching (<150ms)
+        # Embedders are only cleaned up on explicit user request or app shutdown
 
         try:
             import torch
@@ -793,12 +788,12 @@ if __name__ == "__main__":
 
                 # Defer model pool initialization (Phase 3A optimization)
                 # Models will load on first search/index operation (saves 3-4GB VRAM at startup)
-                # if _multi_model_enabled and not _model_preload_task_started:
+                # if state.multi_model_enabled and not state.model_preload_task_started:
                 #     initialize_model_pool(lazy_load=True)
                 #     logger.info(
                 #         f"[INIT] Model pool initialized: {list(MODEL_POOL_CONFIG.keys())}"
                 #     )
-                #     _model_preload_task_started = True
+                #     state.model_preload_task_started = True
                 logger.info("[INIT] Model loading deferred until first use (lazy mode)")
                 logger.info(
                     f"[INIT] Available models: {list(MODEL_POOL_CONFIG.keys())}"
