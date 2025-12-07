@@ -53,9 +53,9 @@ What are you trying to do?
 
 | Tool | Category | Purpose | Key Parameters | Jump To |
 |------|----------|---------|----------------|---------|
-| **search_code** | 🔴 Essential | Find code with NL query or chunk_id lookup | `query`, `chunk_id`, `chunk_type`, `exclude_dirs` | [Details](#1-search_codequery-or-chunk_id-k5-search_modehybrid-model_keynone-use_routingtrue-file_patternnone-include_dirsnone-exclude_dirsnone-chunk_typenone-include_contexttrue-auto_reindextrue-max_age_minutes5) |
+| **search_code** | 🔴 Essential | Find code with NL query or chunk_id lookup | `query`, `chunk_id`, `chunk_type`, `include_dirs`, `exclude_dirs` | [Details](#1-search_codequery-or-chunk_id-k5-search_modehybrid-model_keynone-use_routingtrue-file_patternnone-include_dirsnone-exclude_dirsnone-chunk_typenone-include_contexttrue-auto_reindextrue-max_age_minutes5) |
 | **find_connections** | 🔴 Essential | Find callers, dependencies, flow (graph analysis) | `chunk_id`, `symbol_name`, `max_depth`, `exclude_dirs` | [Details](#3-find_connectionschunk_idnone-symbol_namenone-max_depth3-exclude_dirsnone) |
-| **index_directory** | 🔴 Setup | Index project for search (one-time) | `directory_path`, `incremental`, `multi_model` | [Details](#2-index_directorydirectory_path-project_namenone-file_patternsnone-incrementaltrue) |
+| **index_directory** | 🔴 Setup | Index project for search (one-time) | `directory_path`, `incremental`, `multi_model`, `include_dirs`, `exclude_dirs` | [Details](#2-index_directorydirectory_path-project_namenone-incrementaltrue-multi_modelnone-include_dirsnone-exclude_dirsnone) |
 | find_similar_code | Secondary | Find functionally similar code | `chunk_id`, `k` | [Details](#11-find_similar_codechunk_id-k5) |
 | list_projects | Management | Show all indexed projects | *(none)* | [Details](#4-list_projects) |
 | switch_project | Management | Change active project | `project_path` | [Details](#5-switch_projectproject_path) |
@@ -357,7 +357,7 @@ search_code("token merging implementation", k=10)
 - **BM25 mode**: 3-8ms average (fastest for exact symbols)
 - **Auto mode**: 52-57ms average
 
-#### 2. `index_directory(directory_path, project_name=None, file_patterns=None, incremental=True)`
+#### 2. `index_directory(directory_path, project_name=None, incremental=True, multi_model=None, include_dirs=None, exclude_dirs=None)`
 
 **Purpose**: Index a project for semantic search (one-time setup)
 
@@ -365,19 +365,41 @@ search_code("token merging implementation", k=10)
 
 - `directory_path` (required): Absolute path to project root
 - `project_name` (optional): Name for organization (defaults to directory name)
-- `file_patterns` (optional): File patterns to include (default: all supported extensions)
 - `incremental` (default: True): Use incremental indexing if snapshot exists
+- `multi_model` (default: auto): Index for all models when multi-model mode enabled
+  - `null/None`: Auto-detect from `CLAUDE_MULTI_MODEL_ENABLED` environment variable
+  - `true`: Force multi-model indexing (all 3 models)
+  - `false`: Force single-model indexing (current model only)
+- `include_dirs` (optional): Only index files in these directories (e.g., `["src/", "lib/"]`)
+- `exclude_dirs` (optional): Exclude directories from indexing (e.g., `["tests/", "vendor/"]`)
+
+**Filter Persistence** (v0.5.9+):
+
+- Filters are **automatically saved** to `project_info.json` and reloaded on subsequent indexing
+- **Filter change detection**: If filters change during incremental index, automatically triggers **full reindex** to prevent stale data
+- Uses path prefix matching with normalized separators (`\` → `/`)
 
 **Performance**:
 
 - **Full index**: ~30-60s for typical projects
 - **Incremental**: 10-50x faster (only processes changed files)
 - **Batch removal**: 600-1000x faster for large-scale deletions
+- **Multi-model**: 3x time (indexes with all 3 models sequentially)
 
-**Example**:
+**Examples**:
 
 ```bash
-index_directory("D:\Users\alexk\FORKNI\STREAM_DIFFUSION\STREAM_DIFFUSION_CUDA_0.2.99_CUDA_13")
+# Basic indexing
+index_directory("D:\Users\alexk\FORKNI\STREAM_DIFFUSION")
+
+# Index only source directories
+index_directory("C:\Projects\MyApp", include_dirs=["src/", "lib/"])
+
+# Exclude test and vendor directories
+index_directory("C:\Projects\MyApp", exclude_dirs=["tests/", "node_modules/", "vendor/"])
+
+# Force multi-model indexing
+index_directory("C:\Projects\MyApp", multi_model=True)
 ```
 
 #### 3. `find_connections(chunk_id=None, symbol_name=None, max_depth=3, exclude_dirs=None)`

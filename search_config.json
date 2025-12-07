@@ -1,5 +1,5 @@
 {
-  "embedding_model_name": "google/embeddinggemma-300m",
+  "embedding_model_name": "nomic-ai/CodeRankEmbed",
   "model_dimension": 768,
   "embedding_batch_size": 128,
   "query_cache_size": 128,
@@ -10,7 +10,7 @@
   "use_parallel_search": true,
   "max_parallel_workers": 2,
   "multi_model_enabled": true,
-  "routing_default_model": "bge_m3",
+  "routing_default_model": "qwen3",
   "enable_parallel_chunking": true,
   "max_chunking_workers": 4,
   "bm25_k_parameter": 100,
