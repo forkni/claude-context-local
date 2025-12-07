@@ -305,8 +305,19 @@ async def handle_get_search_config_status(arguments: Dict[str, Any]) -> dict:
 async def handle_list_embedding_models(arguments: Dict[str, Any]) -> dict:
     """List all available embedding models."""
     try:
+        from mcp_server.state import get_state
+
+        state = get_state()
+
+        # Build reverse mapping: model_name -> model_key
+        name_to_key = {v: k for k, v in MODEL_POOL_CONFIG.items()}
+
         models = []
         for model_name, config in MODEL_REGISTRY.items():
+            # Check if model is loaded
+            model_key = name_to_key.get(model_name)
+            is_loaded = model_key in state.embedders if model_key else False
+
             models.append(
                 {
                     "name": model_name,
@@ -316,6 +327,8 @@ async def handle_list_embedding_models(arguments: Dict[str, Any]) -> dict:
                         "fallback_batch_size", 128
                     ),  # API compatibility: reads from fallback_batch_size
                     "vram_gb": config.get("vram_gb", "Unknown"),  # Issue #7
+                    "max_context": config.get("max_context"),  # Token capacity
+                    "loaded": is_loaded,  # Whether model is in memory
                 }
             )
 
