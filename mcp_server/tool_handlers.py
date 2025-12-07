@@ -4,6 +4,7 @@ Converted from FastMCP @mcp.tool() decorators to async handlers.
 All tool implementations preserve the original business logic.
 """
 
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import Any, Dict
 
 # Import dependencies
 from chunking.multi_language_chunker import MultiLanguageChunker
+from merkle.snapshot_manager import SnapshotManager
 
 # Import guidance and tools
 from mcp_server.guidance import add_system_message
@@ -91,10 +93,23 @@ async def handle_get_index_status(arguments: Dict[str, Any]) -> dict:
                 model_info = state.embedders["default"].get_model_info()
                 model_info["multi_model_mode"] = False
 
+        # Add last indexed time from Merkle metadata
+        last_indexed_time = None
+        if state.current_project:
+            try:
+                snapshot_mgr = SnapshotManager()
+                metadata = snapshot_mgr.load_metadata(state.current_project)
+                if metadata:
+                    last_indexed_time = metadata.get("last_snapshot")
+            except Exception as e:
+                logger.debug(f"Could not get last_indexed_time: {e}")
+
         return {
             "index_statistics": stats,
             "model_information": model_info,
             "storage_directory": str(get_storage_dir()),
+            "last_indexed_time": last_indexed_time,
+            "current_project": state.current_project,
         }
     except Exception as e:
         logger.error(f"Status check failed: {e}", exc_info=True)
@@ -193,9 +208,21 @@ async def handle_get_memory_status(arguments: Dict[str, Any]) -> dict:
             for i in range(torch.cuda.device_count()):
                 allocated = torch.cuda.memory_allocated(i) / (1024**3)
                 reserved = torch.cuda.memory_reserved(i) / (1024**3)
+                total_vram = torch.cuda.get_device_properties(i).total_memory / (1024**3)
+
                 gpu_memory[f"gpu_{i}"] = {
                     "allocated_gb": round(allocated, 2),
                     "reserved_gb": round(reserved, 2),
+                    # Issue #5: Add GPU hardware details
+                    "device_name": torch.cuda.get_device_name(i),
+                    "device_id": i,
+                    "total_vram_gb": round(total_vram, 1),
+                    "compute_capability": ".".join(
+                        map(str, torch.cuda.get_device_capability(i))
+                    ),
+                    "utilization_percent": round((allocated / total_vram * 100), 1)
+                    if total_vram > 0
+                    else 0,
                 }
 
         # Index memory estimate
@@ -216,12 +243,25 @@ async def handle_get_memory_status(arguments: Dict[str, Any]) -> dict:
         except Exception:
             pass
 
+        # Collect per-model VRAM breakdown
+        per_model_vram = {}
+        try:
+            state = get_state()
+            for model_key, embedder in state.embedders.items():
+                if embedder is not None and hasattr(embedder, "get_vram_usage"):
+                    usage = embedder.get_vram_usage()
+                    if usage:
+                        per_model_vram[model_key] = usage
+        except Exception:
+            pass
+
         return {
             "system_memory": system_memory,
             "gpu_memory": gpu_memory if gpu_memory else {"status": "No GPU available"},
             "index_memory": (
                 index_memory if index_memory else {"status": "No index loaded"}
             ),
+            "per_model_vram_mb": per_model_vram if per_model_vram else {},
         }
     except Exception as e:
         logger.error(f"Memory status check failed: {e}", exc_info=True)
@@ -250,6 +290,12 @@ async def handle_get_search_config_status(arguments: Dict[str, Any]) -> dict:
             "use_parallel": config.use_parallel_search,
             "embedding_model": config.embedding_model_name,
             "multi_model_enabled": get_state().multi_model_enabled,
+            "auto_reindex_enabled": config.enable_auto_reindex,
+            "max_index_age_minutes": config.max_index_age_minutes,
+            "bm25_use_stemming": config.bm25_use_stemming,  # Issue #8
+            "multi_hop_enabled": config.enable_multi_hop,  # Issue #8
+            "multi_hop_count": config.multi_hop_count,  # Issue #8
+            "multi_hop_expansion": config.multi_hop_expansion,  # Issue #8
         }
     except Exception as e:
         logger.error(f"Config status check failed: {e}", exc_info=True)
@@ -269,6 +315,7 @@ async def handle_list_embedding_models(arguments: Dict[str, Any]) -> dict:
                     "recommended_batch_size": config.get(
                         "fallback_batch_size", 128
                     ),  # API compatibility: reads from fallback_batch_size
+                    "vram_gb": config.get("vram_gb", "Unknown"),  # Issue #7
                 }
             )
 
@@ -329,24 +376,53 @@ async def handle_switch_project(arguments: Dict[str, Any]) -> dict:
 
 
 async def handle_clear_index(arguments: Dict[str, Any]) -> dict:
-    """Clear the entire search index."""
+    """Clear the entire search index for ALL models."""
     try:
+        import shutil
+
         state = get_state()
         current_project = state.current_project
         if current_project is None:
             return {"error": "No active project to clear"}
 
-        index_manager = get_index_manager(model_key=state.current_model_key)
-        index_manager.clear_index()
+        # Get project info for pattern matching
+        project_path = Path(current_project).resolve()
+        project_name = project_path.name
+        project_hash = hashlib.md5(str(project_path).encode()).hexdigest()[:8]
+
+        # Find ALL model directories for this project
+        base_dir = get_storage_dir()
+        projects_dir = base_dir / "projects"
+        pattern = f"{project_name}_{project_hash}_*"
+
+        cleared_dirs = []
+        for model_dir in projects_dir.glob(pattern):
+            # Delete BM25 directory
+            bm25_dir = model_dir / "index" / "bm25"
+            if bm25_dir.exists():
+                shutil.rmtree(bm25_dir)
+                logger.info(f"Deleted BM25 directory: {bm25_dir}")
+
+            # Delete dense index files
+            index_dir = model_dir / "index"
+            for file in ["code.index", "chunks_metadata.db"]:
+                filepath = index_dir / file
+                if filepath.exists():
+                    filepath.unlink()
+                    logger.info(f"Deleted: {filepath}")
+
+            cleared_dirs.append(model_dir.name)
 
         # Cleanup in-memory state
-        state = get_state()
         state.index_manager = None
         state.searcher = None
 
+        logger.info(f"Cleared indices for {len(cleared_dirs)} models: {cleared_dirs}")
+
         return {
             "success": True,
-            "message": f"Index cleared for project: {Path(current_project).name}",
+            "message": f"Index cleared for project: {project_name}",
+            "cleared_models": cleared_dirs,
         }
     except Exception as e:
         logger.error(f"Clear index failed: {e}", exc_info=True)

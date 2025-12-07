@@ -1537,7 +1537,15 @@ class HybridSearcher:
         self._logger.info("Clearing hybrid indices")
 
         try:
-            # Clear BM25 index by recreating it with same configuration
+            import shutil
+
+            # DELETE BM25 files from disk FIRST
+            bm25_dir = self.storage_dir / "bm25"
+            if bm25_dir.exists():
+                shutil.rmtree(bm25_dir)
+                self._logger.info(f"Deleted BM25 directory: {bm25_dir}")
+
+            # Recreate empty BM25 index with same configuration
             self.bm25_index = BM25Index(
                 str(self.storage_dir / "bm25"),
                 use_stopwords=self.bm25_use_stopwords,
