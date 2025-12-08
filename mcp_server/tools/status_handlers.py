@@ -36,7 +36,7 @@ async def handle_get_index_status(arguments: Dict[str, Any]) -> dict:
     # Include hybrid searcher sync status
     # Use get_search_config() to check if hybrid is enabled
     config = get_search_config()
-    if config.enable_hybrid_search:
+    if config.search_mode.enable_hybrid:
         try:
             # Initialize searcher if needed (lazy init)
             searcher = get_searcher()
@@ -247,19 +247,19 @@ async def handle_get_search_config_status(arguments: Dict[str, Any]) -> dict:
     """Get current search configuration status."""
     config = get_search_config()
     return {
-        "search_mode": config.default_search_mode,
-        "bm25_weight": config.bm25_weight,
-        "dense_weight": config.dense_weight,
-        "rrf_k": config.rrf_k_parameter,
-        "use_parallel": config.use_parallel_search,
-        "embedding_model": config.embedding_model_name,
+        "search_mode": config.search_mode.default_mode,
+        "bm25_weight": config.search_mode.bm25_weight,
+        "dense_weight": config.search_mode.dense_weight,
+        "rrf_k": config.search_mode.rrf_k_parameter,
+        "use_parallel": config.performance.use_parallel_search,
+        "embedding_model": config.embedding.model_name,
         "multi_model_enabled": get_state().multi_model_enabled,
-        "auto_reindex_enabled": config.enable_auto_reindex,
-        "max_index_age_minutes": config.max_index_age_minutes,
-        "bm25_use_stemming": config.bm25_use_stemming,
-        "multi_hop_enabled": config.enable_multi_hop,
-        "multi_hop_count": config.multi_hop_count,
-        "multi_hop_expansion": config.multi_hop_expansion,
+        "auto_reindex_enabled": config.performance.enable_auto_reindex,
+        "max_index_age_minutes": config.performance.max_index_age_minutes,
+        "bm25_use_stemming": config.search_mode.bm25_use_stemming,
+        "multi_hop_enabled": config.multi_hop.enabled,
+        "multi_hop_count": config.multi_hop.hop_count,
+        "multi_hop_expansion": config.multi_hop.expansion,
     }
 
 
@@ -296,5 +296,5 @@ async def handle_list_embedding_models(arguments: Dict[str, Any]) -> dict:
     return {
         "models": models,
         "count": len(models),
-        "current_model": get_search_config().embedding_model_name,
+        "current_model": get_search_config().embedding.model_name,
     }

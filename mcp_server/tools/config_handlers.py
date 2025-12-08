@@ -75,7 +75,7 @@ async def handle_configure_query_routing(arguments: Dict[str, Any]) -> dict:
 
     if enable_multi_model is not None:
         # Persist to config file
-        config.multi_model_enabled = enable_multi_model
+        config.routing.multi_model_enabled = enable_multi_model
         changes["multi_model_enabled"] = enable_multi_model
 
         # Update runtime state
@@ -88,7 +88,7 @@ async def handle_configure_query_routing(arguments: Dict[str, Any]) -> dict:
     if default_model is not None:
         if default_model in MODEL_POOL_CONFIG:
             # Persist to config file
-            config.routing_default_model = default_model
+            config.routing.default_model = default_model
             changes["default_model"] = default_model
 
             # Save config
@@ -123,11 +123,11 @@ async def handle_configure_search_mode(arguments: Dict[str, Any]) -> dict:
 
     # Update config
     if search_mode in ["hybrid", "semantic", "bm25", "auto"]:
-        config.default_search_mode = search_mode
-        config.enable_hybrid_search = search_mode in ["hybrid", "auto"]
-        config.bm25_weight = bm25_weight
-        config.dense_weight = dense_weight
-        config.use_parallel_search = enable_parallel
+        config.search_mode.default_mode = search_mode
+        config.search_mode.enable_hybrid = search_mode in ["hybrid", "auto"]
+        config.search_mode.bm25_weight = bm25_weight
+        config.search_mode.dense_weight = dense_weight
+        config.performance.use_parallel_search = enable_parallel
 
         config_manager.save_config(config)
 
@@ -164,9 +164,9 @@ async def handle_switch_embedding_model(arguments: Dict[str, Any]) -> dict:
 
     config_manager = get_config_manager()
     config = config_manager.load_config()
-    old_model = config.embedding_model_name
+    old_model = config.embedding.model_name
 
-    config.embedding_model_name = model_name
+    config.embedding.model_name = model_name
     config_manager.save_config(config)
 
     # Reset embedders to force reload

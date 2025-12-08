@@ -149,20 +149,21 @@ class TestToolHandlers:
         """Verify config status returns auto_reindex settings (Issue #3)."""
         from mcp_server.tool_handlers import handle_get_search_config_status
 
-        # Mock config with auto_reindex fields
+        # Mock config with nested structure
         mock_config = MagicMock()
-        mock_config.default_search_mode = "hybrid"
-        mock_config.bm25_weight = 0.4
-        mock_config.dense_weight = 0.6
-        mock_config.rrf_k_parameter = 60
-        mock_config.use_parallel_search = True
-        mock_config.embedding_model_name = "BAAI/bge-m3"
-        mock_config.enable_auto_reindex = True
-        mock_config.max_index_age_minutes = 5.0
-        mock_config.bm25_use_stemming = True
-        mock_config.enable_multi_hop = True
-        mock_config.multi_hop_count = 5
-        mock_config.multi_hop_expansion = 0.2
+        # Create nested sub-configs
+        mock_config.search_mode.default_mode = "hybrid"
+        mock_config.search_mode.bm25_weight = 0.4
+        mock_config.search_mode.dense_weight = 0.6
+        mock_config.search_mode.rrf_k_parameter = 60
+        mock_config.search_mode.bm25_use_stemming = True
+        mock_config.performance.use_parallel_search = True
+        mock_config.performance.enable_auto_reindex = True
+        mock_config.performance.max_index_age_minutes = 5.0
+        mock_config.embedding.model_name = "BAAI/bge-m3"
+        mock_config.multi_hop.enabled = True
+        mock_config.multi_hop.hop_count = 5
+        mock_config.multi_hop.expansion = 0.2
         mock_get_search_config.return_value = mock_config
 
         # Call handler
@@ -252,20 +253,21 @@ class TestToolHandlers:
         """Verify config status returns multi-hop and stemming settings."""
         from mcp_server.tool_handlers import handle_get_search_config_status
 
-        # Mock config with multi-hop and stemming fields
+        # Mock config with nested structure
         mock_config = MagicMock()
-        mock_config.default_search_mode = "hybrid"
-        mock_config.bm25_weight = 0.4
-        mock_config.dense_weight = 0.6
-        mock_config.rrf_k_parameter = 60
-        mock_config.use_parallel_search = True
-        mock_config.embedding_model_name = "BAAI/bge-m3"
-        mock_config.enable_auto_reindex = True
-        mock_config.max_index_age_minutes = 5.0
-        mock_config.bm25_use_stemming = True
-        mock_config.enable_multi_hop = True
-        mock_config.multi_hop_count = 2
-        mock_config.multi_hop_expansion = 0.3
+        # Create nested sub-configs
+        mock_config.search_mode.default_mode = "hybrid"
+        mock_config.search_mode.bm25_weight = 0.4
+        mock_config.search_mode.dense_weight = 0.6
+        mock_config.search_mode.rrf_k_parameter = 60
+        mock_config.search_mode.bm25_use_stemming = True
+        mock_config.performance.use_parallel_search = True
+        mock_config.performance.enable_auto_reindex = True
+        mock_config.performance.max_index_age_minutes = 5.0
+        mock_config.embedding.model_name = "BAAI/bge-m3"
+        mock_config.multi_hop.enabled = True
+        mock_config.multi_hop.hop_count = 2
+        mock_config.multi_hop.expansion = 0.3
         mock_get_search_config.return_value = mock_config
 
         # Call handler

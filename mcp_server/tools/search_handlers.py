@@ -159,13 +159,13 @@ def _check_auto_reindex(
             logger.warning(f"[AUTO_REINDEX] Failed to load filters: {e}")
 
     config = get_search_config()
-    if config.enable_hybrid_search:
+    if config.search_mode.enable_hybrid:
         storage_dir = project_storage / "index"
         indexer = HybridSearcher(
             storage_dir=str(storage_dir),
             embedder=get_embedder(selected_model_key),
-            bm25_weight=config.bm25_weight,
-            dense_weight=config.dense_weight,
+            bm25_weight=config.search_mode.bm25_weight,
+            dense_weight=config.search_mode.dense_weight,
         )
     else:
         indexer = get_index_manager(project_path, model_key=selected_model_key)
@@ -409,7 +409,7 @@ async def handle_search_code(arguments: Dict[str, Any]) -> dict:
             k=k,
             search_mode=actual_search_mode,
             min_bm25_score=0.1,
-            use_parallel=get_search_config().use_parallel_search,
+            use_parallel=get_search_config().performance.use_parallel_search,
             filters=filters if filters else None,
         )
     else:

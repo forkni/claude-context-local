@@ -57,7 +57,7 @@ def _create_indexer_for_model(
     chunker = MultiLanguageChunker(directory_path)
     embedder = get_embedder(model_key)
 
-    if config.enable_hybrid_search:
+    if config.search_mode.enable_hybrid:
         # Get project_id from index_dir parent
         project_dir = index_dir.parent
         project_id = project_dir.name.rsplit("_", 1)[0]  # Remove dimension suffix
@@ -65,12 +65,12 @@ def _create_indexer_for_model(
         indexer = HybridSearcher(
             storage_dir=str(index_dir),
             embedder=embedder,
-            bm25_weight=config.bm25_weight,
-            dense_weight=config.dense_weight,
-            rrf_k=config.rrf_k_parameter,
+            bm25_weight=config.search_mode.bm25_weight,
+            dense_weight=config.search_mode.dense_weight,
+            rrf_k=config.search_mode.rrf_k_parameter,
             max_workers=2,
-            bm25_use_stopwords=config.bm25_use_stopwords,
-            bm25_use_stemming=config.bm25_use_stemming,
+            bm25_use_stopwords=config.search_mode.bm25_use_stopwords,
+            bm25_use_stemming=config.search_mode.bm25_use_stemming,
             project_id=project_id,
         )
     else:
@@ -192,7 +192,7 @@ def _index_with_all_models(
     """
     results = []
     original_config = get_search_config()
-    original_model = original_config.embedding_model_name
+    original_model = original_config.embedding.model_name
 
     try:
         for model_key, model_name in MODEL_POOL_CONFIG.items():
@@ -201,11 +201,11 @@ def _index_with_all_models(
             # Switch to this model temporarily
             config_mgr = SearchConfigManager()
             config = config_mgr.load_config()
-            config.embedding_model_name = model_name
+            config.embedding.model_name = model_name
 
             # Update dimension from registry
             if model_name in MODEL_REGISTRY:
-                config.model_dimension = MODEL_REGISTRY[model_name]["dimension"]
+                config.embedding.dimension = MODEL_REGISTRY[model_name]["dimension"]
 
             config_mgr.save_config(config)
 
@@ -231,17 +231,17 @@ def _index_with_all_models(
 
             # Create fresh indexer instance directly (bypass global cache)
             config = get_search_config()
-            if config.enable_hybrid_search:
+            if config.search_mode.enable_hybrid:
                 project_id = project_dir.name.rsplit("_", 1)[0]
                 indexer = HybridSearcher(
                     storage_dir=str(index_dir),
                     embedder=embedder,
-                    bm25_weight=config.bm25_weight,
-                    dense_weight=config.dense_weight,
-                    rrf_k=config.rrf_k_parameter,
+                    bm25_weight=config.search_mode.bm25_weight,
+                    dense_weight=config.search_mode.dense_weight,
+                    rrf_k=config.search_mode.rrf_k_parameter,
                     max_workers=2,
-                    bm25_use_stopwords=config.bm25_use_stopwords,
-                    bm25_use_stemming=config.bm25_use_stemming,
+                    bm25_use_stopwords=config.search_mode.bm25_use_stopwords,
+                    bm25_use_stemming=config.search_mode.bm25_use_stemming,
                     project_id=project_id,
                 )
                 logger.info(f"Created HybridSearcher for {model_name} at {index_dir}")
@@ -272,7 +272,7 @@ def _index_with_all_models(
                 {
                     "model": model_name,
                     "model_key": model_key,
-                    "dimension": config.model_dimension,
+                    "dimension": config.embedding.dimension,
                     "files_added": result.files_added,
                     "files_modified": result.files_modified,
                     "files_removed": result.files_removed,
@@ -286,7 +286,7 @@ def _index_with_all_models(
         # Restore original model
         config_mgr = SearchConfigManager()
         config = config_mgr.load_config()
-        config.embedding_model_name = original_model
+        config.embedding.model_name = original_model
         config_mgr.save_config(config)
 
         # Clear cached components
@@ -604,7 +604,7 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
         config = get_search_config()
         indexer = (
             searcher_instance
-            if config.enable_hybrid_search
+            if config.search_mode.enable_hybrid
             else get_index_manager(str(directory_path))
         )
 
