@@ -1181,8 +1181,8 @@ class TestParallelChunking:
         """Test that parallel chunking configuration is loaded from config."""
         with patch("search.incremental_indexer.get_search_config") as mock_config:
             mock_config_obj = Mock()
-            mock_config_obj.enable_parallel_chunking = False
-            mock_config_obj.max_chunking_workers = 8
+            mock_config_obj.performance.enable_parallel_chunking = False
+            mock_config_obj.performance.max_chunking_workers = 8
             mock_config.return_value = mock_config_obj
 
             indexer = IncrementalIndexer(

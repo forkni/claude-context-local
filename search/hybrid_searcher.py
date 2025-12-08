@@ -442,14 +442,14 @@ class HybridSearcher:
         # Phase 4: Use ServiceLocator helper instead of inline import
         config = _get_config_via_service_locator()
 
-        if config.enable_multi_hop:
+        if config.multi_hop.enabled:
             # Use multi-hop search for discovering related code
             return self._multi_hop_search_internal(
                 query=query,
                 k=k,
                 search_mode=search_mode,
-                hops=config.multi_hop_count,
-                expansion_factor=config.multi_hop_expansion,
+                hops=config.multi_hop.hop_count,
+                expansion_factor=config.multi_hop.expansion,
                 use_parallel=use_parallel,
                 min_bm25_score=min_bm25_score,
                 filters=filters,
@@ -830,7 +830,7 @@ class HybridSearcher:
         # Hop 1: Initial query-based search
         # Phase 4: Use ServiceLocator helper instead of inline import
         config = _get_config_via_service_locator()
-        initial_k = int(k * config.multi_hop_initial_k_multiplier)
+        initial_k = int(k * config.multi_hop.initial_k_multiplier)
 
         hop1_start = time.time()
         initial_results = self._single_hop_search(

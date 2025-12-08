@@ -98,8 +98,8 @@ class IncrementalIndexer:
 
         # Load parallel chunking configuration
         config = get_search_config()
-        self.enable_parallel_chunking = config.enable_parallel_chunking
-        self.max_chunking_workers = config.max_chunking_workers
+        self.enable_parallel_chunking = config.performance.enable_parallel_chunking
+        self.max_chunking_workers = config.performance.max_chunking_workers
 
     def _chunk_files_parallel(
         self, project_path: str, file_paths: List[str]

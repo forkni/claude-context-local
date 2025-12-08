@@ -667,8 +667,8 @@ class SearchConfigManager:
         self._config = SearchConfig.from_dict(config_dict)
 
         self.logger.info(
-            f"Search mode: {self._config.default_search_mode}, "
-            f"hybrid enabled: {self._config.enable_hybrid_search}"
+            f"Search mode: {self._config.search_mode.default_mode}, "
+            f"hybrid enabled: {self._config.search_mode.enable_hybrid}"
         )
 
         return self._config
@@ -742,9 +742,9 @@ class SearchConfigManager:
         """Save configuration to file."""
         try:
             # Auto-sync dimension from model registry before saving
-            model_config = get_model_config(config.embedding_model_name)
+            model_config = get_model_config(config.embedding.model_name)
             if model_config:
-                config.model_dimension = model_config["dimension"]
+                config.embedding.dimension = model_config["dimension"]
 
             # Create directory if needed (only if not current directory)
             config_dir = os.path.dirname(self.config_file)
@@ -772,8 +772,8 @@ class SearchConfigManager:
             return explicit_mode
 
         # Use default mode if not auto
-        if config.default_search_mode != "auto":
-            return config.default_search_mode
+        if config.search_mode.default_mode != "auto":
+            return config.search_mode.default_mode
 
         # Auto-detect based on query characteristics
         query_lower = query.lower()
@@ -816,13 +816,13 @@ def get_search_config() -> SearchConfig:
 def is_hybrid_search_enabled() -> bool:
     """Check if hybrid search is enabled."""
     config = get_search_config()
-    return config.enable_hybrid_search
+    return config.search_mode.enable_hybrid
 
 
 def get_default_search_mode() -> str:
     """Get default search mode."""
     config = get_search_config()
-    return config.default_search_mode
+    return config.search_mode.default_mode
 
 
 def get_model_registry() -> Dict[str, Dict[str, Any]]:
