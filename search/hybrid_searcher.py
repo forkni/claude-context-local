@@ -742,7 +742,7 @@ class HybridSearcher:
         filtered_results = {}
         for chunk_id, result in all_results.items():
             # Get metadata from dense index
-            metadata_entry = self.dense_index.metadata_db.get(chunk_id)
+            metadata_entry = self.dense_index.metadata_store.get(chunk_id)
             if metadata_entry:
                 metadata = metadata_entry.get("metadata", {})
                 if self.dense_index._matches_filters(metadata, filters):
@@ -942,7 +942,7 @@ class HybridSearcher:
                     # Get chunk embedding from dense index
                     # reranker.SearchResult now uses chunk_id
                     chunk_id = result.chunk_id
-                    chunk_metadata = self.dense_index.metadata_db.get(chunk_id)
+                    chunk_metadata = self.dense_index.metadata_store.get(chunk_id)
                     if chunk_metadata and "embedding" in chunk_metadata:
                         chunk_emb = np.array(chunk_metadata["embedding"])
                         # Compute cosine similarity
@@ -1377,7 +1377,7 @@ class HybridSearcher:
         metadata = {}
 
         for chunk_id in self.dense_index._chunk_ids:
-            entry = self.dense_index.metadata_db.get(chunk_id)
+            entry = self.dense_index.metadata_store.get(chunk_id)
             if entry:
                 content = entry["metadata"].get("content", "")
                 if content:
