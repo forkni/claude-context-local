@@ -130,7 +130,16 @@ def reset_global_state() -> Generator[None, None, None]:
 
     Uses the centralized ApplicationState.reset() for clean state management.
     Also resets the module-level globals for backward compatibility during migration.
+    Phase 4: Added ServiceLocator.reset() for DI pattern.
     """
+    # Reset ServiceLocator for Phase 4 DI (must be first to clear all services)
+    try:
+        from mcp_server.services import ServiceLocator
+
+        ServiceLocator.reset()
+    except ImportError:
+        pass  # ServiceLocator might not be available yet
+
     # Reset MCP server global state via ApplicationState
     try:
         from mcp_server.state import reset_state

@@ -34,6 +34,14 @@ except Exception:
 from chunking.python_ast_chunker import CodeChunk
 
 
+# Phase 4: Helper function to access config via ServiceLocator (avoids circular imports)
+def _get_config_via_service_locator():
+    """Get SearchConfig via ServiceLocator to avoid circular dependencies."""
+    from mcp_server.services import ServiceLocator
+
+    return ServiceLocator.instance().get_config()
+
+
 def calculate_optimal_batch_size(
     embedding_dim: int = 768,
     min_batch: int = 32,
@@ -236,9 +244,8 @@ class CodeEmbedder:
         if torch is None or not torch.cuda.is_available():
             return None  # CPU: use fp32 default
 
-        from search.config import get_search_config
-
-        config = get_search_config()
+        # Phase 4: Use ServiceLocator helper instead of inline import
+        config = _get_config_via_service_locator()
 
         if not config.enable_fp16:
             return None  # fp16 disabled: use fp32
@@ -705,9 +712,8 @@ class CodeEmbedder:
 
         # Load batch size from config if not explicitly provided
         if batch_size is None:
-            from search.config import get_search_config
-
-            config = get_search_config()
+            # Phase 4: Use ServiceLocator helper instead of inline import
+            config = _get_config_via_service_locator()
 
             # Try dynamic GPU-based batch size first
             if (

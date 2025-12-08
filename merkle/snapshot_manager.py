@@ -48,18 +48,11 @@ class SnapshotManager:
         """
         if dimension is None:
             try:
-                # Import here to avoid circular dependency
-                import sys
-                from pathlib import Path as PathLib
+                # Phase 4: Use ServiceLocator to avoid circular dependency (no sys.path manipulation)
+                from mcp_server.services import ServiceLocator
+                from search.config import get_model_slug
 
-                # Add parent directory to path for imports
-                parent_dir = PathLib(__file__).parent.parent
-                if str(parent_dir) not in sys.path:
-                    sys.path.insert(0, str(parent_dir))
-
-                from search.config import get_model_slug, get_search_config
-
-                config = get_search_config()
+                config = ServiceLocator.instance().get_config()
                 dimension = config.model_dimension
                 model_slug = get_model_slug(config.embedding_model_name)
             except Exception:
@@ -69,9 +62,11 @@ class SnapshotManager:
         else:
             # If dimension is provided explicitly, we need to get the current model slug
             try:
-                from search.config import get_model_slug, get_search_config
+                # Phase 4: Use ServiceLocator to avoid circular dependency
+                from mcp_server.services import ServiceLocator
+                from search.config import get_model_slug
 
-                config = get_search_config()
+                config = ServiceLocator.instance().get_config()
                 model_slug = get_model_slug(config.embedding_model_name)
             except Exception:
                 model_slug = "unknown"

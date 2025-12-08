@@ -20,6 +20,14 @@ from .indexer import CodeIndexManager
 from .reranker import RRFReranker, SearchResult
 
 
+# Phase 4: Helper function to access config via ServiceLocator (avoids circular imports)
+def _get_config_via_service_locator():
+    """Get SearchConfig via ServiceLocator to avoid circular dependencies."""
+    from mcp_server.services import ServiceLocator
+
+    return ServiceLocator.instance().get_config()
+
+
 class GPUMemoryMonitor:
     """Monitor GPU memory usage for optimal batch sizing."""
 
@@ -431,9 +439,8 @@ class HybridSearcher:
                 return []
 
         # Check if multi-hop search is enabled
-        from .config import get_search_config
-
-        config = get_search_config()
+        # Phase 4: Use ServiceLocator helper instead of inline import
+        config = _get_config_via_service_locator()
 
         if config.enable_multi_hop:
             # Use multi-hop search for discovering related code
@@ -821,9 +828,8 @@ class HybridSearcher:
                 )
 
         # Hop 1: Initial query-based search
-        from .config import SearchConfigManager
-
-        config = SearchConfigManager().load_config()
+        # Phase 4: Use ServiceLocator helper instead of inline import
+        config = _get_config_via_service_locator()
         initial_k = int(k * config.multi_hop_initial_k_multiplier)
 
         hop1_start = time.time()
