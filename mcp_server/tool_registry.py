@@ -207,6 +207,31 @@ WORKFLOW:
         "description": "Clear the entire search index and metadata for the current project. Deletes ALL dimension indices (768d, 1024d, etc.) and associated Merkle snapshots.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
+    "delete_project": {
+        "description": """Safely delete an indexed project and all associated data.
+
+Properly closes database connections before deletion to prevent file lock errors.
+Handles deletion of: vector indices (FAISS), metadata databases (SQLite), BM25 indices,
+Merkle snapshots, and call graph data.
+
+IMPORTANT: Use this tool instead of manual deletion when the MCP server is running.
+If files are locked, they'll be queued for automatic retry on next server startup.""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project_path": {
+                    "type": "string",
+                    "description": "Absolute path to the project directory to delete",
+                },
+                "force": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Force delete even if this is the current project (default: False)",
+                },
+            },
+            "required": ["project_path"],
+        },
+    },
     "get_memory_status": {
         "description": """Get current memory usage status for the index and system.
 

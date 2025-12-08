@@ -352,6 +352,138 @@ async def handle_clear_index(arguments: Dict[str, Any]) -> dict:
     }
 
 
+@error_handler("Delete project")
+async def handle_delete_project(arguments: Dict[str, Any]) -> dict:
+    """Delete an indexed project completely (indices + Merkle snapshots).
+
+    This tool properly closes database connections before deletion to prevent
+    file lock errors (PermissionError on Windows). Use this instead of manual
+    deletion when the MCP server is running.
+
+    Args:
+        arguments: Dict with:
+            - project_path (str, required): Absolute path to project directory
+            - force (bool, optional): Force delete even if current project (default: False)
+
+    Returns:
+        dict with:
+            - success (bool): True if fully deleted
+            - deleted_directories (list): Project directories that were deleted
+            - deleted_snapshots (int): Number of Merkle snapshots deleted
+            - errors (list or None): Any deletion errors that occurred
+            - hint (str, optional): Suggestion if deletion blocked
+    """
+    import shutil
+
+    from mcp_server.server import close_project_resources
+    from merkle.snapshot_manager import SnapshotManager
+
+    # Extract arguments
+    project_path = arguments.get("project_path")
+    force = arguments.get("force", False)
+
+    if not project_path:
+        return {"error": "project_path is required"}
+
+    # 1. Validate project exists
+    project_path_resolved = Path(project_path).resolve()
+    if not project_path_resolved.exists():
+        return {"error": f"Project path does not exist: {project_path}"}
+
+    # 2. Check if this is the current project
+    state = get_state()
+    is_current = state.current_project == str(project_path_resolved)
+
+    if is_current and not force:
+        return {
+            "error": "Cannot delete current project without force=True",
+            "hint": "Set force=True or switch to another project first",
+            "is_current_project": True,
+        }
+
+    # 3. Close all resources for this project
+    logger.info(f"Closing resources for project: {project_path}")
+    close_project_resources(str(project_path_resolved))
+
+    # 4. Find and delete all model directories for this project
+    project_name = project_path_resolved.name
+    project_hash = hashlib.md5(str(project_path_resolved).encode()).hexdigest()[:8]
+
+    base_dir = get_storage_dir()
+    projects_dir = base_dir / "projects"
+    pattern = f"{project_name}_{project_hash}_*"
+
+    deleted_dirs = []
+    errors = []
+
+    logger.info(f"Searching for project directories with pattern: {pattern}")
+
+    for model_dir in projects_dir.glob(pattern):
+        logger.info(f"Deleting project directory: {model_dir}")
+        try:
+            shutil.rmtree(model_dir)
+            deleted_dirs.append(model_dir.name)
+            logger.info(f"Successfully deleted: {model_dir}")
+        except PermissionError as e:
+            error_msg = f"{model_dir.name}: File locked - {e}"
+            errors.append(error_msg)
+            logger.error(f"Permission error deleting {model_dir}: {e}")
+        except Exception as e:
+            error_msg = f"{model_dir.name}: {e}"
+            errors.append(error_msg)
+            logger.error(f"Unexpected error deleting {model_dir}: {e}")
+
+    # 5. Delete Merkle snapshots for this project
+    logger.info(f"Deleting Merkle snapshots for: {project_path_resolved}")
+    snapshot_manager = SnapshotManager()
+    try:
+        deleted_snapshots = snapshot_manager.delete_all_snapshots(
+            str(project_path_resolved)
+        )
+        logger.info(f"Deleted {deleted_snapshots} Merkle snapshot(s)")
+    except Exception as e:
+        deleted_snapshots = 0
+        logger.warning(f"Failed to delete Merkle snapshots: {e}")
+
+    # 6. If deletion failed, add to cleanup queue for retry on next startup
+    if errors:
+        from mcp_server.cleanup_queue import CleanupQueue
+
+        queue = CleanupQueue()
+        for error_msg in errors:
+            # Extract directory name from error message
+            dir_name = error_msg.split(":")[0].strip()
+            full_path = str(projects_dir / dir_name)
+            queue.add(full_path, error_msg)
+            logger.info(f"Added to cleanup queue: {full_path}")
+
+    # 7. Build response
+    success = len(errors) == 0
+    result = {
+        "success": success,
+        "deleted_directories": deleted_dirs,
+        "deleted_snapshots": deleted_snapshots,
+    }
+
+    if errors:
+        result["errors"] = errors
+        result["queued_for_retry"] = len(errors)
+        result["hint"] = (
+            "Some files couldn't be deleted (locked). They'll be retried on next server startup."
+        )
+
+    if success:
+        logger.info(
+            f"Project deletion complete: {len(deleted_dirs)} directories, {deleted_snapshots} snapshots"
+        )
+    else:
+        logger.warning(
+            f"Project deletion partial: {len(deleted_dirs)} deleted, {len(errors)} failed"
+        )
+
+    return result
+
+
 @error_handler("Index")
 async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
     """Index a directory for code search with multi-model support.

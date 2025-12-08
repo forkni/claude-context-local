@@ -448,6 +448,45 @@ def _cleanup_previous_resources():
         logger.warning(f"Error during resource cleanup: {e}")
 
 
+def close_project_resources(project_path: str) -> bool:
+    """Close all resources associated with a specific project.
+
+    This function ensures all database connections and file handles
+    are released before project deletion. It's designed to be called
+    before deleting a project directory to prevent file lock errors.
+
+    Args:
+        project_path: Absolute path to the project directory
+
+    Returns:
+        True if cleanup successful
+    """
+    import gc
+    import time
+    from pathlib import Path
+
+    state = get_state()
+    project_path_resolved = str(Path(project_path).resolve())
+
+    # If this is the current project, clean up state
+    if state.current_project == project_path_resolved:
+        _cleanup_previous_resources()
+        state.current_project = None
+        logger.info(f"Cleaned up resources for current project: {project_path}")
+    else:
+        logger.debug(
+            f"Project not current, no active resources to clean: {project_path}"
+        )
+
+    # Force garbage collection to release any lingering handles
+    gc.collect()
+
+    # Small delay to allow OS to release file handles (especially on Windows)
+    time.sleep(0.3)
+
+    return True
+
+
 def get_index_manager(
     project_path: str = None, model_key: str = None
 ) -> CodeIndexManager:
@@ -828,6 +867,20 @@ if __name__ == "__main__":
                 storage = get_storage_dir()
                 logger.info(f"[INIT] Storage directory: {storage}")
 
+                # Process deferred cleanup queue on startup
+                from mcp_server.cleanup_queue import CleanupQueue
+
+                cleanup_queue = CleanupQueue()
+                result = cleanup_queue.process()
+                if result["processed"] > 0:
+                    logger.info(
+                        f"[INIT] Processed {result['processed']} deferred cleanup tasks"
+                    )
+                if result["failed"]:
+                    logger.warning(
+                        f"[INIT] Cleanup failed for {len(result['failed'])} items (will retry later)"
+                    )
+
                 logger.info("=" * 60)
                 logger.info("SERVER READY - Accepting connections")
                 logger.info("=" * 60)
@@ -928,6 +981,20 @@ if __name__ == "__main__":
                     # Log storage directory
                     storage = get_storage_dir()
                     logger.info(f"[INIT] Storage directory: {storage}")
+
+                    # Process deferred cleanup queue on startup
+                    from mcp_server.cleanup_queue import CleanupQueue
+
+                    cleanup_queue = CleanupQueue()
+                    result = cleanup_queue.process()
+                    if result["processed"] > 0:
+                        logger.info(
+                            f"[INIT] Processed {result['processed']} deferred cleanup tasks"
+                        )
+                    if result["failed"]:
+                        logger.warning(
+                            f"[INIT] Cleanup failed for {len(result['failed'])} items (will retry later)"
+                        )
 
                     # Optional: Pre-load embedding model
                     if os.getenv("MCP_PRELOAD_MODEL", "false").lower() in (

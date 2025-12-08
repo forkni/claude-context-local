@@ -698,6 +698,23 @@ if /i not "!confirm_delete!"=="y" goto project_management_menu
 
 REM Delete the specific project
 echo.
+
+REM Check if MCP server is running (SSE mode on port 8765)
+netstat -an 2>nul | findstr ":8765" | findstr "LISTENING" >nul 2>&1
+if not errorlevel 1 (
+    echo [WARNING] MCP Server detected running on port 8765
+    echo.
+    echo [RECOMMENDED] Use MCP tool for safe deletion:
+    echo   /delete_project "%PROJECT_PATH%"
+    echo.
+    echo Direct deletion may fail due to database locks.
+    echo.
+    set continue_choice=
+    set /p continue_choice="Continue with direct deletion anyway? (y/N): "
+    if /i not "!continue_choice!"=="y" goto project_management_menu
+    echo.
+)
+
 echo [WARNING] Make sure the MCP server is NOT running
 echo [WARNING] Close Claude Code or any processes using this project
 echo.
@@ -753,7 +770,10 @@ if "!INDEX_RESULT!"=="0" (
     echo.
     echo [ERROR] Failed to clear index for %PROJECT_NAME%
     echo.
-    echo [SOLUTION] Steps to fix:
+    echo [SOLUTION] If MCP server is running:
+    echo   Use: /delete_project "%PROJECT_PATH%"
+    echo.
+    echo If MCP server is stopped:
     echo   1. Close Claude Code completely
     echo   2. Close this window and any terminal windows
     echo   3. Wait 5 seconds for processes to release files

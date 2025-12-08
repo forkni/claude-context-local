@@ -97,6 +97,7 @@ These are automatically excluded from main branch via `.gitattributes` merge str
 ## 🚀 Workflow Scripts
 
 **Directory Structure**:
+
 - **Shell scripts (.sh)**: `scripts/git/` - **PRIMARY for automated workflows**
 - **Batch scripts (.bat)**: `scripts/git/batch/` - Manual Windows CMD execution
 

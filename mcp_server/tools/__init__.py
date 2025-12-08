@@ -19,6 +19,7 @@ from mcp_server.tools.config_handlers import (
 from mcp_server.tools.decorators import error_handler
 from mcp_server.tools.index_handlers import (
     handle_clear_index,
+    handle_delete_project,
     handle_index_directory,
 )
 from mcp_server.tools.search_handlers import (
@@ -57,7 +58,8 @@ __all__ = [
     "handle_search_code",
     "handle_find_similar_code",
     "handle_find_connections",
-    # Index handlers (2)
+    # Index handlers (3)
     "handle_index_directory",
     "handle_clear_index",
+    "handle_delete_project",
 ]
