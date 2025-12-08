@@ -5,7 +5,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from rich.console import Console
 from rich.progress import (
@@ -250,27 +250,16 @@ class IncrementalIndexer:
                 logger.info(f"No changes detected in {project_name}")
                 # Even with no changes, save current statistics
                 all_files = list(current_dag.get_all_files())
-                supported_files = [
-                    f for f in all_files if self._is_supported_file(project_path, f)
-                ]
+                supported_files = self._get_supported_files(project_path, all_files)
+                total_chunks = self._get_total_chunks()
 
-                total_chunks = 0
-                if hasattr(self.indexer, "get_stats"):
-                    stats = self.indexer.get_stats()
-                    total_chunks = stats.get("total_chunks", 0)
-                elif hasattr(self.indexer, "get_index_size"):
-                    total_chunks = self.indexer.get_index_size()
-
-                metadata = {
-                    "project_name": project_name,
-                    "incremental_update": True,
-                    "files_added": 0,
-                    "files_removed": 0,
-                    "files_modified": 0,
-                    "total_files": len(all_files),
-                    "supported_files": len(supported_files),
-                    "chunks_indexed": total_chunks,
-                }
+                metadata = self._build_snapshot_metadata(
+                    project_name=project_name,
+                    all_files=all_files,
+                    supported_files=supported_files,
+                    total_chunks=total_chunks,
+                    is_full=False,
+                )
                 self.snapshot_manager.save_snapshot(current_dag, metadata)
 
                 return IncrementalIndexResult(
@@ -313,32 +302,20 @@ class IncrementalIndexer:
             # Update snapshot
             # After processing changes, calculate cumulative stats
             all_files = list(current_dag.get_all_files())
-            supported_files = [
-                f for f in all_files if self._is_supported_file(project_path, f)
-            ]
+            supported_files = self._get_supported_files(project_path, all_files)
+            total_chunks = self._get_total_chunks()
 
-            total_chunks = 0
-            if hasattr(self.indexer, "get_stats"):
-                stats = self.indexer.get_stats()
-                total_chunks = stats.get("total_chunks", 0)
-            elif hasattr(self.indexer, "get_index_size"):
-                total_chunks = self.indexer.get_index_size()
-
-            self.snapshot_manager.save_snapshot(
-                current_dag,
-                {
-                    "project_name": project_name,
-                    "incremental_update": True,
-                    # Delta stats (what changed)
-                    "files_added": len(changes.added),
-                    "files_removed": len(changes.removed),
-                    "files_modified": len(changes.modified),
-                    # Cumulative stats (current totals)
-                    "total_files": len(all_files),
-                    "supported_files": len(supported_files),
-                    "chunks_indexed": total_chunks,
-                },
+            metadata = self._build_snapshot_metadata(
+                project_name=project_name,
+                all_files=all_files,
+                supported_files=supported_files,
+                total_chunks=total_chunks,
+                is_full=False,
+                files_added=len(changes.added),
+                files_removed=len(changes.removed),
+                files_modified=len(changes.modified),
             )
+            self.snapshot_manager.save_snapshot(current_dag, metadata)
 
             # Update index
             logger.info("[INCREMENTAL] Saving index...")
@@ -442,17 +419,8 @@ class IncrementalIndexer:
             dag.build()
             all_files = dag.get_all_files()
 
-            # Filter supported files and exclude ignored directories
-            from chunking.multi_language_chunker import MultiLanguageChunker
-
-            ignored_dirs = MultiLanguageChunker.DEFAULT_IGNORED_DIRS
-
-            supported_files = [
-                f
-                for f in all_files
-                if self.chunker.is_supported(str(Path(project_path) / f))
-                and not any(part in ignored_dirs for part in Path(f).parts)
-            ]
+            # Filter supported files
+            supported_files = self._get_supported_files(project_path, all_files)
             logger.info(
                 f"Found {len(supported_files)} supported files out of {len(all_files)} total files"
             )
@@ -511,16 +479,14 @@ class IncrementalIndexer:
             chunks_added = len(all_embedding_results)
 
             # Save snapshot
-            self.snapshot_manager.save_snapshot(
-                dag,
-                {
-                    "project_name": project_name,
-                    "full_index": True,
-                    "total_files": len(all_files),
-                    "supported_files": len(supported_files),
-                    "chunks_indexed": chunks_added,
-                },
+            metadata = self._build_snapshot_metadata(
+                project_name=project_name,
+                all_files=all_files,
+                supported_files=supported_files,
+                total_chunks=chunks_added,
+                is_full=True,
             )
+            self.snapshot_manager.save_snapshot(dag, metadata)
 
             # Save index
             logger.info("[INCREMENTAL] Saving index...")
@@ -559,6 +525,73 @@ class IncrementalIndexer:
                 bm25_resynced=False,
                 bm25_resync_count=0,
             )
+
+    def _get_total_chunks(self) -> int:
+        """Get total number of chunks currently in the index.
+
+        Returns:
+            Total chunk count from index stats or size
+        """
+        if hasattr(self.indexer, "get_stats"):
+            stats = self.indexer.get_stats()
+            return stats.get("total_chunks", 0)
+        elif hasattr(self.indexer, "get_index_size"):
+            return self.indexer.get_index_size()
+        return 0
+
+    def _get_supported_files(
+        self, project_path: str, all_files: List[str]
+    ) -> List[str]:
+        """Filter files to only those supported for indexing.
+
+        Args:
+            project_path: Root project directory
+            all_files: List of all file paths
+
+        Returns:
+            List of supported file paths
+        """
+        return [f for f in all_files if self._is_supported_file(project_path, f)]
+
+    def _build_snapshot_metadata(
+        self,
+        project_name: str,
+        all_files: List,
+        supported_files: List,
+        total_chunks: int,
+        is_full: bool = False,
+        **changes,
+    ) -> Dict[str, Any]:
+        """Build metadata dictionary for snapshot storage.
+
+        Args:
+            project_name: Name of the project
+            all_files: List of all files in project
+            supported_files: List of supported files
+            total_chunks: Total number of indexed chunks
+            is_full: Whether this is a full index (vs incremental)
+            **changes: Optional file change counts (files_added, files_removed, files_modified, etc.)
+
+        Returns:
+            Metadata dictionary for snapshot
+        """
+        metadata = {
+            "project_name": project_name,
+            "incremental_update": not is_full,
+            "total_files": len(all_files),
+            "supported_files": len(supported_files),
+            "chunks_indexed": total_chunks,
+        }
+
+        # Add change statistics if provided
+        metadata.update(changes)
+
+        # Set defaults for missing change counts
+        metadata.setdefault("files_added", 0)
+        metadata.setdefault("files_removed", 0)
+        metadata.setdefault("files_modified", 0)
+
+        return metadata
 
     def _remove_old_chunks(self, changes: FileChanges, project_name: str) -> int:
         """Remove chunks for deleted and modified files.
