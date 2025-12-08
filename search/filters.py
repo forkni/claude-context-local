@@ -8,7 +8,8 @@ This module provides shared filtering logic used across:
 Consolidated from three duplicate implementations as part of code organization refactoring.
 """
 
-from typing import List, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Set
 
 
 def normalize_path(path: str) -> str:
@@ -129,6 +130,208 @@ class DirectoryFilter:
 
     def __repr__(self) -> str:
         return f"DirectoryFilter(include_dirs={self.include_dirs}, exclude_dirs={self.exclude_dirs})"
+
+
+# Known filter keys that have special handling
+_KNOWN_FILTER_KEYS = {
+    "include_dirs",
+    "exclude_dirs",
+    "file_pattern",
+    "chunk_type",
+    "tags",
+    "folder_structure",
+}
+
+
+@dataclass
+class FilterCriteria:
+    """Unified filter criteria for search operations.
+
+    Consolidates all filter types used across CodeIndexManager and HybridSearcher.
+    Supports directory filtering, file patterns, chunk types, tags, and generic metadata matching.
+
+    Attributes:
+        include_dirs: Directories to include (None means all)
+        exclude_dirs: Directories to exclude (None means none)
+        file_pattern: File path patterns (substring match)
+        chunk_type: Specific chunk type to match (function, class, method, etc.)
+        tags: Tags that must be present (set intersection)
+        folder_structure: Folder structure elements that must be present (set intersection)
+        extra_filters: Generic key-value filters for metadata comparison
+    """
+
+    include_dirs: Optional[List[str]] = None
+    exclude_dirs: Optional[List[str]] = None
+    file_pattern: Optional[List[str]] = None  # Normalized to list
+    chunk_type: Optional[str] = None
+    tags: Optional[Set[str]] = None
+    folder_structure: Optional[Set[str]] = None
+    extra_filters: Optional[Dict[str, Any]] = None
+
+    @classmethod
+    def from_dict(cls, filters: Dict[str, Any]) -> "FilterCriteria":
+        """Create FilterCriteria from a filter dictionary.
+
+        Args:
+            filters: Dictionary containing filter specifications
+
+        Returns:
+            FilterCriteria instance with normalized values
+        """
+        # Normalize file_pattern to list
+        file_pattern = filters.get("file_pattern")
+        if file_pattern is not None:
+            if isinstance(file_pattern, str):
+                file_pattern = [file_pattern]
+            elif not isinstance(file_pattern, list):
+                file_pattern = list(file_pattern)
+
+        # Normalize tags to set
+        tags = filters.get("tags")
+        if tags is not None and not isinstance(tags, set):
+            tags = set(tags) if isinstance(tags, (list, tuple)) else {tags}
+
+        # Normalize folder_structure to set
+        folder_structure = filters.get("folder_structure")
+        if folder_structure is not None and not isinstance(folder_structure, set):
+            folder_structure = (
+                set(folder_structure)
+                if isinstance(folder_structure, (list, tuple))
+                else {folder_structure}
+            )
+
+        # Extract extra filters (any keys not in known filter keys)
+        extra_filters = {
+            k: v for k, v in filters.items() if k not in _KNOWN_FILTER_KEYS
+        }
+
+        return cls(
+            include_dirs=filters.get("include_dirs"),
+            exclude_dirs=filters.get("exclude_dirs"),
+            file_pattern=file_pattern,
+            chunk_type=filters.get("chunk_type"),
+            tags=tags,
+            folder_structure=folder_structure,
+            extra_filters=extra_filters if extra_filters else None,
+        )
+
+
+class FilterEngine:
+    """Unified filter engine for code search results.
+
+    Consolidates filter logic from CodeIndexManager._matches_filters and
+    HybridSearcher._matches_bm25_filters into a single, tested implementation.
+
+    Supports:
+    - Directory filtering (include/exclude with prefix matching)
+    - File pattern matching (substring in relative path)
+    - Chunk type filtering (exact match)
+    - Tag intersection (must have overlapping tags)
+    - Folder structure matching (must have overlapping folder elements)
+    - Generic metadata comparison (arbitrary key-value filters)
+
+    Example:
+        >>> engine = FilterEngine.from_dict({
+        ...     "include_dirs": ["src/"],
+        ...     "chunk_type": "function",
+        ...     "file_pattern": "utils"
+        ... })
+        >>> engine.matches({"relative_path": "src/utils.py", "chunk_type": "function"})
+        True
+    """
+
+    def __init__(self, criteria: FilterCriteria):
+        """Initialize FilterEngine with filter criteria.
+
+        Args:
+            criteria: FilterCriteria instance with normalized filter values
+        """
+        self.criteria = criteria
+
+    @classmethod
+    def from_dict(cls, filters: Dict[str, Any]) -> "FilterEngine":
+        """Factory method to create FilterEngine from a filter dictionary.
+
+        Args:
+            filters: Dictionary containing filter specifications
+
+        Returns:
+            FilterEngine instance ready for filtering
+        """
+        return cls(FilterCriteria.from_dict(filters))
+
+    def matches(self, metadata: Dict[str, Any]) -> bool:
+        """Check if metadata matches all filter criteria.
+
+        Applies filters in order of computational cost (fast reject first):
+        1. Directory filter (fastest - prefix matching)
+        2. File pattern (fast - substring search)
+        3. Chunk type (fast - exact comparison)
+        4. Tags (medium - set intersection)
+        5. Folder structure (medium - set intersection)
+        6. Extra filters (variable - depends on filter)
+
+        Args:
+            metadata: Chunk metadata dictionary to check
+
+        Returns:
+            True if metadata passes all filter criteria, False otherwise
+        """
+        if not self.criteria:
+            return True
+
+        # 1. Directory filter (fast reject)
+        relative_path = metadata.get("relative_path", "")
+        if not matches_directory_filter(
+            relative_path, self.criteria.include_dirs, self.criteria.exclude_dirs
+        ):
+            return False
+
+        # 2. File pattern (substring matching)
+        if self.criteria.file_pattern:
+            if not any(
+                pattern in relative_path for pattern in self.criteria.file_pattern
+            ):
+                return False
+
+        # 3. Chunk type (exact match)
+        if self.criteria.chunk_type:
+            if metadata.get("chunk_type") != self.criteria.chunk_type:
+                return False
+
+        # 4. Tags (set intersection)
+        if self.criteria.tags:
+            chunk_tags = set(metadata.get("tags", []))
+            if not self.criteria.tags.intersection(chunk_tags):
+                return False
+
+        # 5. Folder structure (set intersection)
+        if self.criteria.folder_structure:
+            chunk_folders = set(metadata.get("folder_structure", []))
+            if not self.criteria.folder_structure.intersection(chunk_folders):
+                return False
+
+        # 6. Generic key matching
+        if self.criteria.extra_filters:
+            for key, value in self.criteria.extra_filters.items():
+                if key in metadata and metadata[key] != value:
+                    return False
+
+        return True
+
+    def filter_results(
+        self, results: List[Dict], metadata_key: str = "metadata"
+    ) -> List[Dict]:
+        """Filter a list of search results.
+
+        Args:
+            results: List of result dictionaries
+            metadata_key: Key in each result containing metadata (default: "metadata")
+
+        Returns:
+            List of results that pass the filter criteria
+        """
+        return [r for r in results if self.matches(r.get(metadata_key, r))]
 
 
 def get_effective_filters(project_info: dict) -> tuple:

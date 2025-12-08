@@ -25,7 +25,8 @@ except ImportError:
     torch = None
 
 from embeddings.embedder import EmbeddingResult
-from search.filters import matches_directory_filter
+from search.filters import FilterEngine
+from search.metadata import MetadataStore
 
 # Import graph storage for call graph
 try:
@@ -99,7 +100,7 @@ class CodeIndexManager:
 
         # Initialize components
         self._index = None
-        self._metadata_db = None
+        self._metadata_store = MetadataStore(self.metadata_path)
         self._chunk_ids = []
         self._logger = logging.getLogger(__name__)
         self._logger.info(
@@ -138,67 +139,6 @@ class CodeIndexManager:
                 "sqlitedict not found. Install with: pip install sqlitedict"
             )
 
-    @staticmethod
-    def normalize_chunk_id(chunk_id: str) -> str:
-        """Normalize chunk_id path separators to forward slashes.
-
-                Converts chunk_id to cross-platform compatible format with forward slashes.
-                Handles Windows backslashes and ensures consistent path format.
-
-                Args:
-                    chunk_id: Chunk ID in format "file:lines:type:name"
-
-                Returns:
-                    Normalized chunk_id with forward slashes
-
-                Example:
-                    >>> normalize_chunk_id("search
-        eranker.py:36-137:method:rerank")
-                    "search/reranker.py:36-137:method:rerank"
-        """
-        # Split by chunk_id structure (file:lines:type:name)
-        parts = chunk_id.split(":")
-        if len(parts) >= 4:
-            # First part is the file path - normalize it
-            file_path = parts[0].replace("\\", "/")
-            # Reconstruct chunk_id
-            return f"{file_path}:{':'.join(parts[1:])}"
-        # Fallback: just normalize backslashes
-        return chunk_id.replace("\\", "/")
-
-    @staticmethod
-    def get_chunk_id_variants(chunk_id: str) -> list:
-        """Get all possible chunk_id variants for robust lookup.
-
-        Returns list of chunk_id variants to try during lookup, handling:
-        - Original format (exact match)
-        - Un-double-escaped (fixes MCP JSON transport bug on Windows)
-        - Forward slash normalized (cross-platform)
-        - Backslash normalized (Windows native)
-
-        Args:
-            chunk_id: Original chunk ID to generate variants for
-
-        Returns:
-            List of chunk_id variants to try in lookup order
-        """
-        variants = [
-            chunk_id,  # Original (exact match)
-            chunk_id.replace("\\\\", "\\"),  # Un-double-escape (MCP bug fix)
-            chunk_id.replace("\\", "/"),  # Normalize to forward slash
-            chunk_id.replace("/", "\\"),  # Try backslash variant
-        ]
-
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_variants = []
-        for variant in variants:
-            if variant not in seen:
-                seen.add(variant)
-                unique_variants.append(variant)
-
-        return unique_variants
-
     @property
     def index(self):
         """Lazy loading of FAISS index."""
@@ -207,13 +147,12 @@ class CodeIndexManager:
         return self._index
 
     @property
-    def metadata_db(self):
-        """Lazy loading of metadata database."""
-        if self._metadata_db is None:
-            self._metadata_db = SqliteDict(
-                str(self.metadata_path), autocommit=False, journal_mode="WAL"
-            )
-        return self._metadata_db
+    def metadata_store(self):
+        """Access to metadata storage layer.
+
+        Returns the MetadataStore instance for chunk metadata operations.
+        """
+        return self._metadata_store
 
     def _load_index(self):
         """Load existing FAISS index or create new one."""
@@ -346,10 +285,7 @@ class CodeIndexManager:
             self._chunk_ids.append(chunk_id)
 
             # Store in metadata database
-            self.metadata_db[chunk_id] = {
-                "index_id": start_id + i,
-                "metadata": result.metadata,
-            }
+            self.metadata_store.set(chunk_id, start_id + i, result.metadata)
 
             # Populate call graph
             if self.graph_storage is not None:
@@ -362,7 +298,7 @@ class CodeIndexManager:
 
         # Commit metadata in a single transaction for performance
         try:
-            self.metadata_db.commit()
+            self.metadata_store.commit()
         except Exception:
             # If commit is unavailable for some reason, continue without failing
             pass
@@ -458,7 +394,7 @@ class CodeIndexManager:
                 break
 
             chunk_id = self._chunk_ids[index_id]
-            metadata_entry = self.metadata_db.get(chunk_id)
+            metadata_entry = self.metadata_store.get(chunk_id)
 
             if metadata_entry is None:
                 continue
@@ -479,47 +415,12 @@ class CodeIndexManager:
     def _matches_filters(
         self, metadata: Dict[str, Any], filters: Dict[str, Any]
     ) -> bool:
-        """Check if metadata matches the provided filters."""
-        for key, value in filters.items():
-            if key == "include_dirs" or key == "exclude_dirs":
-                # Directory filtering - handled together
-                include_dirs = filters.get("include_dirs")
-                exclude_dirs = filters.get("exclude_dirs")
-                relative_path = metadata.get("relative_path", "")
-                if not matches_directory_filter(
-                    relative_path, include_dirs, exclude_dirs
-                ):
-                    return False
-                # Skip further processing of these keys
-                continue
-            elif key == "file_pattern":
-                # Pattern matching for file paths
-                if not any(
-                    pattern in metadata.get("relative_path", "") for pattern in value
-                ):
-                    return False
-            elif key == "chunk_type":
-                # Exact match for chunk type
-                if metadata.get("chunk_type") != value:
-                    return False
-            elif key == "tags":
-                # Tag intersection
-                chunk_tags = set(metadata.get("tags", []))
-                required_tags = set(value if isinstance(value, list) else [value])
-                if not required_tags.intersection(chunk_tags):
-                    return False
-            elif key == "folder_structure":
-                # Check if any of the required folders are in the path
-                chunk_folders = set(metadata.get("folder_structure", []))
-                required_folders = set(value if isinstance(value, list) else [value])
-                if not required_folders.intersection(chunk_folders):
-                    return False
-            elif key in metadata:
-                # Direct metadata comparison
-                if metadata[key] != value:
-                    return False
+        """Check if metadata matches the provided filters.
 
-        return True
+        Uses FilterEngine for unified filter logic across the codebase.
+        Kept as a method for backward compatibility.
+        """
+        return FilterEngine.from_dict(filters).matches(metadata)
 
     def get_chunk_by_id(self, chunk_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve chunk metadata by ID with path normalization.
@@ -534,10 +435,10 @@ class CodeIndexManager:
             Chunk metadata dict if found, None otherwise
         """
         # Try multiple path separator variants for robust lookup
-        variants = self.get_chunk_id_variants(chunk_id)
+        variants = MetadataStore.get_chunk_id_variants(chunk_id)
 
         for variant in variants:
-            metadata_entry = self.metadata_db.get(variant)
+            metadata_entry = self.metadata_store.get(variant)
             if metadata_entry:
                 if variant != chunk_id:
                     self._logger.debug(
@@ -556,8 +457,8 @@ class CodeIndexManager:
         """Find chunks similar to a given chunk."""
         # Try all path variants to handle Windows/Unix differences
         metadata_entry = None
-        for variant in self.get_chunk_id_variants(chunk_id):
-            metadata_entry = self.metadata_db.get(variant)
+        for variant in MetadataStore.get_chunk_id_variants(chunk_id):
+            metadata_entry = self.metadata_store.get(variant)
             if metadata_entry:
                 chunk_id = variant  # Use the variant that worked
                 break
@@ -616,8 +517,8 @@ class CodeIndexManager:
             metadata_entry = None
             resolved_chunk_id = original_chunk_id  # Default to original
 
-            for variant in self.get_chunk_id_variants(original_chunk_id):
-                metadata_entry = self.metadata_db.get(variant)
+            for variant in MetadataStore.get_chunk_id_variants(original_chunk_id):
+                metadata_entry = self.metadata_store.get(variant)
                 if metadata_entry:
                     resolved_chunk_id = variant  # Use the variant that worked
                     break
@@ -663,7 +564,7 @@ class CodeIndexManager:
                 if chunk_id == query_chunk_id:
                     continue
 
-                metadata_entry = self.metadata_db.get(chunk_id)
+                metadata_entry = self.metadata_store.get(chunk_id)
                 if metadata_entry is None:
                     continue
 
@@ -704,7 +605,7 @@ class CodeIndexManager:
 
         # Find chunks to remove
         for chunk_id in self._chunk_ids:
-            metadata_entry = self.metadata_db.get(chunk_id)
+            metadata_entry = self.metadata_store.get(chunk_id)
             if not metadata_entry:
                 continue
 
@@ -724,7 +625,7 @@ class CodeIndexManager:
 
         # Remove chunks from metadata
         for chunk_id in chunks_to_remove:
-            del self.metadata_db[chunk_id]
+            self.metadata_store.delete(chunk_id)
 
         # Note: We don't remove from FAISS index directly as it's complex
         # Instead, we'll rebuild the index periodically or on demand
@@ -733,7 +634,7 @@ class CodeIndexManager:
 
         # Commit removals in batch
         try:
-            self.metadata_db.commit()
+            self.metadata_store.commit()
         except Exception:
             pass
         return len(chunks_to_remove)
@@ -767,7 +668,7 @@ class CodeIndexManager:
 
         # Single pass to identify chunks to remove
         for position, chunk_id in enumerate(self._chunk_ids):
-            metadata_entry = self.metadata_db.get(chunk_id)
+            metadata_entry = self.metadata_store.get(chunk_id)
             if not metadata_entry:
                 continue
 
@@ -887,19 +788,17 @@ class CodeIndexManager:
 
             # Remove chunks from metadata and update index_ids
             for chunk_id in chunks_to_remove_ids:
-                if chunk_id in self.metadata_db:
-                    del self.metadata_db[chunk_id]
+                if chunk_id in self.metadata_store:
+                    self.metadata_store.delete(chunk_id)
 
             # Update metadata with new index positions
             for new_pos, chunk_id in enumerate(self._chunk_ids):
-                if chunk_id in self.metadata_db:
-                    metadata_entry = self.metadata_db[chunk_id]
-                    metadata_entry["index_id"] = new_pos
-                    self.metadata_db[chunk_id] = metadata_entry
+                if chunk_id in self.metadata_store:
+                    self.metadata_store.update_index_id(chunk_id, new_pos)
 
             # Commit all changes
             try:
-                self.metadata_db.commit()
+                self.metadata_store.commit()
             except Exception as e:
                 self._logger.warning(f"Failed to commit metadata changes: {e}")
 
@@ -1142,7 +1041,7 @@ class CodeIndexManager:
         tag_counts = {}
 
         for chunk_id in self._chunk_ids:
-            metadata_entry = self.metadata_db.get(chunk_id)
+            metadata_entry = self.metadata_store.get(chunk_id)
             if not metadata_entry:
                 continue
 
@@ -1218,9 +1117,9 @@ class CodeIndexManager:
                 issues.append(
                     f"FAISS index is None but chunk_ids list has {len(self._chunk_ids)} entries"
                 )
-            if len(self.metadata_db) > 0:
+            if len(self.metadata_store) > 0:
                 issues.append(
-                    f"FAISS index is None but metadata has {len(self.metadata_db)} entries"
+                    f"FAISS index is None but metadata has {len(self.metadata_store)} entries"
                 )
             return len(issues) == 0, issues
 
@@ -1235,7 +1134,7 @@ class CodeIndexManager:
         # Check 2: All chunk_ids have metadata entries
         missing_metadata = []
         for i, chunk_id in enumerate(self._chunk_ids):
-            metadata_entry = self.metadata_db.get(chunk_id)
+            metadata_entry = self.metadata_store.get(chunk_id)
             if not metadata_entry:
                 missing_metadata.append(f"{chunk_id} (position {i})")
             elif "index_id" in metadata_entry:
@@ -1262,7 +1161,7 @@ class CodeIndexManager:
             )
 
         # Check 4: Metadata database size consistency
-        metadata_size = len(self.metadata_db)
+        metadata_size = len(self.metadata_store)
         if metadata_size != chunk_ids_size:
             issues.append(
                 f"Metadata database size ({metadata_size}) != chunk_ids length ({chunk_ids_size})"
@@ -1286,10 +1185,11 @@ class CodeIndexManager:
 
     def clear_index(self):
         """Clear the entire index and metadata."""
-        # Close database connection
-        if self._metadata_db is not None:
-            self._metadata_db.close()
-            self._metadata_db = None
+        # Close metadata store
+        if self._metadata_store is not None:
+            self._metadata_store.close()
+            # Reinitialize metadata store for future operations
+            self._metadata_store = MetadataStore(self.metadata_path)
 
         # Remove files
         for file_path in [
@@ -1403,12 +1303,11 @@ class CodeIndexManager:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit - cleanup resources."""
-        if self._metadata_db is not None:
-            self._metadata_db.close()
-            self._metadata_db = None
+        if self._metadata_store is not None:
+            self._metadata_store.close()
         return False  # Don't suppress exceptions
 
     def __del__(self):
         """Cleanup when object is destroyed."""
-        if hasattr(self, "_metadata_db") and self._metadata_db is not None:
-            self._metadata_db.close()
+        if hasattr(self, "_metadata_store") and self._metadata_store is not None:
+            self._metadata_store.close()

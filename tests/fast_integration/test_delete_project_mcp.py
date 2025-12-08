@@ -93,9 +93,10 @@ async def test_delete_project_full_workflow(mock_embedder):
         # Step 2: Verify project is indexed
         print("\n[STEP 2] Verifying project is indexed...")
         status = await tool_handlers.handle_get_index_status({})
-        assert status["indexed"] is True
-        assert status["chunk_count"] > 0
-        print(f"  [OK] Project indexed with {status['chunk_count']} chunks")
+        assert status["current_project"] is not None
+        chunk_count = status["index_statistics"].get("total_chunks", 0)
+        assert chunk_count > 0
+        print(f"  [OK] Project indexed with {chunk_count} chunks")
 
         # Step 3: Delete the project via MCP tool
         print("\n[STEP 3] Deleting project via MCP tool...")
@@ -111,7 +112,10 @@ async def test_delete_project_full_workflow(mock_embedder):
         # Step 4: Verify project is no longer indexed
         print("\n[STEP 4] Verifying project is deleted...")
         status_after = await tool_handlers.handle_get_index_status({})
-        assert status_after.get("indexed") is False
+        # After deletion, current_project should not be the test project
+        # (it may be None or fall back to another project)
+        current = status_after.get("current_project")
+        assert current is None or str(project_dir) not in str(current)
         print("  [OK] Project no longer indexed")
 
 

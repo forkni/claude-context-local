@@ -15,7 +15,7 @@ except ImportError:
     torch = None
 
 from .bm25_index import BM25Index
-from .filters import matches_directory_filter
+from .filters import FilterEngine
 from .indexer import CodeIndexManager
 from .reranker import RRFReranker, SearchResult
 
@@ -742,7 +742,7 @@ class HybridSearcher:
         filtered_results = {}
         for chunk_id, result in all_results.items():
             # Get metadata from dense index
-            metadata_entry = self.dense_index.metadata_db.get(chunk_id)
+            metadata_entry = self.dense_index.metadata_store.get(chunk_id)
             if metadata_entry:
                 metadata = metadata_entry.get("metadata", {})
                 if self.dense_index._matches_filters(metadata, filters):
@@ -942,7 +942,7 @@ class HybridSearcher:
                     # Get chunk embedding from dense index
                     # reranker.SearchResult now uses chunk_id
                     chunk_id = result.chunk_id
-                    chunk_metadata = self.dense_index.metadata_db.get(chunk_id)
+                    chunk_metadata = self.dense_index.metadata_store.get(chunk_id)
                     if chunk_metadata and "embedding" in chunk_metadata:
                         chunk_emb = np.array(chunk_metadata["embedding"])
                         # Compute cosine similarity
@@ -1059,36 +1059,12 @@ class HybridSearcher:
             return []
 
     def _matches_bm25_filters(self, metadata: Dict, filters: Dict) -> bool:
-        """Check if BM25 result metadata matches filters."""
-        for key, value in filters.items():
-            if key == "include_dirs" or key == "exclude_dirs":
-                # Directory filtering - handled together
-                include_dirs = filters.get("include_dirs")
-                exclude_dirs = filters.get("exclude_dirs")
-                relative_path = metadata.get("relative_path", "")
-                if not matches_directory_filter(
-                    relative_path, include_dirs, exclude_dirs
-                ):
-                    return False
-                # Skip further processing of these keys
-                continue
-            elif key == "file_pattern":
-                # Pattern matching for file paths (substring match)
-                patterns = value if isinstance(value, list) else [value]
-                relative_path = metadata.get("relative_path", "")
-                if not any(pattern in relative_path for pattern in patterns):
-                    return False
-            elif key == "chunk_type":
-                # Exact match for chunk type
-                if metadata.get("chunk_type") != value:
-                    return False
-            elif key == "tags":
-                # Tag intersection
-                chunk_tags = set(metadata.get("tags", []))
-                required_tags = set(value if isinstance(value, list) else [value])
-                if not required_tags.intersection(chunk_tags):
-                    return False
-        return True
+        """Check if BM25 result metadata matches filters.
+
+        Uses FilterEngine for unified filter logic across the codebase.
+        Kept as a method for backward compatibility.
+        """
+        return FilterEngine.from_dict(filters).matches(metadata)
 
     def _search_dense(
         self,
@@ -1401,7 +1377,7 @@ class HybridSearcher:
         metadata = {}
 
         for chunk_id in self.dense_index._chunk_ids:
-            entry = self.dense_index.metadata_db.get(chunk_id)
+            entry = self.dense_index.metadata_store.get(chunk_id)
             if entry:
                 content = entry["metadata"].get("content", "")
                 if content:
