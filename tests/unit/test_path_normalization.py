@@ -14,6 +14,7 @@ chunk_id creation and edge storage.
 import pytest
 
 from search.indexer import CodeIndexManager
+from search.metadata import MetadataStore
 
 
 class TestChunkIdNormalization:
@@ -22,25 +23,25 @@ class TestChunkIdNormalization:
     def test_normalize_backslash_to_forward_slash(self):
         """Windows backslash paths should normalize to forward slash."""
         chunk_id = r"search\reranker.py:36-137:method:rerank"
-        result = CodeIndexManager.normalize_chunk_id(chunk_id)
+        result = MetadataStore.normalize_chunk_id(chunk_id)
         assert result == "search/reranker.py:36-137:method:rerank"
 
     def test_normalize_already_forward_slash(self):
         """Forward slash paths should remain unchanged."""
         chunk_id = "search/reranker.py:36-137:method:rerank"
-        result = CodeIndexManager.normalize_chunk_id(chunk_id)
+        result = MetadataStore.normalize_chunk_id(chunk_id)
         assert result == "search/reranker.py:36-137:method:rerank"
 
     def test_normalize_mixed_separators(self):
         """Mixed path separators should all become forward slash."""
         chunk_id = r"mcp_server\tools/impact_analysis.py:71-500:class:Analyzer"
-        result = CodeIndexManager.normalize_chunk_id(chunk_id)
+        result = MetadataStore.normalize_chunk_id(chunk_id)
         assert result == "mcp_server/tools/impact_analysis.py:71-500:class:Analyzer"
 
     def test_normalize_nested_paths(self):
         """Deeply nested paths should normalize correctly."""
         chunk_id = r"graph\relationship_extractors\type_extractor.py:20-356:class:TypeAnnotationExtractor"
-        result = CodeIndexManager.normalize_chunk_id(chunk_id)
+        result = MetadataStore.normalize_chunk_id(chunk_id)
         assert (
             result
             == "graph/relationship_extractors/type_extractor.py:20-356:class:TypeAnnotationExtractor"
@@ -49,7 +50,7 @@ class TestChunkIdNormalization:
     def test_normalize_preserves_colon_structure(self):
         """Normalization should not affect colon separators in chunk_id format."""
         chunk_id = r"file.py:10-20:function:my_func"
-        result = CodeIndexManager.normalize_chunk_id(chunk_id)
+        result = MetadataStore.normalize_chunk_id(chunk_id)
         assert result.count(":") == 3  # file:lines:type:name
         assert result == "file.py:10-20:function:my_func"
 
@@ -60,39 +61,39 @@ class TestChunkIdVariants:
     def test_variants_include_original(self):
         """First variant should always be the original chunk_id."""
         chunk_id = "search/reranker.py:36-137:method:rerank"
-        variants = CodeIndexManager.get_chunk_id_variants(chunk_id)
+        variants = MetadataStore.get_chunk_id_variants(chunk_id)
         assert variants[0] == chunk_id
 
     def test_variants_include_un_double_escaped(self):
         """Should include un-double-escaped variant to fix MCP bug."""
         chunk_id = r"search\\reranker.py:36-137:method:rerank"
-        variants = CodeIndexManager.get_chunk_id_variants(chunk_id)
+        variants = MetadataStore.get_chunk_id_variants(chunk_id)
         # Un-double-escape: \\\\ -> \\
         assert r"search\reranker.py:36-137:method:rerank" in variants
 
     def test_variants_include_forward_slash(self):
         """Should include forward slash variant for cross-platform compat."""
         chunk_id = r"search\reranker.py:36-137:method:rerank"
-        variants = CodeIndexManager.get_chunk_id_variants(chunk_id)
+        variants = MetadataStore.get_chunk_id_variants(chunk_id)
         assert "search/reranker.py:36-137:method:rerank" in variants
 
     def test_variants_include_backslash(self):
         """Should include backslash variant to match Windows storage."""
         chunk_id = "search/reranker.py:36-137:method:rerank"
-        variants = CodeIndexManager.get_chunk_id_variants(chunk_id)
+        variants = MetadataStore.get_chunk_id_variants(chunk_id)
         assert r"search\reranker.py:36-137:method:rerank" in variants
 
     def test_variants_deduplicated(self):
         """Duplicate variants should be removed."""
         chunk_id = "search/reranker.py:36-137:method:rerank"
-        variants = CodeIndexManager.get_chunk_id_variants(chunk_id)
+        variants = MetadataStore.get_chunk_id_variants(chunk_id)
         # Should not have duplicates
         assert len(variants) == len(set(variants))
 
     def test_variants_order_preserved(self):
         """Variants should be in priority order: original, un-escaped, forward, back."""
         chunk_id = r"search\reranker.py:36-137:method:rerank"
-        variants = CodeIndexManager.get_chunk_id_variants(chunk_id)
+        variants = MetadataStore.get_chunk_id_variants(chunk_id)
         # Original first
         assert variants[0] == chunk_id
         # Others follow (exact order may vary due to deduplication)
@@ -111,20 +112,22 @@ class TestChunkIdLookup:
         # Create index manager
         manager = CodeIndexManager(storage_dir=str(storage_dir))
 
-        # Mock the metadata_db with test data
+        # Mock the metadata with test data
         test_metadata = {
-            "metadata": {
-                "chunk_id": r"search\reranker.py:36-137:method:rerank",
-                "file_path": r"search\reranker.py",
-                "start_line": 36,
-                "end_line": 137,
-                "chunk_type": "method",
-                "name": "rerank",
-            }
+            "chunk_id": r"search\reranker.py:36-137:method:rerank",
+            "file_path": r"search\reranker.py",
+            "start_line": 36,
+            "end_line": 137,
+            "chunk_type": "method",
+            "name": "rerank",
         }
 
         # Store with Windows backslash (as it would be indexed on Windows)
-        manager.metadata_db[r"search\reranker.py:36-137:method:rerank"] = test_metadata
+        manager.metadata_store.set(
+            r"search\reranker.py:36-137:method:rerank",
+            index_id=0,
+            metadata=test_metadata,
+        )
 
         return manager
 
@@ -183,7 +186,7 @@ class TestCrossPlatformPaths:
         """Simulate indexing on Windows (backslash paths)."""
         # This is what happens during chunking on Windows
         windows_path = r"mcp_server\tools\code_relationship_analyzer.py"
-        normalized = CodeIndexManager.normalize_chunk_id(
+        normalized = MetadataStore.normalize_chunk_id(
             f"{windows_path}:71-500:class:CodeRelationshipAnalyzer"
         )
 
@@ -194,7 +197,7 @@ class TestCrossPlatformPaths:
     def test_unix_path_indexing(self):
         """Simulate indexing on Unix (forward slash paths)."""
         unix_path = "mcp_server/tools/code_relationship_analyzer.py"
-        normalized = CodeIndexManager.normalize_chunk_id(
+        normalized = MetadataStore.normalize_chunk_id(
             f"{unix_path}:71-500:class:CodeRelationshipAnalyzer"
         )
 
@@ -211,7 +214,7 @@ class TestCrossPlatformPaths:
         lookup_id = "search/reranker.py:36-137:method:rerank"
 
         # Get variants for lookup
-        variants = CodeIndexManager.get_chunk_id_variants(lookup_id)
+        variants = MetadataStore.get_chunk_id_variants(lookup_id)
 
         # Windows indexed path should be in variants
         assert (
@@ -240,13 +243,15 @@ class TestRegressionIssue1:
 
         # Chunk indexed with Windows backslash (real scenario)
         test_metadata = {
-            "metadata": {
-                "chunk_id": r"search\reranker.py:36-137:method:rerank",
-                "file_path": r"search\reranker.py",
-                "name": "rerank",
-            }
+            "chunk_id": r"search\reranker.py:36-137:method:rerank",
+            "file_path": r"search\reranker.py",
+            "name": "rerank",
         }
-        manager.metadata_db[r"search\reranker.py:36-137:method:rerank"] = test_metadata
+        manager.metadata_store.set(
+            r"search\reranker.py:36-137:method:rerank",
+            index_id=0,
+            metadata=test_metadata,
+        )
 
         return manager
 

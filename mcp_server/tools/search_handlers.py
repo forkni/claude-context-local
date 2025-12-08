@@ -24,6 +24,7 @@ from search.config import (
 from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
+from search.metadata import MetadataStore
 from search.query_router import QueryRouter
 
 logger = logging.getLogger(__name__)
@@ -452,7 +453,7 @@ async def handle_find_similar_code(arguments: Dict[str, Any]) -> dict:
     # Normalize chunk_id path separators
     # Use CodeIndexManager's normalize_chunk_id for proper cross-platform handling
     if chunk_id:
-        chunk_id = CodeIndexManager.normalize_chunk_id(chunk_id)
+        chunk_id = MetadataStore.normalize_chunk_id(chunk_id)
 
     searcher = get_searcher()
 
@@ -504,7 +505,7 @@ async def handle_find_connections(arguments: Dict[str, Any]) -> dict:
     # Fixes Issue 2: Ensures Windows backslash paths work correctly
     # Use CodeIndexManager's normalize_chunk_id for proper cross-platform handling
     if chunk_id:
-        chunk_id = CodeIndexManager.normalize_chunk_id(chunk_id)
+        chunk_id = MetadataStore.normalize_chunk_id(chunk_id)
 
     logger.info(
         f"[FIND_CONNECTIONS] chunk_id={chunk_id}, symbol_name={symbol_name}, depth={max_depth}"
