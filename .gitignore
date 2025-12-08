@@ -232,7 +232,7 @@ __marimo__/
 _archive/
 benchmark_results/
 analysis/
-logs/                    # Workflow execution logs and analysis reports
+/logs/                   # Workflow execution logs and analysis reports (entire directory)
 scripts/git
 CLAUDE.md
 MEMORY.md
