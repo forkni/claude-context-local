@@ -3,7 +3,7 @@
 import json
 import logging
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 # Model registry with specifications
@@ -57,48 +57,51 @@ MODEL_REGISTRY = {
 
 
 @dataclass
-class SearchConfig:
-    """Configuration for search behavior."""
+class EmbeddingConfig:
+    """Embedding model configuration (4 fields)."""
 
-    # Embedding Model Configuration
-    embedding_model_name: str = "google/embeddinggemma-300m"
-    model_dimension: int = 768
-    embedding_batch_size: int = 128  # Dynamic based on model, see MODEL_REGISTRY
+    model_name: str = "google/embeddinggemma-300m"
+    dimension: int = 768
+    batch_size: int = 128  # Dynamic based on model, see MODEL_REGISTRY
     query_cache_size: int = 128  # LRU cache size for query embeddings
 
-    # Search Mode Configuration
-    default_search_mode: str = "hybrid"  # hybrid, semantic, bm25, auto
-    enable_hybrid_search: bool = True
+
+@dataclass
+class SearchModeConfig:
+    """Search mode and BM25 settings (12 fields)."""
+
+    default_mode: str = "hybrid"  # hybrid, semantic, bm25, auto
+    enable_hybrid: bool = True
 
     # Hybrid Search Weights
     bm25_weight: float = 0.4
     dense_weight: float = 0.6
 
-    # Performance Settings
-    use_parallel_search: bool = True
-    max_parallel_workers: int = 2
-
-    # Multi-Model Routing Configuration
-    multi_model_enabled: bool = True  # Enable intelligent query routing across models
-    routing_default_model: str = (
-        "bge_m3"  # Default model key for routing (most balanced)
-    )
-
-    # Parallel Chunking Configuration
-    enable_parallel_chunking: bool = True  # Enable parallel file chunking
-    max_chunking_workers: int = 4  # ThreadPoolExecutor workers for chunking
-
     # BM25 Configuration
     bm25_k_parameter: int = 100
     bm25_use_stopwords: bool = True
-    bm25_use_stemming: bool = (
-        True  # Snowball stemmer for word normalization (indexing→index)
-    )
+    bm25_use_stemming: bool = True  # Snowball stemmer for word normalization
     min_bm25_score: float = 0.1
 
     # Reranking Configuration
     rrf_k_parameter: int = 100
     enable_result_reranking: bool = True
+
+    # Search Result Limits
+    default_k: int = 5
+    max_k: int = 50
+
+
+@dataclass
+class PerformanceConfig:
+    """GPU, parallelism, caching settings (13 fields)."""
+
+    use_parallel_search: bool = True
+    max_parallel_workers: int = 2
+
+    # Parallel Chunking Configuration
+    enable_parallel_chunking: bool = True  # Enable parallel file chunking
+    max_chunking_workers: int = 4  # ThreadPoolExecutor workers for chunking
 
     # GPU Configuration
     prefer_gpu: bool = True
@@ -117,26 +120,431 @@ class SearchConfig:
     enable_auto_reindex: bool = True
     max_index_age_minutes: float = 5.0
 
-    # Multi-hop Search Configuration
-    # Optimal settings validated through empirical testing (93%+ queries benefit)
-    enable_multi_hop: bool = True
-    multi_hop_count: int = 2  # Number of expansion hops
-    multi_hop_expansion: float = 0.3  # Expansion factor per hop
-    multi_hop_initial_k_multiplier: float = (
-        2.0  # Multiplier for initial results (k * multiplier)
-    )
 
-    # Search Result Limits
-    default_k: int = 5
-    max_k: int = 50
+@dataclass
+class MultiHopConfig:
+    """Multi-hop search settings (4 fields)."""
+
+    enabled: bool = True
+    hop_count: int = 2  # Number of expansion hops
+    expansion: float = 0.3  # Expansion factor per hop
+    initial_k_multiplier: float = 2.0  # Multiplier for initial results (k * multiplier)
+
+
+@dataclass
+class RoutingConfig:
+    """Multi-model routing settings (2 fields)."""
+
+    multi_model_enabled: bool = True  # Enable intelligent query routing across models
+    default_model: str = "bge_m3"  # Default model key for routing (most balanced)
+
+
+class SearchConfig:
+    """Root configuration with nested sub-configs.
+
+    Phase 4 Item 13: Config Splitting
+    - Split 35 monolithic fields into 5 sub-configs for better organization
+    - Backward-compatible property aliases during migration (Phase 13-B)
+
+    Supports both initialization styles:
+        # New style (nested configs)
+        config = SearchConfig(embedding=EmbeddingConfig(model_name="..."))
+
+        # Old style (flat field names) - backward compatible
+        config = SearchConfig(embedding_model_name="...", model_dimension=768)
+    """
+
+    def __init__(
+        self,
+        embedding: Optional[EmbeddingConfig] = None,
+        search_mode: Optional[SearchModeConfig] = None,
+        performance: Optional[PerformanceConfig] = None,
+        multi_hop: Optional[MultiHopConfig] = None,
+        routing: Optional[RoutingConfig] = None,
+        **kwargs,
+    ):
+        """Initialize SearchConfig with nested or flat field names.
+
+        Args:
+            embedding: EmbeddingConfig instance (optional)
+            search_mode: SearchModeConfig instance (optional)
+            performance: PerformanceConfig instance (optional)
+            multi_hop: MultiHopConfig instance (optional)
+            routing: RoutingConfig instance (optional)
+            **kwargs: Flat field names for backward compatibility
+        """
+        # Initialize nested configs with defaults
+        self.embedding = embedding if embedding is not None else EmbeddingConfig()
+        self.search_mode = (
+            search_mode if search_mode is not None else SearchModeConfig()
+        )
+        self.performance = (
+            performance if performance is not None else PerformanceConfig()
+        )
+        self.multi_hop = multi_hop if multi_hop is not None else MultiHopConfig()
+        self.routing = routing if routing is not None else RoutingConfig()
+
+        # Handle flat field names via property setters (backward compatibility)
+        if kwargs:
+            for key, value in kwargs.items():
+                if hasattr(self, key):
+                    setattr(self, key, value)
+                else:
+                    raise TypeError(
+                        f"SearchConfig.__init__() got an unexpected keyword argument '{key}'"
+                    )
+
+    # ==================== BACKWARD COMPATIBILITY ALIASES ====================
+    # Phase 13-B: Temporary aliases for gradual migration
+    # These will be removed in Phase 13-C after all consumers are updated
+    # ========================================================================
+
+    # EmbeddingConfig aliases (4 fields)
+    @property
+    def embedding_model_name(self) -> str:
+        return self.embedding.model_name
+
+    @embedding_model_name.setter
+    def embedding_model_name(self, value: str):
+        self.embedding.model_name = value
+
+    @property
+    def model_dimension(self) -> int:
+        return self.embedding.dimension
+
+    @model_dimension.setter
+    def model_dimension(self, value: int):
+        self.embedding.dimension = value
+
+    @property
+    def embedding_batch_size(self) -> int:
+        return self.embedding.batch_size
+
+    @embedding_batch_size.setter
+    def embedding_batch_size(self, value: int):
+        self.embedding.batch_size = value
+
+    @property
+    def query_cache_size(self) -> int:
+        return self.embedding.query_cache_size
+
+    @query_cache_size.setter
+    def query_cache_size(self, value: int):
+        self.embedding.query_cache_size = value
+
+    # SearchModeConfig aliases (12 fields)
+    @property
+    def default_search_mode(self) -> str:
+        return self.search_mode.default_mode
+
+    @default_search_mode.setter
+    def default_search_mode(self, value: str):
+        self.search_mode.default_mode = value
+
+    @property
+    def enable_hybrid_search(self) -> bool:
+        return self.search_mode.enable_hybrid
+
+    @enable_hybrid_search.setter
+    def enable_hybrid_search(self, value: bool):
+        self.search_mode.enable_hybrid = value
+
+    @property
+    def bm25_weight(self) -> float:
+        return self.search_mode.bm25_weight
+
+    @bm25_weight.setter
+    def bm25_weight(self, value: float):
+        self.search_mode.bm25_weight = value
+
+    @property
+    def dense_weight(self) -> float:
+        return self.search_mode.dense_weight
+
+    @dense_weight.setter
+    def dense_weight(self, value: float):
+        self.search_mode.dense_weight = value
+
+    @property
+    def bm25_k_parameter(self) -> int:
+        return self.search_mode.bm25_k_parameter
+
+    @bm25_k_parameter.setter
+    def bm25_k_parameter(self, value: int):
+        self.search_mode.bm25_k_parameter = value
+
+    @property
+    def bm25_use_stopwords(self) -> bool:
+        return self.search_mode.bm25_use_stopwords
+
+    @bm25_use_stopwords.setter
+    def bm25_use_stopwords(self, value: bool):
+        self.search_mode.bm25_use_stopwords = value
+
+    @property
+    def bm25_use_stemming(self) -> bool:
+        return self.search_mode.bm25_use_stemming
+
+    @bm25_use_stemming.setter
+    def bm25_use_stemming(self, value: bool):
+        self.search_mode.bm25_use_stemming = value
+
+    @property
+    def min_bm25_score(self) -> float:
+        return self.search_mode.min_bm25_score
+
+    @min_bm25_score.setter
+    def min_bm25_score(self, value: float):
+        self.search_mode.min_bm25_score = value
+
+    @property
+    def rrf_k_parameter(self) -> int:
+        return self.search_mode.rrf_k_parameter
+
+    @rrf_k_parameter.setter
+    def rrf_k_parameter(self, value: int):
+        self.search_mode.rrf_k_parameter = value
+
+    @property
+    def enable_result_reranking(self) -> bool:
+        return self.search_mode.enable_result_reranking
+
+    @enable_result_reranking.setter
+    def enable_result_reranking(self, value: bool):
+        self.search_mode.enable_result_reranking = value
+
+    @property
+    def default_k(self) -> int:
+        return self.search_mode.default_k
+
+    @default_k.setter
+    def default_k(self, value: int):
+        self.search_mode.default_k = value
+
+    @property
+    def max_k(self) -> int:
+        return self.search_mode.max_k
+
+    @max_k.setter
+    def max_k(self, value: int):
+        self.search_mode.max_k = value
+
+    # PerformanceConfig aliases (13 fields)
+    @property
+    def use_parallel_search(self) -> bool:
+        return self.performance.use_parallel_search
+
+    @use_parallel_search.setter
+    def use_parallel_search(self, value: bool):
+        self.performance.use_parallel_search = value
+
+    @property
+    def max_parallel_workers(self) -> int:
+        return self.performance.max_parallel_workers
+
+    @max_parallel_workers.setter
+    def max_parallel_workers(self, value: int):
+        self.performance.max_parallel_workers = value
+
+    @property
+    def enable_parallel_chunking(self) -> bool:
+        return self.performance.enable_parallel_chunking
+
+    @enable_parallel_chunking.setter
+    def enable_parallel_chunking(self, value: bool):
+        self.performance.enable_parallel_chunking = value
+
+    @property
+    def max_chunking_workers(self) -> int:
+        return self.performance.max_chunking_workers
+
+    @max_chunking_workers.setter
+    def max_chunking_workers(self, value: int):
+        self.performance.max_chunking_workers = value
+
+    @property
+    def prefer_gpu(self) -> bool:
+        return self.performance.prefer_gpu
+
+    @prefer_gpu.setter
+    def prefer_gpu(self, value: bool):
+        self.performance.prefer_gpu = value
+
+    @property
+    def gpu_memory_threshold(self) -> float:
+        return self.performance.gpu_memory_threshold
+
+    @gpu_memory_threshold.setter
+    def gpu_memory_threshold(self, value: float):
+        self.performance.gpu_memory_threshold = value
+
+    @property
+    def enable_fp16(self) -> bool:
+        return self.performance.enable_fp16
+
+    @enable_fp16.setter
+    def enable_fp16(self, value: bool):
+        self.performance.enable_fp16 = value
+
+    @property
+    def prefer_bf16(self) -> bool:
+        return self.performance.prefer_bf16
+
+    @prefer_bf16.setter
+    def prefer_bf16(self, value: bool):
+        self.performance.prefer_bf16 = value
+
+    @property
+    def enable_dynamic_batch_size(self) -> bool:
+        return self.performance.enable_dynamic_batch_size
+
+    @enable_dynamic_batch_size.setter
+    def enable_dynamic_batch_size(self, value: bool):
+        self.performance.enable_dynamic_batch_size = value
+
+    @property
+    def dynamic_batch_min(self) -> int:
+        return self.performance.dynamic_batch_min
+
+    @dynamic_batch_min.setter
+    def dynamic_batch_min(self, value: int):
+        self.performance.dynamic_batch_min = value
+
+    @property
+    def dynamic_batch_max(self) -> int:
+        return self.performance.dynamic_batch_max
+
+    @dynamic_batch_max.setter
+    def dynamic_batch_max(self, value: int):
+        self.performance.dynamic_batch_max = value
+
+    @property
+    def enable_auto_reindex(self) -> bool:
+        return self.performance.enable_auto_reindex
+
+    @enable_auto_reindex.setter
+    def enable_auto_reindex(self, value: bool):
+        self.performance.enable_auto_reindex = value
+
+    @property
+    def max_index_age_minutes(self) -> float:
+        return self.performance.max_index_age_minutes
+
+    @max_index_age_minutes.setter
+    def max_index_age_minutes(self, value: float):
+        self.performance.max_index_age_minutes = value
+
+    # MultiHopConfig aliases (4 fields)
+    @property
+    def enable_multi_hop(self) -> bool:
+        return self.multi_hop.enabled
+
+    @enable_multi_hop.setter
+    def enable_multi_hop(self, value: bool):
+        self.multi_hop.enabled = value
+
+    @property
+    def multi_hop_count(self) -> int:
+        return self.multi_hop.hop_count
+
+    @multi_hop_count.setter
+    def multi_hop_count(self, value: int):
+        self.multi_hop.hop_count = value
+
+    @property
+    def multi_hop_expansion(self) -> float:
+        return self.multi_hop.expansion
+
+    @multi_hop_expansion.setter
+    def multi_hop_expansion(self, value: float):
+        self.multi_hop.expansion = value
+
+    @property
+    def multi_hop_initial_k_multiplier(self) -> float:
+        return self.multi_hop.initial_k_multiplier
+
+    @multi_hop_initial_k_multiplier.setter
+    def multi_hop_initial_k_multiplier(self, value: float):
+        self.multi_hop.initial_k_multiplier = value
+
+    # RoutingConfig aliases (2 fields)
+    @property
+    def multi_model_enabled(self) -> bool:
+        return self.routing.multi_model_enabled
+
+    @multi_model_enabled.setter
+    def multi_model_enabled(self, value: bool):
+        self.routing.multi_model_enabled = value
+
+    @property
+    def routing_default_model(self) -> str:
+        return self.routing.default_model
+
+    @routing_default_model.setter
+    def routing_default_model(self, value: str):
+        self.routing.default_model = value
+
+    # ==================== END ALIASES ====================
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return asdict(self)
+        """Convert to flat dictionary for JSON serialization.
+
+        This maintains backward compatibility with search_config.json format.
+        The nested structure is flattened for persistence.
+        """
+        return {
+            # EmbeddingConfig fields
+            "embedding_model_name": self.embedding.model_name,
+            "model_dimension": self.embedding.dimension,
+            "embedding_batch_size": self.embedding.batch_size,
+            "query_cache_size": self.embedding.query_cache_size,
+            # SearchModeConfig fields
+            "default_search_mode": self.search_mode.default_mode,
+            "enable_hybrid_search": self.search_mode.enable_hybrid,
+            "bm25_weight": self.search_mode.bm25_weight,
+            "dense_weight": self.search_mode.dense_weight,
+            "bm25_k_parameter": self.search_mode.bm25_k_parameter,
+            "bm25_use_stopwords": self.search_mode.bm25_use_stopwords,
+            "bm25_use_stemming": self.search_mode.bm25_use_stemming,
+            "min_bm25_score": self.search_mode.min_bm25_score,
+            "rrf_k_parameter": self.search_mode.rrf_k_parameter,
+            "enable_result_reranking": self.search_mode.enable_result_reranking,
+            "default_k": self.search_mode.default_k,
+            "max_k": self.search_mode.max_k,
+            # PerformanceConfig fields
+            "use_parallel_search": self.performance.use_parallel_search,
+            "max_parallel_workers": self.performance.max_parallel_workers,
+            "enable_parallel_chunking": self.performance.enable_parallel_chunking,
+            "max_chunking_workers": self.performance.max_chunking_workers,
+            "prefer_gpu": self.performance.prefer_gpu,
+            "gpu_memory_threshold": self.performance.gpu_memory_threshold,
+            "enable_fp16": self.performance.enable_fp16,
+            "prefer_bf16": self.performance.prefer_bf16,
+            "enable_dynamic_batch_size": self.performance.enable_dynamic_batch_size,
+            "dynamic_batch_min": self.performance.dynamic_batch_min,
+            "dynamic_batch_max": self.performance.dynamic_batch_max,
+            "enable_auto_reindex": self.performance.enable_auto_reindex,
+            "max_index_age_minutes": self.performance.max_index_age_minutes,
+            # MultiHopConfig fields
+            "enable_multi_hop": self.multi_hop.enabled,
+            "multi_hop_count": self.multi_hop.hop_count,
+            "multi_hop_expansion": self.multi_hop.expansion,
+            "multi_hop_initial_k_multiplier": self.multi_hop.initial_k_multiplier,
+            # RoutingConfig fields
+            "multi_model_enabled": self.routing.multi_model_enabled,
+            "routing_default_model": self.routing.default_model,
+        }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SearchConfig":
-        """Create from dictionary."""
+        """Create from flat dictionary (backward compatible with JSON format).
+
+        Args:
+            data: Flat dictionary with old field names
+
+        Returns:
+            SearchConfig with populated nested sub-configs
+        """
         # Auto-update dimension and batch size if model is in registry
         if "embedding_model_name" in data:
             model_config = get_model_config(data["embedding_model_name"])
@@ -148,10 +556,64 @@ class SearchConfig:
                         "fallback_batch_size", 128
                     )
 
-        # Filter only known fields to avoid TypeError
-        valid_fields = {f.name for f in cls.__dataclass_fields__.values()}
-        filtered_data = {k: v for k, v in data.items() if k in valid_fields}
-        return cls(**filtered_data)
+        # Create sub-configs from flat data
+        embedding = EmbeddingConfig(
+            model_name=data.get("embedding_model_name", "google/embeddinggemma-300m"),
+            dimension=data.get("model_dimension", 768),
+            batch_size=data.get("embedding_batch_size", 128),
+            query_cache_size=data.get("query_cache_size", 128),
+        )
+
+        search_mode = SearchModeConfig(
+            default_mode=data.get("default_search_mode", "hybrid"),
+            enable_hybrid=data.get("enable_hybrid_search", True),
+            bm25_weight=data.get("bm25_weight", 0.4),
+            dense_weight=data.get("dense_weight", 0.6),
+            bm25_k_parameter=data.get("bm25_k_parameter", 100),
+            bm25_use_stopwords=data.get("bm25_use_stopwords", True),
+            bm25_use_stemming=data.get("bm25_use_stemming", True),
+            min_bm25_score=data.get("min_bm25_score", 0.1),
+            rrf_k_parameter=data.get("rrf_k_parameter", 100),
+            enable_result_reranking=data.get("enable_result_reranking", True),
+            default_k=data.get("default_k", 5),
+            max_k=data.get("max_k", 50),
+        )
+
+        performance = PerformanceConfig(
+            use_parallel_search=data.get("use_parallel_search", True),
+            max_parallel_workers=data.get("max_parallel_workers", 2),
+            enable_parallel_chunking=data.get("enable_parallel_chunking", True),
+            max_chunking_workers=data.get("max_chunking_workers", 4),
+            prefer_gpu=data.get("prefer_gpu", True),
+            gpu_memory_threshold=data.get("gpu_memory_threshold", 0.8),
+            enable_fp16=data.get("enable_fp16", True),
+            prefer_bf16=data.get("prefer_bf16", True),
+            enable_dynamic_batch_size=data.get("enable_dynamic_batch_size", True),
+            dynamic_batch_min=data.get("dynamic_batch_min", 32),
+            dynamic_batch_max=data.get("dynamic_batch_max", 384),
+            enable_auto_reindex=data.get("enable_auto_reindex", True),
+            max_index_age_minutes=data.get("max_index_age_minutes", 5.0),
+        )
+
+        multi_hop = MultiHopConfig(
+            enabled=data.get("enable_multi_hop", True),
+            hop_count=data.get("multi_hop_count", 2),
+            expansion=data.get("multi_hop_expansion", 0.3),
+            initial_k_multiplier=data.get("multi_hop_initial_k_multiplier", 2.0),
+        )
+
+        routing = RoutingConfig(
+            multi_model_enabled=data.get("multi_model_enabled", True),
+            default_model=data.get("routing_default_model", "bge_m3"),
+        )
+
+        return cls(
+            embedding=embedding,
+            search_mode=search_mode,
+            performance=performance,
+            multi_hop=multi_hop,
+            routing=routing,
+        )
 
 
 class SearchConfigManager:
