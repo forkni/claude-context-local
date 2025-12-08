@@ -70,6 +70,68 @@ class TestGetterFunctions:
             "project_id" in call_args.kwargs
         ), "CodeIndexManager must be initialized with project_id"
 
+    @patch("mcp_server.server.IntelligentSearcher")
+    @patch("mcp_server.server.get_embedder")
+    @patch("mcp_server.server.get_index_manager")
+    @patch("mcp_server.server.get_search_config")
+    def test_get_searcher_preserves_model_key_when_none_passed(
+        self,
+        mock_get_config,
+        mock_get_index_manager,
+        mock_get_embedder,
+        mock_intelligent_searcher,
+    ):
+        """Verify get_searcher() preserves current_model_key when model_key=None.
+
+        This is a regression test for the cross-model chunk_id lookup issue.
+        When multi-model routing selects a model (e.g., qwen3), follow-up
+        operations that call get_searcher() without model_key should preserve
+        the routed model, not reset it to None.
+        """
+        # Import here after mocks are set up
+        import mcp_server.server as server
+        from mcp_server.state import get_state
+
+        # Mock config to disable hybrid search for simpler test
+        mock_config = MagicMock()
+        mock_config.enable_hybrid_search = False
+        mock_get_config.return_value = mock_config
+
+        # Mock embedder
+        mock_embedder = MagicMock()
+        mock_get_embedder.return_value = mock_embedder
+
+        # Mock index manager
+        mock_index_mgr = MagicMock()
+        mock_get_index_manager.return_value = mock_index_mgr
+
+        # Mock IntelligentSearcher
+        mock_searcher_instance = MagicMock()
+        mock_intelligent_searcher.return_value = mock_searcher_instance
+
+        # Get state and reset it
+        state = get_state()
+        state.current_project = "/mock/project"
+        state.current_model_key = None
+        state.searcher = None
+
+        # Step 1: Simulate routing selecting a model (like handle_search_code does)
+        searcher1 = server.get_searcher(model_key="qwen3")
+        assert state.current_model_key == "qwen3", "Routing should set model to qwen3"
+        assert searcher1 is mock_searcher_instance
+
+        # Step 2: Call get_searcher without model_key (like follow-up operations do)
+        # This should PRESERVE the qwen3 model, not reset it to None
+        searcher2 = server.get_searcher()
+
+        # Verify model was preserved
+        assert (
+            state.current_model_key == "qwen3"
+        ), "Model should be preserved when model_key=None, not reset"
+
+        # Verify searcher was reused (not recreated since model didn't change)
+        assert searcher2 is searcher1, "Searcher should be reused when model unchanged"
+
 
 # Note: Most MCP server functionality is tested in integration tests
 # where the actual tool handlers and MCP framework are working properly.
@@ -80,7 +142,7 @@ class TestToolHandlers:
     """Test MCP tool handlers return correct data."""
 
     @pytest.mark.asyncio
-    @patch("mcp_server.tool_handlers.get_search_config")
+    @patch("mcp_server.tools.status_handlers.get_search_config")
     async def test_get_search_config_includes_auto_reindex_fields(
         self, mock_get_search_config
     ):
@@ -97,10 +159,14 @@ class TestToolHandlers:
         mock_config.embedding_model_name = "BAAI/bge-m3"
         mock_config.enable_auto_reindex = True
         mock_config.max_index_age_minutes = 5.0
+        mock_config.bm25_use_stemming = True
+        mock_config.enable_multi_hop = True
+        mock_config.multi_hop_count = 5
+        mock_config.multi_hop_expansion = 0.2
         mock_get_search_config.return_value = mock_config
 
         # Call handler
-        with patch("mcp_server.tool_handlers.get_state") as mock_get_state:
+        with patch("mcp_server.tools.status_handlers.get_state") as mock_get_state:
             mock_state = MagicMock()
             mock_state.multi_model_enabled = False
             mock_get_state.return_value = mock_state
@@ -116,11 +182,11 @@ class TestToolHandlers:
         assert result["max_index_age_minutes"] == 5.0
 
     @pytest.mark.asyncio
-    @patch("mcp_server.tool_handlers.SnapshotManager")
-    @patch("mcp_server.tool_handlers.get_storage_dir")
-    @patch("mcp_server.tool_handlers.get_search_config")
-    @patch("mcp_server.tool_handlers.get_index_manager")
-    @patch("mcp_server.tool_handlers.get_state")
+    @patch("mcp_server.tools.status_handlers.SnapshotManager")
+    @patch("mcp_server.tools.status_handlers.get_storage_dir")
+    @patch("mcp_server.tools.status_handlers.get_search_config")
+    @patch("mcp_server.tools.status_handlers.get_index_manager")
+    @patch("mcp_server.tools.status_handlers.get_state")
     async def test_get_index_status_includes_last_indexed_time(
         self,
         mock_get_state,
@@ -179,7 +245,7 @@ class TestToolHandlers:
         mock_snapshot_mgr.load_metadata.assert_called_once_with("/mock/project/path")
 
     @pytest.mark.asyncio
-    @patch("mcp_server.tool_handlers.get_search_config")
+    @patch("mcp_server.tools.status_handlers.get_search_config")
     async def test_get_search_config_includes_multi_hop_and_stemming_fields(
         self, mock_get_search_config
     ):
@@ -203,7 +269,7 @@ class TestToolHandlers:
         mock_get_search_config.return_value = mock_config
 
         # Call handler
-        with patch("mcp_server.tool_handlers.get_state") as mock_get_state:
+        with patch("mcp_server.tools.status_handlers.get_state") as mock_get_state:
             mock_state = MagicMock()
             mock_state.multi_model_enabled = False
             mock_get_state.return_value = mock_state
@@ -225,7 +291,7 @@ class TestToolHandlers:
         assert result["multi_hop_expansion"] == 0.3
 
     @pytest.mark.asyncio
-    @patch("mcp_server.tool_handlers.get_state")
+    @patch("mcp_server.tools.status_handlers.get_state")
     async def test_list_embedding_models_includes_vram(self, mock_get_state):
         """Verify list_embedding_models includes vram_gb field."""
         from mcp_server.tool_handlers import handle_list_embedding_models
@@ -235,7 +301,9 @@ class TestToolHandlers:
         mock_get_state.return_value = mock_state
 
         # Mock get_search_config
-        with patch("mcp_server.tool_handlers.get_search_config") as mock_get_config:
+        with patch(
+            "mcp_server.tools.status_handlers.get_search_config"
+        ) as mock_get_config:
             mock_config = MagicMock()
             mock_config.embedding_model_name = "BAAI/bge-m3"
             mock_get_config.return_value = mock_config
@@ -258,7 +326,7 @@ class TestToolHandlers:
     @patch("torch.cuda.get_device_name", return_value="NVIDIA GeForce RTX 4090")
     @patch("torch.cuda.get_device_properties")
     @patch("torch.cuda.get_device_capability", return_value=(8, 9))
-    @patch("mcp_server.tool_handlers.get_state")
+    @patch("mcp_server.tools.status_handlers.get_state")
     async def test_get_memory_status_includes_gpu_details(
         self,
         mock_get_state,

@@ -509,7 +509,8 @@ def get_searcher(project_path: str = None, model_key: str = None):
 
     Args:
         project_path: Path to project (None = use current project)
-        model_key: Model key for routing (None = use config default)
+        model_key: Model key for routing (None = preserve current model,
+                   or use config default if no current model)
     """
     state = get_state()
 
@@ -517,21 +518,26 @@ def get_searcher(project_path: str = None, model_key: str = None):
         project_path = str(PROJECT_ROOT)
         logger.info(f"No active project found. Using server directory: {project_path}")
 
+    # Use effective model key: passed value OR current value (preserve routing)
+    effective_model_key = (
+        model_key if model_key is not None else state.current_model_key
+    )
+
     # Invalidate cache if project or model changed
     if (
         state.current_project != project_path
-        or state.current_model_key != model_key
+        or state.current_model_key != effective_model_key
         or state.searcher is None
     ):
         state.current_project = project_path or state.current_project
-        state.current_model_key = model_key
+        state.current_model_key = effective_model_key
         config = get_search_config()
         logger.info(
             f"[GET_SEARCHER] Initializing searcher for project: {state.current_project}"
         )
         if config.enable_hybrid_search:
             project_storage = get_project_storage_dir(
-                state.current_project, model_key=model_key
+                state.current_project, model_key=effective_model_key
             )
             storage_dir = project_storage / "index"
             logger.info(f"[GET_SEARCHER] Using storage directory: {storage_dir}")
@@ -544,7 +550,7 @@ def get_searcher(project_path: str = None, model_key: str = None):
 
             state.searcher = HybridSearcher(
                 storage_dir=str(storage_dir),
-                embedder=get_embedder(model_key),
+                embedder=get_embedder(effective_model_key),
                 bm25_weight=config.bm25_weight,
                 dense_weight=config.dense_weight,
                 rrf_k=config.rrf_k_parameter,
@@ -558,8 +564,8 @@ def get_searcher(project_path: str = None, model_key: str = None):
             )
         else:
             state.searcher = IntelligentSearcher(
-                get_index_manager(project_path, model_key=model_key),
-                get_embedder(model_key),
+                get_index_manager(project_path, model_key=effective_model_key),
+                get_embedder(effective_model_key),
             )
             logger.info("IntelligentSearcher initialized (semantic-only mode)")
 

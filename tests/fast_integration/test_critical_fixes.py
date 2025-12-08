@@ -45,10 +45,12 @@ async def test_parallel_tool_calls_dont_cause_race_condition():
     test_project = str(Path.cwd())
 
     with patch.dict(os.environ, {"CLAUDE_DEFAULT_PROJECT": test_project}):
-        with patch("mcp_server.tool_handlers.get_storage_dir") as mock_storage:
+        with patch("mcp_server.tools.status_handlers.get_storage_dir") as mock_storage:
             mock_storage.return_value = Path("/tmp/test")
 
-            with patch("mcp_server.tool_handlers.get_search_config") as mock_config:
+            with patch(
+                "mcp_server.tools.status_handlers.get_search_config"
+            ) as mock_config:
                 mock_cfg = Mock()
                 mock_cfg.enable_hybrid_search = True
                 mock_cfg.bm25_weight = 0.4

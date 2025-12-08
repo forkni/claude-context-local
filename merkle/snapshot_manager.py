@@ -4,7 +4,7 @@ import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from .merkle_dag import MerkleDAG
 
@@ -35,22 +35,17 @@ class SnapshotManager:
         normalized_path = str(Path(project_path).resolve())
         return hashlib.md5(normalized_path.encode()).hexdigest()
 
-    def get_snapshot_path(
-        self, project_path: str, dimension: Optional[int] = None
-    ) -> Path:
-        """Get the snapshot file path for a project with per-model slug and dimension suffix.
+    def _get_model_slug_and_dimension(
+        self, dimension: Optional[int] = None
+    ) -> Tuple[str, int]:
+        """Get model slug and dimension, auto-detecting from config if needed.
 
         Args:
-            project_path: Path to project
-            dimension: Model dimension (768 for Gemma, 1024 for BGE-M3).
-                      If None, auto-detects from current config.
+            dimension: Optional explicit dimension. If None, auto-detects from config.
 
         Returns:
-            Path to snapshot file with model slug and dimension suffix
+            Tuple of (model_slug, dimension)
         """
-        project_id = self.get_project_id(project_path)
-
-        # Auto-detect dimension and model slug from current config if not provided
         if dimension is None:
             try:
                 # Import here to avoid circular dependency
@@ -80,6 +75,26 @@ class SnapshotManager:
                 model_slug = get_model_slug(config.embedding_model_name)
             except Exception:
                 model_slug = "unknown"
+
+        return model_slug, dimension
+
+    def get_snapshot_path(
+        self, project_path: str, dimension: Optional[int] = None
+    ) -> Path:
+        """Get the snapshot file path for a project with per-model slug and dimension suffix.
+
+        Args:
+            project_path: Path to project
+            dimension: Model dimension (768 for Gemma, 1024 for BGE-M3).
+                      If None, auto-detects from current config.
+
+        Returns:
+            Path to snapshot file with model slug and dimension suffix
+        """
+        project_id = self.get_project_id(project_path)
+
+        # Auto-detect dimension and model slug from current config if not provided
+        model_slug, dimension = self._get_model_slug_and_dimension(dimension)
 
         return (
             self.storage_dir / f"{project_id}_{model_slug}_{dimension}d_snapshot.json"
@@ -101,35 +116,7 @@ class SnapshotManager:
         project_id = self.get_project_id(project_path)
 
         # Auto-detect dimension and model slug from current config if not provided
-        if dimension is None:
-            try:
-                # Import here to avoid circular dependency
-                import sys
-                from pathlib import Path as PathLib
-
-                # Add parent directory to path for imports
-                parent_dir = PathLib(__file__).parent.parent
-                if str(parent_dir) not in sys.path:
-                    sys.path.insert(0, str(parent_dir))
-
-                from search.config import get_model_slug, get_search_config
-
-                config = get_search_config()
-                dimension = config.model_dimension
-                model_slug = get_model_slug(config.embedding_model_name)
-            except Exception:
-                # Fallback to default if config unavailable
-                dimension = 768
-                model_slug = "unknown"
-        else:
-            # If dimension is provided explicitly, we need to get the current model slug
-            try:
-                from search.config import get_model_slug, get_search_config
-
-                config = get_search_config()
-                model_slug = get_model_slug(config.embedding_model_name)
-            except Exception:
-                model_slug = "unknown"
+        model_slug, dimension = self._get_model_slug_and_dimension(dimension)
 
         return (
             self.storage_dir / f"{project_id}_{model_slug}_{dimension}d_metadata.json"

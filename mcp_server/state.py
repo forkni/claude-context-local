@@ -160,6 +160,37 @@ class ApplicationState:
         """Clear all cached embedder instances."""
         self.embedders = {}
 
+    def reset_search_components(self) -> None:
+        """Reset index_manager and searcher to force re-initialization.
+
+        Use this when:
+        - Clearing index files
+        - After multi-model batch indexing
+        - When search components need to be recreated
+        """
+        self.index_manager = None
+        self.searcher = None
+
+    def reset_searcher(self) -> None:
+        """Reset only the searcher (preserves index_manager).
+
+        Use this when:
+        - Search configuration changes (hybrid settings, weights, etc.)
+        - Searcher needs refresh but index is still valid
+        """
+        self.searcher = None
+
+    def reset_for_model_switch(self) -> None:
+        """Full reset including embedders for model switch.
+
+        Use this when:
+        - Switching embedding models
+        - Need to reload all model-dependent components
+        """
+        self.clear_embedders()
+        self.index_manager = None
+        self.searcher = None
+
     def __repr__(self) -> str:
         return (
             f"ApplicationState("

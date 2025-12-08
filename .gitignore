@@ -8,7 +8,7 @@
 
 # Development workflow (keep in development branch only)
 .githooks/
-scripts/git/
+# scripts/git/
 
 ignore/
 # Byte-compiled / optimized / DLL files
@@ -233,11 +233,13 @@ _archive/
 benchmark_results/
 analysis/
 logs/                    # Workflow execution logs and analysis reports
+scripts/git
 CLAUDE.md
 MEMORY.md
 GEMINI.md
 BASH_STYLE_GUIDE.md
 BATCH_STYLE_GUIDE.md
+SHELL_STYLE_GUIDE.md
 SLASH_COMMAND_TESTING_PROTOCOL.md
 clean_pycache.bat
 

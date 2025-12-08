@@ -346,54 +346,10 @@ class IncrementalIndexer:
             logger.info("[INCREMENTAL] Index saved")
 
             # Auto-sync BM25 if significant desync detected (>10% difference)
-            bm25_resynced = False
-            bm25_resync_count = 0
-            DESYNC_THRESHOLD = 0.10  # 10% threshold - affects search quality noticeably
-
-            if hasattr(self.indexer, "get_stats") and hasattr(
-                self.indexer, "resync_bm25_from_dense"
-            ):
-                try:
-                    stats = self.indexer.get_stats()
-                    bm25_count = stats.get("bm25_documents", 0)
-                    dense_count = stats.get("dense_vectors", 0)
-
-                    # Ensure counts are integers (not Mock objects in tests)
-                    if (
-                        isinstance(bm25_count, int)
-                        and isinstance(dense_count, int)
-                        and dense_count > 0
-                    ):
-                        desync_ratio = abs(dense_count - bm25_count) / dense_count
-                        if desync_ratio > DESYNC_THRESHOLD:
-                            logger.warning(
-                                f"[INCREMENTAL] Significant desync detected: BM25={bm25_count}, "
-                                f"Dense={dense_count} ({desync_ratio:.1%} difference)"
-                            )
-                            logger.info(
-                                "[INCREMENTAL] Auto-syncing BM25 from dense metadata..."
-                            )
-                            bm25_resync_count = self.indexer.resync_bm25_from_dense()
-                            bm25_resynced = True
-                            logger.info(
-                                f"[INCREMENTAL] BM25 resync complete: {bm25_resync_count} documents"
-                            )
-                except Exception as e:
-                    logger.debug(f"[INCREMENTAL] BM25 sync check skipped: {e}")
+            bm25_resynced, bm25_resync_count = self._sync_bm25_if_needed("INCREMENTAL")
 
             # Clear GPU cache to free intermediate tensors from embedding batches
-            try:
-                import gc
-
-                import torch
-
-                gc.collect()  # Free Python wrapper objects first
-
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()  # Then release CUDA cache
-                    logger.info("[INCREMENTAL] GPU cache cleared after indexing")
-            except ImportError:
-                pass
+            self._clear_gpu_cache("INCREMENTAL")
 
             return IncrementalIndexResult(
                 files_added=len(changes.added),
@@ -572,54 +528,10 @@ class IncrementalIndexer:
             logger.info("[INCREMENTAL] Index saved")
 
             # Auto-sync BM25 if significant desync detected (>10% difference)
-            bm25_resynced = False
-            bm25_resync_count = 0
-            DESYNC_THRESHOLD = 0.10  # 10% threshold - affects search quality noticeably
-
-            if hasattr(self.indexer, "get_stats") and hasattr(
-                self.indexer, "resync_bm25_from_dense"
-            ):
-                try:
-                    stats = self.indexer.get_stats()
-                    bm25_count = stats.get("bm25_documents", 0)
-                    dense_count = stats.get("dense_vectors", 0)
-
-                    # Ensure counts are integers (not Mock objects in tests)
-                    if (
-                        isinstance(bm25_count, int)
-                        and isinstance(dense_count, int)
-                        and dense_count > 0
-                    ):
-                        desync_ratio = abs(dense_count - bm25_count) / dense_count
-                        if desync_ratio > DESYNC_THRESHOLD:
-                            logger.warning(
-                                f"[FULL_INDEX] Significant desync detected: BM25={bm25_count}, "
-                                f"Dense={dense_count} ({desync_ratio:.1%} difference)"
-                            )
-                            logger.info(
-                                "[FULL_INDEX] Auto-syncing BM25 from dense metadata..."
-                            )
-                            bm25_resync_count = self.indexer.resync_bm25_from_dense()
-                            bm25_resynced = True
-                            logger.info(
-                                f"[FULL_INDEX] BM25 resync complete: {bm25_resync_count} documents"
-                            )
-                except Exception as e:
-                    logger.debug(f"[FULL_INDEX] BM25 sync check skipped: {e}")
+            bm25_resynced, bm25_resync_count = self._sync_bm25_if_needed("FULL_INDEX")
 
             # Clear GPU cache to free intermediate tensors from embedding batches
-            try:
-                import gc
-
-                import torch
-
-                gc.collect()  # Free Python wrapper objects first
-
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()  # Then release CUDA cache
-                    logger.info("[INCREMENTAL] GPU cache cleared after indexing")
-            except ImportError:
-                pass
+            self._clear_gpu_cache("FULL_INDEX")
 
             return IncrementalIndexResult(
                 files_added=len(supported_files),
@@ -750,6 +662,70 @@ class IncrementalIndexer:
             logger.info("[INCREMENTAL] Successfully added embeddings")
 
         return len(all_embedding_results)
+
+    def _sync_bm25_if_needed(self, log_prefix: str = "INCREMENTAL") -> Tuple[bool, int]:
+        """Auto-sync BM25 if significant desync detected (>10% difference).
+
+        Args:
+            log_prefix: Prefix for log messages (e.g., "INCREMENTAL" or "FULL_INDEX")
+
+        Returns:
+            tuple[bool, int]: (bm25_resynced, bm25_resync_count)
+        """
+        DESYNC_THRESHOLD = 0.10  # 10% threshold - affects search quality noticeably
+        bm25_resynced = False
+        bm25_resync_count = 0
+
+        if hasattr(self.indexer, "get_stats") and hasattr(
+            self.indexer, "resync_bm25_from_dense"
+        ):
+            try:
+                stats = self.indexer.get_stats()
+                bm25_count = stats.get("bm25_documents", 0)
+                dense_count = stats.get("dense_vectors", 0)
+
+                # Ensure counts are integers (not Mock objects in tests)
+                if (
+                    isinstance(bm25_count, int)
+                    and isinstance(dense_count, int)
+                    and dense_count > 0
+                ):
+                    desync_ratio = abs(dense_count - bm25_count) / dense_count
+                    if desync_ratio > DESYNC_THRESHOLD:
+                        logger.warning(
+                            f"[{log_prefix}] Significant desync detected: BM25={bm25_count}, "
+                            f"Dense={dense_count} ({desync_ratio:.1%} difference)"
+                        )
+                        logger.info(
+                            f"[{log_prefix}] Auto-syncing BM25 from dense metadata..."
+                        )
+                        bm25_resync_count = self.indexer.resync_bm25_from_dense()
+                        bm25_resynced = True
+                        logger.info(
+                            f"[{log_prefix}] BM25 resync complete: {bm25_resync_count} documents"
+                        )
+            except Exception as e:
+                logger.debug(f"[{log_prefix}] BM25 sync check skipped: {e}")
+
+        return bm25_resynced, bm25_resync_count
+
+    def _clear_gpu_cache(self, log_prefix: str = "INCREMENTAL") -> None:
+        """Clear GPU cache to free intermediate tensors from embedding batches.
+
+        Args:
+            log_prefix: Prefix for log messages (e.g., "INCREMENTAL" or "FULL_INDEX")
+        """
+        try:
+            import gc
+
+            import torch
+
+            gc.collect()  # Free Python wrapper objects first
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()  # Then release CUDA cache
+                logger.info(f"[{log_prefix}] GPU cache cleared after indexing")
+        except ImportError:
+            pass
 
     def get_indexing_stats(self, project_path: str) -> Optional[Dict]:
         """Get indexing statistics for a project.
