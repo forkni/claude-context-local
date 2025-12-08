@@ -96,19 +96,25 @@ These are automatically excluded from main branch via `.gitattributes` merge str
 
 ## 🚀 Workflow Scripts
 
-All workflow scripts are located in `scripts/git/` directory.
+**Directory Structure**:
+- **Shell scripts (.sh)**: `scripts/git/` - **PRIMARY for automated workflows**
+- **Batch scripts (.bat)**: `scripts/git/batch/` - Manual Windows CMD execution
 
 **Environment Compatibility**: Scripts are available in two formats:
 
-- **Windows cmd.exe**: Use `.bat` files (6 scripts)
-- **Git Bash / Linux / macOS**: Use `.sh` files (3 scripts: check_lint, fix_lint, validate_branches)
+- **Git Bash / Linux / macOS**: Use `.sh` files in `scripts/git/` (PRIMARY - 10 scripts)
+- **Windows cmd.exe**: Use `.bat` files in `scripts/git/batch/` (manual - 10 scripts)
 
-### Core Workflow Scripts (9 total: 6 .bat + 3 .sh)
+### Core Workflow Scripts (20 total: 10 .sh + 10 .bat)
 
-#### commit_enhanced.bat - Enhanced Commit Workflow
+#### commit_enhanced - Enhanced Commit Workflow
 
-```batch
-commit_enhanced.bat "Your commit message"
+```bash
+# Shell (PRIMARY for automation)
+./scripts/git/commit_enhanced.sh "Your commit message"
+
+# Batch (manual Windows CMD)
+scripts\git\batch\commit_enhanced.bat "Your commit message"
 ```
 
 **Features:**
@@ -122,16 +128,12 @@ commit_enhanced.bat "Your commit message"
 
 #### check_lint - Code Quality Validation
 
-**Windows cmd.exe**:
-
-```batch
-scripts\git\check_lint.bat
-```
-
-**Git Bash / Linux / macOS**:
-
 ```bash
+# Shell (PRIMARY for automation)
 ./scripts/git/check_lint.sh
+
+# Batch (manual Windows CMD)
+scripts\git\batch\check_lint.bat
 ```
 
 **Checks:**
@@ -145,16 +147,12 @@ scripts\git\check_lint.bat
 
 #### fix_lint - Auto-fix Linting Issues
 
-**Windows cmd.exe**:
-
-```batch
-scripts\git\fix_lint.bat
-```
-
-**Git Bash / Linux / macOS**:
-
 ```bash
+# Shell (PRIMARY for automation)
 ./scripts/git/fix_lint.sh
+
+# Batch (manual Windows CMD)
+scripts\git\batch\fix_lint.bat
 ```
 
 **Fixes:**
@@ -164,10 +162,14 @@ scripts\git\fix_lint.bat
 - Auto-fixes most markdown formatting issues
 - Suggests running check_lint to verify all issues resolved
 
-#### merge_with_validation.bat - Safe Merge Workflow
+#### merge_with_validation - Safe Merge Workflow
 
-```batch
-scripts\git\merge_with_validation.bat
+```bash
+# Shell (PRIMARY for automation)
+./scripts/git/merge_with_validation.sh
+
+# Batch (manual Windows CMD)
+scripts\git\batch\merge_with_validation.bat
 ```
 
 **Features:**
@@ -180,16 +182,12 @@ scripts\git\merge_with_validation.bat
 
 #### validate_branches - Pre-merge Validation
 
-**Windows cmd.exe**:
-
-```batch
-scripts\git\validate_branches.bat
-```
-
-**Git Bash / Linux / macOS**:
-
 ```bash
+# Shell (PRIMARY for automation)
 ./scripts/git/validate_branches.sh
+
+# Batch (manual Windows CMD)
+scripts\git\batch\validate_branches.bat
 ```
 
 **Checks:**
