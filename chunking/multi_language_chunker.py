@@ -159,6 +159,50 @@ class MultiLanguageChunker:
         "obj",
     }
 
+    # Node type to chunk type mapping (tree-sitter → CodeChunk)
+    NODE_TYPE_MAP = {
+        "function_declaration": "function",
+        "function_definition": "function",
+        "arrow_function": "function",
+        "function": "function",
+        "function_item": "function",  # Rust
+        "method_declaration": "method",  # Go, Java
+        "method_definition": "method",
+        "class_declaration": "class",
+        "class_definition": "class",
+        "class_specifier": "class",  # C++
+        "interface_declaration": "interface",
+        "type_alias_declaration": "type",
+        "type_declaration": "type",  # Go
+        "enum_declaration": "enum",
+        "enum_specifier": "enum",  # C
+        "enum_item": "enum",  # Rust
+        "struct_declaration": "struct",  # C#
+        "struct_specifier": "struct",  # C/C++
+        "struct_item": "struct",  # Rust
+        "union_specifier": "union",  # C/C++
+        "namespace_definition": "namespace",  # C++
+        "namespace_declaration": "namespace",  # C#
+        "impl_item": "impl",  # Rust
+        "trait_item": "trait",  # Rust
+        "mod_item": "module",  # Rust
+        "macro_definition": "macro",  # Rust
+        "constructor_declaration": "constructor",  # Java/C#
+        "destructor_declaration": "destructor",  # C#
+        "property_declaration": "property",  # C#
+        "event_declaration": "event",  # C#
+        "template_declaration": "template",  # C++
+        "concept_definition": "concept",  # C++
+        "annotation_type_declaration": "annotation",  # Java
+        "script_element": "script",  # Svelte
+        "style_element": "style",  # Svelte
+        "variable_declaration": "variable",  # GLSL uniforms, varying, attributes
+        "preprocessor_define": "define",  # GLSL preprocessor defines
+        "preprocessor_function_def": "define",  # GLSL preprocessor function defines
+        "block_statement": "block",  # GLSL code blocks
+        "compound_statement": "block",  # GLSL compound statements
+    }
+
     def __init__(
         self,
         root_path: Optional[str] = None,
@@ -246,10 +290,191 @@ class MultiLanguageChunker:
             logger.error(f"Failed to chunk file {file_path}: {e}")
             return []
 
+    def _map_node_type(self, node_type: str, parent_name: Optional[str]) -> str:
+        """Map tree-sitter node type to chunk type.
+
+        Args:
+            node_type: Tree-sitter node type
+            parent_name: Parent class name (if any)
+
+        Returns:
+            Mapped chunk type (function, method, class, etc.)
+        """
+        # Get base chunk type from mapping
+        chunk_type = self.NODE_TYPE_MAP.get(node_type, node_type)
+
+        # If we have a parent_name and it's a function, it's actually a method
+        if parent_name and chunk_type == "function":
+            chunk_type = "method"
+
+        return chunk_type
+
+    def _build_folder_structure(self, file_path: str) -> List[str]:
+        """Build folder parts from file path.
+
+        Args:
+            file_path: Path to the source file
+
+        Returns:
+            List of folder parts for the file
+        """
+        path = Path(file_path)
+        folder_parts = []
+
+        if self.root_path:
+            try:
+                rel_path = path.relative_to(self.root_path)
+                folder_parts = list(rel_path.parent.parts)
+            except ValueError:
+                folder_parts = [path.parent.name] if path.parent.name else []
+        else:
+            folder_parts = [path.parent.name] if path.parent.name else []
+
+        return folder_parts
+
+    def _extract_semantic_tags(self, metadata: dict, language: str) -> List[str]:
+        """Extract semantic tags from chunk metadata.
+
+        Args:
+            metadata: Chunk metadata dictionary
+            language: Programming language
+
+        Returns:
+            List of semantic tags (async, generator, export, etc.)
+        """
+        tags = []
+
+        if metadata.get("is_async"):
+            tags.append("async")
+        if metadata.get("is_generator"):
+            tags.append("generator")
+        if metadata.get("is_export"):
+            tags.append("export")
+        if metadata.get("has_generics"):
+            tags.append("generic")
+        if metadata.get("is_component"):
+            tags.append("component")
+
+        # Add language tag
+        tags.append(language)
+
+        return tags
+
+    def _create_chunk_id(
+        self,
+        relative_path: str,
+        start_line: int,
+        end_line: int,
+        chunk_type: str,
+        qualified_name: Optional[str],
+    ) -> str:
+        """Generate normalized chunk ID for relationship extraction.
+
+        Args:
+            relative_path: Relative path to source file
+            start_line: Start line number
+            end_line: End line number
+            chunk_type: Type of chunk (function, method, class, etc.)
+            qualified_name: Qualified name (e.g., ClassName.method_name)
+
+        Returns:
+            Normalized chunk ID string
+        """
+        # Normalize path to forward slashes (cross-platform)
+        normalized_path = str(relative_path).replace("\\", "/")
+        chunk_id = f"{normalized_path}:{start_line}-{end_line}:{chunk_type}"
+
+        # Use qualified name (ClassName.method_name) for better disambiguation
+        if qualified_name:
+            chunk_id += f":{qualified_name}"
+
+        return chunk_id
+
+    def _extract_call_relationships(
+        self, chunk: CodeChunk, tchunk: TreeSitterChunk, chunk_id: str
+    ) -> None:
+        """Extract call graph relationships (Phase 1).
+
+        Args:
+            chunk: CodeChunk to populate with call relationships
+            tchunk: Tree-sitter chunk with source code
+            chunk_id: Chunk identifier for logging
+        """
+        if (
+            self.call_graph_extractor is None
+            or tchunk.language != "python"
+            or chunk.chunk_type not in ("function", "method")
+        ):
+            return
+
+        try:
+            chunk_metadata = {
+                "chunk_id": chunk_id,
+                "file_path": chunk.relative_path,
+                "name": chunk.name,
+                "chunk_type": chunk.chunk_type,
+                "parent_class": chunk.parent_name,
+            }
+            # Extract function calls from this chunk
+            calls = self.call_graph_extractor.extract_calls(
+                tchunk.content, chunk_metadata
+            )
+            chunk.calls = calls
+
+            if calls:
+                logger.debug(f"Extracted {len(calls)} calls from {chunk_id}")
+        except Exception as e:
+            logger.warning(f"Failed to extract calls for {chunk.name}: {e}")
+
+    def _extract_phase3_relationships(
+        self, chunk: CodeChunk, tchunk: TreeSitterChunk, chunk_id: str
+    ) -> None:
+        """Extract Phase 3 relationship edges (inheritance, types, etc.).
+
+        Args:
+            chunk: CodeChunk to populate with relationships
+            tchunk: Tree-sitter chunk with source code
+            chunk_id: Chunk identifier for logging
+        """
+        if tchunk.language != "python" or not self.relationship_extractors:
+            return
+
+        try:
+            chunk_metadata = {
+                "chunk_id": chunk_id,
+                "file_path": chunk.relative_path,
+                "name": chunk.name,
+                "chunk_type": chunk.chunk_type,
+                "parent_class": chunk.parent_name,
+            }
+
+            all_relationships = []
+            # Use smart_dedent to properly dedent nested code
+            dedented_content = _smart_dedent(tchunk.content)
+
+            for extractor in self.relationship_extractors:
+                edges = extractor.extract(dedented_content, chunk_metadata)
+                all_relationships.extend(edges)
+
+            chunk.relationships = all_relationships
+
+            if all_relationships:
+                logger.debug(
+                    f"Extracted {len(all_relationships)} Phase 3 relationships from {chunk_id}"
+                )
+        except Exception as e:
+            logger.warning(
+                f"Failed to extract Phase 3 relationships for {chunk.name}: {e}"
+            )
+
     def _convert_tree_chunks(
         self, tree_chunks: List[TreeSitterChunk], file_path: str
     ) -> List[CodeChunk]:
         """Convert tree-sitter chunks to CodeChunk format.
+
+        Orchestrates the conversion process by delegating to helper methods
+        for node type mapping, folder structure building, semantic tag extraction,
+        chunk ID generation, and relationship extraction.
 
         Args:
             tree_chunks: List of TreeSitterChunk objects
@@ -260,95 +485,27 @@ class MultiLanguageChunker:
         """
         code_chunks = []
 
+        # Build folder structure once for all chunks
+        folder_parts = self._build_folder_structure(file_path)
+        path = Path(file_path)
+
         for tchunk in tree_chunks:
             # Extract metadata
             name = tchunk.metadata.get("name")
             docstring = tchunk.metadata.get("docstring")
             decorators = tchunk.metadata.get("decorators", [])
 
-            # Map tree-sitter node types to our chunk types
-            chunk_type_map = {
-                "function_declaration": "function",
-                "function_definition": "function",
-                "arrow_function": "function",
-                "function": "function",
-                "function_item": "function",  # Rust
-                "method_declaration": "method",  # Go, Java
-                "method_definition": "method",
-                "class_declaration": "class",
-                "class_definition": "class",
-                "class_specifier": "class",  # C++
-                "interface_declaration": "interface",
-                "type_alias_declaration": "type",
-                "type_declaration": "type",  # Go
-                "enum_declaration": "enum",
-                "enum_specifier": "enum",  # C
-                "enum_item": "enum",  # Rust
-                "struct_declaration": "struct",  # C#
-                "struct_specifier": "struct",  # C/C++
-                "struct_item": "struct",  # Rust
-                "union_specifier": "union",  # C/C++
-                "namespace_definition": "namespace",  # C++
-                "namespace_declaration": "namespace",  # C#
-                "impl_item": "impl",  # Rust
-                "trait_item": "trait",  # Rust
-                "mod_item": "module",  # Rust
-                "macro_definition": "macro",  # Rust
-                "constructor_declaration": "constructor",  # Java/C#
-                "destructor_declaration": "destructor",  # C#
-                "property_declaration": "property",  # C#
-                "event_declaration": "event",  # C#
-                "template_declaration": "template",  # C++
-                "concept_definition": "concept",  # C++
-                "annotation_type_declaration": "annotation",  # Java
-                "script_element": "script",  # Svelte
-                "style_element": "style",  # Svelte
-                "variable_declaration": "variable",  # GLSL uniforms, varying, attributes
-                "preprocessor_define": "define",  # GLSL preprocessor defines
-                "preprocessor_function_def": "define",  # GLSL preprocessor function defines
-                "block_statement": "block",  # GLSL code blocks
-                "compound_statement": "block",  # GLSL compound statements
-            }
-
-            chunk_type = chunk_type_map.get(tchunk.node_type, tchunk.node_type)
-
             # Extract parent class from chunk (prefer explicit field, fallback to metadata)
             parent_name = tchunk.parent_class or tchunk.metadata.get("parent_name")
 
-            # If we have a parent_name and it's a function, it's actually a method
-            if parent_name and chunk_type == "function":
-                chunk_type = "method"
+            # Map node type to chunk type (handles parent class logic)
+            chunk_type = self._map_node_type(tchunk.node_type, parent_name)
 
             # Build qualified name for methods/functions inside classes
             qualified_name = f"{parent_name}.{name}" if parent_name and name else name
 
-            # Build folder structure from file path
-            path = Path(file_path)
-            folder_parts = []
-            if self.root_path:
-                try:
-                    rel_path = path.relative_to(self.root_path)
-                    folder_parts = list(rel_path.parent.parts)
-                except ValueError:
-                    folder_parts = [path.parent.name] if path.parent.name else []
-            else:
-                folder_parts = [path.parent.name] if path.parent.name else []
-
             # Extract semantic tags from metadata
-            tags = []
-            if tchunk.metadata.get("is_async"):
-                tags.append("async")
-            if tchunk.metadata.get("is_generator"):
-                tags.append("generator")
-            if tchunk.metadata.get("is_export"):
-                tags.append("export")
-            if tchunk.metadata.get("has_generics"):
-                tags.append("generic")
-            if tchunk.metadata.get("is_component"):
-                tags.append("component")
-
-            # Add language tag
-            tags.append(tchunk.language)
+            tags = self._extract_semantic_tags(tchunk.metadata, tchunk.language)
 
             # Create CodeChunk
             chunk = CodeChunk(
@@ -373,62 +530,20 @@ class MultiLanguageChunker:
                 language=tchunk.language,
             )
 
-            # Build chunk_id for relationship extraction (Phase 1 + Phase 3)
-            # Normalize path to forward slashes (cross-platform)
-            normalized_path = str(chunk.relative_path).replace("\\", "/")
-            chunk_id = (
-                f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk_type}"
+            # Generate chunk_id for relationship extraction (Phase 1 + Phase 3)
+            chunk_id = self._create_chunk_id(
+                chunk.relative_path,
+                chunk.start_line,
+                chunk.end_line,
+                chunk_type,
+                qualified_name,
             )
-            # Use qualified name (ClassName.method_name) for better disambiguation
-            if qualified_name:
-                chunk_id += f":{qualified_name}"
-            chunk_metadata = {
-                "chunk_id": chunk_id,
-                "file_path": chunk.relative_path,
-                "name": name,
-                "chunk_type": chunk_type,
-                "parent_class": parent_name,  # For self/super call resolution
-            }
 
-            # Extract call graph for Python chunks (Phase 1)
-            if (
-                self.call_graph_extractor is not None
-                and tchunk.language == "python"
-                and chunk_type in ("function", "method")
-            ):
-                try:
-                    # Extract function calls from this chunk
-                    calls = self.call_graph_extractor.extract_calls(
-                        tchunk.content, chunk_metadata
-                    )
-                    chunk.calls = calls
+            # Extract call graph relationships (Phase 1)
+            self._extract_call_relationships(chunk, tchunk, chunk_id)
 
-                    if calls:
-                        logger.debug(f"Extracted {len(calls)} calls from {chunk_id}")
-                except Exception as e:
-                    logger.warning(f"Failed to extract calls for {name}: {e}")
-
-            # Phase 3: Extract all relationship types (for ALL Python chunks)
-            if tchunk.language == "python" and self.relationship_extractors:
-                try:
-                    all_relationships = []
-                    # Use smart_dedent to properly dedent nested code
-                    # Handles blank lines correctly while preserving relative indentation
-                    dedented_content = _smart_dedent(tchunk.content)
-                    for extractor in self.relationship_extractors:
-                        edges = extractor.extract(dedented_content, chunk_metadata)
-                        all_relationships.extend(edges)
-
-                    chunk.relationships = all_relationships
-
-                    if all_relationships:
-                        logger.debug(
-                            f"Extracted {len(all_relationships)} Phase 3 relationships from {chunk_id}"
-                        )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to extract Phase 3 relationships for {name}: {e}"
-                    )
+            # Extract Phase 3 relationship edges
+            self._extract_phase3_relationships(chunk, tchunk, chunk_id)
 
             code_chunks.append(chunk)
 
