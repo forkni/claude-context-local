@@ -1479,21 +1479,79 @@ class CodeEmbedder:
                 )
 
                 if custom_has_config and default_has_weights:
-                    # SPLIT CACHE: Return custom cache snapshot
-                    # SentenceTransformer will find config.json here and load weights from default HF cache
+                    # SPLIT CACHE: Ensure weights are accessible in custom cache
+                    # Create symlink (or copy as fallback) from default to custom cache
                     if custom_cache_path and custom_cache_path.exists():
-                        snapshots = list(custom_cache_path.glob("snapshots/*"))
-                        valid_snapshots = [s for s in snapshots if list(s.iterdir())]
-                        if valid_snapshots:
-                            snapshot = max(
-                                valid_snapshots, key=lambda p: p.stat().st_mtime
+                        # Get custom snapshot directory
+                        custom_snapshots = list(custom_cache_path.glob("snapshots/*"))
+                        custom_valid_snapshots = [
+                            s for s in custom_snapshots if list(s.iterdir())
+                        ]
+                        if custom_valid_snapshots:
+                            custom_snapshot = max(
+                                custom_valid_snapshots, key=lambda p: p.stat().st_mtime
                             )
-                            self._logger.info(
-                                f"[SPLIT CACHE] Using custom cache for config/tokenizer:\n"
-                                f"  Path: {snapshot}\n"
-                                f"  Weights will be loaded from: {default_cache_path}"
+
+                            # Get default snapshot directory for weights
+                            default_snapshots = list(
+                                default_cache_path.glob("snapshots/*")
                             )
-                            return snapshot
+                            default_valid_snapshots = [
+                                s for s in default_snapshots if list(s.iterdir())
+                            ]
+                            if default_valid_snapshots:
+                                default_snapshot = max(
+                                    default_valid_snapshots,
+                                    key=lambda p: p.stat().st_mtime,
+                                )
+
+                                # Check if weights exist in custom cache (directly or via symlink)
+                                custom_weights = custom_snapshot / "model.safetensors"
+                                if not custom_weights.exists():
+                                    # Weights not in custom cache - create symlink or copy
+                                    default_weights = (
+                                        default_snapshot / "model.safetensors"
+                                    )
+                                    if default_weights.exists():
+                                        try:
+                                            # Try to create symlink first (no disk space waste)
+                                            custom_weights.symlink_to(default_weights)
+                                            self._logger.info(
+                                                f"[SYMLINK CREATED] model.safetensors symlink created\n"
+                                                f"  From: {custom_weights}\n"
+                                                f"  To: {default_weights}\n"
+                                                f"  Note: This is a ONE-TIME operation. Future loads will be instant."
+                                            )
+                                        except OSError as e:
+                                            # Symlink failed (permissions?) - fall back to copy
+                                            self._logger.warning(
+                                                f"[SYMLINK FAILED] Could not create symlink: {e}\n"
+                                                f"  Falling back to file copy..."
+                                            )
+                                            import shutil
+
+                                            shutil.copy2(
+                                                default_weights, custom_weights
+                                            )
+                                            self._logger.info(
+                                                f"[COPY CREATED] model.safetensors copied (546MB)\n"
+                                                f"  From: {default_weights}\n"
+                                                f"  To: {custom_weights}\n"
+                                                f"  Note: This is a ONE-TIME operation. Future loads will be instant."
+                                            )
+                                else:
+                                    # Weights already exist (symlink or copy from previous run)
+                                    self._logger.debug(
+                                        f"[SPLIT CACHE] Weights already accessible in custom cache: {custom_weights}"
+                                    )
+
+                                self._logger.info(
+                                    f"[SPLIT CACHE] Using custom cache (all files now accessible):\n"
+                                    f"  Path: {custom_snapshot}\n"
+                                    f"  Config/tokenizer: custom cache\n"
+                                    f"  Model weights: {'symlink/copy' if custom_weights.exists() else 'default cache'}"
+                                )
+                                return custom_snapshot
 
             # Helper to get latest snapshot from a cache path if validation passes
             def get_latest_snapshot_if_valid(cache_path: Path) -> Optional[Path]:
