@@ -442,6 +442,12 @@ def _cleanup_previous_resources():
             state.clear_embedders()
             logger.info("Embedder pool cleared - VRAM released")
 
+        # Force garbage collection to immediately free GPU memory
+        import gc
+
+        gc.collect()
+        logger.info("Garbage collection completed")
+
         try:
             import torch
 
