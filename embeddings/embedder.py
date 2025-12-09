@@ -1452,6 +1452,10 @@ class CodeEmbedder:
 
         Checks both custom cache and default HuggingFace cache for models with
         trust_remote_code=True.
+
+        For split cache scenarios (config in custom, weights in default HF cache),
+        returns the custom cache path so SentenceTransformer can find config.json
+        and load weights from default cache automatically.
         """
         # Use validation to ensure cache is complete
         is_valid, reason = self._validate_model_cache()
@@ -1460,6 +1464,37 @@ class CodeEmbedder:
             return None
 
         try:
+            # Check if this is a split cache scenario for trust_remote_code models
+            model_config = self._get_model_config()
+            requires_trust_remote_code = model_config.get("trust_remote_code", False)
+
+            if requires_trust_remote_code:
+                custom_cache_path = self._get_model_cache_path()
+                default_cache_path = self._get_default_hf_cache_path()
+
+                # Check for split cache: config in custom, weights in default
+                custom_has_config = self._check_config_at_location(custom_cache_path)
+                default_has_weights = self._check_weights_at_location(
+                    default_cache_path
+                )
+
+                if custom_has_config and default_has_weights:
+                    # SPLIT CACHE: Return custom cache snapshot
+                    # SentenceTransformer will find config.json here and load weights from default HF cache
+                    if custom_cache_path and custom_cache_path.exists():
+                        snapshots = list(custom_cache_path.glob("snapshots/*"))
+                        valid_snapshots = [s for s in snapshots if list(s.iterdir())]
+                        if valid_snapshots:
+                            snapshot = max(
+                                valid_snapshots, key=lambda p: p.stat().st_mtime
+                            )
+                            self._logger.info(
+                                f"[SPLIT CACHE] Using custom cache for config/tokenizer:\n"
+                                f"  Path: {snapshot}\n"
+                                f"  Weights will be loaded from: {default_cache_path}"
+                            )
+                            return snapshot
+
             # Helper to get latest snapshot from a cache path if validation passes
             def get_latest_snapshot_if_valid(cache_path: Path) -> Optional[Path]:
                 # Check if this specific cache location is valid
@@ -1482,8 +1517,7 @@ class CodeEmbedder:
                 return custom_snapshot
 
             # Fallback: Check default HuggingFace cache for trust_remote_code models
-            model_config = self._get_model_config()
-            if model_config.get("trust_remote_code", False):
+            if requires_trust_remote_code:
                 default_cache_path = self._get_default_hf_cache_path()
                 default_snapshot = get_latest_snapshot_if_valid(default_cache_path)
                 if default_snapshot:
