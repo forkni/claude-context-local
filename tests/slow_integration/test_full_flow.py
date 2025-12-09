@@ -285,12 +285,12 @@ class TestFullSearchFlow:
             found_api_related
         ), f"Should find API-related code, found names: {api_chunk_names}"
 
-    @pytest.mark.skip(
-        reason="Flaky test - uses random embeddings with fixed query, causing non-deterministic results. "
-        "TODO: Rewrite with real embedder for meaningful semantic search."
-    )
     def test_cross_file_search_patterns(self, test_project_path, mock_storage_dir):
-        """Test search patterns that span multiple files."""
+        """Test search patterns that span multiple files.
+
+        Uses deterministic embeddings for consistent results.
+        Query vectors are created with the same deterministic approach as chunk embeddings.
+        """
         chunker = MultiLanguageChunker(str(test_project_path))
         all_chunks = []
 
@@ -304,9 +304,16 @@ class TestFullSearchFlow:
         index_manager.create_index(768, "flat")
         index_manager.add_embeddings(embeddings)
 
+        # Create deterministic query vector for "exception error class"
+        # Use same hash-based approach as create_test_embeddings()
+        exception_query_seed = abs(hash("exception error class")) % 10000
+        exception_query = (
+            np.random.RandomState(exception_query_seed).random(768).astype(np.float32)
+        )
+
         # Find all exception classes across files
         exception_results = index_manager.search(
-            np.ones(768, dtype=np.float32) * 0.5,
+            exception_query,
             k=20,
             filters={"chunk_type": "class"},
         )
@@ -324,15 +331,20 @@ class TestFullSearchFlow:
             "ValidationError",
         }
         found_exceptions = set(exception_names).intersection(expected_exceptions)
-        # Relax assertion - with deterministic-random embeddings, finding 2 classes is acceptable
-        # TODO: Use real embedder for semantic search instead of random embeddings
+        # With deterministic embeddings, we should consistently find at least 2 exception classes
         assert (
             len(found_exceptions) >= 2
         ), f"Should find multiple exception classes, found: {found_exceptions}"
 
+        # Create deterministic query vector for "validation check function"
+        validation_query_seed = abs(hash("validation check function")) % 10000
+        validation_query = (
+            np.random.RandomState(validation_query_seed).random(768).astype(np.float32)
+        )
+
         # Find all validation-related functions
         validation_results = index_manager.search(
-            np.ones(768, dtype=np.float32) * 0.5,
+            validation_query,
             k=20,
             filters={"chunk_type": "function"},
         )
@@ -351,7 +363,7 @@ class TestFullSearchFlow:
             "check_password",
         }
         found_validators = set(validation_functions).intersection(expected_validators)
-        # Relax assertion - with random embeddings, finding 1 validator is acceptable
+        # With deterministic embeddings, we should consistently find at least 1 validator
         assert (
             len(found_validators) >= 1
         ), f"Should find at least one validation function, found: {found_validators}"
