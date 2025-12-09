@@ -139,6 +139,17 @@ class RoutingConfig:
     default_model: str = "bge_m3"  # Default model key for routing (most balanced)
 
 
+@dataclass
+class RerankerConfig:
+    """Neural reranker settings (5 fields)."""
+
+    enabled: bool = True  # Enabled by default (Quality First)
+    model_name: str = "BAAI/bge-reranker-v2-m3"  # Cross-encoder reranker model
+    top_k_candidates: int = 50  # Rerank top 50 from RRF
+    min_vram_gb: float = 6.0  # Auto-disable below this threshold
+    batch_size: int = 16  # Reranker inference batch size
+
+
 class SearchConfig:
     """Root configuration with nested sub-configs.
 
@@ -157,6 +168,7 @@ class SearchConfig:
         performance: Optional[PerformanceConfig] = None,
         multi_hop: Optional[MultiHopConfig] = None,
         routing: Optional[RoutingConfig] = None,
+        reranker: Optional[RerankerConfig] = None,
     ):
         """Initialize SearchConfig with nested sub-configs.
 
@@ -166,6 +178,7 @@ class SearchConfig:
             performance: PerformanceConfig instance (optional, defaults to PerformanceConfig())
             multi_hop: MultiHopConfig instance (optional, defaults to MultiHopConfig())
             routing: RoutingConfig instance (optional, defaults to RoutingConfig())
+            reranker: RerankerConfig instance (optional, defaults to RerankerConfig())
         """
         # Initialize nested configs with defaults
         self.embedding = embedding if embedding is not None else EmbeddingConfig()
@@ -177,6 +190,7 @@ class SearchConfig:
         )
         self.multi_hop = multi_hop if multi_hop is not None else MultiHopConfig()
         self.routing = routing if routing is not None else RoutingConfig()
+        self.reranker = reranker if reranker is not None else RerankerConfig()
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to flat dictionary for JSON serialization.
@@ -225,6 +239,12 @@ class SearchConfig:
             # RoutingConfig fields
             "multi_model_enabled": self.routing.multi_model_enabled,
             "routing_default_model": self.routing.default_model,
+            # RerankerConfig fields
+            "reranker_enabled": self.reranker.enabled,
+            "reranker_model_name": self.reranker.model_name,
+            "reranker_top_k_candidates": self.reranker.top_k_candidates,
+            "reranker_min_vram_gb": self.reranker.min_vram_gb,
+            "reranker_batch_size": self.reranker.batch_size,
         }
 
     @classmethod
@@ -299,12 +319,21 @@ class SearchConfig:
             default_model=data.get("routing_default_model", "bge_m3"),
         )
 
+        reranker = RerankerConfig(
+            enabled=data.get("reranker_enabled", True),
+            model_name=data.get("reranker_model_name", "BAAI/bge-reranker-v2-m3"),
+            top_k_candidates=data.get("reranker_top_k_candidates", 50),
+            min_vram_gb=data.get("reranker_min_vram_gb", 6.0),
+            batch_size=data.get("reranker_batch_size", 16),
+        )
+
         return cls(
             embedding=embedding,
             search_mode=search_mode,
             performance=performance,
             multi_hop=multi_hop,
             routing=routing,
+            reranker=reranker,
         )
 
 
@@ -408,6 +437,11 @@ class SearchConfigManager:
                 self._bool_from_env,
             ),
             "CLAUDE_ROUTING_DEFAULT_MODEL": ("routing_default_model", str),
+            "CLAUDE_RERANKER_ENABLED": ("reranker_enabled", self._bool_from_env),
+            "CLAUDE_RERANKER_MODEL": ("reranker_model_name", str),
+            "CLAUDE_RERANKER_TOP_K": ("reranker_top_k_candidates", int),
+            "CLAUDE_RERANKER_MIN_VRAM_GB": ("reranker_min_vram_gb", float),
+            "CLAUDE_RERANKER_BATCH_SIZE": ("reranker_batch_size", int),
         }
 
         config_dict = {}

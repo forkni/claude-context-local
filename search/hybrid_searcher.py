@@ -17,6 +17,7 @@ except ImportError:
 from .bm25_index import BM25Index
 from .filters import FilterEngine
 from .indexer import CodeIndexManager
+from .neural_reranker import NeuralReranker
 from .reranker import RRFReranker, SearchResult
 
 
@@ -181,6 +182,10 @@ class HybridSearcher:
         self.reranker = RRFReranker(k=rrf_k)
         self.gpu_monitor = GPUMemoryMonitor()
 
+        # Neural reranker (lazy loaded, VRAM-aware)
+        self.neural_reranker: Optional[NeuralReranker] = None
+        self._neural_reranking_enabled: bool = True  # Will be verified on first use
+
         # Threading
         self.max_workers = max_workers
         self._thread_pool = ThreadPoolExecutor(max_workers=max_workers)
@@ -205,11 +210,52 @@ class HybridSearcher:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.shutdown()
 
+    def _should_enable_neural_reranking(self) -> bool:
+        """Check if VRAM is sufficient for neural reranking.
+
+        Returns:
+            bool: True if VRAM is sufficient and feature is enabled
+        """
+        try:
+            from .config import get_search_config
+
+            config = get_search_config()
+            if not hasattr(config, "reranker") or not config.reranker.enabled:
+                return False
+
+            min_vram = config.reranker.min_vram_gb
+            if not torch.cuda.is_available():
+                self._logger.warning("Neural reranking disabled: No GPU available")
+                return False
+
+            available_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            # Account for already allocated memory
+            allocated_gb = torch.cuda.memory_allocated() / (1024**3)
+            free_gb = available_gb - allocated_gb
+
+            if free_gb >= min_vram:
+                self._logger.info(
+                    f"Neural reranking enabled: {free_gb:.1f}GB available >= {min_vram}GB required"
+                )
+                return True
+            else:
+                self._logger.warning(
+                    f"Neural reranking disabled: {free_gb:.1f}GB available < {min_vram}GB required"
+                )
+                return False
+        except Exception as e:
+            self._logger.warning(f"VRAM check failed, disabling neural reranking: {e}")
+            return False
+
     def shutdown(self):
         """Shutdown the thread pool and cleanup resources."""
         with self._shutdown_lock:
             if not self._is_shutdown:
                 self._thread_pool.shutdown(wait=True)
+                # Cleanup neural reranker
+                if self.neural_reranker:
+                    self.neural_reranker.cleanup()
+                    self.neural_reranker = None
                 self._is_shutdown = True
                 self._logger.info("HybridSearcher shut down")
 
@@ -540,6 +586,38 @@ class HybridSearcher:
             self._logger.debug(
                 f"[RERANK] Produced {len(final_results)} results in {rerank_time:.3f}s"
             )
+
+            # Neural reranking (Quality First mode)
+            if self._neural_reranking_enabled and len(final_results) > 0:
+                # Lazy initialize on first search
+                if self.neural_reranker is None:
+                    self._neural_reranking_enabled = (
+                        self._should_enable_neural_reranking()
+                    )
+                    if self._neural_reranking_enabled:
+                        from .config import get_search_config
+
+                        config = get_search_config()
+                        self.neural_reranker = NeuralReranker(
+                            model_name=config.reranker.model_name,
+                            batch_size=config.reranker.batch_size,
+                        )
+
+                if self.neural_reranker:
+                    neural_start = time.time()
+                    from .config import get_search_config
+
+                    config = get_search_config()
+                    rerank_count = min(
+                        config.reranker.top_k_candidates, len(final_results)
+                    )
+                    final_results = self.neural_reranker.rerank(
+                        query, final_results[:rerank_count], k
+                    )
+                    neural_time = time.time() - neural_start
+                    self._logger.debug(
+                        f"[NEURAL_RERANK] Processed {rerank_count} candidates in {neural_time:.3f}s"
+                    )
 
         # Update statistics
         total_time = time.time() - start_time

@@ -260,6 +260,9 @@ async def handle_get_search_config_status(arguments: Dict[str, Any]) -> dict:
         "multi_hop_enabled": config.multi_hop.enabled,
         "multi_hop_count": config.multi_hop.hop_count,
         "multi_hop_expansion": config.multi_hop.expansion,
+        "reranker_enabled": config.reranker.enabled,
+        "reranker_model": config.reranker.model_name,
+        "reranker_top_k_candidates": config.reranker.top_k_candidates,
     }
 
 
