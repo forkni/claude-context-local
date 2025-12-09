@@ -52,12 +52,12 @@ async def test_parallel_tool_calls_dont_cause_race_condition():
                 "mcp_server.tools.status_handlers.get_search_config"
             ) as mock_config:
                 mock_cfg = Mock()
-                mock_cfg.enable_hybrid_search = True
-                mock_cfg.bm25_weight = 0.4
-                mock_cfg.dense_weight = 0.6
-                mock_cfg.rrf_k_parameter = 60
-                mock_cfg.use_parallel_search = True
-                mock_cfg.embedding_model_name = "test"
+                mock_cfg.search_mode.enable_hybrid = True
+                mock_cfg.search_mode.bm25_weight = 0.4
+                mock_cfg.search_mode.dense_weight = 0.6
+                mock_cfg.search_mode.rrf_k_parameter = 60
+                mock_cfg.performance.use_parallel_search = True
+                mock_cfg.embedding.model_name = "test"
                 mock_config.return_value = mock_cfg
 
                 # Call multiple tools in parallel

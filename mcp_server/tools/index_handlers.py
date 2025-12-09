@@ -214,9 +214,28 @@ def _index_with_all_models(
 
             config_module._config_manager = None
 
-            # Clear cached components to force reload with new model
+            # Also invalidate ServiceLocator's cached config (BUG FIX #1: Merkle snapshot naming)
+            from mcp_server.services import ServiceLocator
+
+            locator = ServiceLocator.instance()
+            locator.invalidate("config")  # Force config reload with new model settings
+
+            # Clear cached components INCLUDING embedders to free GPU memory (BUG FIX #2: Performance)
             state = get_state()
-            state.reset_search_components()
+            state.reset_for_model_switch()  # Clears embedders + index_manager + searcher
+
+            # Force garbage collection and GPU memory release
+            import gc
+
+            gc.collect()
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+            except ImportError:
+                pass
 
             # Get project storage for this model
             project_dir = get_project_storage_dir(str(directory_path))

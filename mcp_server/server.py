@@ -117,7 +117,7 @@ def get_project_storage_dir(
                 f"Invalid model_key: {model_key}, falling back to config default"
             )
             config = get_search_config()
-            model_name = config.embedding_model_name
+            model_name = config.embedding.model_name
         else:
             model_name = MODEL_POOL_CONFIG[model_key]
             logger.info(
@@ -126,7 +126,7 @@ def get_project_storage_dir(
     else:
         # Use config default
         config = get_search_config()
-        model_name = config.embedding_model_name
+        model_name = config.embedding.model_name
         logger.info(f"[CONFIG] Using config default model: {model_name}")
 
     # Validate model exists in registry (prevent silent 768d fallback)
@@ -306,7 +306,7 @@ def get_embedder(model_key: str = None) -> CodeEmbedder:
             # Try to get from config, fallback to bge_m3
             try:
                 config = get_search_config()
-                config_model_name = config.embedding_model_name
+                config_model_name = config.embedding.model_name
 
                 # Map config model name to model_key
                 model_key = None
@@ -372,7 +372,7 @@ def get_embedder(model_key: str = None) -> CodeEmbedder:
         if "default" not in state.embedders or state.embedders["default"] is None:
             try:
                 config = get_search_config()
-                model_name = config.embedding_model_name
+                model_name = config.embedding.model_name
                 logger.info(f"Using single embedding model: {model_name}")
             except Exception as e:
                 logger.warning(f"Failed to load model from config: {e}")
@@ -574,7 +574,7 @@ def get_searcher(project_path: str = None, model_key: str = None):
         logger.info(
             f"[GET_SEARCHER] Initializing searcher for project: {state.current_project}"
         )
-        if config.enable_hybrid_search:
+        if config.search_mode.enable_hybrid:
             project_storage = get_project_storage_dir(
                 state.current_project, model_key=effective_model_key
             )
@@ -590,9 +590,9 @@ def get_searcher(project_path: str = None, model_key: str = None):
             state.searcher = HybridSearcher(
                 storage_dir=str(storage_dir),
                 embedder=get_embedder(effective_model_key),
-                bm25_weight=config.bm25_weight,
-                dense_weight=config.dense_weight,
-                rrf_k=config.rrf_k_parameter,
+                bm25_weight=config.search_mode.bm25_weight,
+                dense_weight=config.search_mode.dense_weight,
+                rrf_k=config.search_mode.rrf_k_parameter,
                 max_workers=2,
                 project_id=project_id,
             )

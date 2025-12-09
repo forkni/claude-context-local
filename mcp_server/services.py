@@ -87,6 +87,29 @@ class ServiceLocator:
         """
         self._factories[name] = factory
 
+    def invalidate(self, name: str) -> bool:
+        """Invalidate a cached service to force re-creation on next access.
+
+        Useful when a service's underlying state has changed and needs to be
+        reloaded. For example, invalidating the config service when the config
+        file has been modified.
+
+        Args:
+            name: Service identifier to invalidate
+
+        Returns:
+            True if service was cached and removed, False otherwise
+
+        Example:
+            >>> locator = ServiceLocator.instance()
+            >>> locator.invalidate("config")  # Force config reload on next access
+            True
+        """
+        if name in self._services:
+            del self._services[name]
+            return True
+        return False
+
     def get(self, name: str) -> Any:
         """Get a service by name, lazily creating it if a factory is registered.
 

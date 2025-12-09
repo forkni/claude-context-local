@@ -94,7 +94,7 @@ class TestGetterFunctions:
 
         # Mock config to disable hybrid search for simpler test
         mock_config = MagicMock()
-        mock_config.enable_hybrid_search = False
+        mock_config.search_mode.enable_hybrid = False
         mock_get_config.return_value = mock_config
 
         # Mock embedder
@@ -218,7 +218,7 @@ class TestToolHandlers:
 
         # Mock search config
         mock_config = MagicMock()
-        mock_config.enable_hybrid_search = False
+        mock_config.search_mode.enable_hybrid = False
         mock_get_search_config.return_value = mock_config
 
         # Mock storage dir
@@ -307,7 +307,7 @@ class TestToolHandlers:
             "mcp_server.tools.status_handlers.get_search_config"
         ) as mock_get_config:
             mock_config = MagicMock()
-            mock_config.embedding_model_name = "BAAI/bge-m3"
+            mock_config.embedding.model_name = "BAAI/bge-m3"
             mock_get_config.return_value = mock_config
 
             # Call handler

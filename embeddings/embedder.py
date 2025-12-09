@@ -247,11 +247,11 @@ class CodeEmbedder:
         # Phase 4: Use ServiceLocator helper instead of inline import
         config = _get_config_via_service_locator()
 
-        if not config.enable_fp16:
+        if not config.performance.enable_fp16:
             return None  # fp16 disabled: use fp32
 
         # Check bf16 support (requires Ampere+ architecture)
-        if config.prefer_bf16:
+        if config.performance.prefer_bf16:
             try:
                 if torch.cuda.is_bf16_supported():
                     self._logger.info(
@@ -717,22 +717,22 @@ class CodeEmbedder:
 
             # Try dynamic GPU-based batch size first
             if (
-                config.enable_dynamic_batch_size
-                and config.prefer_gpu
+                config.performance.enable_dynamic_batch_size
+                and config.performance.prefer_gpu
                 and torch
                 and torch.cuda.is_available()
             ):
                 batch_size = calculate_optimal_batch_size(
-                    embedding_dim=config.model_dimension,
-                    min_batch=config.dynamic_batch_min,
-                    max_batch=config.dynamic_batch_max,
-                    memory_fraction=config.gpu_memory_threshold,
+                    embedding_dim=config.embedding.dimension,
+                    min_batch=config.performance.dynamic_batch_min,
+                    max_batch=config.performance.dynamic_batch_max,
+                    memory_fraction=config.performance.gpu_memory_threshold,
                 )
                 self._logger.info(
                     f"Using dynamic GPU-optimized batch size {batch_size} for {len(chunks)} chunks"
                 )
             else:
-                batch_size = config.embedding_batch_size
+                batch_size = config.embedding.batch_size
                 self._logger.info(
                     f"Using static batch size {batch_size} from config for {len(chunks)} chunks"
                 )
@@ -1056,6 +1056,89 @@ class CodeEmbedder:
 
         return default_hf_cache / expected_model_dir_name
 
+    def _check_config_at_location(self, cache_path: Path) -> bool:
+        """Check if config.json exists and is valid at location.
+
+        Used for split cache validation where config may be in custom cache
+        while model weights are in default HuggingFace cache.
+
+        Args:
+            cache_path: Path to models--{org}--{name} directory to check
+
+        Returns:
+            True if valid config.json found, False otherwise
+        """
+        if not cache_path or not cache_path.exists():
+            return False
+
+        try:
+            # Find snapshot directories (skip empty ones)
+            all_snapshots = list(cache_path.glob("snapshots/*"))
+            if not all_snapshots:
+                return False
+
+            # Filter out empty snapshots
+            valid_snapshots = [s for s in all_snapshots if list(s.iterdir())]
+            if not valid_snapshots:
+                return False
+
+            # Use latest valid snapshot
+            snapshot_dir = max(valid_snapshots, key=lambda p: p.stat().st_mtime)
+
+            # Check if config.json exists
+            config_path = snapshot_dir / "config.json"
+            return config_path.exists()
+
+        except Exception as e:
+            self._logger.debug(f"Error checking config at {cache_path}: {e}")
+            return False
+
+    def _check_weights_at_location(self, cache_path: Path) -> bool:
+        """Check if model weights exist at location (any format).
+
+        Used for split cache validation where model weights may be in default
+        HuggingFace cache while config is in custom cache.
+
+        Supports both single-file formats (model.safetensors, pytorch_model.bin)
+        and sharded formats (*.index.json).
+
+        Args:
+            cache_path: Path to models--{org}--{name} directory to check
+
+        Returns:
+            True if model weights found in any format, False otherwise
+        """
+        if not cache_path or not cache_path.exists():
+            return False
+
+        try:
+            # Find snapshot directories (skip empty ones)
+            all_snapshots = list(cache_path.glob("snapshots/*"))
+            if not all_snapshots:
+                return False
+
+            # Filter out empty snapshots
+            valid_snapshots = [s for s in all_snapshots if list(s.iterdir())]
+            if not valid_snapshots:
+                return False
+
+            # Use latest valid snapshot
+            snapshot_dir = max(valid_snapshots, key=lambda p: p.stat().st_mtime)
+
+            # Check for model weights in any format
+            has_weights = (
+                (snapshot_dir / "model.safetensors").exists()
+                or (snapshot_dir / "pytorch_model.bin").exists()
+                or (snapshot_dir / "model.safetensors.index.json").exists()
+                or (snapshot_dir / "pytorch_model.bin.index.json").exists()
+            )
+
+            return has_weights
+
+        except Exception as e:
+            self._logger.debug(f"Error checking weights at {cache_path}: {e}")
+            return False
+
     def _check_cache_at_location(self, cache_path: Path) -> tuple[bool, str]:
         """Check if valid model cache exists at a specific location.
 
@@ -1221,17 +1304,39 @@ class CodeEmbedder:
         requires_trust_remote_code = model_config.get("trust_remote_code", False)
 
         if requires_trust_remote_code:
-            # Fallback: Check default HuggingFace cache location
-            # Some models with trust_remote_code ignore cache_folder and use default location
+            # SPLIT CACHE VALIDATION: Check if config+tokenizer in custom, weights in default
+            # trust_remote_code models often split cache:
+            #   - Custom cache: config.json, tokenizer, Python code
+            #   - Default HF cache: model.safetensors (weights only)
             default_cache_path = self._get_default_hf_cache_path()
+
+            # Check what exists in each location
+            custom_has_config = self._check_config_at_location(custom_cache_path)
+            default_has_weights = self._check_weights_at_location(default_cache_path)
+
+            if custom_has_config and default_has_weights:
+                # Valid split cache scenario!
+                self._logger.info(
+                    f"[SPLIT CACHE VALID] trust_remote_code model detected.\n"
+                    f"  Config/tokenizer: {custom_cache_path}\n"
+                    f"  Model weights: {default_cache_path}\n"
+                    f"  Reason: Models with trust_remote_code=True split cache across locations.\n"
+                    f"  Impact: Model will load successfully using both cache locations."
+                )
+                return (
+                    True,
+                    "Valid (split cache: config in custom, weights in default HF cache)",
+                )
+
+            # Full fallback: Check if complete cache exists in default location
             default_valid, default_reason = self._check_cache_at_location(
                 default_cache_path
             )
 
             if default_valid:
-                # Cache found in default location instead of custom location
+                # Complete cache found in default location instead of custom location
                 self._logger.warning(
-                    f"[CACHE LOCATION MISMATCH] Model weights found in default HuggingFace cache instead of custom cache.\n"
+                    f"[CACHE LOCATION MISMATCH] Complete model cache found in default HuggingFace cache.\n"
                     f"  Expected: {custom_cache_path}\n"
                     f"  Found: {default_cache_path}\n"
                     f"  Reason: Models with trust_remote_code=True may ignore cache_folder parameter.\n"

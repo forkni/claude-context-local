@@ -69,7 +69,7 @@ def main():
     from search.config import get_search_config
 
     config = get_search_config()
-    multi_model_config = config.multi_model_enabled  # From search_config.json
+    multi_model_config = config.routing.multi_model_enabled  # From search_config.json
 
     # CLI flag overrides, then config, then env var fallback
     if args.multi_model:

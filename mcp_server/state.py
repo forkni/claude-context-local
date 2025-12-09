@@ -103,7 +103,7 @@ class ApplicationState:
         if env_value is not None:
             self.multi_model_enabled = env_value.lower() in ("true", "1", "yes")
         else:
-            self.multi_model_enabled = config.multi_model_enabled
+            self.multi_model_enabled = config.routing.multi_model_enabled
 
     def switch_project(self, path: str) -> None:
         """Switch to a different project.

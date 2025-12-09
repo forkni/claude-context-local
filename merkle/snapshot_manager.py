@@ -53,8 +53,8 @@ class SnapshotManager:
                 from search.config import get_model_slug
 
                 config = ServiceLocator.instance().get_config()
-                dimension = config.model_dimension
-                model_slug = get_model_slug(config.embedding_model_name)
+                dimension = config.embedding.dimension
+                model_slug = get_model_slug(config.embedding.model_name)
             except Exception:
                 # Fallback to default if config unavailable
                 dimension = 768
@@ -67,7 +67,7 @@ class SnapshotManager:
                 from search.config import get_model_slug
 
                 config = ServiceLocator.instance().get_config()
-                model_slug = get_model_slug(config.embedding_model_name)
+                model_slug = get_model_slug(config.embedding.model_name)
             except Exception:
                 model_slug = "unknown"
 
