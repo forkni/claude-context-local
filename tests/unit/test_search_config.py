@@ -218,8 +218,8 @@ class TestDefaultConfigPath:
 
         mgr = SearchConfigManager(config_file=str(storage_path))
         cfg = mgr.load_config()
-        cfg.embedding_model_name = "BAAI/bge-m3"
-        cfg.default_search_mode = "semantic"
+        cfg.embedding.model_name = "BAAI/bge-m3"
+        cfg.search_mode.default_mode = "semantic"
         mgr.save_config(cfg)
 
         # Verify file exists
@@ -228,8 +228,8 @@ class TestDefaultConfigPath:
         # Load in new manager
         mgr2 = SearchConfigManager(config_file=str(storage_path))
         cfg2 = mgr2.load_config()
-        assert cfg2.embedding_model_name == "BAAI/bge-m3"
-        assert cfg2.default_search_mode == "semantic"
+        assert cfg2.embedding.model_name == "BAAI/bge-m3"
+        assert cfg2.search_mode.default_mode == "semantic"
 
         # tmp_path cleanup is automatic via pytest fixture
 

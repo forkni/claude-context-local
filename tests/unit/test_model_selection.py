@@ -53,21 +53,27 @@ class TestSearchConfigModelFields:
     def test_default_config_uses_gemma(self):
         """Test that default config uses Gemma (backward compatibility)."""
         config = SearchConfig()
-        assert config.embedding_model_name == "google/embeddinggemma-300m"
-        assert config.model_dimension == 768
+        assert config.embedding.model_name == "google/embeddinggemma-300m"
+        assert config.embedding.dimension == 768
 
     def test_config_with_bge_m3(self):
         """Test creating config with BGE-M3."""
+        from search.config import EmbeddingConfig
+
         config = SearchConfig(
-            embedding_model_name="BAAI/bge-m3",
-            model_dimension=1024,
+            embedding=EmbeddingConfig(
+                model_name="BAAI/bge-m3",
+                dimension=1024,
+            )
         )
-        assert config.embedding_model_name == "BAAI/bge-m3"
-        assert config.model_dimension == 1024
+        assert config.embedding.model_name == "BAAI/bge-m3"
+        assert config.embedding.dimension == 1024
 
     def test_config_to_dict(self):
         """Test config serialization."""
-        config = SearchConfig(embedding_model_name="BAAI/bge-m3")
+        from search.config import EmbeddingConfig
+
+        config = SearchConfig(embedding=EmbeddingConfig(model_name="BAAI/bge-m3"))
         config_dict = config.to_dict()
         assert "embedding_model_name" in config_dict
         assert config_dict["embedding_model_name"] == "BAAI/bge-m3"
@@ -80,8 +86,8 @@ class TestSearchConfigModelFields:
             "default_search_mode": "hybrid",
         }
         config = SearchConfig.from_dict(config_dict)
-        assert config.embedding_model_name == "BAAI/bge-m3"
-        assert config.model_dimension == 1024
+        assert config.embedding.model_name == "BAAI/bge-m3"
+        assert config.embedding.dimension == 1024
 
 
 class TestSearchConfigManager:
@@ -98,7 +104,7 @@ class TestSearchConfigManager:
             mgr = SearchConfigManager(config_file=str(config_file))
             config = mgr.load_config()
             # Should default to Gemma when no config exists
-            assert "gemma" in config.embedding_model_name.lower()
+            assert "gemma" in config.embedding.model_name.lower()
 
     def test_config_manager_save_and_load(self):
         """Test saving and loading model configuration."""
@@ -110,7 +116,7 @@ class TestSearchConfigManager:
             config = mgr.load_config()
 
             # Change to BGE-M3
-            config.embedding_model_name = "BAAI/bge-m3"
+            config.embedding.model_name = "BAAI/bge-m3"
             mgr.save_config(config)
 
             # Verify file was created
@@ -119,7 +125,7 @@ class TestSearchConfigManager:
             # Load in new manager instance
             mgr2 = SearchConfigManager(config_file=str(config_file))
             config2 = mgr2.load_config()
-            assert config2.embedding_model_name == "BAAI/bge-m3"
+            assert config2.embedding.model_name == "BAAI/bge-m3"
 
     def test_environment_variable_override(self, monkeypatch):
         """Test that CLAUDE_EMBEDDING_MODEL env var works."""
@@ -127,7 +133,7 @@ class TestSearchConfigManager:
 
         mgr = SearchConfigManager()
         config = mgr.load_config()
-        assert config.embedding_model_name == "BAAI/bge-m3"
+        assert config.embedding.model_name == "BAAI/bge-m3"
 
 
 @pytest.mark.usefixtures("mock_sentence_transformer")
@@ -241,8 +247,8 @@ class TestBackwardCompatibility:
 
         config = SearchConfig.from_dict(old_config)
         # Should use defaults for missing fields
-        assert config.embedding_model_name == "google/embeddinggemma-300m"
-        assert config.model_dimension == 768
+        assert config.embedding.model_name == "google/embeddinggemma-300m"
+        assert config.embedding.dimension == 768
 
 
 if __name__ == "__main__":

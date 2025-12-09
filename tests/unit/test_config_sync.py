@@ -20,7 +20,7 @@ class TestMultiModelEnabledPersistence:
     def test_multi_model_enabled_default_true(self):
         """Test default value is True."""
         config = SearchConfig()
-        assert config.multi_model_enabled is True
+        assert config.routing.multi_model_enabled is True
 
     def test_multi_model_enabled_persistence(self):
         """Test multi_model_enabled saves and loads from file."""
@@ -30,13 +30,13 @@ class TestMultiModelEnabledPersistence:
             config = manager.load_config()
 
             # Change value
-            config.multi_model_enabled = False
+            config.routing.multi_model_enabled = False
             manager.save_config(config)
 
             # Reload and verify
             manager._config = None  # Clear cache
             loaded = manager.load_config()
-            assert loaded.multi_model_enabled is False
+            assert loaded.routing.multi_model_enabled is False
 
     def test_env_override_multi_model(self):
         """Test environment variable overrides config file."""
@@ -49,7 +49,7 @@ class TestMultiModelEnabledPersistence:
         with patch.dict(os.environ, {"CLAUDE_MULTI_MODEL_ENABLED": "false"}):
             manager = SearchConfigManager(self.config_file)
             config = manager.load_config()
-            assert config.multi_model_enabled is False
+            assert config.routing.multi_model_enabled is False
 
     def test_multi_model_env_values(self):
         """Test various environment variable values."""
@@ -72,7 +72,7 @@ class TestMultiModelEnabledPersistence:
                 manager = SearchConfigManager(self.config_file)
                 config = manager.load_config()
                 assert (
-                    config.multi_model_enabled == expected
+                    config.routing.multi_model_enabled == expected
                 ), f"Failed for env_value={env_value}"
 
 
@@ -90,7 +90,7 @@ class TestApplicationStateSyncFromConfig:
         # Clear env var to test config-only sync
         with patch.dict(os.environ, {}, clear=True):
             config = SearchConfig()
-            config.multi_model_enabled = False
+            config.routing.multi_model_enabled = False
 
             state = get_state()
             state.sync_from_config(config)
@@ -100,7 +100,7 @@ class TestApplicationStateSyncFromConfig:
     def test_sync_env_overrides_config(self):
         """Test environment variable overrides config during sync."""
         config = SearchConfig()
-        config.multi_model_enabled = True
+        config.routing.multi_model_enabled = True
 
         with patch.dict(os.environ, {"CLAUDE_MULTI_MODEL_ENABLED": "false"}):
             state = get_state()
@@ -110,7 +110,7 @@ class TestApplicationStateSyncFromConfig:
     def test_sync_config_used_when_no_env(self):
         """Test config value used when no env var set."""
         config = SearchConfig()
-        config.multi_model_enabled = False
+        config.routing.multi_model_enabled = False
 
         # Ensure no env var is set
         with patch.dict(os.environ, {}, clear=True):
@@ -121,7 +121,7 @@ class TestApplicationStateSyncFromConfig:
     def test_sync_various_env_values(self):
         """Test sync with various environment variable values."""
         config = SearchConfig()
-        config.multi_model_enabled = False  # Config says False
+        config.routing.multi_model_enabled = False  # Config says False
 
         test_cases = [
             ("true", True),
@@ -154,13 +154,13 @@ class TestSearchModeConfigPersistence:
         config = manager.load_config()
 
         # Change search mode
-        config.default_search_mode = "bm25"
+        config.search_mode.default_mode = "bm25"
         manager.save_config(config)
 
         # Reload and verify
         manager._config = None
         loaded = manager.load_config()
-        assert loaded.default_search_mode == "bm25"
+        assert loaded.search_mode.default_mode == "bm25"
 
     def test_weights_persistence(self):
         """Test BM25 and Dense weights save and load."""
