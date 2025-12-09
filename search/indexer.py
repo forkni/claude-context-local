@@ -2,12 +2,10 @@
 
 import json
 import logging
-import pickle
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-import psutil
 
 try:
     import faiss
@@ -19,12 +17,8 @@ try:
 except ImportError:
     SqliteDict = None
 
-try:
-    import torch
-except ImportError:
-    torch = None
-
 from embeddings.embedder import EmbeddingResult
+from search.faiss_index import FaissVectorIndex
 from search.filters import FilterEngine
 from search.metadata import MetadataStore
 
@@ -38,53 +32,6 @@ except ImportError:
     CodeGraphStorage = None
 
 
-def get_available_memory() -> Dict[str, int]:
-    """Get available system and GPU memory in bytes."""
-    memory_info = {
-        "system_total": psutil.virtual_memory().total,
-        "system_available": psutil.virtual_memory().available,
-        "gpu_total": 0,
-        "gpu_available": 0,
-    }
-
-    # Get GPU memory if CUDA available
-    if torch and torch.cuda.is_available():
-        try:
-            gpu_props = torch.cuda.get_device_properties(0)
-            memory_info["gpu_total"] = gpu_props.total_memory
-            memory_info["gpu_available"] = (
-                gpu_props.total_memory - torch.cuda.memory_allocated(0)
-            )
-        except Exception:
-            pass
-
-    return memory_info
-
-
-def estimate_index_memory_usage(
-    num_vectors: int, dimension: int, index_type: str = "flat"
-) -> Dict[str, int]:
-    """Estimate memory usage for FAISS index in bytes."""
-    # Base vector storage (float32 = 4 bytes per element)
-    vector_memory = num_vectors * dimension * 4
-
-    # FAISS overhead depends on index type
-    if index_type.lower() == "flat":
-        # Flat index: minimal overhead
-        overhead = vector_memory * 0.1  # ~10% overhead
-    else:
-        # IVF/other indexes: more overhead for centroids, inverted lists
-        overhead = vector_memory * 0.3  # ~30% overhead
-
-    total_memory = int(vector_memory + overhead)
-
-    return {
-        "vectors": int(vector_memory),
-        "overhead": int(overhead),
-        "total": total_memory,
-    }
-
-
 class CodeIndexManager:
     """Manages FAISS vector index and metadata storage for code chunks."""
 
@@ -95,18 +42,15 @@ class CodeIndexManager:
         # File paths
         self.index_path = self.storage_dir / "code.index"
         self.metadata_path = self.storage_dir / "metadata.db"
-        self.chunk_id_path = self.storage_dir / "chunk_ids.pkl"
         self.stats_path = self.storage_dir / "stats.json"
 
         # Initialize components
-        self._index = None
         self._metadata_store = MetadataStore(self.metadata_path)
-        self._chunk_ids = []
+        self._faiss_index = FaissVectorIndex(self.index_path, embedder=embedder)
         self._logger = logging.getLogger(__name__)
         self._logger.info(
             f"[INIT] CodeIndexManager created: storage_dir={storage_dir}, project_id={project_id}"
         )
-        self._on_gpu = False
         self.embedder = embedder  # Optional embedder for dimension validation
 
         # Initialize call graph storage (Phase 1)
@@ -127,6 +71,9 @@ class CodeIndexManager:
         # Check dependencies
         self._check_dependencies()
 
+        # Load existing index
+        self._faiss_index.load()
+
     def _check_dependencies(self):
         """Check if required dependencies are available."""
         if faiss is None:
@@ -141,10 +88,23 @@ class CodeIndexManager:
 
     @property
     def index(self):
-        """Lazy loading of FAISS index."""
-        if self._index is None:
-            self._load_index()
-        return self._index
+        """Access to underlying FAISS index."""
+        return self._faiss_index.index
+
+    @property
+    def _index(self):
+        """Backward compatibility property."""
+        return self._faiss_index.index
+
+    @property
+    def _chunk_ids(self):
+        """Backward compatibility property for chunk IDs."""
+        return self._faiss_index.chunk_ids
+
+    @property
+    def _on_gpu(self):
+        """Backward compatibility property for GPU status."""
+        return self._faiss_index.is_on_gpu
 
     @property
     def metadata_store(self):
@@ -154,72 +114,14 @@ class CodeIndexManager:
         """
         return self._metadata_store
 
-    def _load_index(self):
-        """Load existing FAISS index or create new one."""
-        if self.index_path.exists():
-            self._logger.info(f"Loading existing index from {self.index_path}")
-            self._index = faiss.read_index(str(self.index_path))
-
-            # Validate index dimension matches current model (if embedder provided)
-            if self.embedder is not None:
-                try:
-                    stored_dim = self._index.d
-                    current_model_dim = self.embedder.get_model_info()[
-                        "embedding_dimension"
-                    ]
-
-                    if stored_dim != current_model_dim:
-                        self._logger.warning(
-                            f"Index dimension mismatch detected!\n"
-                            f"  Stored index: {stored_dim} dimensions\n"
-                            f"  Current model: {current_model_dim} dimensions\n"
-                            f"  Model: {self.embedder.model_name}\n"
-                            f"This index was created with a different embedding model.\n"
-                            f"Creating new index for current model..."
-                        )
-                        # Clear the incompatible index
-                        self._index = None
-                        self._chunk_ids = []
-                        return  # Will create new index when embeddings are added
-                except Exception as e:
-                    self._logger.debug(f"Could not validate index dimension: {e}")
-
-            # If GPU support is available, optionally move to GPU for runtime speed
-            self._maybe_move_index_to_gpu()
-
-            # Load chunk IDs
-            if self.chunk_id_path.exists():
-                with open(self.chunk_id_path, "rb") as f:
-                    self._chunk_ids = pickle.load(f)
-        else:
-            self._logger.info("Creating new index")
-            # Create a new index - we'll initialize it when we get the first embedding
-            self._index = None
-            self._chunk_ids = []
-
     def create_index(self, embedding_dimension: int, index_type: str = "flat"):
-        """Create a new FAISS index."""
-        if index_type == "flat":
-            # Simple flat index for exact search
-            self._index = faiss.IndexFlatIP(
-                embedding_dimension
-            )  # Inner product (cosine similarity)
-        elif index_type == "ivf":
-            # IVF index for faster approximate search on large datasets
-            quantizer = faiss.IndexFlatIP(embedding_dimension)
-            n_centroids = min(
-                100, max(10, embedding_dimension // 8)
-            )  # Adaptive number of centroids
-            self._index = faiss.IndexIVFFlat(
-                quantizer, embedding_dimension, n_centroids
-            )
-        else:
-            raise ValueError(f"Unsupported index type: {index_type}")
+        """Create a new FAISS index.
 
-        self._logger.info(
-            f"Created {index_type} index with dimension {embedding_dimension}"
-        )
-        self._maybe_move_index_to_gpu()
+        Args:
+            embedding_dimension: Dimension of embedding vectors
+            index_type: Type of index to create ("flat" or "ivf")
+        """
+        self._faiss_index.create(embedding_dimension, index_type)
 
     def add_embeddings(self, embedding_results: List[EmbeddingResult]) -> None:
         """Add embeddings to the index and metadata to the database."""
@@ -266,23 +168,15 @@ class CodeIndexManager:
 
         # Prepare embeddings and metadata
         embeddings = np.array([result.embedding for result in embedding_results])
+        chunk_ids_to_add = [result.chunk_id for result in embedding_results]
 
-        # Normalize embeddings for cosine similarity
-        faiss.normalize_L2(embeddings)
+        # Add to FAISS index (handles normalization and training internally)
+        start_id = self._faiss_index.ntotal
+        self._faiss_index.add(embeddings, chunk_ids_to_add)
 
-        # Train IVF index if needed
-        if hasattr(self._index, "is_trained") and not self._index.is_trained:
-            self._logger.info("Training IVF index...")
-            self._index.train(embeddings)
-
-        # Add to FAISS index
-        start_id = len(self._chunk_ids)
-        self._index.add(embeddings)
-
-        # Store metadata and update chunk IDs
+        # Store metadata
         for i, result in enumerate(embedding_results):
             chunk_id = result.chunk_id
-            self._chunk_ids.append(chunk_id)
 
             # Store in metadata database
             self.metadata_store.set(chunk_id, start_id + i, result.metadata)
@@ -327,34 +221,6 @@ class CodeIndexManager:
         # Update statistics
         self._update_stats()
 
-    def _gpu_is_available(self) -> bool:
-        """Check if GPU FAISS support is available and GPUs are present."""
-        try:
-            if not hasattr(faiss, "StandardGpuResources"):
-                return False
-            get_num_gpus = getattr(faiss, "get_num_gpus", None)
-            if get_num_gpus is None:
-                return False
-            return get_num_gpus() > 0
-        except Exception:
-            return False
-
-    def _maybe_move_index_to_gpu(self) -> None:
-        """Move the current index to GPU if supported. No-op if already on GPU or unsupported."""
-        if self.index is None or self._on_gpu:
-            return
-        if not self._gpu_is_available():
-            return
-        try:
-            # Move index to all GPUs for faster add/search
-            self._index = faiss.index_cpu_to_all_gpus(self._index)
-            self._on_gpu = True
-            self._logger.info("FAISS index moved to GPU(s)")
-        except Exception as e:
-            self._logger.warning(
-                f"Failed to move FAISS index to GPU, continuing on CPU: {e}"
-            )
-
     def search(
         self,
         query_embedding: np.ndarray,
@@ -368,27 +234,24 @@ class CodeIndexManager:
 
         logger.info(f"Index manager search called with k={k}, filters={filters}")
 
-        # Use property to trigger lazy loading
-        index = self.index
-        if index is None or index.ntotal == 0:
+        # Check if index exists and has vectors
+        if self.index is None or self._faiss_index.ntotal == 0:
             logger.warning(
-                f"Index is empty or None. Index: {index}, ntotal: {index.ntotal if index else 'N/A'}"
+                f"Index is empty or None. Index: {self.index}, ntotal: {self._faiss_index.ntotal}"
             )
             return []
 
-        logger.info(f"Index has {index.ntotal} total vectors")
+        logger.info(f"Index has {self._faiss_index.ntotal} total vectors")
 
-        # Normalize query embedding
-        query_embedding = query_embedding.reshape(1, -1)
-        faiss.normalize_L2(query_embedding)
-
-        # Search in FAISS index
-        search_k = min(k * 3, index.ntotal)  # Get more results for filtering
-        similarities, indices = index.search(query_embedding, search_k)
+        # Search in FAISS index (handles normalization internally)
+        search_k = min(
+            k * 3, self._faiss_index.ntotal
+        )  # Get more results for filtering
+        similarities, indices = self._faiss_index.search(query_embedding, search_k)
 
         results = []
         for _i, (similarity, index_id) in enumerate(
-            zip(similarities[0], indices[0], strict=False)
+            zip(similarities, indices, strict=False)
         ):
             if index_id == -1:  # No more results
                 break
@@ -471,7 +334,7 @@ class CodeIndexManager:
             return []
 
         # Get the embedding for this chunk
-        embedding = self._index.reconstruct(index_id)
+        embedding = self._faiss_index.reconstruct(index_id)
 
         # Search for similar chunks (excluding the original)
         results = self.search(embedding, k + 1)
@@ -531,7 +394,7 @@ class CodeIndexManager:
                 continue
 
             # Get the embedding for this chunk
-            embedding = self._index.reconstruct(index_id)
+            embedding = self._faiss_index.reconstruct(index_id)
             embeddings.append(embedding)
             valid_chunk_ids.append(resolved_chunk_id)
             original_to_variant[original_chunk_id] = resolved_chunk_id
@@ -711,10 +574,12 @@ class CodeIndexManager:
                 if positions_to_keep:
                     # Reconstruct embeddings for chunks we want to keep
                     embeddings_to_keep = []
+                    chunk_ids_to_keep = []
                     for pos in positions_to_keep:
                         try:
-                            embedding = self._index.reconstruct(int(pos))
+                            embedding = self._faiss_index.reconstruct(int(pos))
                             embeddings_to_keep.append(embedding)
+                            chunk_ids_to_keep.append(self._chunk_ids[pos])
                         except Exception as e:
                             self._logger.warning(
                                 f"Failed to reconstruct embedding at position {pos}: {e}"
@@ -722,47 +587,26 @@ class CodeIndexManager:
                             continue
 
                     if embeddings_to_keep:
-                        # Create new index with kept embeddings
+                        # Save current state
                         embeddings_array = np.array(
                             embeddings_to_keep, dtype=np.float32
                         )
-
-                        # Get embedding dimension
                         embedding_dim = embeddings_array.shape[1]
+                        was_on_gpu = self._faiss_index.is_on_gpu
 
-                        # Determine index type from current index
-                        if hasattr(self._index, "metric_type"):
-                            # Preserve metric type
-                            pass
+                        # Clear old index and create new one
+                        self._faiss_index.clear()
+                        self._faiss_index.create(embedding_dim, "flat")
 
-                        # Check if we were on GPU
-                        was_on_gpu = self._on_gpu
+                        # Add kept embeddings and chunk IDs
+                        self._faiss_index.add(embeddings_array, chunk_ids_to_keep)
 
-                        # Create new CPU index
-                        new_index = faiss.IndexFlatIP(embedding_dim)
-
-                        # Normalize embeddings (we use cosine similarity)
-                        faiss.normalize_L2(embeddings_array)
-
-                        # Add kept embeddings to new index
-                        new_index.add(embeddings_array)
-
-                        # Replace old index
-                        if self._on_gpu:
-                            # Clear GPU memory from old index
-                            del self._index
-                            if torch and torch.cuda.is_available():
-                                torch.cuda.empty_cache()
-
-                        self._index = new_index
-                        self._on_gpu = False
-
-                        # Move to GPU if it was on GPU before
+                        # Restore GPU state if needed
                         if was_on_gpu:
-                            self._maybe_move_index_to_gpu()
+                            self._faiss_index.move_to_gpu()
 
                         self._logger.info(
-                            f"Rebuilt FAISS index: {self._index.ntotal} vectors "
+                            f"Rebuilt FAISS index: {self._faiss_index.ntotal} vectors "
                             f"(removed {len(chunks_to_remove_ids)})"
                         )
                     else:
@@ -777,14 +621,6 @@ class CodeIndexManager:
                     self._logger.info("All chunks removed, clearing index")
                     self.clear_index()
                     return len(chunks_to_remove_ids)
-
-            # Update chunk_ids list (remove chunks at removed positions)
-            new_chunk_ids = [
-                chunk_id
-                for i, chunk_id in enumerate(self._chunk_ids)
-                if i not in set(chunks_to_remove_positions)
-            ]
-            self._chunk_ids = new_chunk_ids
 
             # Remove chunks from metadata and update index_ids
             for chunk_id in chunks_to_remove_ids:
@@ -822,30 +658,8 @@ class CodeIndexManager:
 
     def save_index(self):
         """Save the FAISS index and chunk IDs to disk."""
-        if self.index is not None:
-            try:
-                index_to_write = self._index
-                # If on GPU, convert to CPU before saving
-                if self._on_gpu and hasattr(faiss, "index_gpu_to_cpu"):
-                    index_to_write = faiss.index_gpu_to_cpu(self._index)
-                faiss.write_index(index_to_write, str(self.index_path))
-                self._logger.info(f"Saved index to {self.index_path}")
-            except Exception as e:
-                self._logger.warning(
-                    f"Failed to save GPU index directly, attempting CPU fallback: {e}"
-                )
-                try:
-                    cpu_index = faiss.index_gpu_to_cpu(self._index)
-                    faiss.write_index(cpu_index, str(self.index_path))
-                    self._logger.info(
-                        f"Saved index to {self.index_path} (CPU fallback)"
-                    )
-                except Exception as e2:
-                    self._logger.error(f"Failed to save FAISS index: {e2}")
-
-        # Save chunk IDs
-        with open(self.chunk_id_path, "wb") as f:
-            pickle.dump(self._chunk_ids, f)
+        # Delegate FAISS index and chunk ID saving to FaissVectorIndex
+        self._faiss_index.save()
 
         # Save call graph if populated (Phase 1)
         graph_status = "not None" if self.graph_storage is not None else "None"
@@ -900,20 +714,8 @@ class CodeIndexManager:
         Returns:
             bool: True if index was loaded successfully or already exists, False otherwise
         """
-        # Index is already loaded in __init__, so just check if it exists
-        if self.index is not None and len(self._chunk_ids) > 0:
-            return True
-
-        # Try to reload if index file exists but index is None
-        if self.index_path.exists():
-            try:
-                self._load_index()
-                return self._index is not None
-            except Exception as e:
-                self._logger.error(f"Failed to reload index: {e}")
-                return False
-
-        return False
+        # Delegate to FaissVectorIndex
+        return self._faiss_index.load()
 
     def _add_to_graph(self, chunk_id: str, metadata: Dict[str, Any]) -> None:
         """Add chunk to call graph storage.
@@ -1191,19 +993,13 @@ class CodeIndexManager:
             # Reinitialize metadata store for future operations
             self._metadata_store = MetadataStore(self.metadata_path)
 
-        # Remove files
-        for file_path in [
-            self.index_path,
-            self.metadata_path,
-            self.chunk_id_path,
-            self.stats_path,
-        ]:
+        # Clear FAISS index (includes GPU cleanup if needed)
+        self._faiss_index.clear()
+
+        # Remove additional files
+        for file_path in [self.metadata_path, self.stats_path]:
             if file_path.exists():
                 file_path.unlink()
-
-        # Reset in-memory state
-        self._index = None
-        self._chunk_ids = []
 
         # Clear call graph
         if self.graph_storage is not None:
@@ -1218,82 +1014,31 @@ class CodeIndexManager:
     def check_memory_requirements(
         self, num_new_vectors: int, dimension: int
     ) -> Dict[str, Any]:
-        """Check if there's enough memory for adding new vectors."""
-        # Get current memory status
-        available = get_available_memory()
+        """Check if there's enough memory for adding new vectors.
 
-        # Estimate memory needed for new vectors
-        estimate_index_memory_usage(num_new_vectors, dimension)
+        Args:
+            num_new_vectors: Number of vectors to be added
+            dimension: Dimension of vectors
 
-        # Check current index size
-        current_size = self.get_index_size()
-        total_vectors_after = current_size + num_new_vectors
-
-        # Estimate total memory after adding vectors
-        total_estimated = estimate_index_memory_usage(total_vectors_after, dimension)
-
-        # Determine if we should use GPU or CPU
-        prefer_gpu = self._gpu_is_available()
-        target_memory = (
-            available["gpu_available"] if prefer_gpu else available["system_available"]
-        )
-
-        # Safety margin: require 20% more available memory than estimated
-        safety_factor = 1.2
-        required_memory = int(total_estimated["total"] * safety_factor)
-
-        memory_check = {
-            "available_memory": available,
-            "estimated_usage": total_estimated,
-            "required_memory": required_memory,
-            "current_vectors": current_size,
-            "new_vectors": num_new_vectors,
-            "total_vectors_after": total_vectors_after,
-            "prefer_gpu": prefer_gpu,
-            "sufficient_memory": target_memory >= required_memory,
-            "memory_utilization": (
-                required_memory / target_memory if target_memory > 0 else float("inf")
-            ),
-        }
-
-        # Log warning if memory is tight
-        if not memory_check["sufficient_memory"]:
-            self._logger.warning(
-                f"Insufficient memory: need {required_memory // (1024**2):.1f}MB, "
-                f"have {target_memory // (1024**2):.1f}MB "
-                f"({'GPU' if prefer_gpu else 'CPU'})"
-            )
-        elif memory_check["memory_utilization"] > 0.8:
-            self._logger.warning(
-                f"High memory utilization: {memory_check['memory_utilization']:.1%} "
-                f"of available {'GPU' if prefer_gpu else 'CPU'} memory"
-            )
-
-        return memory_check
+        Returns:
+            Dictionary with memory check results
+        """
+        # Delegate to FaissVectorIndex
+        return self._faiss_index.check_memory_requirements(num_new_vectors, dimension)
 
     def get_memory_status(self) -> Dict[str, Any]:
-        """Get current memory usage status."""
-        available = get_available_memory()
-        current_size = self.get_index_size()
+        """Get current memory usage status.
 
-        status = {
-            "available_memory": available,
-            "current_index_size": current_size,
-            "is_gpu_enabled": self._on_gpu,
-            "gpu_available": self._gpu_is_available(),
-        }
+        Returns:
+            Dictionary with memory status
+        """
+        # Delegate to FaissVectorIndex
+        status = self._faiss_index.get_memory_status()
 
-        # Estimate current index memory usage if we have vectors
-        if current_size > 0 and self._index is not None:
-            # Estimate dimension from index if available
-            try:
-                dimension = (
-                    self._index.d if hasattr(self._index, "d") else 768
-                )  # Default dimension
-                estimated = estimate_index_memory_usage(current_size, dimension)
-                status["estimated_index_memory"] = estimated
-            except Exception as e:
-                self._logger.debug(f"Could not estimate index memory usage: {e}")
+        # Add backward compatibility fields
+        status["current_index_size"] = status.get("index_vectors", 0)
+        status["is_gpu_enabled"] = status.get("on_gpu", False)
+        status["gpu_available"] = FaissVectorIndex.gpu_is_available()
 
         return status
 
