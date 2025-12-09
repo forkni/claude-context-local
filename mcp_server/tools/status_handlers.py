@@ -30,8 +30,19 @@ logger = logging.getLogger(__name__)
 async def handle_get_index_status(arguments: Dict[str, Any]) -> dict:
     """Get current status and statistics of the search index."""
     state = get_state()
-    index_manager = get_index_manager(model_key=state.current_model_key)
-    stats = index_manager.get_stats()
+
+    # Check if a project is selected
+    try:
+        index_manager = get_index_manager(model_key=state.current_model_key)
+        stats = index_manager.get_stats()
+    except ValueError as e:
+        # No project selected - return clear error
+        return {
+            "error": str(e),
+            "index_statistics": {"total_chunks": 0},
+            "current_project": None,
+            "system_message": "No project indexed. Use index_directory to index a project first.",
+        }
 
     # Include hybrid searcher sync status
     # Use get_search_config() to check if hybrid is enabled

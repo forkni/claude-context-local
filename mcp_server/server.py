@@ -512,9 +512,8 @@ def get_index_manager(
 
     if project_path is None:
         if state.current_project is None:
-            project_path = str(PROJECT_ROOT)
-            logger.info(
-                f"No active project found. Using server directory: {project_path}"
+            raise ValueError(
+                "No indexed project found. Please run index_directory first."
             )
         else:
             project_path = state.current_project
