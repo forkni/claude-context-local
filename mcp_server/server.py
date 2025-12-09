@@ -427,14 +427,20 @@ def _cleanup_previous_resources():
             logger.info("Previous index manager cleaned up")
 
         if state.searcher is not None:
+            if hasattr(state.searcher, "shutdown"):
+                state.searcher.shutdown()
+                logger.info("Searcher shutdown completed (neural reranker released)")
             state.searcher = None
             logger.info("Previous searcher cleaned up")
 
-        # NOTE: Embedder pool is NOT cleared here to preserve:
-        # - Multi-model routing capability
-        # - Per-model VRAM tracking
-        # - Instant model switching (<150ms)
-        # Embedders are only cleaned up on explicit user request or app shutdown
+        # Clear embedder pool to free GPU memory (explicit user request)
+        if state.embedders:
+            embedder_count = len(state.embedders)
+            logger.info(
+                f"Clearing {embedder_count} cached embedder(s): {list(state.embedders.keys())}"
+            )
+            state.clear_embedders()
+            logger.info("Embedder pool cleared - VRAM released")
 
         try:
             import torch
