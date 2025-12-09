@@ -221,9 +221,9 @@ class TestMultiHopSearchFlow:
         )
 
         # Verify config values
-        assert config.enable_multi_hop is True
-        assert config.multi_hop_count == 2
-        assert config.multi_hop_expansion == 0.3
+        assert config.multi_hop.enabled is True
+        assert config.multi_hop.hop_count == 2
+        assert config.multi_hop.expansion == 0.3
 
         # Test config with multi-hop disabled
         config_disabled = SearchConfig(enable_multi_hop=False)

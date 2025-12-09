@@ -15,11 +15,11 @@ class TestSearchConfig:
         """Test default configuration values."""
         config = SearchConfig()
 
-        assert config.default_search_mode == "hybrid"
-        assert config.enable_hybrid_search is True
-        assert config.bm25_weight == 0.4
-        assert config.dense_weight == 0.6
-        assert config.use_parallel_search is True
+        assert config.search_mode.default_mode == "hybrid"
+        assert config.search_mode.enable_hybrid is True
+        assert config.search_mode.bm25_weight == 0.4
+        assert config.search_mode.dense_weight == 0.6
+        assert config.performance.use_parallel_search is True
 
     def test_to_dict_conversion(self):
         """Test conversion to dictionary."""
@@ -39,10 +39,10 @@ class TestSearchConfig:
         }
 
         config = SearchConfig.from_dict(data)
-        assert config.default_search_mode == "semantic"
-        assert config.bm25_weight == 0.3
-        assert config.dense_weight == 0.7
-        assert config.enable_hybrid_search is True  # Default value
+        assert config.search_mode.default_mode == "semantic"
+        assert config.search_mode.bm25_weight == 0.3
+        assert config.search_mode.dense_weight == 0.7
+        assert config.search_mode.enable_hybrid is True  # Default value
 
 
 class TestSearchConfigManager:
@@ -59,7 +59,7 @@ class TestSearchConfigManager:
         config = manager.load_config()
 
         assert isinstance(config, SearchConfig)
-        assert config.default_search_mode == "hybrid"
+        assert config.search_mode.default_mode == "hybrid"
 
     def test_load_from_file(self):
         """Test loading configuration from file."""
@@ -77,9 +77,9 @@ class TestSearchConfigManager:
         manager = SearchConfigManager(self.config_file)
         config = manager.load_config()
 
-        assert config.default_search_mode == "bm25"
-        assert config.bm25_weight == 0.5
-        assert config.enable_hybrid_search is False
+        assert config.search_mode.default_mode == "bm25"
+        assert config.search_mode.bm25_weight == 0.5
+        assert config.search_mode.enable_hybrid is False
 
     def test_environment_overrides(self):
         """Test environment variable overrides."""
@@ -94,15 +94,15 @@ class TestSearchConfigManager:
             manager = SearchConfigManager(self.config_file)
             config = manager.load_config()
 
-            assert config.default_search_mode == "semantic"
-            assert config.enable_hybrid_search is False
-            assert config.bm25_weight == 0.8
+            assert config.search_mode.default_mode == "semantic"
+            assert config.search_mode.enable_hybrid is False
+            assert config.search_mode.bm25_weight == 0.8
 
     def test_save_config(self):
         """Test saving configuration."""
         config = SearchConfig()
-        config.default_search_mode = "bm25"
-        config.bm25_weight = 0.7
+        config.search_mode.default_mode = "bm25"
+        config.search_mode.bm25_weight = 0.7
 
         manager = SearchConfigManager(self.config_file)
         manager.save_config(config)

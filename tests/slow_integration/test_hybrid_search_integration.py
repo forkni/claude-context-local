@@ -596,11 +596,11 @@ class TestHybridSearchConfigIntegration:
         config_manager = SearchConfigManager(str(self.config_file))
         config = config_manager.load_config()
 
-        assert config.default_search_mode == "hybrid"
-        assert config.enable_hybrid_search
-        assert config.bm25_weight == 0.3
-        assert config.dense_weight == 0.7
-        assert config.use_parallel_search
+        assert config.search_mode.default_mode == "hybrid"
+        assert config.search_mode.enable_hybrid
+        assert config.search_mode.bm25_weight == 0.3
+        assert config.search_mode.dense_weight == 0.7
+        assert config.performance.use_parallel_search
 
     def test_hybrid_searcher_uses_config(self):
         """Test that HybridSearcher respects configuration."""
@@ -621,9 +621,9 @@ class TestHybridSearchConfigIntegration:
 
         searcher = HybridSearcher(
             storage_dir=str(self.temp_dir / "indices"),
-            bm25_weight=config.bm25_weight,
-            dense_weight=config.dense_weight,
-            rrf_k=config.rrf_k_parameter,
+            bm25_weight=config.search_mode.bm25_weight,
+            dense_weight=config.search_mode.dense_weight,
+            rrf_k=config.search_mode.rrf_k_parameter,
         )
 
         assert searcher.bm25_weight == 0.7

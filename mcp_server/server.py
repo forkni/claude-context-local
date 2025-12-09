@@ -599,7 +599,7 @@ def get_searcher(project_path: str = None, model_key: str = None):
             # REMOVED: get_index_manager() call that was causing state corruption
             # The HybridSearcher already loads existing indices during initialization
             logger.info(
-                f"HybridSearcher initialized (BM25: {config.bm25_weight}, Dense: {config.dense_weight})"
+                f"HybridSearcher initialized (BM25: {config.search_mode.bm25_weight}, Dense: {config.search_mode.dense_weight})"
             )
         else:
             state.searcher = IntelligentSearcher(

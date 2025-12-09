@@ -168,15 +168,15 @@ class TestSearchModeConfigPersistence:
         config = manager.load_config()
 
         # Change weights
-        config.bm25_weight = 0.3
-        config.dense_weight = 0.7
+        config.search_mode.bm25_weight = 0.3
+        config.search_mode.dense_weight = 0.7
         manager.save_config(config)
 
         # Reload and verify
         manager._config = None
         loaded = manager.load_config()
-        assert loaded.bm25_weight == 0.3
-        assert loaded.dense_weight == 0.7
+        assert loaded.search_mode.bm25_weight == 0.3
+        assert loaded.search_mode.dense_weight == 0.7
 
     def test_all_settings_together(self):
         """Test all config settings persist together."""
@@ -186,16 +186,16 @@ class TestSearchModeConfigPersistence:
             config = manager.load_config()
 
             # Change all settings
-            config.default_search_mode = "semantic"
-            config.bm25_weight = 0.5
-            config.dense_weight = 0.5
-            config.multi_model_enabled = False
+            config.search_mode.default_mode = "semantic"
+            config.search_mode.bm25_weight = 0.5
+            config.search_mode.dense_weight = 0.5
+            config.routing.multi_model_enabled = False
             manager.save_config(config)
 
             # Reload and verify all
             manager._config = None
             loaded = manager.load_config()
-            assert loaded.default_search_mode == "semantic"
-            assert loaded.bm25_weight == 0.5
-            assert loaded.dense_weight == 0.5
-            assert loaded.multi_model_enabled is False
+            assert loaded.search_mode.default_mode == "semantic"
+            assert loaded.search_mode.bm25_weight == 0.5
+            assert loaded.search_mode.dense_weight == 0.5
+            assert loaded.routing.multi_model_enabled is False
