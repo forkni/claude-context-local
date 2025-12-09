@@ -293,11 +293,12 @@ class IncrementalIndexer:
                         f"[INCREMENTAL] Index validation failed with {len(issues)} issues. "
                         "Triggering full re-index to recover."
                     )
-                    # Clear corrupted index and do full re-index
-                    logger.warning("[INCREMENTAL] Clearing corrupted index...")
-                    self.indexer.clear_index()
-                    logger.info("[INCREMENTAL] Performing full re-index as recovery...")
-                    return self._full_index(project_path, project_name, start_time)
+                    return self._attempt_recovery(
+                        f"Index validation failed after batch removal ({len(issues)} issues)",
+                        project_path,
+                        project_name,
+                        start_time,
+                    )
 
             # Update snapshot
             # After processing changes, calculate cumulative stats
@@ -346,33 +347,52 @@ class IncrementalIndexer:
 
             logger.error(traceback.format_exc())
 
-            # Attempt recovery via full re-index
-            logger.warning(
-                "[INCREMENTAL] Attempting recovery via full re-index due to error..."
+            return self._attempt_recovery(
+                f"Incremental indexing failed: {e}",
+                project_path,
+                project_name,
+                start_time,
             )
-            try:
-                # Clear potentially corrupted index
-                self.indexer.clear_index()
-                # Attempt full re-index as recovery
-                return self._full_index(project_path, project_name, start_time)
-            except Exception as recovery_error:
-                logger.error(
-                    f"Recovery via full re-index also failed: {recovery_error}"
-                )
-                logger.error(traceback.format_exc())
-                # Return failure result with both errors
-                return IncrementalIndexResult(
-                    files_added=0,
-                    files_removed=0,
-                    files_modified=0,
-                    chunks_added=0,
-                    chunks_removed=0,
-                    time_taken=time.time() - start_time,
-                    success=False,
-                    error=f"Incremental indexing failed: {e}. Recovery attempt also failed: {recovery_error}",
-                    bm25_resynced=False,
-                    bm25_resync_count=0,
-                )
+
+    def _attempt_recovery(
+        self,
+        original_error: str,
+        project_path: str,
+        project_name: str,
+        start_time: float,
+    ) -> IncrementalIndexResult:
+        """Attempt recovery via full re-index after failure.
+
+        Args:
+            original_error: Description of the original failure
+            project_path: Path to the project
+            project_name: Name of the project
+            start_time: Start time for duration calculation
+
+        Returns:
+            IncrementalIndexResult from recovery attempt or error result
+        """
+        logger.warning(f"Attempting recovery via full re-index: {original_error}")
+        try:
+            self.indexer.clear_index()
+            return self._full_index(project_path, project_name, start_time)
+        except Exception as recovery_error:
+            logger.error(f"Recovery failed: {recovery_error}")
+            import traceback
+
+            logger.error(traceback.format_exc())
+            return IncrementalIndexResult(
+                files_added=0,
+                files_removed=0,
+                files_modified=0,
+                chunks_added=0,
+                chunks_removed=0,
+                time_taken=time.time() - start_time,
+                success=False,
+                error=f"Original: {original_error}, Recovery: {recovery_error}",
+                bm25_resynced=False,
+                bm25_resync_count=0,
+            )
 
     def _full_index(
         self, project_path: str, project_name: str, start_time: float
