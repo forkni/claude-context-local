@@ -107,11 +107,12 @@ class NeuralReranker:
         scored_candidates = list(zip(candidates, scores, strict=True))
         scored_candidates.sort(key=lambda x: x[1], reverse=True)
 
-        # Return top_k results with updated metadata
+        # Return top_k results with updated metadata and score
         results = []
         for candidate, score in scored_candidates[:top_k]:
-            # Add reranker score to metadata
+            # Add reranker score to metadata AND update main score
             candidate.metadata["reranker_score"] = float(score)
+            candidate.score = float(score)  # Replace original score with reranker score
             results.append(candidate)
 
         self._logger.debug(

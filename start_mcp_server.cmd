@@ -861,7 +861,7 @@ REM Search Configuration Functions
 echo.
 echo [INFO] Current Search Configuration:
 if exist ".venv\Scripts\python.exe" (
-    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding_model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); print(f'  Embedding Model: {model_short} ({dim}d, {vram})'); print('  Multi-Model Routing:', 'Enabled' if config.multi_model_enabled else 'Disabled'); print('  Search Mode:', config.default_search_mode); print('  Hybrid Search:', 'Enabled' if config.enable_hybrid_search else 'Disabled'); print('  BM25 Weight:', config.bm25_weight); print('  Dense Weight:', config.dense_weight); print('  Prefer GPU:', config.prefer_gpu); print('  Parallel Search:', 'Enabled' if config.use_parallel_search else 'Disabled')"
+    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); print(f'  Embedding Model: {model_short} ({dim}d, {vram})'); print('  Multi-Model Routing:', 'Enabled' if config.routing.multi_model_enabled else 'Disabled'); print('  Search Mode:', config.search_mode.default_mode); print('  Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('  BM25 Weight:', config.search_mode.bm25_weight); print('  Dense Weight:', config.search_mode.dense_weight); print('  Prefer GPU:', config.performance.prefer_gpu); print('  Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'  Reranker Top-K: {config.reranker.top_k_candidates}')"
     if "!ERRORLEVEL!" neq "0" (
         echo Error loading configuration
         echo Using defaults: hybrid mode, BM25=0.4, Dense=0.6
@@ -951,7 +951,7 @@ echo.
 echo === Select Embedding Model ===
 echo.
 echo Current Model:
-.\.venv\Scripts\python.exe -c "from search.config import get_search_config; print('  ', get_search_config().embedding_model_name)" 2>nul
+.\.venv\Scripts\python.exe -c "from search.config import get_search_config; print('  ', get_search_config().embedding.model_name)" 2>nul
 if errorlevel 1 echo   google/embeddinggemma-300m ^(default^)
 echo.
 echo RECOMMENDED MODELS ^(Validated 2025-11^):
@@ -997,7 +997,7 @@ if "!model_choice!"=="5" (
 if defined SELECTED_MODEL (
     echo.
     echo [INFO] Configuring model: !SELECTED_MODEL!
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding_model_name = '!SELECTED_MODEL!'; cfg.multi_model_enabled = False; mgr.save_config(cfg); print('[OK] Model configuration saved')" 2>nul
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding.model_name = '!SELECTED_MODEL!'; cfg.routing.multi_model_enabled = False; mgr.save_config(cfg); print('[OK] Model configuration saved')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (

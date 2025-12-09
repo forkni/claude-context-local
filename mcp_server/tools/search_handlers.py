@@ -260,6 +260,9 @@ def _format_search_results(results: list) -> list[dict]:
                 "score": round(result.score, 2),
                 "chunk_id": result.chunk_id,
             }
+            # Add reranker score if available (neural reranking)
+            if "reranker_score" in result.metadata:
+                item["reranker_score"] = round(result.metadata["reranker_score"], 4)
         formatted_results.append(item)
     return formatted_results
 

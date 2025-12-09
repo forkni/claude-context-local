@@ -1047,6 +1047,36 @@ class HybridSearcher:
         # reranker.SearchResult uses score, not similarity_score
         sorted_results = sorted(results, key=lambda r: r.score, reverse=True)
 
+        # Neural reranking (Quality First mode) - apply to multi-hop results
+        if self._neural_reranking_enabled and len(sorted_results) > 0:
+            # Lazy initialize on first search
+            if self.neural_reranker is None:
+                self._neural_reranking_enabled = self._should_enable_neural_reranking()
+                if self._neural_reranking_enabled:
+                    from .config import get_search_config
+
+                    config = get_search_config()
+                    self.neural_reranker = NeuralReranker(
+                        model_name=config.reranker.model_name,
+                        batch_size=config.reranker.batch_size,
+                    )
+
+            if self.neural_reranker:
+                neural_start = time.time()
+                from .config import get_search_config
+
+                config = get_search_config()
+                rerank_count = min(
+                    config.reranker.top_k_candidates, len(sorted_results)
+                )
+                sorted_results = self.neural_reranker.rerank(
+                    query, sorted_results[:rerank_count], k
+                )
+                neural_time = time.time() - neural_start
+                self._logger.debug(
+                    f"[NEURAL_RERANK] Multi-hop: Processed {rerank_count} candidates in {neural_time:.3f}s"
+                )
+
         return sorted_results[:k]
 
     def _parallel_search(

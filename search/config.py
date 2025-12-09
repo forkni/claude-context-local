@@ -146,7 +146,7 @@ class RerankerConfig:
     enabled: bool = True  # Enabled by default (Quality First)
     model_name: str = "BAAI/bge-reranker-v2-m3"  # Cross-encoder reranker model
     top_k_candidates: int = 50  # Rerank top 50 from RRF
-    min_vram_gb: float = 6.0  # Auto-disable below this threshold
+    min_vram_gb: float = 2.0  # Auto-disable below this threshold (reranker uses ~1.5GB)
     batch_size: int = 16  # Reranker inference batch size
 
 

@@ -36,7 +36,7 @@
   "routing_default_model": "qwen3",
   "reranker_enabled": true,
   "reranker_model_name": "BAAI/bge-reranker-v2-m3",
-  "reranker_top_k_candidates": 50,
-  "reranker_min_vram_gb": 6.0,
+  "reranker_top_k_candidates": 30,
+  "reranker_min_vram_gb": 2.0,
   "reranker_batch_size": 16
 }
