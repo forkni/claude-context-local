@@ -11,7 +11,7 @@ from conftest import create_test_embeddings
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from embeddings.embedder import CodeEmbedder
-from search.config import SearchConfig
+from search.config import MultiHopConfig, SearchConfig
 from search.hybrid_searcher import HybridSearcher
 
 
@@ -217,7 +217,7 @@ class TestMultiHopSearchFlow:
         """Test that multi-hop respects configuration settings."""
         # Create test config with multi-hop enabled
         config = SearchConfig(
-            enable_multi_hop=True, multi_hop_count=2, multi_hop_expansion=0.3
+            multi_hop=MultiHopConfig(enabled=True, hop_count=2, expansion=0.3)
         )
 
         # Verify config values
@@ -226,9 +226,9 @@ class TestMultiHopSearchFlow:
         assert config.multi_hop.expansion == 0.3
 
         # Test config with multi-hop disabled
-        config_disabled = SearchConfig(enable_multi_hop=False)
+        config_disabled = SearchConfig(multi_hop=MultiHopConfig(enabled=False))
 
-        assert config_disabled.enable_multi_hop is False
+        assert config_disabled.multi_hop.enabled is False
 
     def test_multi_hop_deduplication(self, test_project_path, mock_storage_dir):
         """Test that multi-hop properly deduplicates results."""

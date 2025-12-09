@@ -285,6 +285,11 @@ class TestFullSearchFlow:
             found_api_related
         ), f"Should find API-related code, found names: {api_chunk_names}"
 
+    @pytest.mark.skip(
+        reason="Flaky test: fake embeddings have no semantic meaning. "
+        "Search results depend on random vector geometry, not code similarity. "
+        "Use real embeddings for semantic search validation (see test_real_search_scenarios)."
+    )
     def test_cross_file_search_patterns(self, test_project_path, mock_storage_dir):
         """Test search patterns that span multiple files.
 
