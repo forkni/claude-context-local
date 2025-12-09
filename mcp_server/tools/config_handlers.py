@@ -195,9 +195,8 @@ async def handle_configure_reranking(arguments: Dict[str, Any]) -> dict:
     Returns:
         Dict with success status and updated config
     """
-    from search.config import get_search_config, save_search_config
-
-    config = get_search_config()
+    config_manager = get_config_manager()
+    config = config_manager.load_config()
 
     enabled = arguments.get("enabled")
     model_name = arguments.get("model_name")
@@ -210,7 +209,7 @@ async def handle_configure_reranking(arguments: Dict[str, Any]) -> dict:
     if top_k_candidates is not None:
         config.reranker.top_k_candidates = top_k_candidates
 
-    save_search_config(config)
+    config_manager.save_config(config)
 
     return {
         "success": True,
