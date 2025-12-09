@@ -2,15 +2,71 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2025-12-03)
+## Current Status: All Features Operational (2025-12-09)
 
 - **Version**: 0.6.1
 - **Status**: Production-ready
-- **Test Coverage**: 545 unit tests + integration tests (100% pass rate)
+- **Test Coverage**: 669 unit tests + integration tests (100% pass rate)
 - **Index Quality**: 109 active files, 1,199 chunks (site-packages excluded, BGE-M3 1024d, ~24 MB)
 - **Token Reduction**: 85-95% (validated benchmark)
 - **Call Graph Resolution**: Phase 4 complete (~90% accuracy)
-- **Refactoring**: Phase 7.1 complete (resolver extraction)
+- **Refactoring**: Phase 13-C complete (config alias removal)
+
+---
+
+## Development Sessions
+
+### Session 2025-12-09: Phase 13-C + Test Coverage Improvements
+
+**Objective**: Complete Phase 13 refactoring arc and address critical test coverage gaps
+
+**Completed Work**:
+
+1. **Phase 13-C: Remove Property Aliases** (Commit: `2f88010`)
+   - Removed 35 backward-compatibility property aliases from SearchConfig
+   - Deleted 291 lines of alias code (lines 181-471)
+   - Migrated 20 test accesses to nested config pattern
+   - Updated test constructors to use nested config objects
+   - Files: `search/config.py`, `tests/unit/test_model_selection.py`, `tests/unit/test_config_sync.py`, `tests/unit/test_search_config.py`
+   - Result: Phase 13 arc complete (13-A → 13-B → 13-C)
+
+2. **ServiceLocator Tests** (Commit: `3d00f1e`)
+   - Created comprehensive test suite for ServiceLocator dependency injection (29 tests)
+   - Coverage: Singleton pattern, registration, factory pattern, cache invalidation
+   - Coverage: Typed convenience methods, wrapper functions, integration scenarios
+   - File: `tests/unit/test_services.py` (422 lines)
+   - Result: 150+ LOC implementation now has full test coverage
+
+3. **Fix Flaky Test** (Commit: `397e5ad`)
+   - Fixed `test_cross_file_search_patterns` with deterministic embeddings
+   - Replaced arbitrary query vector with hash-based deterministic queries
+   - Validated with 5 consecutive runs (100% pass rate, 0.91-1.02s)
+   - Removed `@pytest.mark.skip` decorator
+   - File: `tests/slow_integration/test_full_flow.py`
+   - Result: Previously flaky test now reliable
+
+4. **Decorator Tests** (Commit: `39f7967`)
+   - Created comprehensive test suite for `@error_handler` decorator (15 tests)
+   - Coverage: Success/failure handling, context enrichment, logging, metadata preservation
+   - Fixed B023 loop variable binding issue with default arguments
+   - File: `tests/unit/test_decorators.py` (267 lines)
+   - Result: Critical decorator used by all MCP handlers now fully tested
+
+**Test Count Impact**:
+
+- Before: 625 unit tests
+- After: 669 unit tests (+44 tests, +7.0%)
+- All tests passing (100% pass rate)
+
+**Refactoring Progress**:
+
+- Phase 13 (Config Splitting) - **COMPLETE** ✅
+  - Phase 13-A: Split into sub-configs ✅
+  - Phase 13-B: Migrate consumers ✅
+  - Phase 13-C: Remove aliases ✅
+- Next: Phase 14 (Further modularization opportunities)
+
+**Files Modified**: 5 files (1 refactored, 3 test fixes, 3 new test files)
 
 ---
 
