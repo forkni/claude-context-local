@@ -88,10 +88,12 @@ def pytest_collection_modifyitems(config: Any, items: List[Any]) -> None:
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    """Clean up stale Merkle snapshots after test session completes.
+    """Clean up test artifacts after test session completes.
 
-    Runs silently after all tests, removing orphaned merkle snapshots
-    that were created by tests but no longer have corresponding project indices.
+    Runs silently after all tests, removing:
+    1. Stale Merkle snapshots without corresponding project indices
+    2. Orphaned projects without project_info.json (test projects)
+
     Only outputs on errors/timeouts.
 
     Args:
@@ -122,6 +124,26 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
                 print("\n[Cleanup] Warning: Snapshot cleanup timed out")
             except Exception as e:
                 print(f"\n[Cleanup] Warning: Snapshot cleanup failed: {e}")
+
+        # Also cleanup orphaned projects (those without project_info.json)
+        orphan_cleanup_script = (
+            Path(__file__).parent.parent / "tools" / "cleanup_orphaned_projects.py"
+        )
+
+        if orphan_cleanup_script.exists():
+            try:
+                # Run cleanup in non-interactive mode (auto-confirm deletion)
+                subprocess.run(
+                    [sys.executable, str(orphan_cleanup_script), "--auto"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                # Silent on success - no output
+            except subprocess.TimeoutExpired:
+                print("\n[Cleanup] Warning: Orphaned project cleanup timed out")
+            except Exception as e:
+                print(f"\n[Cleanup] Warning: Orphaned project cleanup failed: {e}")
 
 
 @pytest.fixture(autouse=True)
