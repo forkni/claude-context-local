@@ -598,7 +598,7 @@ class TestHybridSearcher:
 
         # Setup dense index with chunk IDs and metadata
         dense_mock = mock_dense.return_value
-        dense_mock._chunk_ids = ["chunk1", "chunk2", "chunk3"]
+        dense_mock.chunk_ids = ["chunk1", "chunk2", "chunk3"]
         dense_mock.metadata_db = {
             "chunk1": {"metadata": {"content": "def func1(): pass"}},
             "chunk2": {"metadata": {"content": "class MyClass: pass"}},
@@ -630,7 +630,7 @@ class TestHybridSearcher:
 
         # Setup empty dense index
         dense_mock = mock_dense.return_value
-        dense_mock._chunk_ids = []  # No chunks
+        dense_mock.chunk_ids = []  # No chunks
         searcher.dense_index = dense_mock
 
         count = searcher.resync_bm25_from_dense()
@@ -645,7 +645,7 @@ class TestHybridSearcher:
         searcher = HybridSearcher(self.temp_dir)
 
         dense_mock = mock_dense.return_value
-        dense_mock._chunk_ids = ["chunk1", "chunk2"]
+        dense_mock.chunk_ids = ["chunk1", "chunk2"]
         dense_mock.metadata_db = {
             "chunk1": {"metadata": {"content": "valid content"}},
             "chunk2": {"metadata": {}},  # No content key

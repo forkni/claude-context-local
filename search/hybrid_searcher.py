@@ -1454,8 +1454,8 @@ class HybridSearcher:
         """
         bm25_count = len(self.bm25_index._doc_ids) if self.bm25_index else 0
         dense_count = (
-            self.dense_index._index.ntotal
-            if self.dense_index and self.dense_index._index
+            self.dense_index.ntotal
+            if self.dense_index and self.dense_index.index
             else 0
         )
 
@@ -1479,10 +1479,7 @@ class HybridSearcher:
         self._logger.info("[RESYNC] Starting BM25 resync from dense metadata...")
 
         # Get all chunk IDs from dense index
-        if (
-            not hasattr(self.dense_index, "_chunk_ids")
-            or not self.dense_index._chunk_ids
-        ):
+        if not hasattr(self.dense_index, "chunk_ids") or not self.dense_index.chunk_ids:
             self._logger.warning("[RESYNC] No chunks in dense index")
             return 0
 
@@ -1490,7 +1487,7 @@ class HybridSearcher:
         doc_ids = []
         metadata = {}
 
-        for chunk_id in self.dense_index._chunk_ids:
+        for chunk_id in self.dense_index.chunk_ids:
             entry = self.dense_index.metadata_store.get(chunk_id)
             if entry:
                 content = entry["metadata"].get("content", "")
