@@ -21,6 +21,8 @@ from rich.progress import (
     TextColumn,
 )
 
+from search.filters import normalize_path
+
 try:
     from sentence_transformers import SentenceTransformer
 except ImportError:
@@ -655,7 +657,7 @@ class CodeEmbedder:
             embedding = embedding.cpu().float().numpy()
 
         # Create unique chunk ID with normalized path separators
-        normalized_path = str(chunk.relative_path).replace("\\", "/")
+        normalized_path = normalize_path(str(chunk.relative_path))
         chunk_id = (
             f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
         )
@@ -799,7 +801,7 @@ class CodeEmbedder:
                     zip(batch, batch_embeddings, strict=False)
                 ):
                     # Normalize path separators for cross-platform consistency
-                    normalized_path = str(chunk.relative_path).replace("\\", "/")
+                    normalized_path = normalize_path(str(chunk.relative_path))
                     chunk_id = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
                     # Build qualified name for methods/functions inside classes
                     qualified_name = (

@@ -7,6 +7,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Optional
 
+from search.filters import normalize_path
+
 from .python_ast_chunker import CodeChunk
 from .tree_sitter import TreeSitterChunk, TreeSitterChunker
 
@@ -381,7 +383,7 @@ class MultiLanguageChunker:
             Normalized chunk ID string
         """
         # Normalize path to forward slashes (cross-platform)
-        normalized_path = str(relative_path).replace("\\", "/")
+        normalized_path = normalize_path(str(relative_path))
         chunk_id = f"{normalized_path}:{start_line}-{end_line}:{chunk_type}"
 
         # Use qualified name (ClassName.method_name) for better disambiguation

@@ -8,7 +8,12 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Set
 
-from search.filters import matches_directory_filter
+from search.filters import (
+    matches_directory_filter,
+    normalize_path,
+    normalize_path_lower,
+    unescape_mcp_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -280,7 +285,7 @@ class CodeRelationshipAnalyzer:
 
                 # Deprioritize test files (add 100 to base priority)
                 # Check for common test directory patterns
-                file_path_normalized = file_path.replace("\\", "/").lower()
+                file_path_normalized = normalize_path_lower(file_path)
                 if (
                     "/tests/" in file_path_normalized
                     or "/test_" in file_path_normalized
@@ -379,7 +384,7 @@ class CodeRelationshipAnalyzer:
         indirect_callers = []
         stale_indirect_count = 0  # Track stale chunk_ids in multi-hop
         # Normalize target_id for visited set (handle mixed path separators)
-        normalized_target = target_id.replace("\\", "/")
+        normalized_target = normalize_path(target_id)
         visited = {normalized_target}
 
         if self.graph and direct_callers:
@@ -390,9 +395,7 @@ class CodeRelationshipAnalyzer:
                 for caller_dict in prev_level:
                     caller_id = caller_dict.get("chunk_id")
                     # Normalize caller_id before checking visited set
-                    normalized_caller = (
-                        caller_id.replace("\\", "/") if caller_id else ""
-                    )
+                    normalized_caller = normalize_path(caller_id) if caller_id else ""
                     if normalized_caller in visited:
                         continue
                     visited.add(normalized_caller)
@@ -414,7 +417,7 @@ class CodeRelationshipAnalyzer:
 
                         for next_id in next_callers:
                             # Normalize next_id before checking visited set
-                            normalized_next = next_id.replace("\\", "/")
+                            normalized_next = normalize_path(next_id)
                             if normalized_next not in visited:
                                 result = self.searcher.get_by_chunk_id(next_id)
                                 if result:
@@ -608,7 +611,7 @@ class CodeRelationshipAnalyzer:
         # Note: graph_storage.py methods also normalize, but doing it here ensures
         # symbol_name extraction works correctly
         # Un-double-escape first (MCP JSON transport), then normalize to forward slashes
-        chunk_id = chunk_id.replace("\\\\", "\\").replace("\\", "/")
+        chunk_id = unescape_mcp_path(chunk_id)
 
         # Get relationship field mapping
         field_mapping = get_relationship_field_mapping()

@@ -9,6 +9,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
+from search.filters import normalize_path
+
 if TYPE_CHECKING:
     from graph.relationship_types import RelationshipEdge
 
@@ -151,7 +153,7 @@ class CodeGraphStorage:
             >>> graph_storage.add_relationship_edge(edge)
         """
         # Normalize source_id path separators to forward slashes (cross-platform)
-        normalized_source = edge.source_id.replace("\\", "/")
+        normalized_source = normalize_path(edge.source_id)
 
         # Create lightweight node for target_name if it doesn't exist
         # This enables queries like get_callers("BaseRelationshipExtractor") to work
@@ -194,7 +196,7 @@ class CodeGraphStorage:
         """
         # Normalize path separators to forward slashes for consistent lookup
         # Query path normalization mismatch
-        normalized_chunk_id = chunk_id.replace("\\", "/")
+        normalized_chunk_id = normalize_path(chunk_id)
 
         # Debug logging for relationship queries
         self.logger.debug(
@@ -227,7 +229,7 @@ class CodeGraphStorage:
         """
         # Normalize path separators to forward slashes for consistent lookup
         # Query path normalization mismatch
-        normalized_chunk_id = chunk_id.replace("\\", "/")
+        normalized_chunk_id = normalize_path(chunk_id)
 
         if normalized_chunk_id not in self.graph:
             return []
@@ -254,7 +256,7 @@ class CodeGraphStorage:
         """
         # Normalize path separators to forward slashes for consistent lookup
         # Query path normalization mismatch
-        normalized_chunk_id = chunk_id.replace("\\", "/")
+        normalized_chunk_id = normalize_path(chunk_id)
 
         if normalized_chunk_id not in self.graph:
             return set()
@@ -305,7 +307,7 @@ class CodeGraphStorage:
         """
         # Normalize path separators to forward slashes for consistent lookup
         # Query path normalization mismatch
-        normalized_chunk_id = chunk_id.replace("\\", "/")
+        normalized_chunk_id = normalize_path(chunk_id)
 
         if normalized_chunk_id not in self.graph:
             return None
@@ -326,8 +328,8 @@ class CodeGraphStorage:
         """
         # Normalize path separators to forward slashes for consistent lookup
         # Query path normalization mismatch
-        normalized_caller = caller_id.replace("\\", "/")
-        normalized_callee = callee_id.replace("\\", "/")
+        normalized_caller = normalize_path(caller_id)
+        normalized_callee = normalize_path(callee_id)
 
         if not self.graph.has_edge(normalized_caller, normalized_callee):
             return None

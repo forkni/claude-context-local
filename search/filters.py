@@ -24,6 +24,46 @@ def normalize_path(path: str) -> str:
     return path.replace("\\", "/")
 
 
+def normalize_path_lower(path: str) -> str:
+    """Normalize path separators and convert to lowercase.
+
+    Useful for case-insensitive path matching and test file detection.
+
+    Args:
+        path: File path with any separator style
+
+    Returns:
+        Path with forward slashes only, lowercase
+
+    Example:
+        >>> normalize_path_lower("Tests\\Test_Main.PY")
+        'tests/test_main.py'
+    """
+    return path.replace("\\", "/").lower()
+
+
+def unescape_mcp_path(path: str) -> str:
+    """Handle MCP JSON transport double-escape bug.
+
+    The MCP JSON transport layer sometimes double-escapes backslashes,
+    converting single backslashes to double backslashes. This utility
+    handles both cases and normalizes to forward slashes.
+
+    Args:
+        path: File path that may have double-escaped backslashes
+
+    Returns:
+        Path with forward slashes only
+
+    Example:
+        >>> unescape_mcp_path("path\\\\to\\\\file.py")
+        'path/to/file.py'
+        >>> unescape_mcp_path("path\\to\\file.py")
+        'path/to/file.py'
+    """
+    return path.replace("\\\\", "\\").replace("\\", "/")
+
+
 def matches_directory_filter(
     relative_path: str,
     include_dirs: Optional[List[str]] = None,

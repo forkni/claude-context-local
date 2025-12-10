@@ -12,6 +12,8 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from sqlitedict import SqliteDict
 
+from search.filters import normalize_path
+
 
 class MetadataStore:
     """Centralized metadata storage for code chunks.
@@ -250,11 +252,11 @@ class MetadataStore:
         parts = chunk_id.split(":")
         if len(parts) >= 4:
             # First part is the file path - normalize it
-            file_path = parts[0].replace("\\", "/")
+            file_path = normalize_path(parts[0])
             # Reconstruct chunk_id
             return f"{file_path}:{':'.join(parts[1:])}"
         # Fallback: just normalize backslashes
-        return chunk_id.replace("\\", "/")
+        return normalize_path(chunk_id)
 
     @staticmethod
     def get_chunk_id_variants(chunk_id: str) -> List[str]:
@@ -282,7 +284,7 @@ class MetadataStore:
         variants = [
             chunk_id,  # Original (exact match)
             chunk_id.replace("\\\\", "\\"),  # Un-double-escape (MCP bug fix)
-            chunk_id.replace("\\", "/"),  # Normalize to forward slash
+            normalize_path(chunk_id),  # Normalize to forward slash
             chunk_id.replace("/", "\\"),  # Try backslash variant
             MetadataStore.normalize_chunk_id(chunk_id),  # Properly normalized
             MetadataStore.normalize_chunk_id(

@@ -19,6 +19,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List
 
 from graph.relationship_types import RelationshipEdge, RelationshipType
+from search.filters import normalize_path
 
 
 class BaseRelationshipExtractor(ABC):
@@ -144,7 +145,7 @@ class BaseRelationshipExtractor(ABC):
 
         # Normalize source_id path to forward slashes (cross-platform consistency)
         # Matches Issue 1 fix for chunk_id normalization
-        normalized_source_id = source_id.replace("\\", "/")
+        normalized_source_id = normalize_path(source_id)
 
         return RelationshipEdge(
             source_id=normalized_source_id,
