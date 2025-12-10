@@ -37,8 +37,8 @@ from embeddings.embedder import CodeEmbedder  # noqa: E402
 from mcp_server.project_persistence import (  # noqa: E402
     load_project_selection,
 )
-from mcp_server.state import get_state  # noqa: E402
-from search.config import MODEL_POOL_CONFIG, get_search_config  # noqa: E402
+from mcp_server.services import get_config, get_state  # noqa: E402
+from search.config import MODEL_POOL_CONFIG  # noqa: E402
 from search.hybrid_searcher import HybridSearcher  # noqa: E402
 from search.indexer import CodeIndexManager  # noqa: E402
 from search.searcher import IntelligentSearcher  # noqa: E402
@@ -305,7 +305,7 @@ def get_embedder(model_key: str = None) -> CodeEmbedder:
         if model_key is None:
             # Try to get from config, fallback to bge_m3
             try:
-                config = get_search_config()
+                config = get_config()
                 config_model_name = config.embedding.model_name
 
                 # Map config model name to model_key
@@ -371,7 +371,7 @@ def get_embedder(model_key: str = None) -> CodeEmbedder:
         # Use old singleton pattern with "default" key
         if "default" not in state.embedders or state.embedders["default"] is None:
             try:
-                config = get_search_config()
+                config = get_config()
                 model_name = config.embedding.model_name
                 logger.info(f"Using single embedding model: {model_name}")
             except Exception as e:
@@ -581,7 +581,7 @@ def get_searcher(project_path: str = None, model_key: str = None):
     ):
         state.current_project = project_path or state.current_project
         state.current_model_key = effective_model_key
-        config = get_search_config()
+        config = get_config()
         logger.info(
             f"[GET_SEARCHER] Initializing searcher for project: {state.current_project}"
         )

@@ -13,7 +13,7 @@ from mcp_server.server import (
     get_project_storage_dir,
     set_current_project,
 )
-from mcp_server.state import get_state
+from mcp_server.services import get_state
 from mcp_server.tools.decorators import error_handler
 from search.config import (
     MODEL_POOL_CONFIG,

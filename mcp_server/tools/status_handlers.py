@@ -13,13 +13,12 @@ from mcp_server.server import (
     get_searcher,
     get_storage_dir,
 )
-from mcp_server.state import get_state
+from mcp_server.services import get_config, get_state
 from mcp_server.tools.decorators import error_handler
 from merkle.snapshot_manager import SnapshotManager
 from search.config import (
     MODEL_POOL_CONFIG,
     MODEL_REGISTRY,
-    get_search_config,
 )
 from search.hybrid_searcher import HybridSearcher
 
@@ -45,8 +44,8 @@ async def handle_get_index_status(arguments: Dict[str, Any]) -> dict:
         }
 
     # Include hybrid searcher sync status
-    # Use get_search_config() to check if hybrid is enabled
-    config = get_search_config()
+    # Use get_config() to check if hybrid is enabled
+    config = get_config()
     if config.search_mode.enable_hybrid:
         try:
             # Initialize searcher if needed (lazy init)
@@ -256,7 +255,7 @@ async def handle_cleanup_resources(arguments: Dict[str, Any]) -> dict:
 @error_handler("Config status check")
 async def handle_get_search_config_status(arguments: Dict[str, Any]) -> dict:
     """Get current search configuration status."""
-    config = get_search_config()
+    config = get_config()
     return {
         "search_mode": config.search_mode.default_mode,
         "bm25_weight": config.search_mode.bm25_weight,
@@ -310,5 +309,5 @@ async def handle_list_embedding_models(arguments: Dict[str, Any]) -> dict:
     return {
         "models": models,
         "count": len(models),
-        "current_model": get_search_config().embedding.model_name,
+        "current_model": get_config().embedding.model_name,
     }

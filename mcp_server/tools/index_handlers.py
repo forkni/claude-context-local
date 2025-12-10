@@ -20,13 +20,12 @@ from mcp_server.server import (
     set_current_project,
     update_project_filters,
 )
-from mcp_server.state import get_state
+from mcp_server.services import get_config, get_state
 from mcp_server.tools.decorators import error_handler
 from search.config import (
     MODEL_POOL_CONFIG,
     MODEL_REGISTRY,
     SearchConfigManager,
-    get_search_config,
 )
 from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
@@ -53,7 +52,7 @@ def _create_indexer_for_model(
     Returns:
         tuple: (indexer, embedder, chunker)
     """
-    config = get_search_config()
+    config = get_config()
     chunker = MultiLanguageChunker(directory_path)
     embedder = get_embedder(model_key)
 
@@ -191,7 +190,7 @@ def _index_with_all_models(
         list: Results for each model with timing and statistics
     """
     results = []
-    original_config = get_search_config()
+    original_config = get_config()
     original_model = original_config.embedding.model_name
 
     try:
@@ -249,7 +248,7 @@ def _index_with_all_models(
             embedder = get_embedder(model_key)
 
             # Create fresh indexer instance directly (bypass global cache)
-            config = get_search_config()
+            config = get_config()
             if config.search_mode.enable_hybrid:
                 project_id = project_dir.name.rsplit("_", 1)[0]
                 indexer = HybridSearcher(
@@ -620,7 +619,7 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
         embedder = get_embedder()
         searcher_instance = get_searcher(str(directory_path))
 
-        config = get_search_config()
+        config = get_config()
         indexer = (
             searcher_instance
             if config.search_mode.enable_hybrid
