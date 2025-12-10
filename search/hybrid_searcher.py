@@ -19,6 +19,7 @@ from .filters import FilterEngine
 from .gpu_monitor import GPUMemoryMonitor
 from .index_sync import IndexSynchronizer
 from .indexer import CodeIndexManager
+from .multi_hop_searcher import MultiHopSearcher
 from .neural_reranker import NeuralReranker
 from .reranker import RRFReranker, SearchResult
 from .reranking_engine import RerankingEngine
@@ -165,6 +166,15 @@ class HybridSearcher:
             bm25_use_stopwords=bm25_use_stopwords,
             bm25_use_stemming=bm25_use_stemming,
             project_id=project_id,
+        )
+
+        # Multi-hop searcher (handles iterative search expansion)
+        self.multi_hop_searcher = MultiHopSearcher(
+            embedder=embedder,
+            dense_index=self.dense_index,
+            single_hop_callback=self._single_hop_search,
+            rerank_callback=self._rerank_by_query,
+            logger=self._logger,
         )
 
         # Threading
@@ -654,6 +664,9 @@ class HybridSearcher:
         """
         Validate and sanitize multi-hop search parameters.
 
+        Delegates to multi_hop_searcher for actual implementation.
+        Kept for backward compatibility.
+
         Args:
             hops: Number of search hops requested
             expansion_factor: Expansion factor per hop
@@ -661,20 +674,7 @@ class HybridSearcher:
         Returns:
             Tuple of (validated_hops, validated_expansion_factor)
         """
-        validated_hops = hops
-        validated_expansion = expansion_factor
-
-        if hops < 1:
-            self._logger.warning(f"Invalid hops={hops}, using 1")
-            validated_hops = 1
-
-        if expansion_factor < 0 or expansion_factor > 2.0:
-            self._logger.warning(
-                f"Invalid expansion_factor={expansion_factor}, using 0.3"
-            )
-            validated_expansion = 0.3
-
-        return validated_hops, validated_expansion
+        return self.multi_hop_searcher.validate_params(hops, expansion_factor)
 
     def _expand_from_initial_results(
         self,
@@ -688,7 +688,8 @@ class HybridSearcher:
         """
         Expand search results by finding similar chunks for each initial result.
 
-        Uses batched FAISS search for significant performance improvements (50-100ms savings).
+        Delegates to multi_hop_searcher for actual implementation.
+        Kept for backward compatibility.
 
         Args:
             initial_results: Results from initial search (hop 1)
@@ -701,60 +702,14 @@ class HybridSearcher:
         Returns:
             Dict mapping hop number to duration in seconds
         """
-        from .reranker import SearchResult as RerankerSearchResult
-
-        expansion_timings = {}
-
-        for hop in range(2, hops + 1):
-            hop_start = time.time()
-            hop_discovered = 0
-
-            # Expand from top initial results only (not from previously expanded)
-            source_results = initial_results[:k]
-
-            # Collect all chunk_ids for batched search
-            chunk_ids_to_expand = [result.chunk_id for result in source_results]
-
-            try:
-                # Perform batched search (single FAISS call instead of N individual calls)
-                batched_results = self.dense_index.get_similar_chunks_batched(
-                    chunk_ids=chunk_ids_to_expand,
-                    k=expansion_k,
-                )
-
-                # Process batched results
-                for result in source_results:
-                    similar_chunks_raw = batched_results.get(result.chunk_id, [])
-
-                    # Convert raw results to SearchResult format
-                    for cid, similarity, metadata in similar_chunks_raw:
-                        if cid not in all_chunk_ids:
-                            all_chunk_ids.add(cid)
-                            # Convert to reranker.SearchResult format
-                            reranker_result = RerankerSearchResult(
-                                chunk_id=cid,
-                                score=similarity,
-                                metadata=metadata,
-                                source="multi_hop",
-                            )
-                            all_results[cid] = reranker_result
-                            hop_discovered += 1
-
-            except Exception as e:
-                self._logger.warning(
-                    f"[MULTI_HOP] Batched search failed for hop {hop}: {e}"
-                )
-                # Continue without expansion for this hop
-                pass
-
-            expansion_timings[hop] = time.time() - hop_start
-
-            self._logger.info(
-                f"[MULTI_HOP] Hop {hop}: Discovered {hop_discovered} new chunks "
-                f"(total: {len(all_results)}, {expansion_timings[hop] * 1000:.1f}ms)"
-            )
-
-        return expansion_timings
+        return self.multi_hop_searcher.expand_from_initial_results(
+            initial_results=initial_results,
+            all_chunk_ids=all_chunk_ids,
+            all_results=all_results,
+            expansion_k=expansion_k,
+            hops=hops,
+            k=k,
+        )
 
     def _apply_post_expansion_filters(
         self,
@@ -765,6 +720,9 @@ class HybridSearcher:
         """
         Apply filters to expanded results.
 
+        Delegates to multi_hop_searcher for actual implementation.
+        Kept for backward compatibility.
+
         Args:
             all_results: Dict of chunk_id -> result
             initial_results_count: Number of initial results (before expansion)
@@ -773,28 +731,11 @@ class HybridSearcher:
         Returns:
             Filtered results dict
         """
-        if not filters or len(all_results) <= initial_results_count:
-            return all_results
-
-        filtered_results = {}
-        for chunk_id, result in all_results.items():
-            # Get metadata from dense index
-            metadata_entry = self.dense_index.metadata_store.get(chunk_id)
-            if metadata_entry:
-                metadata = metadata_entry.get("metadata", {})
-                if self.dense_index._matches_filters(metadata, filters):
-                    filtered_results[chunk_id] = result
-            else:
-                # Keep results without metadata (shouldn't happen)
-                filtered_results[chunk_id] = result
-
-        removed_count = len(all_results) - len(filtered_results)
-        self._logger.info(
-            f"[MULTI_HOP] Applied filters: {len(filtered_results)} results remain "
-            f"({removed_count} removed)"
+        return self.multi_hop_searcher.apply_post_expansion_filters(
+            all_results=all_results,
+            initial_results_count=initial_results_count,
+            filters=filters,
         )
-
-        return filtered_results
 
     def _multi_hop_search_internal(
         self,
@@ -810,10 +751,8 @@ class HybridSearcher:
         """
         Internal multi-hop search implementation.
 
-        Discovers interconnected code relationships by:
-        1. Initial query-based search (Hop 1)
-        2. Finding similar chunks for each result (Hop 2+)
-        3. Re-ranking all discovered chunks by query relevance
+        Delegates to multi_hop_searcher for actual implementation.
+        Kept for backward compatibility.
 
         Args:
             query: Search query
@@ -828,118 +767,16 @@ class HybridSearcher:
         Returns:
             List of SearchResult objects with discovered related code
         """
-        # Validate parameters
-        hops, expansion_factor = self._validate_multi_hop_params(hops, expansion_factor)
-
-        # Initialize timing tracker
-        timings = {
-            "total": time.time(),
-            "hop_1": 0,
-            "expansion": {},
-            "rerank": 0,
-        }
-
-        self._logger.info(
-            f"[MULTI_HOP] Starting {hops}-hop search for '{query}' "
-            f"(k={k}, expansion={expansion_factor}, mode={search_mode})"
-        )
-
-        # Pre-compute query embedding once for reuse (optimization)
-        query_embedding = None
-        if search_mode in ("semantic", "hybrid") and self.embedder:
-            try:
-                query_embedding = self.embedder.embed_query(query)
-                self._logger.debug(
-                    "[MULTI_HOP] Pre-computed query embedding for caching"
-                )
-            except Exception as e:
-                self._logger.warning(
-                    f"[MULTI_HOP] Failed to pre-compute embedding: {e}"
-                )
-
-        # Hop 1: Initial query-based search
-        # Phase 4: Use ServiceLocator helper instead of inline import
-        config = _get_config_via_service_locator()
-        initial_k = int(k * config.multi_hop.initial_k_multiplier)
-
-        hop1_start = time.time()
-        initial_results = self._single_hop_search(
+        return self.multi_hop_searcher.search(
             query=query,
-            k=initial_k,
+            k=k,
             search_mode=search_mode,
+            hops=hops,
+            expansion_factor=expansion_factor,
             use_parallel=use_parallel,
             min_bm25_score=min_bm25_score,
             filters=filters,
-            query_embedding=query_embedding,
         )
-        timings["hop_1"] = time.time() - hop1_start
-
-        if not initial_results:
-            self._logger.info("[MULTI_HOP] No initial results found")
-            return []
-
-        self._logger.info(
-            f"[MULTI_HOP] Hop 1: Found {len(initial_results)} initial results "
-            f"({timings['hop_1'] * 1000:.1f}ms)"
-        )
-
-        # Track all discovered chunks
-        all_chunk_ids = {r.chunk_id for r in initial_results}
-        all_results = {r.chunk_id: r for r in initial_results}
-
-        # If only 1 hop requested, return initial results
-        if hops == 1:
-            return initial_results[:k]
-
-        # Hop 2+: Expand from initial results
-        expansion_k = max(1, int(k * expansion_factor))
-        timings["expansion"] = self._expand_from_initial_results(
-            initial_results=initial_results,
-            all_chunk_ids=all_chunk_ids,
-            all_results=all_results,
-            expansion_k=expansion_k,
-            hops=hops,
-            k=k,
-        )
-
-        # Apply filters to expanded results
-        all_results = self._apply_post_expansion_filters(
-            all_results=all_results,
-            initial_results_count=len(initial_results),
-            filters=filters,
-        )
-
-        # Re-rank all discovered results by query relevance
-        self._logger.info(
-            f"[MULTI_HOP] Re-ranking {len(all_results)} total chunks by query relevance"
-        )
-
-        rerank_start = time.time()
-        final_results = self._rerank_by_query(
-            query=query,
-            results=list(all_results.values()),
-            k=k,
-            search_mode=search_mode,
-            query_embedding=query_embedding,
-        )
-
-        timings["rerank"] = time.time() - rerank_start
-
-        # Final summary
-        timings["total"] = time.time() - timings["total"]
-        expansion_time = (
-            sum(timings["expansion"].values()) if timings["expansion"] else 0
-        )
-
-        self._logger.info(
-            f"[MULTI_HOP] Complete: {len(final_results)} results | "
-            f"Total={timings['total'] * 1000:.0f}ms "
-            f"(Hop1={timings['hop_1'] * 1000:.0f}ms, "
-            f"Expansion={expansion_time * 1000:.0f}ms, "
-            f"Rerank={timings['rerank'] * 1000:.0f}ms)"
-        )
-
-        return final_results
 
     def _rerank_by_query(
         self,
