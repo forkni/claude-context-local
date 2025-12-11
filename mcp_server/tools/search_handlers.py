@@ -8,8 +8,8 @@ from typing import Any, Dict
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from mcp_server.guidance import add_system_message
+from mcp_server.model_pool_manager import get_embedder
 from mcp_server.server import (
-    get_embedder,
     get_index_manager,
     get_searcher,
 )
