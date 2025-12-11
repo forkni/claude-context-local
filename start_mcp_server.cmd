@@ -57,7 +57,7 @@ if "%~1"=="" (
     echo.
 
     REM Ensure we have a valid choice
-    set choice=
+    set "choice="
     set /p choice="Select option (0-7, M): "
 
     REM Handle empty input or Ctrl+C gracefully
@@ -108,7 +108,7 @@ echo NOTE: SSE Transport Options:
 echo   - Option 1 ^(stdio^): Default MCP mode for Claude Code
 echo   - Option 2 ^(Single SSE^): HTTP server on port 8765 for MCP access
 echo.
-set transport_choice=
+set "transport_choice="
 set /p transport_choice="Select transport (0-2): "
 
 REM Handle empty input or back option
@@ -140,7 +140,7 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 REM Start the MCP server with stdio
-.\.venv\Scripts\python.exe -m mcp_server.server --transport stdio
+call .\.venv\Scripts\python.exe -m mcp_server.server --transport stdio
 set "SERVER_EXIT_CODE=!ERRORLEVEL!"
 
 echo.
@@ -203,7 +203,7 @@ echo.
 echo [INFO] Running unit tests for core components...
 echo [INFO] This will test chunking, indexing, search, and utility modules.
 echo.
-.\.venv\Scripts\python.exe -m pytest tests/unit/ -v --tb=short
+call .\.venv\Scripts\python.exe -m pytest tests/unit/ -v --tb=short
 if "!ERRORLEVEL!" neq "0" (
     echo.
     echo [WARNING] Some tests failed. Check output above for details.
@@ -213,7 +213,9 @@ if "!ERRORLEVEL!" neq "0" (
     echo [OK] All unit tests passed!
 )
 echo.
-pause
+echo.
+echo Press any key to return to the menu...
+pause >nul
 goto menu_restart
 
 :run_fast_integration_tests
@@ -224,7 +226,7 @@ echo [INFO] Running fast integration tests (^< 5s each)...
 echo [INFO] This will test quick workflows, system integration, and MCP server functionality.
 echo [INFO] Expected duration: ~2 minutes
 echo.
-.\.venv\Scripts\python.exe -m pytest tests/fast_integration/ -v --tb=short
+call .\.venv\Scripts\python.exe -m pytest tests/fast_integration/ -v --tb=short
 if "!ERRORLEVEL!" neq "0" (
     echo.
     echo [WARNING] Some tests failed. Check output above for details.
@@ -234,7 +236,8 @@ if "!ERRORLEVEL!" neq "0" (
     echo [OK] All fast integration tests passed!
 )
 echo.
-pause
+echo Press any key to return to the menu...
+pause >nul
 goto menu_restart
 
 :run_slow_integration_tests
@@ -246,7 +249,7 @@ echo [INFO] This will test complete workflows, advanced features, and relationsh
 echo [INFO] Expected duration: ~10 minutes
 echo [WARNING] These tests use real embeddings and take significant time.
 echo.
-.\.venv\Scripts\python.exe -m pytest tests/slow_integration/ -v --tb=short
+call .\.venv\Scripts\python.exe -m pytest tests/slow_integration/ -v --tb=short
 if "!ERRORLEVEL!" neq "0" (
     echo.
     echo [WARNING] Some tests failed. Check output above for details.
@@ -256,7 +259,8 @@ if "!ERRORLEVEL!" neq "0" (
     echo [OK] All slow integration tests passed!
 )
 echo.
-pause
+echo Press any key to return to the menu...
+pause >nul
 goto menu_restart
 
 :run_regression_tests
@@ -278,7 +282,8 @@ if "!ERRORLEVEL!" neq "0" (
     echo [OK] All regression tests passed!
 )
 echo.
-pause
+echo Press any key to return to the menu...
+pause >nul
 goto menu_restart
 
 :installation_menu
@@ -291,7 +296,7 @@ echo   3. Configure Claude Code Integration
 echo   4. Check CUDA/CPU Mode
 echo   0. Back to Main Menu
 echo.
-set inst_choice=
+set "inst_choice="
 set /p inst_choice="Select option (0-4): "
 
 REM Handle empty input gracefully
@@ -328,7 +333,7 @@ echo   6. Configure Neural Reranker
 echo   7. Reset to Defaults
 echo   0. Back to Main Menu
 echo.
-set search_choice=
+set "search_choice="
 set /p search_choice="Select option (0-7): "
 
 REM Handle empty input gracefully
@@ -363,7 +368,7 @@ echo   1. Auto-Tune Search Parameters
 echo   2. Memory Usage Report
 echo   0. Back to Main Menu
 echo.
-set perf_choice=
+set "perf_choice="
 set /p perf_choice="Select option (0-2): "
 
 REM Handle empty input gracefully
@@ -409,7 +414,7 @@ if "%MULTI_MODEL_STATUS%"=="Enabled" (
     echo   Note: Indexing will update ALL models ^(Qwen3, BGE-M3, CodeRankEmbed^)
     echo.
 )
-set pm_choice=
+set "pm_choice="
 set /p pm_choice="Select option (0-7): "
 
 REM Handle empty input gracefully
@@ -447,7 +452,7 @@ echo   4. Run Slow Integration Tests (67 tests, ~10 min)
 echo   5. Run Regression Tests
 echo   0. Back to Main Menu
 echo.
-set adv_choice=
+set "adv_choice="
 set /p adv_choice="Select option (0-5): "
 
 REM Handle empty input gracefully
@@ -484,7 +489,7 @@ echo   C:\Projects\MyProject
 echo   D:\Code\WebApp
 echo   F:\Development\TouchDesigner\MyToeFile
 echo.
-set new_project_path=
+set "new_project_path="
 set /p new_project_path="Project path (or press Enter to cancel): "
 
 REM Handle cancel
@@ -492,14 +497,17 @@ if not defined new_project_path goto project_management_menu
 if "!new_project_path!"=="" goto project_management_menu
 
 REM Remove quotes if present
-set new_project_path=%new_project_path:"=%
+set "new_project_path=%new_project_path:"=%"
+if "%new_project_path:~-1%"=="\" set "new_project_path=%new_project_path:~0,-1%"
 
 REM Validate path exists
 if not exist "%new_project_path%" (
     echo.
     echo [ERROR] Path does not exist: %new_project_path%
     echo [INFO] Please check the path and try again
-    pause
+    echo.
+    echo Press any key to retry...
+    pause >nul
     goto index_new_project
 )
 
@@ -522,21 +530,25 @@ echo Examples:
 echo   Include: src,lib
 echo   Exclude: tests,vendor,docs
 echo.
-set include_filter=
-set exclude_filter=
+set "include_filter="
+set "exclude_filter="
 set /p include_filter="Include directories (comma-separated, Enter=all): "
 set /p exclude_filter="Exclude directories (comma-separated, Enter=none): "
+
+REM Strip spaces after commas for proper argument parsing
+if defined include_filter set "include_filter=!include_filter:, =,!"
+if defined exclude_filter set "exclude_filter=!exclude_filter:, =,!"
 
 REM Build filter arguments
 set "filter_args="
 if defined include_filter if not "!include_filter!"=="" (
-    set "filter_args=--include-dirs "!include_filter!""
+    set "filter_args=--include-dirs !include_filter!"
 )
 if defined exclude_filter if not "!exclude_filter!"=="" (
     if defined filter_args (
-        set "filter_args=!filter_args! --exclude-dirs "!exclude_filter!""
+        set "filter_args=!filter_args! --exclude-dirs !exclude_filter!"
     ) else (
-        set "filter_args=--exclude-dirs "!exclude_filter!""
+        set "filter_args=--exclude-dirs !exclude_filter!"
     )
 )
 
@@ -552,8 +564,17 @@ if defined exclude_filter if not "!exclude_filter!"=="" (
 )
 echo.
 
-.\.venv\Scripts\python.exe tools\batch_index.py --path "!new_project_path!" --mode new !filter_args!
-pause
+call .\.venv\Scripts\python.exe tools\batch_index.py --path "!new_project_path!" --mode new !filter_args!
+if errorlevel 1 (
+    echo.
+    echo [ERROR] Indexing failed with exit code: !ERRORLEVEL!
+) else (
+    echo.
+    echo [OK] Indexing completed successfully.
+)
+echo.
+echo Press any key to return to the menu...
+pause >nul
 goto menu_restart
 
 :reindex_existing_project
@@ -574,8 +595,17 @@ echo [INFO] Path: %SELECTED_PROJECT_PATH%
 echo [INFO] Mode: Incremental (detects changes only, uses batch removal)
 echo.
 
-.\.venv\Scripts\python.exe tools\batch_index.py --path "%SELECTED_PROJECT_PATH%" --mode incremental
-pause
+call .\.venv\Scripts\python.exe tools\batch_index.py --path "%SELECTED_PROJECT_PATH%" --mode incremental
+if errorlevel 1 (
+    echo.
+    echo [ERROR] Re-indexing failed with exit code: %ERRORLEVEL%
+) else (
+    echo.
+    echo [OK] Re-indexing completed successfully.
+)
+echo.
+echo Press any key to return to the menu...
+pause >nul
 goto menu_restart
 
 :force_reindex_project
@@ -596,8 +626,17 @@ echo [INFO] Path: %SELECTED_PROJECT_PATH%
 echo [INFO] Mode: Full (bypasses snapshot, indexes everything)
 echo.
 
-.\.venv\Scripts\python.exe tools\batch_index.py --path "%SELECTED_PROJECT_PATH%" --mode force
-pause
+call .\.venv\Scripts\python.exe tools\batch_index.py --path "%SELECTED_PROJECT_PATH%" --mode force
+if errorlevel 1 (
+    echo.
+    echo [ERROR] Force re-indexing failed with exit code: %ERRORLEVEL%
+) else (
+    echo.
+    echo [OK] Force re-indexing completed successfully.
+)
+echo.
+echo Press any key to return to the menu...
+pause >nul
 goto menu_restart
 
 :list_projects_menu
@@ -620,7 +659,7 @@ echo.
 
 REM Get list of projects and store in temp file
 set "TEMP_PROJECTS=%TEMP%\mcp_projects.txt"
-.\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; from pathlib import Path; import json; storage = get_storage_dir(); projects = list((storage / 'projects').glob('*/project_info.json')); [print(f'{i+1}|{json.load(open(p))[\"project_name\"]}|{json.load(open(p))[\"project_path\"]}|{p.parent.name}') for i, p in enumerate(projects)]" > "%TEMP_PROJECTS%" 2>nul
+call .\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; from pathlib import Path; import json; storage = get_storage_dir(); projects = list((storage / 'projects').glob('*/project_info.json')); [print(f'{i+1}|{json.load(open(p))[\"project_name\"]}|{json.load(open(p))[\"project_path\"]}|{p.parent.name}') for i, p in enumerate(projects)]" > "%TEMP_PROJECTS%" 2>nul
 
 REM Check if any projects exist
 findstr /R "." "%TEMP_PROJECTS%" >nul 2>&1
@@ -646,7 +685,7 @@ for /f "tokens=1,2,3,4 delims=|" %%a in (%TEMP_PROJECTS%) do (
 echo   0. Cancel
 
 echo.
-set project_choice=
+set "project_choice="
 set /p project_choice="Select project number to clear (0 to cancel): "
 
 REM Handle cancel or empty input
@@ -691,7 +730,7 @@ echo [WARNING] You are about to delete the index for:
 echo   Project: %PROJECT_NAME%
 echo   Hash: %PROJECT_HASH%
 echo.
-set confirm_delete=
+set "confirm_delete="
 set /p confirm_delete="Are you sure? (y/N): "
 
 if not defined confirm_delete goto project_management_menu
@@ -711,7 +750,7 @@ if not errorlevel 1 (
     echo.
     echo Direct deletion may fail due to database locks.
     echo.
-    set continue_choice=
+    set "continue_choice="
     set /p continue_choice="Continue with direct deletion anyway? (y/N): "
     if /i not "!continue_choice!"=="y" goto project_management_menu
     echo.
@@ -727,7 +766,7 @@ echo [INFO] Clearing index for %PROJECT_NAME%...
 echo.
 
 REM Clear the index directory with DB cleanup
-.\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; import shutil, time, gc; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; gc.collect(); time.sleep(0.5); shutil.rmtree(project_dir, ignore_errors=False) if project_dir.exists() else None; print('Index: cleared')"
+call .\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; import shutil, time, gc; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; gc.collect(); time.sleep(0.5); shutil.rmtree(project_dir, ignore_errors=False) if project_dir.exists() else None; print('Index: cleared')"
 set "INDEX_RESULT=!ERRORLEVEL!"
 
 REM Handle locked files
@@ -735,12 +774,12 @@ if "!INDEX_RESULT!" neq "0" (
     echo.
     echo [ERROR] Index is locked by another process
     echo.
-    set retry=
+    set "retry="
     set /p retry="Try force cleanup? (Will close Python processes) (y/N): "
     if /i "!retry!"=="y" (
         echo [INFO] Attempting force cleanup...
         timeout /t 2 /nobreak >nul
-        .\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; import shutil, time; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; time.sleep(1); shutil.rmtree(project_dir, ignore_errors=True)"
+        call .\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; import shutil, time; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; time.sleep(1); shutil.rmtree(project_dir, ignore_errors=True)"
 
         if exist "%USERPROFILE%\.claude_code_search\projects\%PROJECT_HASH%" (
             echo [WARNING] Force cleanup partially successful
@@ -754,7 +793,7 @@ if "!INDEX_RESULT!" neq "0" (
 
 REM Clear the Merkle snapshot (matching model/dimension only)
 REM Parse model_slug and dimension from PROJECT_HASH
-.\.venv\Scripts\python.exe -c "project_hash = '%PROJECT_HASH%'; parts = project_hash.rsplit('_', 2); model_slug = parts[-2]; dimension = int(parts[-1].rstrip('d')); from merkle.snapshot_manager import SnapshotManager; sm = SnapshotManager(); deleted = sm.delete_snapshot_by_slug(r'%PROJECT_PATH%', model_slug, dimension); print(f'Snapshot: cleared {deleted} files ({model_slug} {dimension}d)')" 2>&1
+call .\.venv\Scripts\python.exe -c "project_hash = '%PROJECT_HASH%'; parts = project_hash.rsplit('_', 2); model_slug = parts[-2]; dimension = int(parts[-1].rstrip('d')); from merkle.snapshot_manager import SnapshotManager; sm = SnapshotManager(); deleted = sm.delete_snapshot_by_slug(r'%PROJECT_PATH%', model_slug, dimension); print(f'Snapshot: cleared {deleted} files ({model_slug} {dimension}d)')" 2>&1
 set "SNAPSHOT_RESULT=!ERRORLEVEL!"
 
 echo.
@@ -785,19 +824,21 @@ if "!INDEX_RESULT!"=="0" (
     echo Manual delete: %USERPROFILE%\.claude_code_search\projects\%PROJECT_HASH%
 )
 echo.
-pause
+echo Press any key to return to the menu...
+pause >nul
 goto project_management_menu
 
 :storage_stats
 echo.
 echo === Storage Statistics ===
 echo.
-.\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; from pathlib import Path; import os; storage = get_storage_dir(); total_size = sum(f.stat().st_size for f in storage.rglob('*') if f.is_file()) // (1024**2); project_count = len(list((storage / 'projects').glob('*/project_info.json'))); index_count = len(list(storage.glob('projects/*/index/code.index'))); print(f'Storage Location: {storage}'); print(f'Total Size: {total_size} MB'); print(f'Indexed Projects: {project_count}'); print(f'Active Indexes: {index_count}'); models_size = sum(f.stat().st_size for f in (storage / 'models').rglob('*') if f.is_file()) // (1024**2) if (storage / 'models').exists() else 0; print(f'Model Cache: {models_size} MB')" 2>nul
+call .\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; from pathlib import Path; import os; storage = get_storage_dir(); total_size = sum(f.stat().st_size for f in storage.rglob('*') if f.is_file()) // (1024**2); project_count = len(list((storage / 'projects').glob('*/project_info.json'))); index_count = len(list(storage.glob('projects/*/index/code.index'))); print(f'Storage Location: {storage}'); print(f'Total Size: {total_size} MB'); print(f'Indexed Projects: {project_count}'); print(f'Active Indexes: {index_count}'); models_size = sum(f.stat().st_size for f in (storage / 'models').rglob('*') if f.is_file()) // (1024**2) if (storage / 'models').exists() else 0; print(f'Model Cache: {models_size} MB')" 2>nul
 if errorlevel 1 (
     echo [ERROR] Could not retrieve storage statistics
 )
 echo.
-pause
+echo Press any key to return to the menu...
+pause >nul
 goto project_management_menu
 
 :switch_to_project
@@ -817,8 +858,10 @@ echo [INFO] Switching to: %SELECTED_PROJECT_NAME%
 echo [INFO] Path: %SELECTED_PROJECT_PATH%
 echo.
 
-.\.venv\Scripts\python.exe tools\switch_project_helper.py --path "%SELECTED_PROJECT_PATH%"
-pause
+call .\.venv\Scripts\python.exe tools\switch_project_helper.py --path "%SELECTED_PROJECT_PATH%"
+echo.
+echo Press any key to return to the menu...
+pause >nul
 goto project_management_menu
 
 REM Installation & Setup Functions
@@ -884,7 +927,7 @@ echo   2. Semantic Only ^(Dense vector search^)
 echo   3. BM25 Only ^(Text-based search^)
 echo   0. Back to Search Configuration
 echo.
-set mode_choice=
+set "mode_choice="
 set /p mode_choice="Select mode (0-3): "
 
 REM Handle empty input or back option
@@ -900,7 +943,7 @@ if "!mode_choice!"=="3" set "SEARCH_MODE=bm25"
 if defined SEARCH_MODE (
     echo [INFO] Setting search mode to: !SEARCH_MODE!
     REM Persist to config file via Python
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.default_search_mode = '!SEARCH_MODE!'; cfg.enable_hybrid_search = '!SEARCH_MODE!' == 'hybrid'; mgr.save_config(cfg); print('[OK] Search mode saved to config file')" 2>nul
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.search_mode.default_mode = '!SEARCH_MODE!'; cfg.search_mode.enable_hybrid = '!SEARCH_MODE!' == 'hybrid'; mgr.save_config(cfg); print('[OK] Search mode saved to config file')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
         set "CLAUDE_SEARCH_MODE=!SEARCH_MODE!"
@@ -917,17 +960,17 @@ echo.
 echo [INFO] Configure search weights ^(must sum to 1.0^)
 echo.
 REM Show current values from config
-.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print(f'   Current: BM25={cfg.bm25_weight}, Dense={cfg.dense_weight}')" 2>nul
+.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print(f'   Current: BM25={cfg.search_mode.bm25_weight}, Dense={cfg.search_mode.dense_weight}')" 2>nul
 if errorlevel 1 echo    Current: BM25=0.4, Dense=0.6 ^(default^)
 echo.
-set bm25_weight=
+set "bm25_weight="
 set /p bm25_weight="Enter BM25 weight (0.0-1.0, or press Enter to cancel): "
 
 REM Handle empty input - cancel and go back
 if not defined bm25_weight goto search_config_menu
 if "!bm25_weight!"=="" goto search_config_menu
 
-set dense_weight=
+set "dense_weight="
 set /p dense_weight="Enter Dense weight (0.0-1.0, or press Enter to cancel): "
 
 REM Handle empty input - cancel and go back
@@ -936,7 +979,7 @@ if "!dense_weight!"=="" goto search_config_menu
 
 echo [INFO] Saving weights - BM25: %bm25_weight%, Dense: %dense_weight%
 REM Persist to config file via Python
-.\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.bm25_weight = float('%bm25_weight%'); cfg.dense_weight = float('%dense_weight%'); mgr.save_config(cfg); print('[OK] Weights saved to config file')" 2>nul
+.\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.search_mode.bm25_weight = float('%bm25_weight%'); cfg.search_mode.dense_weight = float('%dense_weight%'); mgr.save_config(cfg); print('[OK] Weights saved to config file')" 2>nul
 if errorlevel 1 (
     echo [ERROR] Failed to save configuration
     set "CLAUDE_BM25_WEIGHT=%bm25_weight%"
@@ -978,7 +1021,7 @@ echo.
 echo IMPORTANT: BGE-M3 validated 100%% identical to code-specific models
 echo in hybrid search mode ^(30-query test, Nov 2025^). Choose by VRAM.
 echo.
-set model_choice=
+set "model_choice="
 set /p model_choice="Select model (0-5): "
 
 if not defined model_choice goto search_config_menu
@@ -1005,7 +1048,7 @@ if defined SELECTED_MODEL (
         echo [WARNING] Existing indexes need to be rebuilt for the new model
         echo [INFO] Next time you index a project, it will use: !SELECTED_MODEL!
         echo.
-        set reindex_now=
+        set "reindex_now="
         set /p reindex_now="Clear old indexes now? (y/N): "
         if /i "!reindex_now!"=="y" (
             echo [INFO] Clearing old indexes and Merkle snapshots...
@@ -1032,14 +1075,14 @@ echo Total VRAM: 5.3GB
 echo Routing Accuracy: 100%% ^(validated^)
 echo Performance: 15-25%% quality improvement on complex queries
 echo.
-set confirm_multi=
+set "confirm_multi="
 set /p confirm_multi="Enable multi-model routing? (y/N): "
 if /i "!confirm_multi!"=="y" (
     REM Persist to config file via Python
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.multi_model_enabled = True; mgr.save_config(cfg); print('[OK] Multi-model routing enabled and saved to config')" 2>nul
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.routing.multi_model_enabled = True; mgr.save_config(cfg); print('[OK] Multi-model routing enabled and saved to config')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save to config file
-        set CLAUDE_MULTI_MODEL_ENABLED=true
+        set "CLAUDE_MULTI_MODEL_ENABLED=true"
         echo [INFO] Set as environment variable for this session only
     )
 ) else (
@@ -1065,13 +1108,13 @@ echo.
 echo Recommendation: Keep ENABLED unless you have resource constraints.
 echo.
 echo Current Setting:
-.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Parallel Search:', 'Enabled' if cfg.use_parallel_search else 'Disabled')" 2>nul
+.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Parallel Search:', 'Enabled' if cfg.performance.use_parallel_search else 'Disabled')" 2>nul
 echo.
 echo   1. Enable Parallel Search
 echo   2. Disable Parallel Search
 echo   0. Back to Search Configuration
 echo.
-set parallel_choice=
+set "parallel_choice="
 set /p parallel_choice="Select option (0-2): "
 
 if not defined parallel_choice goto search_config_menu
@@ -1081,7 +1124,7 @@ if "!parallel_choice!"=="0" goto search_config_menu
 if "!parallel_choice!"=="1" (
     echo.
     echo [INFO] Enabling parallel search...
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.use_parallel_search = True; mgr.save_config(cfg); print('[OK] Parallel search enabled and saved')" 2>nul
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.performance.use_parallel_search = True; mgr.save_config(cfg); print('[OK] Parallel search enabled and saved')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     )
@@ -1089,7 +1132,7 @@ if "!parallel_choice!"=="1" (
 if "!parallel_choice!"=="2" (
     echo.
     echo [INFO] Disabling parallel search...
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.use_parallel_search = False; mgr.save_config(cfg); print('[OK] Parallel search disabled and saved')" 2>nul
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.performance.use_parallel_search = False; mgr.save_config(cfg); print('[OK] Parallel search disabled and saved')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     )
@@ -1120,7 +1163,7 @@ echo   2. Disable Neural Reranker
 echo   3. Set Top-K Candidates ^(rerank limit^)
 echo   0. Back to Search Configuration
 echo.
-set reranker_choice=
+set "reranker_choice="
 set /p reranker_choice="Select option (0-3): "
 
 if not defined reranker_choice goto search_config_menu
@@ -1145,7 +1188,7 @@ if "!reranker_choice!"=="2" (
 )
 if "!reranker_choice!"=="3" (
     echo.
-    set top_k=
+    set "top_k="
     set /p top_k="Enter Top-K candidates (5-100, default 50): "
     if defined top_k (
         .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.top_k_candidates = int('!top_k!'); mgr.save_config(cfg); print('[OK] Top-K set to !top_k!')" 2>nul
@@ -1167,7 +1210,7 @@ echo === Quick Model Switch ===
 echo.
 echo Current Model:
 if exist ".venv\Scripts\python.exe" (
-    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding_model_name; specs = MODEL_REGISTRY.get(model, {}); dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); print(f'  {model} ({dim}d, {vram})')" 2>nul
+    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); print(f'  {model} ({dim}d, {vram})')" 2>nul
 ) else (
     echo   google/embeddinggemma-300m ^(default^)
 )
@@ -1189,7 +1232,7 @@ echo.
 echo   A. View All Models ^(full registry^)
 echo   0. Back to Main Menu
 echo.
-set model_choice=
+set "model_choice="
 set /p model_choice="Select model (0-3, M, A): "
 
 REM Handle empty input or back
@@ -1218,7 +1261,7 @@ if defined SELECTED_MODEL (
     echo.
 
     REM Use Python to switch model
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager, MODEL_REGISTRY; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding_model_name = '!SELECTED_MODEL!'; cfg.model_dimension = MODEL_REGISTRY['!SELECTED_MODEL!']['dimension']; cfg.multi_model_enabled = False; mgr.save_config(cfg); print('[OK] Model switched successfully'); print(f'[INFO] Dimension: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"dimension\"]}d'); print(f'[INFO] VRAM: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"vram_gb\"]}')" 2>nul
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager, MODEL_REGISTRY; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding.model_name = '!SELECTED_MODEL!'; cfg.embedding.dimension = MODEL_REGISTRY['!SELECTED_MODEL!']['dimension']; cfg.routing.multi_model_enabled = False; mgr.save_config(cfg); print('[OK] Model switched successfully'); print(f'[INFO] Dimension: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"dimension\"]}d'); print(f'[INFO] VRAM: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"vram_gb\"]}')" 2>nul
 
     if errorlevel 1 (
         echo [ERROR] Failed to switch model
@@ -1273,7 +1316,7 @@ echo   - Provide recommended settings
 echo.
 echo Estimated time: ~2 minutes
 echo.
-set confirm=
+set "confirm="
 set /p confirm="Continue with auto-tuning? (y/N): "
 REM Handle empty input - treat as "no"
 if not defined confirm goto performance_menu
@@ -1283,7 +1326,7 @@ if /i not "!confirm!"=="y" goto performance_menu
 echo.
 echo [INFO] Starting auto-tuning process...
 echo.
-.\.venv\Scripts\python.exe tools\auto_tune_search.py --project "." --dataset evaluation\datasets\debug_scenarios.json --current-f1 0.367
+call .\.venv\Scripts\python.exe tools\auto_tune_search.py --project "." --dataset evaluation\datasets\debug_scenarios.json --current-f1 0.367
 if errorlevel 1 (
     echo.
     echo [ERROR] Auto-tuning failed!
@@ -1300,7 +1343,7 @@ goto performance_menu
 :memory_report
 echo.
 echo [INFO] System memory usage report...
-.\.venv\Scripts\python.exe -c "import psutil; import torch; print('  System RAM:', psutil.virtual_memory().total // (1024**3), 'GB'); print('  Available RAM:', psutil.virtual_memory().available // (1024**3), 'GB'); print('  RAM Usage:', str(psutil.virtual_memory().percent) + '%%'); gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'Not available'; print('  GPU:', gpu_name); gpu_mem = torch.cuda.get_device_properties(0).total_memory // (1024**3) if torch.cuda.is_available() else 0; print('  GPU Memory:', str(gpu_mem) + ' GB') if gpu_mem else print('  GPU Memory: N/A')"
+call .\.venv\Scripts\python.exe -c "import psutil; import torch; print('  System RAM:', psutil.virtual_memory().total // (1024**3), 'GB'); print('  Available RAM:', psutil.virtual_memory().available // (1024**3), 'GB'); print('  RAM Usage:', str(psutil.virtual_memory().percent) + '%%'); gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'Not available'; print('  GPU:', gpu_name); gpu_mem = torch.cuda.get_device_properties(0).total_memory // (1024**3) if torch.cuda.is_available() else 0; print('  GPU Memory:', str(gpu_mem) + ' GB') if gpu_mem else print('  GPU Memory: N/A')"
 if errorlevel 1 (
     echo Error: Unable to retrieve system information
     echo Make sure psutil is installed: pip install psutil
@@ -1338,7 +1381,7 @@ echo.
 echo [INFO] Running installation tests...
 if exist "tests\unit\test_imports.py" (
     echo [INFO] Testing core imports and MCP server functionality...
-    .\.venv\Scripts\python.exe -m pytest tests\unit\test_imports.py tests\unit\test_mcp_server.py -v --tb=short
+    call .\.venv\Scripts\python.exe -m pytest tests\unit\test_imports.py tests\unit\test_mcp_server.py -v --tb=short
     if "!ERRORLEVEL!" neq "0" (
         echo [WARNING] Some tests failed. Check output above for details.
     ) else (
@@ -1346,33 +1389,32 @@ if exist "tests\unit\test_imports.py" (
     )
 ) else (
     echo [INFO] Pytest not available, running basic import test...
-    .\.venv\Scripts\python.exe -c "try: import mcp_server.server; print('[OK] MCP server imports successfully'); except Exception as e: print(f'[ERROR] Import failed: {e}')"
+    call .\.venv\Scripts\python.exe -c "try: import mcp_server.server; print('[OK] MCP server imports successfully'); except Exception as e: print(f'[ERROR] Import failed: {e}')"
 )
 pause
 goto end
 
 :menu_restart
-echo.
-echo Press any key to return to main menu...
-pause >nul
 cls
 goto start
 
 :exit_cleanly
 echo.
 echo [INFO] Exiting Claude Context MCP Server Launcher...
+endlocal
 exit /b 0
 
 REM System Status Functions
 :show_system_status
 echo [Runtime Status]
 if exist ".venv\Scripts\python.exe" (
-    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding_model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = cfg.multi_model_enabled; print('Model: [MULTI] BGE-M3 + Qwen3 + CodeRankEmbed (5.3GB total)') if multi_enabled else print(f'Model: [SINGLE] {model_short} ({dim}d, {vram})'); print('       Active routing across all 3 models') if multi_enabled else print('Tip: Press M for Quick Model Switch')" 2>nul
+    REM Display model status
+    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = cfg.routing.multi_model_enabled; print('Model: [MULTI] BGE-M3 + Qwen3 + CodeRankEmbed (5.3GB total)') if multi_enabled else print(f'Model: [SINGLE] {model_short} ({dim}d, {vram})'); print('       Active routing across all 3 models') if multi_enabled else print('Tip: Press M for Quick Model Switch')" 2>nul
+    REM Display current project using helper script
+    .\.venv\Scripts\python.exe scripts\get_current_project.py 2>nul
     if errorlevel 1 (
         echo Model: embeddinggemma-300m ^| Status: Loading...
     )
-    REM Display current project selection
-    .\.venv\Scripts\python.exe scripts\get_current_project.py 2>nul
 ) else (
     echo Runtime: Python | Status: Not installed
 )
@@ -1457,7 +1499,7 @@ set "ACTION_DESC=%~1"
 
 REM Get grouped project list
 set "TEMP_PROJECTS=%TEMP%\mcp_projects_select_grouped.txt"
-.\.venv\Scripts\python.exe scripts\list_projects_parseable.py > "%TEMP_PROJECTS%" 2>nul
+call .\.venv\Scripts\python.exe scripts\list_projects_parseable.py > "%TEMP_PROJECTS%" 2>nul
 
 REM Check if any projects exist
 findstr /R "." "%TEMP_PROJECTS%" >nul 2>&1
@@ -1480,7 +1522,7 @@ for /f "tokens=1,2,3,4 delims=|" %%a in (%TEMP_PROJECTS%) do (
 )
 echo   0. Cancel
 echo.
-set project_choice=
+set "project_choice="
 set /p project_choice="Select project number (0 to cancel): "
 
 REM Handle cancel
@@ -1524,4 +1566,5 @@ exit /b 0
 echo.
 echo [STOP] MCP server stopped
 pause
+endlocal
 exit /b 0

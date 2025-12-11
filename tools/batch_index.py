@@ -177,6 +177,7 @@ def main():
                 print(f"Time taken: {result.get('time_taken', elapsed):.2f} seconds")
 
             print("=" * 70)
+            sys.stdout.flush()
             return 0
 
         else:
@@ -184,6 +185,7 @@ def main():
             error = result.get("error", "Unknown error")
             print(f"Error: {error}")
             print("=" * 70)
+            sys.stdout.flush()
             return 1
 
     except Exception as e:
@@ -198,8 +200,14 @@ def main():
         import traceback
 
         traceback.print_exc()
+        sys.stdout.flush()
         return 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    import os
+
+    exit_code = main()
+    sys.stdout.flush()
+    # Force exit to avoid hanging on model cleanup (GPU/CUDA resources)
+    os._exit(exit_code)

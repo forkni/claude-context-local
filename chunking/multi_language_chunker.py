@@ -426,7 +426,13 @@ class MultiLanguageChunker:
             if calls:
                 logger.debug(f"Extracted {len(calls)} calls from {chunk_id}")
         except Exception as e:
-            logger.warning(f"Failed to extract calls for {chunk.name}: {e}")
+            # Python 3.11.0-3.11.3 has a known AST recursion depth bug (CPython #106905)
+            if "recursion depth mismatch" in str(e):
+                logger.debug(
+                    f"Skipping call extraction for {chunk.name} (Python 3.11 AST bug)"
+                )
+            else:
+                logger.warning(f"Failed to extract calls for {chunk.name}: {e}")
 
     def _extract_phase3_relationships(
         self, chunk: CodeChunk, tchunk: TreeSitterChunk, chunk_id: str
@@ -465,9 +471,15 @@ class MultiLanguageChunker:
                     f"Extracted {len(all_relationships)} Phase 3 relationships from {chunk_id}"
                 )
         except Exception as e:
-            logger.warning(
-                f"Failed to extract Phase 3 relationships for {chunk.name}: {e}"
-            )
+            # Python 3.11.0-3.11.3 has a known AST recursion depth bug (CPython #106905)
+            if "recursion depth mismatch" in str(e):
+                logger.debug(
+                    f"Skipping Phase 3 extraction for {chunk.name} (Python 3.11 AST bug)"
+                )
+            else:
+                logger.warning(
+                    f"Failed to extract Phase 3 relationships for {chunk.name}: {e}"
+                )
 
     def _convert_tree_chunks(
         self, tree_chunks: List[TreeSitterChunk], file_path: str
