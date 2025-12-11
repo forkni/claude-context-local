@@ -6,7 +6,7 @@ REM Python-based comprehensive testing system
 REM If not running in persistent mode, relaunch in new window
 if not defined VERIFY_PERSISTENT_MODE (
     set "VERIFY_PERSISTENT_MODE=1"
-    cmd /k ""%~f0""
+    cmd /c ""%~f0""
     exit
 )
 

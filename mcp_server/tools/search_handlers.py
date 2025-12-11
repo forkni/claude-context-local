@@ -14,13 +14,10 @@ from mcp_server.server import (
     get_project_storage_dir,
     get_searcher,
 )
-from mcp_server.state import get_state
+from mcp_server.services import get_config, get_state
 from mcp_server.tools.code_relationship_analyzer import CodeRelationshipAnalyzer
 from mcp_server.tools.decorators import error_handler
-from search.config import (
-    get_config_manager,
-    get_search_config,
-)
+from search.config import get_config_manager
 from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
@@ -158,7 +155,7 @@ def _check_auto_reindex(
         except Exception as e:
             logger.warning(f"[AUTO_REINDEX] Failed to load filters: {e}")
 
-    config = get_search_config()
+    config = get_config()
     if config.search_mode.enable_hybrid:
         storage_dir = project_storage / "index"
         indexer = HybridSearcher(
@@ -260,6 +257,9 @@ def _format_search_results(results: list) -> list[dict]:
                 "score": round(result.score, 2),
                 "chunk_id": result.chunk_id,
             }
+            # Add reranker score if available (neural reranking)
+            if "reranker_score" in result.metadata:
+                item["reranker_score"] = round(result.metadata["reranker_score"], 4)
         formatted_results.append(item)
     return formatted_results
 
@@ -409,7 +409,7 @@ async def handle_search_code(arguments: Dict[str, Any]) -> dict:
             k=k,
             search_mode=actual_search_mode,
             min_bm25_score=0.1,
-            use_parallel=get_search_config().performance.use_parallel_search,
+            use_parallel=get_config().performance.use_parallel_search,
             filters=filters if filters else None,
         )
     else:

@@ -94,7 +94,7 @@ class TestFullSearchFlow:
         index_manager.create_index(768, "flat")
         index_manager.add_embeddings(embeddings)
 
-        assert len(index_manager._chunk_ids) == len(embeddings)
+        assert len(index_manager.chunk_ids) == len(embeddings)
 
         # Step 4: Test various searches
         query_embedding = np.ones(768, dtype=np.float32) * 0.5
@@ -438,7 +438,7 @@ class TestFullSearchFlow:
         index_manager.create_index(768, "flat")
         index_manager.add_embeddings(initial_embeddings)
 
-        initial_count = len(index_manager._chunk_ids)
+        initial_count = len(index_manager.chunk_ids)
 
         # Save the initial index
         index_manager.save_index()
@@ -494,7 +494,7 @@ class TestFullSearchFlow:
             index_manager.add_embeddings(new_embeddings)
 
             # Should have more chunks now
-            assert len(index_manager._chunk_ids) > initial_count
+            assert len(index_manager.chunk_ids) > initial_count
 
     def test_search_with_context(self, test_project_path, mock_storage_dir):
         """Test enhanced search with context and relationships."""
@@ -622,7 +622,7 @@ class TestFullSearchFlow:
         if not loaded:
             # Should be able to recreate index
             new_manager.create_index(768, "flat")
-            assert new_manager._index is not None
+            assert new_manager.index is not None
 
     def test_search_modes_and_filtering(self, test_project_path, mock_storage_dir):
         """Test different search modes and advanced filtering."""

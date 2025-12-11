@@ -38,7 +38,8 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo.
-echo Verification completed. Press any key to exit.
-pause
+echo Verification completed.
+echo Press any key to exit . . .
+pause >nul
 popd
 exit /b %ERRORLEVEL%

@@ -382,6 +382,34 @@ RETURNS:
             "required": [],
         },
     },
+    "configure_reranking": {
+        "description": """Configure neural reranker settings.
+
+Args:
+    enabled: Enable/disable neural reranking (default: True)
+    model_name: Cross-encoder model to use (default: BAAI/bge-reranker-v2-m3)
+    top_k_candidates: Number of candidates to rerank (default: 50)""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "description": "Enable/disable neural reranking",
+                },
+                "model_name": {
+                    "type": "string",
+                    "description": "Cross-encoder model name",
+                },
+                "top_k_candidates": {
+                    "type": "integer",
+                    "description": "Number of candidates to rerank",
+                    "minimum": 5,
+                    "maximum": 100,
+                },
+            },
+            "required": [],
+        },
+    },
 }
 
 

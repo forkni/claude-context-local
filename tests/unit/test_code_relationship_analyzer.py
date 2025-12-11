@@ -694,5 +694,97 @@ def test_extract_relationships_filters_by_exclude_dirs(
         assert "tests/" not in rel.get("file", "")
 
 
+def test_find_connections_filters_indirect_callers_with_missing_metadata(
+    impact_analyzer, mock_graph, mock_searcher
+):
+    """Test indirect_callers filtering works even when chunk metadata is missing (Issue 3).
+
+    Regression test for: Empty file path from missing metadata bypasses exclude_dirs filter.
+    The fix extracts file path from chunk_id as fallback.
+    """
+    target_id = "src/api.py:10-20:function:endpoint"
+    direct_caller = "src/service.py:30-40:function:service_call"
+    # Indirect callers: one has metadata, one missing (empty file path)
+    indirect_with_metadata = "tools/batch.py:50-60:function:batch_process"
+    indirect_without_metadata = "tools/helper.py:70-80:function:helper"
+
+    # Setup graph structure: target <- direct <- indirect_callers
+    mock_graph.get_callers.side_effect = lambda target_name: {
+        target_id: [direct_caller],
+        direct_caller: [indirect_with_metadata, indirect_without_metadata],
+        "service_call": [indirect_with_metadata, indirect_without_metadata],
+    }.get(target_name, [])
+
+    mock_graph.get_callees.return_value = []
+
+    # Mock target chunk (the analyzed endpoint)
+    mock_target = Mock()
+    mock_target.chunk_id = target_id
+    mock_target.metadata = {
+        "file": "src/api.py",
+        "start_line": 10,
+        "end_line": 20,
+        "chunk_type": "function",
+    }
+    mock_target.name = "endpoint"
+
+    # Mock direct caller chunk (has metadata)
+    mock_direct = Mock()
+    mock_direct.chunk_id = direct_caller
+    mock_direct.metadata = {
+        "file": "src/service.py",
+        "start_line": 30,
+        "end_line": 40,
+        "chunk_type": "function",
+    }
+    mock_direct.name = "service_call"
+
+    # Mock indirect caller WITH metadata
+    mock_indirect_1 = Mock()
+    mock_indirect_1.chunk_id = indirect_with_metadata
+    mock_indirect_1.metadata = {
+        "file": "tools/batch.py",  # Has file in metadata
+        "start_line": 50,
+        "end_line": 60,
+        "chunk_type": "function",
+    }
+    mock_indirect_1.name = "batch_process"
+
+    # Mock indirect caller WITHOUT metadata (empty file path)
+    mock_indirect_2 = Mock()
+    mock_indirect_2.chunk_id = indirect_without_metadata
+    mock_indirect_2.metadata = {
+        # "file" key missing - THIS IS THE EDGE CASE
+        "start_line": 70,
+        "end_line": 80,
+        "chunk_type": "function",
+    }
+    mock_indirect_2.name = "helper"
+
+    mock_searcher.get_by_chunk_id.side_effect = lambda cid: {
+        target_id: mock_target,
+        direct_caller: mock_direct,
+        indirect_with_metadata: mock_indirect_1,
+        indirect_without_metadata: mock_indirect_2,
+    }.get(cid)
+
+    # Execute with exclude_dirs=["tools/"]
+    report = impact_analyzer.analyze_impact(
+        chunk_id=target_id, exclude_dirs=["tools/"], max_depth=3
+    )
+
+    # Verify: Both indirect callers should be filtered out (both in tools/)
+    # BEFORE FIX: indirect_without_metadata would pass filter (empty file path)
+    # AFTER FIX: File path extracted from chunk_id, properly filtered
+    assert len(report.indirect_callers) == 0, (
+        f"Expected 0 indirect callers (both in excluded 'tools/'), "
+        f"got {len(report.indirect_callers)}: {[c['file'] for c in report.indirect_callers]}"
+    )
+
+    # Verify direct_callers still work (not in excluded dir)
+    assert len(report.direct_callers) == 1
+    assert report.direct_callers[0]["file"] == "src/service.py"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -37,8 +37,8 @@ from embeddings.embedder import CodeEmbedder  # noqa: E402
 from mcp_server.project_persistence import (  # noqa: E402
     load_project_selection,
 )
-from mcp_server.state import get_state  # noqa: E402
-from search.config import MODEL_POOL_CONFIG, get_search_config  # noqa: E402
+from mcp_server.services import get_config, get_state  # noqa: E402
+from search.config import MODEL_POOL_CONFIG  # noqa: E402
 from search.hybrid_searcher import HybridSearcher  # noqa: E402
 from search.indexer import CodeIndexManager  # noqa: E402
 from search.searcher import IntelligentSearcher  # noqa: E402
@@ -305,7 +305,7 @@ def get_embedder(model_key: str = None) -> CodeEmbedder:
         if model_key is None:
             # Try to get from config, fallback to bge_m3
             try:
-                config = get_search_config()
+                config = get_config()
                 config_model_name = config.embedding.model_name
 
                 # Map config model name to model_key
@@ -371,7 +371,7 @@ def get_embedder(model_key: str = None) -> CodeEmbedder:
         # Use old singleton pattern with "default" key
         if "default" not in state.embedders or state.embedders["default"] is None:
             try:
-                config = get_search_config()
+                config = get_config()
                 model_name = config.embedding.model_name
                 logger.info(f"Using single embedding model: {model_name}")
             except Exception as e:
@@ -427,14 +427,26 @@ def _cleanup_previous_resources():
             logger.info("Previous index manager cleaned up")
 
         if state.searcher is not None:
+            if hasattr(state.searcher, "shutdown"):
+                state.searcher.shutdown()
+                logger.info("Searcher shutdown completed (neural reranker released)")
             state.searcher = None
             logger.info("Previous searcher cleaned up")
 
-        # NOTE: Embedder pool is NOT cleared here to preserve:
-        # - Multi-model routing capability
-        # - Per-model VRAM tracking
-        # - Instant model switching (<150ms)
-        # Embedders are only cleaned up on explicit user request or app shutdown
+        # Clear embedder pool to free GPU memory (explicit user request)
+        if state.embedders:
+            embedder_count = len(state.embedders)
+            logger.info(
+                f"Clearing {embedder_count} cached embedder(s): {list(state.embedders.keys())}"
+            )
+            state.clear_embedders()
+            logger.info("Embedder pool cleared - VRAM released")
+
+        # Force garbage collection to immediately free GPU memory
+        import gc
+
+        gc.collect()
+        logger.info("Garbage collection completed")
 
         try:
             import torch
@@ -500,9 +512,8 @@ def get_index_manager(
 
     if project_path is None:
         if state.current_project is None:
-            project_path = str(PROJECT_ROOT)
-            logger.info(
-                f"No active project found. Using server directory: {project_path}"
+            raise ValueError(
+                "No indexed project found. Please run index_directory first."
             )
         else:
             project_path = state.current_project
@@ -570,7 +581,7 @@ def get_searcher(project_path: str = None, model_key: str = None):
     ):
         state.current_project = project_path or state.current_project
         state.current_model_key = effective_model_key
-        config = get_search_config()
+        config = get_config()
         logger.info(
             f"[GET_SEARCHER] Initializing searcher for project: {state.current_project}"
         )
@@ -1038,7 +1049,14 @@ if __name__ == "__main__":
             logger.info(f"SSE endpoint: http://{args.host}:{args.port}/sse")
             logger.info(f"Message endpoint: http://{args.host}:{args.port}/messages/")
 
-            uvicorn.run(starlette_app, host=args.host, port=args.port, log_level="info")
+            # Increase keep-alive timeout to handle long-running operations (indexing)
+            uvicorn.run(
+                starlette_app,
+                host=args.host,
+                port=args.port,
+                timeout_keep_alive=120,  # 2 minutes (default: 5s)
+                log_level="info",
+            )
 
     except KeyboardInterrupt:
         logger.info("\nShutting down gracefully...")

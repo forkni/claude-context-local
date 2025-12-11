@@ -92,18 +92,18 @@ class CodeIndexManager:
         return self._faiss_index.index
 
     @property
-    def _index(self):
-        """Backward compatibility property."""
-        return self._faiss_index.index
-
-    @property
-    def _chunk_ids(self):
-        """Backward compatibility property for chunk IDs."""
+    def chunk_ids(self) -> List[str]:
+        """Public property - List of all indexed chunk IDs."""
         return self._faiss_index.chunk_ids
 
     @property
-    def _on_gpu(self):
-        """Backward compatibility property for GPU status."""
+    def ntotal(self) -> int:
+        """Public property - Total number of vectors in index."""
+        return self._faiss_index.ntotal
+
+    @property
+    def is_on_gpu(self) -> bool:
+        """Public property - Whether index is currently on GPU."""
         return self._faiss_index.is_on_gpu
 
     @property
@@ -256,7 +256,7 @@ class CodeIndexManager:
             if index_id == -1:  # No more results
                 break
 
-            chunk_id = self._chunk_ids[index_id]
+            chunk_id = self.chunk_ids[index_id]
             metadata_entry = self.metadata_store.get(chunk_id)
 
             if metadata_entry is None:
@@ -421,7 +421,7 @@ class CodeIndexManager:
                 if index_id == -1:  # No more results
                     break
 
-                chunk_id = self._chunk_ids[index_id]
+                chunk_id = self.chunk_ids[index_id]
 
                 # Skip the original chunk
                 if chunk_id == query_chunk_id:
@@ -467,7 +467,7 @@ class CodeIndexManager:
         chunks_to_remove = []
 
         # Find chunks to remove
-        for chunk_id in self._chunk_ids:
+        for chunk_id in self.chunk_ids:
             metadata_entry = self.metadata_store.get(chunk_id)
             if not metadata_entry:
                 continue
@@ -530,7 +530,7 @@ class CodeIndexManager:
         chunks_to_remove_positions = []
 
         # Single pass to identify chunks to remove
-        for position, chunk_id in enumerate(self._chunk_ids):
+        for position, chunk_id in enumerate(self.chunk_ids):
             metadata_entry = self.metadata_store.get(chunk_id)
             if not metadata_entry:
                 continue
@@ -567,7 +567,7 @@ class CodeIndexManager:
                 positions_to_remove_set = set(chunks_to_remove_positions)
                 positions_to_keep = [
                     i
-                    for i in range(len(self._chunk_ids))
+                    for i in range(len(self.chunk_ids))
                     if i not in positions_to_remove_set
                 ]
 
@@ -579,7 +579,7 @@ class CodeIndexManager:
                         try:
                             embedding = self._faiss_index.reconstruct(int(pos))
                             embeddings_to_keep.append(embedding)
-                            chunk_ids_to_keep.append(self._chunk_ids[pos])
+                            chunk_ids_to_keep.append(self.chunk_ids[pos])
                         except Exception as e:
                             self._logger.warning(
                                 f"Failed to reconstruct embedding at position {pos}: {e}"
@@ -628,7 +628,7 @@ class CodeIndexManager:
                     self.metadata_store.delete(chunk_id)
 
             # Update metadata with new index positions
-            for new_pos, chunk_id in enumerate(self._chunk_ids):
+            for new_pos, chunk_id in enumerate(self.chunk_ids):
                 if chunk_id in self.metadata_store:
                     self.metadata_store.update_index_id(chunk_id, new_pos)
 
@@ -830,10 +830,10 @@ class CodeIndexManager:
     def _update_stats(self):
         """Update index statistics."""
         stats = {
-            "total_chunks": len(self._chunk_ids),
-            "index_size": self._index.ntotal if self._index else 0,
-            "embedding_dimension": self._index.d if self._index else 0,
-            "index_type": type(self._index).__name__ if self._index else "None",
+            "total_chunks": len(self.chunk_ids),
+            "index_size": self.ntotal if self.index else 0,
+            "embedding_dimension": self.index.d if self.index else 0,
+            "index_type": type(self.index).__name__ if self.index else "None",
         }
 
         # Add file and folder statistics
@@ -842,7 +842,7 @@ class CodeIndexManager:
         chunk_type_counts = {}
         tag_counts = {}
 
-        for chunk_id in self._chunk_ids:
+        for chunk_id in self.chunk_ids:
             metadata_entry = self.metadata_store.get(chunk_id)
             if not metadata_entry:
                 continue
@@ -897,7 +897,7 @@ class CodeIndexManager:
 
     def get_index_size(self) -> int:
         """Get the number of chunks in the index."""
-        return len(self._chunk_ids)
+        return len(self.chunk_ids)
 
     def validate_index_consistency(self) -> Tuple[bool, List[str]]:
         """Validate consistency between FAISS index, chunk_ids, and metadata.
@@ -915,9 +915,9 @@ class CodeIndexManager:
 
         # Check if index exists
         if self.index is None:
-            if len(self._chunk_ids) > 0:
+            if len(self.chunk_ids) > 0:
                 issues.append(
-                    f"FAISS index is None but chunk_ids list has {len(self._chunk_ids)} entries"
+                    f"FAISS index is None but chunk_ids list has {len(self.chunk_ids)} entries"
                 )
             if len(self.metadata_store) > 0:
                 issues.append(
@@ -926,8 +926,8 @@ class CodeIndexManager:
             return len(issues) == 0, issues
 
         # Check 1: FAISS index size matches chunk_ids length
-        faiss_size = self._index.ntotal
-        chunk_ids_size = len(self._chunk_ids)
+        faiss_size = self.ntotal
+        chunk_ids_size = len(self.chunk_ids)
         if faiss_size != chunk_ids_size:
             issues.append(
                 f"FAISS index size ({faiss_size}) != chunk_ids length ({chunk_ids_size})"
@@ -935,7 +935,7 @@ class CodeIndexManager:
 
         # Check 2: All chunk_ids have metadata entries
         missing_metadata = []
-        for i, chunk_id in enumerate(self._chunk_ids):
+        for i, chunk_id in enumerate(self.chunk_ids):
             metadata_entry = self.metadata_store.get(chunk_id)
             if not metadata_entry:
                 missing_metadata.append(f"{chunk_id} (position {i})")

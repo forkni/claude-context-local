@@ -21,6 +21,8 @@ from typing import Any, Dict, Generator, List, Optional  # noqa: E402
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 
+from search.filters import normalize_path  # noqa: E402
+
 # Add the package to Python path for testing
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
@@ -469,7 +471,7 @@ def mock_snapshot_manager_for_unit_tests(
     from unittest.mock import Mock, patch
 
     # Only apply to unit tests (handle both Unix and Windows path separators)
-    test_path = str(request.fspath).replace("\\", "/")
+    test_path = normalize_path(str(request.fspath))
     if "tests/unit" not in test_path:
         yield
         return

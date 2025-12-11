@@ -13,7 +13,7 @@ from mcp_server.server import (
     get_project_storage_dir,
     set_current_project,
 )
-from mcp_server.state import get_state
+from mcp_server.services import get_state
 from mcp_server.tools.decorators import error_handler
 from search.config import (
     MODEL_POOL_CONFIG,
@@ -179,4 +179,46 @@ async def handle_switch_embedding_model(arguments: Dict[str, Any]) -> dict:
         "new_model": model_name,
         "message": f"Switched to {model_name}. Indexes will use this model.",
         "note": "Existing indices for other models are preserved (per-model storage)",
+    }
+
+
+@error_handler("Configure reranking")
+async def handle_configure_reranking(arguments: Dict[str, Any]) -> dict:
+    """Configure neural reranker settings.
+
+    Args:
+        arguments: Dict with optional keys:
+            - enabled: Enable/disable neural reranking
+            - model_name: Cross-encoder model to use
+            - top_k_candidates: Number of candidates to rerank
+
+    Returns:
+        Dict with success status and updated config
+    """
+    config_manager = get_config_manager()
+    config = config_manager.load_config()
+
+    enabled = arguments.get("enabled")
+    model_name = arguments.get("model_name")
+    top_k_candidates = arguments.get("top_k_candidates")
+
+    if enabled is not None:
+        config.reranker.enabled = enabled
+    if model_name is not None:
+        config.reranker.model_name = model_name
+    if top_k_candidates is not None:
+        config.reranker.top_k_candidates = top_k_candidates
+
+    config_manager.save_config(config)
+
+    return {
+        "success": True,
+        "config": {
+            "enabled": config.reranker.enabled,
+            "model_name": config.reranker.model_name,
+            "top_k_candidates": config.reranker.top_k_candidates,
+            "min_vram_gb": config.reranker.min_vram_gb,
+            "batch_size": config.reranker.batch_size,
+        },
+        "system_message": "Reranker configuration updated. Changes take effect on next search.",
     }

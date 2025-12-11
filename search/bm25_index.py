@@ -8,6 +8,8 @@ import string
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from search.filters import normalize_path
+
 try:
     from rank_bm25 import BM25Okapi
 except ImportError:
@@ -711,20 +713,6 @@ class BM25Index:
         )
         return removed_count
 
-    @staticmethod
-    def _normalize_path(path: str) -> str:
-        """Normalize path separators for consistent matching.
-
-        Converts backslashes to forward slashes to handle Windows/Unix path differences.
-
-        Args:
-            path: File path to normalize
-
-        Returns:
-            Normalized path with forward slashes
-        """
-        return path.replace("\\", "/")
-
     def remove_multiple_files(self, file_paths: set, project_name: str) -> int:
         """
         Remove documents associated with multiple files in a single pass.
@@ -751,12 +739,12 @@ class BM25Index:
         indices_to_remove_set = set()
 
         # Normalize all file paths for consistent matching
-        normalized_file_paths = {self._normalize_path(fp) for fp in file_paths}
+        normalized_file_paths = {normalize_path(fp) for fp in file_paths}
 
         # Single pass through all doc_ids to identify documents to remove
         for i, doc_id in enumerate(self._doc_ids):
             # Normalize doc_id for comparison
-            normalized_doc_id = self._normalize_path(doc_id)
+            normalized_doc_id = normalize_path(doc_id)
 
             # Check if document belongs to any of the files
             for file_path in normalized_file_paths:

@@ -48,9 +48,7 @@ async def test_parallel_tool_calls_dont_cause_race_condition():
         with patch("mcp_server.tools.status_handlers.get_storage_dir") as mock_storage:
             mock_storage.return_value = Path("/tmp/test")
 
-            with patch(
-                "mcp_server.tools.status_handlers.get_search_config"
-            ) as mock_config:
+            with patch("search.config.get_search_config") as mock_config:
                 mock_cfg = Mock()
                 mock_cfg.search_mode.enable_hybrid = True
                 mock_cfg.search_mode.bm25_weight = 0.4

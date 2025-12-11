@@ -20,13 +20,12 @@ from mcp_server.server import (
     set_current_project,
     update_project_filters,
 )
-from mcp_server.state import get_state
+from mcp_server.services import get_config, get_state
 from mcp_server.tools.decorators import error_handler
 from search.config import (
     MODEL_POOL_CONFIG,
     MODEL_REGISTRY,
     SearchConfigManager,
-    get_search_config,
 )
 from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
@@ -53,7 +52,7 @@ def _create_indexer_for_model(
     Returns:
         tuple: (indexer, embedder, chunker)
     """
-    config = get_search_config()
+    config = get_config()
     chunker = MultiLanguageChunker(directory_path)
     embedder = get_embedder(model_key)
 
@@ -191,7 +190,7 @@ def _index_with_all_models(
         list: Results for each model with timing and statistics
     """
     results = []
-    original_config = get_search_config()
+    original_config = get_config()
     original_model = original_config.embedding.model_name
 
     try:
@@ -249,7 +248,7 @@ def _index_with_all_models(
             embedder = get_embedder(model_key)
 
             # Create fresh indexer instance directly (bypass global cache)
-            config = get_search_config()
+            config = get_config()
             if config.search_mode.enable_hybrid:
                 project_id = project_dir.name.rsplit("_", 1)[0]
                 indexer = HybridSearcher(
@@ -351,7 +350,7 @@ async def handle_clear_index(arguments: Dict[str, Any]) -> dict:
 
         # Delete dense index files
         index_dir = model_dir / "index"
-        for file in ["code.index", "chunks_metadata.db"]:
+        for file in ["code.index", "chunks_metadata.db", "stats.json"]:
             filepath = index_dir / file
             if filepath.exists():
                 filepath.unlink()
@@ -599,8 +598,15 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
     # Multi-model batch indexing
     if multi_model and get_state().multi_model_enabled:
         logger.info(f"Multi-model batch indexing for: {directory_path}")
-        results = _index_with_all_models(
-            directory_path, incremental, include_dirs, exclude_dirs
+        # Run in thread pool to avoid blocking asyncio event loop (SSE keepalive fix)
+        import asyncio
+
+        results = await asyncio.to_thread(
+            _index_with_all_models,
+            directory_path,
+            incremental,
+            include_dirs,
+            exclude_dirs,
         )
         return _build_index_response(
             results, str(directory_path), multi_model=True, incremental=incremental
@@ -620,15 +626,18 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
         embedder = get_embedder()
         searcher_instance = get_searcher(str(directory_path))
 
-        config = get_search_config()
+        config = get_config()
         indexer = (
             searcher_instance
             if config.search_mode.enable_hybrid
             else get_index_manager(str(directory_path))
         )
 
-        # Run indexing (using helper)
-        result = _run_indexing(
+        # Run indexing (using helper) - in thread pool to avoid blocking event loop
+        import asyncio
+
+        result = await asyncio.to_thread(
+            _run_indexing,
             indexer,
             embedder,
             chunker,

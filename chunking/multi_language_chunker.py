@@ -7,6 +7,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Optional
 
+from search.filters import normalize_path
+
 from .python_ast_chunker import CodeChunk
 from .tree_sitter import TreeSitterChunk, TreeSitterChunker
 
@@ -381,7 +383,7 @@ class MultiLanguageChunker:
             Normalized chunk ID string
         """
         # Normalize path to forward slashes (cross-platform)
-        normalized_path = str(relative_path).replace("\\", "/")
+        normalized_path = normalize_path(str(relative_path))
         chunk_id = f"{normalized_path}:{start_line}-{end_line}:{chunk_type}"
 
         # Use qualified name (ClassName.method_name) for better disambiguation
@@ -424,7 +426,13 @@ class MultiLanguageChunker:
             if calls:
                 logger.debug(f"Extracted {len(calls)} calls from {chunk_id}")
         except Exception as e:
-            logger.warning(f"Failed to extract calls for {chunk.name}: {e}")
+            # Python 3.11.0-3.11.3 has a known AST recursion depth bug (CPython #106905)
+            if "recursion depth mismatch" in str(e):
+                logger.debug(
+                    f"Skipping call extraction for {chunk.name} (Python 3.11 AST bug)"
+                )
+            else:
+                logger.warning(f"Failed to extract calls for {chunk.name}: {e}")
 
     def _extract_phase3_relationships(
         self, chunk: CodeChunk, tchunk: TreeSitterChunk, chunk_id: str
@@ -463,9 +471,15 @@ class MultiLanguageChunker:
                     f"Extracted {len(all_relationships)} Phase 3 relationships from {chunk_id}"
                 )
         except Exception as e:
-            logger.warning(
-                f"Failed to extract Phase 3 relationships for {chunk.name}: {e}"
-            )
+            # Python 3.11.0-3.11.3 has a known AST recursion depth bug (CPython #106905)
+            if "recursion depth mismatch" in str(e):
+                logger.debug(
+                    f"Skipping Phase 3 extraction for {chunk.name} (Python 3.11 AST bug)"
+                )
+            else:
+                logger.warning(
+                    f"Failed to extract Phase 3 relationships for {chunk.name}: {e}"
+                )
 
     def _convert_tree_chunks(
         self, tree_chunks: List[TreeSitterChunk], file_path: str

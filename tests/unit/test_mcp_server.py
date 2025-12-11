@@ -73,7 +73,7 @@ class TestGetterFunctions:
     @patch("mcp_server.server.IntelligentSearcher")
     @patch("mcp_server.server.get_embedder")
     @patch("mcp_server.server.get_index_manager")
-    @patch("mcp_server.server.get_search_config")
+    @patch("search.config.get_search_config")
     def test_get_searcher_preserves_model_key_when_none_passed(
         self,
         mock_get_config,
@@ -142,7 +142,7 @@ class TestToolHandlers:
     """Test MCP tool handlers return correct data."""
 
     @pytest.mark.asyncio
-    @patch("mcp_server.tools.status_handlers.get_search_config")
+    @patch("search.config.get_search_config")
     async def test_get_search_config_includes_auto_reindex_fields(
         self, mock_get_search_config
     ):
@@ -185,7 +185,7 @@ class TestToolHandlers:
     @pytest.mark.asyncio
     @patch("mcp_server.tools.status_handlers.SnapshotManager")
     @patch("mcp_server.tools.status_handlers.get_storage_dir")
-    @patch("mcp_server.tools.status_handlers.get_search_config")
+    @patch("search.config.get_search_config")
     @patch("mcp_server.tools.status_handlers.get_index_manager")
     @patch("mcp_server.tools.status_handlers.get_state")
     async def test_get_index_status_includes_last_indexed_time(
@@ -246,7 +246,7 @@ class TestToolHandlers:
         mock_snapshot_mgr.load_metadata.assert_called_once_with("/mock/project/path")
 
     @pytest.mark.asyncio
-    @patch("mcp_server.tools.status_handlers.get_search_config")
+    @patch("search.config.get_search_config")
     async def test_get_search_config_includes_multi_hop_and_stemming_fields(
         self, mock_get_search_config
     ):
@@ -303,9 +303,7 @@ class TestToolHandlers:
         mock_get_state.return_value = mock_state
 
         # Mock get_search_config
-        with patch(
-            "mcp_server.tools.status_handlers.get_search_config"
-        ) as mock_get_config:
+        with patch("search.config.get_search_config") as mock_get_config:
             mock_config = MagicMock()
             mock_config.embedding.model_name = "BAAI/bge-m3"
             mock_get_config.return_value = mock_config

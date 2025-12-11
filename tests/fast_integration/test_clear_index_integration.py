@@ -88,6 +88,9 @@ async def test_clear_index_clears_bm25_and_dense(mock_embedder):
         stats_after = status_after.get("index_statistics", {})
         assert stats_after.get("bm25_documents", -1) == 0, "BM25 should be cleared"
         assert stats_after.get("dense_vectors", -1) == 0, "Dense should be cleared"
+        assert (
+            stats_after.get("total_chunks", -1) == 0
+        ), "Total chunks should be 0 after clear"
         assert stats_after.get("synced", False) is True, "Indices should be synced"
 
 
@@ -143,6 +146,9 @@ async def test_clear_index_persists_after_searcher_recreation(mock_embedder):
             stats2.get("bm25_documents", -1) == 0
         ), f"BM25 reloaded from disk after clear: {stats2.get('bm25_documents')} docs (expected 0)"
         assert stats2.get("dense_vectors", -1) == 0, "Dense should stay cleared"
+        assert (
+            stats2.get("total_chunks", -1) == 0
+        ), "Total chunks should be 0 after clear"
         assert (
             stats2.get("synced", False) is True
         ), "Indices should be synced after clear"
