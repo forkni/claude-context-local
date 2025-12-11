@@ -225,23 +225,6 @@ def update_project_filters(
         logger.warning(f"[PROJECT_INFO] Failed to update filters: {e}")
 
 
-def ensure_project_indexed(project_path: str) -> bool:
-    """Check if project is indexed, auto-index only for non-server directories."""
-    try:
-        project_dir = get_project_storage_dir(project_path)
-        index_dir = project_dir / "index"
-        if index_dir.exists() and (index_dir / "code.index").exists():
-            return True
-        project_path_obj = Path(project_path)
-        if project_path_obj == PROJECT_ROOT:
-            logger.info(f"Skipping auto-index of server directory: {project_path}")
-            return False
-        return False
-    except (OSError, IOError, PermissionError) as e:
-        logger.warning(f"Failed to check/auto-index project {project_path}: {e}")
-        return False
-
-
 def initialize_model_pool(lazy_load: bool = True) -> None:
     """Initialize multi-model pool with all 3 models.
 
@@ -384,33 +367,6 @@ def get_embedder(model_key: str = None) -> CodeEmbedder:
             logger.info("Embedder initialized successfully")
 
         return state.embedders["default"]
-
-
-def _maybe_start_model_preload() -> None:
-    """Preload the embedding model in the background to avoid cold-start delays."""
-    state = get_state()
-
-    if state.model_preload_task_started:
-        return
-
-    state.model_preload_task_started = True
-
-    async def _preload():
-        try:
-            logger.info("Starting background model preload")
-            _ = get_embedder().model
-            logger.info("Background model preload completed")
-        except (ImportError, RuntimeError, ValueError) as e:
-            logger.warning(f"Background model preload failed: {e}")
-
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(_preload())
-        else:
-            loop.run_until_complete(_preload())
-    except (RuntimeError, AttributeError) as e:
-        logger.debug(f"Model preload scheduling skipped: {e}")
 
 
 def _cleanup_previous_resources():
