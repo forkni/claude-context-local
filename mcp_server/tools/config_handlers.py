@@ -8,12 +8,12 @@ from pathlib import Path
 from typing import Any, Dict
 
 from mcp_server.project_persistence import save_project_selection
-from mcp_server.server import (
-    _cleanup_previous_resources,
+from mcp_server.server import _cleanup_previous_resources
+from mcp_server.services import get_state
+from mcp_server.storage_manager import (
     get_project_storage_dir,
     set_current_project,
 )
-from mcp_server.services import get_state
 from mcp_server.tools.decorators import error_handler
 from search.config import (
     MODEL_POOL_CONFIG,

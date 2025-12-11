@@ -38,6 +38,11 @@ from mcp_server.project_persistence import (  # noqa: E402
     load_project_selection,
 )
 from mcp_server.services import get_config, get_state  # noqa: E402
+from mcp_server.storage_manager import (  # noqa: E402
+    get_project_storage_dir,
+    get_storage_dir,
+    set_current_project,
+)
 from search.config import MODEL_POOL_CONFIG  # noqa: E402
 from search.hybrid_searcher import HybridSearcher  # noqa: E402
 from search.indexer import CodeIndexManager  # noqa: E402
@@ -66,163 +71,6 @@ else:
 # ============================================================================
 # HELPER FUNCTIONS (copied from FastMCP backup)
 # ============================================================================
-
-
-def get_storage_dir() -> Path:
-    """Get or create base storage directory."""
-    state = get_state()
-
-    if state.storage_dir is None:
-        storage_path = os.getenv(
-            "CODE_SEARCH_STORAGE", str(Path.home() / ".claude_code_search")
-        )
-        state.storage_dir = Path(storage_path)
-        state.storage_dir.mkdir(parents=True, exist_ok=True)
-    return state.storage_dir
-
-
-def set_current_project(project_path: str) -> None:
-    """Set the current project path."""
-    get_state().current_project = project_path
-    logger.info(
-        f"Current project set to: {Path(project_path).name if project_path else None}"
-    )
-
-
-def get_project_storage_dir(
-    project_path: str, model_key: str = None, include_dirs=None, exclude_dirs=None
-) -> Path:
-    """Get or create project-specific storage directory with per-model dimension suffix.
-
-    Args:
-        project_path: Path to the project
-        model_key: Model key for routing (None = use config default)
-        include_dirs: Optional list of directories to include during indexing
-        exclude_dirs: Optional list of directories to exclude during indexing
-    """
-    base_dir = get_storage_dir()
-    import hashlib
-    from datetime import datetime
-
-    project_path = Path(project_path).resolve()
-    project_name = project_path.name
-    project_hash = hashlib.md5(str(project_path).encode()).hexdigest()[:8]
-    from search.config import MODEL_REGISTRY, get_model_slug, get_search_config
-
-    # Determine which model to use
-    if model_key:
-        # Use routing-selected model (map model_key to model_name via MODEL_POOL_CONFIG)
-        if model_key not in MODEL_POOL_CONFIG:
-            logger.error(
-                f"Invalid model_key: {model_key}, falling back to config default"
-            )
-            config = get_search_config()
-            model_name = config.embedding.model_name
-        else:
-            model_name = MODEL_POOL_CONFIG[model_key]
-            logger.info(
-                f"[ROUTING] Using routed model: {model_name} (key: {model_key})"
-            )
-    else:
-        # Use config default
-        config = get_search_config()
-        model_name = config.embedding.model_name
-        logger.info(f"[CONFIG] Using config default model: {model_name}")
-
-    # Validate model exists in registry (prevent silent 768d fallback)
-    model_config = MODEL_REGISTRY.get(model_name)
-    if model_config is None:
-        available_models = ", ".join(sorted(MODEL_REGISTRY.keys()))
-        raise ValueError(
-            f"Unknown embedding model: '{model_name}'\n"
-            f"This model is not registered in MODEL_REGISTRY.\n"
-            f"Available models:\n  {available_models}\n"
-            f"To add this model, update search/config.py:MODEL_REGISTRY"
-        )
-    dimension = model_config["dimension"]
-    model_slug = get_model_slug(model_name)
-    project_dir = (
-        base_dir
-        / "projects"
-        / f"{project_name}_{project_hash}_{model_slug}_{dimension}d"
-    )
-    project_dir.mkdir(parents=True, exist_ok=True)
-    logger.info(
-        f"[PER_MODEL_INDICES] Using storage: {project_dir.name} (model: {model_name}, dimension: {dimension}d)"
-    )
-    project_info_file = project_dir / "project_info.json"
-    if not project_info_file.exists():
-        # Import default excluded dirs for transparency
-        from chunking.multi_language_chunker import MultiLanguageChunker
-
-        project_info = {
-            "project_name": project_name,
-            "project_path": str(project_path),
-            "project_hash": project_hash,
-            "embedding_model": model_name,
-            "model_dimension": dimension,
-            "created_at": datetime.now().isoformat(),
-            "default_excluded_dirs": sorted(MultiLanguageChunker.DEFAULT_IGNORED_DIRS),
-            "user_excluded_dirs": exclude_dirs,
-            "default_included_dirs": None,
-            "user_included_dirs": include_dirs,
-        }
-        with open(project_info_file, "w") as f:
-            json.dump(project_info, f, indent=2)
-    return project_dir
-
-
-def update_project_filters(
-    project_path: str,
-    include_dirs=None,
-    exclude_dirs=None,
-    model_key: str | None = None,
-) -> None:
-    """Update filters in project_info.json after filter change with full reindex.
-
-    Args:
-        project_path: Path to the project
-        include_dirs: New include_dirs filter
-        exclude_dirs: New exclude_dirs filter
-        model_key: Optional model key to update specific model's project_info
-    """
-    project_storage = get_project_storage_dir(project_path, model_key=model_key)
-    project_info_file = project_storage / "project_info.json"
-
-    if not project_info_file.exists():
-        logger.warning(
-            "[PROJECT_INFO] Cannot update filters - project_info.json not found"
-        )
-        return
-
-    try:
-        with open(project_info_file) as f:
-            project_info = json.load(f)
-
-        # Update default excluded dirs snapshot for transparency
-        from chunking.multi_language_chunker import MultiLanguageChunker
-
-        project_info["default_excluded_dirs"] = sorted(
-            MultiLanguageChunker.DEFAULT_IGNORED_DIRS
-        )
-
-        # Update user-defined filter fields
-        project_info["user_included_dirs"] = include_dirs
-        project_info["user_excluded_dirs"] = exclude_dirs
-
-        # Clean up old field names (migration)
-        project_info.pop("include_dirs", None)
-        project_info.pop("exclude_dirs", None)
-
-        # Write back updated info
-        with open(project_info_file, "w") as f:
-            json.dump(project_info, f, indent=2)
-
-        logger.info(
-            f"[PROJECT_INFO] Updated filters: user_include={include_dirs}, user_exclude={exclude_dirs}"
-        )
-    except Exception as e:
-        logger.warning(f"[PROJECT_INFO] Failed to update filters: {e}")
 
 
 def initialize_model_pool(lazy_load: bool = True) -> None:

@@ -11,10 +11,10 @@ from mcp_server.guidance import add_system_message
 from mcp_server.server import (
     get_embedder,
     get_index_manager,
-    get_project_storage_dir,
     get_searcher,
 )
 from mcp_server.services import get_config, get_state
+from mcp_server.storage_manager import get_project_storage_dir
 from mcp_server.tools.code_relationship_analyzer import CodeRelationshipAnalyzer
 from mcp_server.tools.decorators import error_handler
 from search.config import get_config_manager

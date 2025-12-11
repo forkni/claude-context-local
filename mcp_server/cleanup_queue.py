@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List
 
-from mcp_server.server import get_storage_dir
+from mcp_server.storage_manager import get_storage_dir
 
 logger = logging.getLogger(__name__)
 

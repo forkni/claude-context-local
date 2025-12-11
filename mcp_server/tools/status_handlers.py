@@ -11,9 +11,9 @@ from mcp_server.server import (
     _cleanup_previous_resources,
     get_index_manager,
     get_searcher,
-    get_storage_dir,
 )
 from mcp_server.services import get_config, get_state
+from mcp_server.storage_manager import get_storage_dir
 from mcp_server.tools.decorators import error_handler
 from merkle.snapshot_manager import SnapshotManager
 from search.config import (
