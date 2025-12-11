@@ -90,6 +90,9 @@ def _route_query_to_model(
 ) -> tuple[str | None, dict | None]:
     """Route query to optimal embedding model.
 
+    Validates that the routed model has an index for the current project.
+    Falls back to auto-detected model if routing selects unindexed model.
+
     Args:
         query: The search query
         use_routing: Whether to use automatic model routing
@@ -98,21 +101,68 @@ def _route_query_to_model(
     Returns:
         tuple: (selected_model_key, routing_info_dict)
     """
-    if get_state().multi_model_enabled and use_routing and model_key is None:
-        router = QueryRouter(enable_logging=True)
-        decision = router.route(query)
-        return decision.model_key, {
-            "model_selected": decision.model_key,
-            "confidence": decision.confidence,
-            "reason": decision.reason,
-            "scores": decision.scores,
-        }
-    elif model_key is not None:
+    from search.config import MODEL_POOL_CONFIG
+
+    # User-specified override always wins
+    if model_key is not None:
         return model_key, {
             "model_selected": model_key,
             "confidence": 1.0,
             "reason": "User-specified override",
         }
+
+    # Try query routing if enabled
+    if get_state().multi_model_enabled and use_routing:
+        router = QueryRouter(enable_logging=True)
+        decision = router.route(query)
+
+        # Validate routed model has an index for current project
+        current_project = get_state().current_project
+        if current_project:
+            project_dir = get_project_storage_dir(
+                current_project, model_key=decision.model_key
+            )
+            stats_file = project_dir / "index" / "stats.json"
+
+            if stats_file.exists():
+                # Routed model has valid index
+                return decision.model_key, {
+                    "model_selected": decision.model_key,
+                    "confidence": decision.confidence,
+                    "reason": decision.reason,
+                    "scores": decision.scores,
+                }
+            else:
+                logger.warning(
+                    f"Routed model '{decision.model_key}' has no index. "
+                    f"Falling back to auto-detected model."
+                )
+
+        # Routed model doesn't have index, fall back to auto-detected
+        fallback_model = get_state().current_model_key
+        if fallback_model:
+            return fallback_model, {
+                "model_selected": fallback_model,
+                "confidence": decision.confidence,
+                "reason": f"Fallback to indexed model (routed '{decision.model_key}' not indexed)",
+                "routed_model": decision.model_key,
+            }
+
+        # Last resort: scan for any indexed model
+        for model_key_candidate in MODEL_POOL_CONFIG.keys():
+            project_dir = get_project_storage_dir(
+                current_project, model_key=model_key_candidate
+            )
+            stats_file = project_dir / "index" / "stats.json"
+            if stats_file.exists():
+                logger.info(f"Found indexed model: {model_key_candidate}")
+                return model_key_candidate, {
+                    "model_selected": model_key_candidate,
+                    "confidence": 0.0,
+                    "reason": f"Auto-detected from indices (routed '{decision.model_key}' not indexed)",
+                    "routed_model": decision.model_key,
+                }
+
     return None, None
 
 

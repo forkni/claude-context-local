@@ -33,10 +33,10 @@
   "multi_hop_expansion": 0.3,
   "multi_hop_initial_k_multiplier": 2.0,
   "multi_model_enabled": true,
-  "routing_default_model": "qwen3",
+  "routing_default_model": "bge_m3",
   "reranker_enabled": true,
   "reranker_model_name": "BAAI/bge-reranker-v2-m3",
-  "reranker_top_k_candidates": 30,
+  "reranker_top_k_candidates": 50,
   "reranker_min_vram_gb": 2.0,
   "reranker_batch_size": 16
 }

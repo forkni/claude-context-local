@@ -24,6 +24,24 @@ from search.config import (
 logger = logging.getLogger(__name__)
 
 
+def _detect_indexed_model(project_path: str) -> str | None:
+    """Detect which model has a valid index for this project.
+
+    Args:
+        project_path: Path to the project directory
+
+    Returns:
+        Model key if found, None otherwise
+    """
+    for model_key in MODEL_POOL_CONFIG.keys():
+        project_dir = get_project_storage_dir(project_path, model_key=model_key)
+        stats_file = project_dir / "index" / "stats.json"
+        if stats_file.exists():
+            logger.info(f"Detected indexed model for project: {model_key}")
+            return model_key
+    return None
+
+
 @error_handler("Project switch")
 async def handle_switch_project(arguments: Dict[str, Any]) -> dict:
     """Switch to a different indexed project."""
@@ -38,6 +56,19 @@ async def handle_switch_project(arguments: Dict[str, Any]) -> dict:
 
     # Set new project using setter function (required for cross-module globals)
     set_current_project(str(project_path))
+
+    # Reset and auto-detect model key to ensure correct index is used
+    state = get_state()
+    state.current_model_key = None
+    state.current_index_model_key = None
+
+    # Auto-detect which model was used to index this project
+    indexed_model = _detect_indexed_model(str(project_path))
+    if indexed_model:
+        state.current_model_key = indexed_model
+        logger.info(f"Auto-detected and set model key to: {indexed_model}")
+    else:
+        logger.warning(f"No indexed model detected for project: {project_path}")
 
     # Save selection for persistence across server restarts
     save_project_selection(str(project_path))
