@@ -1049,7 +1049,14 @@ if __name__ == "__main__":
             logger.info(f"SSE endpoint: http://{args.host}:{args.port}/sse")
             logger.info(f"Message endpoint: http://{args.host}:{args.port}/messages/")
 
-            uvicorn.run(starlette_app, host=args.host, port=args.port, log_level="info")
+            # Increase keep-alive timeout to handle long-running operations (indexing)
+            uvicorn.run(
+                starlette_app,
+                host=args.host,
+                port=args.port,
+                timeout_keep_alive=120,  # 2 minutes (default: 5s)
+                log_level="info",
+            )
 
     except KeyboardInterrupt:
         logger.info("\nShutting down gracefully...")

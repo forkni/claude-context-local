@@ -100,10 +100,13 @@ class TestRerankingEngine:
 
         self.mock_metadata_store.get.side_effect = mock_get
 
-        # Rerank
-        reranked = self.engine.rerank_by_query(
-            "test query", results, k=3, search_mode="semantic"
-        )
+        # Rerank - prevent neural reranking from interfering
+        with patch.object(
+            self.engine, "should_enable_neural_reranking", return_value=False
+        ):
+            reranked = self.engine.rerank_by_query(
+                "test query", results, k=3, search_mode="semantic"
+            )
 
         # Check ordering - chunk3 should be first (similarity=1.0)
         assert len(reranked) == 3
@@ -119,9 +122,11 @@ class TestRerankingEngine:
             SearchResult(chunk_id="chunk2", score=0.7, metadata={}),
         ]
 
-        reranked = engine.rerank_by_query(
-            "test query", results, k=2, search_mode="bm25"
-        )
+        # Prevent neural reranking from interfering with score-based sorting
+        with patch.object(engine, "should_enable_neural_reranking", return_value=False):
+            reranked = engine.rerank_by_query(
+                "test query", results, k=2, search_mode="bm25"
+            )
 
         # Should keep original ordering (sorted by score)
         assert len(reranked) == 2
@@ -187,3 +192,82 @@ class TestRerankingEngine:
         )
 
         assert len(reranked) == 2
+
+    @patch("search.reranking_engine.torch")
+    @patch("search.reranking_engine.NeuralReranker")
+    def test_neural_reranker_reload_after_disable_reenable(
+        self, mock_neural_reranker_class, mock_torch
+    ):
+        """Test neural reranker properly reloads after disable/re-enable cycle.
+
+        Regression test for Issue 1: Reranker doesn't reload after disable/re-enable.
+        The cached _neural_reranking_enabled flag prevented config re-evaluation.
+        """
+        # Setup: GPU available with sufficient VRAM
+        mock_torch.cuda.is_available.return_value = True
+        mock_device = MagicMock()
+        mock_device.total_memory = 8 * 1024**3  # 8GB
+        mock_torch.cuda.get_device_properties.return_value = mock_device
+        mock_torch.cuda.memory_allocated.return_value = 0
+
+        # Mock NeuralReranker
+        mock_reranker_instance = MagicMock()
+        mock_neural_reranker_class.return_value = mock_reranker_instance
+
+        # Create test results
+        results = [
+            SearchResult(chunk_id="chunk1", score=0.5, metadata={}),
+            SearchResult(chunk_id="chunk2", score=0.7, metadata={}),
+        ]
+
+        # Phase 1: Enable neural reranking
+        with patch("search.config.get_search_config") as mock_config:
+            config = MagicMock()
+            config.reranker.enabled = True
+            config.reranker.min_vram_gb = 4
+            config.reranker.model_name = "BAAI/bge-reranker-v2-m3"
+            config.reranker.batch_size = 16
+            config.reranker.top_k_candidates = 50
+            mock_config.return_value = config
+
+            # First search - should initialize reranker
+            mock_reranker_instance.rerank.return_value = results
+            self.engine.rerank_by_query("test query", results, k=2)
+
+            assert self.engine.neural_reranker is not None
+            assert mock_neural_reranker_class.call_count == 1
+
+        # Phase 2: Disable neural reranking
+        with patch("search.config.get_search_config") as mock_config:
+            config = MagicMock()
+            config.reranker.enabled = False  # Disabled
+            mock_config.return_value = config
+
+            # Second search - should cleanup reranker
+            self.engine.rerank_by_query("test query", results, k=2)
+
+            mock_reranker_instance.cleanup.assert_called_once()
+            assert self.engine.neural_reranker is None
+
+        # Phase 3: Re-enable neural reranking (THIS WAS BROKEN BEFORE FIX)
+        with patch("search.config.get_search_config") as mock_config:
+            config = MagicMock()
+            config.reranker.enabled = True  # Re-enabled
+            config.reranker.min_vram_gb = 4
+            config.reranker.model_name = "BAAI/bge-reranker-v2-m3"
+            config.reranker.batch_size = 16
+            config.reranker.top_k_candidates = 50
+            mock_config.return_value = config
+
+            # Third search - should RE-INITIALIZE reranker
+            mock_reranker_instance.rerank.return_value = results
+            self.engine.rerank_by_query("test query", results, k=2)
+
+            # Key assertion: Reranker should be reloaded (not None)
+            assert self.engine.neural_reranker is not None
+            assert (
+                mock_neural_reranker_class.call_count == 2
+            )  # Called twice (init + re-init)
+            assert (
+                mock_reranker_instance.rerank.call_count == 2
+            )  # Used in phase 1 and 3

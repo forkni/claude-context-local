@@ -128,20 +128,31 @@ class RerankingEngine:
         sorted_results = sorted(results, key=lambda r: r.score, reverse=True)
 
         # Neural reranking (Quality First mode)
-        if self._neural_reranking_enabled and len(sorted_results) > 0:
-            # Lazy initialize on first search
-            if self.neural_reranker is None:
-                self._neural_reranking_enabled = self.should_enable_neural_reranking()
-                if self._neural_reranking_enabled:
-                    from .config import get_search_config
+        # Always re-check config to pick up runtime changes
+        if len(sorted_results) > 0:
+            should_enable = self.should_enable_neural_reranking()
 
-                    config = get_search_config()
-                    self.neural_reranker = NeuralReranker(
-                        model_name=config.reranker.model_name,
-                        batch_size=config.reranker.batch_size,
-                    )
+            # Handle state transitions
+            if should_enable and self.neural_reranker is None:
+                # Initialize reranker (lazy load)
+                from .config import get_search_config
 
-            if self.neural_reranker:
+                config = get_search_config()
+                self.neural_reranker = NeuralReranker(
+                    model_name=config.reranker.model_name,
+                    batch_size=config.reranker.batch_size,
+                )
+                self._logger.debug("[RERANK] Neural reranker initialized")
+            elif not should_enable and self.neural_reranker is not None:
+                # Cleanup when disabled
+                self.neural_reranker.cleanup()
+                self.neural_reranker = None
+                self._logger.debug("[RERANK] Neural reranker disabled and cleaned up")
+
+            self._neural_reranking_enabled = should_enable
+
+            # Proceed with reranking if enabled
+            if self._neural_reranking_enabled and self.neural_reranker:
                 neural_start = time.time()
                 from .config import get_search_config
 

@@ -350,7 +350,7 @@ async def handle_clear_index(arguments: Dict[str, Any]) -> dict:
 
         # Delete dense index files
         index_dir = model_dir / "index"
-        for file in ["code.index", "chunks_metadata.db"]:
+        for file in ["code.index", "chunks_metadata.db", "stats.json"]:
             filepath = index_dir / file
             if filepath.exists():
                 filepath.unlink()
@@ -598,8 +598,15 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
     # Multi-model batch indexing
     if multi_model and get_state().multi_model_enabled:
         logger.info(f"Multi-model batch indexing for: {directory_path}")
-        results = _index_with_all_models(
-            directory_path, incremental, include_dirs, exclude_dirs
+        # Run in thread pool to avoid blocking asyncio event loop (SSE keepalive fix)
+        import asyncio
+
+        results = await asyncio.to_thread(
+            _index_with_all_models,
+            directory_path,
+            incremental,
+            include_dirs,
+            exclude_dirs,
         )
         return _build_index_response(
             results, str(directory_path), multi_model=True, incremental=incremental
@@ -626,8 +633,11 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
             else get_index_manager(str(directory_path))
         )
 
-        # Run indexing (using helper)
-        result = _run_indexing(
+        # Run indexing (using helper) - in thread pool to avoid blocking event loop
+        import asyncio
+
+        result = await asyncio.to_thread(
+            _run_indexing,
             indexer,
             embedder,
             chunker,

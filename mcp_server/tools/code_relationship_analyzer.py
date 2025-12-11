@@ -364,8 +364,13 @@ class CodeRelationshipAnalyzer:
                     caller_result = self.searcher.get_by_chunk_id(caller_id)
                     if caller_result:
                         caller_dict = self._result_to_dict(caller_result, caller_id)
-                        # Apply exclude_dirs filter
-                        file_path = caller_dict.get("file", "")
+                        # Apply exclude_dirs filter - use relative path from chunk_id
+                        if ":" in caller_id:
+                            file_path = caller_id.split(":")[0]  # Extract relative path
+                        else:
+                            file_path = caller_dict.get(
+                                "file", ""
+                            )  # Fallback to metadata
                         if matches_directory_filter(file_path, None, exclude_dirs):
                             direct_callers.append(caller_dict)
                     else:
@@ -422,8 +427,15 @@ class CodeRelationshipAnalyzer:
                                 result = self.searcher.get_by_chunk_id(next_id)
                                 if result:
                                     result_dict = self._result_to_dict(result, next_id)
-                                    # Apply exclude_dirs filter
-                                    file_path = result_dict.get("file", "")
+                                    # Apply exclude_dirs filter - use relative path from chunk_id
+                                    if ":" in next_id:
+                                        file_path = next_id.split(":")[
+                                            0
+                                        ]  # Extract relative path
+                                    else:
+                                        file_path = result_dict.get(
+                                            "file", ""
+                                        )  # Fallback to metadata
                                     if matches_directory_filter(
                                         file_path, None, exclude_dirs
                                     ):

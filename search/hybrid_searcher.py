@@ -550,22 +550,33 @@ class HybridSearcher:
             )
 
             # Neural reranking (Quality First mode)
-            if self._neural_reranking_enabled and len(final_results) > 0:
-                # Lazy initialize on first search
-                if self.neural_reranker is None:
-                    self._neural_reranking_enabled = (
-                        self._should_enable_neural_reranking()
+            # Always re-check config to pick up runtime changes
+            if len(final_results) > 0:
+                should_enable = self._should_enable_neural_reranking()
+
+                # Handle state transitions
+                if should_enable and self.neural_reranker is None:
+                    # Initialize reranker (lazy load)
+                    from .config import get_search_config
+
+                    config = get_search_config()
+                    self.neural_reranker = NeuralReranker(
+                        model_name=config.reranker.model_name,
+                        batch_size=config.reranker.batch_size,
                     )
-                    if self._neural_reranking_enabled:
-                        from .config import get_search_config
+                    self._logger.debug("[RERANK] Neural reranker initialized")
+                elif not should_enable and self.neural_reranker is not None:
+                    # Cleanup when disabled
+                    self.neural_reranker.cleanup()
+                    self.neural_reranker = None
+                    self._logger.debug(
+                        "[RERANK] Neural reranker disabled and cleaned up"
+                    )
 
-                        config = get_search_config()
-                        self.neural_reranker = NeuralReranker(
-                            model_name=config.reranker.model_name,
-                            batch_size=config.reranker.batch_size,
-                        )
+                self._neural_reranking_enabled = should_enable
 
-                if self.neural_reranker:
+                # Proceed with reranking if enabled
+                if self._neural_reranking_enabled and self.neural_reranker:
                     neural_start = time.time()
                     from .config import get_search_config
 
