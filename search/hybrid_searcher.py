@@ -272,7 +272,7 @@ class HybridSearcher:
                     "total_vectors": (
                         self.dense_index.index.ntotal if self.dense_index.index else 0
                     ),
-                    "on_gpu": getattr(self.dense_index, "_on_gpu", False),
+                    "on_gpu": self.dense_index.is_on_gpu,
                 },
                 "gpu_memory": self.gpu_monitor.get_available_memory(),
             }
