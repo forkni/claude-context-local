@@ -14,6 +14,8 @@ try:
 except ImportError:
     torch = None
 
+from utils.deprecation import deprecated
+
 from .bm25_index import BM25Index
 from .filters import FilterEngine
 from .gpu_monitor import GPUMemoryMonitor
@@ -201,8 +203,17 @@ class HybridSearcher:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.shutdown()
 
+    @deprecated(
+        replacement="self.reranking_engine.should_enable_neural_reranking()",
+        version="0.7.0",
+    )
     def _should_enable_neural_reranking(self) -> bool:
         """Check if VRAM is sufficient for neural reranking.
+
+        .. deprecated:: 0.7.0
+            Use :meth:`reranking_engine.should_enable_neural_reranking` instead.
+            This wrapper method is kept for backward compatibility but will be
+            removed in v0.8.0.
 
         Delegates to reranking_engine for actual implementation.
         Kept for backward compatibility.
@@ -279,6 +290,24 @@ class HybridSearcher:
         )
 
         return stats
+
+    @property
+    def index_synchronizer(self) -> IndexSynchronizer:
+        """Access the index synchronizer for advanced index management.
+
+        Returns:
+            IndexSynchronizer instance managing BM25/dense index coordination.
+
+        Note:
+            For most use cases, use the delegated methods (save_indices,
+            load_indices, etc.) which provide a simpler API. This property
+            is for advanced users who need direct access to index sync functionality.
+
+        Example:
+            >>> searcher.index_synchronizer.validate_index_sync()
+            >>> searcher.index_synchronizer.resync_bm25_from_dense()
+        """
+        return self.index_sync
 
     def get_stats(self) -> Dict[str, Any]:
         """Get index statistics in the format expected by MCP server."""
@@ -452,7 +481,7 @@ class HybridSearcher:
 
         if config.multi_hop.enabled:
             # Use multi-hop search for discovering related code
-            return self._multi_hop_search_internal(
+            return self.multi_hop_searcher.search(
                 query=query,
                 k=k,
                 search_mode=search_mode,
@@ -552,7 +581,7 @@ class HybridSearcher:
             # Neural reranking (Quality First mode)
             # Always re-check config to pick up runtime changes
             if len(final_results) > 0:
-                should_enable = self._should_enable_neural_reranking()
+                should_enable = self.reranking_engine.should_enable_neural_reranking()
 
                 # Handle state transitions
                 if should_enable and self.neural_reranker is None:
@@ -669,6 +698,7 @@ class HybridSearcher:
 
         return results
 
+    @deprecated(replacement="self.multi_hop_searcher.search()", version="0.7.0")
     def _multi_hop_search_internal(
         self,
         query: str,
@@ -682,6 +712,11 @@ class HybridSearcher:
     ) -> List:
         """
         Internal multi-hop search implementation.
+
+        .. deprecated:: 0.7.0
+            Use :meth:`multi_hop_searcher.search` instead.
+            This wrapper method is kept for backward compatibility but will be
+            removed in v0.8.0.
 
         Delegates to multi_hop_searcher for actual implementation.
         Kept for backward compatibility.
@@ -710,6 +745,7 @@ class HybridSearcher:
             filters=filters,
         )
 
+    @deprecated(replacement="self.reranking_engine.rerank_by_query()", version="0.7.0")
     def _rerank_by_query(
         self,
         query: str,
@@ -720,6 +756,11 @@ class HybridSearcher:
     ) -> List:
         """
         Re-rank results by computing fresh relevance scores against the original query.
+
+        .. deprecated:: 0.7.0
+            Use :meth:`reranking_engine.rerank_by_query` instead.
+            This wrapper method is kept for backward compatibility but will be
+            removed in v0.8.0.
 
         Delegates to reranking_engine for actual implementation.
         Kept for backward compatibility.
@@ -813,7 +854,7 @@ class HybridSearcher:
                         # Skip malformed results
                         continue
 
-                    if self._matches_bm25_filters(metadata, filters):
+                    if FilterEngine.from_dict(filters).matches(metadata):
                         filtered_results.append(result)
                         if len(filtered_results) >= k:
                             break
@@ -835,8 +876,16 @@ class HybridSearcher:
             self._logger.error(f"BM25 search failed: {e}")
             return []
 
+    @deprecated(
+        replacement="FilterEngine.from_dict(filters).matches(metadata)", version="0.7.0"
+    )
     def _matches_bm25_filters(self, metadata: Dict, filters: Dict) -> bool:
         """Check if BM25 result metadata matches filters.
+
+        .. deprecated:: 0.7.0
+            Use :meth:`FilterEngine.from_dict(filters).matches(metadata)` instead.
+            This wrapper method is kept for backward compatibility but will be
+            removed in v0.8.0.
 
         Uses FilterEngine for unified filter logic across the codebase.
         Kept as a method for backward compatibility.
@@ -1139,8 +1188,17 @@ class HybridSearcher:
         """Remove chunks for multiple files from both indices. Delegates to IndexSynchronizer."""
         return self.index_sync.remove_multiple_files(file_paths, project_name)
 
+    @deprecated(replacement="self.save_indices()", version="0.7.0")
     def save_index(self) -> None:
-        """Save both BM25 and dense indices to disk. Delegates to IndexSynchronizer."""
+        """Save both BM25 and dense indices to disk.
+
+        .. deprecated:: 0.7.0
+            Use :meth:`save_indices` instead (note the plural form).
+            This method is kept for backward compatibility but will be
+            removed in v0.8.0.
+
+        Delegates to IndexSynchronizer.
+        """
         self.index_sync.save_indices()
 
     def _verify_bm25_files(self):
