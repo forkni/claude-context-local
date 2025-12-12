@@ -35,21 +35,7 @@ from mcp.types import (  # noqa: E402
 # Project imports
 from mcp_server.model_pool_manager import (  # noqa: E402
     get_embedder,
-    initialize_model_pool,
 )
-from mcp_server.project_persistence import (  # noqa: E402
-    load_project_selection,
-)
-from mcp_server.services import get_config, get_state  # noqa: E402
-from mcp_server.storage_manager import (  # noqa: E402
-    get_project_storage_dir,
-    get_storage_dir,
-    set_current_project,
-)
-from search.config import MODEL_POOL_CONFIG  # noqa: E402
-from search.hybrid_searcher import HybridSearcher  # noqa: E402
-from search.indexer import CodeIndexManager  # noqa: E402
-from search.searcher import IntelligentSearcher  # noqa: E402
 
 # Configure logging
 debug_mode = os.getenv("MCP_DEBUG", "").lower() in ("1", "true", "yes")
@@ -72,222 +58,21 @@ else:
 
 
 # ============================================================================
-# HELPER FUNCTIONS (copied from FastMCP backup)
+# HELPER FUNCTIONS - Now imported from dedicated modules
 # ============================================================================
 
+# Import resource management functions from resource_manager.py
+from mcp_server.resource_manager import (  # noqa: E402, F401 - Re-exported for backward compatibility
+    _cleanup_previous_resources,
+    close_project_resources,
+    initialize_server_state,
+)
 
-def _cleanup_previous_resources():
-    """Cleanup previous project resources to free memory."""
-    state = get_state()
-    try:
-        if state.index_manager is not None:
-            if (
-                hasattr(state.index_manager, "_metadata_db")
-                and state.index_manager._metadata_db is not None
-            ):
-                state.index_manager._metadata_db.close()
-            state.index_manager = None
-            logger.info("Previous index manager cleaned up")
-
-        if state.searcher is not None:
-            if hasattr(state.searcher, "shutdown"):
-                state.searcher.shutdown()
-                logger.info("Searcher shutdown completed (neural reranker released)")
-            state.searcher = None
-            logger.info("Previous searcher cleaned up")
-
-        # Clear embedder pool to free GPU memory (explicit user request)
-        if state.embedders:
-            embedder_count = len(state.embedders)
-            logger.info(
-                f"Clearing {embedder_count} cached embedder(s): {list(state.embedders.keys())}"
-            )
-            state.clear_embedders()
-            logger.info("Embedder pool cleared - VRAM released")
-
-        # Force garbage collection to immediately free GPU memory
-        import gc
-
-        gc.collect()
-        logger.info("Garbage collection completed")
-
-        try:
-            import torch
-
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                logger.info("GPU cache cleared")
-        except ImportError as e:
-            logger.debug(f"GPU cache cleanup skipped: {e}")
-    except (AttributeError, TypeError) as e:
-        logger.warning(f"Error during resource cleanup: {e}")
-
-
-def close_project_resources(project_path: str) -> bool:
-    """Close all resources associated with a specific project.
-
-    This function ensures all database connections and file handles
-    are released before project deletion. It's designed to be called
-    before deleting a project directory to prevent file lock errors.
-
-    Args:
-        project_path: Absolute path to the project directory
-
-    Returns:
-        True if cleanup successful
-    """
-    import gc
-    import time
-    from pathlib import Path
-
-    state = get_state()
-    project_path_resolved = str(Path(project_path).resolve())
-
-    # If this is the current project, clean up state
-    if state.current_project == project_path_resolved:
-        _cleanup_previous_resources()
-        state.current_project = None
-        logger.info(f"Cleaned up resources for current project: {project_path}")
-    else:
-        logger.debug(
-            f"Project not current, no active resources to clean: {project_path}"
-        )
-
-    # Force garbage collection to release any lingering handles
-    gc.collect()
-
-    # Small delay to allow OS to release file handles (especially on Windows)
-    time.sleep(0.3)
-
-    return True
-
-
-def get_index_manager(
-    project_path: str = None, model_key: str = None
-) -> CodeIndexManager:
-    """Get index manager for specific project or current project.
-
-    Args:
-        project_path: Path to the project (None = use current project)
-        model_key: Model key for routing (None = use config default)
-    """
-    state = get_state()
-
-    if project_path is None:
-        if state.current_project is None:
-            raise ValueError(
-                "No indexed project found. Please run index_directory first."
-            )
-        else:
-            project_path = state.current_project
-
-    # Invalidate cache if project or model changed
-    if (
-        state.current_project != project_path
-        or state.current_index_model_key != model_key
-    ):
-        if state.current_project != project_path:
-            logger.info(
-                f"Switching project from '{state.current_project}' to '{Path(project_path).name}'"
-            )
-        if state.current_index_model_key != model_key:
-            logger.info(
-                f"Switching index model from '{state.current_index_model_key}' to '{model_key}'"
-            )
-        _cleanup_previous_resources()
-
-        state.current_project = project_path
-        state.current_index_model_key = model_key
-        state.index_manager = None
-
-    if state.index_manager is None:
-        project_dir = get_project_storage_dir(project_path, model_key=model_key)
-        index_dir = project_dir / "index"
-        index_dir.mkdir(exist_ok=True)
-
-        # Extract project_id from storage directory name
-        # Format: projectname_hash_modelslug_dimension (e.g., claude-context-local_caf2e75a_qwen3_1024d)
-        project_id = project_dir.name.rsplit("_", 1)[0]  # Remove dimension suffix
-
-        state.index_manager = CodeIndexManager(str(index_dir), project_id=project_id)
-        logger.info(
-            f"Index manager initialized for project: {Path(project_path).name} (ID: {project_id}, model_key: {model_key})"
-        )
-
-    return state.index_manager
-
-
-def get_searcher(project_path: str = None, model_key: str = None):
-    """Get searcher for specific project or current project.
-
-    Args:
-        project_path: Path to project (None = use current project)
-        model_key: Model key for routing (None = preserve current model,
-                   or use config default if no current model)
-    """
-    state = get_state()
-
-    if project_path is None and state.current_project is None:
-        project_path = str(PROJECT_ROOT)
-        logger.info(f"No active project found. Using server directory: {project_path}")
-
-    # Use effective model key: passed value OR current value (preserve routing)
-    effective_model_key = (
-        model_key if model_key is not None else state.current_model_key
-    )
-
-    # Invalidate cache if project or model changed
-    if (
-        state.current_project != project_path
-        or state.current_model_key != effective_model_key
-        or state.searcher is None
-    ):
-        state.current_project = project_path or state.current_project
-        state.current_model_key = effective_model_key
-        config = get_config()
-        logger.info(
-            f"[GET_SEARCHER] Initializing searcher for project: {state.current_project}"
-        )
-        if config.search_mode.enable_hybrid:
-            project_storage = get_project_storage_dir(
-                state.current_project, model_key=effective_model_key
-            )
-            storage_dir = project_storage / "index"
-            logger.info(f"[GET_SEARCHER] Using storage directory: {storage_dir}")
-
-            # Extract project_id from storage directory name
-            # Format: projectname_hash_dimension (e.g., claude-context-local_caf2e75a_1024d)
-            project_id = project_storage.name.rsplit("_", 1)[
-                0
-            ]  # Remove dimension suffix
-
-            state.searcher = HybridSearcher(
-                storage_dir=str(storage_dir),
-                embedder=get_embedder(effective_model_key),
-                bm25_weight=config.search_mode.bm25_weight,
-                dense_weight=config.search_mode.dense_weight,
-                rrf_k=config.search_mode.rrf_k_parameter,
-                max_workers=2,
-                project_id=project_id,
-            )
-            # REMOVED: get_index_manager() call that was causing state corruption
-            # The HybridSearcher already loads existing indices during initialization
-            logger.info(
-                f"HybridSearcher initialized (BM25: {config.search_mode.bm25_weight}, Dense: {config.search_mode.dense_weight})"
-            )
-        else:
-            state.searcher = IntelligentSearcher(
-                get_index_manager(project_path, model_key=effective_model_key),
-                get_embedder(effective_model_key),
-            )
-            logger.info("IntelligentSearcher initialized (semantic-only mode)")
-
-        logger.info(
-            f"Searcher initialized for project: {Path(state.current_project).name if state.current_project else 'unknown'}"
-        )
-
-    return state.searcher
-
+# Import search factory functions from search_factory.py
+from mcp_server.search_factory import (  # noqa: E402, F401 - Re-exported for backward compatibility
+    get_index_manager,
+    get_searcher,
+)
 
 # ============================================================================
 # Explicit lifecycle management
@@ -489,71 +274,13 @@ if __name__ == "__main__":
 
             async def run_stdio_server():
                 """Run stdio server with proper lifecycle management."""
-                state = get_state()
-
-                # Sync multi_model_enabled from config file (with env override)
-                from search.config import get_config_manager
-
-                try:
-                    config_manager = get_config_manager()
-                    config = config_manager.load_config()
-                    state.sync_from_config(config)
-                except Exception as e:
-                    logger.warning(f"[INIT] Config sync failed (using defaults): {e}")
-
                 # Initialize global state BEFORE starting server
                 logger.info("=" * 60)
                 logger.info("SERVER STARTUP: Initializing global state")
                 logger.info("=" * 60)
 
-                # Set default project: env var > persistent selection > none
-                default_project = os.getenv("CLAUDE_DEFAULT_PROJECT", None)
-                if default_project:
-                    project_path = str(Path(default_project).resolve())
-                    state.current_project = project_path
-                    logger.info(f"[INIT] Default project (env): {project_path}")
-                else:
-                    # Try to restore from persistent selection
-                    selection = load_project_selection()
-                    if selection:
-                        restored_path = selection["last_project_path"]
-                        set_current_project(restored_path)
-                        logger.info(
-                            f"[INIT] Restored project: {Path(restored_path).name}"
-                        )
-                    else:
-                        logger.info("[INIT] No default project")
-
-                # Defer model pool initialization
-                # Models will load on first search/index operation (saves 3-4GB VRAM at startup)
-                # if state.multi_model_enabled and not state.model_preload_task_started:
-                #     initialize_model_pool(lazy_load=True)
-                #     logger.info(
-                #         f"[INIT] Model pool initialized: {list(MODEL_POOL_CONFIG.keys())}"
-                #     )
-                #     state.model_preload_task_started = True
-                logger.info("[INIT] Model loading deferred until first use (lazy mode)")
-                logger.info(
-                    f"[INIT] Available models: {list(MODEL_POOL_CONFIG.keys())}"
-                )
-
-                # Log storage directory
-                storage = get_storage_dir()
-                logger.info(f"[INIT] Storage directory: {storage}")
-
-                # Process deferred cleanup queue on startup
-                from mcp_server.cleanup_queue import CleanupQueue
-
-                cleanup_queue = CleanupQueue()
-                result = cleanup_queue.process()
-                if result["processed"] > 0:
-                    logger.info(
-                        f"[INIT] Processed {result['processed']} deferred cleanup tasks"
-                    )
-                if result["failed"]:
-                    logger.warning(
-                        f"[INIT] Cleanup failed for {len(result['failed'])} items (will retry later)"
-                    )
+                # Use shared initialization logic from resource_manager
+                initialize_server_state()
 
                 logger.info("=" * 60)
                 logger.info("SERVER READY - Accepting connections")
@@ -602,75 +329,15 @@ if __name__ == "__main__":
             # Starlette app with lifespan integration
             async def app_lifespan(app):
                 """Application lifecycle - initialize global state ONCE before accepting connections."""
-                state = get_state()
-
-                # Sync multi_model_enabled from config file (with env override)
-                from search.config import get_config_manager
-
-                try:
-                    config_manager = get_config_manager()
-                    config = config_manager.load_config()
-                    state.sync_from_config(config)
-                except Exception as e:
-                    logger.warning(f"[INIT] Config sync failed (using defaults): {e}")
-
                 logger.info("=" * 60)
                 logger.info("APPLICATION STARTUP: Initializing global state")
                 logger.info("=" * 60)
 
                 try:
-                    # Set default project: env var > persistent selection > none
-                    default_project = os.getenv("CLAUDE_DEFAULT_PROJECT", None)
-                    if default_project:
-                        project_path = str(Path(default_project).resolve())
-                        state.current_project = project_path
-                        logger.info(f"[INIT] Default project (env): {project_path}")
-                    else:
-                        # Try to restore from persistent selection
-                        selection = load_project_selection()
-                        if selection:
-                            restored_path = selection["last_project_path"]
-                            set_current_project(restored_path)
-                            logger.info(
-                                f"[INIT] Restored project: {Path(restored_path).name}"
-                            )
-                        else:
-                            logger.info("[INIT] No default project")
+                    # Use shared initialization logic from resource_manager
+                    initialize_server_state()
 
-                    # Initialize model pool in lazy mode
-                    if (
-                        state.multi_model_enabled
-                        and not state.model_preload_task_started
-                    ):
-                        initialize_model_pool(lazy_load=True)
-                        logger.info(
-                            f"[INIT] Model pool initialized: {list(MODEL_POOL_CONFIG.keys())}"
-                        )
-                        state.model_preload_task_started = True
-                    elif state.multi_model_enabled:
-                        logger.info("[INIT] Model pool already initialized")
-                    else:
-                        logger.info("[INIT] Single-model mode enabled")
-
-                    # Log storage directory
-                    storage = get_storage_dir()
-                    logger.info(f"[INIT] Storage directory: {storage}")
-
-                    # Process deferred cleanup queue on startup
-                    from mcp_server.cleanup_queue import CleanupQueue
-
-                    cleanup_queue = CleanupQueue()
-                    result = cleanup_queue.process()
-                    if result["processed"] > 0:
-                        logger.info(
-                            f"[INIT] Processed {result['processed']} deferred cleanup tasks"
-                        )
-                    if result["failed"]:
-                        logger.warning(
-                            f"[INIT] Cleanup failed for {len(result['failed'])} items (will retry later)"
-                        )
-
-                    # Optional: Pre-load embedding model
+                    # Optional: Pre-load embedding model (SSE-specific feature)
                     if os.getenv("MCP_PRELOAD_MODEL", "false").lower() in (
                         "true",
                         "1",

@@ -23,8 +23,8 @@ class TestGetterFunctions:
     """Test MCP server getter functions return proper values."""
 
     @patch("graph.graph_storage.CodeGraphStorage")
-    @patch("mcp_server.server.CodeIndexManager")
-    @patch("mcp_server.server.get_project_storage_dir")
+    @patch("search.indexer.CodeIndexManager")
+    @patch("mcp_server.storage_manager.get_project_storage_dir")
     def test_get_index_manager_returns_value(
         self, mock_get_storage, mock_index_manager_class, mock_graph_storage
     ):
@@ -34,7 +34,7 @@ class TestGetterFunctions:
         a return statement, causing it to return None instead of the manager object.
         """
         # Import here after mocks are set up
-        import mcp_server.server as server
+        from mcp_server import search_factory as server
 
         # Set up mocks - create a proper Path mock with mkdir method
         mock_storage_dir = MagicMock(spec=Path)
@@ -70,9 +70,9 @@ class TestGetterFunctions:
             "project_id" in call_args.kwargs
         ), "CodeIndexManager must be initialized with project_id"
 
-    @patch("mcp_server.server.IntelligentSearcher")
-    @patch("mcp_server.server.get_embedder")
-    @patch("mcp_server.server.get_index_manager")
+    @patch("search.searcher.IntelligentSearcher")
+    @patch("mcp_server.model_pool_manager.get_embedder")
+    @patch("mcp_server.search_factory.SearchFactory.get_index_manager")
     @patch("search.config.get_search_config")
     def test_get_searcher_preserves_model_key_when_none_passed(
         self,
@@ -89,7 +89,7 @@ class TestGetterFunctions:
         the routed model, not reset it to None.
         """
         # Import here after mocks are set up
-        import mcp_server.server as server
+        from mcp_server import search_factory as server
         from mcp_server.state import get_state
 
         # Mock config to disable hybrid search for simpler test
