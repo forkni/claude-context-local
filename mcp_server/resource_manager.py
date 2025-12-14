@@ -178,6 +178,24 @@ def initialize_server_state() -> None:
     logger.info("[INIT] Model loading deferred until first use (lazy mode)")
     logger.info(f"[INIT] Available models: {list(MODEL_POOL_CONFIG.keys())}")
 
+    # 3.5. VRAM tier detection
+    try:
+        from search.vram_manager import VRAMTierManager
+
+        tier_manager = VRAMTierManager()
+        tier = tier_manager.detect_tier()
+        logger.info(
+            f"[INIT] VRAM tier: {tier.name} "
+            f"(recommended model: {tier.recommended_model.split('/')[-1]})"
+        )
+        logger.info(
+            f"[INIT] Features enabled - "
+            f"Multi-model: {tier.multi_model_enabled}, "
+            f"Neural reranking: {tier.neural_reranking_enabled}"
+        )
+    except Exception as e:
+        logger.warning(f"[INIT] VRAM tier detection failed: {e}")
+
     # 4. Storage directory
     storage = get_storage_dir()
     logger.info(f"[INIT] Storage directory: {storage}")

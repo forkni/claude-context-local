@@ -9,8 +9,9 @@ from typing import Any, Dict, Optional
 # Model registry with specifications
 # Multi-model pool configuration for query routing
 # Maps model keys to full model names in MODEL_REGISTRY
+# Note: "qwen3" uses adaptive selection (4B max on all tiers, 0.6B fallback on minimal/laptop <10GB)
 MODEL_POOL_CONFIG = {
-    "qwen3": "Qwen/Qwen3-Embedding-0.6B",
+    "qwen3": "Qwen/Qwen3-Embedding-4B",  # Adaptive: 0.6B (minimal/laptop) or 4B (desktop/workstation)
     "bge_m3": "BAAI/bge-m3",
     "coderankembed": "nomic-ai/CodeRankEmbed",
 }
@@ -37,6 +38,23 @@ MODEL_REGISTRY = {
         "description": "High-efficiency model with excellent performance-to-size ratio",
         "vram_gb": "2.3GB",
         "fallback_batch_size": 256,
+        "vram_tier": "minimal",  # Usable on all GPUs
+    },
+    "Qwen/Qwen3-Embedding-4B": {
+        "dimension": 2560,
+        "max_context": 32768,
+        "description": "Best value upgrade - 87.93% CodeSearchNet, +6% vs 0.6B (MTEB-Code 80.06)",
+        "vram_gb": "8-10GB",
+        "fallback_batch_size": 128,
+        "vram_tier": "desktop",  # 12GB+ recommended
+    },
+    "Qwen/Qwen3-Embedding-8B": {
+        "dimension": 4096,
+        "max_context": 32768,
+        "description": "SOTA code retrieval - 89.51% CodeSearchNet, #1 MTEB (MTEB-Code 80.68)",
+        "vram_gb": "16GB",
+        "fallback_batch_size": 64,
+        "vram_tier": "workstation",  # 20GB+ recommended
     },
     # Code-specific models (optimized for Python, C++, and programming languages)
     "nomic-ai/CodeRankEmbed": {

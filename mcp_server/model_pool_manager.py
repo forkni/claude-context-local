@@ -120,6 +120,29 @@ class ModelPoolManager:
             # Lazy load model if not already loaded
             if model_key not in state.embedders or state.embedders[model_key] is None:
                 model_name = MODEL_POOL_CONFIG[model_key]
+
+                # VRAM tier adaptive selection: Upgrade/downgrade based on available VRAM
+                if model_key == "qwen3" and model_name == "Qwen/Qwen3-Embedding-4B":
+                    try:
+                        from search.vram_manager import VRAMTierManager
+
+                        tier_manager = VRAMTierManager()
+                        tier = tier_manager.detect_tier()
+
+                        # Fallback to 0.6B on laptop/minimal tiers (VRAM < 10GB)
+                        # Max model is 4B (8B removed for safety and compatibility)
+                        if tier.name in ["minimal", "laptop"]:
+                            original_model = model_name
+                            model_name = "Qwen/Qwen3-Embedding-0.6B"
+                            logger.info(
+                                f"VRAM tier '{tier.name}' detected: "
+                                f"Using {model_name} instead of {original_model}"
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to detect VRAM tier, using configured model: {e}"
+                        )
+
                 # Check if this is the first model being loaded (cold start)
                 is_first_load = not any(state.embedders.values())
                 if is_first_load:

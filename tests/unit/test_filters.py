@@ -1,6 +1,5 @@
 """Unit tests for search/filters.py drive-agnostic path utilities."""
 
-
 from search.filters import (
     compute_drive_agnostic_hash,
     compute_legacy_hash,

@@ -1,7 +1,9 @@
 """Query routing system for multi-model semantic search.
 
 Routes queries to the optimal embedding model based on query characteristics.
-Based on empirical verification results comparing Qwen3-0.6B, BGE-M3, and CodeRankEmbed.
+Based on empirical verification results comparing Qwen3, BGE-M3, and CodeRankEmbed.
+
+Note: Qwen3 adaptively selects Qwen3-4B (12GB+ GPUs) or Qwen3-0.6B (8GB GPUs).
 """
 
 import logging
@@ -26,6 +28,7 @@ class QueryRouter:
 
     Routing strategy based on verification results:
     - Qwen3 (3/8 wins): Implementation-heavy queries, algorithms, complete systems
+      (Adaptive: Qwen3-4B on 12GB+ GPUs, Qwen3-0.6B on 8GB GPUs)
     - BGE-M3 (3/8 wins): Workflow queries, configuration, system plumbing (most consistent)
     - CodeRankEmbed (2/8 wins): Specialized algorithms (Merkle, RRF, etc.)
     """

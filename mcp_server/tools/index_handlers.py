@@ -197,6 +197,14 @@ def _index_with_all_models(
 
     try:
         for model_key, model_name in MODEL_POOL_CONFIG.items():
+            # Apply VRAM tier selection for qwen3 (selects 0.6B/4B/8B based on available VRAM)
+            if model_key == "qwen3":
+                from search.vram_manager import VRAMTierManager
+
+                tier = VRAMTierManager().detect_tier()
+                model_name = tier.recommended_model
+                logger.info(f"VRAM tier '{tier.name}' detected: using {model_name}")
+
             logger.info(f"Indexing with model: {model_name} ({model_key})")
 
             # Switch to this model temporarily
