@@ -8,7 +8,10 @@ This module provides shared filtering logic used across:
 Consolidated from three duplicate implementations as part of code organization refactoring.
 """
 
+import hashlib
+import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 
@@ -22,6 +25,108 @@ def normalize_path(path: str) -> str:
         Path with forward slashes only
     """
     return path.replace("\\", "/")
+
+
+def extract_drive_agnostic_path(path: str) -> str:
+    """Extract path portion without drive letter on Windows.
+
+    Args:
+        path: Full file path (e.g., "F:\\Projects\\MyApp")
+
+    Returns:
+        Path without drive letter, normalized with forward slashes
+        (e.g., "/Projects/MyApp")
+
+    Examples:
+        >>> extract_drive_agnostic_path("F:\\Projects\\MyApp")
+        '/Projects/MyApp'
+        >>> extract_drive_agnostic_path("F:/Projects/MyApp")
+        '/Projects/MyApp'
+        >>> extract_drive_agnostic_path("/home/user/projects")
+        '/home/user/projects'
+    """
+    normalized = normalize_path(path)
+    # Remove Windows drive letter (e.g., "F:/Projects" -> "/Projects")
+    drive_pattern = r"^[A-Za-z]:/?"
+    return re.sub(drive_pattern, "/", normalized)
+
+
+def compute_drive_agnostic_hash(path: str, length: int = 8) -> str:
+    """Compute MD5 hash from drive-agnostic path portion.
+
+    This enables project indices to remain valid when external drives change
+    drive letters (e.g., F: → E:). The hash is computed from the path portion
+    after the drive letter, making it portable across drive assignments.
+
+    Args:
+        path: Full file path
+        length: Hash length in characters (default 8)
+
+    Returns:
+        Truncated MD5 hash of drive-agnostic path
+
+    Examples:
+        >>> hash1 = compute_drive_agnostic_hash("F:/Projects/MyApp")
+        >>> hash2 = compute_drive_agnostic_hash("E:/Projects/MyApp")
+        >>> hash1 == hash2
+        True
+    """
+    resolved = str(Path(path).resolve())
+    agnostic_path = extract_drive_agnostic_path(resolved)
+    return hashlib.md5(agnostic_path.encode()).hexdigest()[:length]
+
+
+def compute_legacy_hash(path: str, length: int = 8) -> str:
+    """Compute hash using legacy (full path) method for backward compatibility.
+
+    This hash includes the drive letter, which was the original implementation.
+    Used for finding existing indices created with earlier versions.
+
+    Args:
+        path: Full file path
+        length: Hash length in characters (default 8)
+
+    Returns:
+        Truncated MD5 hash of full resolved path
+
+    Examples:
+        >>> hash1 = compute_legacy_hash("F:/Projects/MyApp")
+        >>> hash2 = compute_legacy_hash("E:/Projects/MyApp")
+        >>> hash1 != hash2
+        True
+    """
+    resolved = str(Path(path).resolve())
+    return hashlib.md5(resolved.encode()).hexdigest()[:length]
+
+
+def find_project_at_different_drive(original_path: str) -> Optional[str]:
+    """Find project at a different drive letter.
+
+    Scans common removable drive letters to locate a project that may have
+    moved when an external drive was reassigned a different letter.
+
+    Args:
+        original_path: Original stored path (e.g., "F:/Projects/MyApp")
+
+    Returns:
+        New path if found, None otherwise
+
+    Examples:
+        >>> # If project exists at E:/Projects/MyApp but was indexed at F:
+        >>> find_project_at_different_drive("F:/Projects/MyApp")
+        'E:/Projects/MyApp'
+    """
+    agnostic = extract_drive_agnostic_path(original_path)
+    orig_name = Path(original_path).name
+
+    # Check common removable drive letters (D-N covers most scenarios)
+    for letter in "DEFGHIJKLMN":
+        candidate = f"{letter}:{agnostic}"
+        candidate_path = Path(candidate)
+        if candidate_path.exists() and candidate_path.name == orig_name:
+            return str(candidate_path.resolve())
+
+    return None
 
 
 def normalize_path_lower(path: str) -> str:

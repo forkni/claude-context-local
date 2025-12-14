@@ -659,7 +659,7 @@ echo.
 
 REM Get list of projects and store in temp file
 set "TEMP_PROJECTS=%TEMP%\mcp_projects.txt"
-call .\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; from pathlib import Path; import json; storage = get_storage_dir(); projects = list((storage / 'projects').glob('*/project_info.json')); [print(f'{i+1}|{json.load(open(p))[\"project_name\"]}|{json.load(open(p))[\"project_path\"]}|{p.parent.name}') for i, p in enumerate(projects)]" > "%TEMP_PROJECTS%" 2>nul
+call .\.venv\Scripts\python.exe -c "from mcp_server.storage_manager import get_storage_dir; from pathlib import Path; import json; storage = get_storage_dir(); projects = list((storage / 'projects').glob('*/project_info.json')); [print(f'{i+1}|{json.load(open(p))[\"project_name\"]}|{json.load(open(p))[\"project_path\"]}|{p.parent.name}') for i, p in enumerate(projects)]" > "%TEMP_PROJECTS%" 2>nul
 
 REM Check if any projects exist
 findstr /R "." "%TEMP_PROJECTS%" >nul 2>&1
@@ -766,7 +766,7 @@ echo [INFO] Clearing index for %PROJECT_NAME%...
 echo.
 
 REM Clear the index directory with DB cleanup
-call .\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; import shutil, time, gc; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; gc.collect(); time.sleep(0.5); shutil.rmtree(project_dir, ignore_errors=False) if project_dir.exists() else None; print('Index: cleared')"
+call .\.venv\Scripts\python.exe -c "from mcp_server.storage_manager import get_storage_dir; import shutil, time, gc; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; gc.collect(); time.sleep(0.5); shutil.rmtree(project_dir, ignore_errors=False) if project_dir.exists() else None; print('Index: cleared')"
 set "INDEX_RESULT=!ERRORLEVEL!"
 
 REM Handle locked files
@@ -779,7 +779,7 @@ if "!INDEX_RESULT!" neq "0" (
     if /i "!retry!"=="y" (
         echo [INFO] Attempting force cleanup...
         timeout /t 2 /nobreak >nul
-        call .\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; import shutil, time; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; time.sleep(1); shutil.rmtree(project_dir, ignore_errors=True)"
+        call .\.venv\Scripts\python.exe -c "from mcp_server.storage_manager import get_storage_dir; import shutil, time; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; time.sleep(1); shutil.rmtree(project_dir, ignore_errors=True)"
 
         if exist "%USERPROFILE%\.claude_code_search\projects\%PROJECT_HASH%" (
             echo [WARNING] Force cleanup partially successful
@@ -832,7 +832,7 @@ goto project_management_menu
 echo.
 echo === Storage Statistics ===
 echo.
-call .\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; from pathlib import Path; import os; storage = get_storage_dir(); total_size = sum(f.stat().st_size for f in storage.rglob('*') if f.is_file()) // (1024**2); project_count = len(list((storage / 'projects').glob('*/project_info.json'))); index_count = len(list(storage.glob('projects/*/index/code.index'))); print(f'Storage Location: {storage}'); print(f'Total Size: {total_size} MB'); print(f'Indexed Projects: {project_count}'); print(f'Active Indexes: {index_count}'); models_size = sum(f.stat().st_size for f in (storage / 'models').rglob('*') if f.is_file()) // (1024**2) if (storage / 'models').exists() else 0; print(f'Model Cache: {models_size} MB')" 2>nul
+call .\.venv\Scripts\python.exe -c "from mcp_server.storage_manager import get_storage_dir; from pathlib import Path; import os; storage = get_storage_dir(); total_size = sum(f.stat().st_size for f in storage.rglob('*') if f.is_file()) // (1024**2); project_count = len(list((storage / 'projects').glob('*/project_info.json'))); index_count = len(list(storage.glob('projects/*/index/code.index'))); print(f'Storage Location: {storage}'); print(f'Total Size: {total_size} MB'); print(f'Indexed Projects: {project_count}'); print(f'Active Indexes: {index_count}'); models_size = sum(f.stat().st_size for f in (storage / 'models').rglob('*') if f.is_file()) // (1024**2) if (storage / 'models').exists() else 0; print(f'Model Cache: {models_size} MB')" 2>nul
 if errorlevel 1 (
     echo [ERROR] Could not retrieve storage statistics
 )
@@ -1052,7 +1052,7 @@ if defined SELECTED_MODEL (
         set /p reindex_now="Clear old indexes now? (y/N): "
         if /i "!reindex_now!"=="y" (
             echo [INFO] Clearing old indexes and Merkle snapshots...
-            .\.venv\Scripts\python.exe -c "from mcp_server.server import get_storage_dir; from merkle.snapshot_manager import SnapshotManager; import shutil; import json; storage = get_storage_dir(); sm = SnapshotManager(); cleared = 0; projects = list((storage / 'projects').glob('*/project_info.json')); [sm.delete_all_snapshots(json.load(open(p))['project_path']) or shutil.rmtree(p.parent) if p.exists() and (cleared := cleared + 1) else None for p in projects]; print(f'[OK] Cleared indexes and snapshots for {cleared} projects')" 2>nul
+            .\.venv\Scripts\python.exe -c "from mcp_server.storage_manager import get_storage_dir; from merkle.snapshot_manager import SnapshotManager; import shutil; import json; storage = get_storage_dir(); sm = SnapshotManager(); cleared = 0; projects = list((storage / 'projects').glob('*/project_info.json')); [sm.delete_all_snapshots(json.load(open(p))['project_path']) or shutil.rmtree(p.parent) if p.exists() and (cleared := cleared + 1) else None for p in projects]; print(f'[OK] Cleared indexes and snapshots for {cleared} projects')" 2>nul
             echo [OK] Indexes and Merkle snapshots cleared ^(all dimensions^). Re-index projects via: /index_directory "path"
         )
     )

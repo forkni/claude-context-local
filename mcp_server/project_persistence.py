@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from search.filters import find_project_at_different_drive
+
 logger = logging.getLogger(__name__)
 
 # Default storage location (same as main storage)
@@ -81,6 +83,15 @@ def load_project_selection() -> Optional[dict]:
         # Verify project path still exists
         project_path = Path(data["last_project_path"])
         if not project_path.exists():
+            # Try to find at different drive letter
+            alt_path = find_project_at_different_drive(data["last_project_path"])
+            if alt_path:
+                logger.info(f"Found project at new location: {alt_path}")
+                data["last_project_path"] = alt_path
+                # Update selection file with new path
+                save_project_selection(alt_path, data.get("last_model_key"))
+                return data
+
             logger.warning(f"Saved project no longer exists: {project_path}")
             return None
 

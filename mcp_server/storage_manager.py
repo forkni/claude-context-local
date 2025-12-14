@@ -3,7 +3,6 @@
 Extracted from server.py as part of Phase 2 refactoring.
 """
 
-import hashlib
 import json
 import logging
 import os
@@ -17,6 +16,11 @@ from search.config import (
     MODEL_REGISTRY,
     get_model_slug,
     get_search_config,
+)
+from search.filters import (
+    compute_drive_agnostic_hash,
+    compute_legacy_hash,
+    extract_drive_agnostic_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,6 +60,73 @@ class StorageManager:
             f"Current project set to: {Path(project_path).name if project_path else None}"
         )
 
+    def _find_existing_project_dir(
+        self,
+        projects_dir: Path,
+        project_name: str,
+        new_hash: str,
+        legacy_hash: str,
+        model_slug: str,
+        dimension: int,
+    ) -> Optional[Path]:
+        """Find existing project directory by hash (new or legacy).
+
+        Args:
+            projects_dir: Base projects directory
+            project_name: Project directory name
+            new_hash: Drive-agnostic hash
+            legacy_hash: Full-path hash (backward compatibility)
+            model_slug: Model identifier slug
+            dimension: Model dimension
+
+        Returns:
+            Path to existing directory or None if not found
+        """
+        # Try drive-agnostic hash first
+        new_dir = projects_dir / f"{project_name}_{new_hash}_{model_slug}_{dimension}d"
+        if new_dir.exists():
+            return new_dir
+
+        # Try legacy hash (backward compatibility)
+        legacy_dir = (
+            projects_dir / f"{project_name}_{legacy_hash}_{model_slug}_{dimension}d"
+        )
+        if legacy_dir.exists():
+            logger.info(f"Found project with legacy hash: {legacy_dir.name}")
+            return legacy_dir
+
+        return None
+
+    def _update_stored_path_if_changed(
+        self, project_dir: Path, current_path: str
+    ) -> None:
+        """Update stored path if drive letter changed.
+
+        Args:
+            project_dir: Project storage directory
+            current_path: Current project path
+        """
+        info_file = project_dir / "project_info.json"
+        if not info_file.exists():
+            return
+
+        try:
+            with open(info_file, "r") as f:
+                info = json.load(f)
+
+            stored = info.get("project_path", "")
+            if stored != current_path:
+                logger.info(f"Updating project path: {stored} -> {current_path}")
+                info["project_path"] = current_path
+                info["previous_paths"] = info.get("previous_paths", [])
+                if stored and stored not in info["previous_paths"]:
+                    info["previous_paths"].append(stored)
+
+                with open(info_file, "w") as f:
+                    json.dump(info, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Failed to update stored path: {e}")
+
     def get_project_storage_dir(
         self,
         project_path: str,
@@ -81,7 +152,10 @@ class StorageManager:
 
         project_path = Path(project_path).resolve()
         project_name = project_path.name
-        project_hash = hashlib.md5(str(project_path).encode()).hexdigest()[:8]
+
+        # Compute both hashes for backward compatibility
+        new_hash = compute_drive_agnostic_hash(str(project_path))
+        legacy_hash = compute_legacy_hash(str(project_path))
 
         # Determine which model to use
         if model_key:
@@ -115,6 +189,23 @@ class StorageManager:
             )
         dimension = model_config["dimension"]
         model_slug = get_model_slug(model_name)
+
+        # Check for existing project directory (handles drive letter changes)
+        projects_dir = base_dir / "projects"
+        existing_dir = self._find_existing_project_dir(
+            projects_dir, project_name, new_hash, legacy_hash, model_slug, dimension
+        )
+
+        if existing_dir:
+            # Update stored path if drive letter changed
+            self._update_stored_path_if_changed(existing_dir, str(project_path))
+            logger.info(
+                f"[PER_MODEL_INDICES] Using existing storage: {existing_dir.name} (model: {model_name}, dimension: {dimension}d)"
+            )
+            return existing_dir
+
+        # Create new directory with drive-agnostic hash
+        project_hash = new_hash
         project_dir = (
             base_dir
             / "projects"
@@ -122,7 +213,7 @@ class StorageManager:
         )
         project_dir.mkdir(parents=True, exist_ok=True)
         logger.info(
-            f"[PER_MODEL_INDICES] Using storage: {project_dir.name} (model: {model_name}, dimension: {dimension}d)"
+            f"[PER_MODEL_INDICES] Creating new storage: {project_dir.name} (model: {model_name}, dimension: {dimension}d)"
         )
         project_info_file = project_dir / "project_info.json"
         if not project_info_file.exists():
@@ -132,7 +223,9 @@ class StorageManager:
             project_info = {
                 "project_name": project_name,
                 "project_path": str(project_path),
+                "project_path_agnostic": extract_drive_agnostic_path(str(project_path)),
                 "project_hash": project_hash,
+                "hash_version": 2,  # Version 2 = drive-agnostic hash
                 "embedding_model": model_name,
                 "model_dimension": dimension,
                 "created_at": datetime.now().isoformat(),

@@ -3,7 +3,6 @@
 Handlers for creating, updating, and clearing code indices.
 """
 
-import hashlib
 import json
 import logging
 from datetime import datetime
@@ -29,6 +28,7 @@ from search.config import (
     MODEL_REGISTRY,
     SearchConfigManager,
 )
+from search.filters import compute_drive_agnostic_hash, compute_legacy_hash
 from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
@@ -335,30 +335,41 @@ async def handle_clear_index(arguments: Dict[str, Any]) -> dict:
     # Get project info for pattern matching
     project_path = Path(current_project).resolve()
     project_name = project_path.name
-    project_hash = hashlib.md5(str(project_path).encode()).hexdigest()[:8]
 
-    # Find ALL model directories for this project
+    # Check both hashes for backward compatibility
+    new_hash = compute_drive_agnostic_hash(str(project_path))
+    legacy_hash = compute_legacy_hash(str(project_path))
+
+    # Find ALL model directories for this project (check both patterns)
     base_dir = get_storage_dir()
     projects_dir = base_dir / "projects"
-    pattern = f"{project_name}_{project_hash}_*"
+    patterns = [f"{project_name}_{new_hash}_*", f"{project_name}_{legacy_hash}_*"]
 
     cleared_dirs = []
-    for model_dir in projects_dir.glob(pattern):
-        # Delete BM25 directory
-        bm25_dir = model_dir / "index" / "bm25"
-        if bm25_dir.exists():
-            shutil.rmtree(bm25_dir)
-            logger.info(f"Deleted BM25 directory: {bm25_dir}")
+    seen_dirs = set()  # Avoid processing same dir twice
 
-        # Delete dense index files
-        index_dir = model_dir / "index"
-        for file in ["code.index", "chunks_metadata.db", "stats.json"]:
-            filepath = index_dir / file
-            if filepath.exists():
-                filepath.unlink()
-                logger.info(f"Deleted: {filepath}")
+    for pattern in patterns:
+        for model_dir in projects_dir.glob(pattern):
+            # Skip if already processed (in case both hashes match same dir)
+            if model_dir in seen_dirs:
+                continue
+            seen_dirs.add(model_dir)
 
-        cleared_dirs.append(model_dir.name)
+            # Delete BM25 directory
+            bm25_dir = model_dir / "index" / "bm25"
+            if bm25_dir.exists():
+                shutil.rmtree(bm25_dir)
+                logger.info(f"Deleted BM25 directory: {bm25_dir}")
+
+            # Delete dense index files
+            index_dir = model_dir / "index"
+            for file in ["code.index", "chunks_metadata.db", "stats.json"]:
+                filepath = index_dir / file
+                if filepath.exists():
+                    filepath.unlink()
+                    logger.info(f"Deleted: {filepath}")
+
+            cleared_dirs.append(model_dir.name)
 
     # Cleanup in-memory state
     state.reset_search_components()
@@ -427,31 +438,41 @@ async def handle_delete_project(arguments: Dict[str, Any]) -> dict:
 
     # 4. Find and delete all model directories for this project
     project_name = project_path_resolved.name
-    project_hash = hashlib.md5(str(project_path_resolved).encode()).hexdigest()[:8]
+
+    # Check both hashes for backward compatibility
+    new_hash = compute_drive_agnostic_hash(str(project_path_resolved))
+    legacy_hash = compute_legacy_hash(str(project_path_resolved))
 
     base_dir = get_storage_dir()
     projects_dir = base_dir / "projects"
-    pattern = f"{project_name}_{project_hash}_*"
+    patterns = [f"{project_name}_{new_hash}_*", f"{project_name}_{legacy_hash}_*"]
 
     deleted_dirs = []
     errors = []
+    seen_dirs = set()  # Avoid processing same dir twice
 
-    logger.info(f"Searching for project directories with pattern: {pattern}")
+    logger.info(f"Searching for project directories with patterns: {patterns}")
 
-    for model_dir in projects_dir.glob(pattern):
-        logger.info(f"Deleting project directory: {model_dir}")
-        try:
-            shutil.rmtree(model_dir)
-            deleted_dirs.append(model_dir.name)
-            logger.info(f"Successfully deleted: {model_dir}")
-        except PermissionError as e:
-            error_msg = f"{model_dir.name}: File locked - {e}"
-            errors.append(error_msg)
-            logger.error(f"Permission error deleting {model_dir}: {e}")
-        except Exception as e:
-            error_msg = f"{model_dir.name}: {e}"
-            errors.append(error_msg)
-            logger.error(f"Unexpected error deleting {model_dir}: {e}")
+    for pattern in patterns:
+        for model_dir in projects_dir.glob(pattern):
+            # Skip if already processed
+            if model_dir in seen_dirs:
+                continue
+            seen_dirs.add(model_dir)
+
+            logger.info(f"Deleting project directory: {model_dir}")
+            try:
+                shutil.rmtree(model_dir)
+                deleted_dirs.append(model_dir.name)
+                logger.info(f"Successfully deleted: {model_dir}")
+            except PermissionError as e:
+                error_msg = f"{model_dir.name}: File locked - {e}"
+                errors.append(error_msg)
+                logger.error(f"Permission error deleting {model_dir}: {e}")
+            except Exception as e:
+                error_msg = f"{model_dir.name}: {e}"
+                errors.append(error_msg)
+                logger.error(f"Unexpected error deleting {model_dir}: {e}")
 
     # 5. Delete Merkle snapshots for this project
     logger.info(f"Deleting Merkle snapshots for: {project_path_resolved}")

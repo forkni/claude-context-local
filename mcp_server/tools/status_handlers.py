@@ -131,10 +131,27 @@ async def handle_list_projects(arguments: Dict[str, Any]) -> dict:
 
         # Initialize project entry if first time seeing this path
         if project_path not in projects_by_path:
+            # Check if project exists at stored path
+            from pathlib import Path
+
+            from search.filters import find_project_at_different_drive
+
+            path_exists = Path(project_path).exists()
+            relocated_to = None
+
+            if not path_exists:
+                # Try to find at different drive letter
+                alt_path = find_project_at_different_drive(project_path)
+                if alt_path:
+                    relocated_to = alt_path
+                    path_exists = True
+
             projects_by_path[project_path] = {
                 "project_name": project_info["project_name"],
                 "project_path": project_path,
                 "project_hash": project_info["project_hash"],
+                "path_exists": path_exists,
+                "relocated_to": relocated_to,
                 "models_indexed": [],
             }
 

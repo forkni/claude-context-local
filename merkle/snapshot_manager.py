@@ -1,10 +1,11 @@
 """Manages Merkle tree snapshots for persistent change tracking."""
 
-import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+from search.filters import compute_drive_agnostic_hash, compute_legacy_hash
 
 from .merkle_dag import MerkleDAG
 
@@ -24,16 +25,26 @@ class SnapshotManager:
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
     def get_project_id(self, project_path: str) -> str:
-        """Generate a unique ID for a project based on its path.
+        """Generate a unique ID for a project based on its path (drive-agnostic).
 
         Args:
             project_path: Path to project
 
         Returns:
-            MD5 hash of the normalized path
+            MD5 hash of the drive-agnostic path (32 chars)
         """
-        normalized_path = str(Path(project_path).resolve())
-        return hashlib.md5(normalized_path.encode()).hexdigest()
+        return compute_drive_agnostic_hash(project_path, length=32)
+
+    def _get_legacy_project_id(self, project_path: str) -> str:
+        """Generate legacy project ID for backward compatibility.
+
+        Args:
+            project_path: Path to project
+
+        Returns:
+            MD5 hash of the full resolved path (32 chars)
+        """
+        return compute_legacy_hash(project_path, length=32)
 
     def _get_model_slug_and_dimension(
         self, dimension: Optional[int] = None
@@ -76,7 +87,7 @@ class SnapshotManager:
     def get_snapshot_path(
         self, project_path: str, dimension: Optional[int] = None
     ) -> Path:
-        """Get the snapshot file path for a project with per-model slug and dimension suffix.
+        """Get the snapshot file path for a project, checking both new and legacy hashes.
 
         Args:
             project_path: Path to project
@@ -86,19 +97,31 @@ class SnapshotManager:
         Returns:
             Path to snapshot file with model slug and dimension suffix
         """
-        project_id = self.get_project_id(project_path)
-
-        # Auto-detect dimension and model slug from current config if not provided
         model_slug, dimension = self._get_model_slug_and_dimension(dimension)
 
-        return (
-            self.storage_dir / f"{project_id}_{model_slug}_{dimension}d_snapshot.json"
+        # Try new hash first (drive-agnostic)
+        new_id = self.get_project_id(project_path)
+        new_path = (
+            self.storage_dir / f"{new_id}_{model_slug}_{dimension}d_snapshot.json"
         )
+        if new_path.exists():
+            return new_path
+
+        # Fallback to legacy hash (backward compatibility)
+        legacy_id = self._get_legacy_project_id(project_path)
+        legacy_path = (
+            self.storage_dir / f"{legacy_id}_{model_slug}_{dimension}d_snapshot.json"
+        )
+        if legacy_path.exists():
+            return legacy_path
+
+        # Return new path for creation
+        return new_path
 
     def get_metadata_path(
         self, project_path: str, dimension: Optional[int] = None
     ) -> Path:
-        """Get the metadata file path for a project with per-model slug and dimension suffix.
+        """Get the metadata file path for a project, checking both new and legacy hashes.
 
         Args:
             project_path: Path to project
@@ -108,14 +131,26 @@ class SnapshotManager:
         Returns:
             Path to metadata file with model slug and dimension suffix
         """
-        project_id = self.get_project_id(project_path)
-
-        # Auto-detect dimension and model slug from current config if not provided
         model_slug, dimension = self._get_model_slug_and_dimension(dimension)
 
-        return (
-            self.storage_dir / f"{project_id}_{model_slug}_{dimension}d_metadata.json"
+        # Try new hash first (drive-agnostic)
+        new_id = self.get_project_id(project_path)
+        new_path = (
+            self.storage_dir / f"{new_id}_{model_slug}_{dimension}d_metadata.json"
         )
+        if new_path.exists():
+            return new_path
+
+        # Fallback to legacy hash (backward compatibility)
+        legacy_id = self._get_legacy_project_id(project_path)
+        legacy_path = (
+            self.storage_dir / f"{legacy_id}_{model_slug}_{dimension}d_metadata.json"
+        )
+        if legacy_path.exists():
+            return legacy_path
+
+        # Return new path for creation
+        return new_path
 
     def save_snapshot(self, dag: MerkleDAG, metadata: Optional[Dict] = None) -> None:
         """Save a Merkle DAG snapshot to disk.
