@@ -590,6 +590,7 @@ filters = get_effective_filters(project_info)
 **Change Detection**:
 
 When filters change during incremental indexing:
+
 - System detects mismatch between saved and current filters
 - Automatically triggers full re-index (not incremental)
 - Prevents stale results from wrong filter set
@@ -918,10 +919,12 @@ The system automatically:
 ### Feature Enablement by Tier
 
 **Multi-Model Routing**:
+
 - Minimal tier: DISABLED (insufficient VRAM for 3 models)
 - Laptop tier+: ENABLED (loads BGE-M3, Qwen3, CodeRankEmbed)
 
 **Neural Reranking** (BAAI/bge-reranker-v2-m3, ~1.5GB VRAM):
+
 - Minimal tier: DISABLED
 - Laptop tier+: ENABLED (5-15% quality improvement)
 
@@ -1017,15 +1020,18 @@ Neural reranking uses a cross-encoder model to re-score initial search results, 
 ### Performance Impact
 
 **Quality Improvement**:
+
 - 5-15% better ranking (validated on benchmarks)
 - 30% of queries see top result changes
 - More noticeable on semantic queries vs exact matches
 
 **Speed Impact**:
+
 - +100-200ms per search (acceptable for quality gain)
 - Depends on `top_k_candidates` and `batch_size`
 
 **VRAM Usage**:
+
 - Model loading: ~1.5GB additional VRAM
 - Only loads when reranking enabled
 
@@ -1074,12 +1080,14 @@ mgr.save_config(cfg)
 ### When to Enable/Disable
 
 **Enable reranking when**:
+
 - Accuracy is critical
 - Semantic queries are common
 - VRAM is available (laptop tier+)
 - Search latency <300ms is acceptable
 
 **Disable reranking when**:
+
 - Speed is critical (<100ms searches)
 - VRAM is limited (minimal tier)
 - Exact keyword searches dominate
@@ -1110,6 +1118,7 @@ From `tools/benchmark_models.py`:
 ### Problem Solved
 
 External drives often get assigned different drive letters:
+
 - F: → E: (laptop docking/undocking)
 - E: → D: (USB port change)
 - Original: `F:\RD_PROJECTS\claude-context-local`
@@ -1212,11 +1221,13 @@ Progress bars provide visual feedback during the two longest indexing phases: fi
 **When**: During file parsing and chunking (AST/Tree-sitter)
 
 **Output**:
+
 ```
 Chunking files... 100% (21/21 files)
 ```
 
 **Details**:
+
 - Shows file count: `(current/total files)`
 - Updates in real-time
 - Terminal-compatible: `Console(force_terminal=True)`
@@ -1228,11 +1239,13 @@ Chunking files... 100% (21/21 files)
 **When**: During embedding generation (~15 seconds typical)
 
 **Output**:
+
 ```
 Embedding... 100% (3/3 batches)
 ```
 
 **Details**:
+
 - Shows batch count: `(current/total batches)`
 - Model warmup prevents log interference
 - Only shows for embedding phase (longest operation)
@@ -1259,6 +1272,7 @@ for batch in tqdm(batches, desc="Embedding"):
 **Enabled by default** - no configuration needed
 
 **Terminal compatibility**: `Console(force_terminal=True)` ensures progress bars work in:
+
 - Interactive terminals
 - Batch scripts (Windows CMD, PowerShell)
 - CI/CD environments
@@ -1362,6 +1376,7 @@ print(f"Hit rate: {embedder._cache_hits / (embedder._cache_hits + embedder._cach
 ### Cache Invalidation
 
 **Automatic invalidation** when:
+
 - Cache reaches max size (LRU eviction - oldest entry removed)
 - Embedding model changes (full cache clear)
 - Server restarts (cache is in-memory only)
@@ -1384,12 +1399,14 @@ print(f"Hit rate: {embedder._cache_hits / (embedder._cache_hits + embedder._cach
 ### Use Cases
 
 **High benefit scenarios**:
+
 - **Interactive search**: Users often refine/repeat queries
 - **Bulk analysis**: Same queries across multiple projects
 - **Testing**: Benchmark scripts with fixed query sets
 - **Development**: Repeated queries during debugging
 
 **Low benefit scenarios**:
+
 - Unique queries only (no repetition)
 - One-time searches
 - Random query generation
