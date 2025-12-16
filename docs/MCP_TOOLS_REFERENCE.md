@@ -866,7 +866,7 @@ When multi-model mode is enabled, `index_directory` automatically indexes with *
 
 ## Supported Features
 
-- **Languages**: Python, JS, TS, Java, Go, Rust, C, C++, C#, GLSL, Svelte (22 extensions)
+- **Languages**: Python, JavaScript, TypeScript, Go, Rust, C, C++, C#, GLSL (9 languages, 19 extensions)
 - **Parsing**: AST (Python) + Tree-sitter (all others)
 - **Search Modes**: Semantic, BM25, Hybrid
 - **Chunking**: Functions, classes, methods, interfaces, enums, modules, etc.

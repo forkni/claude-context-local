@@ -488,6 +488,8 @@ class CodeEmbedder:
             if torch.cuda.is_available():
                 vram_after = torch.cuda.memory_allocated()
                 vram_used_mb = (vram_after - vram_before) / (1024 * 1024)
+                # FIX Issue #1: Clamp to 0 minimum (prevent negative VRAM in multi-model scenarios)
+                vram_used_mb = max(0, vram_used_mb)
                 self._model_vram_usage[self.model_name] = round(vram_used_mb, 1)
                 self._logger.info(
                     f"Model VRAM usage: {vram_used_mb:.1f} MB ({self.model_name})"
@@ -539,6 +541,8 @@ class CodeEmbedder:
                     if torch.cuda.is_available():
                         vram_after = torch.cuda.memory_allocated()
                         vram_used_mb = (vram_after - vram_before) / (1024 * 1024)
+                        # FIX Issue #1: Clamp to 0 minimum (prevent negative VRAM in multi-model scenarios)
+                        vram_used_mb = max(0, vram_used_mb)
                         self._model_vram_usage[self.model_name] = round(vram_used_mb, 1)
                         self._logger.info(
                             f"Model VRAM usage: {vram_used_mb:.1f} MB ({self.model_name})"

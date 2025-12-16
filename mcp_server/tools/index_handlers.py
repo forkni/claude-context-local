@@ -335,6 +335,8 @@ async def handle_clear_index(arguments: Dict[str, Any]) -> dict:
     """Clear the entire search index for ALL models."""
     import shutil
 
+    from merkle.snapshot_manager import SnapshotManager
+
     state = get_state()
     current_project = state.current_project
     if current_project is None:
@@ -379,6 +381,19 @@ async def handle_clear_index(arguments: Dict[str, Any]) -> dict:
 
             cleared_dirs.append(model_dir.name)
 
+    # Delete Merkle snapshots for this project (FIX: Issue #2)
+    # This ensures that incremental re-index after clear_index works correctly
+    snapshots_cleared = 0
+    try:
+        snapshot_mgr = SnapshotManager()
+        snapshots_cleared = snapshot_mgr.delete_all_snapshots(str(project_path))
+        logger.info(
+            f"Cleared {snapshots_cleared} Merkle snapshot(s) for {project_path}"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to clear Merkle snapshots: {e}")
+        # Non-fatal - continue with index clearing
+
     # Cleanup in-memory state
     state.reset_search_components()
 
@@ -388,6 +403,7 @@ async def handle_clear_index(arguments: Dict[str, Any]) -> dict:
         "success": True,
         "message": f"Index cleared for project: {project_name}",
         "cleared_models": cleared_dirs,
+        "snapshots_cleared": snapshots_cleared,
     }
 
 

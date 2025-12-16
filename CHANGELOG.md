@@ -13,6 +13,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.4] - 2025-12-16
+
+### Added
+
+- **Qwen3 Instruction Tuning** - Code-optimized query instructions for better retrieval
+  - Automatically applies: `"Instruct: Retrieve source code implementations matching the query\nQuery: {query}"`
+  - Configurable `instruction_mode`: "custom" (code-optimized) vs "prompt_name" (generic)
+  - 1-5% retrieval precision improvement (per Qwen3 documentation)
+  - Files: `search/config.py`, `embeddings/embedder.py`
+
+- **Matryoshka MRL Support** - Reduces storage 2x with <1.5% quality drop
+  - Full dimension 2560 → Truncated to 1024 (same as Qwen3-0.6B)
+  - Enabled by default for Qwen3-4B model
+  - 50% storage reduction while preserving 4B model quality (36 layers)
+  - Configuration: `truncate_dim=1024`, `mrl_dimensions` in MODEL_REGISTRY
+  - Files: `search/config.py`, `embeddings/embedder.py`
+
+- **Benchmark Instruction Tool** - Compare instruction modes
+  - Script: `tools/benchmark_instructions.py`
+  - Validates identical performance between custom and prompt_name modes
+  - Files: `tools/benchmark_instructions.py`
+
+### Changed
+
+- Model configuration for Qwen3-0.6B and Qwen3-4B updated with instruction tuning parameters
+
+---
+
+## [0.6.3] - 2025-12-13
+
+### Added
+
+- **Drive-Agnostic Project Path Detection** - Automatic project discovery for external drives
+  - Auto-detect relocated projects when drive letters change (F: → E:)
+  - Backward compatible dual-hash lookup for existing indices
+  - 4 utility functions: `compute_drive_agnostic_hash()`, `compute_legacy_hash()`, `get_effective_filters()`, `normalize_path_filters()`
+  - Path relocation status in `list_projects` output
+  - 20 new unit tests for drive-agnostic utilities
+  - Files: `search/filters.py`, `mcp_server/utils/path_utils.py`, `merkle/snapshot_manager.py`
+
+### Fixed
+
+- **User-Defined Filters Lost After MCP Restart** - Filters now persist across server restarts and re-indexing
+  - Root cause: Field name inconsistency (`included_dirs` vs `user_included_dirs`)
+  - Fix: Corrected field names in `index_handlers.py` and `incremental_indexer.py`
+  - Result: Consistent filter persistence across all models during multi-model indexing
+  - Files: `mcp_server/index_handlers.py`, `search/incremental_indexer.py`
+
+- **pip-audit Header Line Handling** - Skip header line in deps-audit slash command
+  - Fix: Updated Python paths in deps-audit slash command
+  - Files: `.claude/commands/deps-audit.md`
+
+- **Stale Imports in start_mcp_server.cmd** - Fixed get_storage_dir import error
+  - Files: `start_mcp_server.cmd`
+
+---
+
+## [0.6.2] - 2025-12-13
+
+### Added
+
+- **VRAM Tier Management** - Adaptive model selection based on available GPU memory
+  - 4 VRAM tiers: minimal (<6GB), laptop (6-10GB), desktop (10-18GB), workstation (18GB+)
+  - Automatic feature enablement based on tier (multi-model routing, neural reranking)
+  - Auto-configuration recommendations via `VRAMTierManager`
+  - 42 comprehensive unit tests for VRAM manager
+  - Files: `embeddings/vram_manager.py`, `mcp_server/model_pool_manager.py`
+
+- **Benchmark Model Analysis Tool** - Validate model performance
+  - Script: `tools/benchmark_models.py`
+  - Validates Qwen3-4B: 90% of 8B quality at 2-3x speed
+  - Documents neural reranker impact: 5.2% improvement, 30% result changes
+  - Archived benchmark results
+
+### Changed
+
+- Model pool manager updated with tier-based configuration
+- Production config validated: Qwen3-4B + Neural Reranker ENABLED
+
+### Fixed
+
+- **TTY Auto-Detection for Git Scripts** - Commit enhanced shell script improvements
+  - Automatically enables `--non-interactive` and `--skip-md-lint` when no TTY detected
+  - Environment variable overrides: `CLAUDE_GIT_NON_INTERACTIVE=1`, `CLAUDE_GIT_SKIP_MD_LINT=1`
+  - New `--interactive` flag for forcing prompts in automated contexts
+  - Files: `scripts/git/commit_enhanced.sh`
+
+---
+
 ## [0.6.1] - 2025-12-03
 
 ### Added

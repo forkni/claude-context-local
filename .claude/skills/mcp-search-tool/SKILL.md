@@ -49,7 +49,7 @@ What are you trying to do?
 
 ## 📚 Quick Function Index
 
-### All 15 MCP Tools at a Glance
+### All 16 MCP Tools at a Glance
 
 | Tool | Category | Purpose | Key Parameters | Jump To |
 |------|----------|---------|----------------|---------|
@@ -64,10 +64,12 @@ What are you trying to do?
 | configure_search_mode | Config | Set search mode & weights | `search_mode`, `bm25_weight`, `dense_weight` | [Details](#8-configure_search_modesearch_modehybrid-bm25_weight04-dense_weight06-enable_paralleltrue) |
 | get_search_config_status | Config | View current config | *(none)* | [Details](#9-get_search_config_status) |
 | configure_query_routing | Config | Multi-model routing settings | `enable_multi_model`, `default_model`, `confidence_threshold` | [Details](#10-configure_query_routingenable_multi_modelnone-default_modelnone-confidence_thresholdnone) |
-| list_embedding_models | Model | Show available models | *(none)* | [Details](#12-list_embedding_models) |
-| switch_embedding_model | Model | Change embedding model | `model_name` | [Details](#13-switch_embedding_modelmodel_name) |
-| get_memory_status | Monitor | Check RAM/VRAM usage | *(none)* | [Details](#14-get_memory_status) |
-| cleanup_resources | Cleanup | Free memory/caches | *(none)* | [Details](#15-cleanup_resources) |
+| find_similar_code | Secondary | Find functionally similar code | `chunk_id`, `k` | [Details](#11-find_similar_codechunk_id-k5) |
+| configure_reranking | Config | Neural reranking settings | `enabled`, `model_name`, `top_k_candidates` | [Details](#12-configure_rerankingenablednone-model_namenone-top_k_candidatesnone) |
+| list_embedding_models | Model | Show available models | *(none)* | [Details](#13-list_embedding_models) |
+| switch_embedding_model | Model | Change embedding model | `model_name` | [Details](#14-switch_embedding_modelmodel_name) |
+| get_memory_status | Monitor | Check RAM/VRAM usage | *(none)* | [Details](#15-get_memory_status) |
+| cleanup_resources | Cleanup | Free memory/caches | *(none)* | [Details](#16-cleanup_resources) |
 
 ### Usage Patterns by Task
 
@@ -379,6 +381,17 @@ search_code("token merging implementation", k=10)
 - **Filter change detection**: If filters change during incremental index, automatically triggers **full reindex** to prevent stale data
 - Uses path prefix matching with normalized separators (`\` → `/`)
 
+**Progress Bar (v0.6.1+)**:
+
+- Real-time visual feedback during chunking and embedding phases
+- Shows progress: `Chunking files... 100% (21/21 files)`, `Embedding... 100% (3/3 batches)`
+
+**Drive-Agnostic Paths (v0.6.3+)**:
+
+- Automatic project discovery when drive letters change (F: → E:)
+- Dual-hash lookup for backward compatibility
+- `list_projects` shows path relocation status
+
 **Performance**:
 
 - **Full index**: ~30-60s for typical projects
@@ -561,20 +574,48 @@ search_code("authentication handler")
 find_similar_code("src/auth.py:10-50:function:authenticate", k=5)
 ```
 
-#### 12. `list_embedding_models()`
+#### 12. `configure_reranking(enabled=None, model_name=None, top_k_candidates=None)`
+
+**Purpose**: Configure neural reranking for improved search quality
+
+**Parameters**:
+
+- `enabled` (optional): Enable/disable reranking (5-15% quality improvement)
+- `model_name` (optional): Reranker model (default: "BAAI/bge-reranker-v2-m3")
+- `top_k_candidates` (optional): Candidates to rerank (default: 50)
+
+**When to enable**:
+- Accuracy is critical
+- Semantic queries are common
+- VRAM available (laptop tier+)
+
+**When to disable**:
+- Speed is critical (<100ms searches)
+- VRAM limited (minimal tier)
+
+**Example**:
+
+```bash
+configure_reranking(enabled=True, top_k_candidates=100)
+```
+
+**See**: `docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration` for all parameters
+
+#### 13. `list_embedding_models()`
 
 **Purpose**: List all available embedding models with specifications
 
 **Returns**: JSON with model info including dimensions, context length, descriptions
 
-**Available Models**:
+**Available Models** (5 total):
 
 - **BGE-M3** ⭐: 1024d, 3-4GB VRAM, production baseline
 - **Qwen3-0.6B**: 1024d, 2.3GB VRAM, best value & high efficiency
+- **Qwen3-4B** 🆕: 1024d (MRL), 8-10GB VRAM, best quality with Matryoshka MRL
 - **CodeRankEmbed**: 768d, 2GB VRAM, code-specific retrieval
 - **EmbeddingGemma-300m**: 768d, 4-8GB VRAM, default model (fast)
 
-#### 13. `switch_embedding_model(model_name)`
+#### 14. `switch_embedding_model(model_name)`
 
 **Purpose**: Switch to a different embedding model without deleting indices
 
@@ -630,15 +671,76 @@ get_memory_status()  # Shows ~5.3 GB VRAM (3 models loaded)
 cleanup_resources()  # Returns to 0 MB VRAM
 ```
 
+### VRAM Tier Management (v0.5.17+)
+
+**Purpose**: Automatic model and feature configuration based on available GPU memory
+
+**4 VRAM Tiers**:
+
+| Tier | VRAM Range | Recommended Models | Features |
+|------|------------|-------------------|----------|
+| **Minimal** | <6GB | EmbeddingGemma OR CodeRankEmbed | Single-model only |
+| **Laptop** | 6-10GB | BGE-M3 OR Qwen3-0.6B | Multi-model + Reranking |
+| **Desktop** | 10-18GB | Qwen3-4B + 3-model pool | Full features |
+| **Workstation** | 18GB+ | Full 3-model pool | Maximum quality |
+
+**Automatic Configuration**:
+
+- System detects available VRAM on startup
+- Recommends optimal model for tier
+- Enables/disables features based on memory
+
+**Environment Override**:
+
+```bash
+set CLAUDE_VRAM_TIER=laptop
+```
+
+**See**: `docs/MODEL_MIGRATION_GUIDE.md` for detailed tier recommendations
+
+---
+
+### Qwen3 Features (v0.6.4+)
+
+#### Instruction Tuning
+
+**Purpose**: Code-optimized query instructions for better retrieval (1-5% improvement)
+
+**Two modes**:
+
+- **custom** (default): Code-specific instructions
+  `"Instruct: Retrieve source code implementations matching the query\nQuery: {query}"`
+- **prompt_name**: Model's built-in generic prompt
+
+**Configuration**: Automatic for Qwen3 models, configurable in `search/config.py`
+
+#### Matryoshka MRL (Qwen3-4B only)
+
+**Purpose**: Reduce storage 2x with <1.5% quality drop
+
+**How it works**:
+- Full model dimension: 2560
+- Truncated to: 1024 (same as Qwen3-0.6B and BGE-M3)
+- Keeps 4B model quality (36 layers)
+
+**Benefits**:
+- 50% storage reduction
+- Same dimension as other 1024d models → instant switching
+- Best quality for reasonable VRAM (8-10GB)
+
+**See**: `docs/ADVANCED_FEATURES_GUIDE.md#qwen3-instruction-tuning--mrl-v064` for details
+
+---
+
 ### 🟣 Memory Management Tools
 
-#### 14. `get_memory_status()`
+#### 15. `get_memory_status()`
 
 **Purpose**: Get current memory usage for index and system
 
 **Returns**: JSON with RAM/VRAM usage, GPU status, available memory
 
-#### 15. `cleanup_resources()`
+#### 16. `cleanup_resources()`
 
 **Purpose**: Manually cleanup all resources to free memory
 
@@ -831,6 +933,12 @@ clear_index()          # Full reset (requires re-indexing)
 - **Subsequent searches**: 3-5s (models cached in memory)
 - **VRAM after first search**: ~5.3 GB (multi-model routing with 3 models loaded)
 - **Cleanup**: Returns to 0 MB VRAM with `cleanup_resources()`
+
+### Query Cache (v0.5.17+)
+
+- **LRU cache** for query embeddings (128 entries default)
+- **Performance**: Repeated queries = 0ms encoding (instant)
+- **Configuration**: `set CLAUDE_QUERY_CACHE_SIZE=256`
 
 ### Quality Metrics (Validated)
 

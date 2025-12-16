@@ -2,15 +2,15 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2025-12-09)
+## Current Status: All Features Operational (2025-12-16)
 
-- **Version**: 0.6.1
+- **Version**: 0.6.4
 - **Status**: Production-ready
-- **Test Coverage**: 669 unit tests + integration tests (100% pass rate)
+- **Test Coverage**: 720+ unit tests + integration tests (100% pass rate)
 - **Index Quality**: 109 active files, 1,199 chunks (site-packages excluded, BGE-M3 1024d, ~24 MB)
 - **Token Reduction**: 85-95% (validated benchmark)
 - **Call Graph Resolution**: Phase 4 complete (~90% accuracy)
-- **Refactoring**: Phase 13-C complete (config alias removal)
+- **Recent Features**: Qwen3 Instruction Tuning, Matryoshka MRL, VRAM Tier Management, Drive-Agnostic Paths
 
 ---
 
@@ -828,8 +828,6 @@ set CLAUDE_MULTI_MODEL_ENABLED=false # Disable
 - First model switch: 30-60s (indexing required)
 - Return to previous model: <150ms (98% faster)
 - Model comparison workflow: <1s (99% faster)
-
-**See**: `docs/PER_MODEL_INDICES_IMPLEMENTATION.md`
 
 ### Independent Merkle Snapshots
 
