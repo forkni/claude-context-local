@@ -659,6 +659,170 @@ start_mcp_server.bat → 3 (Search Config) → 4 (Select Model)
 
 ---
 
+## Qwen3 Instruction Tuning & MRL (v0.6.4+)
+
+**Feature**: Code-optimized query instructions and Matryoshka Representation Learning for Qwen3 models
+
+**Status**: ✅ **Production-Ready** (v0.6.4+)
+
+### Overview
+
+Qwen3 embedding models support two advanced features for improved code retrieval:
+
+1. **Instruction Tuning**: Task-specific instructions optimize query embeddings for code search
+2. **Matryoshka Representation Learning (MRL)**: Flexible output dimensions reduce storage while maintaining quality
+
+### Instruction Tuning
+
+**What it does**: Prepends code-specific instructions to queries before embedding, improving retrieval precision by 1-5%
+
+**Two modes available**:
+
+| Mode | Format | When to Use |
+|------|--------|-------------|
+| **custom** (default) | `"Instruct: Retrieve source code implementations matching the query\nQuery: {query}"` | Code search (recommended) |
+| **prompt_name** | Uses model's built-in generic prompt | General-purpose retrieval |
+
+**Configuration**:
+
+```python
+# In search/config.py MODEL_REGISTRY:
+"Qwen/Qwen3-Embedding-0.6B": {
+    "instruction_mode": "custom",  # or "prompt_name"
+    "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
+    "prompt_name": "query",  # Alternative for prompt_name mode
+}
+```
+
+**How it works**:
+
+```python
+# User query
+query = "find authentication functions"
+
+# Custom mode (default)
+# → "Instruct: Retrieve source code implementations matching the query\nQuery: find authentication functions"
+
+# Prompt name mode
+# → Sentence-transformers auto-applies model's built-in prompt
+```
+
+**Benefits**:
+
+- 1-5% retrieval precision improvement (per Qwen3 documentation)
+- Code-specific instruction optimizes for source code retrieval
+- Only affects queries, not indexed documents (no re-indexing needed)
+
+**Benchmarking**:
+
+```bash
+# Compare both modes
+python tools/benchmark_instructions.py --model Qwen/Qwen3-Embedding-0.6B
+```
+
+### Matryoshka Representation Learning (MRL)
+
+**What it does**: Reduces embedding dimension output while maintaining model quality
+
+**Status**: Enabled by default for Qwen3-4B (truncate_dim=1024)
+
+**Configuration**:
+
+```python
+# In search/config.py MODEL_REGISTRY:
+"Qwen/Qwen3-Embedding-4B": {
+    "dimension": 2560,  # Full model dimension
+    "truncate_dim": 1024,  # Output dimension (50% reduction)
+    "mrl_dimensions": [2560, 1024, 512, 256, 128, 64, 32],  # Supported dims
+}
+```
+
+**Performance**:
+
+| Dimension | Storage | Quality Drop | Use Case |
+|-----------|---------|--------------|----------|
+| 2560 (full) | 100% | 0% | Maximum quality |
+| **1024** (default) | **50%** | **~1.47%** | Best balance (matches 0.6B storage) |
+| 512 | 25% | ~3% | Extreme storage constraints |
+
+**Benefits**:
+
+- **2x storage reduction** with Qwen3-4B using truncate_dim=1024
+- Match 0.6B storage footprint while keeping 4B model quality (36 layers vs 28)
+- Minimal quality drop (~1.47% per sentence-transformers benchmarks)
+
+**How it works**:
+
+```python
+# Sentence-transformers truncates embeddings during model instantiation
+model = SentenceTransformer(
+    "Qwen/Qwen3-Embedding-4B",
+    truncate_dim=1024  # Output 1024d instead of 2560d
+)
+
+# All embeddings automatically truncated
+embedding = model.encode("query")
+# embedding.shape = (1024,) instead of (2560,)
+```
+
+**Index compatibility**:
+
+- **Requires re-indexing** if changing truncate_dim
+- Different dimensions create separate index directories
+- Example: `project_abc123_qwen3-4b_1024d/` vs `project_abc123_qwen3-4b_2560d/`
+
+### Customization
+
+**Disable MRL (use full dimension)**:
+
+```python
+# Edit search/config.py
+"Qwen/Qwen3-Embedding-4B": {
+    "truncate_dim": None,  # Use full 2560 dimensions
+}
+```
+
+**Change instruction mode**:
+
+```python
+# Edit search/config.py
+"Qwen/Qwen3-Embedding-0.6B": {
+    "instruction_mode": "prompt_name",  # Switch to built-in prompt
+}
+```
+
+**Runtime modification** (advanced):
+
+```python
+from search.config import MODEL_REGISTRY
+
+# Temporarily change for testing
+MODEL_REGISTRY["Qwen/Qwen3-Embedding-4B"]["truncate_dim"] = 512
+MODEL_REGISTRY["Qwen/Qwen3-Embedding-0.6B"]["instruction_mode"] = "prompt_name"
+```
+
+### Technical Details
+
+**Instruction priority** (in `embed_query()`):
+
+1. `instruction_mode == "prompt_name"` → Use `prompt_name` parameter in encode()
+2. `instruction_mode == "custom"` → Prepend `query_instruction` to query text
+3. Fallback → Legacy `task_instruction` or `query_prefix` (for other models)
+
+**MRL implementation**:
+
+- Passed to `SentenceTransformer` constructor as `truncate_dim` parameter
+- Applied during model loading (before any embedding generation)
+- Works with all sentence-transformers backends (PyTorch, ONNX)
+
+### References
+
+- Sentence Transformers MRL docs: <https://sbert.net/examples/sentence_transformer/training/matryoshka/README.html>
+- Qwen3 Embedding blog: <https://qwenlm.github.io/blog/qwen3-embedding/>
+- HuggingFace Matryoshka blog: <https://huggingface.co/blog/matryoshka>
+
+---
+
 ## Symbol ID Lookups (Phase 1.1)
 
 **Feature**: O(1) unambiguous symbol retrieval using chunk IDs

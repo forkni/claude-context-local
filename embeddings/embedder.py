@@ -454,6 +454,15 @@ class CodeEmbedder:
                 "trust_remote_code": True,  # Required for some models like Qodo
             }
 
+            # Add Matryoshka Representation Learning (MRL) support
+            model_config = self._get_model_config()
+            truncate_dim = model_config.get("truncate_dim")
+            if truncate_dim is not None:
+                constructor_kwargs["truncate_dim"] = truncate_dim
+                self._logger.info(
+                    f"Matryoshka MRL enabled: truncating output to {truncate_dim} dimensions"
+                )
+
             # Add model_kwargs if any options (e.g., torch_dtype)
             if model_kwargs_dict:
                 constructor_kwargs["model_kwargs"] = model_kwargs_dict
@@ -507,6 +516,10 @@ class CodeEmbedder:
                         "device": resolved_device,
                         "trust_remote_code": True,
                     }
+
+                    # Preserve truncate_dim for MRL support
+                    if truncate_dim is not None:
+                        fallback_kwargs["truncate_dim"] = truncate_dim
 
                     # Preserve model_kwargs (e.g., torch_dtype)
                     if model_kwargs_dict:
@@ -930,29 +943,53 @@ class CodeEmbedder:
         self._logger.debug(f"Cache miss for query: {query[:50]}...")
 
         # Cache miss - generate embedding
-        # Check for task_instruction (e.g., CodeRankEmbed) or query_prefix
-        task_instruction = model_config.get("task_instruction")
-        query_prefix = model_config.get("query_prefix", "")
+        # Priority: instruction_mode > task_instruction > query_prefix
+        instruction_mode = model_config.get("instruction_mode")
 
-        # Prepend prefix/instruction if it exists
-        if task_instruction:
-            # Task instructions need ": " separator
-            separator = ": " if not task_instruction.endswith(": ") else ""
-            query_to_embed = task_instruction + separator + query
-        elif query_prefix:
-            # Simple prefix (e.g., "Retrieval-document: ")
-            query_to_embed = query_prefix + query
-        else:
-            query_to_embed = query
+        # Prepare encoding kwargs
+        encode_kwargs = {
+            "show_progress_bar": False,
+        }
 
-        # Generate embedding
         # Use convert_to_tensor for GPU to avoid CPU<->GPU transfers
         use_tensor = self._is_gpu_device()
+        if use_tensor:
+            encode_kwargs["convert_to_tensor"] = True
+            encode_kwargs["device"] = self.device
+
+        # Determine query formatting based on instruction mode
+        if instruction_mode == "prompt_name":
+            # Option A: Use sentence-transformers built-in prompt
+            prompt_name_value = model_config.get("prompt_name", "query")
+            encode_kwargs["prompt_name"] = prompt_name_value
+            query_to_embed = query
+            self._logger.debug(
+                f"Using prompt_name='{prompt_name_value}' for query encoding"
+            )
+        elif instruction_mode == "custom":
+            # Option B: Custom Qwen3-style instruction format
+            query_instruction = model_config.get("query_instruction", "")
+            query_to_embed = query_instruction + query
+            self._logger.debug("Using custom instruction for query encoding")
+        else:
+            # Fallback to legacy behavior for other models
+            task_instruction = model_config.get("task_instruction")
+            query_prefix = model_config.get("query_prefix", "")
+
+            if task_instruction:
+                # Task instructions need ": " separator (e.g., CodeRankEmbed)
+                separator = ": " if not task_instruction.endswith(": ") else ""
+                query_to_embed = task_instruction + separator + query
+            elif query_prefix:
+                # Simple prefix (e.g., "Retrieval-document: ")
+                query_to_embed = query_prefix + query
+            else:
+                query_to_embed = query
+
+        # Generate embedding
         embedding = self.model.encode(
             [query_to_embed],
-            show_progress_bar=False,
-            convert_to_tensor=use_tensor,
-            device=self.device if use_tensor else None,
+            **encode_kwargs,
         )[0]
 
         # Convert back to numpy if tensor

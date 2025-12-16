@@ -39,6 +39,13 @@ MODEL_REGISTRY = {
         "vram_gb": "2.3GB",
         "fallback_batch_size": 256,
         "vram_tier": "minimal",  # Usable on all GPUs
+        # Matryoshka Representation Learning (MRL) support
+        "mrl_dimensions": [1024, 512, 256, 128, 64, 32],  # Supported MRL dimensions
+        "truncate_dim": None,  # Optional: Set to reduce output dimension (e.g., 512)
+        # Instruction tuning for code retrieval
+        "instruction_mode": "custom",  # "custom" or "prompt_name"
+        "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
+        "prompt_name": "query",  # Alternative: use model's built-in prompt (generic)
     },
     "Qwen/Qwen3-Embedding-4B": {
         "dimension": 2560,
@@ -47,6 +54,21 @@ MODEL_REGISTRY = {
         "vram_gb": "8-10GB",
         "fallback_batch_size": 128,
         "vram_tier": "desktop",  # 12GB+ recommended
+        # Matryoshka Representation Learning (MRL) support
+        "mrl_dimensions": [
+            2560,
+            1024,
+            512,
+            256,
+            128,
+            64,
+            32,
+        ],  # Supported MRL dimensions
+        "truncate_dim": 1024,  # ENABLED BY DEFAULT: Match 0.6B storage with 4B quality (36 layers)
+        # Instruction tuning for code retrieval
+        "instruction_mode": "custom",  # "custom" or "prompt_name"
+        "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
+        "prompt_name": "query",  # Alternative: use model's built-in prompt (generic)
     },
     "Qwen/Qwen3-Embedding-8B": {
         "dimension": 4096,
@@ -55,6 +77,22 @@ MODEL_REGISTRY = {
         "vram_gb": "16GB",
         "fallback_batch_size": 64,
         "vram_tier": "workstation",  # 20GB+ recommended
+        # Matryoshka Representation Learning (MRL) support
+        "mrl_dimensions": [
+            4096,
+            2560,
+            1024,
+            512,
+            256,
+            128,
+            64,
+            32,
+        ],  # Supported MRL dimensions
+        "truncate_dim": None,  # Optional: Set to reduce output dimension
+        # Instruction tuning for code retrieval
+        "instruction_mode": "custom",  # "custom" or "prompt_name"
+        "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
+        "prompt_name": "query",  # Alternative: use model's built-in prompt (generic)
     },
     # Code-specific models (optimized for Python, C++, and programming languages)
     "nomic-ai/CodeRankEmbed": {
@@ -68,6 +106,61 @@ MODEL_REGISTRY = {
         "trust_remote_code": True,
     },
 }
+
+
+def resolve_qwen3_variant_for_lookup(project_hash: str, project_name: str) -> str:
+    """Resolve actual Qwen3 variant indexed for a project.
+
+    Qwen3 uses adaptive selection (0.6B vs 4B) based on VRAM, so the actual
+    indexed variant may differ from MODEL_POOL_CONFIG["qwen3"].
+
+    This function checks which Qwen3 variant is actually indexed for the given
+    project and returns the correct full model name for directory lookup.
+
+    Args:
+        project_hash: Project hash for directory matching
+        project_name: Project name for directory matching
+
+    Returns:
+        Full model name of indexed Qwen3 variant ("Qwen/Qwen3-Embedding-0.6B" or
+        "Qwen/Qwen3-Embedding-4B"), or MODEL_POOL_CONFIG["qwen3"] if neither found.
+
+    Example:
+        >>> resolve_qwen3_variant_for_lookup("abc123", "my-project")
+        "Qwen/Qwen3-Embedding-0.6B"  # If 0.6B variant is indexed
+    """
+    from pathlib import Path
+
+    storage_dir = Path.home() / ".claude_code_search" / "projects"
+
+    # Check for existing Qwen3 index (either 0.6B or 4B)
+    # Try 0.6B first (more common on typical systems)
+    qwen_variants = [
+        ("Qwen/Qwen3-Embedding-0.6B", "qwen3-0.6b", 1024),
+        ("Qwen/Qwen3-Embedding-4B", "qwen3-4b", 2560),
+    ]
+
+    for model_name, slug, dim in qwen_variants:
+        # Check for both hash variants (drive-agnostic and legacy)
+        pattern = f"{project_name}_{project_hash}_{slug}_{dim}d"
+        index_path = storage_dir / pattern / "index" / "stats.json"
+        if index_path.exists():
+            logging.getLogger(__name__).debug(
+                f"[QWEN3_RESOLUTION] Found {model_name} index at {pattern}"
+            )
+            return model_name
+
+    # No index found → use VRAM-based selection for creation context
+    # (During search lookups, this will find existing index above)
+    # (During index creation, this selects correct variant for hardware)
+    from search.vram_manager import VRAMTierManager
+
+    tier = VRAMTierManager().detect_tier()
+    logging.getLogger(__name__).debug(
+        f"[QWEN3_RESOLUTION] No Qwen3 index found, using VRAM tier '{tier.name}': {tier.recommended_model}"
+    )
+    return tier.recommended_model  # e.g., "Qwen/Qwen3-Embedding-0.6B" for 8GB VRAM
+
 
 # Multi-hop search configuration
 # Based on empirical testing: 2 hops with 0.3 expansion provides optimal balance

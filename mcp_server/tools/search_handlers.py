@@ -148,8 +148,29 @@ def _route_query_to_model(
                 "routed_model": decision.model_key,
             }
 
-        # Last resort: scan for any indexed model
+        # Last resort: Try configured default model first, then scan remaining models
+        from search.config import get_search_config
+
+        config = get_search_config()
+        default_model = config.routing.default_model  # "bge_m3"
+
+        # Try default model first
+        logger.info(f"Trying configured default model: {default_model}")
+        project_dir = get_project_storage_dir(current_project, model_key=default_model)
+        stats_file = project_dir / "index" / "stats.json"
+        if stats_file.exists():
+            logger.info(f"Using configured default model: {default_model}")
+            return default_model, {
+                "model_selected": default_model,
+                "confidence": 0.0,
+                "reason": f"Fallback to configured default ({default_model}), routed '{decision.model_key}' not indexed",
+                "routed_model": decision.model_key,
+            }
+
+        # Then scan remaining models (excluding default since we already checked it)
         for model_key_candidate in MODEL_POOL_CONFIG.keys():
+            if model_key_candidate == default_model:
+                continue  # Already checked above
             project_dir = get_project_storage_dir(
                 current_project, model_key=model_key_candidate
             )

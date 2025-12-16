@@ -509,3 +509,154 @@ def test_query_cache_with_task_instruction(mock_sentence_transformer):
     stats = embedder.get_cache_stats()
     assert stats["hits"] == 1
     assert stats["misses"] == 1
+
+
+@patch("embeddings.embedder.SentenceTransformer")
+def test_mrl_truncate_dim_support(mock_sentence_transformer):
+    """Test that Matryoshka Representation Learning (MRL) truncate_dim is passed correctly."""
+    # Track constructor kwargs
+    constructor_kwargs_list = []
+
+    def mock_constructor(model_name_or_path, **kwargs):
+        constructor_kwargs_list.append(kwargs)
+        mock_model = MagicMock()
+        mock_model.encode.return_value = np.ones((1, 1024), dtype=np.float32) * 0.5
+        return mock_model
+
+    mock_sentence_transformer.side_effect = mock_constructor
+
+    # Test Qwen3-4B with MRL enabled (truncate_dim=1024)
+    embedder = CodeEmbedder(model_name="Qwen/Qwen3-Embedding-4B")
+
+    # Trigger model loading by accessing the model property
+    _ = embedder.model
+
+    # Verify truncate_dim was passed to constructor
+    assert len(constructor_kwargs_list) == 1
+    assert "truncate_dim" in constructor_kwargs_list[0]
+    assert constructor_kwargs_list[0]["truncate_dim"] == 1024
+
+    # Test embedding works
+    query = "test query"
+    embedding = embedder.embed_query(query)
+    assert isinstance(embedding, np.ndarray)
+    assert embedding.shape == (1024,)  # Should match truncate_dim
+
+
+@patch("embeddings.embedder.SentenceTransformer")
+def test_instruction_mode_custom(mock_sentence_transformer):
+    """Test custom instruction mode for Qwen3 models."""
+    # Track encoded queries
+    encoded_queries = []
+
+    def mock_encode(
+        sentences,
+        show_progress_bar=False,
+        convert_to_tensor=False,
+        device=None,
+        **kwargs,
+    ):
+        encoded_queries.append((sentences[0], kwargs))
+        return np.ones((len(sentences), 1024), dtype=np.float32) * 0.5
+
+    mock_model = MagicMock()
+    mock_model.encode.side_effect = mock_encode
+    mock_sentence_transformer.return_value = mock_model
+
+    # Test Qwen3-0.6B with custom instruction mode
+    embedder = CodeEmbedder(model_name="Qwen/Qwen3-Embedding-0.6B")
+
+    query = "find authentication functions"
+    _ = embedder.embed_query(query)
+
+    # Verify custom instruction was prepended
+    assert len(encoded_queries) == 1
+    encoded_query, encode_kwargs = encoded_queries[0]
+    assert (
+        "Instruct: Retrieve source code implementations matching the query"
+        in encoded_query
+    )
+    assert "Query: " in encoded_query
+    assert "find authentication functions" in encoded_query
+    # Should NOT have prompt_name in kwargs for custom mode
+    assert "prompt_name" not in encode_kwargs
+
+
+@patch("embeddings.embedder.SentenceTransformer")
+def test_instruction_mode_prompt_name(mock_sentence_transformer):
+    """Test prompt_name instruction mode for Qwen3 models."""
+    # Track encoded queries
+    encoded_queries = []
+
+    def mock_encode(
+        sentences,
+        show_progress_bar=False,
+        convert_to_tensor=False,
+        device=None,
+        prompt_name=None,
+        **kwargs,
+    ):
+        encoded_queries.append((sentences[0], prompt_name))
+        return np.ones((len(sentences), 1024), dtype=np.float32) * 0.5
+
+    mock_model = MagicMock()
+    mock_model.encode.side_effect = mock_encode
+    mock_sentence_transformer.return_value = mock_model
+
+    # Test Qwen3-0.6B with prompt_name mode (temporarily switch mode)
+    embedder = CodeEmbedder(model_name="Qwen/Qwen3-Embedding-0.6B")
+
+    # Override instruction_mode to test prompt_name behavior
+    MODEL_REGISTRY["Qwen/Qwen3-Embedding-0.6B"]["instruction_mode"] = "prompt_name"
+    embedder._model_config = None  # Clear cached config
+
+    query = "find authentication functions"
+    _ = embedder.embed_query(query)
+
+    # Verify prompt_name was passed to encode
+    assert len(encoded_queries) == 1
+    encoded_query, prompt_name_arg = encoded_queries[0]
+    assert encoded_query == "find authentication functions"  # No prefix added
+    assert prompt_name_arg == "query"  # prompt_name passed to encode
+
+    # Reset to custom mode
+    MODEL_REGISTRY["Qwen/Qwen3-Embedding-0.6B"]["instruction_mode"] = "custom"
+
+
+@patch("embeddings.embedder.SentenceTransformer")
+def test_instruction_mode_cache_keys(mock_sentence_transformer):
+    """Test that different instruction modes produce different cache keys."""
+    # Mock the model
+    encode_count = [0]
+
+    def mock_encode(
+        sentences,
+        show_progress_bar=False,
+        convert_to_tensor=False,
+        device=None,
+        **kwargs,
+    ):
+        encode_count[0] += 1
+        return np.ones((len(sentences), 1024), dtype=np.float32) * 0.5
+
+    mock_model = MagicMock()
+    mock_model.encode.side_effect = mock_encode
+    mock_sentence_transformer.return_value = mock_model
+
+    # Create embedder with custom instruction mode
+    embedder = CodeEmbedder(model_name="Qwen/Qwen3-Embedding-0.6B")
+
+    query = "test query"
+
+    # First call - cache miss
+    embedding1 = embedder.embed_query(query)
+    assert encode_count[0] == 1
+
+    # Second call with same query - cache hit
+    embedding2 = embedder.embed_query(query)
+    assert encode_count[0] == 1  # No new encode
+    assert np.allclose(embedding1, embedding2)
+
+    stats = embedder.get_cache_stats()
+    assert stats["hits"] == 1
+    assert stats["misses"] == 1

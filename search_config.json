@@ -1,6 +1,6 @@
 {
-  "embedding_model_name": "Qwen/Qwen3-Embedding-4B",
-  "model_dimension": 2560,
+  "embedding_model_name": "Qwen/Qwen3-Embedding-0.6B",
+  "model_dimension": 1024,
   "embedding_batch_size": 128,
   "query_cache_size": 128,
   "default_search_mode": "hybrid",
@@ -34,7 +34,7 @@
   "multi_hop_initial_k_multiplier": 2.0,
   "multi_model_enabled": true,
   "routing_default_model": "bge_m3",
-  "reranker_enabled": false,
+  "reranker_enabled": true,
   "reranker_model_name": "BAAI/bge-reranker-v2-m3",
   "reranker_top_k_candidates": 50,
   "reranker_min_vram_gb": 2.0,
