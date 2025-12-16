@@ -179,11 +179,29 @@ def main():
             sys.exit(1)
 
         with open(json_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    else:
-        # Read from stdin
+            content = f.read()
+
+        # Handle pip-audit header line (e.g., "No known vulnerabilities found")
+        # Find the start of JSON content
+        json_start = content.find("{")
+        if json_start == -1:
+            print("Error: No JSON object found in file", file=sys.stderr)
+            sys.exit(1)
+
         try:
-            data = json.load(sys.stdin)
+            data = json.loads(content[json_start:])
+        except json.JSONDecodeError as e:
+            print(f"Error: Invalid JSON: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        # Read from stdin - also handle header line
+        try:
+            content = sys.stdin.read()
+            json_start = content.find("{")
+            if json_start == -1:
+                print("Error: No JSON object found in input", file=sys.stderr)
+                sys.exit(1)
+            data = json.loads(content[json_start:])
         except json.JSONDecodeError as e:
             print(f"Error: Invalid JSON input: {e}", file=sys.stderr)
             print("\nUsage:", file=sys.stderr)
