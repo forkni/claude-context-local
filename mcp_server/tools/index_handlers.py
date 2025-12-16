@@ -573,8 +573,8 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
     if project_info_file.exists():
         with open(project_info_file) as f:
             project_info = json.load(f)
-        stored_include = project_info.get("include_dirs")
-        stored_exclude = project_info.get("exclude_dirs")
+        stored_include = project_info.get("user_included_dirs")
+        stored_exclude = project_info.get("user_excluded_dirs")
 
     # Determine effective filters
     # If user didn't provide filters, use stored filters (auto-reindex case)
