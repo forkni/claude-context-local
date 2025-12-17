@@ -330,11 +330,12 @@ echo   3. Configure Search Weights ^(BM25 vs Dense^)
 echo   4. Select Embedding Model
 echo   5. Configure Parallel Search
 echo   6. Configure Neural Reranker
-echo   7. Reset to Defaults
+echo   7. Configure Entity Tracking
+echo   8. Reset to Defaults
 echo   0. Back to Main Menu
 echo.
 set "search_choice="
-set /p search_choice="Select option (0-7): "
+set /p search_choice="Select option (0-8): "
 
 REM Handle empty input gracefully
 if not defined search_choice (
@@ -352,10 +353,11 @@ if "!search_choice!"=="3" goto set_weights
 if "!search_choice!"=="4" goto select_embedding_model
 if "!search_choice!"=="5" goto configure_parallel_search
 if "!search_choice!"=="6" goto configure_reranker
-if "!search_choice!"=="7" goto reset_config
+if "!search_choice!"=="7" goto configure_entity_tracking
+if "!search_choice!"=="8" goto reset_config
 if "!search_choice!"=="0" goto menu_restart
 
-echo [ERROR] Invalid choice. Please select 0-7.
+echo [ERROR] Invalid choice. Please select 0-8.
 pause
 cls
 goto search_config_menu
@@ -1282,6 +1284,65 @@ if defined SELECTED_MODEL (
 echo.
 pause
 goto menu_restart
+
+:configure_entity_tracking
+echo.
+echo === Configure Entity Tracking ===
+echo.
+echo Entity Tracking extracts additional code relationships during indexing:
+echo   - Enum members
+echo   - Default parameter values
+echo   - Context manager usage
+echo.
+echo Impact:
+echo   - Enabled: More detailed relationship data ^(~25%% slower indexing^)
+echo   - Disabled: Core relationships only ^(faster indexing^)
+echo.
+echo Core relationships ^(always tracked^):
+echo   - Inheritance, type annotations, imports
+echo   - Decorators, exceptions, instantiations
+echo   - Class attributes, dataclass fields, constants
+echo.
+echo Current Setting:
+.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Entity Tracking:', 'Enabled' if cfg.performance.enable_entity_tracking else 'Disabled')" 2>nul
+echo.
+echo   1. Enable Entity Tracking
+echo   2. Disable Entity Tracking
+echo   0. Back to Search Configuration
+echo.
+set "entity_choice="
+set /p entity_choice="Select option (0-2): "
+
+if not defined entity_choice goto search_config_menu
+if "!entity_choice!"=="" goto search_config_menu
+if "!entity_choice!"=="0" goto search_config_menu
+
+if "!entity_choice!"=="1" (
+    echo.
+    echo [INFO] Enabling entity tracking...
+    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.enable_entity_tracking = True; mgr.save_config(cfg); print('[OK] Entity tracking enabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Re-index project to apply changes
+    )
+)
+if "!entity_choice!"=="2" (
+    echo.
+    echo [INFO] Disabling entity tracking...
+    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.enable_entity_tracking = False; mgr.save_config(cfg); print('[OK] Entity tracking disabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Re-index project to apply changes
+    )
+)
+
+if not "!entity_choice!"=="1" if not "!entity_choice!"=="2" (
+    echo [ERROR] Invalid choice. Please select 0-2.
+)
+pause
+goto search_config_menu
 
 :reset_config
 echo.

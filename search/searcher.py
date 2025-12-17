@@ -2,7 +2,7 @@
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from embeddings.embedder import CodeEmbedder
@@ -28,6 +28,7 @@ class SearchResult:
     docstring: Optional[str]
     tags: List[str]
     context_info: Dict[str, Any]
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class IntelligentSearcher:

@@ -22,20 +22,34 @@ from graph.relationship_types import (
 
 
 def test_relationship_type_enum_values():
-    """Test that all 12 relationship types are defined."""
+    """Test that all 21 relationship types are defined."""
     expected_types = {
+        # Priority 1: Foundation
         "calls",
         "inherits",
         "uses_type",
         "imports",
+        # Priority 2: Core Relationships
         "decorates",
         "raises",
         "catches",
         "instantiates",
+        # Priority 3: Advanced Relationships
         "implements",
         "overrides",
         "assigns_to",
         "reads_from",
+        # Priority 4: Constants & Definitions (Entity Tracking)
+        "defines_constant",
+        "defines_enum_member",
+        "defines_class_attr",
+        "defines_field",
+        # Priority 5: References & Usage (Entity Tracking)
+        "uses_constant",
+        "uses_default",
+        "uses_global",
+        "asserts_type",
+        "uses_context_manager",
     }
 
     actual_types = {rt.value for rt in RelationshipType}
@@ -320,7 +334,7 @@ def test_get_relationship_field_mapping():
 
     # Check structure
     assert isinstance(mapping, dict)
-    assert len(mapping) == 12
+    assert len(mapping) == 21
 
     # Check specific mappings
     assert mapping["inherits"] == ("parent_classes", "child_classes")

@@ -513,7 +513,9 @@ class CodeRelationshipAnalyzer:
         # Note: find_similar_to_chunk() returns searcher.SearchResult (different type!)
         similar_code = []
         try:
-            similar_results = self.searcher.find_similar_to_chunk(target_id, k=5)
+            similar_results = self.searcher.find_similar_to_chunk(
+                target_id, k=10, rerank=True
+            )
             for result in similar_results:
                 # Both SearchResult types now use chunk_id
                 result_id = result.chunk_id
@@ -524,12 +526,19 @@ class CodeRelationshipAnalyzer:
                     file_path, None, exclude_dirs
                 ):
                     # Convert searcher.SearchResult to dict (has direct attributes, not metadata)
+                    # Use reranker score if available (set by neural_reranker), else FAISS score
+                    score_value = getattr(result, "score", result.similarity_score)
+                    # Convert to float to handle both real values and Mock objects in tests
+                    try:
+                        final_score = round(float(score_value), 2)
+                    except (TypeError, ValueError):
+                        final_score = 0.0
                     similar_dict = {
                         "chunk_id": result_id,
                         "file": file_path,
                         "lines": f"{result.start_line}-{result.end_line}",
                         "kind": result.chunk_type,
-                        "score": round(result.similarity_score, 2),
+                        "score": final_score,
                     }
                     similar_code.append(similar_dict)
         except Exception as e:

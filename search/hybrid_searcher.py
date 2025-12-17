@@ -658,19 +658,23 @@ class HybridSearcher:
 
         return final_results
 
-    def find_similar_to_chunk(self, chunk_id: str, k: int = 5) -> List:
+    def find_similar_to_chunk(
+        self, chunk_id: str, k: int = 5, rerank: bool = False
+    ) -> List:
         """
         Find chunks similar to a given chunk using dense semantic search.
 
         Args:
             chunk_id: The ID of the reference chunk
             k: Number of similar chunks to return
+            rerank: Whether to apply neural reranking (default: False)
 
         Returns:
             List of SearchResult objects with similar chunks
         """
-        # Use dense index for semantic similarity
-        similar_chunks = self.dense_index.get_similar_chunks(chunk_id, k)
+        # Fetch more candidates when reranking to improve quality
+        fetch_k = k * 2 if rerank else k
+        similar_chunks = self.dense_index.get_similar_chunks(chunk_id, fetch_k)
 
         # Convert to SearchResult format expected by MCP tool
         # Import here to avoid circular dependency
@@ -693,10 +697,61 @@ class HybridSearcher:
                 docstring=metadata.get("docstring"),
                 tags=metadata.get("tags", []),
                 context_info={},
+                metadata={"content_preview": metadata.get("content_preview", "")},
             )
             results.append(result)
 
-        return results
+        # Apply neural reranking if requested and available
+        if rerank and len(results) > 0:
+            should_enable = self.reranking_engine.should_enable_neural_reranking()
+
+            # Handle state transitions (lazy load reranker)
+            if should_enable and self.neural_reranker is None:
+                from .config import get_search_config
+
+                config = get_search_config()
+                self.neural_reranker = NeuralReranker(
+                    model_name=config.reranker.model_name,
+                    batch_size=config.reranker.batch_size,
+                )
+                self._logger.debug(
+                    "[RERANK-SIMILAR] Neural reranker initialized for find_similar_to_chunk"
+                )
+            elif not should_enable and self.neural_reranker is not None:
+                # Cleanup when disabled (though this is unlikely during runtime)
+                self.neural_reranker.cleanup()
+                self.neural_reranker = None
+                self._logger.debug("[RERANK-SIMILAR] Neural reranker disabled")
+
+            # Proceed with reranking if enabled
+            if should_enable and self.neural_reranker:
+                # Get reference chunk content to use as "query"
+                ref_metadata = self.dense_index.get_chunk_by_id(chunk_id)
+                query_content = (
+                    ref_metadata.get("content_preview", "") if ref_metadata else ""
+                )
+
+                if query_content:
+                    self._logger.debug(
+                        f"[RERANK-SIMILAR] Reranking {len(results)} candidates "
+                        f"using reference chunk as query (length: {len(query_content)} chars)"
+                    )
+                    try:
+                        results = self.neural_reranker.rerank(query_content, results, k)
+                        self._logger.debug(
+                            f"[RERANK-SIMILAR] Returned {len(results)} reranked results"
+                        )
+                    except Exception as e:
+                        self._logger.warning(
+                            f"[RERANK-SIMILAR] Reranking failed, using FAISS results: {e}"
+                        )
+                else:
+                    self._logger.warning(
+                        f"[RERANK-SIMILAR] No content found for reference chunk {chunk_id}, "
+                        "skipping reranking"
+                    )
+
+        return results[:k]
 
     @deprecated(replacement="self.multi_hop_searcher.search()", version="0.7.0")
     def _multi_hop_search_internal(

@@ -84,7 +84,16 @@ class IncrementalIndexer:
         """
         self.indexer = indexer or Indexer()
         self.embedder = embedder or CodeEmbedder()
-        self.chunker = chunker or MultiLanguageChunker()
+
+        # Load configuration for chunker initialization
+        config = get_search_config()
+
+        # Initialize chunker with directory filters and entity tracking config
+        self.chunker = chunker or MultiLanguageChunker(
+            include_dirs=include_dirs,
+            exclude_dirs=exclude_dirs,
+            enable_entity_tracking=config.performance.enable_entity_tracking,
+        )
         self.snapshot_manager = snapshot_manager or SnapshotManager()
 
         # Store directory filters for MerkleDAG creation
@@ -97,7 +106,6 @@ class IncrementalIndexer:
         )
 
         # Load parallel chunking configuration
-        config = get_search_config()
         self.enable_parallel_chunking = config.performance.enable_parallel_chunking
         self.max_chunking_workers = config.performance.max_chunking_workers
 

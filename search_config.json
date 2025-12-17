@@ -19,6 +19,7 @@
   "max_parallel_workers": 2,
   "enable_parallel_chunking": true,
   "max_chunking_workers": 4,
+  "enable_entity_tracking": false,
   "prefer_gpu": true,
   "gpu_memory_threshold": 0.8,
   "enable_fp16": true,

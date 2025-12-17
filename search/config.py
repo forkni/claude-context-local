@@ -205,7 +205,7 @@ class SearchModeConfig:
 
 @dataclass
 class PerformanceConfig:
-    """GPU, parallelism, caching settings (13 fields)."""
+    """GPU, parallelism, caching settings (14 fields)."""
 
     use_parallel_search: bool = True
     max_parallel_workers: int = 2
@@ -213,6 +213,9 @@ class PerformanceConfig:
     # Parallel Chunking Configuration
     enable_parallel_chunking: bool = True  # Enable parallel file chunking
     max_chunking_workers: int = 4  # ThreadPoolExecutor workers for chunking
+    enable_entity_tracking: bool = (
+        False  # Enable P4-5 entity extractors (enums, defaults, context managers)
+    )
 
     # GPU Configuration
     prefer_gpu: bool = True
@@ -333,6 +336,7 @@ class SearchConfig:
             "max_parallel_workers": self.performance.max_parallel_workers,
             "enable_parallel_chunking": self.performance.enable_parallel_chunking,
             "max_chunking_workers": self.performance.max_chunking_workers,
+            "enable_entity_tracking": self.performance.enable_entity_tracking,
             "prefer_gpu": self.performance.prefer_gpu,
             "gpu_memory_threshold": self.performance.gpu_memory_threshold,
             "enable_fp16": self.performance.enable_fp16,
@@ -407,6 +411,7 @@ class SearchConfig:
             max_parallel_workers=data.get("max_parallel_workers", 2),
             enable_parallel_chunking=data.get("enable_parallel_chunking", True),
             max_chunking_workers=data.get("max_chunking_workers", 4),
+            enable_entity_tracking=data.get("enable_entity_tracking", False),
             prefer_gpu=data.get("prefer_gpu", True),
             gpu_memory_threshold=data.get("gpu_memory_threshold", 0.8),
             enable_fp16=data.get("enable_fp16", True),
@@ -522,6 +527,10 @@ class SearchConfigManager:
                 self._bool_from_env,
             ),
             "CLAUDE_MAX_CHUNKING_WORKERS": ("max_chunking_workers", int),
+            "CLAUDE_ENABLE_ENTITY_TRACKING": (
+                "enable_entity_tracking",
+                self._bool_from_env,
+            ),
             "CLAUDE_PREFER_GPU": ("prefer_gpu", self._bool_from_env),
             "CLAUDE_GPU_THRESHOLD": ("gpu_memory_threshold", float),
             "CLAUDE_ENABLE_FP16": ("enable_fp16", self._bool_from_env),

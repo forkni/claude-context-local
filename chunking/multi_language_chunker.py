@@ -311,6 +311,7 @@ class MultiLanguageChunker:
         root_path: Optional[str] = None,
         include_dirs: Optional[list] = None,
         exclude_dirs: Optional[list] = None,
+        enable_entity_tracking: bool = False,
     ):
         """Initialize multi-language chunker.
 
@@ -318,8 +319,10 @@ class MultiLanguageChunker:
             root_path: Optional root path for relative path calculation
             include_dirs: Optional list of directories to include
             exclude_dirs: Optional list of directories to exclude
+            enable_entity_tracking: Enable P4-5 entity extractors (enums, defaults, context managers). Default False.
         """
         self.root_path = root_path
+        self.enable_entity_tracking = enable_entity_tracking
         # Use AST chunker for Python (more mature implementation)
         # Use tree-sitter for other languages
         self.tree_sitter_chunker = TreeSitterChunker()
@@ -342,26 +345,38 @@ class MultiLanguageChunker:
         self.relationship_extractors = []
         try:
             self.relationship_extractors = [
-                # Priority 1 (Foundation)
+                # Priority 1 (Foundation) - always enabled
                 InheritanceExtractor(),
                 TypeAnnotationExtractor(),
                 ImportExtractor(),
-                # Priority 2 (Core)
+                # Priority 2 (Core) - always enabled
                 DecoratorExtractor(),
                 ExceptionExtractor(),
                 InstantiationExtractor(),
-                # Priority 4-5 (Entity Tracking) - Tier 1 enabled
-                ConstantExtractor(),
-                EnumMemberExtractor(),
-                DefaultParameterExtractor(),
-                ClassAttributeExtractor(),
-                DataclassFieldExtractor(),
-                ContextManagerExtractor(),
+                # Promoted to P2 - essential for understanding code structure
+                ClassAttributeExtractor(),  # Class data models (self.x = ...)
+                DataclassFieldExtractor(),  # Dataclass fields (field(...))
+                ConstantExtractor(),  # Module-level UPPER_CASE constants
             ]
-            logger.info(
-                f"Phase 3+: Initialized {len(self.relationship_extractors)} relationship extractors "
-                f"(foundation + core + entity tracking Tier 1)"
-            )
+
+            # Priority 4-5 (Entity Tracking) - conditional
+            if enable_entity_tracking:
+                self.relationship_extractors.extend(
+                    [
+                        EnumMemberExtractor(),
+                        DefaultParameterExtractor(),
+                        ContextManagerExtractor(),
+                    ]
+                )
+                logger.info(
+                    f"Phase 3+: Initialized {len(self.relationship_extractors)} relationship extractors "
+                    f"(foundation + core + data models + entity tracking)"
+                )
+            else:
+                logger.info(
+                    f"Phase 3+: Initialized {len(self.relationship_extractors)} relationship extractors "
+                    f"(foundation + core + data models; entity tracking disabled)"
+                )
         except Exception as e:
             logger.warning(f"Failed to initialize Phase 3+ extractors: {e}")
 
