@@ -4,13 +4,146 @@ Complete version history and feature timeline for claude-context-local MCP serve
 
 ## Current Status: All Features Operational (2025-12-16)
 
-- **Version**: 0.6.4
+- **Version**: 0.6.5
 - **Status**: Production-ready
-- **Test Coverage**: 720+ unit tests + integration tests (100% pass rate)
+- **Test Coverage**: 750+ unit tests + integration tests (100% pass rate)
 - **Index Quality**: 109 active files, 1,199 chunks (site-packages excluded, BGE-M3 1024d, ~24 MB)
 - **Token Reduction**: 85-95% (validated benchmark)
 - **Call Graph Resolution**: Phase 4 complete (~90% accuracy)
-- **Recent Features**: Qwen3 Instruction Tuning, Matryoshka MRL, VRAM Tier Management, Drive-Agnostic Paths
+- **Recent Features**: Entity Tracking (Constants, Enums, Defaults), Qwen3 Instruction Tuning, Matryoshka MRL
+
+---
+
+## v0.6.5 - Entity Tracking System (2025-12-16)
+
+### Status: PRODUCTION-READY ✅
+
+**Added 3 new relationship extractors for tracking constants, enum members, and default parameters**
+
+### Highlights
+
+- **ConstantExtractor** - Track module-level constant definitions (UPPER_CASE) and their usages
+- **EnumMemberExtractor** - Track enum member definitions (Enum, IntEnum, StrEnum, Flag)
+- **DefaultParameterExtractor** - Track default parameter value references
+- **find_connections Integration** - Display entity tracking relationships in impact analysis
+
+### Key Changes
+
+#### New Relationship Types (9 total)
+
+**Priority 4 - Definitions**:
+- `DEFINES_CONSTANT` - Module-level constant definitions (e.g., `TIMEOUT = 30`)
+- `DEFINES_ENUM_MEMBER` - Enum member definitions (e.g., `Status.ACTIVE = 1`)
+- `DEFINES_CLASS_ATTR` - Class attribute definitions (planned)
+- `DEFINES_FIELD` - Dataclass field definitions (planned)
+
+**Priority 5 - References**:
+- `USES_CONSTANT` - Constant usage in functions/methods
+- `USES_DEFAULT` - Default parameter value references
+- `USES_GLOBAL` - Global statement usage (planned)
+- `ASSERTS_TYPE` - isinstance() type assertions (planned)
+- `USES_CONTEXT_MANAGER` - Context manager usage (planned)
+
+#### ConstantExtractor Features
+
+- **Extraction**: Module-level UPPER_CASE assignments (≥2 chars, non-private)
+- **Filtering**: Excludes trivial values (single digits -9 to 9, empty strings)
+- **Smart detection**: Distinguishes definitions from usages based on chunk type
+- **Examples**:
+  - Definition: `TIMEOUT = 30` → `DEFINES_CONSTANT`
+  - Usage: `time.sleep(TIMEOUT)` → `USES_CONSTANT`
+
+#### EnumMemberExtractor Features
+
+- **Supported variants**: Enum, IntEnum, StrEnum, Flag
+- **Qualified names**: `Status.ACTIVE`, `Priority.HIGH`
+- **Annotation support**: Handles typed enum members (`ACTIVE: int = 1`)
+- **Filtering**: Excludes private members (`_INTERNAL`)
+
+#### DefaultParameterExtractor Features
+
+- **Tracked defaults**:
+  - Name references: `def connect(timeout=DEFAULT_TIMEOUT)`
+  - Call expressions: `def init(config=Config())`
+  - Attribute access: `def connect(timeout=config.TIMEOUT)`
+- **Skipped defaults**: None, booleans, small numbers, empty strings/collections
+- **Metadata**: Includes parameter name and default type (name/call/attribute)
+
+#### find_connections Tool Integration
+
+Added 4 new fields to `ImpactReport`:
+- `defines_constants` - Constants defined by this code
+- `uses_constants` - Constants used by this code
+- `defines_enum_members` - Enum members defined by this code
+- `uses_defaults` - Default parameter values used by this code
+
+**Example output**:
+```json
+{
+  "defines_enum_members": [
+    {"target_name": "RelationshipType.CALLS", "line": 10, ...},
+    {"target_name": "RelationshipType.DEFINES_CONSTANT", "line": 65, ...}
+  ],
+  "uses_constants": [
+    {"target_name": "FAISS_INDEX_FILENAME", "line": 42, ...}
+  ],
+  "uses_defaults": [
+    {"target_name": "DEFAULT_TIMEOUT", "parameter": "timeout", ...}
+  ]
+}
+```
+
+### Files Modified
+
+**New Extractors** (3 files):
+- `graph/relationship_extractors/constant_extractor.py` (250 lines)
+- `graph/relationship_extractors/enum_extractor.py` (180 lines)
+- `graph/relationship_extractors/default_param_extractor.py` (299 lines)
+
+**Core Infrastructure**:
+- `graph/relationship_types.py` - Added 9 new RelationshipType enum values
+- `graph/relationship_extractors/__init__.py` - Exported new extractors
+- `mcp_server/tools/code_relationship_analyzer.py` - Updated ImpactReport for entity tracking
+
+**Tests** (30+ tests):
+- `tests/unit/test_entity_tracking_extractors.py` (522 lines)
+  - TestConstantExtractor: 8 tests
+  - TestEnumMemberExtractor: 7 tests
+  - TestDefaultParameterExtractor: 14 tests
+  - TestEntityTrackingIntegration: 1 test
+
+### Test Coverage
+
+- **Before**: 720 unit tests
+- **After**: 750+ unit tests (+30 tests, +4.2%)
+- **Pass rate**: 100%
+
+### Use Cases
+
+**Find constant usages**:
+```
+/find_connections --symbol_name "FAISS_INDEX_FILENAME"
+# Shows all functions using this constant
+```
+
+**Find enum member usages**:
+```
+/find_connections --chunk_id "types.py:10-50:class:Status"
+# Shows all enum members and their definitions
+```
+
+**Track default parameter dependencies**:
+```
+/find_connections --symbol_name "connect"
+# Shows constants used as default parameters
+```
+
+### Refactoring Support
+
+Entity tracking enables:
+- **Constant refactoring**: Find all usages before renaming
+- **Enum migration**: Track enum member references across codebase
+- **Default value changes**: Identify functions affected by constant changes
 
 ---
 

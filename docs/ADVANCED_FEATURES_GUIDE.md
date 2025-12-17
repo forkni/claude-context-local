@@ -20,7 +20,8 @@ Complete guide to advanced features in claude-context-local MCP server.
 14. [Symbol ID Lookups (Phase 1.1)](#symbol-id-lookups-phase-11)
 15. [AI Guidance Messages (Phase 1.2)](#ai-guidance-messages-phase-12)
 16. [Dependency Analysis (Phase 1.3)](#dependency-analysis-phase-13)
-17. [Self-Healing Index Sync](#self-healing-index-sync)
+17. [Entity Tracking (Phase 1.4)](#entity-tracking-phase-14)
+18. [Self-Healing Index Sync](#self-healing-index-sync)
 
 ---
 
@@ -2306,6 +2307,219 @@ def process():
 - Qualified chunk IDs stored in: `chunks_metadata.json`
 - Call relationships in: `call_graph.json`
 - Format: `{"ClassName.method": {"calls": ["OtherClass.method"], "called_by": [...]}}`
+
+---
+
+## Entity Tracking (Phase 1.4)
+
+**Feature**: Track constants, enum members, and default parameter references across the codebase
+
+**Status**: ✅ **Production-Ready** (v0.6.5+)
+
+### Overview
+
+Entity tracking enables precise discovery of how constants, enums, and default parameters are defined and used throughout your codebase. This is essential for:
+
+- **Refactoring**: Find all usages before renaming constants or enum values
+- **Impact analysis**: Identify affected code when changing default parameter values
+- **Code navigation**: Discover relationships between configuration and implementation
+
+### Tracked Entities
+
+The `find_connections` tool now returns **Phase 1.4 entity tracking relationships**:
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `defines_constants` | Module-level constant definitions | `[{"target_name": "TIMEOUT", "line": 15}]` |
+| `uses_constants` | Constant usage in functions/methods | `[{"target_name": "TIMEOUT", "line": 42}]` |
+| `defines_enum_members` | Enum member definitions | `[{"target_name": "Status.ACTIVE", "line": 8}]` |
+| `uses_defaults` | Default parameter value references | `[{"target_name": "DEFAULT_TIMEOUT", "parameter": "timeout"}]` |
+
+### Relationship Types (9 total)
+
+**Priority 4 - Definitions**:
+- `DEFINES_CONSTANT` - Module-level constant definitions (e.g., `TIMEOUT = 30`)
+- `DEFINES_ENUM_MEMBER` - Enum member definitions (e.g., `Status.ACTIVE = 1`)
+- `DEFINES_CLASS_ATTR` - Class attribute definitions (planned)
+- `DEFINES_FIELD` - Dataclass field definitions (planned)
+
+**Priority 5 - References**:
+- `USES_CONSTANT` - Constant usage in functions/methods
+- `USES_DEFAULT` - Default parameter value references
+- `USES_GLOBAL` - Global statement usage (planned)
+- `ASSERTS_TYPE` - isinstance() type assertions (planned)
+- `USES_CONTEXT_MANAGER` - Context manager usage (planned)
+
+### How It Works
+
+**Extraction Process**:
+
+1. **ConstantExtractor**:
+   - Finds module-level UPPER_CASE assignments (≥2 chars, non-private)
+   - Filters trivial values (single digits -9 to 9, empty strings)
+   - Tracks both definitions and usages
+
+2. **EnumMemberExtractor**:
+   - Detects Enum, IntEnum, StrEnum, Flag classes
+   - Creates qualified names (e.g., `Status.ACTIVE`)
+   - Supports type annotations
+
+3. **DefaultParameterExtractor**:
+   - Extracts non-literal default values (names, calls, attributes)
+   - Skips trivial defaults (None, booleans, small numbers)
+   - Tracks parameter name and default type
+
+### Usage Examples
+
+#### Find Constant Usages
+
+```bash
+# Search for constant definition
+/search_code "FAISS_INDEX_FILENAME constant"
+
+# Get connections for the constant
+/find_connections --chunk_id "search/__init__.py:15-16:module"
+```
+
+**Output**:
+```json
+{
+  "defines_constants": [
+    {"target_name": "FAISS_INDEX_FILENAME", "line": 15, "metadata": {"definition": true}}
+  ],
+  "uses_constants": [
+    {"target_name": "FAISS_INDEX_FILENAME", "line": 42, "source": "search/faiss_index.py:40-60:function:save_index"},
+    {"target_name": "FAISS_INDEX_FILENAME", "line": 78, "source": "search/faiss_index.py:76-95:function:load_index"}
+  ]
+}
+```
+
+#### Find Enum Member Definitions
+
+```bash
+# Search for enum class
+/search_code "RelationshipType enum"
+
+# Get all enum members
+/find_connections --chunk_id "graph/relationship_types.py:49-138:class:RelationshipType"
+```
+
+**Output**:
+```json
+{
+  "defines_enum_members": [
+    {"target_name": "RelationshipType.CALLS", "line": 10, "metadata": {"enum_class": "RelationshipType"}},
+    {"target_name": "RelationshipType.INHERITS", "line": 11, "metadata": {"enum_class": "RelationshipType"}},
+    {"target_name": "RelationshipType.DEFINES_CONSTANT", "line": 65, "metadata": {"enum_class": "RelationshipType"}}
+    // ... 21 total enum members
+  ]
+}
+```
+
+#### Track Default Parameter Dependencies
+
+```bash
+# Find function using constants as defaults
+/search_code "connect function with timeout"
+
+# Get default parameter dependencies
+/find_connections --chunk_id "network.py:42-58:function:connect"
+```
+
+**Output**:
+```json
+{
+  "uses_defaults": [
+    {
+      "target_name": "DEFAULT_TIMEOUT",
+      "line": 42,
+      "metadata": {
+        "parameter": "timeout",
+        "default_type": "name"
+      }
+    },
+    {
+      "target_name": "Config",
+      "line": 42,
+      "metadata": {
+        "parameter": "config",
+        "default_type": "call"
+      }
+    }
+  ]
+}
+```
+
+### Filtering Rules
+
+**ConstantExtractor**:
+- Only UPPER_CASE names (≥2 characters)
+- Excludes private constants (`_INTERNAL`)
+- Excludes trivial values (single digits, empty strings)
+- Excludes builtin constants (True, False, None)
+
+**EnumMemberExtractor**:
+- Supports Enum, IntEnum, StrEnum, Flag variants
+- Excludes private members (`_INTERNAL`)
+- Handles type annotations (`ACTIVE: int = 1`)
+
+**DefaultParameterExtractor**:
+- Tracks name references, call expressions, attribute access
+- Skips None, booleans, small numbers (-10 to 10)
+- Skips empty strings and empty collections
+- Excludes builtin defaults (list, dict, set)
+
+### Refactoring Workflows
+
+**Constant Refactoring**:
+```bash
+# Step 1: Find constant definition
+/search_code "MAX_RETRIES constant definition"
+
+# Step 2: Get all usages
+/find_connections --chunk_id "config.py:15-16:module"
+
+# Step 3: Review impact (check uses_constants field)
+# Step 4: Safely rename knowing all affected code
+```
+
+**Enum Migration**:
+```bash
+# Step 1: Find enum class
+/search_code "Status enum"
+
+# Step 2: Get all enum members and their usages
+/find_connections --chunk_id "types.py:10-25:class:Status"
+
+# Step 3: Review defines_enum_members field
+# Step 4: Migrate knowing complete member list
+```
+
+**Default Value Changes**:
+```bash
+# Step 1: Find constant used as default
+/search_code "DEFAULT_TIMEOUT constant"
+
+# Step 2: Get connections
+/find_connections --chunk_id "config.py:20-21:module"
+
+# Step 3: Check uses_defaults to find affected functions
+# Step 4: Update default value knowing downstream impact
+```
+
+### Requirements
+
+- **Re-indexing required**: Projects indexed before v0.6.5 need re-indexing for entity tracking to populate
+- **Python only**: Phase 1.4 supports Python AST entity extraction
+- **Module-level constants**: Only top-level constant definitions tracked (not class/function-level)
+
+### Benefits
+
+1. **Constant Discovery**: Find all usages before renaming configuration values
+2. **Enum Navigation**: Track enum members across complex codebases
+3. **Dependency Analysis**: Understand function dependencies on constants
+4. **Refactoring Safety**: Identify all affected code before making changes
+5. **Code Comprehension**: Discover how configuration flows through implementation
 
 ---
 

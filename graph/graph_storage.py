@@ -120,8 +120,20 @@ class CodeGraphStorage:
                 (vs qualified name or bare name)
             **kwargs: Additional edge attributes
         """
-        # Note: callee_name might not correspond to a chunk_id yet
-        # We store the name and will resolve to chunk_id later if needed
+        # Create lightweight target_name node if it doesn't exist
+        # This enables get_callers(callee_name) queries to work
+        # (matching add_relationship_edge() behavior at lines 167-175)
+        if callee_name not in self.graph:
+            self.graph.add_node(
+                callee_name,
+                name=callee_name,
+                type="symbol_name",  # Distinguish from full chunk nodes
+                is_target_name=True,  # Flag for query filtering
+                is_call_target=True,  # New flag: distinguishes from relationship targets
+                file="",  # Unknown file (will be resolved if chunk exists)
+                language="",  # Unknown language
+            )
+
         self.graph.add_edge(
             caller_id,
             callee_name,

@@ -132,6 +132,38 @@ class ImpactReport:
         default_factory=list
     )  # Where this class is instantiated
 
+    # Priority 4-5 relationship fields (entity tracking)
+    defines_constants: List[Dict[str, Any]] = field(
+        default_factory=list
+    )  # Constants defined by this code
+    uses_constants: List[Dict[str, Any]] = field(
+        default_factory=list
+    )  # Constants used by this code
+    defines_enum_members: List[Dict[str, Any]] = field(
+        default_factory=list
+    )  # Enum members defined by this code
+    uses_defaults: List[Dict[str, Any]] = field(
+        default_factory=list
+    )  # Default parameter values used
+    defines_class_attrs: List[Dict[str, Any]] = field(
+        default_factory=list
+    )  # Class attributes defined by this code
+    class_attr_definitions: List[Dict[str, Any]] = field(
+        default_factory=list
+    )  # Where this class attribute is defined
+    defines_fields: List[Dict[str, Any]] = field(
+        default_factory=list
+    )  # Dataclass fields defined by this code
+    field_definitions: List[Dict[str, Any]] = field(
+        default_factory=list
+    )  # Where this dataclass field is defined
+    uses_context_managers: List[Dict[str, Any]] = field(
+        default_factory=list
+    )  # Context managers used by this code
+    context_manager_usages: List[Dict[str, Any]] = field(
+        default_factory=list
+    )  # Where this is used as a context manager
+
     stale_chunk_count: int = 0  # Count of chunk_ids not found in current index
 
     def to_dict(self) -> Dict[str, Any]:
@@ -161,6 +193,17 @@ class ImpactReport:
             "exceptions_caught": self.exceptions_caught,
             "instantiates": self.instantiates,
             "instantiated_by": self.instantiated_by,
+            # Priority 4-5 relationships (entity tracking)
+            "defines_constants": self.defines_constants,
+            "uses_constants": self.uses_constants,
+            "defines_enum_members": self.defines_enum_members,
+            "uses_defaults": self.uses_defaults,
+            "defines_class_attrs": self.defines_class_attrs,
+            "class_attr_definitions": self.class_attr_definitions,
+            "defines_fields": self.defines_fields,
+            "field_definitions": self.field_definitions,
+            "uses_context_managers": self.uses_context_managers,
+            "context_manager_usages": self.context_manager_usages,
             "stale_chunk_count": self.stale_chunk_count,
         }
 
@@ -343,20 +386,36 @@ class CodeRelationshipAnalyzer:
                     target_id.split(":")[-1] if ":" in target_id else target_id
                 )
 
-                # Get callers using both chunk_id AND symbol name
+                # Also try bare method name if symbol is qualified (e.g., "ClassName.method" → "method")
+                # This handles calls via obj.method() which store bare names
+                bare_method_name = (
+                    symbol_name_for_callers.split(".")[-1]
+                    if "." in symbol_name_for_callers
+                    else None
+                )
+
+                # Get callers using chunk_id, qualified name, AND bare method name
                 callers_by_id = self.graph.get_callers(target_id)
                 callers_by_name = (
                     self.graph.get_callers(symbol_name_for_callers)
                     if symbol_name_for_callers != target_id
                     else []
                 )
+                callers_by_bare = (
+                    self.graph.get_callers(bare_method_name)
+                    if bare_method_name and bare_method_name != symbol_name_for_callers
+                    else []
+                )
 
                 # Combine and deduplicate callers
-                all_callers = list(set(callers_by_id + callers_by_name))
+                all_callers = list(
+                    set(callers_by_id + callers_by_name + callers_by_bare)
+                )
 
                 logger.debug(
                     f"[FIND_CONNECTIONS] Direct callers: by_id={len(callers_by_id)}, "
-                    f"by_name={len(callers_by_name)}, combined={len(all_callers)}"
+                    f"by_name={len(callers_by_name)}, by_bare={len(callers_by_bare)}, "
+                    f"combined={len(all_callers)}"
                 )
 
                 for caller_id in all_callers:
@@ -524,6 +583,22 @@ class CodeRelationshipAnalyzer:
             exceptions_caught=graph_relationships.get("exceptions_caught", []),
             instantiates=graph_relationships.get("instantiates", []),
             instantiated_by=graph_relationships.get("instantiated_by", []),
+            # Priority 4-5: Entity tracking relationships
+            defines_constants=graph_relationships.get("defines_constants", []),
+            uses_constants=graph_relationships.get("uses_constants", []),
+            defines_enum_members=graph_relationships.get("defines_enum_members", []),
+            uses_defaults=graph_relationships.get("uses_defaults", []),
+            # Tier 1 entity tracking (class attrs, fields, context managers)
+            defines_class_attrs=graph_relationships.get("defines_class_attrs", []),
+            class_attr_definitions=graph_relationships.get(
+                "class_attr_definitions", []
+            ),
+            defines_fields=graph_relationships.get("defines_fields", []),
+            field_definitions=graph_relationships.get("field_definitions", []),
+            uses_context_managers=graph_relationships.get("uses_context_managers", []),
+            context_manager_usages=graph_relationships.get(
+                "context_manager_usages", []
+            ),
             stale_chunk_count=stale_caller_count + stale_indirect_count,
         )
 

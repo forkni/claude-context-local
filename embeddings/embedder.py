@@ -442,9 +442,9 @@ class CodeEmbedder:
         model_source = str(local_model_dir) if local_model_dir else self.model_name
         model_kwargs_dict = {}
 
-        # Add torch_dtype for PyTorch backend
+        # Add dtype for PyTorch backend (renamed from torch_dtype in sentence-transformers 5.x)
         if torch_dtype is not None:
-            model_kwargs_dict["torch_dtype"] = torch_dtype
+            model_kwargs_dict["dtype"] = torch_dtype
 
         try:
             # Build constructor kwargs
@@ -463,7 +463,7 @@ class CodeEmbedder:
                     f"Matryoshka MRL enabled: truncating output to {truncate_dim} dimensions"
                 )
 
-            # Add model_kwargs if any options (e.g., torch_dtype)
+            # Add model_kwargs if any options (e.g., dtype)
             if model_kwargs_dict:
                 constructor_kwargs["model_kwargs"] = model_kwargs_dict
 

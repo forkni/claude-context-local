@@ -108,6 +108,50 @@ class TestCodeGraphStorage:
         assert "foo_id" in callers
         assert "baz_id" in callers
 
+    def test_get_callers_creates_target_node(self, graph_storage):
+        """Test that add_call_edge creates target_name node for callee."""
+        # Add call edge without pre-creating callee node
+        graph_storage.add_call_edge("foo_id", "bar_func", line_number=1)
+
+        # Verify target_name node was created
+        assert "bar_func" in graph_storage
+        node_data = graph_storage.get_node_data("bar_func")
+        assert node_data is not None
+        assert node_data["type"] == "symbol_name"
+        assert node_data["is_target_name"] is True
+        assert node_data.get("is_call_target") is True
+
+    def test_get_callers_by_symbol_name(self, graph_storage):
+        """Test get_callers works with bare symbol name (not full chunk_id)."""
+        # Setup: Multiple callers for same method
+        graph_storage.add_call_edge(
+            "test.py:1-10:function:foo", "embed_chunks", line_number=5
+        )
+        graph_storage.add_call_edge(
+            "test.py:20-30:function:bar", "embed_chunks", line_number=25
+        )
+
+        # Query by symbol name should find both callers
+        callers = graph_storage.get_callers("embed_chunks")
+        assert len(callers) == 2
+        assert "test.py:1-10:function:foo" in callers
+        assert "test.py:20-30:function:bar" in callers
+
+    def test_add_call_edge_idempotent_node_creation(self, graph_storage):
+        """Test that multiple calls don't duplicate target_name node."""
+        # Add multiple edges to same callee
+        graph_storage.add_call_edge("foo_id", "target_func", line_number=1)
+        graph_storage.add_call_edge("bar_id", "target_func", line_number=2)
+        graph_storage.add_call_edge("baz_id", "target_func", line_number=3)
+
+        # Should have 4 nodes: 3 callers + 1 target_name
+        # (NetworkX creates implicit nodes for callers too)
+        assert "target_func" in graph_storage
+
+        # Verify only one target_func node exists
+        target_nodes = [n for n in graph_storage.graph.nodes() if n == "target_func"]
+        assert len(target_nodes) == 1
+
     def test_get_callees(self, graph_storage):
         """Test getting callees of a function."""
         # Setup: foo calls bar and baz

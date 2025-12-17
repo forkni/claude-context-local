@@ -6,16 +6,26 @@ Created for Phase 3.3 IndexSynchronizer extraction - completing test coverage.
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from search.index_sync import IndexSynchronizer
+
+
+@pytest.fixture
+def mock_storage_dir(tmp_path: Path) -> Path:
+    """Create a temporary storage directory for tests."""
+    storage_dir = tmp_path / "test_storage"
+    storage_dir.mkdir(parents=True)
+    return storage_dir
 
 
 class TestIndexSynchronizer:
     """Test IndexSynchronizer functionality."""
 
-    def setup_method(self):
-        """Set up test fixtures."""
-        # Create mock storage directory
-        self.storage_dir = Path("test_storage")
+    @pytest.fixture(autouse=True)
+    def setup_synchronizer(self, mock_storage_dir: Path):
+        """Set up test fixtures with proper temp directory."""
+        self.storage_dir = mock_storage_dir
 
         # Create mock BM25 index
         self.mock_bm25_index = MagicMock()
@@ -41,7 +51,7 @@ class TestIndexSynchronizer:
 
     def test_initialization(self):
         """Test IndexSynchronizer initialization."""
-        assert self.synchronizer.storage_dir == Path("test_storage")
+        assert self.synchronizer.storage_dir == self.storage_dir
         assert self.synchronizer.bm25_index == self.mock_bm25_index
         assert self.synchronizer.dense_index == self.mock_dense_index
         assert self.synchronizer.bm25_use_stopwords is True
@@ -310,4 +320,4 @@ class TestIndexSynchronizer:
     def test_storage_dir_creation(self):
         """Test that storage_dir property is a Path object."""
         assert isinstance(self.synchronizer.storage_dir, Path)
-        assert self.synchronizer.storage_dir == Path("test_storage")
+        assert self.synchronizer.storage_dir == self.storage_dir

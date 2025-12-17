@@ -747,6 +747,7 @@ class CodeIndexManager:
             SEMANTIC_TYPES = (
                 "function",
                 "method",
+                "decorated_definition",
                 "class",
                 "struct",
                 "interface",
