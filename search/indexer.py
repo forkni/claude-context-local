@@ -53,7 +53,7 @@ class CodeIndexManager:
         )
         self.embedder = embedder  # Optional embedder for dimension validation
 
-        # Initialize call graph storage (Phase 1)
+        # Initialize call graph storage
         self.graph_storage = None
         if GRAPH_STORAGE_AVAILABLE and project_id:
             try:
@@ -661,7 +661,7 @@ class CodeIndexManager:
         # Delegate FAISS index and chunk ID saving to FaissVectorIndex
         self._faiss_index.save()
 
-        # Save call graph if populated (Phase 1)
+        # Save call graph if populated
         graph_status = "not None" if self.graph_storage is not None else "None"
         graph_nodes = len(self.graph_storage) if self.graph_storage else 0
         self._logger.info(
@@ -731,9 +731,9 @@ class CodeIndexManager:
             return
 
         try:
-            # Phase 3: Process all semantic chunk types for relationships
-            # - Functions/methods: call relationships (Phase 1)
-            # - Classes/structs/interfaces/etc: inheritance, type usage (Phase 3)
+            # Process all semantic chunk types for relationships
+            # - Functions/methods: call relationships
+            # - Classes/structs/interfaces/etc: inheritance, type usage
             chunk_type = metadata.get("chunk_type")
             chunk_name = metadata.get("name")
             relationships = metadata.get("relationships", [])
@@ -759,7 +759,7 @@ class CodeIndexManager:
             )
 
             if chunk_type not in SEMANTIC_TYPES:
-                # Allow through if it has Phase 3 relationships (edge case)
+                # Allow through if it has relationships (edge case)
                 if not relationships:
                     self._logger.debug(
                         f"Skipping non-semantic chunk: {chunk_id} (type={chunk_type})"
@@ -781,7 +781,7 @@ class CodeIndexManager:
                 language=metadata.get("language", "python"),
             )
 
-            # Phase 1: Add legacy call edges (backwards compatibility)
+            # Add call edges from function call extraction
             calls = metadata.get("calls", [])
             for call_dict in calls:
                 self.graph_storage.add_call_edge(
@@ -791,11 +791,11 @@ class CodeIndexManager:
                     is_method_call=call_dict.get("is_method_call", False),
                 )
 
-            # Phase 3: Add all relationship edges
+            # Add all relationship edges
             relationships = metadata.get("relationships", [])
             if relationships:
                 self._logger.debug(
-                    f"[PHASE3] Processing {len(relationships)} relationship edges for {chunk_id}"
+                    f"Processing {len(relationships)} relationship edges for {chunk_id}"
                 )
                 for rel_dict in relationships:
                     try:

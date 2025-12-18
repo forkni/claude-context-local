@@ -1,10 +1,7 @@
 """Metadata storage layer for code search index.
 
 This module provides a centralized interface for managing chunk metadata
-stored in SQLite. Previously scattered across 20+ locations in CodeIndexManager.
-
-Extracted as part of Phase 3 refactoring (Item 9) to reduce God Class complexity
-and improve testability.
+stored in SQLite, with support for efficient querying and chunk ID normalization.
 """
 
 from pathlib import Path
@@ -283,7 +280,9 @@ class MetadataStore:
         """
         variants = [
             chunk_id,  # Original (exact match)
-            chunk_id.replace("\\\\", "\\"),  # Un-double-escape (MCP bug fix)
+            chunk_id.replace(
+                "\\\\", "\\"
+            ),  # Handle double-escaped backslashes from JSON transport
             normalize_path(chunk_id),  # Normalize to forward slash
             chunk_id.replace("/", "\\"),  # Try backslash variant
             MetadataStore.normalize_chunk_id(chunk_id),  # Properly normalized

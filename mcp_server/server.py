@@ -260,7 +260,7 @@ if __name__ == "__main__":
     if args.transport == "sse":
         logger.info(f"SSE endpoint: http://{args.host}:{args.port}")
 
-    # Windows SSE fix
+    # Windows asyncio event loop policy for SSE transport
     if args.transport == "sse":
         import platform
 

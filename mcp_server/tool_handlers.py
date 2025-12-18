@@ -1,7 +1,7 @@
 """Tool handlers for low-level MCP server.
 
-DEPRECATED: This module is now a re-export facade for backward compatibility.
-New code should import directly from the specific handler modules:
+This module re-exports handlers from domain-specific modules.
+Direct imports from specific handler modules are recommended:
 - mcp_server.tools.status_handlers
 - mcp_server.tools.config_handlers
 - mcp_server.tools.search_handlers

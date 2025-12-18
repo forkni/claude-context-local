@@ -143,8 +143,7 @@ class BaseRelationshipExtractor(ABC):
                 f"{self.__class__.__name__} must set self.relationship_type"
             )
 
-        # Normalize source_id path to forward slashes (cross-platform consistency)
-        # Matches Issue 1 fix for chunk_id normalization
+        # Normalize source_id path to forward slashes for cross-platform consistency
         normalized_source_id = normalize_path(source_id)
 
         return RelationshipEdge(

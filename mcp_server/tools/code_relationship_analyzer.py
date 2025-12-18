@@ -465,7 +465,7 @@ class CodeRelationshipAnalyzer:
                     visited.add(normalized_caller)
 
                     try:
-                        # Extract symbol name for name-based lookup (same fix as Step 2)
+                        # Extract symbol name for name-based lookup
                         caller_symbol = (
                             caller_id.split(":")[-1] if ":" in caller_id else caller_id
                         )
@@ -584,7 +584,7 @@ class CodeRelationshipAnalyzer:
             used_as_type_in=graph_relationships.get("used_as_type_in", []),
             imports=graph_relationships.get("imports", []),
             imported_by=graph_relationships.get("imported_by", []),
-            # Phase 3b: Priority 2 relationships
+            # Additional relationship types
             decorates=graph_relationships.get("decorates", []),
             decorated_by=graph_relationships.get("decorated_by", []),
             exceptions_raised=graph_relationships.get("exceptions_raised", []),

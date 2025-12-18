@@ -214,8 +214,7 @@ def get_state() -> ApplicationState:
     return _app_state
 
 
-# Register ApplicationState with ServiceLocator for Phase 4 DI
-# This allows gradual migration while maintaining backward compatibility
+# Register ApplicationState with ServiceLocator for dependency injection
 def _register_with_service_locator():
     """Register ApplicationState with ServiceLocator on module import."""
     try:
@@ -241,8 +240,7 @@ def reset_state() -> None:
     _app_state.reset()
 
 
-# Backward compatibility aliases for gradual migration
-# These allow existing code to continue working while we migrate
+# Convenience functions for accessing ApplicationState
 def get_current_project() -> Optional[str]:
     """Get current project path (backward compatibility)."""
     return _app_state.current_project

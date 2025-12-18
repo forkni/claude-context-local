@@ -223,13 +223,13 @@ def _index_with_all_models(
 
             config_module._config_manager = None
 
-            # Also invalidate ServiceLocator's cached config (BUG FIX #1: Merkle snapshot naming)
+            # Invalidate ServiceLocator's cached config to ensure correct snapshot naming
             from mcp_server.services import ServiceLocator
 
             locator = ServiceLocator.instance()
             locator.invalidate("config")  # Force config reload with new model settings
 
-            # Clear cached components INCLUDING embedders to free GPU memory (BUG FIX #2: Performance)
+            # Clear cached components including embedders to release GPU memory
             state = get_state()
             state.reset_for_model_switch()  # Clears embedders + index_manager + searcher
 
@@ -381,8 +381,7 @@ async def handle_clear_index(arguments: Dict[str, Any]) -> dict:
 
             cleared_dirs.append(model_dir.name)
 
-    # Delete Merkle snapshots for this project (FIX: Issue #2)
-    # This ensures that incremental re-index after clear_index works correctly
+    # Delete Merkle snapshots to ensure incremental re-indexing works correctly
     snapshots_cleared = 0
     try:
         snapshot_mgr = SnapshotManager()
@@ -645,7 +644,7 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
     # Multi-model batch indexing
     if multi_model and get_state().multi_model_enabled:
         logger.info(f"Multi-model batch indexing for: {directory_path}")
-        # Run in thread pool to avoid blocking asyncio event loop (SSE keepalive fix)
+        # Run in thread pool to avoid blocking asyncio event loop
         import asyncio
 
         results = await asyncio.to_thread(

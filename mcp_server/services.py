@@ -1,9 +1,7 @@
 """Service locator pattern for dependency injection.
 
 This module provides a centralized service registry for managing application-wide
-dependencies, replacing direct access to global state and configuration singletons.
-
-Phase 4 Architecture Improvement - Item 12: Dependency Injection
+dependencies with lazy instantiation and flexible resolution patterns.
 """
 
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
@@ -17,8 +15,8 @@ class ServiceLocator:
     """Centralized service registry for dependency resolution.
 
     The Service Locator pattern provides a less invasive approach to dependency
-    injection compared to constructor injection, allowing gradual migration while
-    maintaining backward compatibility with existing code.
+    injection compared to constructor injection, allowing flexible dependency
+    resolution while supporting both direct access and service location patterns.
 
     Features:
     - Singleton pattern for global access
@@ -141,7 +139,7 @@ class ServiceLocator:
         state = self.get("state")
         if state is None:
 
-            # Auto-create if not registered (for gradual migration)
+            # Auto-create if not registered
             from mcp_server.state import get_state as _get_legacy_state
 
             state = _get_legacy_state()
@@ -159,7 +157,7 @@ class ServiceLocator:
         """
         config = self.get("config")
         if config is None:
-            # Auto-create if not registered (for gradual migration)
+            # Auto-create if not registered
             from search.config import get_search_config
 
             config = get_search_config()
@@ -167,7 +165,7 @@ class ServiceLocator:
         return config
 
 
-# Backward-compatible wrappers for gradual migration
+# Convenience wrappers for common access patterns
 def get_state() -> "ApplicationState":
     """Get ApplicationState via ServiceLocator (backward-compatible wrapper).
 

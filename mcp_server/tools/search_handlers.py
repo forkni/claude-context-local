@@ -415,12 +415,12 @@ async def handle_search_code(arguments: Dict[str, Any]) -> dict:
 
     logger.info(f"[SEARCH] query='{query}', k={k}, mode='{search_mode}'")
 
-    # Phase 1: Model Routing
+    # Route query to optimal embedding model
     selected_model_key, routing_info = _route_query_to_model(
         query, use_routing, model_key
     )
 
-    # Phase 2: Auto-reindex if needed
+    # Check and perform auto-reindex if index is stale
     current_project = get_state().current_project
     if auto_reindex and current_project:
         reindexed = _check_auto_reindex(
@@ -429,7 +429,7 @@ async def handle_search_code(arguments: Dict[str, Any]) -> dict:
         if reindexed:
             get_state().searcher = None
 
-    # Phase 3: Execute search (pass routing decision to get correct model index)
+    # Execute search with selected model index
     searcher = get_searcher(model_key=selected_model_key)
 
     # Check if index ready - support both HybridSearcher and IntelligentSearcher
@@ -493,10 +493,10 @@ async def handle_search_code(arguments: Dict[str, Any]) -> dict:
             filters=filters if filters else None,
         )
 
-    # Phase 4: Format results (using helper)
+    # Format search results
     formatted_results = _format_search_results(results)
 
-    # Phase 5: Enrich with graph data (using helpers)
+    # Enrich results with call graph data
     index_manager = _get_index_manager_from_searcher(searcher)
     formatted_results = _enrich_results_with_graph_data(
         formatted_results, index_manager
@@ -572,9 +572,7 @@ async def handle_find_connections(arguments: Dict[str, Any]) -> dict:
             "message": "Provide either chunk_id or symbol_name",
         }
 
-    # Normalize chunk_id path separators (defense-in-depth)
-    # Fixes Issue 2: Ensures Windows backslash paths work correctly
-    # Use CodeIndexManager's normalize_chunk_id for proper cross-platform handling
+    # Normalize chunk_id path separators for cross-platform compatibility
     if chunk_id:
         chunk_id = MetadataStore.normalize_chunk_id(chunk_id)
 

@@ -348,12 +348,10 @@ class RelationshipEdge:
 @dataclass
 class CallEdge:
     """
-    Legacy CallEdge for backwards compatibility.
+    Call relationship edge representation.
 
-    DEPRECATED: Use RelationshipEdge instead.
-
-    This class is maintained for backwards compatibility with Phase 1 code.
-    New code should use RelationshipEdge.
+    Note: RelationshipEdge provides a more general interface for all
+    relationship types. Consider using RelationshipEdge for new code.
     """
 
     source_id: str
@@ -411,7 +409,7 @@ def get_relationship_field_mapping() -> Dict[str, tuple]:
         }
     """
     return {
-        "calls": ("direct_callers", None),  # Legacy, handled separately
+        "calls": ("direct_callers", None),  # Handled separately
         "inherits": ("parent_classes", "child_classes"),
         "uses_type": ("uses_types", "used_as_type_in"),
         "imports": ("imports", "imported_by"),

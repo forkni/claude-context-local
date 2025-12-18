@@ -36,7 +36,7 @@ class SnapshotManager:
         return compute_drive_agnostic_hash(project_path, length=32)
 
     def _get_legacy_project_id(self, project_path: str) -> str:
-        """Generate legacy project ID for backward compatibility.
+        """Generate project ID using original hashing algorithm.
 
         Args:
             project_path: Path to project
@@ -59,7 +59,7 @@ class SnapshotManager:
         """
         if dimension is None:
             try:
-                # Phase 4: Use ServiceLocator to avoid circular dependency (no sys.path manipulation)
+                # Use ServiceLocator to avoid circular dependency
                 from mcp_server.services import ServiceLocator
                 from search.config import get_model_slug
 
@@ -73,7 +73,7 @@ class SnapshotManager:
         else:
             # If dimension is provided explicitly, we need to get the current model slug
             try:
-                # Phase 4: Use ServiceLocator to avoid circular dependency
+                # Use ServiceLocator to avoid circular dependency
                 from mcp_server.services import ServiceLocator
                 from search.config import get_model_slug
 
@@ -107,7 +107,7 @@ class SnapshotManager:
         if new_path.exists():
             return new_path
 
-        # Fallback to legacy hash (backward compatibility)
+        # Fallback to legacy hash for existing projects
         legacy_id = self._get_legacy_project_id(project_path)
         legacy_path = (
             self.storage_dir / f"{legacy_id}_{model_slug}_{dimension}d_snapshot.json"
@@ -141,7 +141,7 @@ class SnapshotManager:
         if new_path.exists():
             return new_path
 
-        # Fallback to legacy hash (backward compatibility)
+        # Fallback to legacy hash for existing projects
         legacy_id = self._get_legacy_project_id(project_path)
         legacy_path = (
             self.storage_dir / f"{legacy_id}_{model_slug}_{dimension}d_metadata.json"

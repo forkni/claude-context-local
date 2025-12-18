@@ -1,7 +1,7 @@
 """Multi-hop search expansion logic for discovering interconnected code relationships.
 
-Extracted from HybridSearcher for Phase 3.4 refactoring.
-Handles iterative expansion of search results through semantic similarity.
+Handles iterative expansion of search results through semantic similarity
+to discover related code across multiple hops.
 """
 
 import logging
@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from .reranker import SearchResult as RerankerSearchResult
 
 
-# Phase 4: Helper function to access config via ServiceLocator (avoids circular imports)
+# Helper function to access config via ServiceLocator (avoids circular imports)
 def _get_config_via_service_locator():
     """Get SearchConfig via ServiceLocator to avoid circular dependencies."""
     from mcp_server.services import ServiceLocator
@@ -258,7 +258,7 @@ class MultiHopSearcher:
                 )
 
         # Hop 1: Initial query-based search
-        # Phase 4: Use ServiceLocator helper instead of inline import
+        # Use ServiceLocator helper instead of inline import
         config = _get_config_via_service_locator()
         initial_k = int(k * config.multi_hop.initial_k_multiplier)
 

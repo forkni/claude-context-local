@@ -267,9 +267,9 @@ class RerankerConfig:
 class SearchConfig:
     """Root configuration with nested sub-configs.
 
-    Phase 4 Item 13: Config Splitting (Complete)
-    - Split 35 monolithic fields into 5 sub-configs for better organization
-    - Phase 13-C: Removed backward-compatible property aliases
+    Configuration organization:
+    - Split into 5 focused sub-configs for better organization
+    - embedding, search, neural_reranking, multi_hop, gpu_monitor
 
     Initialization style (nested configs only):
         config = SearchConfig(embedding=EmbeddingConfig(model_name="..."))
@@ -722,8 +722,8 @@ def get_model_slug(model_name: str) -> str:
     return slug
 
 
-# Register SearchConfigManager with ServiceLocator for Phase 4 DI
-# This allows gradual migration while maintaining backward compatibility
+# Register SearchConfigManager with ServiceLocator for dependency injection
+# This allows flexible dependency resolution
 def _register_with_service_locator():
     """Register SearchConfig with ServiceLocator on module import."""
     try:

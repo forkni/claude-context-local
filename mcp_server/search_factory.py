@@ -1,7 +1,6 @@
 """Search component factory functions for MCP server.
 
-Extracted from server.py as part of Phase 4 refactoring to improve code organization.
-This module provides factory functions for creating index managers and searchers
+Provides factory functions for creating index managers and searchers
 with proper lifecycle management and caching.
 """
 

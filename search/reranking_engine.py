@@ -1,7 +1,6 @@
 """Reranking engine for result quality improvement.
 
-Extracted from hybrid_searcher.py (Phase 3.2 refactoring).
-This module coordinates both embedding-based reranking and neural reranking
+Coordinates both embedding-based reranking and neural reranking
 for search result quality improvement.
 """
 

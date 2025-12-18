@@ -36,7 +36,7 @@ except Exception:
 from chunking.python_ast_chunker import CodeChunk
 
 
-# Phase 4: Helper function to access config via ServiceLocator (avoids circular imports)
+# Helper function to access config via ServiceLocator (avoids circular imports)
 def _get_config_via_service_locator():
     """Get SearchConfig via ServiceLocator to avoid circular dependencies."""
     from mcp_server.services import ServiceLocator
@@ -128,7 +128,7 @@ class CodeEmbedder:
     """Multi-model embedder for generating code embeddings.
 
     Supports multiple embedding models with automatic configuration detection.
-    Default model is google/embeddinggemma-300m for backward compatibility.
+    Default model is google/embeddinggemma-300m.
     """
 
     def __init__(
@@ -246,7 +246,7 @@ class CodeEmbedder:
         if torch is None or not torch.cuda.is_available():
             return None  # CPU: use fp32 default
 
-        # Phase 4: Use ServiceLocator helper instead of inline import
+        # Use ServiceLocator helper instead of inline import
         config = _get_config_via_service_locator()
 
         if not config.performance.enable_fp16:
@@ -360,7 +360,7 @@ class CodeEmbedder:
                     self._logger.info(f"[DELETED] Corrupted cache: {cache_path_obj}")
                     cache_valid = False  # Force re-download
                 except Exception as e:
-                    # Failed to delete corrupted cache - provide manual fix instructions
+                    # Failed to delete corrupted cache - provide manual cleanup instructions
                     raise RuntimeError(
                         f"[CACHE CORRUPTION] Cache cannot be deleted automatically.\n"
                         f"Cache path: {cache_path_obj}\n"
@@ -488,7 +488,7 @@ class CodeEmbedder:
             if torch.cuda.is_available():
                 vram_after = torch.cuda.memory_allocated()
                 vram_used_mb = (vram_after - vram_before) / (1024 * 1024)
-                # FIX Issue #1: Clamp to 0 minimum (prevent negative VRAM in multi-model scenarios)
+                # Clamp to 0 minimum to handle multi-model memory accounting
                 vram_used_mb = max(0, vram_used_mb)
                 self._model_vram_usage[self.model_name] = round(vram_used_mb, 1)
                 self._logger.info(
@@ -541,7 +541,7 @@ class CodeEmbedder:
                     if torch.cuda.is_available():
                         vram_after = torch.cuda.memory_allocated()
                         vram_used_mb = (vram_after - vram_before) / (1024 * 1024)
-                        # FIX Issue #1: Clamp to 0 minimum (prevent negative VRAM in multi-model scenarios)
+                        # Clamp to 0 minimum to handle multi-model memory accounting
                         vram_used_mb = max(0, vram_used_mb)
                         self._model_vram_usage[self.model_name] = round(vram_used_mb, 1)
                         self._logger.info(
@@ -735,7 +735,7 @@ class CodeEmbedder:
 
         # Load batch size from config if not explicitly provided
         if batch_size is None:
-            # Phase 4: Use ServiceLocator helper instead of inline import
+            # Use ServiceLocator helper instead of inline import
             config = _get_config_via_service_locator()
 
             # Try dynamic GPU-based batch size first
@@ -853,13 +853,13 @@ class CodeEmbedder:
                             if len(chunk.content) > 200
                             else chunk.content
                         ),
-                        # Call graph data (Phase 1: Python only)
+                        # Call graph data (Python)
                         "calls": (
                             [call.to_dict() for call in chunk.calls]
                             if chunk.calls
                             else []
                         ),
-                        # Phase 3: Relationship edges (all relationship types)
+                        # Relationship edges (all relationship types)
                         "relationships": (
                             [rel.to_dict() for rel in chunk.relationships]
                             if chunk.relationships

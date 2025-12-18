@@ -1,9 +1,7 @@
 """FAISS vector index management.
 
-This module provides a dedicated interface for managing FAISS vector indices,
-extracted from CodeIndexManager to improve separation of concerns and testability.
-
-Extracted as part of Phase 4 refactoring to reduce God Class complexity.
+This module provides a dedicated interface for managing FAISS vector indices
+with support for saving, loading, searching, and dimension tracking.
 """
 
 import logging

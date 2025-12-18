@@ -277,9 +277,7 @@ class InheritanceExtractor(BaseRelationshipExtractor):
         Example:
             "test.py:10-30:class:Child"
         """
-        # ALWAYS use the chunk's actual chunk_id
-        # This ensures source_id in relationships matches the indexed chunk_id
-        # Bug fix: Previously constructed synthetic IDs that didn't match real chunks
+        # Use the chunk's actual chunk_id to ensure source_id matches indexed chunk_id
         return chunk_metadata.get("chunk_id", "unknown:0-0:unknown:unknown")
 
 

@@ -11,7 +11,7 @@ from search.filters import normalize_path
 from .python_ast_chunker import CodeChunk
 from .tree_sitter import TreeSitterChunk, TreeSitterChunker
 
-# Import call graph extractor for Python (Phase 1)
+# Import call graph extractor for Python
 try:
     from graph.call_graph_extractor import CallGraphExtractorFactory
     from graph.relationship_extractors.class_attr_extractor import (
@@ -332,7 +332,7 @@ class MultiLanguageChunker:
 
         self.directory_filter = DirectoryFilter(include_dirs, exclude_dirs)
 
-        # Initialize call graph extractor for Python (Phase 1)
+        # Initialize call graph extractor for Python
         self.call_graph_extractor = None
         if CALL_GRAPH_AVAILABLE:
             try:
@@ -341,7 +341,7 @@ class MultiLanguageChunker:
             except Exception as e:
                 logger.warning(f"Failed to initialize call graph extractor: {e}")
 
-        # Initialize Phase 3+ relationship extractors
+        # Initialize relationship extractors
         self.relationship_extractors = []
         try:
             self.relationship_extractors = [
@@ -369,16 +369,16 @@ class MultiLanguageChunker:
                     ]
                 )
                 logger.info(
-                    f"Phase 3+: Initialized {len(self.relationship_extractors)} relationship extractors "
+                    f"Initialized {len(self.relationship_extractors)} relationship extractors "
                     f"(foundation + core + data models + entity tracking)"
                 )
             else:
                 logger.info(
-                    f"Phase 3+: Initialized {len(self.relationship_extractors)} relationship extractors "
+                    f"Initialized {len(self.relationship_extractors)} relationship extractors "
                     f"(foundation + core + data models; entity tracking disabled)"
                 )
         except Exception as e:
-            logger.warning(f"Failed to initialize Phase 3+ extractors: {e}")
+            logger.warning(f"Failed to initialize relationship extractors: {e}")
 
     def is_supported(self, file_path: str) -> bool:
         """Check if file type is supported.
@@ -519,7 +519,7 @@ class MultiLanguageChunker:
     def _extract_call_relationships(
         self, chunk: CodeChunk, tchunk: TreeSitterChunk, chunk_id: str
     ) -> None:
-        """Extract call graph relationships (Phase 1).
+        """Extract call graph relationships.
 
         Args:
             chunk: CodeChunk to populate with call relationships
@@ -550,7 +550,7 @@ class MultiLanguageChunker:
             if calls:
                 logger.debug(f"Extracted {len(calls)} calls from {chunk_id}")
         except Exception as e:
-            # Python 3.11.0-3.11.3 has a known AST recursion depth bug (CPython #106905)
+            # Handle AST recursion depth limitation in Python 3.11.0-3.11.3
             if "recursion depth mismatch" in str(e):
                 logger.debug(
                     f"Skipping call extraction for {chunk.name} (Python 3.11 AST bug)"
@@ -561,7 +561,7 @@ class MultiLanguageChunker:
     def _extract_phase3_relationships(
         self, chunk: CodeChunk, tchunk: TreeSitterChunk, chunk_id: str
     ) -> None:
-        """Extract Phase 3 relationship edges (inheritance, types, etc.).
+        """Extract relationship edges (inheritance, types, etc.).
 
         Args:
             chunk: CodeChunk to populate with relationships
@@ -592,18 +592,16 @@ class MultiLanguageChunker:
 
             if all_relationships:
                 logger.debug(
-                    f"Extracted {len(all_relationships)} Phase 3 relationships from {chunk_id}"
+                    f"Extracted {len(all_relationships)} relationships from {chunk_id}"
                 )
         except Exception as e:
-            # Python 3.11.0-3.11.3 has a known AST recursion depth bug (CPython #106905)
+            # Handle AST recursion depth limitation in Python 3.11.0-3.11.3
             if "recursion depth mismatch" in str(e):
                 logger.debug(
-                    f"Skipping Phase 3 extraction for {chunk.name} (Python 3.11 AST bug)"
+                    f"Skipping relationship extraction for {chunk.name} (Python 3.11 AST limitation)"
                 )
             else:
-                logger.warning(
-                    f"Failed to extract Phase 3 relationships for {chunk.name}: {e}"
-                )
+                logger.warning(f"Failed to extract relationships for {chunk.name}: {e}")
 
     def _convert_tree_chunks(
         self, tree_chunks: List[TreeSitterChunk], file_path: str
@@ -668,7 +666,7 @@ class MultiLanguageChunker:
                 language=tchunk.language,
             )
 
-            # Generate chunk_id for relationship extraction (Phase 1 + Phase 3)
+            # Generate chunk_id for relationship extraction
             chunk_id = self._create_chunk_id(
                 chunk.relative_path,
                 chunk.start_line,
@@ -677,10 +675,10 @@ class MultiLanguageChunker:
                 qualified_name,
             )
 
-            # Extract call graph relationships (Phase 1)
+            # Extract call graph relationships
             self._extract_call_relationships(chunk, tchunk, chunk_id)
 
-            # Extract Phase 3 relationship edges
+            # Extract relationship edges
             self._extract_phase3_relationships(chunk, tchunk, chunk_id)
 
             code_chunks.append(chunk)
@@ -756,7 +754,7 @@ class MultiLanguageChunker:
         return all_chunks
 
     def _chunk_files_sequential(self, file_paths: List[Path]) -> List[CodeChunk]:
-        """Chunk files sequentially (backward compatibility).
+        """Chunk files sequentially without parallelization.
 
         Args:
             file_paths: List of file paths to chunk

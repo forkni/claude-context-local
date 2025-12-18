@@ -1,6 +1,5 @@
 """Resource cleanup and lifecycle management for MCP server.
 
-Extracted from server.py as part of Phase 4 refactoring to improve code organization.
 This module handles:
 - Cleanup of previous project resources (index managers, searchers, embedders)
 - Project resource closure before deletion

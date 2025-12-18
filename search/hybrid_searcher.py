@@ -27,7 +27,7 @@ from .reranker import RRFReranker, SearchResult
 from .reranking_engine import RerankingEngine
 
 
-# Phase 4: Helper function to access config via ServiceLocator (avoids circular imports)
+# Helper function to access config via ServiceLocator (avoids circular imports)
 def _get_config_via_service_locator():
     """Get SearchConfig via ServiceLocator to avoid circular dependencies."""
     from mcp_server.services import ServiceLocator
@@ -210,13 +210,11 @@ class HybridSearcher:
     def _should_enable_neural_reranking(self) -> bool:
         """Check if VRAM is sufficient for neural reranking.
 
-        .. deprecated:: 0.7.0
+        .. deprecated::
             Use :meth:`reranking_engine.should_enable_neural_reranking` instead.
-            This wrapper method is kept for backward compatibility but will be
-            removed in v0.8.0.
+            This wrapper method may be removed in a future release.
 
         Delegates to reranking_engine for actual implementation.
-        Kept for backward compatibility.
         """
         return self.reranking_engine.should_enable_neural_reranking()
 
@@ -476,7 +474,7 @@ class HybridSearcher:
                 return []
 
         # Check if multi-hop search is enabled
-        # Phase 4: Use ServiceLocator helper instead of inline import
+        # Use ServiceLocator helper instead of inline import
         config = _get_config_via_service_locator()
 
         if config.multi_hop.enabled:
@@ -768,13 +766,11 @@ class HybridSearcher:
         """
         Internal multi-hop search implementation.
 
-        .. deprecated:: 0.7.0
+        .. deprecated::
             Use :meth:`multi_hop_searcher.search` instead.
-            This wrapper method is kept for backward compatibility but will be
-            removed in v0.8.0.
+            This wrapper method may be removed in a future release.
 
         Delegates to multi_hop_searcher for actual implementation.
-        Kept for backward compatibility.
 
         Args:
             query: Search query
@@ -812,13 +808,11 @@ class HybridSearcher:
         """
         Re-rank results by computing fresh relevance scores against the original query.
 
-        .. deprecated:: 0.7.0
+        .. deprecated::
             Use :meth:`reranking_engine.rerank_by_query` instead.
-            This wrapper method is kept for backward compatibility but will be
-            removed in v0.8.0.
+            This wrapper method may be removed in a future release.
 
         Delegates to reranking_engine for actual implementation.
-        Kept for backward compatibility.
 
         Args:
             query: Original search query
@@ -937,13 +931,11 @@ class HybridSearcher:
     def _matches_bm25_filters(self, metadata: Dict, filters: Dict) -> bool:
         """Check if BM25 result metadata matches filters.
 
-        .. deprecated:: 0.7.0
+        .. deprecated::
             Use :meth:`FilterEngine.from_dict(filters).matches(metadata)` instead.
-            This wrapper method is kept for backward compatibility but will be
-            removed in v0.8.0.
+            This wrapper method may be removed in a future release.
 
         Uses FilterEngine for unified filter logic across the codebase.
-        Kept as a method for backward compatibility.
         """
         return FilterEngine.from_dict(filters).matches(metadata)
 
@@ -1247,10 +1239,9 @@ class HybridSearcher:
     def save_index(self) -> None:
         """Save both BM25 and dense indices to disk.
 
-        .. deprecated:: 0.7.0
+        .. deprecated::
             Use :meth:`save_indices` instead (note the plural form).
-            This method is kept for backward compatibility but will be
-            removed in v0.8.0.
+            This method may be removed in a future release.
 
         Delegates to IndexSynchronizer.
         """

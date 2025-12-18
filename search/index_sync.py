@@ -1,7 +1,6 @@
 """Index synchronization and management for hybrid search.
 
-Extracted from hybrid_searcher.py (Phase 3.3 refactoring).
-This module handles saving, loading, validation, and synchronization
+Handles saving, loading, validation, and synchronization
 of both BM25 and dense FAISS indices.
 """
 

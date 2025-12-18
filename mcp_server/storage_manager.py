@@ -1,6 +1,6 @@
 """Storage path and project directory management.
 
-Extracted from server.py as part of Phase 2 refactoring.
+Manages project storage directories, metadata persistence, and path resolution.
 """
 
 import json
@@ -289,7 +289,7 @@ class StorageManager:
             project_info["user_included_dirs"] = include_dirs
             project_info["user_excluded_dirs"] = exclude_dirs
 
-            # Clean up old field names (migration)
+            # Clean up obsolete field names
             project_info.pop("include_dirs", None)
             project_info.pop("exclude_dirs", None)
 
