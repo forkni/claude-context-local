@@ -195,7 +195,8 @@ class StorageManager:
                 f"Available models:\n  {available_models}\n"
                 f"To add this model, update search/config.py:MODEL_REGISTRY"
             )
-        dimension = model_config["dimension"]
+        # Use effective dimension (truncate_dim for MRL, else native dimension)
+        dimension = model_config.get("truncate_dim") or model_config["dimension"]
         model_slug = get_model_slug(model_name)
 
         # Check for existing project directory (handles drive letter changes)

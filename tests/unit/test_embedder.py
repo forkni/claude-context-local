@@ -247,7 +247,10 @@ def test_query_cache_lru_eviction(mock_sentence_transformer):
 
     # Create embedder with small cache size for testing
     embedder = CodeEmbedder(model_name="BAAI/bge-m3")
-    embedder._query_cache_size = 3  # Small cache for testing
+    # Replace query cache with smaller size for testing
+    from embeddings.query_cache import QueryEmbeddingCache
+
+    embedder._query_cache = QueryEmbeddingCache(max_size=3)
 
     # Fill cache with 3 queries
     query1 = "query 1"
@@ -312,15 +315,36 @@ def test_query_cache_key_deterministic(mock_sentence_transformer):
     model_config = embedder._get_model_config()
 
     # Generate multiple keys for same query - should be identical
-    key1 = embedder._get_query_cache_key(query, model_config)
-    key2 = embedder._get_query_cache_key(query, model_config)
-    key3 = embedder._get_query_cache_key(query, model_config)
+    # Access the internal method of QueryEmbeddingCache
+    key1 = embedder._query_cache._generate_cache_key(
+        query,
+        embedder.model_name,
+        model_config.get("task_instruction", ""),
+        model_config.get("query_prefix", ""),
+    )
+    key2 = embedder._query_cache._generate_cache_key(
+        query,
+        embedder.model_name,
+        model_config.get("task_instruction", ""),
+        model_config.get("query_prefix", ""),
+    )
+    key3 = embedder._query_cache._generate_cache_key(
+        query,
+        embedder.model_name,
+        model_config.get("task_instruction", ""),
+        model_config.get("query_prefix", ""),
+    )
 
     assert key1 == key2 == key3
 
     # Different query should generate different key
     different_query = "different query"
-    key4 = embedder._get_query_cache_key(different_query, model_config)
+    key4 = embedder._query_cache._generate_cache_key(
+        different_query,
+        embedder.model_name,
+        model_config.get("task_instruction", ""),
+        model_config.get("query_prefix", ""),
+    )
 
     assert key1 != key4
 
@@ -448,8 +472,18 @@ def test_query_cache_different_models(mock_sentence_transformer):
     model_config1 = embedder1._get_model_config()
     model_config2 = embedder2._get_model_config()
 
-    key1 = embedder1._get_query_cache_key(query, model_config1)
-    key2 = embedder2._get_query_cache_key(query, model_config2)
+    key1 = embedder1._query_cache._generate_cache_key(
+        query,
+        embedder1.model_name,
+        model_config1.get("task_instruction", ""),
+        model_config1.get("query_prefix", ""),
+    )
+    key2 = embedder2._query_cache._generate_cache_key(
+        query,
+        embedder2.model_name,
+        model_config2.get("task_instruction", ""),
+        model_config2.get("query_prefix", ""),
+    )
 
     assert (
         key1 != key2

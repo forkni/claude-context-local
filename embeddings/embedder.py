@@ -21,6 +21,7 @@ from rich.progress import (
     TextColumn,
 )
 
+from embeddings.query_cache import QueryEmbeddingCache
 from search.filters import normalize_path
 
 try:
@@ -147,11 +148,7 @@ class CodeEmbedder:
         self._model_config = None
 
         # Query embedding cache (LRU)
-        self._query_cache_size = 128  # Configurable cache size
-        self._query_cache = {}  # Simple dict cache
-        self._cache_order = []  # Track insertion order for LRU
-        self._cache_hits = 0
-        self._cache_misses = 0
+        self._query_cache = QueryEmbeddingCache(max_size=128)
 
         # Track per-model VRAM usage
         self._model_vram_usage: Dict[str, float] = {}  # model_key -> VRAM MB
@@ -880,47 +877,13 @@ class CodeEmbedder:
         self._logger.info("Embedding generation completed")
         return results
 
-    def _get_query_cache_key(self, query: str, model_config: dict) -> str:
-        """Generate deterministic cache key from query and model config."""
-        import hashlib
-
-        key_data = f"{query}|{self.model_name}|{model_config.get('task_instruction', '')}|{model_config.get('query_prefix', '')}"
-        return hashlib.md5(key_data.encode()).hexdigest()
-
-    def _add_to_query_cache(self, key: str, embedding: np.ndarray):
-        """Add embedding to cache with LRU eviction."""
-        # Remove key if it already exists (to update order)
-        if key in self._query_cache:
-            self._cache_order.remove(key)
-
-        # Evict oldest entry if cache is full
-        if len(self._query_cache) >= self._query_cache_size:
-            oldest_key = self._cache_order.pop(0)
-            del self._query_cache[oldest_key]
-
-        # Add to cache
-        self._query_cache[key] = embedding.copy()
-        self._cache_order.append(key)
-
     def get_cache_stats(self) -> dict:
         """Get cache hit/miss statistics."""
-        total = self._cache_hits + self._cache_misses
-        hit_rate = (self._cache_hits / total * 100) if total > 0 else 0
-        return {
-            "hits": self._cache_hits,
-            "misses": self._cache_misses,
-            "hit_rate": f"{hit_rate:.1f}%",
-            "cache_size": len(self._query_cache),
-            "max_size": self._query_cache_size,
-        }
+        return self._query_cache.get_stats()
 
     def clear_query_cache(self):
         """Clear the query embedding cache."""
         self._query_cache.clear()
-        self._cache_order.clear()
-        self._cache_hits = 0
-        self._cache_misses = 0
-        self._logger.info("Query embedding cache cleared")
 
     def embed_query(self, query: str) -> np.ndarray:
         """Generate embedding for a search query with LRU caching.
@@ -934,17 +897,16 @@ class CodeEmbedder:
         # Get model-specific configuration
         model_config = self._get_model_config()
 
-        # Create cache key from query + model config
-        cache_key = self._get_query_cache_key(query, model_config)
+        # Try to get from cache
+        cached_embedding = self._query_cache.get(
+            query=query,
+            model_name=self.model_name,
+            task_instruction=model_config.get("task_instruction", ""),
+            query_prefix=model_config.get("query_prefix", ""),
+        )
 
-        # Check cache
-        if cache_key in self._query_cache:
-            self._cache_hits += 1
-            self._logger.debug(f"Cache hit for query: {query[:50]}...")
-            return self._query_cache[cache_key].copy()
-
-        self._cache_misses += 1
-        self._logger.debug(f"Cache miss for query: {query[:50]}...")
+        if cached_embedding is not None:
+            return cached_embedding
 
         # Cache miss - generate embedding
         # Priority: instruction_mode > task_instruction > query_prefix
@@ -1002,7 +964,13 @@ class CodeEmbedder:
             embedding = embedding.cpu().float().numpy()
 
         # Add to cache
-        self._add_to_query_cache(cache_key, embedding)
+        self._query_cache.put(
+            query=query,
+            model_name=self.model_name,
+            embedding=embedding,
+            task_instruction=model_config.get("task_instruction", ""),
+            query_prefix=model_config.get("query_prefix", ""),
+        )
 
         return embedding
 
