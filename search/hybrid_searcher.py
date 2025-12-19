@@ -25,6 +25,7 @@ from .multi_hop_searcher import MultiHopSearcher
 from .neural_reranker import NeuralReranker
 from .reranker import RRFReranker, SearchResult
 from .reranking_engine import RerankingEngine
+from .result_factory import ResultFactory
 
 
 # Helper function to access config via ServiceLocator (avoids circular imports)
@@ -354,24 +355,8 @@ class HybridSearcher:
         if not metadata:
             return None
 
-        # Normalize metadata to ensure 'file' key exists
-        # (metadata may have 'file_path' or 'relative_path' instead)
-        if "file" not in metadata:
-            metadata["file"] = metadata.get(
-                "file_path", metadata.get("relative_path", "")
-            )
-
-        # Create SearchResult with score 1.0 (exact match)
-        # Use the reranker's SearchResult format: (chunk_id, score, metadata, source, rank)
-        result = SearchResult(
-            chunk_id=chunk_id,
-            score=1.0,
-            metadata=metadata,
-            source="direct_lookup",
-            rank=0,
-        )
-
-        return result
+        # Delegate to ResultFactory for SearchResult creation
+        return ResultFactory.from_direct_lookup(chunk_id, metadata)
 
     def index_documents(
         self,
@@ -932,33 +917,35 @@ class HybridSearcher:
             )
             return []
 
+    @deprecated(
+        replacement="ResultFactory.from_bm25_results()",
+        version="0.7.0",
+    )
     def _convert_bm25_to_search_results(
         self, bm25_results: List[Tuple]
     ) -> List[SearchResult]:
-        """Convert BM25 search results to SearchResult format."""
-        search_results = []
-        for i, (chunk_id, score, metadata) in enumerate(bm25_results):
-            search_result = SearchResult(
-                chunk_id=chunk_id, score=score, metadata=metadata, source="bm25", rank=i
-            )
-            search_results.append(search_result)
-        return search_results
+        """Convert BM25 search results to SearchResult format.
 
+        .. deprecated::
+            Use :meth:`ResultFactory.from_bm25_results` instead.
+            This wrapper method may be removed in a future release.
+        """
+        return ResultFactory.from_bm25_results(bm25_results)
+
+    @deprecated(
+        replacement="ResultFactory.from_dense_results()",
+        version="0.7.0",
+    )
     def _convert_dense_to_search_results(
         self, dense_results: List[Tuple]
     ) -> List[SearchResult]:
-        """Convert dense search results to SearchResult format."""
-        search_results = []
-        for i, (chunk_id, score, metadata) in enumerate(dense_results):
-            search_result = SearchResult(
-                chunk_id=chunk_id,
-                score=score,
-                metadata=metadata,
-                source="semantic",
-                rank=i,
-            )
-            search_results.append(search_result)
-        return search_results
+        """Convert dense search results to SearchResult format.
+
+        .. deprecated::
+            Use :meth:`ResultFactory.from_dense_results` instead.
+            This wrapper method may be removed in a future release.
+        """
+        return ResultFactory.from_dense_results(dense_results)
 
     def get_search_mode_stats(self) -> Dict[str, Any]:
         """Get statistics about search mode performance."""
