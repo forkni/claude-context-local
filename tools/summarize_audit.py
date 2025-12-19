@@ -120,6 +120,26 @@ def get_dependency_tree_json() -> list | None:
     return None
 
 
+def get_outdated_packages() -> list[dict] | None:
+    """Run pip list --outdated --format=json and return parsed output."""
+    python_exe = find_python_with_pipdeptree()
+    if python_exe is None:
+        python_exe = sys.executable
+
+    try:
+        result = subprocess.run(
+            [python_exe, "-m", "pip", "list", "--outdated", "--format=json"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode == 0:
+            return json.loads(result.stdout)
+    except (subprocess.SubprocessError, json.JSONDecodeError, FileNotFoundError):
+        return None
+    return None
+
+
 def get_direct_dependencies(project_root: Path = None) -> set[str]:
     """Extract direct dependency names from pyproject.toml."""
     if project_root is None:
@@ -146,6 +166,54 @@ def get_direct_dependencies(project_root: Path = None) -> set[str]:
             deps.add(name)
 
     return deps
+
+
+def categorize_outdated_packages(outdated: list[dict]) -> dict:
+    """Categorize outdated packages by update risk."""
+    ML_CORE = {
+        "torch",
+        "torchvision",
+        "torchaudio",
+        "transformers",
+        "sentence-transformers",
+        "faiss-cpu",
+        "faiss-gpu",
+        "huggingface-hub",
+        "accelerate",
+        "peft",
+        "safetensors",
+    }
+
+    categories = {
+        "ml_core": [],  # DO NOT auto-update
+        "major_jump": [],  # Review breaking changes
+        "safe_update": [],  # Safe to update
+    }
+
+    for pkg in outdated:
+        name = pkg["name"].lower()
+        current = pkg["version"]
+        latest = pkg["latest_version"]
+
+        # Parse major versions
+        current_major = current.split(".")[0].lstrip("v")
+        latest_major = latest.split(".")[0].lstrip("v")
+
+        pkg_info = {
+            "name": pkg["name"],
+            "current": current,
+            "latest": latest,
+            "is_major_jump": current_major != latest_major,
+        }
+
+        if name in ML_CORE:
+            categories["ml_core"].append(pkg_info)
+        elif current_major != latest_major:
+            categories["major_jump"].append(pkg_info)
+        else:
+            categories["safe_update"].append(pkg_info)
+
+    return categories
 
 
 def build_package_trees(tree_data: list, direct_deps: set) -> dict:
@@ -381,8 +449,55 @@ def print_dependency_analysis(tree_data: list, direct_deps: set):
         safe_print("")
 
 
+def print_outdated_analysis(outdated: list[dict] | None):
+    """Print outdated packages analysis to console."""
+    if outdated is None:
+        safe_print("\n[WARN] Could not retrieve outdated packages")
+        return
+
+    if not outdated:
+        safe_print("\n[OK] All packages are up to date!")
+        return
+
+    categories = categorize_outdated_packages(outdated)
+
+    safe_print("\n" + "=" * 70)
+    safe_print("OUTDATED PACKAGES ANALYSIS".center(70))
+    safe_print("=" * 70)
+    safe_print(f"Total Outdated: {len(outdated)}")
+    safe_print("")
+
+    # ML Core packages (DO NOT auto-update)
+    if categories["ml_core"]:
+        safe_print("[ML CORE] DO NOT auto-update - test thoroughly first:")
+        safe_print("-" * 70)
+        for pkg in categories["ml_core"]:
+            jump = " [MAJOR]" if pkg["is_major_jump"] else ""
+            safe_print(f"  {pkg['name']}: {pkg['current']} -> {pkg['latest']}{jump}")
+        safe_print("")
+
+    # Major version jumps (review breaking changes)
+    if categories["major_jump"]:
+        safe_print("[MAJOR VERSION] Review breaking changes before updating:")
+        safe_print("-" * 70)
+        for pkg in categories["major_jump"]:
+            safe_print(f"  {pkg['name']}: {pkg['current']} -> {pkg['latest']}")
+        safe_print("")
+
+    # Safe updates
+    if categories["safe_update"]:
+        safe_print("[SAFE] Minor/patch updates (generally safe):")
+        safe_print("-" * 70)
+        for pkg in categories["safe_update"]:
+            safe_print(f"  {pkg['name']}: {pkg['current']} -> {pkg['latest']}")
+        safe_print("")
+
+
 def generate_markdown_report(
-    summary: dict, tree_data: list | None, direct_deps: set
+    summary: dict,
+    tree_data: list | None,
+    direct_deps: set,
+    outdated: list[dict] | None = None,
 ) -> str:
     """Generate full audit report as markdown string."""
     lines = []
@@ -549,6 +664,49 @@ def generate_markdown_report(
             lines.append("- If not needed: `pip uninstall <package>`")
             lines.append("")
 
+    # Outdated Packages Analysis
+    if outdated:
+        categories = categorize_outdated_packages(outdated)
+
+        lines.append("---")
+        lines.append("")
+        lines.append("## Outdated Packages Analysis")
+        lines.append("")
+        lines.append(f"**Total Outdated**: {len(outdated)}")
+        lines.append("")
+
+        if categories["ml_core"]:
+            lines.append("### ML Core (DO NOT auto-update)")
+            lines.append("")
+            lines.append("⚠️ **Test thoroughly before updating these packages:**")
+            lines.append("")
+            lines.append("| Package | Current | Latest | Risk |")
+            lines.append("|---------|---------|--------|------|")
+            for pkg in categories["ml_core"]:
+                risk = "MAJOR" if pkg["is_major_jump"] else "minor"
+                lines.append(
+                    f"| {pkg['name']} | {pkg['current']} | {pkg['latest']} | {risk} |"
+                )
+            lines.append("")
+
+        if categories["major_jump"]:
+            lines.append("### Major Version Jumps (Review breaking changes)")
+            lines.append("")
+            lines.append("| Package | Current | Latest |")
+            lines.append("|---------|---------|--------|")
+            for pkg in categories["major_jump"]:
+                lines.append(f"| {pkg['name']} | {pkg['current']} | {pkg['latest']} |")
+            lines.append("")
+
+        if categories["safe_update"]:
+            lines.append("### Safe Updates (Minor/Patch)")
+            lines.append("")
+            lines.append("| Package | Current | Latest |")
+            lines.append("|---------|---------|--------|")
+            for pkg in categories["safe_update"]:
+                lines.append(f"| {pkg['name']} | {pkg['current']} | {pkg['latest']} |")
+            lines.append("")
+
     return "\n".join(lines)
 
 
@@ -646,14 +804,18 @@ Examples:
     summary = parse_audit_json(data)
     tree_data = get_dependency_tree_json()
     direct_deps = get_direct_dependencies()
+    outdated_data = get_outdated_packages()
 
     # Always print to stdout (for chat display)
     print_summary(summary)
     print_dependency_analysis(tree_data, direct_deps)
+    print_outdated_analysis(outdated_data)
 
     # Save to file unless --no-save
     if not args.no_save:
-        report = generate_markdown_report(summary, tree_data, direct_deps)
+        report = generate_markdown_report(
+            summary, tree_data, direct_deps, outdated_data
+        )
         if args.output:
             output_path = args.output
         else:
