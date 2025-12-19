@@ -202,21 +202,6 @@ class HybridSearcher:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.shutdown()
 
-    @deprecated(
-        replacement="self.reranking_engine.should_enable_neural_reranking()",
-        version="0.7.0",
-    )
-    def _should_enable_neural_reranking(self) -> bool:
-        """Check if VRAM is sufficient for neural reranking.
-
-        .. deprecated::
-            Use :meth:`reranking_engine.should_enable_neural_reranking` instead.
-            This wrapper method may be removed in a future release.
-
-        Delegates to reranking_engine for actual implementation.
-        """
-        return self.reranking_engine.should_enable_neural_reranking()
-
     def shutdown(self):
         """Shutdown the thread pool and cleanup resources."""
         with self._shutdown_lock:
@@ -884,20 +869,6 @@ class HybridSearcher:
         except Exception as e:
             self._logger.error(f"BM25 search failed: {e}")
             return []
-
-    @deprecated(
-        replacement="FilterEngine.from_dict(filters).matches(metadata)", version="0.7.0"
-    )
-    def _matches_bm25_filters(self, metadata: Dict, filters: Dict) -> bool:
-        """Check if BM25 result metadata matches filters.
-
-        .. deprecated::
-            Use :meth:`FilterEngine.from_dict(filters).matches(metadata)` instead.
-            This wrapper method may be removed in a future release.
-
-        Uses FilterEngine for unified filter logic across the codebase.
-        """
-        return FilterEngine.from_dict(filters).matches(metadata)
 
     def _search_dense(
         self,
