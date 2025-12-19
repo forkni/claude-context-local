@@ -715,6 +715,11 @@ class HybridSearcher:
             Use :meth:`reranking_engine.rerank_by_query` instead.
             This wrapper method may be removed in a future release.
 
+        .. note::
+            TODO (Phase 3): This method is used as a callback by MultiHopSearcher.
+            Cannot be removed until MultiHopSearcher is refactored to use
+            RerankingEngine directly instead of this callback.
+
         Delegates to reranking_engine for actual implementation.
 
         Args:
