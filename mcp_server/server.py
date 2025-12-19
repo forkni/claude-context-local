@@ -260,14 +260,6 @@ if __name__ == "__main__":
     if args.transport == "sse":
         logger.info(f"SSE endpoint: http://{args.host}:{args.port}")
 
-    # Windows asyncio event loop policy for SSE transport
-    if args.transport == "sse":
-        import platform
-
-        if platform.system() == "Windows":
-            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-            logger.info("Windows: Using SelectorEventLoop for SSE")
-
     try:
         if args.transport == "stdio":
             from mcp.server.stdio import stdio_server
@@ -305,6 +297,8 @@ if __name__ == "__main__":
             asyncio.run(run_stdio_server())
         elif args.transport == "sse":
             # SSE transport using Starlette + SseServerTransport + uvicorn
+            import platform
+
             import uvicorn
             from mcp.server.sse import SseServerTransport
             from starlette.applications import Starlette
@@ -374,19 +368,53 @@ if __name__ == "__main__":
 
             starlette_app = Starlette(routes=routes, lifespan=app_lifespan)
 
-            # Run server
+            # Run server with Windows-specific event loop handling
             logger.info(f"Starting SSE server on {args.host}:{args.port}")
             logger.info(f"SSE endpoint: http://{args.host}:{args.port}/sse")
             logger.info(f"Message endpoint: http://{args.host}:{args.port}/messages/")
 
-            # Increase keep-alive timeout to handle long-running operations (indexing)
-            uvicorn.run(
+            # Uvicorn config (explicit asyncio loop, not uvloop)
+            config = uvicorn.Config(
                 starlette_app,
                 host=args.host,
                 port=args.port,
                 timeout_keep_alive=120,  # 2 minutes (default: 5s)
                 log_level="info",
+                loop="asyncio",  # Force asyncio (fixes uvicorn 0.36+ regression)
             )
+            uvi_server = uvicorn.Server(config)
+
+            # Windows: Use SelectorEventLoop to prevent WinError 64
+            # (uvicorn 0.36+ ignores asyncio.set_event_loop_policy when using uvicorn.run)
+            if platform.system() == "Windows":
+                asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+                # Set exception handler for residual socket errors
+                def handle_win_socket_error(loop, context):
+                    exc = context.get("exception")
+                    if (
+                        isinstance(exc, OSError)
+                        and getattr(exc, "winerror", None) == 64
+                    ):
+                        logger.debug(
+                            f"Client disconnect (WinError 64): {context.get('message', '')}"
+                        )
+                        return
+                    loop.default_exception_handler(context)
+
+                loop.set_exception_handler(handle_win_socket_error)
+
+                logger.info(
+                    "Windows: Using SelectorEventLoop for SSE (uvicorn 0.36+ fix)"
+                )
+                try:
+                    loop.run_until_complete(uvi_server.serve())
+                finally:
+                    loop.close()
+            else:
+                asyncio.run(uvi_server.serve())
 
     except KeyboardInterrupt:
         logger.info("\nShutting down gracefully...")
