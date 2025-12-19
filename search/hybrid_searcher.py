@@ -156,9 +156,6 @@ class HybridSearcher:
         self.reranking_engine = RerankingEngine(
             embedder=embedder, metadata_store=self.dense_index.metadata_store
         )
-        # Backward compatibility - delegate to reranking_engine
-        self.neural_reranker: Optional[NeuralReranker] = None
-        self._neural_reranking_enabled: bool = True  # Will be verified on first use
 
         # Index synchronizer (manages index persistence and synchronization)
         self.index_sync = IndexSynchronizer(
@@ -223,10 +220,8 @@ class HybridSearcher:
         with self._shutdown_lock:
             if not self._is_shutdown:
                 self._thread_pool.shutdown(wait=True)
-                # Cleanup reranking engine (which handles neural reranker)
+                # Cleanup reranking engine (which handles neural reranker cleanup)
                 self.reranking_engine.shutdown()
-                # Backward compatibility - keep reference in sync
-                self.neural_reranker = None
                 self._is_shutdown = True
                 self._logger.info("HybridSearcher shut down")
 
@@ -306,6 +301,19 @@ class HybridSearcher:
             >>> searcher.index_synchronizer.resync_bm25_from_dense()
         """
         return self.index_sync
+
+    @property
+    def neural_reranker(self) -> Optional[NeuralReranker]:
+        """Access the neural reranker instance (backward compatibility).
+
+        Returns:
+            NeuralReranker instance from reranking_engine, or None if not initialized.
+
+        Note:
+            This property delegates to reranking_engine.neural_reranker.
+            The neural reranker is lazily initialized when first needed.
+        """
+        return self.reranking_engine.neural_reranker
 
     def get_stats(self) -> Dict[str, Any]:
         """Get index statistics in the format expected by MCP server."""
@@ -576,48 +584,11 @@ class HybridSearcher:
                 f"[RERANK] Produced {len(final_results)} results in {rerank_time:.3f}s"
             )
 
-            # Neural reranking (Quality First mode)
-            # Always re-check config to pick up runtime changes
+            # Neural reranking (Quality First mode) - delegate to reranking_engine
             if len(final_results) > 0:
-                should_enable = self.reranking_engine.should_enable_neural_reranking()
-
-                # Handle state transitions
-                if should_enable and self.neural_reranker is None:
-                    # Initialize reranker (lazy load)
-                    from .config import get_search_config
-
-                    config = get_search_config()
-                    self.neural_reranker = NeuralReranker(
-                        model_name=config.reranker.model_name,
-                        batch_size=config.reranker.batch_size,
-                    )
-                    self._logger.debug("[RERANK] Neural reranker initialized")
-                elif not should_enable and self.neural_reranker is not None:
-                    # Cleanup when disabled
-                    self.neural_reranker.cleanup()
-                    self.neural_reranker = None
-                    self._logger.debug(
-                        "[RERANK] Neural reranker disabled and cleaned up"
-                    )
-
-                self._neural_reranking_enabled = should_enable
-
-                # Proceed with reranking if enabled
-                if self._neural_reranking_enabled and self.neural_reranker:
-                    neural_start = time.time()
-                    from .config import get_search_config
-
-                    config = get_search_config()
-                    rerank_count = min(
-                        config.reranker.top_k_candidates, len(final_results)
-                    )
-                    final_results = self.neural_reranker.rerank(
-                        query, final_results[:rerank_count], k
-                    )
-                    neural_time = time.time() - neural_start
-                    self._logger.debug(
-                        f"[NEURAL_RERANK] Processed {rerank_count} candidates in {neural_time:.3f}s"
-                    )
+                final_results = self.reranking_engine.apply_neural_reranking(
+                    query, final_results, k, context="search"
+                )
 
         # Update statistics
         total_time = time.time() - start_time
@@ -701,53 +672,26 @@ class HybridSearcher:
 
         # Apply neural reranking if requested and available
         if rerank and len(results) > 0:
-            should_enable = self.reranking_engine.should_enable_neural_reranking()
+            # Get reference chunk content to use as "query" for reranking
+            ref_metadata = self.dense_index.get_chunk_by_id(chunk_id)
+            query_content = (
+                ref_metadata.get("content_preview", "") if ref_metadata else ""
+            )
 
-            # Handle state transitions (lazy load reranker)
-            if should_enable and self.neural_reranker is None:
-                from .config import get_search_config
-
-                config = get_search_config()
-                self.neural_reranker = NeuralReranker(
-                    model_name=config.reranker.model_name,
-                    batch_size=config.reranker.batch_size,
-                )
+            if query_content:
                 self._logger.debug(
-                    "[RERANK-SIMILAR] Neural reranker initialized for find_similar_to_chunk"
+                    f"[RERANK-SIMILAR] Reranking {len(results)} candidates "
+                    f"using reference chunk as query (length: {len(query_content)} chars)"
                 )
-            elif not should_enable and self.neural_reranker is not None:
-                # Cleanup when disabled (though this is unlikely during runtime)
-                self.neural_reranker.cleanup()
-                self.neural_reranker = None
-                self._logger.debug("[RERANK-SIMILAR] Neural reranker disabled")
-
-            # Proceed with reranking if enabled
-            if should_enable and self.neural_reranker:
-                # Get reference chunk content to use as "query"
-                ref_metadata = self.dense_index.get_chunk_by_id(chunk_id)
-                query_content = (
-                    ref_metadata.get("content_preview", "") if ref_metadata else ""
+                # Delegate to reranking_engine for lifecycle + reranking
+                results = self.reranking_engine.apply_neural_reranking(
+                    query_content, results, k, context="similarity"
                 )
-
-                if query_content:
-                    self._logger.debug(
-                        f"[RERANK-SIMILAR] Reranking {len(results)} candidates "
-                        f"using reference chunk as query (length: {len(query_content)} chars)"
-                    )
-                    try:
-                        results = self.neural_reranker.rerank(query_content, results, k)
-                        self._logger.debug(
-                            f"[RERANK-SIMILAR] Returned {len(results)} reranked results"
-                        )
-                    except Exception as e:
-                        self._logger.warning(
-                            f"[RERANK-SIMILAR] Reranking failed, using FAISS results: {e}"
-                        )
-                else:
-                    self._logger.warning(
-                        f"[RERANK-SIMILAR] No content found for reference chunk {chunk_id}, "
-                        "skipping reranking"
-                    )
+            else:
+                self._logger.warning(
+                    f"[RERANK-SIMILAR] No content found for reference chunk {chunk_id}, "
+                    "skipping reranking"
+                )
 
         return results[:k]
 
@@ -824,13 +768,10 @@ class HybridSearcher:
         Returns:
             Top k results sorted by query relevance
         """
-        reranked = self.reranking_engine.rerank_by_query(
+        # Delegate to reranking_engine (neural_reranker access via property)
+        return self.reranking_engine.rerank_by_query(
             query, results, k, search_mode, query_embedding
         )
-        # Keep backward compatibility - sync neural_reranker reference
-        self.neural_reranker = self.reranking_engine.neural_reranker
-        self._neural_reranking_enabled = self.reranking_engine._neural_reranking_enabled
-        return reranked
 
     def _parallel_search(
         self,

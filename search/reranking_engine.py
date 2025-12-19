@@ -169,6 +169,80 @@ class RerankingEngine:
 
         return sorted_results[:k]
 
+    def apply_neural_reranking(
+        self,
+        query_or_content: str,
+        results: List,
+        k: int,
+        context: str = "search",
+    ) -> List:
+        """
+        Apply neural reranking with automatic lifecycle management.
+
+        Consolidates duplicate lifecycle logic from HybridSearcher methods.
+        Handles lazy initialization, VRAM checks, and cleanup automatically.
+
+        Args:
+            query_or_content: Query string or reference content for reranking
+            results: List of SearchResult objects to rerank
+            k: Number of top results to return
+            context: Context identifier for logging ("search" or "similarity")
+
+        Returns:
+            Reranked results (or original results if neural reranking unavailable)
+        """
+        if not results:
+            return []
+
+        # Check if neural reranking should be enabled
+        should_enable = self.should_enable_neural_reranking()
+
+        # Handle state transitions (lazy load/cleanup)
+        if should_enable and self.neural_reranker is None:
+            # Initialize reranker (lazy load)
+            from .config import get_search_config
+
+            config = get_search_config()
+            self.neural_reranker = NeuralReranker(
+                model_name=config.reranker.model_name,
+                batch_size=config.reranker.batch_size,
+            )
+            log_prefix = f"[RERANK-{context.upper()}]"
+            self._logger.debug(f"{log_prefix} Neural reranker initialized")
+        elif not should_enable and self.neural_reranker is not None:
+            # Cleanup when disabled
+            self.neural_reranker.cleanup()
+            self.neural_reranker = None
+            log_prefix = f"[RERANK-{context.upper()}]"
+            self._logger.debug(f"{log_prefix} Neural reranker disabled and cleaned up")
+
+        self._neural_reranking_enabled = should_enable
+
+        # Proceed with reranking if enabled
+        if self._neural_reranking_enabled and self.neural_reranker:
+            neural_start = time.time()
+            from .config import get_search_config
+
+            config = get_search_config()
+            rerank_count = min(config.reranker.top_k_candidates, len(results))
+
+            try:
+                results = self.neural_reranker.rerank(
+                    query_or_content, results[:rerank_count], k
+                )
+                neural_time = time.time() - neural_start
+                log_prefix = f"[NEURAL_RERANK-{context.upper()}]"
+                self._logger.debug(
+                    f"{log_prefix} Processed {rerank_count} candidates in {neural_time:.3f}s"
+                )
+            except Exception as e:
+                log_prefix = f"[NEURAL_RERANK-{context.upper()}]"
+                self._logger.warning(
+                    f"{log_prefix} Reranking failed: {e}, using original results"
+                )
+
+        return results
+
     def shutdown(self) -> None:
         """Cleanup neural reranker resources."""
         if self.neural_reranker:
