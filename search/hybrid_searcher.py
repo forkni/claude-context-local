@@ -576,40 +576,17 @@ class HybridSearcher:
                     query, final_results, k, context="search"
                 )
 
-        # Update statistics
+        # Update statistics and log completion
         total_time = time.time() - start_time
-        self._search_stats["total_searches"] += 1
-        self._search_stats["rerank_time"] += rerank_time
-
-        if use_parallel:
-            parallel_time = max(
-                self._search_stats.get("last_bm25_time", 0),
-                self._search_stats.get("last_dense_time", 0),
-            )
-            sequential_time = self._search_stats.get(
-                "last_bm25_time", 0
-            ) + self._search_stats.get("last_dense_time", 0)
-            if sequential_time > 0:
-                efficiency = 1.0 - (parallel_time / sequential_time)
-                self._search_stats["parallel_efficiency"] = efficiency
-
-        # Mode-specific logging
-        if search_mode == "bm25":
-            self._logger.debug(
-                f"BM25 search complete: {len(final_results)} results, "
-                f"Total time: {total_time:.3f}s"
-            )
-        elif search_mode == "semantic":
-            self._logger.debug(
-                f"Semantic search complete: {len(final_results)} results, "
-                f"Total time: {total_time:.3f}s"
-            )
-        else:  # hybrid
-            self._logger.debug(
-                f"Hybrid search complete: {len(final_results)} results, "
-                f"BM25: {len(bm25_results)}, Dense: {len(dense_results)}, "
-                f"Total time: {total_time:.3f}s"
-            )
+        self._update_search_stats(
+            search_mode=search_mode,
+            use_parallel=use_parallel,
+            rerank_time=rerank_time,
+            total_time=total_time,
+            results_count=len(final_results),
+            bm25_count=len(bm25_results),
+            dense_count=len(dense_results),
+        )
 
         return final_results
 
@@ -725,6 +702,62 @@ class HybridSearcher:
             min_bm25_score=min_bm25_score,
             filters=filters,
         )
+
+    def _update_search_stats(
+        self,
+        search_mode: str,
+        use_parallel: bool,
+        rerank_time: float,
+        total_time: float,
+        results_count: int,
+        bm25_count: int = 0,
+        dense_count: int = 0,
+    ) -> None:
+        """Update search performance statistics and log completion.
+
+        Args:
+            search_mode: Search mode used ("bm25", "semantic", or "hybrid")
+            use_parallel: Whether parallel execution was used
+            rerank_time: Time spent on reranking (seconds)
+            total_time: Total search time (seconds)
+            results_count: Number of results returned
+            bm25_count: Number of BM25 results (for hybrid mode logging)
+            dense_count: Number of dense results (for hybrid mode logging)
+        """
+        # Update statistics
+        self._search_stats["total_searches"] += 1
+        self._search_stats["rerank_time"] += rerank_time
+
+        # Calculate parallel efficiency if applicable
+        if use_parallel:
+            parallel_time = max(
+                self._search_stats.get("last_bm25_time", 0),
+                self._search_stats.get("last_dense_time", 0),
+            )
+            sequential_time = self._search_stats.get(
+                "last_bm25_time", 0
+            ) + self._search_stats.get("last_dense_time", 0)
+            if sequential_time > 0:
+                efficiency = 1.0 - (parallel_time / sequential_time)
+                self._search_stats["parallel_efficiency"] = efficiency
+
+        # Mode-specific logging
+        if search_mode == "bm25":
+            self._logger.debug(
+                f"BM25 search complete: {results_count} results, "
+                f"Total time: {total_time:.3f}s"
+            )
+        elif search_mode == "semantic":
+            self._logger.debug(
+                f"Semantic search complete: {results_count} results, "
+                f"Total time: {total_time:.3f}s"
+            )
+        else:  # hybrid
+            self._logger.debug(
+                f"Hybrid search complete: {results_count} results, "
+                f"BM25: {bm25_count}, Dense: {dense_count}, "
+                f"Total time: {total_time:.3f}s"
+            )
 
     @deprecated(replacement="self.reranking_engine.rerank_by_query()", version="0.7.0")
     def _rerank_by_query(
