@@ -18,18 +18,11 @@ except ImportError:
     SqliteDict = None
 
 from embeddings.embedder import EmbeddingResult
+from search.batch_operations import BatchOperations
 from search.faiss_index import FaissVectorIndex
 from search.filters import FilterEngine
+from search.graph_integration import GraphIntegration
 from search.metadata import MetadataStore
-
-# Import graph storage for call graph
-try:
-    from graph.graph_storage import CodeGraphStorage
-
-    GRAPH_STORAGE_AVAILABLE = True
-except ImportError:
-    GRAPH_STORAGE_AVAILABLE = False
-    CodeGraphStorage = None
 
 
 class CodeIndexManager:
@@ -53,20 +46,16 @@ class CodeIndexManager:
         )
         self.embedder = embedder  # Optional embedder for dimension validation
 
-        # Initialize call graph storage
-        self.graph_storage = None
-        if GRAPH_STORAGE_AVAILABLE and project_id:
-            try:
-                # Store graph in same directory as vector index
-                graph_dir = self.storage_dir.parent
-                self.graph_storage = CodeGraphStorage(
-                    project_id=project_id, storage_dir=graph_dir
-                )
-                self._logger.info(
-                    f"Call graph storage initialized for project: {project_id}"
-                )
-            except Exception as e:
-                self._logger.warning(f"Failed to initialize graph storage: {e}")
+        # Initialize graph integration layer
+        self._graph = GraphIntegration(project_id, self.storage_dir)
+
+        # Backward compatibility: expose graph storage directly
+        self.graph_storage = self._graph.storage
+
+        # Initialize batch operations handler
+        self._batch_ops = BatchOperations(
+            self._faiss_index, self._metadata_store, self._logger
+        )
 
         # Check dependencies
         self._check_dependencies()
@@ -181,11 +170,11 @@ class CodeIndexManager:
             # Store in metadata database
             self.metadata_store.set(chunk_id, start_id + i, result.metadata)
 
-            # Populate call graph
-            if self.graph_storage is not None:
-                self._add_to_graph(chunk_id, result.metadata)
+            # Populate call graph via integration layer
+            if self._graph.is_available:
+                self._graph.add_chunk(chunk_id, result.metadata)
                 self._logger.debug(
-                    f"Graph storage check: chunk_id={chunk_id}, type={result.metadata.get('chunk_type')}, graph_nodes={len(self.graph_storage)}"
+                    f"Graph storage check: chunk_id={chunk_id}, type={result.metadata.get('chunk_type')}, graph_nodes={len(self._graph)}"
                 )
 
         self._logger.info(f"Added {len(embedding_results)} embeddings to index")
@@ -523,164 +512,24 @@ class CodeIndexManager:
         if not file_paths:
             return 0
 
-        # Force lazy loading of index and chunk_ids before accessing _chunk_ids
+        # Force lazy loading of index and chunk_ids before accessing them
         _ = self.index
 
-        chunks_to_remove_ids = set()
-        chunks_to_remove_positions = []
-
-        # Single pass to identify chunks to remove
-        for position, chunk_id in enumerate(self.chunk_ids):
-            metadata_entry = self.metadata_store.get(chunk_id)
-            if not metadata_entry:
-                continue
-
-            metadata = metadata_entry["metadata"]
-
-            # Check if this chunk belongs to any of the files
-            chunk_file = metadata.get("file_path") or metadata.get("relative_path")
-            if not chunk_file:
-                continue
-
-            # Check if chunk matches any file in the set
-            for file_path in file_paths:
-                if file_path in chunk_file or chunk_file in file_path:
-                    # Check project name if provided
-                    if project_name and metadata.get("project_name") != project_name:
-                        continue
-                    chunks_to_remove_ids.add(chunk_id)
-                    chunks_to_remove_positions.append(position)
-                    break  # Found match, no need to check other files
-
-        if not chunks_to_remove_ids:
-            self._logger.info("No chunks found to remove")
-            return 0
-
-        self._logger.info(
-            f"Removing {len(chunks_to_remove_ids)} chunks from {len(file_paths)} files"
+        # Delegate to batch operations handler
+        return self._batch_ops.remove_files(
+            file_paths=file_paths,
+            chunk_ids=self.chunk_ids,
+            project_name=project_name,
+            clear_index_callback=self.clear_index,
         )
-
-        try:
-            # Rebuild FAISS index without removed chunks
-            if self.index is not None and self.index.ntotal > 0:
-                # Get positions to keep (all except those being removed)
-                positions_to_remove_set = set(chunks_to_remove_positions)
-                positions_to_keep = [
-                    i
-                    for i in range(len(self.chunk_ids))
-                    if i not in positions_to_remove_set
-                ]
-
-                if positions_to_keep:
-                    # Reconstruct embeddings for chunks we want to keep
-                    embeddings_to_keep = []
-                    chunk_ids_to_keep = []
-                    for pos in positions_to_keep:
-                        try:
-                            embedding = self._faiss_index.reconstruct(int(pos))
-                            embeddings_to_keep.append(embedding)
-                            chunk_ids_to_keep.append(self.chunk_ids[pos])
-                        except Exception as e:
-                            self._logger.warning(
-                                f"Failed to reconstruct embedding at position {pos}: {e}"
-                            )
-                            continue
-
-                    if embeddings_to_keep:
-                        # Save current state
-                        embeddings_array = np.array(
-                            embeddings_to_keep, dtype=np.float32
-                        )
-                        embedding_dim = embeddings_array.shape[1]
-                        was_on_gpu = self._faiss_index.is_on_gpu
-
-                        # Clear old index and create new one
-                        self._faiss_index.clear()
-                        self._faiss_index.create(embedding_dim, "flat")
-
-                        # Add kept embeddings and chunk IDs
-                        self._faiss_index.add(embeddings_array, chunk_ids_to_keep)
-
-                        # Restore GPU state if needed
-                        if was_on_gpu:
-                            self._faiss_index.move_to_gpu()
-
-                        self._logger.info(
-                            f"Rebuilt FAISS index: {self._faiss_index.ntotal} vectors "
-                            f"(removed {len(chunks_to_remove_ids)})"
-                        )
-                    else:
-                        # No embeddings to keep, clear the index
-                        self._logger.warning(
-                            "No valid embeddings to keep, clearing index"
-                        )
-                        self.clear_index()
-                        return len(chunks_to_remove_ids)
-                else:
-                    # All chunks removed, clear the index
-                    self._logger.info("All chunks removed, clearing index")
-                    self.clear_index()
-                    return len(chunks_to_remove_ids)
-
-            # Remove chunks from metadata and update index_ids
-            for chunk_id in chunks_to_remove_ids:
-                if chunk_id in self.metadata_store:
-                    self.metadata_store.delete(chunk_id)
-
-            # Update metadata with new index positions
-            for new_pos, chunk_id in enumerate(self.chunk_ids):
-                if chunk_id in self.metadata_store:
-                    self.metadata_store.update_index_id(chunk_id, new_pos)
-
-            # Commit all changes
-            try:
-                self.metadata_store.commit()
-            except Exception as e:
-                self._logger.warning(f"Failed to commit metadata changes: {e}")
-
-            self._logger.info(
-                f"Successfully batch removed {len(chunks_to_remove_ids)} chunks from {len(file_paths)} files"
-            )
-
-            return len(chunks_to_remove_ids)
-
-        except Exception as e:
-            self._logger.error(f"Failed to batch remove chunks: {e}")
-            import traceback
-
-            self._logger.error(traceback.format_exc())
-            # Don't leave index in corrupted state - if rebuild fails, clear it
-            self._logger.warning(
-                "Batch removal failed, clearing index to prevent corruption"
-            )
-            self.clear_index()
-            raise
 
     def save_index(self):
         """Save the FAISS index and chunk IDs to disk."""
         # Delegate FAISS index and chunk ID saving to FaissVectorIndex
         self._faiss_index.save()
 
-        # Save call graph if populated
-        graph_status = "not None" if self.graph_storage is not None else "None"
-        graph_nodes = len(self.graph_storage) if self.graph_storage else 0
-        self._logger.info(
-            f"[save_index] Graph storage check: graph_storage={graph_status}, nodes={graph_nodes}"
-        )
-        if self.graph_storage is not None and len(self.graph_storage) > 0:
-            try:
-                self._logger.info(
-                    f"[save_index] Saving call graph with {len(self.graph_storage)} nodes to {self.graph_storage.graph_path}"
-                )
-                self.graph_storage.save()
-                self._logger.info("[save_index] Successfully saved call graph")
-            except Exception as e:
-                self._logger.warning(f"[save_index] Failed to save call graph: {e}")
-        else:
-            skip_reason = "None" if self.graph_storage is None else "empty (0 nodes)"
-            self._logger.info(
-                f"[save_index] Skipping graph save: graph_storage is {skip_reason}"
-            )
+        # Save call graph via integration layer
+        self._graph.save()
 
     def save_indices(self) -> None:
         """Save indices (alias for save_index for IncrementalIndexer compatibility)."""
@@ -722,115 +571,16 @@ class CodeIndexManager:
         return self._faiss_index.load()
 
     def _add_to_graph(self, chunk_id: str, metadata: Dict[str, Any]) -> None:
-        """Add chunk to call graph storage.
+        """Add chunk to call graph storage (compatibility wrapper).
+
+        This method is kept for backward compatibility. New code should
+        use the GraphIntegration layer directly.
 
         Args:
             chunk_id: Unique chunk identifier
             metadata: Chunk metadata including calls and relationships
         """
-        if self.graph_storage is None:
-            self._logger.debug(
-                f"_add_to_graph: graph_storage is None, skipping {chunk_id}"
-            )
-            return
-
-        try:
-            # Process all semantic chunk types for relationships
-            # - Functions/methods: call relationships
-            # - Classes/structs/interfaces/etc: inheritance, type usage
-            chunk_type = metadata.get("chunk_type")
-            chunk_name = metadata.get("name")
-            relationships = metadata.get("relationships", [])
-
-            self._logger.debug(
-                f"_add_to_graph called: chunk_id={chunk_id}, type={chunk_type}, name={chunk_name}"
-            )
-
-            # Semantic chunk types that can have relationships
-            # Based on Codanna's approach: index ALL semantic symbols
-            SEMANTIC_TYPES = (
-                "function",
-                "method",
-                "decorated_definition",
-                "class",
-                "struct",
-                "interface",
-                "enum",
-                "trait",
-                "impl",
-                "constant",
-                "variable",
-            )
-
-            if chunk_type not in SEMANTIC_TYPES:
-                # Allow through if it has relationships (edge case)
-                if not relationships:
-                    self._logger.debug(
-                        f"Skipping non-semantic chunk: {chunk_id} (type={chunk_type})"
-                    )
-                    return
-                else:
-                    self._logger.debug(
-                        f"Processing non-semantic chunk with relationships: {chunk_id} (type={chunk_type}, rels={len(relationships)})"
-                    )
-
-            self._logger.debug(f"Adding {chunk_type} '{metadata.get('name')}' to graph")
-
-            # Add node for this chunk
-            self.graph_storage.add_node(
-                chunk_id=chunk_id,
-                name=metadata.get("name", "unknown"),
-                chunk_type=chunk_type,
-                file_path=metadata.get("file_path", ""),
-                language=metadata.get("language", "python"),
-            )
-
-            # Add call edges from function call extraction
-            calls = metadata.get("calls", [])
-            for call_dict in calls:
-                self.graph_storage.add_call_edge(
-                    caller_id=chunk_id,
-                    callee_name=call_dict.get("callee_name", "unknown"),
-                    line_number=call_dict.get("line_number", 0),
-                    is_method_call=call_dict.get("is_method_call", False),
-                )
-
-            # Add all relationship edges
-            relationships = metadata.get("relationships", [])
-            if relationships:
-                self._logger.debug(
-                    f"Processing {len(relationships)} relationship edges for {chunk_id}"
-                )
-                for rel_dict in relationships:
-                    try:
-                        # Import RelationshipEdge to reconstruct from dict
-                        from graph.relationship_types import (
-                            RelationshipEdge,
-                            RelationshipType,
-                        )
-
-                        # Reconstruct RelationshipEdge from dict
-                        edge = RelationshipEdge(
-                            source_id=rel_dict.get("source_id", chunk_id),
-                            target_name=rel_dict.get("target_name", "unknown"),
-                            relationship_type=RelationshipType(
-                                rel_dict.get("relationship_type", "calls")
-                            ),
-                            line_number=rel_dict.get("line_number", 0),
-                            confidence=rel_dict.get("confidence", 1.0),
-                            metadata=rel_dict.get("metadata", {}),
-                        )
-
-                        # Add to graph storage
-                        self.graph_storage.add_relationship_edge(edge)
-
-                    except Exception as e:
-                        self._logger.warning(
-                            f"Failed to add relationship edge from {chunk_id}: {e}"
-                        )
-
-        except Exception as e:
-            self._logger.warning(f"Failed to add {chunk_id} to graph: {e}")
+        self._graph.add_chunk(chunk_id, metadata)
 
     def _update_stats(self):
         """Update index statistics."""
@@ -1006,13 +756,8 @@ class CodeIndexManager:
             if file_path.exists():
                 file_path.unlink()
 
-        # Clear call graph
-        if self.graph_storage is not None:
-            try:
-                self.graph_storage.clear()
-                self._logger.info("Call graph cleared")
-            except Exception as e:
-                self._logger.warning(f"Failed to clear call graph: {e}")
+        # Clear call graph via integration layer
+        self._graph.clear()
 
         self._logger.info("Index cleared")
 
