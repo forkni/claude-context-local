@@ -28,7 +28,10 @@ def test_model_loading_and_embedding(mock_sentence_transformer, model_name: str)
     """
     # Get model config to determine expected dimension
     model_config = MODEL_REGISTRY.get(model_name, {})
-    expected_dimension = model_config.get("dimension", 768)
+    # Use truncate_dim if available (for MRL models like Qwen3-4B), otherwise use dimension
+    expected_dimension = model_config.get(
+        "truncate_dim", model_config.get("dimension", 768)
+    )
 
     # Mock the SentenceTransformer to avoid downloading models
     def mock_encode(
@@ -161,8 +164,9 @@ def test_prefixing_logic(mock_sentence_transformer):
     del MODEL_REGISTRY["test/query-prefix-model"]
 
 
+@patch("embeddings.model_loader.SentenceTransformer")
 @patch("embeddings.embedder.SentenceTransformer")
-def test_query_cache_hits_and_misses(mock_sentence_transformer):
+def test_query_cache_hits_and_misses(mock_sentence_transformer, mock_model_loader_st):
     """Test that query cache correctly tracks hits and misses."""
 
     # Mock the model's encode method
@@ -177,7 +181,9 @@ def test_query_cache_hits_and_misses(mock_sentence_transformer):
 
     mock_model = MagicMock()
     mock_model.encode.side_effect = mock_encode
+    mock_model.device = "cpu"  # Add device attribute for ModelLoader
     mock_sentence_transformer.return_value = mock_model
+    mock_model_loader_st.return_value = mock_model  # Same mock for ModelLoader
 
     embedder = CodeEmbedder(model_name="BAAI/bge-m3")
 
