@@ -15,13 +15,16 @@ from chunking.python_ast_chunker import CodeChunk  # noqa: E402
 from embeddings.embedder import CodeEmbedder, EmbeddingResult  # noqa: E402
 from search.config import MODEL_REGISTRY  # noqa: E402
 
-# Get all configured models to test
-supported_models = list(MODEL_REGISTRY.keys())
+# Get all configured models to test (exclude 8B model - not actively used)
+supported_models = [m for m in MODEL_REGISTRY.keys() if "8B" not in m]
 
 
 @pytest.mark.parametrize("model_name", supported_models)
+@patch("embeddings.model_loader.SentenceTransformer")
 @patch("embeddings.embedder.SentenceTransformer")
-def test_model_loading_and_embedding(mock_sentence_transformer, model_name: str):
+def test_model_loading_and_embedding(
+    mock_sentence_transformer, mock_model_loader_st, model_name: str
+):
     """
     Tests that each supported model can be loaded and can create embeddings
     of the correct dimension.
@@ -29,8 +32,9 @@ def test_model_loading_and_embedding(mock_sentence_transformer, model_name: str)
     # Get model config to determine expected dimension
     model_config = MODEL_REGISTRY.get(model_name, {})
     # Use truncate_dim if available (for MRL models like Qwen3-4B), otherwise use dimension
-    expected_dimension = model_config.get(
-        "truncate_dim", model_config.get("dimension", 768)
+    # Note: Use `or` to handle truncate_dim=None (not just missing key)
+    expected_dimension = model_config.get("truncate_dim") or model_config.get(
+        "dimension", 768
     )
 
     # Mock the SentenceTransformer to avoid downloading models
@@ -51,7 +55,9 @@ def test_model_loading_and_embedding(mock_sentence_transformer, model_name: str)
 
     mock_model = MagicMock()
     mock_model.encode.side_effect = mock_encode
+    mock_model.device = "cpu"  # Add device attribute for ModelLoader
     mock_sentence_transformer.return_value = mock_model
+    mock_model_loader_st.return_value = mock_model  # Same mock for ModelLoader
 
     try:
         embedder = CodeEmbedder(model_name=model_name)
@@ -97,8 +103,9 @@ def test_model_loading_and_embedding(mock_sentence_transformer, model_name: str)
         pytest.fail(f"An unexpected error occurred while testing {model_name}: {e}")
 
 
+@patch("embeddings.model_loader.SentenceTransformer")
 @patch("embeddings.embedder.SentenceTransformer")
-def test_prefixing_logic(mock_sentence_transformer):
+def test_prefixing_logic(mock_sentence_transformer, mock_model_loader_st):
     """
     Tests that the prefixing logic is correctly applied based on model config.
     """
@@ -230,8 +237,9 @@ def test_query_cache_hits_and_misses(mock_sentence_transformer, mock_model_loade
     assert stats["cache_size"] == 2
 
 
+@patch("embeddings.model_loader.SentenceTransformer")
 @patch("embeddings.embedder.SentenceTransformer")
-def test_query_cache_lru_eviction(mock_sentence_transformer):
+def test_query_cache_lru_eviction(mock_sentence_transformer, mock_model_loader_st):
     """Test that LRU eviction works when cache is full."""
     # Mock the model's encode method
     call_count = [0]
@@ -249,7 +257,9 @@ def test_query_cache_lru_eviction(mock_sentence_transformer):
 
     mock_model = MagicMock()
     mock_model.encode.side_effect = mock_encode
+    mock_model.device = "cpu"  # Add device attribute for ModelLoader
     mock_sentence_transformer.return_value = mock_model
+    mock_model_loader_st.return_value = mock_model  # Same mock for ModelLoader
 
     # Create embedder with small cache size for testing
     embedder = CodeEmbedder(model_name="BAAI/bge-m3")
@@ -297,8 +307,9 @@ def test_query_cache_lru_eviction(mock_sentence_transformer):
     assert call_count[0] == 5  # No new encode call
 
 
+@patch("embeddings.model_loader.SentenceTransformer")
 @patch("embeddings.embedder.SentenceTransformer")
-def test_query_cache_key_deterministic(mock_sentence_transformer):
+def test_query_cache_key_deterministic(mock_sentence_transformer, mock_model_loader_st):
     """Test that cache key generation is deterministic."""
 
     # Mock the model's encode method
@@ -313,7 +324,9 @@ def test_query_cache_key_deterministic(mock_sentence_transformer):
 
     mock_model = MagicMock()
     mock_model.encode.side_effect = mock_encode
+    mock_model.device = "cpu"  # Add device attribute for ModelLoader
     mock_sentence_transformer.return_value = mock_model
+    mock_model_loader_st.return_value = mock_model  # Same mock for ModelLoader
 
     embedder = CodeEmbedder(model_name="BAAI/bge-m3")
 
@@ -355,8 +368,9 @@ def test_query_cache_key_deterministic(mock_sentence_transformer):
     assert key1 != key4
 
 
+@patch("embeddings.model_loader.SentenceTransformer")
 @patch("embeddings.embedder.SentenceTransformer")
-def test_query_cache_stats_accuracy(mock_sentence_transformer):
+def test_query_cache_stats_accuracy(mock_sentence_transformer, mock_model_loader_st):
     """Test that cache statistics are accurate."""
 
     # Mock the model's encode method
@@ -371,7 +385,9 @@ def test_query_cache_stats_accuracy(mock_sentence_transformer):
 
     mock_model = MagicMock()
     mock_model.encode.side_effect = mock_encode
+    mock_model.device = "cpu"  # Add device attribute for ModelLoader
     mock_sentence_transformer.return_value = mock_model
+    mock_model_loader_st.return_value = mock_model  # Same mock for ModelLoader
 
     embedder = CodeEmbedder(model_name="BAAI/bge-m3")
 
@@ -400,8 +416,9 @@ def test_query_cache_stats_accuracy(mock_sentence_transformer):
     assert stats["max_size"] == 128
 
 
+@patch("embeddings.model_loader.SentenceTransformer")
 @patch("embeddings.embedder.SentenceTransformer")
-def test_query_cache_clear(mock_sentence_transformer):
+def test_query_cache_clear(mock_sentence_transformer, mock_model_loader_st):
     """Test that clear_query_cache properly resets cache state."""
 
     # Mock the model's encode method
@@ -416,7 +433,9 @@ def test_query_cache_clear(mock_sentence_transformer):
 
     mock_model = MagicMock()
     mock_model.encode.side_effect = mock_encode
+    mock_model.device = "cpu"  # Add device attribute for ModelLoader
     mock_sentence_transformer.return_value = mock_model
+    mock_model_loader_st.return_value = mock_model  # Same mock for ModelLoader
 
     embedder = CodeEmbedder(model_name="BAAI/bge-m3")
 
@@ -450,8 +469,9 @@ def test_query_cache_clear(mock_sentence_transformer):
     assert stats["cache_size"] == 1
 
 
+@patch("embeddings.model_loader.SentenceTransformer")
 @patch("embeddings.embedder.SentenceTransformer")
-def test_query_cache_different_models(mock_sentence_transformer):
+def test_query_cache_different_models(mock_sentence_transformer, mock_model_loader_st):
     """Test that cache handles different model configurations correctly."""
 
     # Mock the model's encode method
@@ -466,7 +486,9 @@ def test_query_cache_different_models(mock_sentence_transformer):
 
     mock_model = MagicMock()
     mock_model.encode.side_effect = mock_encode
+    mock_model.device = "cpu"  # Add device attribute for ModelLoader
     mock_sentence_transformer.return_value = mock_model
+    mock_model_loader_st.return_value = mock_model  # Same mock for ModelLoader
 
     # Create two embedders with different models
     embedder1 = CodeEmbedder(model_name="BAAI/bge-m3")
@@ -508,8 +530,11 @@ def test_query_cache_different_models(mock_sentence_transformer):
     assert stats2["misses"] == 1
 
 
+@patch("embeddings.model_loader.SentenceTransformer")
 @patch("embeddings.embedder.SentenceTransformer")
-def test_query_cache_with_task_instruction(mock_sentence_transformer):
+def test_query_cache_with_task_instruction(
+    mock_sentence_transformer, mock_model_loader_st
+):
     """Test that cache correctly handles models with task_instruction prefix."""
     # Mock the model's encode method
     encoded_queries = []
@@ -526,7 +551,9 @@ def test_query_cache_with_task_instruction(mock_sentence_transformer):
 
     mock_model = MagicMock()
     mock_model.encode.side_effect = mock_encode
+    mock_model.device = "cpu"  # Add device attribute for ModelLoader
     mock_sentence_transformer.return_value = mock_model
+    mock_model_loader_st.return_value = mock_model  # Same mock for ModelLoader
 
     # Use existing model with task_instruction (CodeRankEmbed)
     embedder = CodeEmbedder(model_name="nomic-ai/CodeRankEmbed")
@@ -551,8 +578,9 @@ def test_query_cache_with_task_instruction(mock_sentence_transformer):
     assert stats["misses"] == 1
 
 
+@patch("embeddings.model_loader.SentenceTransformer")
 @patch("embeddings.embedder.SentenceTransformer")
-def test_mrl_truncate_dim_support(mock_sentence_transformer):
+def test_mrl_truncate_dim_support(mock_sentence_transformer, mock_model_loader_st):
     """Test that Matryoshka Representation Learning (MRL) truncate_dim is passed correctly."""
     # Track constructor kwargs
     constructor_kwargs_list = []
@@ -561,9 +589,11 @@ def test_mrl_truncate_dim_support(mock_sentence_transformer):
         constructor_kwargs_list.append(kwargs)
         mock_model = MagicMock()
         mock_model.encode.return_value = np.ones((1, 1024), dtype=np.float32) * 0.5
+        mock_model.device = "cpu"  # Add device attribute for ModelLoader
         return mock_model
 
-    mock_sentence_transformer.side_effect = mock_constructor
+    # Set side_effect on the model_loader mock (where actual loading happens)
+    mock_model_loader_st.side_effect = mock_constructor
 
     # Test Qwen3-4B with MRL enabled (truncate_dim=1024)
     embedder = CodeEmbedder(model_name="Qwen/Qwen3-Embedding-4B")
@@ -583,8 +613,9 @@ def test_mrl_truncate_dim_support(mock_sentence_transformer):
     assert embedding.shape == (1024,)  # Should match truncate_dim
 
 
+@patch("embeddings.model_loader.SentenceTransformer")
 @patch("embeddings.embedder.SentenceTransformer")
-def test_instruction_mode_custom(mock_sentence_transformer):
+def test_instruction_mode_custom(mock_sentence_transformer, mock_model_loader_st):
     """Test custom instruction mode for Qwen3 models."""
     # Track encoded queries
     encoded_queries = []
@@ -601,7 +632,9 @@ def test_instruction_mode_custom(mock_sentence_transformer):
 
     mock_model = MagicMock()
     mock_model.encode.side_effect = mock_encode
+    mock_model.device = "cpu"  # Add device attribute for ModelLoader
     mock_sentence_transformer.return_value = mock_model
+    mock_model_loader_st.return_value = mock_model  # Same mock for ModelLoader
 
     # Test Qwen3-0.6B with custom instruction mode
     embedder = CodeEmbedder(model_name="Qwen/Qwen3-Embedding-0.6B")
@@ -622,8 +655,9 @@ def test_instruction_mode_custom(mock_sentence_transformer):
     assert "prompt_name" not in encode_kwargs
 
 
+@patch("embeddings.model_loader.SentenceTransformer")
 @patch("embeddings.embedder.SentenceTransformer")
-def test_instruction_mode_prompt_name(mock_sentence_transformer):
+def test_instruction_mode_prompt_name(mock_sentence_transformer, mock_model_loader_st):
     """Test prompt_name instruction mode for Qwen3 models."""
     # Track encoded queries
     encoded_queries = []
@@ -641,7 +675,9 @@ def test_instruction_mode_prompt_name(mock_sentence_transformer):
 
     mock_model = MagicMock()
     mock_model.encode.side_effect = mock_encode
+    mock_model.device = "cpu"  # Add device attribute for ModelLoader
     mock_sentence_transformer.return_value = mock_model
+    mock_model_loader_st.return_value = mock_model  # Same mock for ModelLoader
 
     # Test Qwen3-0.6B with prompt_name mode (temporarily switch mode)
     embedder = CodeEmbedder(model_name="Qwen/Qwen3-Embedding-0.6B")
@@ -663,8 +699,9 @@ def test_instruction_mode_prompt_name(mock_sentence_transformer):
     MODEL_REGISTRY["Qwen/Qwen3-Embedding-0.6B"]["instruction_mode"] = "custom"
 
 
+@patch("embeddings.model_loader.SentenceTransformer")
 @patch("embeddings.embedder.SentenceTransformer")
-def test_instruction_mode_cache_keys(mock_sentence_transformer):
+def test_instruction_mode_cache_keys(mock_sentence_transformer, mock_model_loader_st):
     """Test that different instruction modes produce different cache keys."""
     # Mock the model
     encode_count = [0]
@@ -681,7 +718,9 @@ def test_instruction_mode_cache_keys(mock_sentence_transformer):
 
     mock_model = MagicMock()
     mock_model.encode.side_effect = mock_encode
+    mock_model.device = "cpu"  # Add device attribute for ModelLoader
     mock_sentence_transformer.return_value = mock_model
+    mock_model_loader_st.return_value = mock_model  # Same mock for ModelLoader
 
     # Create embedder with custom instruction mode
     embedder = CodeEmbedder(model_name="Qwen/Qwen3-Embedding-0.6B")
