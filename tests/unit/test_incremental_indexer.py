@@ -211,7 +211,7 @@ class TestIncrementalIndexer:
             self.mock_indexer.clear_index.assert_called_once()
             self.mock_embedder.embed_chunks.assert_called()
             self.mock_indexer.add_embeddings.assert_called_once()
-            self.mock_indexer.save_index.assert_called_once()
+            self.mock_indexer.save_indices.assert_called_once()
 
     def test_incremental_update_no_changes(self):
         """Test incremental update when no changes detected."""

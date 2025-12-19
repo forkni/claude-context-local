@@ -328,7 +328,7 @@ class IncrementalIndexer:
 
             # Update index
             logger.info("[INCREMENTAL] Saving index...")
-            self.indexer.save_index()
+            self.indexer.save_indices()
             logger.info("[INCREMENTAL] Index saved")
 
             # Auto-sync BM25 if significant desync detected (>10% difference)
@@ -524,7 +524,7 @@ class IncrementalIndexer:
 
             # Save index
             logger.info("[INCREMENTAL] Saving index...")
-            self.indexer.save_index()
+            self.indexer.save_indices()
             logger.info("[INCREMENTAL] Index saved")
 
             # Auto-sync BM25 if significant desync detected (>10% difference)
