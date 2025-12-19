@@ -682,6 +682,10 @@ class CodeIndexManager:
                 f"[save_index] Skipping graph save: graph_storage is {skip_reason}"
             )
 
+    def save_indices(self) -> None:
+        """Save indices (alias for save_index for IncrementalIndexer compatibility)."""
+        self.save_index()
+
         # Save model metadata for dimension validation (if embedder available)
         if self.embedder is not None:
             model_info_path = self.index_path.parent / "model_info.json"

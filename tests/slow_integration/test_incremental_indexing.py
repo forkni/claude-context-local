@@ -146,8 +146,27 @@ class Database:
         # Verify snapshot was created
         assert self.snapshot_manager.has_snapshot(str(self.test_path))
 
-    def test_no_changes(self):
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_no_changes(self, mock_sentence_transformer):
         """Test indexing when no changes occur."""
+
+        # Mock the model to prevent downloads
+        def mock_encode(
+            sentences,
+            show_progress_bar=False,
+            convert_to_tensor=False,
+            device=None,
+            **kwargs,
+        ):
+            if isinstance(sentences, str):
+                return np.ones(768, dtype=np.float32) * 0.5
+            else:
+                return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
+
+        mock_model = MagicMock()
+        mock_model.encode.side_effect = mock_encode
+        mock_sentence_transformer.return_value = mock_model
+
         indexer = Indexer(storage_dir=str(self.index_dir))
         embedder = CodeEmbedder()
         chunker = MultiLanguageChunker(str(self.test_path))
@@ -379,8 +398,27 @@ class NewClass:
         assert changes.has_changes()
         assert "main.py" in changes.modified
 
-    def test_needs_reindex(self):
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_needs_reindex(self, mock_sentence_transformer):
         """Test checking if reindex is needed."""
+
+        # Mock the model to prevent downloads
+        def mock_encode(
+            sentences,
+            show_progress_bar=False,
+            convert_to_tensor=False,
+            device=None,
+            **kwargs,
+        ):
+            if isinstance(sentences, str):
+                return np.ones(768, dtype=np.float32) * 0.5
+            else:
+                return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
+
+        mock_model = MagicMock()
+        mock_model.encode.side_effect = mock_encode
+        mock_sentence_transformer.return_value = mock_model
+
         indexer = Indexer(storage_dir=str(self.index_dir))
         embedder = CodeEmbedder()
         chunker = MultiLanguageChunker(str(self.test_path))
@@ -409,8 +447,27 @@ class NewClass:
         # Should need reindex after change
         assert incremental_indexer.needs_reindex(str(self.test_path))
 
-    def test_indexing_stats(self):
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_indexing_stats(self, mock_sentence_transformer):
         """Test getting indexing statistics."""
+
+        # Mock the model to prevent downloads
+        def mock_encode(
+            sentences,
+            show_progress_bar=False,
+            convert_to_tensor=False,
+            device=None,
+            **kwargs,
+        ):
+            if isinstance(sentences, str):
+                return np.ones(768, dtype=np.float32) * 0.5
+            else:
+                return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
+
+        mock_model = MagicMock()
+        mock_model.encode.side_effect = mock_encode
+        mock_sentence_transformer.return_value = mock_model
+
         indexer = Indexer(storage_dir=str(self.index_dir))
         embedder = CodeEmbedder()
         chunker = MultiLanguageChunker(str(self.test_path))
