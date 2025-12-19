@@ -26,6 +26,7 @@ from .neural_reranker import NeuralReranker
 from .reranker import RRFReranker, SearchResult
 from .reranking_engine import RerankingEngine
 from .result_factory import ResultFactory
+from .weight_optimizer import WeightOptimizer
 
 
 # Helper function to access config via ServiceLocator (avoids circular imports)
@@ -979,70 +980,31 @@ class HybridSearcher:
         """
         Optimize BM25/dense weights based on test queries.
 
+        Delegates to WeightOptimizer for grid search over weight combinations.
+
         Args:
             test_queries: List of test queries
             ground_truth: Optional ground truth results for each query
 
         Returns:
-            Optimized weights
+            Optimized weights dict with keys:
+                - bm25_weight: Optimal BM25 weight
+                - dense_weight: Optimal dense weight
+                - optimization_score: Best score achieved
+                - tested_combinations: Number of combinations tested
         """
-        self._logger.info(f"Optimizing weights with {len(test_queries)} test queries")
-
-        weight_combinations = [
-            (0.2, 0.8),
-            (0.3, 0.7),
-            (0.4, 0.6),
-            (0.5, 0.5),
-            (0.6, 0.4),
-            (0.7, 0.3),
-            (0.8, 0.2),
-        ]
-
-        best_weights = (self.bm25_weight, self.dense_weight)
-        best_score = 0.0
-
-        for bm25_w, dense_w in weight_combinations:
-            # Temporarily set weights
-            orig_bm25_w, orig_dense_w = self.bm25_weight, self.dense_weight
-            self.bm25_weight, self.dense_weight = bm25_w, dense_w
-
-            total_score = 0.0
-            for _i, query in enumerate(test_queries):
-                results = self.search(query, k=10, use_parallel=False)
-
-                # Score based on result quality metrics
-                if results:
-                    analysis = self.reranker.analyze_fusion_quality(results)
-                    score = (
-                        analysis["diversity_score"] * 0.4
-                        + analysis["coverage_balance"] * 0.3
-                        + analysis["high_quality_ratio"] * 0.3
-                    )
-                    total_score += score
-
-            avg_score = total_score / len(test_queries) if test_queries else 0.0
-
-            if avg_score > best_score:
-                best_score = avg_score
-                best_weights = (bm25_w, dense_w)
-
-            # Restore original weights
-            self.bm25_weight, self.dense_weight = orig_bm25_w, orig_dense_w
-
-        # Set optimal weights
-        self.bm25_weight, self.dense_weight = best_weights
-
-        self._logger.info(
-            f"Optimized weights: BM25={self.bm25_weight:.2f}, "
-            f"Dense={self.dense_weight:.2f} (score: {best_score:.3f})"
+        # Create optimizer with callbacks
+        optimizer = WeightOptimizer(
+            search_callback=lambda q, k: self.search(q, k=k, use_parallel=False),
+            analyze_callback=self.reranker.analyze_fusion_quality,
+            set_weights_callback=lambda b, d: setattr(self, "bm25_weight", b)
+            or setattr(self, "dense_weight", d),
+            get_weights_callback=lambda: (self.bm25_weight, self.dense_weight),
+            logger=self._logger,
         )
 
-        return {
-            "bm25_weight": self.bm25_weight,
-            "dense_weight": self.dense_weight,
-            "optimization_score": best_score,
-            "tested_combinations": len(weight_combinations),
-        }
+        # Delegate to optimizer
+        return optimizer.optimize(test_queries, ground_truth=ground_truth)
 
     def save_indices(self) -> None:
         """Save both BM25 and dense indices. Delegates to IndexSynchronizer."""

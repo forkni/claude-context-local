@@ -8,8 +8,12 @@ Usage:
     .venv/Scripts/pip-audit --format json | python tools/summarize_audit.py
     # or:
     python tools/summarize_audit.py audit.json
+    # or with custom output:
+    python tools/summarize_audit.py --no-save  # stdout only
+    python tools/summarize_audit.py -o custom.md  # custom output path
 """
 
+import argparse
 import json
 import re
 import subprocess
@@ -377,11 +381,229 @@ def print_dependency_analysis(tree_data: list, direct_deps: set):
         safe_print("")
 
 
+def generate_markdown_report(
+    summary: dict, tree_data: list | None, direct_deps: set
+) -> str:
+    """Generate full audit report as markdown string."""
+    lines = []
+
+    # Title and Executive Summary
+    lines.append(
+        f"# Dependency Audit Report - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    )
+    lines.append("")
+    lines.append("## Executive Summary")
+    lines.append("")
+    lines.append(f"- **Date**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append(f"- **Total Packages**: {summary['total_packages']}")
+    lines.append(f"- **Vulnerable Packages**: {summary['vulnerable_packages']}")
+    lines.append(f"- **Total CVEs**: {summary['total_cves']}")
+    lines.append("")
+
+    if summary["total_cves"] == 0:
+        lines.append("**Status**: ✅ No known vulnerabilities found")
+        lines.append("")
+    else:
+        # Severity breakdown
+        if summary["severity_counts"]:
+            lines.append("**Severity Breakdown**:")
+            for severity, count in summary["severity_counts"].items():
+                lines.append(f"- {severity.capitalize()}: {count}")
+            lines.append("")
+
+    # Vulnerabilities Found
+    if summary["vulnerabilities"]:
+        lines.append("---")
+        lines.append("")
+        lines.append("## Vulnerabilities Found")
+        lines.append("")
+
+        for pkg_name, vulns in sorted(summary["vulnerabilities"].items()):
+            lines.append(f"### {pkg_name} ({vulns[0]['version']})")
+            lines.append("")
+
+            for vuln in vulns:
+                lines.append(f"**{vuln['cve_id']}**")
+                lines.append("")
+
+                if vuln["aliases"]:
+                    aliases_str = ", ".join(vuln["aliases"])
+                    lines.append(f"- **Aliases**: {aliases_str}")
+
+                if vuln["fix_versions"]:
+                    fix_str = ", ".join(vuln["fix_versions"])
+                    lines.append(f"- **Fix Available**: {fix_str}")
+                else:
+                    lines.append("- **Fix Available**: No fix released yet")
+
+                if vuln["description"]:
+                    # Clean description for markdown
+                    desc = vuln["description"].replace("\n", " ")
+                    lines.append(f"- **Description**: {desc}")
+
+                lines.append("")
+
+    # Recommended Actions
+    if summary["vulnerabilities"]:
+        lines.append("---")
+        lines.append("")
+        lines.append("## Recommended Actions")
+        lines.append("")
+
+        # Fixable packages
+        fixable = [
+            (pkg, v)
+            for pkg, vulns in summary["vulnerabilities"].items()
+            for v in vulns
+            if v["fix_versions"]
+        ]
+
+        if fixable:
+            lines.append("### Packages with Available Fixes")
+            lines.append("")
+            lines.append("```bash")
+            for pkg, vuln in fixable:
+                fix_version = (
+                    vuln["fix_versions"][0] if vuln["fix_versions"] else "latest"
+                )
+                lines.append(f"pip install --upgrade {pkg}=={fix_version}")
+            lines.append("```")
+            lines.append("")
+
+        # Unfixable packages
+        unfixable = [
+            (pkg, v)
+            for pkg, vulns in summary["vulnerabilities"].items()
+            for v in vulns
+            if not v["fix_versions"]
+        ]
+
+        if unfixable:
+            lines.append("### Packages Without Fixes (Monitor for Updates)")
+            lines.append("")
+            for pkg, vuln in unfixable:
+                lines.append(f"- **{pkg}**: {vuln['cve_id']}")
+            lines.append("")
+
+        lines.append("### Next Steps")
+        lines.append("")
+        lines.append("1. Review CVE details at https://osv.dev/")
+        lines.append("2. Test updates in isolated environment")
+        lines.append("3. Run full test suite before deploying")
+        lines.append("4. Update pyproject.toml with new version constraints")
+        lines.append("")
+
+    # Dependency Tree Analysis
+    if tree_data:
+        all_installed = {pkg["package"]["package_name"].lower() for pkg in tree_data}
+        transitive = all_installed - direct_deps
+
+        lines.append("---")
+        lines.append("")
+        lines.append("## Dependency Tree Analysis")
+        lines.append("")
+        lines.append(
+            f"- **Direct Dependencies**: {len(direct_deps)} (from pyproject.toml)"
+        )
+        lines.append(
+            f"- **Transitive Dependencies**: {len(transitive)} (pulled in automatically)"
+        )
+        lines.append(f"- **Total Installed**: {len(all_installed)}")
+        lines.append("")
+
+        # Build trees for direct deps
+        trees = build_package_trees(tree_data, direct_deps)
+
+        if trees:
+            lines.append("### Dependency Trees")
+            lines.append("")
+            for pkg_name in sorted(trees.keys()):
+                pkg_data = trees[pkg_name]
+                if pkg_data["dependencies"]:
+                    lines.append(f"**{pkg_name}** ({pkg_data['version']})")
+                    lines.append("")
+                    lines.append("```")
+                    lines.append(f"{pkg_name}=={pkg_data['version']}")
+                    for dep in pkg_data["dependencies"]:
+                        dep_name = dep["package_name"]
+                        required = dep.get("required_version", "Any")
+                        installed = dep.get("installed_version", "?")
+                        lines.append(
+                            f"  |-- {dep_name} [required: {required}, installed: {installed}]"
+                        )
+                    lines.append("```")
+                    lines.append("")
+
+        # Orphan packages
+        orphans = find_orphan_packages(tree_data, direct_deps)
+        if orphans:
+            lines.append("### Potential Leftover Packages")
+            lines.append("")
+            for orphan in orphans:
+                lines.append(
+                    f"- **{orphan['name']}** ({orphan['version']}) - Not in direct deps, nothing depends on it"
+                )
+            lines.append("")
+            lines.append("**Actions**:")
+            lines.append("- If needed: Add to pyproject.toml dependencies")
+            lines.append("- If not needed: `pip uninstall <package>`")
+            lines.append("")
+
+    return "\n".join(lines)
+
+
+def save_report(content: str, output_path: Path):
+    """Save report to file."""
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(content, encoding="utf-8")
+        print(f"\n[SAVED] Report saved to: {output_path}")
+    except Exception as e:
+        print(f"\n[ERROR] Failed to save report: {e}", file=sys.stderr)
+
+
 def main():
     """Main entry point."""
-    if len(sys.argv) > 1:
+    parser = argparse.ArgumentParser(
+        description="Parse pip-audit JSON and generate human-readable summary",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Default: displays AND saves automatically
+  pip-audit --format json | python tools/summarize_audit.py
+
+  # Disable auto-save (stdout only)
+  pip-audit --format json | python tools/summarize_audit.py --no-save
+
+  # Custom output path
+  pip-audit --format json | python tools/summarize_audit.py -o audit_reports/before-fixes.md
+
+  # Read from file
+  python tools/summarize_audit.py audit_reports/2025-12-18-audit.json
+        """,
+    )
+    parser.add_argument(
+        "input_file",
+        nargs="?",
+        help="Input JSON file (or pipe from stdin)",
+    )
+    parser.add_argument(
+        "--no-save",
+        action="store_true",
+        help="Disable auto-save (stdout only)",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        help="Custom output path (overrides auto-save location)",
+    )
+    args = parser.parse_args()
+
+    # Read input data
+    if args.input_file:
         # Read from file
-        json_file = Path(sys.argv[1])
+        json_file = Path(args.input_file)
         if not json_file.exists():
             print(f"Error: File not found: {json_file}", file=sys.stderr)
             sys.exit(1)
@@ -420,13 +642,24 @@ def main():
             print("  python tools/summarize_audit.py audit.json", file=sys.stderr)
             sys.exit(1)
 
+    # Parse data
     summary = parse_audit_json(data)
-    print_summary(summary)
-
-    # Add dependency tree analysis
     tree_data = get_dependency_tree_json()
     direct_deps = get_direct_dependencies()
+
+    # Always print to stdout (for chat display)
+    print_summary(summary)
     print_dependency_analysis(tree_data, direct_deps)
+
+    # Save to file unless --no-save
+    if not args.no_save:
+        report = generate_markdown_report(summary, tree_data, direct_deps)
+        if args.output:
+            output_path = args.output
+        else:
+            filename = f"{datetime.now().strftime('%Y-%m-%d-%H%M')}-audit-summary.md"
+            output_path = Path("audit_reports") / filename
+        save_report(report, output_path)
 
 
 if __name__ == "__main__":

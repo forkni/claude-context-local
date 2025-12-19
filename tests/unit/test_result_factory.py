@@ -1,6 +1,5 @@
 """Unit tests for ResultFactory."""
 
-
 from search.reranker import SearchResult
 from search.result_factory import ResultFactory
 
