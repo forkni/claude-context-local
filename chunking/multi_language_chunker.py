@@ -251,6 +251,7 @@ class MultiLanguageChunker:
         ".gradle",
         ".idea",
         ".vscode",
+        ".claude",
         ".docusaurus",
         ".vercel",
         ".serverless",
