@@ -131,6 +131,53 @@ def calculate_optimal_batch_size(
         return min_batch  # Fallback on error
 
 
+def parse_vram_gb_from_registry(model_name: str) -> float:
+    """Parse VRAM estimate from MODEL_REGISTRY for upfront batch sizing.
+
+    Handles formats: "8-10GB" (range) → 10.0, "2.3GB" (exact) → 2.3, "2GB" → 2.0
+    Uses upper bound of range for conservative batch sizing.
+
+    Args:
+        model_name: Model identifier (e.g., "Qwen/Qwen3-Embedding-4B")
+
+    Returns:
+        VRAM estimate in GB, or 0.0 if not found/parseable
+
+    Examples:
+        >>> parse_vram_gb_from_registry("Qwen/Qwen3-Embedding-4B")
+        10.0  # From "8-10GB" (upper bound)
+
+        >>> parse_vram_gb_from_registry("Qwen/Qwen3-Embedding-0.6B")
+        2.3  # From "2.3GB"
+
+        >>> parse_vram_gb_from_registry("BAAI/bge-m3")
+        4.0  # From "3-4GB" (upper bound)
+    """
+    import re
+
+    from search.config import get_model_config
+
+    config = get_model_config(model_name)
+    if not config:
+        return 0.0
+
+    vram_str = config.get("vram_gb", "")
+    if not vram_str:
+        return 0.0
+
+    # Handle range format: "8-10GB" → use upper bound (10.0)
+    range_match = re.match(r"(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)GB", vram_str)
+    if range_match:
+        return float(range_match.group(2))  # Upper bound for safety
+
+    # Handle exact format: "2.3GB" or "2GB"
+    exact_match = re.match(r"(\d+(?:\.\d+)?)GB", vram_str)
+    if exact_match:
+        return float(exact_match.group(1))
+
+    return 0.0
+
+
 @dataclass
 class EmbeddingResult:
     """Result of embedding generation."""
@@ -439,9 +486,13 @@ class CodeEmbedder:
                 and torch
                 and torch.cuda.is_available()
             ):
-                # Get model VRAM usage (convert MB to GB)
-                model_vram_mb = self._model_vram_usage.get(self.model_name, 0.0)
-                model_vram_gb = model_vram_mb / 1024.0
+                # Get model VRAM from MODEL_REGISTRY estimate (available upfront)
+                # Falls back to runtime tracking if registry doesn't have estimate
+                model_vram_gb = parse_vram_gb_from_registry(self.model_name)
+                if model_vram_gb == 0.0:
+                    # Fallback: use runtime tracking if available
+                    model_vram_mb = self._model_vram_usage.get(self.model_name, 0.0)
+                    model_vram_gb = model_vram_mb / 1024.0
 
                 batch_size = calculate_optimal_batch_size(
                     embedding_dim=config.embedding.dimension,
