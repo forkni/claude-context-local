@@ -51,36 +51,38 @@ def calculate_optimal_batch_size(
     min_batch: int = 32,
     max_batch: int = 512,
     memory_fraction: float = 0.7,
+    model_vram_gb: float = 0.0,
 ) -> int:
-    """Calculate optimal batch size based on GPU VRAM tiers.
+    """Calculate optimal batch size based on GPU VRAM tiers (model-aware).
 
     Uses simple GPU memory tiers for reliable batch sizing that accounts for
-    model activation memory (not just embedding output):
-    - ≤8GB VRAM: 128 batch size
-    - 10-16GB VRAM: 256 batch size
-    - ≥24GB VRAM: 512 batch size
+    model activation memory (not just embedding output). Now subtracts model
+    VRAM from available memory to prevent OOM with large models.
+
+    Available Memory Tiers (after subtracting model VRAM):
+    - ≤8GB available: 64 batch size
+    - 8-12GB available: 128 batch size
+    - 12-20GB available: 256 batch size
+    - ≥20GB available: 512 batch size
 
     Args:
         embedding_dim: Embedding dimension (unused, kept for API compatibility)
         min_batch: Minimum batch size (safety floor, default: 32)
         max_batch: Maximum batch size (default: 512)
         memory_fraction: Unused, kept for API compatibility
+        model_vram_gb: Model VRAM usage in GB (subtracted from available memory)
 
     Returns:
-        Batch size based on GPU tier, clamped to [min_batch, max_batch]
+        Batch size based on available GPU tier, clamped to [min_batch, max_batch]
 
     Examples:
-        >>> # RTX 3070 (8GB VRAM)
-        >>> calculate_optimal_batch_size()
-        128
+        >>> # RTX 4090 (24GB) with Qwen3-4B (7.5GB model)
+        >>> calculate_optimal_batch_size(model_vram_gb=7.5)
+        128  # 24 - 7.5 = 16.5GB available → tier=128
 
-        >>> # RTX 4080 (16GB VRAM)
-        >>> calculate_optimal_batch_size()
-        256
-
-        >>> # RTX 4090 (24GB VRAM)
-        >>> calculate_optimal_batch_size()
-        512
+        >>> # RTX 4090 (24GB) with BGE-M3 (1GB model)
+        >>> calculate_optimal_batch_size(model_vram_gb=1.0)
+        512  # 24 - 1 = 23GB available → tier=512
     """
     if not torch or not torch.cuda.is_available():
         return min_batch  # CPU fallback
@@ -90,22 +92,34 @@ def calculate_optimal_batch_size(
         _, total_memory = torch.cuda.mem_get_info()
         total_gb = total_memory / (1024**3)
 
-        # GPU-tiered batch sizes (conservative, accounts for model activations)
-        if total_gb <= 8:
-            optimal_batch = 128
-        elif total_gb <= 16:
-            optimal_batch = 256
-        else:  # 24GB+
-            optimal_batch = 512
+        # Calculate available memory for activations (total - model weights)
+        available_gb = total_gb - model_vram_gb
+
+        # GPU-tiered batch sizes based on AVAILABLE memory
+        if available_gb <= 8:
+            optimal_batch = 64  # Very constrained
+        elif available_gb <= 12:
+            optimal_batch = 128  # Moderate
+        elif available_gb <= 20:
+            optimal_batch = 256  # Good
+        else:  # 20GB+ available
+            optimal_batch = 512  # Excellent
 
         # Clamp to config limits
         result = max(min_batch, min(optimal_batch, max_batch))
 
-        # Log for debugging
+        # Log for debugging (show both total and available)
         logger = logging.getLogger(__name__)
-        logger.info(
-            f"[DYNAMIC_BATCH] GPU: {total_gb:.1f}GB total → batch size: {result} (tier-based)"
-        )
+        if model_vram_gb > 0:
+            logger.info(
+                f"[DYNAMIC_BATCH] GPU: {total_gb:.1f}GB total, "
+                f"{model_vram_gb:.1f}GB model, "
+                f"{available_gb:.1f}GB available → batch size: {result}"
+            )
+        else:
+            logger.info(
+                f"[DYNAMIC_BATCH] GPU: {total_gb:.1f}GB total → batch size: {result} (tier-based)"
+            )
 
         return result
 
@@ -425,11 +439,16 @@ class CodeEmbedder:
                 and torch
                 and torch.cuda.is_available()
             ):
+                # Get model VRAM usage (convert MB to GB)
+                model_vram_mb = self._model_vram_usage.get(self.model_name, 0.0)
+                model_vram_gb = model_vram_mb / 1024.0
+
                 batch_size = calculate_optimal_batch_size(
                     embedding_dim=config.embedding.dimension,
                     min_batch=config.performance.dynamic_batch_min,
                     max_batch=config.performance.dynamic_batch_max,
                     memory_fraction=config.performance.gpu_memory_threshold,
+                    model_vram_gb=model_vram_gb,
                 )
                 self._logger.info(
                     f"Using dynamic GPU-optimized batch size {batch_size} for {len(chunks)} chunks"
