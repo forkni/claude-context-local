@@ -91,7 +91,7 @@ class TestMultiHopSearchFlow:
         )
 
         # Multi-hop search
-        multi_hop_results = hybrid_searcher._multi_hop_search_internal(
+        multi_hop_results = hybrid_searcher.multi_hop_searcher.search(
             query=query, k=3, search_mode="hybrid", hops=2, expansion_factor=0.3
         )
 
@@ -139,12 +139,12 @@ class TestMultiHopSearchFlow:
         k = 5
 
         # Low expansion
-        low_expansion_results = hybrid_searcher._multi_hop_search_internal(
+        low_expansion_results = hybrid_searcher.multi_hop_searcher.search(
             query=query, k=k, hops=2, expansion_factor=0.2
         )
 
         # High expansion
-        high_expansion_results = hybrid_searcher._multi_hop_search_internal(
+        high_expansion_results = hybrid_searcher.multi_hop_searcher.search(
             query=query, k=k, hops=2, expansion_factor=0.8
         )
 
@@ -188,17 +188,17 @@ class TestMultiHopSearchFlow:
         k = 3
 
         # 1 hop (should be same as regular search)
-        results_1_hop = hybrid_searcher._multi_hop_search_internal(
+        results_1_hop = hybrid_searcher.multi_hop_searcher.search(
             query=query, k=k, hops=1, expansion_factor=0.3
         )
 
         # 2 hops (default)
-        results_2_hops = hybrid_searcher._multi_hop_search_internal(
+        results_2_hops = hybrid_searcher.multi_hop_searcher.search(
             query=query, k=k, hops=2, expansion_factor=0.3
         )
 
         # 3 hops
-        results_3_hops = hybrid_searcher._multi_hop_search_internal(
+        results_3_hops = hybrid_searcher.multi_hop_searcher.search(
             query=query, k=k, hops=3, expansion_factor=0.3
         )
 
@@ -255,7 +255,7 @@ class TestMultiHopSearchFlow:
         hybrid_searcher.index_documents(documents, doc_ids, embeddings_list, metadata)
 
         # Multi-hop search
-        results = hybrid_searcher._multi_hop_search_internal(
+        results = hybrid_searcher.multi_hop_searcher.search(
             query="database query", k=5, hops=2, expansion_factor=0.5
         )
 
@@ -292,7 +292,7 @@ class TestMultiHopSearchFlow:
         hybrid_searcher.index_documents(documents, doc_ids, embeddings_list, metadata)
 
         # Multi-hop search
-        results = hybrid_searcher._multi_hop_search_internal(
+        results = hybrid_searcher.multi_hop_searcher.search(
             query="user authentication validation", k=5, hops=2, expansion_factor=0.3
         )
 

@@ -82,7 +82,7 @@ def test_bm25_population():
 
         # Save indices
         print("[TEST] Saving indices...")
-        searcher.save_index()
+        searcher.save_indices()
 
         # Check if BM25 files exist
         bm25_dir = temp_dir / "bm25"

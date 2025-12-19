@@ -643,51 +643,6 @@ class HybridSearcher:
 
         return results[:k]
 
-    @deprecated(replacement="self.multi_hop_searcher.search()", version="0.7.0")
-    def _multi_hop_search_internal(
-        self,
-        query: str,
-        k: int = 5,
-        search_mode: str = "hybrid",
-        hops: int = 2,
-        expansion_factor: float = 0.3,
-        use_parallel: bool = True,
-        min_bm25_score: float = 0.0,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> List:
-        """
-        Internal multi-hop search implementation.
-
-        .. deprecated::
-            Use :meth:`multi_hop_searcher.search` instead.
-            This wrapper method may be removed in a future release.
-
-        Delegates to multi_hop_searcher for actual implementation.
-
-        Args:
-            query: Search query
-            k: Number of final results to return
-            search_mode: Search mode - "hybrid", "semantic", or "bm25"
-            hops: Number of search hops (default: 2)
-            expansion_factor: Fraction of k to expand per hop (default: 0.3)
-            use_parallel: Whether to use parallel search
-            min_bm25_score: Minimum BM25 score threshold
-            filters: Optional filters for search
-
-        Returns:
-            List of SearchResult objects with discovered related code
-        """
-        return self.multi_hop_searcher.search(
-            query=query,
-            k=k,
-            search_mode=search_mode,
-            hops=hops,
-            expansion_factor=expansion_factor,
-            use_parallel=use_parallel,
-            min_bm25_score=min_bm25_score,
-            filters=filters,
-        )
-
     def _update_search_stats(
         self,
         search_mode: str,
@@ -1098,18 +1053,6 @@ class HybridSearcher:
     def remove_multiple_files(self, file_paths: set, project_name: str) -> int:
         """Remove chunks for multiple files from both indices. Delegates to IndexSynchronizer."""
         return self.index_sync.remove_multiple_files(file_paths, project_name)
-
-    @deprecated(replacement="self.save_indices()", version="0.7.0")
-    def save_index(self) -> None:
-        """Save both BM25 and dense indices to disk.
-
-        .. deprecated::
-            Use :meth:`save_indices` instead (note the plural form).
-            This method may be removed in a future release.
-
-        Delegates to IndexSynchronizer.
-        """
-        self.index_sync.save_indices()
 
     def _verify_bm25_files(self):
         """Verify BM25 files exist and are non-empty. Delegates to IndexSynchronizer."""
