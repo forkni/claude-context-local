@@ -513,14 +513,14 @@ class HybridSearcher:
             # BM25-only search
             bm25_results = self._search_bm25(query, k, min_bm25_score)
             # Convert BM25 results to SearchResult format
-            final_results = self._convert_bm25_to_search_results(bm25_results)
+            final_results = ResultFactory.from_bm25_results(bm25_results)
             rerank_time = 0.0  # No reranking for single mode
 
         elif search_mode == "semantic":
             # Dense-only search
             dense_results = self._search_dense(query, k, filters, query_embedding)
             # Convert dense results to SearchResult format
-            final_results = self._convert_dense_to_search_results(dense_results)
+            final_results = ResultFactory.from_dense_results(dense_results)
             rerank_time = 0.0  # No reranking for single mode
 
         else:  # hybrid mode
@@ -921,36 +921,6 @@ class HybridSearcher:
                 f"Dense search exception details: {traceback.format_exc()}"
             )
             return []
-
-    @deprecated(
-        replacement="ResultFactory.from_bm25_results()",
-        version="0.7.0",
-    )
-    def _convert_bm25_to_search_results(
-        self, bm25_results: List[Tuple]
-    ) -> List[SearchResult]:
-        """Convert BM25 search results to SearchResult format.
-
-        .. deprecated::
-            Use :meth:`ResultFactory.from_bm25_results` instead.
-            This wrapper method may be removed in a future release.
-        """
-        return ResultFactory.from_bm25_results(bm25_results)
-
-    @deprecated(
-        replacement="ResultFactory.from_dense_results()",
-        version="0.7.0",
-    )
-    def _convert_dense_to_search_results(
-        self, dense_results: List[Tuple]
-    ) -> List[SearchResult]:
-        """Convert dense search results to SearchResult format.
-
-        .. deprecated::
-            Use :meth:`ResultFactory.from_dense_results` instead.
-            This wrapper method may be removed in a future release.
-        """
-        return ResultFactory.from_dense_results(dense_results)
 
     def get_search_mode_stats(self) -> Dict[str, Any]:
         """Get statistics about search mode performance."""
