@@ -44,6 +44,7 @@ class IntelligentSearcher:
 
         # Query patterns for intent detection
         self.query_patterns = {
+            # Existing categories
             "function_search": [
                 r"\bfunction\b",
                 r"\bdef\b",
@@ -96,6 +97,79 @@ class IntelligentSearcher:
                 r"unit.*test",
                 r"integration.*test",
             ],
+            # NEW categories (Phase 1 enhancement)
+            "refactoring": [
+                r"\brefactor\b",
+                r"\brename\b",
+                r"\bextract\b",
+                r"\bmove\b",
+                r"\binline\b",
+                r"clean.*up",
+                r"reorganize",
+            ],
+            "debugging": [
+                r"\bdebug\b",
+                r"\bfix\b",
+                r"\bbug\b",
+                r"\bissue\b",
+                r"\bcrash\b",
+                r"\bfail\b",
+                r"troubleshoot",
+                r"investigate",
+            ],
+            "performance": [
+                r"\boptimize\b",
+                r"\bfast\b",
+                r"\bslow\b",
+                r"\bperformance\b",
+                r"\bmemory\b",
+                r"\bcpu\b",
+                r"speed.*up",
+                r"bottleneck",
+            ],
+            "configuration": [
+                r"\bconfig\b",
+                r"\bsetting\b",
+                r"\benvironment\b",
+                r"\boption\b",
+                r"\bparameter\b",
+                r"configure",
+                r"setup.*file",
+            ],
+            "dependency": [
+                r"\bimport\b",
+                r"\bdependency\b",
+                r"\brequire\b",
+                r"\bpackage\b",
+                r"\bmodule\b",
+                r"\blibrary\b",
+                r"install.*",
+            ],
+            "initialization": [
+                r"\binit\b",
+                r"\bsetup\b",
+                r"\bstart\b",
+                r"\bbootstrap\b",
+                r"\bcreate\b",
+                r"initialize",
+                r"constructor",
+            ],
+        }
+
+        # Intent-to-chunk-type boost mapping (for ranking)
+        self.intent_boosts = {
+            "function_search": {"function": 1.2, "method": 1.15, "class": 1.05},
+            "debugging": {"function": 1.15, "method": 1.1, "class": 1.05},
+            "performance": {"function": 1.2, "method": 1.15, "class": 1.1},
+            "configuration": {"module": 1.2, "class": 1.1, "function": 1.05},
+            "initialization": {"function": 1.15, "class": 1.1, "method": 1.05},
+            "refactoring": {"class": 1.15, "function": 1.1, "method": 1.1},
+            "testing": {"function": 1.15, "class": 1.1, "method": 1.1},
+            "error_handling": {"function": 1.15, "method": 1.1, "class": 1.05},
+            "database": {"class": 1.15, "function": 1.1, "module": 1.05},
+            "api": {"function": 1.15, "class": 1.1, "method": 1.05},
+            "authentication": {"function": 1.15, "class": 1.1, "method": 1.05},
+            "dependency": {"module": 1.2, "function": 1.05, "class": 1.0},
         }
 
     def _validate_dimensions(self):
@@ -197,18 +271,32 @@ class IntelligentSearcher:
         # that might distort code-specific queries
         return query.strip()
 
-    def _detect_query_intent(self, query: str) -> List[str]:
-        """Detect the intent/domain of the search query."""
+    def _detect_query_intent(self, query: str) -> List[tuple]:
+        """Detect the intent/domain of the search query with confidence scores.
+
+        Returns:
+            List of (intent, confidence) tuples sorted by confidence descending.
+            Confidence is 0.0-1.0 based on pattern match count.
+        """
         query_lower = query.lower()
-        detected_intents = []
+        intents = []
 
         for intent, patterns in self.query_patterns.items():
-            for pattern in patterns:
-                if re.search(pattern, query_lower):
-                    detected_intents.append(intent)
-                    break
+            # Count pattern matches
+            matches = sum(1 for p in patterns if re.search(p, query_lower))
 
-        return detected_intents
+            if matches > 0:
+                # Calculate confidence: base 0.3 + bonus for multiple matches
+                # Formula: min(1.0, matches / len(patterns) + 0.3)
+                # Examples:
+                #   1/7 patterns matched: 0.3 + 0.14 = 0.44
+                #   2/7 patterns matched: 0.3 + 0.29 = 0.59
+                #   5/7 patterns matched: 0.3 + 0.71 = 1.0 (capped)
+                confidence = min(1.0, matches / len(patterns) + 0.3)
+                intents.append((intent, confidence))
+
+        # Sort by confidence descending
+        return sorted(intents, key=lambda x: -x[1])
 
     def _create_search_result(
         self,
@@ -273,9 +361,15 @@ class IntelligentSearcher:
         return stats.get("files_indexed", 0)
 
     def _rank_results(
-        self, results: List[SearchResult], original_query: str, intent_tags: List[str]
+        self, results: List[SearchResult], original_query: str, intent_tags: List[tuple]
     ) -> List[SearchResult]:
-        """Advanced ranking based on multiple factors."""
+        """Advanced ranking based on multiple factors.
+
+        Args:
+            results: Search results to rank
+            original_query: Original query string
+            intent_tags: List of (intent, confidence) tuples from _detect_query_intent()
+        """
 
         def calculate_rank_score(result: SearchResult) -> float:
             score = result.similarity_score
@@ -313,6 +407,17 @@ class IntelligentSearcher:
 
             score *= type_boosts.get(result.chunk_type, 1.0)
 
+            # NEW: Intent-specific chunk type boosting with confidence
+            for intent, confidence in intent_tags:
+                boosts = self.intent_boosts.get(intent, {})
+                boost = boosts.get(result.chunk_type, 1.0)
+                # Apply boost proportional to confidence
+                # Formula: score *= 1 + (boost - 1) * confidence
+                # Examples:
+                #   boost=1.2, confidence=0.8: score *= 1 + 0.2*0.8 = 1.16
+                #   boost=1.15, confidence=0.5: score *= 1 + 0.15*0.5 = 1.075
+                score *= 1 + (boost - 1.0) * confidence
+
             # Enhanced name matching with token-based comparison
             name_boost = self._calculate_name_boost(
                 result.name, original_query, query_tokens
@@ -323,9 +428,10 @@ class IntelligentSearcher:
             path_boost = self._calculate_path_boost(result.relative_path, query_tokens)
             score *= path_boost
 
-            # Boost based on tag matches
+            # Boost based on tag matches (convert intent tuples to intent names)
             if intent_tags and result.tags:
-                tag_overlap = len(set(intent_tags) & set(result.tags))
+                intent_names = [intent for intent, _ in intent_tags]
+                tag_overlap = len(set(intent_names) & set(result.tags))
                 score *= 1.0 + tag_overlap * 0.1
 
             # Boost based on docstring presence (but less for module chunks on entity queries)
