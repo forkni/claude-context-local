@@ -90,13 +90,17 @@ def pytest_collection_modifyitems(config: Any, items: List[Any]) -> None:
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    """Clean up test artifacts after test session completes.
+    """Clean up test-created project indices and merkle trees after test session.
 
-    Runs silently after all tests, removing:
-    1. Stale Merkle snapshots without corresponding project indices
-    2. Orphaned projects without project_info.json (test projects)
+    Only runs cleanup_orphaned_projects.py which safely identifies test projects by
+    checking if their project_path still exists. Test projects point to temporary
+    directories (pytest's tmp_path) that are deleted after tests, so they can be
+    safely cleaned up along with their merkle trees.
 
-    Only outputs on errors/timeouts.
+    NOTE: cleanup_stale_snapshots.py is NOT run automatically because it identifies
+    "stale" snapshots by checking for missing indices, not by checking if the original
+    project path exists. This could incorrectly delete merkle trees for real projects
+    if their indices were temporarily affected by tests.
 
     Args:
         session: pytest session object
@@ -108,26 +112,9 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 
     # Only run cleanup if tests passed or had some failures (not on collection errors)
     if exitstatus in (0, 1):  # 0=passed, 1=some tests failed
-        cleanup_script = (
-            Path(__file__).parent.parent / "tools" / "cleanup_stale_snapshots.py"
-        )
-
-        if cleanup_script.exists():
-            try:
-                # Run cleanup in non-interactive mode (auto-confirm deletion)
-                subprocess.run(
-                    [sys.executable, str(cleanup_script), "--auto"],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-                # Silent on success - no output
-            except subprocess.TimeoutExpired:
-                print("\n[Cleanup] Warning: Snapshot cleanup timed out")
-            except Exception as e:
-                print(f"\n[Cleanup] Warning: Snapshot cleanup failed: {e}")
-
-        # Also cleanup orphaned projects (those without project_info.json)
+        # Only cleanup orphaned projects (those where project_path no longer exists)
+        # This safely targets test projects (temp directories) while preserving
+        # real projects (whose paths still exist on disk)
         orphan_cleanup_script = (
             Path(__file__).parent.parent / "tools" / "cleanup_orphaned_projects.py"
         )

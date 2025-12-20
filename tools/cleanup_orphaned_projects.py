@@ -59,35 +59,55 @@ def get_project_size(project_dir):
     return total_size / (1024 * 1024)  # Convert to MB
 
 
+def _get_full_project_id(project_dir: Path) -> str | None:
+    """Get full 32-char project_id from project_info.json.
+
+    Args:
+        project_dir: Path to project directory
+
+    Returns:
+        Full 32-char MD5 hash project_id, or None if not found
+    """
+    import hashlib
+
+    info_file = project_dir / "project_info.json"
+    if not info_file.exists():
+        return None
+
+    try:
+        with open(info_file, "r", encoding="utf-8") as f:
+            project_info = json.load(f)
+            project_path = project_info.get("project_path", "")
+            if project_path:
+                # Compute full 32-char project_id from normalized path
+                normalized = str(Path(project_path).resolve())
+                return hashlib.md5(normalized.encode()).hexdigest()
+    except Exception:
+        pass
+
+    return None
+
+
 def cleanup_project(project_dir):
     """Remove a project directory and its merkle snapshots safely."""
     try:
+        # Get full 32-char project_id from project_info.json BEFORE deleting
+        full_project_id = _get_full_project_id(project_dir)
+
         # Force garbage collection to release any handles
         gc.collect()
         time.sleep(0.5)
 
-        # Extract project hash from directory name
-        # Format: {name}_{hash}_{model}_{dimension}
-        dir_name = project_dir.name
-        parts = dir_name.split("_")
-        if len(parts) >= 2:
-            # Hash is typically the second-to-last or in the middle
-            # Try to find 8-char hex hash
-            project_hash = None
-            for part in parts:
-                if len(part) == 8 and all(c in "0123456789abcdef" for c in part):
-                    project_hash = part
-                    break
-
-            # Remove merkle snapshots if we found the hash
-            if project_hash:
-                merkle_dir = Path.home() / ".claude_code_search" / "merkle"
-                if merkle_dir.exists():
-                    for merkle_file in merkle_dir.glob(f"{project_hash}*"):
-                        try:
-                            merkle_file.unlink()
-                        except Exception:
-                            pass  # Ignore errors removing merkle files
+        # Remove merkle snapshots using full 32-char project_id
+        if full_project_id:
+            merkle_dir = Path.home() / ".claude_code_search" / "merkle"
+            if merkle_dir.exists():
+                # Match files like: {project_id}_{model}_{dim}d_snapshot.json
+                for merkle_file in merkle_dir.glob(f"{full_project_id}_*"):
+                    try:
+                        merkle_file.unlink()
+                    except Exception:
+                        pass  # Ignore errors removing merkle files
 
         # Remove directory
         shutil.rmtree(project_dir, ignore_errors=False)

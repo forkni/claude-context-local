@@ -347,10 +347,10 @@ class TestHybridSearcher:
         assert "No searches performed" in stats["message"]
 
         # Mock a search to generate stats
-        searcher._search_stats["total_searches"] = 10
-        searcher._search_stats["bm25_time"] = 1.0
-        searcher._search_stats["dense_time"] = 2.0
-        searcher._search_stats["rerank_time"] = 0.5
+        searcher.search_executor._search_stats["total_searches"] = 10
+        searcher.search_executor._search_stats["bm25_time"] = 1.0
+        searcher.search_executor._search_stats["dense_time"] = 2.0
+        searcher.search_executor._search_stats["rerank_time"] = 0.5
 
         stats = searcher.get_search_mode_stats()
 
@@ -384,19 +384,22 @@ class TestHybridSearcher:
             embedder_mock.embed_text.return_value = np.random.rand(768)
 
             # Perform searches
-            initial_searches = searcher._search_stats["total_searches"]
+            initial_searches = searcher.search_executor._search_stats["total_searches"]
             searcher.search("query 1", use_parallel=False)
             searcher.search("query 2", use_parallel=False)
 
             # Stats should be updated
-            assert searcher._search_stats["total_searches"] == initial_searches + 2
+            assert (
+                searcher.search_executor._search_stats["total_searches"]
+                == initial_searches + 2
+            )
             # In mocked environment, times might be 0, so just check they exist
-            assert "bm25_time" in searcher._search_stats
-            assert "dense_time" in searcher._search_stats
-            assert "rerank_time" in searcher._search_stats
-            assert searcher._search_stats["bm25_time"] >= 0
-            assert searcher._search_stats["dense_time"] >= 0
-            assert searcher._search_stats["rerank_time"] >= 0
+            assert "bm25_time" in searcher.search_executor._search_stats
+            assert "dense_time" in searcher.search_executor._search_stats
+            assert "rerank_time" in searcher.search_executor._search_stats
+            assert searcher.search_executor._search_stats["bm25_time"] >= 0
+            assert searcher.search_executor._search_stats["dense_time"] >= 0
+            assert searcher.search_executor._search_stats["rerank_time"] >= 0
 
     @patch("search.hybrid_searcher.CodeIndexManager")
     @patch("search.hybrid_searcher.BM25Index")

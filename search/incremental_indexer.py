@@ -2,19 +2,9 @@
 
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-
-from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TaskProgressColumn,
-    TextColumn,
-)
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from chunking.python_ast_chunker import CodeChunk
@@ -23,8 +13,10 @@ from merkle.change_detector import ChangeDetector, FileChanges
 from merkle.merkle_dag import MerkleDAG
 from merkle.snapshot_manager import SnapshotManager
 
+from .bm25_sync import BM25SyncManager
 from .config import get_search_config
 from .indexer import CodeIndexManager as Indexer
+from .parallel_chunker import ParallelChunker
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +101,14 @@ class IncrementalIndexer:
         self.enable_parallel_chunking = config.performance.enable_parallel_chunking
         self.max_chunking_workers = config.performance.max_chunking_workers
 
+        # Initialize helper modules
+        self._parallel_chunker = ParallelChunker(
+            chunker=self.chunker,
+            enable_parallel=self.enable_parallel_chunking,
+            max_workers=self.max_chunking_workers,
+        )
+        self._bm25_sync = BM25SyncManager(indexer=self.indexer)
+
     def _chunk_files_parallel(
         self, project_path: str, file_paths: List[str]
     ) -> List[CodeChunk]:
@@ -121,69 +121,7 @@ class IncrementalIndexer:
         Returns:
             List of CodeChunk objects from all files
         """
-        all_chunks = []
-
-        # Use parallel chunking if enabled and there are multiple files
-        if self.enable_parallel_chunking and len(file_paths) > 1:
-            with ThreadPoolExecutor(max_workers=self.max_chunking_workers) as executor:
-                # Submit all chunking tasks
-                future_to_path = {}
-                for file_path in file_paths:
-                    full_path = Path(project_path) / file_path
-                    future = executor.submit(self.chunker.chunk_file, str(full_path))
-                    future_to_path[future] = file_path
-
-                # Collect results as they complete with progress bar
-                console = Console(force_terminal=True)
-                with Progress(
-                    SpinnerColumn(),
-                    TextColumn("[progress.description]{task.description}"),
-                    BarColumn(),
-                    TaskProgressColumn(),
-                    TextColumn("({task.completed}/{task.total} files)"),
-                    console=console,
-                    transient=False,
-                ) as progress:
-                    task = progress.add_task("Chunking files...", total=len(file_paths))
-                    for future in as_completed(future_to_path):
-                        file_path = future_to_path[future]
-                        try:
-                            chunks = future.result()
-                            if chunks:
-                                all_chunks.extend(chunks)
-                                logger.debug(
-                                    f"Chunked {file_path}: {len(chunks)} chunks"
-                                )
-                        except Exception as e:
-                            logger.warning(f"Failed to chunk {file_path}: {e}")
-                        finally:
-                            progress.update(task, advance=1)
-        else:
-            # Sequential chunking (fallback or single file)
-            console = Console(force_terminal=True)
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TaskProgressColumn(),
-                TextColumn("({task.completed}/{task.total} files)"),
-                console=console,
-                transient=False,
-            ) as progress:
-                task = progress.add_task("Chunking files...", total=len(file_paths))
-                for file_path in file_paths:
-                    full_path = Path(project_path) / file_path
-                    try:
-                        chunks = self.chunker.chunk_file(str(full_path))
-                        if chunks:
-                            all_chunks.extend(chunks)
-                            logger.debug(f"Chunked {file_path}: {len(chunks)} chunks")
-                    except Exception as e:
-                        logger.warning(f"Failed to chunk {file_path}: {e}")
-                    finally:
-                        progress.update(task, advance=1)
-
-        return all_chunks
+        return self._parallel_chunker.chunk_files(project_path, file_paths)
 
     def detect_changes(self, project_path: str) -> Tuple[FileChanges, MerkleDAG]:
         """Detect changes in project since last snapshot.
@@ -739,42 +677,7 @@ class IncrementalIndexer:
         Returns:
             tuple[bool, int]: (bm25_resynced, bm25_resync_count)
         """
-        DESYNC_THRESHOLD = 0.10  # 10% threshold - affects search quality noticeably
-        bm25_resynced = False
-        bm25_resync_count = 0
-
-        if hasattr(self.indexer, "get_stats") and hasattr(
-            self.indexer, "resync_bm25_from_dense"
-        ):
-            try:
-                stats = self.indexer.get_stats()
-                bm25_count = stats.get("bm25_documents", 0)
-                dense_count = stats.get("dense_vectors", 0)
-
-                # Ensure counts are integers (not Mock objects in tests)
-                if (
-                    isinstance(bm25_count, int)
-                    and isinstance(dense_count, int)
-                    and dense_count > 0
-                ):
-                    desync_ratio = abs(dense_count - bm25_count) / dense_count
-                    if desync_ratio > DESYNC_THRESHOLD:
-                        logger.warning(
-                            f"[{log_prefix}] Significant desync detected: BM25={bm25_count}, "
-                            f"Dense={dense_count} ({desync_ratio:.1%} difference)"
-                        )
-                        logger.info(
-                            f"[{log_prefix}] Auto-syncing BM25 from dense metadata..."
-                        )
-                        bm25_resync_count = self.indexer.resync_bm25_from_dense()
-                        bm25_resynced = True
-                        logger.info(
-                            f"[{log_prefix}] BM25 resync complete: {bm25_resync_count} documents"
-                        )
-            except Exception as e:
-                logger.debug(f"[{log_prefix}] BM25 sync check skipped: {e}")
-
-        return bm25_resynced, bm25_resync_count
+        return self._bm25_sync.sync_if_needed(log_prefix)
 
     def _clear_gpu_cache(self, log_prefix: str = "INCREMENTAL") -> None:
         """Clear GPU cache to free intermediate tensors from embedding batches.

@@ -33,7 +33,7 @@ class MultiHopSearcher:
         embedder,
         dense_index,
         single_hop_callback,  # Callable for _single_hop_search
-        rerank_callback,  # Callable for _rerank_by_query
+        reranking_engine,  # RerankingEngine instance
         logger: Optional[logging.Logger] = None,
     ):
         """
@@ -43,13 +43,13 @@ class MultiHopSearcher:
             embedder: CodeEmbedder instance for query embeddings
             dense_index: CodeIndexManager instance for similarity search
             single_hop_callback: Callback to parent's _single_hop_search() method
-            rerank_callback: Callback to parent's _rerank_by_query() method
+            reranking_engine: RerankingEngine instance for result reranking
             logger: Optional logger instance
         """
         self.embedder = embedder
         self.dense_index = dense_index
         self._single_hop_search = single_hop_callback
-        self._rerank_by_query = rerank_callback
+        self.reranking_engine = reranking_engine
         self._logger = logger or logging.getLogger(__name__)
 
     def validate_params(self, hops: int, expansion_factor: float) -> Tuple[int, float]:
@@ -315,7 +315,7 @@ class MultiHopSearcher:
         )
 
         rerank_start = time.time()
-        final_results = self._rerank_by_query(
+        final_results = self.reranking_engine.rerank_by_query(
             query=query,
             results=list(all_results.values()),
             k=k,

@@ -191,3 +191,57 @@ class TestResultFactory:
         for i, result in enumerate(converted):
             assert result.rank == i
             assert result.chunk_id == f"chunk{i+1}"
+
+    def test_from_similarity_results_basic(self):
+        """Test basic similarity result conversion."""
+        similar_chunks = [
+            ("chunk1", 0.92, {"file": "test.py", "content": "foo"}),
+            ("chunk2", 0.88, {"file": "test.py", "content": "bar"}),
+        ]
+
+        results = ResultFactory.from_similarity_results(similar_chunks)
+
+        assert len(results) == 2
+        assert all(isinstance(r, SearchResult) for r in results)
+        assert results[0].chunk_id == "chunk1"
+        assert results[0].score == 0.92
+        assert results[0].source == "similarity"
+        assert results[0].rank == 0
+        assert results[1].rank == 1
+
+    def test_from_similarity_results_empty(self):
+        """Test similarity conversion with empty list."""
+        results = ResultFactory.from_similarity_results([])
+        assert results == []
+
+    def test_from_similarity_results_custom_source(self):
+        """Test similarity conversion with custom source."""
+        similar_chunks = [("chunk1", 0.95, {"file": "test.py"})]
+
+        results = ResultFactory.from_similarity_results(
+            similar_chunks, source="multi_hop"
+        )
+
+        assert results[0].source == "multi_hop"
+
+    def test_from_similarity_results_preserves_metadata(self):
+        """Test that similarity conversion preserves all metadata fields."""
+        similar_chunks = [
+            (
+                "chunk1",
+                0.92,
+                {
+                    "file": "test.py",
+                    "content": "foo",
+                    "chunk_type": "function",
+                    "name": "foo",
+                },
+            )
+        ]
+
+        results = ResultFactory.from_similarity_results(similar_chunks)
+
+        assert results[0].metadata["file"] == "test.py"
+        assert results[0].metadata["content"] == "foo"
+        assert results[0].metadata["chunk_type"] == "function"
+        assert results[0].metadata["name"] == "foo"

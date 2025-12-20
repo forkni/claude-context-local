@@ -30,7 +30,7 @@ dependencies = [
     "faiss-cpu>=1.13.1",
     "FlagEmbedding>=1.3.0",
     "huggingface-hub>=0.36.0",
-    "mcp>=1.23.0",
+    "mcp>=1.25.0",
     "nltk>=3.8",
     "pandas>=2.0.0",  # Required by datasets (transitive dependency of sentence-transformers)
     "psutil>=7.1.3",
@@ -93,10 +93,10 @@ include = ["chunking*", "embeddings*", "mcp_server*", "search*", "merkle*"]
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2025-12-04 (pip-audit)
+# Last audit: 2025-12-19 (pip-audit)
 #
 # Direct dependency security updates:
-# mcp>=1.23.0        # Fixes CVE-2025-66416 (DNS rebinding vulnerability)
+# mcp>=1.25.0        # Fixes CVE-2025-66416 (DNS rebinding vulnerability)
 #
 # Transitive dependency security updates:
 # authlib>=1.6.5     # Fixes CVE-2025-59420, CVE-2025-61920, CVE-2025-62706
@@ -107,6 +107,14 @@ include = ["chunking*", "embeddings*", "mcp_server*", "search*", "merkle*"]
 #
 # Verification: .venv/Scripts/pip-audit --format json > audit_reports/YYYY-MM-DD-audit.json
 # Summary: python tools/summarize_audit.py audit_reports/YYYY-MM-DD-audit.json
+#
+# Transitive dependency version constraints (cannot upgrade):
+# fsspec<=2025.10.0   # datasets 4.4.1 requires fsspec[http]<=2025.10.0
+# sympy==1.13.1       # torch 2.6.0 requires sympy==1.13.1 (pinned)
+#
+# Safe transitive updates (tested 2025-12-19):
+# networkx: 3.5 → 3.6.1 (OK)
+# scikit-learn: 1.7.1 → 1.8.0 (OK)
 
 [tool.uv]
 index-url = "https://pypi.org/simple"

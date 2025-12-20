@@ -1,6 +1,5 @@
 """Multi-language chunker that combines AST and tree-sitter approaches."""
 
-import ast
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -8,6 +7,13 @@ from typing import List, Optional
 
 from search.filters import normalize_path
 
+# Import utilities from new modules
+from .dedent_utils import smart_dedent as _smart_dedent
+from .language_registry import (
+    DEFAULT_IGNORED_DIRS,
+    NODE_TYPE_MAP,
+    SUPPORTED_EXTENSIONS,
+)
 from .python_ast_chunker import CodeChunk
 from .tree_sitter import TreeSitterChunk, TreeSitterChunker
 
@@ -44,268 +50,13 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-def _smart_dedent(code: str) -> str:
-    """Dedent code by removing the indentation of the first non-blank line.
-
-    Uses first-line baseline approach (Scrapy method) which handles:
-    - Flush-left string continuations (docstrings with flush-left text)
-    - Mixed tabs/spaces (tabs normalized to 4 spaces)
-    - Blank lines without whitespace
-    - Decorators and nested structures
-
-    This solves the textwrap.dedent() failure for decorated definitions.
-
-    Args:
-        code: Source code string with potential leading indentation
-
-    Returns:
-        Dedented code that can be parsed by ast.parse()
-
-    References:
-        Scrapy GitHub issue #4477, PR #4935
-    """
-    if not code or not code.strip():
-        return code
-
-    # Normalize line endings (CRLF → LF, CR → LF)
-    # This handles Windows files and mixed line endings
-    code = code.replace("\r\n", "\n").replace("\r", "\n")
-
-    # Normalize tabs to 4 spaces for consistent handling
-    code = code.expandtabs(4)
-
-    lines = code.split("\n")
-
-    # Strip leading/trailing blank lines
-    while lines and not lines[0].strip():
-        lines.pop(0)
-    while lines and not lines[-1].strip():
-        lines.pop()
-
-    if not lines:
-        return code
-
-    # Find indentation of first non-blank line (baseline)
-    first_line = lines[0]
-    baseline_indent = len(first_line) - len(first_line.lstrip())
-
-    if baseline_indent == 0:
-        # First line is flush-left, try parsing directly
-        dedented = "\n".join(lines)
-        try:
-            ast.parse(dedented)
-            return dedented
-        except SyntaxError:
-            # First line is at column 0 but subsequent lines may be indented
-            # (common with decorated definitions extracted by tree-sitter)
-            # Find minimum indent from subsequent lines
-            subsequent_indents = []
-            for line in lines[1:]:  # Skip first line
-                if line.strip():  # Non-blank line
-                    indent = len(line) - len(line.lstrip())
-                    if indent > 0:
-                        subsequent_indents.append(indent)
-
-            if subsequent_indents:
-                # Dedent subsequent lines by their minimum common indent
-                min_indent = min(subsequent_indents)
-                dedented_lines = [lines[0]]  # Keep first line as-is
-                for line in lines[1:]:
-                    if not line.strip():
-                        dedented_lines.append("")
-                    elif len(line) >= min_indent and line[:min_indent].strip() == "":
-                        dedented_lines.append(line[min_indent:])
-                    else:
-                        dedented_lines.append(line.lstrip())
-
-                dedented = "\n".join(dedented_lines)
-                try:
-                    ast.parse(dedented)
-                    return dedented
-                except SyntaxError:
-                    pass  # Fall through to wrap_with_if_true
-
-            return _wrap_with_if_true(dedented)
-
-    # Remove baseline indentation from all lines
-    dedented_lines = []
-    for line in lines:
-        if not line.strip():
-            # Preserve blank lines as empty
-            dedented_lines.append("")
-        elif len(line) >= baseline_indent and line[:baseline_indent].strip() == "":
-            # Line has at least baseline_indent spaces, remove them
-            dedented_lines.append(line[baseline_indent:])
-        else:
-            # Line has less indentation than baseline (flush-left content)
-            # This happens with multi-line string continuations
-            dedented_lines.append(line.lstrip())
-
-    dedented = "\n".join(dedented_lines)
-
-    try:
-        ast.parse(dedented)
-        return dedented
-    except SyntaxError:
-        return _wrap_with_if_true(dedented)
-
-
-def _wrap_with_if_true(code: str) -> str:
-    """Wrap code with 'if True:' block as fallback for flush-left content.
-
-    This is the industry-standard fallback (used by Scrapy, Numba) for handling
-    code with flush-left content that can't be dedented normally.
-
-    Args:
-        code: Dedented code that may still have parsing issues
-
-    Returns:
-        Wrapped code or original if wrapping fails
-    """
-    # Indent all lines by 4 spaces
-    indented_lines = []
-    for line in code.split("\n"):
-        if line.strip():
-            indented_lines.append("    " + line)
-        else:
-            indented_lines.append("")
-
-    wrapped = "if True:\n" + "\n".join(indented_lines)
-
-    try:
-        ast.parse(wrapped)
-        return wrapped
-    except SyntaxError as e:
-        # If even wrapping fails, return original code
-        # Log for debugging - helps identify edge cases not handled
-        logger.warning(
-            f"_smart_dedent: Both dedent and wrap failed. "
-            f"Error: {e}. First 100 chars: {repr(code[:100])}"
-        )
-        # Let the caller handle the syntax error
-        return code
-
-
 class MultiLanguageChunker:
     """Unified chunker supporting multiple programming languages."""
 
-    # Supported extensions
-    SUPPORTED_EXTENSIONS = {
-        ".py",  # Python
-        ".js",  # JavaScript
-        ".ts",  # TypeScript
-        ".tsx",  # TSX
-        ".go",  # Go
-        ".rs",  # Rust
-        ".c",  # C
-        ".cpp",  # C++
-        ".cc",  # C++
-        ".cxx",  # C++
-        ".c++",  # C++
-        ".cs",  # C#
-        ".glsl",  # GLSL shader
-        ".frag",  # Fragment shader
-        ".vert",  # Vertex shader
-        ".comp",  # Compute shader
-        ".geom",  # Geometry shader
-        ".tesc",  # Tessellation control shader
-        ".tese",  # Tessellation evaluation shader
-    }
-
-    # Common large/build/tooling directories to skip during traversal
-    DEFAULT_IGNORED_DIRS = {
-        "__pycache__",
-        ".git",
-        ".hg",
-        ".svn",
-        ".venv",
-        "venv",
-        "env",
-        ".env",
-        ".direnv",
-        "site-packages",  # Python package installations
-        "node_modules",
-        ".pnpm-store",
-        ".yarn",
-        ".pytest_cache",
-        ".mypy_cache",
-        ".ruff_cache",
-        ".pytype",
-        ".ipynb_checkpoints",
-        "build",
-        "dist",
-        "out",
-        "public",
-        ".next",
-        ".nuxt",
-        ".svelte-kit",
-        ".angular",
-        ".astro",
-        ".vite",
-        ".cache",
-        ".parcel-cache",
-        ".turbo",
-        "coverage",
-        ".coverage",
-        ".nyc_output",
-        ".gradle",
-        ".idea",
-        ".vscode",
-        ".claude",
-        ".docusaurus",
-        ".vercel",
-        ".serverless",
-        ".terraform",
-        ".mvn",
-        ".tox",
-        "target",
-        "bin",
-        "obj",
-    }
-
-    # Node type to chunk type mapping (tree-sitter → CodeChunk)
-    NODE_TYPE_MAP = {
-        "function_declaration": "function",
-        "function_definition": "function",
-        "arrow_function": "function",
-        "function": "function",
-        "function_item": "function",  # Rust
-        "method_declaration": "method",  # Go, Java
-        "method_definition": "method",
-        "class_declaration": "class",
-        "class_definition": "class",
-        "class_specifier": "class",  # C++
-        "interface_declaration": "interface",
-        "type_alias_declaration": "type",
-        "type_declaration": "type",  # Go
-        "enum_declaration": "enum",
-        "enum_specifier": "enum",  # C
-        "enum_item": "enum",  # Rust
-        "struct_declaration": "struct",  # C#
-        "struct_specifier": "struct",  # C/C++
-        "struct_item": "struct",  # Rust
-        "union_specifier": "union",  # C/C++
-        "namespace_definition": "namespace",  # C++
-        "namespace_declaration": "namespace",  # C#
-        "impl_item": "impl",  # Rust
-        "trait_item": "trait",  # Rust
-        "mod_item": "module",  # Rust
-        "macro_definition": "macro",  # Rust
-        "constructor_declaration": "constructor",  # Java/C#
-        "destructor_declaration": "destructor",  # C#
-        "property_declaration": "property",  # C#
-        "event_declaration": "event",  # C#
-        "template_declaration": "template",  # C++
-        "concept_definition": "concept",  # C++
-        "annotation_type_declaration": "annotation",  # Java
-        "script_element": "script",  # Svelte
-        "style_element": "style",  # Svelte
-        "variable_declaration": "variable",  # GLSL uniforms, varying, attributes
-        "preprocessor_define": "define",  # GLSL preprocessor defines
-        "preprocessor_function_def": "define",  # GLSL preprocessor function defines
-        "block_statement": "block",  # GLSL code blocks
-        "compound_statement": "block",  # GLSL compound statements
-    }
+    # Backward compatibility - reference registry constants
+    SUPPORTED_EXTENSIONS = SUPPORTED_EXTENSIONS
+    DEFAULT_IGNORED_DIRS = DEFAULT_IGNORED_DIRS
+    NODE_TYPE_MAP = NODE_TYPE_MAP
 
     def __init__(
         self,

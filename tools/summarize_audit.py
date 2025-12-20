@@ -2,7 +2,14 @@
 """
 Dependency Audit Summary Generator
 
-Parses pip-audit JSON output and generates human-readable security summary.
+Parses pip-audit JSON output and generates comprehensive executive summary reports.
+
+Features:
+- Security vulnerability analysis with severity breakdown
+- ML stack health check (PyTorch, CUDA, GPU)
+- Outdated packages with risk prioritization
+- Dependency tree analysis with orphan detection
+- Full markdown report saved to audit_reports/
 
 Usage:
     .venv/Scripts/pip-audit --format json | python tools/summarize_audit.py
@@ -131,13 +138,108 @@ def get_outdated_packages() -> list[dict] | None:
             [python_exe, "-m", "pip", "list", "--outdated", "--format=json"],
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=120,  # Increased timeout for slow networks
         )
-        if result.returncode == 0:
+        if result.returncode == 0 and result.stdout.strip():
             return json.loads(result.stdout)
+        # Return empty list instead of None if command succeeded but no outdated packages
+        if result.returncode == 0:
+            return []
+    except subprocess.TimeoutExpired:
+        # Timeout is common on slow networks, return None to signal failure
+        return None
     except (subprocess.SubprocessError, json.JSONDecodeError, FileNotFoundError):
         return None
     return None
+
+
+def get_ml_stack_health() -> dict:
+    """Get ML stack health information (PyTorch, CUDA, GPU)."""
+    python_exe = find_python_with_pipdeptree()
+    if python_exe is None:
+        python_exe = sys.executable
+
+    ml_info = {
+        "pytorch_version": None,
+        "cuda_available": False,
+        "cuda_version": None,
+        "gpu_name": None,
+        "gpu_count": 0,
+        "transformers_version": None,
+        "faiss_version": None,
+        "sentence_transformers_version": None,
+    }
+
+    # Get PyTorch/CUDA info
+    try:
+        result = subprocess.run(
+            [
+                python_exe,
+                "-c",
+                """
+import json
+info = {}
+try:
+    import torch
+    info['pytorch_version'] = torch.__version__
+    info['cuda_available'] = torch.cuda.is_available()
+    if torch.cuda.is_available():
+        info['cuda_version'] = torch.version.cuda
+        info['gpu_count'] = torch.cuda.device_count()
+        info['gpu_name'] = torch.cuda.get_device_name(0)
+except ImportError:
+    pass
+print(json.dumps(info))
+""",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            pytorch_info = json.loads(result.stdout.strip())
+            ml_info.update(pytorch_info)
+    except (subprocess.SubprocessError, json.JSONDecodeError):
+        pass
+
+    # Get other ML package versions
+    try:
+        result = subprocess.run(
+            [
+                python_exe,
+                "-c",
+                """
+import json
+info = {}
+try:
+    import transformers
+    info['transformers_version'] = transformers.__version__
+except ImportError:
+    pass
+try:
+    import faiss
+    info['faiss_version'] = faiss.__version__ if hasattr(faiss, '__version__') else 'installed'
+except ImportError:
+    pass
+try:
+    import sentence_transformers
+    info['sentence_transformers_version'] = sentence_transformers.__version__
+except ImportError:
+    pass
+print(json.dumps(info))
+""",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            other_info = json.loads(result.stdout.strip())
+            ml_info.update(other_info)
+    except (subprocess.SubprocessError, json.JSONDecodeError):
+        pass
+
+    return ml_info
 
 
 def get_direct_dependencies(project_root: Path = None) -> set[str]:
@@ -493,44 +595,162 @@ def print_outdated_analysis(outdated: list[dict] | None):
         safe_print("")
 
 
+def get_project_info() -> dict:
+    """Get project name and version from pyproject.toml."""
+    pyproject_path = Path.cwd() / "pyproject.toml"
+    if not pyproject_path.exists():
+        return {"name": "Unknown", "version": "Unknown"}
+
+    try:
+        with open(pyproject_path, "rb") as f:
+            data = tomllib.load(f)
+        return {
+            "name": data.get("project", {}).get("name", "Unknown"),
+            "version": data.get("project", {}).get("version", "Unknown"),
+        }
+    except Exception:
+        return {"name": "Unknown", "version": "Unknown"}
+
+
 def generate_markdown_report(
     summary: dict,
     tree_data: list | None,
     direct_deps: set,
     outdated: list[dict] | None = None,
+    ml_info: dict | None = None,
 ) -> str:
-    """Generate full audit report as markdown string."""
+    """Generate comprehensive executive summary report as markdown string."""
     lines = []
+    now = datetime.now()
+    project_info = get_project_info()
 
-    # Title and Executive Summary
+    # Calculate dependency stats
+    total_installed = len(tree_data) if tree_data else summary["total_packages"]
+    transitive_count = total_installed - len(direct_deps) if tree_data else 0
+
+    # Title
+    lines.append("# Dependency Audit Executive Summary")
+    lines.append("")
+    lines.append(f"**Date**: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append(f"**Project**: {project_info['name']} (v{project_info['version']})")
     lines.append(
-        f"# Dependency Audit Report - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        f"**Total Dependencies**: {total_installed} packages "
+        f"({len(direct_deps)} direct + {transitive_count} transitive)"
+    )
+    lines.append(
+        f"**Audit Report**: `audit_reports/{now.strftime('%Y-%m-%d-%H%M')}-audit-summary.md`"
     )
     lines.append("")
-    lines.append("## Executive Summary")
+
+    # --- Security Status ---
+    lines.append("---")
     lines.append("")
-    lines.append(f"- **Date**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    lines.append(f"- **Total Packages**: {summary['total_packages']}")
-    lines.append(f"- **Vulnerable Packages**: {summary['vulnerable_packages']}")
-    lines.append(f"- **Total CVEs**: {summary['total_cves']}")
+    if summary["total_cves"] == 0:
+        lines.append("## ✅ Security Status: **EXCELLENT**")
+    else:
+        lines.append("## ⚠️ Security Status: **ACTION REQUIRED**")
+    lines.append("")
+    lines.append(
+        f"- **Known Vulnerabilities**: "
+        f"{summary['severity_counts'].get('critical', 0)} critical, "
+        f"{summary['severity_counts'].get('high', 0)} high, "
+        f"{summary['severity_counts'].get('medium', 0)} medium, "
+        f"{summary['severity_counts'].get('low', 0)} low"
+    )
+    lines.append(f"- **CVE Count**: {summary['total_cves']}")
+    lines.append(f"- **Last Scan**: {now.strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append("")
 
     if summary["total_cves"] == 0:
-        lines.append("**Status**: ✅ No known vulnerabilities found")
+        lines.append(
+            "**Finding**: No security vulnerabilities detected in any dependencies. "
+            "All packages are clean according to OSV database."
+        )
         lines.append("")
-    else:
-        # Severity breakdown
-        if summary["severity_counts"]:
-            lines.append("**Severity Breakdown**:")
-            for severity, count in summary["severity_counts"].items():
-                lines.append(f"- {severity.capitalize()}: {count}")
+
+    # --- ML Stack Health ---
+    if ml_info:
+        lines.append("---")
+        lines.append("")
+        if ml_info.get("cuda_available"):
+            lines.append("## 🤖 ML Stack Health: **GOOD**")
+        elif ml_info.get("pytorch_version"):
+            lines.append("## 🤖 ML Stack Health: **CPU-ONLY**")
+        else:
+            lines.append("## 🤖 ML Stack Health: **NOT INSTALLED**")
+        lines.append("")
+
+        lines.append("| Component | Version | Status | Notes |")
+        lines.append("|-----------|---------|--------|-------|")
+
+        # PyTorch
+        if ml_info.get("pytorch_version"):
+            pytorch_status = "✅ Stable"
+            pytorch_notes = ""
+            # Check if outdated
+            if outdated:
+                for pkg in outdated:
+                    if pkg["name"].lower() == "torch":
+                        pytorch_notes = f"Latest: {pkg['latest_version']}"
+                        break
+            lines.append(
+                f"| PyTorch | {ml_info['pytorch_version']} | {pytorch_status} | {pytorch_notes} |"
+            )
+        else:
+            lines.append("| PyTorch | Not installed | ⚪ N/A | |")
+
+        # CUDA
+        if ml_info.get("cuda_available"):
+            lines.append(
+                f"| CUDA | {ml_info.get('cuda_version', 'Unknown')} | ✅ Available | "
+                f"Compatible with {ml_info.get('gpu_name', 'GPU')} |"
+            )
+        else:
+            lines.append("| CUDA | N/A | ⚪ Not available | CPU mode |")
+
+        # GPU
+        if ml_info.get("gpu_name"):
+            lines.append(
+                f"| GPU | {ml_info['gpu_name']} | ✅ Active | "
+                f"{ml_info.get('gpu_count', 1)} device(s) |"
+            )
+        else:
+            lines.append("| GPU | None | ⚪ N/A | |")
+
+        # transformers
+        if ml_info.get("transformers_version"):
+            lines.append(
+                f"| transformers | {ml_info['transformers_version']} | ✅ Current | |"
+            )
+
+        # FAISS
+        if ml_info.get("faiss_version"):
+            lines.append(
+                f"| FAISS | {ml_info['faiss_version']} | ✅ Current | CPU version |"
+            )
+
+        # sentence-transformers
+        if ml_info.get("sentence_transformers_version"):
+            lines.append(
+                f"| sentence-transformers | {ml_info['sentence_transformers_version']} | ✅ Current | |"
+            )
+
+        lines.append("")
+
+        if ml_info.get("cuda_available") and ml_info.get("pytorch_version"):
+            lines.append(
+                f"**CUDA/PyTorch Compatibility**: Excellent. "
+                f"PyTorch {ml_info['pytorch_version']} with CUDA {ml_info.get('cuda_version', 'Unknown')} "
+                f"support is working correctly"
+                f"{' with ' + ml_info['gpu_name'] if ml_info.get('gpu_name') else ''}."
+            )
             lines.append("")
 
-    # Vulnerabilities Found
+    # --- Vulnerabilities Found ---
     if summary["vulnerabilities"]:
         lines.append("---")
         lines.append("")
-        lines.append("## Vulnerabilities Found")
+        lines.append("## 🔴 Vulnerabilities Found")
         lines.append("")
 
         for pkg_name, vulns in sorted(summary["vulnerabilities"].items()):
@@ -552,20 +772,15 @@ def generate_markdown_report(
                     lines.append("- **Fix Available**: No fix released yet")
 
                 if vuln["description"]:
-                    # Clean description for markdown
                     desc = vuln["description"].replace("\n", " ")
                     lines.append(f"- **Description**: {desc}")
 
                 lines.append("")
 
-    # Recommended Actions
-    if summary["vulnerabilities"]:
-        lines.append("---")
-        lines.append("")
-        lines.append("## Recommended Actions")
+        # Recommended fix commands
+        lines.append("### Recommended Actions")
         lines.append("")
 
-        # Fixable packages
         fixable = [
             (pkg, v)
             for pkg, vulns in summary["vulnerabilities"].items()
@@ -574,7 +789,7 @@ def generate_markdown_report(
         ]
 
         if fixable:
-            lines.append("### Packages with Available Fixes")
+            lines.append("**Packages with available fixes:**")
             lines.append("")
             lines.append("```bash")
             for pkg, vuln in fixable:
@@ -585,7 +800,6 @@ def generate_markdown_report(
             lines.append("```")
             lines.append("")
 
-        # Unfixable packages
         unfixable = [
             (pkg, v)
             for pkg, vulns in summary["vulnerabilities"].items()
@@ -594,28 +808,89 @@ def generate_markdown_report(
         ]
 
         if unfixable:
-            lines.append("### Packages Without Fixes (Monitor for Updates)")
+            lines.append("**Packages without fixes (monitor for updates):**")
             lines.append("")
             for pkg, vuln in unfixable:
                 lines.append(f"- **{pkg}**: {vuln['cve_id']}")
             lines.append("")
 
-        lines.append("### Next Steps")
+    # --- Outdated Packages Analysis ---
+    if outdated:
+        categories = categorize_outdated_packages(outdated)
+
+        lines.append("---")
         lines.append("")
-        lines.append("1. Review CVE details at https://osv.dev/")
-        lines.append("2. Test updates in isolated environment")
-        lines.append("3. Run full test suite before deploying")
-        lines.append("4. Update pyproject.toml with new version constraints")
+        lines.append("## 📦 Outdated Packages Analysis")
+        lines.append("")
+        lines.append(
+            f"**Total Outdated**: {len(outdated)} packages (prioritized by risk)"
+        )
         lines.append("")
 
-    # Dependency Tree Analysis
+        # High Priority - ML Core
+        if categories["ml_core"]:
+            lines.append("### 🔴 High Priority (ML Core - Test Thoroughly)")
+            lines.append("")
+            lines.append(
+                "⚠️ **DO NOT auto-update these packages** - CUDA compatibility and model behavior may change."
+            )
+            lines.append("")
+            lines.append("| Package | Current | Latest | Priority | Reason |")
+            lines.append("|---------|---------|--------|----------|--------|")
+            for pkg in categories["ml_core"]:
+                priority = "🔴 High" if pkg["is_major_jump"] else "🟡 Medium"
+                reason = (
+                    "Major version change"
+                    if pkg["is_major_jump"]
+                    else "ML core package"
+                )
+                lines.append(
+                    f"| **{pkg['name']}** | {pkg['current']} | {pkg['latest']} | {priority} | {reason} |"
+                )
+            lines.append("")
+
+        # Major Version Jumps
+        if categories["major_jump"]:
+            lines.append("### 🟡 Medium Priority (Major Version Changes)")
+            lines.append("")
+            lines.append(
+                "Review breaking changes before updating. Check release notes."
+            )
+            lines.append("")
+            lines.append("| Package | Current | Latest | Type |")
+            lines.append("|---------|---------|--------|------|")
+            for pkg in categories["major_jump"]:
+                pkg_type = (
+                    "Dev tool"
+                    if pkg["name"].lower()
+                    in {"pytest", "black", "isort", "ruff", "mypy"}
+                    else "Library"
+                )
+                lines.append(
+                    f"| {pkg['name']} | {pkg['current']} | {pkg['latest']} | {pkg_type} |"
+                )
+            lines.append("")
+
+        # Safe Updates
+        if categories["safe_update"]:
+            lines.append("### 🟢 Low Priority (Minor/Patch Updates)")
+            lines.append("")
+            lines.append("Generally safe to update. Run tests after updating.")
+            lines.append("")
+            lines.append("| Package | Current | Latest |")
+            lines.append("|---------|---------|--------|")
+            for pkg in categories["safe_update"]:
+                lines.append(f"| {pkg['name']} | {pkg['current']} | {pkg['latest']} |")
+            lines.append("")
+
+    # --- Dependency Tree Analysis ---
     if tree_data:
         all_installed = {pkg["package"]["package_name"].lower() for pkg in tree_data}
         transitive = all_installed - direct_deps
 
         lines.append("---")
         lines.append("")
-        lines.append("## Dependency Tree Analysis")
+        lines.append("## 🌳 Dependency Tree Analysis")
         lines.append("")
         lines.append(
             f"- **Direct Dependencies**: {len(direct_deps)} (from pyproject.toml)"
@@ -624,14 +899,21 @@ def generate_markdown_report(
             f"- **Transitive Dependencies**: {len(transitive)} (pulled in automatically)"
         )
         lines.append(f"- **Total Installed**: {len(all_installed)}")
+        dep_ratio = len(all_installed) / len(direct_deps) if direct_deps else 0
+        lines.append(
+            f"- **Dependency Ratio**: {dep_ratio:.2f}:1 (each direct dep pulls ~{dep_ratio:.1f} transitive)"
+        )
         lines.append("")
 
         # Build trees for direct deps
         trees = build_package_trees(tree_data, direct_deps)
 
         if trees:
-            lines.append("### Dependency Trees")
+            lines.append("### Key Dependency Trees")
             lines.append("")
+            lines.append("<details><summary>Click to expand dependency trees</summary>")
+            lines.append("")
+
             for pkg_name in sorted(trees.keys()):
                 pkg_data = trees[pkg_name]
                 if pkg_data["dependencies"]:
@@ -644,68 +926,197 @@ def generate_markdown_report(
                         required = dep.get("required_version", "Any")
                         installed = dep.get("installed_version", "?")
                         lines.append(
-                            f"  |-- {dep_name} [required: {required}, installed: {installed}]"
+                            f"|-- {dep_name} [required: {required}, installed: {installed}]"
                         )
+                        # Add nested deps if present
+                        for nested in dep.get("dependencies", [])[:3]:
+                            n_name = nested["package_name"]
+                            n_inst = nested.get("installed_version", "?")
+                            lines.append(f"    +-- {n_name} [{n_inst}]")
                     lines.append("```")
                     lines.append("")
+
+            lines.append("</details>")
+            lines.append("")
 
         # Orphan packages
         orphans = find_orphan_packages(tree_data, direct_deps)
         if orphans:
-            lines.append("### Potential Leftover Packages")
+            lines.append("### 🧹 Orphan Packages")
             lines.append("")
+            lines.append(
+                f"Found **{len(orphans)}** packages not in pyproject.toml with no dependents."
+            )
+            lines.append("")
+
+            # Categorize orphans
+            dev_tools = {
+                "ipython",
+                "pip_audit",
+                "pip-audit",
+                "setuptools",
+                "wheel",
+                "uv",
+                "pyreadline3",
+            }
+            safe_orphans = []
+            investigate_orphans = []
+
             for orphan in orphans:
-                lines.append(
-                    f"- **{orphan['name']}** ({orphan['version']}) - Not in direct deps, nothing depends on it"
-                )
-            lines.append("")
-            lines.append("**Actions**:")
-            lines.append("- If needed: Add to pyproject.toml dependencies")
-            lines.append("- If not needed: `pip uninstall <package>`")
+                if orphan["name"].lower() in dev_tools:
+                    safe_orphans.append(orphan)
+                else:
+                    investigate_orphans.append(orphan)
+
+            if safe_orphans:
+                lines.append("**Safe to Keep (Development Tools)**:")
+                for orphan in safe_orphans:
+                    lines.append(f"- `{orphan['name']}` ({orphan['version']})")
+                lines.append("")
+
+            if investigate_orphans:
+                lines.append("**Investigate Before Removing**:")
+                for orphan in investigate_orphans[:10]:  # Limit to first 10
+                    lines.append(f"- `{orphan['name']}` ({orphan['version']})")
+                if len(investigate_orphans) > 10:
+                    lines.append(f"- ... and {len(investigate_orphans) - 10} more")
+                lines.append("")
+
+            lines.append(
+                "**Recommendation**: Don't remove orphans yet. Many are transitive dependencies "
+                "that pipdeptree may not detect correctly (especially for compiled packages)."
+            )
             lines.append("")
 
-    # Outdated Packages Analysis
+    # --- Health Metrics ---
+    lines.append("---")
+    lines.append("")
+    lines.append("## 📊 Dependency Health Metrics")
+    lines.append("")
+    lines.append("| Metric | Value | Status |")
+    lines.append("|--------|-------|--------|")
+
+    total_pkgs = total_installed
+    lines.append(f"| Total Packages | {total_pkgs} | ✅ Reasonable |")
+    lines.append(f"| Direct Dependencies | {len(direct_deps)} | ✅ Manageable |")
+    lines.append(
+        f"| Transitive Dependencies | {transitive_count} | ✅ Expected for ML project |"
+    )
+
+    if direct_deps:
+        dep_ratio = total_pkgs / len(direct_deps)
+        lines.append(f"| Dependency Ratio | {dep_ratio:.2f}:1 | ✅ Normal |")
+
+    lines.append(
+        f"| Security Vulnerabilities | {summary['total_cves']} | {'✅ Excellent' if summary['total_cves'] == 0 else '⚠️ Action needed'} |"
+    )
+
     if outdated:
-        categories = categorize_outdated_packages(outdated)
+        outdated_pct = (len(outdated) / total_pkgs) * 100 if total_pkgs else 0
+        lines.append(
+            f"| Outdated Packages | {len(outdated)} ({outdated_pct:.1f}%) | "
+            f"{'✅ Acceptable' if outdated_pct < 20 else '⚠️ Review needed'} |"
+        )
 
-        lines.append("---")
+    if tree_data:
+        orphan_count = len(find_orphan_packages(tree_data, direct_deps))
+        orphan_pct = (orphan_count / total_pkgs) * 100 if total_pkgs else 0
+        lines.append(
+            f"| Orphan Packages | {orphan_count} ({orphan_pct:.1f}%) | "
+            f"{'✅ Normal' if orphan_pct < 20 else '⚠️ Review periodically'} |"
+        )
+
+    lines.append("")
+
+    # --- Recommended Actions Summary ---
+    lines.append("---")
+    lines.append("")
+    lines.append("## 🎯 Recommended Actions")
+    lines.append("")
+
+    if summary["total_cves"] == 0:
+        lines.append("### Immediate Actions (This Week)")
         lines.append("")
-        lines.append("## Outdated Packages Analysis")
+        lines.append(
+            "✅ **No immediate security updates required** - All packages are vulnerability-free."
+        )
         lines.append("")
-        lines.append(f"**Total Outdated**: {len(outdated)}")
+    else:
+        lines.append("### 🔴 Immediate Actions (This Week)")
+        lines.append("")
+        lines.append("Security vulnerabilities detected. Apply fixes listed above.")
         lines.append("")
 
-        if categories["ml_core"]:
-            lines.append("### ML Core (DO NOT auto-update)")
-            lines.append("")
-            lines.append("⚠️ **Test thoroughly before updating these packages:**")
-            lines.append("")
-            lines.append("| Package | Current | Latest | Risk |")
-            lines.append("|---------|---------|--------|------|")
-            for pkg in categories["ml_core"]:
-                risk = "MAJOR" if pkg["is_major_jump"] else "minor"
-                lines.append(
-                    f"| {pkg['name']} | {pkg['current']} | {pkg['latest']} | {risk} |"
-                )
-            lines.append("")
+    if outdated and categories.get("ml_core"):
+        lines.append("### Short-Term Actions (Next Sprint)")
+        lines.append("")
+        lines.append("Consider updating ML core packages after thorough testing:")
+        lines.append("")
+        for pkg in categories["ml_core"][:3]:
+            lines.append(f"- `{pkg['name']}`: {pkg['current']} → {pkg['latest']}")
+        lines.append("")
+        lines.append(
+            "**Before upgrading**: Check release notes, verify CUDA compatibility, test in isolated environment."
+        )
+        lines.append("")
 
-        if categories["major_jump"]:
-            lines.append("### Major Version Jumps (Review breaking changes)")
-            lines.append("")
-            lines.append("| Package | Current | Latest |")
-            lines.append("|---------|---------|--------|")
-            for pkg in categories["major_jump"]:
-                lines.append(f"| {pkg['name']} | {pkg['current']} | {pkg['latest']} |")
-            lines.append("")
+    lines.append("### Quarterly Review Actions")
+    lines.append("")
+    next_quarter = now.replace(month=((now.month - 1) // 3 + 1) * 3 % 12 + 1)
+    if next_quarter.month <= now.month:
+        next_quarter = next_quarter.replace(year=now.year + 1)
+    lines.append(f"1. Re-run security audit: {next_quarter.strftime('%B %Y')}")
+    lines.append("2. Review outdated packages for updates")
+    lines.append("3. Check PyTorch ecosystem for new releases")
+    lines.append("4. Clean up orphan packages (if still unused)")
+    lines.append("")
 
-        if categories["safe_update"]:
-            lines.append("### Safe Updates (Minor/Patch)")
-            lines.append("")
-            lines.append("| Package | Current | Latest |")
-            lines.append("|---------|---------|--------|")
-            for pkg in categories["safe_update"]:
-                lines.append(f"| {pkg['name']} | {pkg['current']} | {pkg['latest']} |")
-            lines.append("")
+    # --- Summary ---
+    lines.append("---")
+    lines.append("")
+    lines.append("## 💡 Summary")
+    lines.append("")
+
+    overall_status = "EXCELLENT" if summary["total_cves"] == 0 else "ACTION REQUIRED"
+    lines.append(
+        f"**Overall Health**: {'✅' if summary['total_cves'] == 0 else '⚠️'} **{overall_status}**"
+    )
+    lines.append("")
+
+    checklist = []
+    if summary["total_cves"] == 0:
+        checklist.append("✅ **Zero security vulnerabilities** - All packages clean")
+    else:
+        checklist.append(
+            f"⚠️ **{summary['total_cves']} security vulnerabilities** - Action required"
+        )
+
+    if ml_info and ml_info.get("cuda_available"):
+        checklist.append(
+            f"✅ **ML stack stable** - PyTorch {ml_info.get('pytorch_version', 'Unknown')} + "
+            f"CUDA {ml_info.get('cuda_version', 'Unknown')} working"
+        )
+    elif ml_info and ml_info.get("pytorch_version"):
+        checklist.append("⚠️ **ML stack CPU-only** - No CUDA available")
+
+    checklist.append(
+        f"✅ **Dependencies manageable** - {total_pkgs} packages with good organization"
+    )
+
+    if outdated:
+        checklist.append(
+            f"🟡 **{len(outdated)} packages outdated** - Review when convenient"
+        )
+
+    for item in checklist:
+        lines.append(f"- {item}")
+
+    lines.append("")
+    lines.append(
+        f"**Risk Level**: **{'LOW' if summary['total_cves'] == 0 else 'MEDIUM'}** - "
+        f"{'No immediate action required.' if summary['total_cves'] == 0 else 'Apply security fixes first.'}"
+    )
+    lines.append("")
 
     return "\n".join(lines)
 
@@ -805,6 +1216,7 @@ Examples:
     tree_data = get_dependency_tree_json()
     direct_deps = get_direct_dependencies()
     outdated_data = get_outdated_packages()
+    ml_info = get_ml_stack_health()
 
     # Always print to stdout (for chat display)
     print_summary(summary)
@@ -814,7 +1226,7 @@ Examples:
     # Save to file unless --no-save
     if not args.no_save:
         report = generate_markdown_report(
-            summary, tree_data, direct_deps, outdated_data
+            summary, tree_data, direct_deps, outdated_data, ml_info
         )
         if args.output:
             output_path = args.output

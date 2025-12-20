@@ -125,3 +125,39 @@ class ResultFactory:
             source="direct_lookup",
             rank=0,
         )
+
+    @staticmethod
+    def from_similarity_results(
+        similar_chunks: List[Tuple[str, float, Dict]], source: str = "similarity"
+    ) -> List[SearchResult]:
+        """Convert similarity search results to SearchResult format.
+
+        Args:
+            similar_chunks: List of (chunk_id, similarity, metadata) tuples
+            source: Result source identifier (default: "similarity")
+
+        Returns:
+            List of SearchResult objects
+
+        Example:
+            >>> similar_chunks = [
+            ...     ("file.py:1-10:function:foo", 0.92, {"file": "file.py"}),
+            ...     ("file.py:20-30:class:Bar", 0.88, {"file": "file.py"}),
+            ... ]
+            >>> results = ResultFactory.from_similarity_results(similar_chunks)
+            >>> len(results)
+            2
+            >>> results[0].source
+            'similarity'
+        """
+        search_results = []
+        for i, (chunk_id, score, metadata) in enumerate(similar_chunks):
+            search_result = SearchResult(
+                chunk_id=chunk_id,
+                score=score,
+                metadata=metadata,
+                source=source,
+                rank=i,
+            )
+            search_results.append(search_result)
+        return search_results

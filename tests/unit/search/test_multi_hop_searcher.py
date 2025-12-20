@@ -19,13 +19,13 @@ class TestMultiHopSearcher:
         self.mock_embedder = MagicMock()
         self.mock_dense_index = MagicMock()
         self.mock_single_hop_callback = MagicMock()
-        self.mock_rerank_callback = MagicMock()
+        self.mock_reranking_engine = MagicMock()
 
         self.searcher = MultiHopSearcher(
             embedder=self.mock_embedder,
             dense_index=self.mock_dense_index,
             single_hop_callback=self.mock_single_hop_callback,
-            rerank_callback=self.mock_rerank_callback,
+            reranking_engine=self.mock_reranking_engine,
         )
 
     def test_validate_params_valid(self):
@@ -251,7 +251,7 @@ class TestMultiHopSearcher:
         assert results == initial_results[:2]
         self.mock_single_hop_callback.assert_called_once()
         self.mock_dense_index.get_similar_chunks_batched.assert_not_called()
-        self.mock_rerank_callback.assert_not_called()
+        self.mock_reranking_engine.rerank_by_query.assert_not_called()
 
     @patch("search.multi_hop_searcher._get_config_via_service_locator")
     def test_search_multi_hop(self, mock_config):
@@ -284,7 +284,7 @@ class TestMultiHopSearcher:
             SearchResult(chunk_id="chunk1", score=0.95, metadata={}),
             SearchResult(chunk_id="chunk3", score=0.85, metadata={}),
         ]
-        self.mock_rerank_callback.return_value = final_results
+        self.mock_reranking_engine.rerank_by_query.return_value = final_results
 
         # Perform search
         results = self.searcher.search(
@@ -299,7 +299,7 @@ class TestMultiHopSearcher:
         assert results == final_results
         self.mock_single_hop_callback.assert_called_once()
         self.mock_dense_index.get_similar_chunks_batched.assert_called_once()
-        self.mock_rerank_callback.assert_called_once()
+        self.mock_reranking_engine.rerank_by_query.assert_called_once()
 
     @patch("search.multi_hop_searcher._get_config_via_service_locator")
     def test_search_no_initial_results(self, mock_config):
@@ -320,7 +320,7 @@ class TestMultiHopSearcher:
         self.mock_single_hop_callback.assert_called_once()
         # No expansion or reranking should occur
         self.mock_dense_index.get_similar_chunks_batched.assert_not_called()
-        self.mock_rerank_callback.assert_not_called()
+        self.mock_reranking_engine.rerank_by_query.assert_not_called()
 
     @patch("search.multi_hop_searcher._get_config_via_service_locator")
     def test_search_embedding_cache(self, mock_config):
