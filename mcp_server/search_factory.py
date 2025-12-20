@@ -89,8 +89,13 @@ class SearchFactory:
             # Format: projectname_hash_modelslug_dimension (e.g., claude-context-local_caf2e75a_qwen3_1024d)
             project_id = project_dir.name.rsplit("_", 1)[0]  # Remove dimension suffix
 
+            # Get config for performance settings (including mmap)
+            from search.config import get_config
+
+            config = get_config()
+
             state.index_manager = CodeIndexManager(
-                str(index_dir), project_id=project_id
+                str(index_dir), project_id=project_id, config=config
             )
             logger.info(
                 f"Index manager initialized for project: {Path(project_path).name} (ID: {project_id}, model_key: {model_key})"

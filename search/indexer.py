@@ -28,7 +28,9 @@ from search.metadata import MetadataStore
 class CodeIndexManager:
     """Manages FAISS vector index and metadata storage for code chunks."""
 
-    def __init__(self, storage_dir: str, embedder=None, project_id: str = None):
+    def __init__(
+        self, storage_dir: str, embedder=None, project_id: str = None, config=None
+    ):
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
@@ -39,7 +41,23 @@ class CodeIndexManager:
 
         # Initialize components
         self._metadata_store = MetadataStore(self.metadata_path)
-        self._faiss_index = FaissVectorIndex(self.index_path, embedder=embedder)
+
+        # Determine if mmap storage should be used
+        use_mmap = (
+            getattr(config, "mmap_storage_enabled", False)
+            if config and hasattr(config, "mmap_storage_enabled")
+            else (
+                getattr(
+                    getattr(config, "performance", None), "mmap_storage_enabled", False
+                )
+                if config and hasattr(config, "performance")
+                else False
+            )
+        )
+
+        self._faiss_index = FaissVectorIndex(
+            self.index_path, embedder=embedder, use_mmap=use_mmap
+        )
         self._logger = logging.getLogger(__name__)
         self._logger.info(
             f"[INIT] CodeIndexManager created: storage_dir={storage_dir}, project_id={project_id}"

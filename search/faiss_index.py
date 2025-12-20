@@ -113,12 +113,13 @@ class FaissVectorIndex:
         >>> index.save()
     """
 
-    def __init__(self, index_path: Path, embedder=None):
+    def __init__(self, index_path: Path, embedder=None, use_mmap: bool = False):
         """Initialize FAISS vector index.
 
         Args:
             index_path: Path to FAISS index file
             embedder: Optional embedder for dimension validation
+            use_mmap: Enable memory-mapped vector storage for fast access
         """
         self.index_path = Path(index_path)
         self.chunk_id_path = self.index_path.parent / "chunk_ids.pkl"
@@ -128,6 +129,13 @@ class FaissVectorIndex:
         self._chunk_ids: list = []
         self._on_gpu: bool = False
         self._logger = logging.getLogger(__name__)
+
+        # Memory-mapped vector storage (optional)
+        self._use_mmap = use_mmap
+        self._mmap_storage: Optional[Any] = None  # MmapVectorStorage
+        self._mmap_path = (
+            self.index_path.parent / f"{self.index_path.stem}_vectors.mmap"
+        )
 
     @property
     def index(self) -> Optional[Any]:
@@ -243,6 +251,28 @@ class FaissVectorIndex:
             else:
                 self._chunk_ids = []
 
+            # Load mmap storage if available
+            if self._use_mmap and self._mmap_path.exists():
+                try:
+                    from search.mmap_vectors import MmapVectorStorage
+
+                    self._mmap_storage = MmapVectorStorage(
+                        self._mmap_path, self._index.d
+                    )
+                    if not self._mmap_storage.load():
+                        self._mmap_storage = None
+                        self._logger.debug(
+                            "Mmap vectors not available, using FAISS reconstruct"
+                        )
+                    else:
+                        self._logger.info(
+                            f"Loaded mmap storage: {self._mmap_storage.count} vectors "
+                            f"from {self._mmap_path.name}"
+                        )
+                except Exception as e:
+                    self._logger.debug(f"Could not load mmap storage: {e}")
+                    self._mmap_storage = None
+
             return True
 
         except Exception as e:
@@ -279,6 +309,26 @@ class FaissVectorIndex:
         # Save chunk IDs
         with open(self.chunk_id_path, "wb") as f:
             pickle.dump(self._chunk_ids, f)
+
+        # Save mmap copy for fast access if enabled
+        if self._use_mmap and self._index is not None:
+            try:
+                from search.mmap_vectors import MmapVectorStorage
+
+                dimension = self._index.d
+                mmap_storage = MmapVectorStorage(self._mmap_path, dimension)
+
+                # Reconstruct all vectors
+                embeddings = np.array(
+                    [self._index.reconstruct(i) for i in range(self._index.ntotal)]
+                )
+                mmap_storage.save(embeddings, self._chunk_ids)
+                self._logger.info(
+                    f"Saved {self._index.ntotal} vectors to mmap storage: "
+                    f"{self._mmap_path.name}"
+                )
+            except Exception as e:
+                self._logger.warning(f"Failed to save mmap vectors: {e}")
 
     def add(self, embeddings: np.ndarray, chunk_ids: list) -> None:
         """Add embeddings to the index.
@@ -345,9 +395,21 @@ class FaissVectorIndex:
 
         Returns:
             Reconstructed embedding vector
+
+        Note:
+            Uses memory-mapped storage for fast access (<1μs) if enabled,
+            otherwise falls back to FAISS reconstruct.
         """
         if self._index is None:
             raise ValueError("No index exists")
+
+        # Fast path: mmap access (<1μs after cache warm)
+        if self._mmap_storage and self._mmap_storage.is_loaded:
+            vector = self._mmap_storage.get_vector(idx)
+            if vector is not None:
+                return vector
+
+        # Fallback: FAISS reconstruct
         return self._index.reconstruct(int(idx))
 
     def clear(self) -> None:

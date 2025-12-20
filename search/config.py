@@ -234,6 +234,9 @@ class PerformanceConfig:
     enable_auto_reindex: bool = True
     max_index_age_minutes: float = 5.0
 
+    # Memory-mapped vector storage (Phase 3)
+    mmap_storage_enabled: bool = False  # Opt-in for <1μs vector access
+
 
 @dataclass
 class MultiHopConfig:
@@ -546,6 +549,10 @@ class SearchConfigManager:
             "CLAUDE_DYNAMIC_BATCH_MAX": ("dynamic_batch_max", int),
             "CLAUDE_AUTO_REINDEX": ("enable_auto_reindex", self._bool_from_env),
             "CLAUDE_MAX_INDEX_AGE": ("max_index_age_minutes", float),
+            "CLAUDE_MMAP_STORAGE_ENABLED": (
+                "mmap_storage_enabled",
+                self._bool_from_env,
+            ),
             "CLAUDE_ENABLE_MULTI_HOP": ("enable_multi_hop", self._bool_from_env),
             "CLAUDE_MULTI_HOP_COUNT": ("multi_hop_count", int),
             "CLAUDE_MULTI_HOP_EXPANSION": ("multi_hop_expansion", float),
