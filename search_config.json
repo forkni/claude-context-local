@@ -1,6 +1,6 @@
 {
-  "embedding_model_name": "nomic-ai/CodeRankEmbed",
-  "model_dimension": 768,
+  "embedding_model_name": "Qwen/Qwen3-Embedding-4B",
+  "model_dimension": 2560,
   "embedding_batch_size": 128,
   "query_cache_size": 128,
   "default_search_mode": "hybrid",

@@ -376,7 +376,10 @@ class SearchConfig:
         if "embedding_model_name" in data:
             model_config = get_model_config(data["embedding_model_name"])
             if model_config:
-                data["model_dimension"] = model_config["dimension"]
+                # Use truncate_dim if MRL is enabled, otherwise use native dimension
+                data["model_dimension"] = (
+                    model_config.get("truncate_dim") or model_config["dimension"]
+                )
                 # Only auto-set batch size if not explicitly provided
                 if "embedding_batch_size" not in data:
                     data["embedding_batch_size"] = model_config.get(
@@ -590,7 +593,10 @@ class SearchConfigManager:
             # Auto-sync dimension from model registry before saving
             model_config = get_model_config(config.embedding.model_name)
             if model_config:
-                config.embedding.dimension = model_config["dimension"]
+                # Use truncate_dim if MRL is enabled, otherwise use native dimension
+                config.embedding.dimension = (
+                    model_config.get("truncate_dim") or model_config["dimension"]
+                )
 
             # Create directory if needed (only if not current directory)
             config_dir = os.path.dirname(self.config_file)

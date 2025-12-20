@@ -214,7 +214,11 @@ def _index_with_all_models(
 
             # Update dimension from registry
             if model_name in MODEL_REGISTRY:
-                config.embedding.dimension = MODEL_REGISTRY[model_name]["dimension"]
+                model_cfg = MODEL_REGISTRY[model_name]
+                # Use truncate_dim if MRL is enabled, otherwise use native dimension
+                config.embedding.dimension = (
+                    model_cfg.get("truncate_dim") or model_cfg["dimension"]
+                )
 
             config_mgr.save_config(config)
 
