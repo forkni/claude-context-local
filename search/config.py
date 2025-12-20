@@ -349,6 +349,7 @@ class SearchConfig:
             "dynamic_batch_max": self.performance.dynamic_batch_max,
             "enable_auto_reindex": self.performance.enable_auto_reindex,
             "max_index_age_minutes": self.performance.max_index_age_minutes,
+            "mmap_storage_enabled": self.performance.mmap_storage_enabled,
             # MultiHopConfig fields
             "enable_multi_hop": self.multi_hop.enabled,
             "multi_hop_count": self.multi_hop.hop_count,
@@ -427,6 +428,7 @@ class SearchConfig:
             dynamic_batch_max=data.get("dynamic_batch_max", 384),
             enable_auto_reindex=data.get("enable_auto_reindex", True),
             max_index_age_minutes=data.get("max_index_age_minutes", 5.0),
+            mmap_storage_enabled=data.get("mmap_storage_enabled", False),
         )
 
         multi_hop = MultiHopConfig(

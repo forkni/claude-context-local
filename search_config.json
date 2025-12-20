@@ -29,6 +29,7 @@
   "dynamic_batch_max": 384,
   "enable_auto_reindex": true,
   "max_index_age_minutes": 5.0,
+  "mmap_storage_enabled": true,
   "enable_multi_hop": true,
   "multi_hop_count": 2,
   "multi_hop_expansion": 0.3,
