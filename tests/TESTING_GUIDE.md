@@ -40,7 +40,9 @@ The test suite has been optimized for module-by-module execution. Running all te
 ```
 
 ### Automated Module Testing Script
+
 **Usage:**
+
 ```cmd
 cd tests
 run_all_tests.bat

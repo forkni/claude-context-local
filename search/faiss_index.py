@@ -310,24 +310,40 @@ class FaissVectorIndex:
         with open(self.chunk_id_path, "wb") as f:
             pickle.dump(self._chunk_ids, f)
 
-        # Save mmap copy for fast access if enabled
+        # Save mmap copy for fast access if enabled AND above threshold
+        # Auto-threshold: Only use mmap for indices >10K vectors (performance benefit)
+        MMAP_THRESHOLD = 10000
         if self._use_mmap and self._index is not None:
-            try:
-                from search.mmap_vectors import MmapVectorStorage
+            vector_count = self._index.ntotal
+            if vector_count >= MMAP_THRESHOLD:
+                try:
+                    from search.mmap_vectors import MmapVectorStorage
 
-                dimension = self._index.d
-                mmap_storage = MmapVectorStorage(self._mmap_path, dimension)
+                    dimension = self._index.d
+                    mmap_storage = MmapVectorStorage(self._mmap_path, dimension)
 
-                # Reconstruct all vectors
-                embeddings = np.array(
-                    [self._index.reconstruct(i) for i in range(self._index.ntotal)]
-                )
-                mmap_storage.save(embeddings, self._chunk_ids)
-                self._logger.info(
-                    f"Saved mmap storage: {self._index.ntotal} vectors to {self._mmap_path}"
-                )
-            except Exception as e:
-                self._logger.warning(f"Failed to save mmap vectors: {e}")
+                    # Reconstruct all vectors
+                    embeddings = np.array(
+                        [self._index.reconstruct(i) for i in range(self._index.ntotal)]
+                    )
+                    mmap_storage.save(embeddings, self._chunk_ids)
+                    self._logger.info(
+                        f"Saved mmap storage: {self._index.ntotal} vectors to {self._mmap_path}"
+                    )
+                except Exception as e:
+                    self._logger.warning(f"Failed to save mmap vectors: {e}")
+            else:
+                # Below threshold: delete mmap if it exists (from previous larger index)
+                if self._mmap_path.exists():
+                    self._mmap_path.unlink()
+                    self._logger.info(
+                        f"Deleted mmap file (below threshold): {vector_count} vectors < {MMAP_THRESHOLD}"
+                    )
+                else:
+                    self._logger.info(
+                        f"Skipping mmap storage: {vector_count} vectors < {MMAP_THRESHOLD} threshold "
+                        f"(FAISS is faster at small scale)"
+                    )
 
     def add(self, embeddings: np.ndarray, chunk_ids: list) -> None:
         """Add embeddings to the index.
@@ -435,6 +451,11 @@ class FaissVectorIndex:
             self.index_path.unlink()
         if self.chunk_id_path.exists():
             self.chunk_id_path.unlink()
+
+        # Remove mmap files (from before threshold implementation or old indices)
+        if self._mmap_path.exists():
+            self._mmap_path.unlink()
+            self._logger.info(f"Removed old mmap file: {self._mmap_path.name}")
 
         self._logger.info("FAISS index cleared")
 

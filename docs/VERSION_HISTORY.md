@@ -32,12 +32,14 @@ Complete version history and feature timeline for claude-context-local MCP serve
 #### New Relationship Types (9 total)
 
 **Priority 4 - Definitions**:
+
 - `DEFINES_CONSTANT` - Module-level constant definitions (e.g., `TIMEOUT = 30`)
 - `DEFINES_ENUM_MEMBER` - Enum member definitions (e.g., `Status.ACTIVE = 1`)
 - `DEFINES_CLASS_ATTR` - Class attribute definitions (planned)
 - `DEFINES_FIELD` - Dataclass field definitions (planned)
 
 **Priority 5 - References**:
+
 - `USES_CONSTANT` - Constant usage in functions/methods
 - `USES_DEFAULT` - Default parameter value references
 - `USES_GLOBAL` - Global statement usage (planned)
@@ -72,12 +74,14 @@ Complete version history and feature timeline for claude-context-local MCP serve
 #### find_connections Tool Integration
 
 Added 4 new fields to `ImpactReport`:
+
 - `defines_constants` - Constants defined by this code
 - `uses_constants` - Constants used by this code
 - `defines_enum_members` - Enum members defined by this code
 - `uses_defaults` - Default parameter values used by this code
 
 **Example output**:
+
 ```json
 {
   "defines_enum_members": [
@@ -96,16 +100,19 @@ Added 4 new fields to `ImpactReport`:
 ### Files Modified
 
 **New Extractors** (3 files):
+
 - `graph/relationship_extractors/constant_extractor.py` (250 lines)
 - `graph/relationship_extractors/enum_extractor.py` (180 lines)
 - `graph/relationship_extractors/default_param_extractor.py` (299 lines)
 
 **Core Infrastructure**:
+
 - `graph/relationship_types.py` - Added 9 new RelationshipType enum values
 - `graph/relationship_extractors/__init__.py` - Exported new extractors
 - `mcp_server/tools/code_relationship_analyzer.py` - Updated ImpactReport for entity tracking
 
 **Tests** (30+ tests):
+
 - `tests/unit/test_entity_tracking_extractors.py` (522 lines)
   - TestConstantExtractor: 8 tests
   - TestEnumMemberExtractor: 7 tests
@@ -121,18 +128,21 @@ Added 4 new fields to `ImpactReport`:
 ### Use Cases
 
 **Find constant usages**:
+
 ```
 /find_connections --symbol_name "FAISS_INDEX_FILENAME"
 # Shows all functions using this constant
 ```
 
 **Find enum member usages**:
+
 ```
 /find_connections --chunk_id "types.py:10-50:class:Status"
 # Shows all enum members and their definitions
 ```
 
 **Track default parameter dependencies**:
+
 ```
 /find_connections --symbol_name "connect"
 # Shows constants used as default parameters
@@ -141,6 +151,7 @@ Added 4 new fields to `ImpactReport`:
 ### Refactoring Support
 
 Entity tracking enables:
+
 - **Constant refactoring**: Find all usages before renaming
 - **Enum migration**: Track enum member references across codebase
 - **Default value changes**: Identify functions affected by constant changes

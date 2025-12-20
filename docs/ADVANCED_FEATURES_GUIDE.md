@@ -2338,12 +2338,14 @@ The `find_connections` tool now returns **Phase 1.4 entity tracking relationship
 ### Relationship Types (9 total)
 
 **Priority 4 - Definitions**:
+
 - `DEFINES_CONSTANT` - Module-level constant definitions (e.g., `TIMEOUT = 30`)
 - `DEFINES_ENUM_MEMBER` - Enum member definitions (e.g., `Status.ACTIVE = 1`)
 - `DEFINES_CLASS_ATTR` - Class attribute definitions (planned)
 - `DEFINES_FIELD` - Dataclass field definitions (planned)
 
 **Priority 5 - References**:
+
 - `USES_CONSTANT` - Constant usage in functions/methods
 - `USES_DEFAULT` - Default parameter value references
 - `USES_GLOBAL` - Global statement usage (planned)
@@ -2382,6 +2384,7 @@ The `find_connections` tool now returns **Phase 1.4 entity tracking relationship
 ```
 
 **Output**:
+
 ```json
 {
   "defines_constants": [
@@ -2405,6 +2408,7 @@ The `find_connections` tool now returns **Phase 1.4 entity tracking relationship
 ```
 
 **Output**:
+
 ```json
 {
   "defines_enum_members": [
@@ -2427,6 +2431,7 @@ The `find_connections` tool now returns **Phase 1.4 entity tracking relationship
 ```
 
 **Output**:
+
 ```json
 {
   "uses_defaults": [
@@ -2453,17 +2458,20 @@ The `find_connections` tool now returns **Phase 1.4 entity tracking relationship
 ### Filtering Rules
 
 **ConstantExtractor**:
+
 - Only UPPER_CASE names (≥2 characters)
 - Excludes private constants (`_INTERNAL`)
 - Excludes trivial values (single digits, empty strings)
 - Excludes builtin constants (True, False, None)
 
 **EnumMemberExtractor**:
+
 - Supports Enum, IntEnum, StrEnum, Flag variants
 - Excludes private members (`_INTERNAL`)
 - Handles type annotations (`ACTIVE: int = 1`)
 
 **DefaultParameterExtractor**:
+
 - Tracks name references, call expressions, attribute access
 - Skips None, booleans, small numbers (-10 to 10)
 - Skips empty strings and empty collections
@@ -2472,6 +2480,7 @@ The `find_connections` tool now returns **Phase 1.4 entity tracking relationship
 ### Refactoring Workflows
 
 **Constant Refactoring**:
+
 ```bash
 # Step 1: Find constant definition
 /search_code "MAX_RETRIES constant definition"
@@ -2484,6 +2493,7 @@ The `find_connections` tool now returns **Phase 1.4 entity tracking relationship
 ```
 
 **Enum Migration**:
+
 ```bash
 # Step 1: Find enum class
 /search_code "Status enum"
@@ -2496,6 +2506,7 @@ The `find_connections` tool now returns **Phase 1.4 entity tracking relationship
 ```
 
 **Default Value Changes**:
+
 ```bash
 # Step 1: Find constant used as default
 /search_code "DEFAULT_TIMEOUT constant"

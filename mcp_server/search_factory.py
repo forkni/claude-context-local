@@ -182,6 +182,7 @@ class SearchFactory:
                 state.searcher = IntelligentSearcher(
                     self.get_index_manager(project_path, model_key=effective_model_key),
                     get_embedder(effective_model_key),
+                    config=config,
                 )
                 logger.info("IntelligentSearcher initialized (semantic-only mode)")
 
