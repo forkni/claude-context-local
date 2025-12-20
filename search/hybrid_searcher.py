@@ -74,6 +74,9 @@ class HybridSearcher:
         # Store project_id for graph storage
         self.project_id = project_id
 
+        # Store config for index synchronizer
+        self.config = config
+
         # Weights
         self.bm25_weight = bm25_weight
         self.dense_weight = dense_weight
@@ -166,6 +169,7 @@ class HybridSearcher:
             bm25_use_stopwords=bm25_use_stopwords,
             bm25_use_stemming=bm25_use_stemming,
             project_id=project_id,
+            config=self.config,
         )
 
         # Search executor (handles core search execution logic)

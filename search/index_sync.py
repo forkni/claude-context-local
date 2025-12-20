@@ -24,6 +24,7 @@ class IndexSynchronizer:
         bm25_use_stopwords: bool = True,
         bm25_use_stemming: bool = True,
         project_id: Optional[str] = None,
+        config=None,
     ):
         """
         Initialize index synchronizer.
@@ -35,6 +36,7 @@ class IndexSynchronizer:
             bm25_use_stopwords: BM25 stopwords configuration
             bm25_use_stemming: BM25 stemming configuration
             project_id: Project identifier for index recreation
+            config: SearchConfig instance for mmap storage and other settings
         """
         self.storage_dir = Path(storage_dir)
         self.bm25_index = bm25_index
@@ -42,6 +44,7 @@ class IndexSynchronizer:
         self.bm25_use_stopwords = bm25_use_stopwords
         self.bm25_use_stemming = bm25_use_stemming
         self.project_id = project_id
+        self.config = config
         self._logger = logging.getLogger(__name__)
 
     def save_indices(self) -> Dict[str, any]:
@@ -258,9 +261,9 @@ class IndexSynchronizer:
             if self.dense_index is not None:
                 self.dense_index.clear_index()
 
-            # Recreate with clean state (preserve project_id for graph storage)
+            # Recreate with clean state (preserve project_id and config for graph storage and mmap)
             self.dense_index = CodeIndexManager(
-                str(self.storage_dir), project_id=self.project_id
+                str(self.storage_dir), project_id=self.project_id, config=self.config
             )
 
             self._logger.info("Successfully cleared hybrid indices")
