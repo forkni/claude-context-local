@@ -90,9 +90,9 @@ class SearchFactory:
             project_id = project_dir.name.rsplit("_", 1)[0]  # Remove dimension suffix
 
             # Get config for performance settings (including mmap)
-            from search.config import get_config
+            from search.config import get_config_manager
 
-            config = get_config()
+            config = get_config_manager().load_config()
 
             state.index_manager = CodeIndexManager(
                 str(index_dir), project_id=project_id, config=config
