@@ -235,7 +235,7 @@ class PerformanceConfig:
     max_index_age_minutes: float = 5.0
 
     # Memory-mapped vector storage (Phase 3)
-    mmap_storage_enabled: bool = False  # Opt-in for <1μs vector access
+    mmap_storage_enabled: bool = True  # Enabled by default for <1μs vector access
 
 
 @dataclass
