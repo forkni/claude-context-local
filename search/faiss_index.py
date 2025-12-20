@@ -130,6 +130,11 @@ class FaissVectorIndex:
         self._on_gpu: bool = False
         self._logger = logging.getLogger(__name__)
 
+        # Mmap configuration logging
+        self._logger.info(
+            f"[MMAP_CONFIG] FaissVectorIndex initialized with use_mmap={use_mmap}"
+        )
+
         # Memory-mapped vector storage (optional)
         self._use_mmap = use_mmap
         self._mmap_storage: Optional[Any] = None  # MmapVectorStorage
@@ -311,6 +316,9 @@ class FaissVectorIndex:
             pickle.dump(self._chunk_ids, f)
 
         # Save mmap copy for fast access if enabled
+        self._logger.info(
+            f"[MMAP_SAVE] Checking: use_mmap={self._use_mmap}, index_exists={self._index is not None}"
+        )
         if self._use_mmap and self._index is not None:
             try:
                 from search.mmap_vectors import MmapVectorStorage
@@ -324,8 +332,7 @@ class FaissVectorIndex:
                 )
                 mmap_storage.save(embeddings, self._chunk_ids)
                 self._logger.info(
-                    f"Saved {self._index.ntotal} vectors to mmap storage: "
-                    f"{self._mmap_path.name}"
+                    f"Saved mmap storage: {self._index.ntotal} vectors to {self._mmap_path}"
                 )
             except Exception as e:
                 self._logger.warning(f"Failed to save mmap vectors: {e}")

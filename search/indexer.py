@@ -55,6 +55,19 @@ class CodeIndexManager:
             )
         )
 
+        # Log mmap configuration
+        _logger = logging.getLogger(__name__)
+        _logger.info(
+            f"[MMAP_CONFIG] CodeIndexManager: config={config is not None}, use_mmap={use_mmap}"
+        )
+        if config:
+            _logger.info(
+                f"[MMAP_CONFIG] config.mmap_storage_enabled={getattr(config, 'mmap_storage_enabled', 'NOT_FOUND')}"
+            )
+            _logger.info(
+                f"[MMAP_CONFIG] config.performance.mmap_storage_enabled={getattr(getattr(config, 'performance', None), 'mmap_storage_enabled', 'NOT_FOUND')}"
+            )
+
         self._faiss_index = FaissVectorIndex(
             self.index_path, embedder=embedder, use_mmap=use_mmap
         )
@@ -235,20 +248,16 @@ class CodeIndexManager:
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[Tuple[str, float, Dict[str, Any]]]:
         """Search for similar code chunks."""
-        import logging
-
-        logger = logging.getLogger(__name__)
-
-        logger.info(f"Index manager search called with k={k}, filters={filters}")
+        self._logger.info(f"Index manager search called with k={k}, filters={filters}")
 
         # Check if index exists and has vectors
         if self.index is None or self._faiss_index.ntotal == 0:
-            logger.warning(
+            self._logger.warning(
                 f"Index is empty or None. Index: {self.index}, ntotal: {self._faiss_index.ntotal}"
             )
             return []
 
-        logger.info(f"Index has {self._faiss_index.ntotal} total vectors")
+        self._logger.info(f"Index has {self._faiss_index.ntotal} total vectors")
 
         # Search in FAISS index (handles normalization internally)
         search_k = min(
@@ -352,10 +361,6 @@ class CodeIndexManager:
         Returns:
             Dict mapping chunk_id -> list of (chunk_id, similarity, metadata) tuples
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
         if not chunk_ids:
             return {}
 
@@ -440,7 +445,7 @@ class CodeIndexManager:
             if chunk_id not in results_dict:
                 results_dict[chunk_id] = []
 
-        logger.debug(
+        self._logger.debug(
             f"Batched search: {len(chunk_ids)} queries, {len(valid_chunk_ids)} valid"
         )
 
