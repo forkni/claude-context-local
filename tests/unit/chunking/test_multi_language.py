@@ -18,7 +18,7 @@ class TestMultiLanguageChunker:
     @pytest.fixture
     def test_data_dir(self):
         """Get test data directory."""
-        return Path(__file__).parent.parent / "test_data" / "multi_language"
+        return Path(__file__).parent.parent.parent / "test_data" / "multi_language"
 
     def test_supported_extensions(self, chunker):
         """Test that all required extensions are supported."""
