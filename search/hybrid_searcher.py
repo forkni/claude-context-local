@@ -48,6 +48,7 @@ class HybridSearcher:
         bm25_use_stopwords: bool = True,
         bm25_use_stemming: bool = True,
         project_id: str = None,
+        config=None,
     ):
         """
         Initialize hybrid searcher.
@@ -62,6 +63,7 @@ class HybridSearcher:
             bm25_use_stopwords: Whether BM25 should filter stopwords
             bm25_use_stemming: Whether BM25 should use Snowball stemming
             project_id: Project identifier for graph storage
+            config: SearchConfig instance for mmap storage and other settings
         """
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
@@ -120,7 +122,7 @@ class HybridSearcher:
         # Dense index uses the main storage directory where existing indices are stored
         self._logger.info(f"[INIT] Initializing dense index at: {self.storage_dir}")
         self.dense_index = CodeIndexManager(
-            str(self.storage_dir), project_id=project_id
+            str(self.storage_dir), project_id=project_id, config=config
         )
         # Dense index loads automatically in its __init__
         dense_count = self.dense_index.index.ntotal if self.dense_index.index else 0

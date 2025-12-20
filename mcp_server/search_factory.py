@@ -171,6 +171,7 @@ class SearchFactory:
                     rrf_k=config.search_mode.rrf_k_parameter,
                     max_workers=2,
                     project_id=project_id,
+                    config=config,
                 )
                 # REMOVED: get_index_manager() call that was causing state corruption
                 # The HybridSearcher already loads existing indices during initialization

@@ -73,11 +73,12 @@ def _create_indexer_for_model(
             bm25_use_stopwords=config.search_mode.bm25_use_stopwords,
             bm25_use_stemming=config.search_mode.bm25_use_stemming,
             project_id=project_id,
+            config=config,
         )
     else:
         project_dir = index_dir.parent
         project_id = project_dir.name.rsplit("_", 1)[0]
-        indexer = CodeIndexManager(str(index_dir), project_id=project_id)
+        indexer = CodeIndexManager(str(index_dir), project_id=project_id, config=config)
 
     return indexer, embedder, chunker
 
@@ -275,11 +276,14 @@ def _index_with_all_models(
                     bm25_use_stopwords=config.search_mode.bm25_use_stopwords,
                     bm25_use_stemming=config.search_mode.bm25_use_stemming,
                     project_id=project_id,
+                    config=config,
                 )
                 logger.info(f"Created HybridSearcher for {model_name} at {index_dir}")
             else:
                 project_id = project_dir.name.rsplit("_", 1)[0]
-                indexer = CodeIndexManager(str(index_dir), project_id=project_id)
+                indexer = CodeIndexManager(
+                    str(index_dir), project_id=project_id, config=config
+                )
                 logger.info(f"Created CodeIndexManager for {model_name} at {index_dir}")
 
             # Create incremental indexer and run
