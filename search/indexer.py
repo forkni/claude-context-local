@@ -278,7 +278,7 @@ class CodeIndexManager:
         """Retrieve chunk metadata by ID with path normalization.
 
         Handles Windows backslash escaping issues in MCP transport by trying
-        multiple path separator variants.
+        multiple path separator variants via symbol hash cache (O(1) lookup).
 
         Args:
             chunk_id: Chunk ID to lookup
@@ -286,34 +286,21 @@ class CodeIndexManager:
         Returns:
             Chunk metadata dict if found, None otherwise
         """
-        # Try multiple path separator variants for robust lookup
-        variants = MetadataStore.get_chunk_id_variants(chunk_id)
+        # MetadataStore.get() now handles hash cache lookup + variant fallback internally
+        metadata_entry = self.metadata_store.get(chunk_id)
 
-        for variant in variants:
-            metadata_entry = self.metadata_store.get(variant)
-            if metadata_entry:
-                if variant != chunk_id:
-                    self._logger.debug(
-                        f"Found chunk with variant: {variant} (original: {chunk_id})"
-                    )
-                return metadata_entry["metadata"]
+        if metadata_entry:
+            return metadata_entry["metadata"]
 
-        self._logger.warning(
-            f"Chunk not found for ID (tried {len(variants)} variants): {chunk_id}"
-        )
+        self._logger.warning(f"Chunk not found for ID: {chunk_id}")
         return None
 
     def get_similar_chunks(
         self, chunk_id: str, k: int = 5
     ) -> List[Tuple[str, float, Dict[str, Any]]]:
-        """Find chunks similar to a given chunk."""
-        # Try all path variants to handle Windows/Unix differences
-        metadata_entry = None
-        for variant in MetadataStore.get_chunk_id_variants(chunk_id):
-            metadata_entry = self.metadata_store.get(variant)
-            if metadata_entry:
-                chunk_id = variant  # Use the variant that worked
-                break
+        """Find chunks similar to a given chunk via symbol hash cache (O(1) lookup)."""
+        # MetadataStore.get() now handles hash cache lookup + variant fallback internally
+        metadata_entry = self.metadata_store.get(chunk_id)
 
         if not metadata_entry:
             return []

@@ -10,6 +10,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 from sqlitedict import SqliteDict
 
 from search.filters import normalize_path
+from search.symbol_cache import SymbolHashCache
 
 
 class MetadataStore:
@@ -40,6 +41,10 @@ class MetadataStore:
         self.db_path = db_path
         self._db: Optional[SqliteDict] = None
 
+        # Symbol hash cache for O(1) chunk_id lookups
+        cache_path = db_path.parent / f"{db_path.stem}_symbol_cache.json"
+        self._symbol_cache = SymbolHashCache(cache_path)
+
     def _ensure_open(self):
         """Lazy-load database connection."""
         if self._db is None:
@@ -55,6 +60,8 @@ class MetadataStore:
         Tries multiple chunk_id variants to handle path separator differences
         (Windows backslash vs Unix forward slash) and MCP transport escaping bugs.
 
+        Uses symbol hash cache for O(1) lookup before falling back to variant checking.
+
         Args:
             chunk_id: Chunk identifier in format "file:lines:type:name"
 
@@ -66,9 +73,19 @@ class MetadataStore:
             {"index_id": 0, "metadata": {"relative_path": "search/indexer.py", ...}}
         """
         self._ensure_open()
+
+        # Fast path: Try hash cache lookup (O(1))
+        cached_chunk_id = self._symbol_cache.get_by_chunk_id(chunk_id)
+        if cached_chunk_id and cached_chunk_id in self._db:
+            return self._db[cached_chunk_id]
+
+        # Slow path: Try variants (backward compatibility)
         for variant in self.get_chunk_id_variants(chunk_id):
             if variant in self._db:
+                # Cache the successful variant for future lookups
+                self._symbol_cache.add(variant)
                 return self._db[variant]
+
         return None
 
     def set(self, chunk_id: str, index_id: int, metadata: Dict[str, Any]):
@@ -89,6 +106,9 @@ class MetadataStore:
         self._ensure_open()
         self._db[chunk_id] = {"index_id": index_id, "metadata": metadata}
 
+        # Add to symbol cache for O(1) lookups
+        self._symbol_cache.add(chunk_id)
+
     def delete(self, chunk_id: str) -> bool:
         """Delete metadata for a chunk.
 
@@ -101,6 +121,8 @@ class MetadataStore:
         self._ensure_open()
         if chunk_id in self._db:
             del self._db[chunk_id]
+            # Remove from symbol cache
+            self._symbol_cache.remove(chunk_id)
             return True
         return False
 
@@ -216,6 +238,9 @@ class MetadataStore:
         """
         self._ensure_open()
         self._db.commit()
+
+        # Save symbol cache
+        self._symbol_cache.save()
 
     def close(self):
         """Close database connection.
