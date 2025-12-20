@@ -2,30 +2,159 @@
 
 ## Overview
 
-This comprehensive guide covers the testing infrastructure for the Claude Context MCP semantic search system. The project maintains a professional test suite with 38 test files (712 passing tests) organized into clear categories for effective quality assurance and continuous integration.
+This comprehensive guide covers the testing infrastructure for the Claude Context MCP semantic search system. The project maintains a professional test suite with 1,054 passing tests organized into clear categories for effective quality assurance.
 
 ### Current Test Status
 
-✅ **All tests passing** (as of 2025-11-28):
+✅ **All tests passing** (as of 2025-12-19):
 
-- **Unit Tests**: 557 tests passing (16 files, < 1s each)
-- **Fast Integration Tests**: 79 tests passing (11 files, < 5s each)
-- **Slow Integration Tests**: 76 tests passing (10 files, > 10s each)
-- **Regression Tests**: 1 test (15 checks) passing
-- **Test Execution Time**: Unit ~5s, Fast Integration ~2 min, Slow Integration ~10 min
+- **Unit Tests**: 1,052 tests passing across 6 modules
+  - Chunking: 63 tests (8.92s)
+  - Embeddings: 113 tests (1.36s)
+  - Graph: 313 tests (1.52s)
+  - Merkle: 21 tests (0.91s)
+  - Search: 402 tests (25.91s)
+  - MCP Server: 140 tests (1.79s)
+- **Integration Tests**: 2 tests passing (19.00s)
+- **Total**: 1,054 tests, ~60s total execution time
 
-## Table of Contents
+**⚠️ IMPORTANT**: Run tests by module for best results (see "Recommended Testing Approach" below)
 
-1. [Test Organization](#test-organization)
-2. [Running Tests](#running-tests)
-3. [Test Categories](#test-categories)
-4. [Fast vs Slow Test Organization](#fast-vs-slow-test-organization)
-5. [Creating New Tests](#creating-new-tests)
-6. [Test Isolation and Production Directory Protection](#test-isolation-and-production-directory-protection)
-7. [Coverage Requirements](#coverage-requirements)
-8. [Pre-commit Testing](#pre-commit-testing)
-9. [Debugging Failed Tests](#debugging-failed-tests)
-10. [Continuous Integration](#continuous-integration)
+## Recommended Testing Approach
+
+### Why Run Tests by Module?
+
+The test suite has been optimized for module-by-module execution. Running all tests together may encounter resource cleanup issues between modules. **All 1,054 tests pass when run by module.**
+
+### Quick Start: Run Tests by Module
+
+```bash
+# Recommended: Run all modules sequentially
+.venv/Scripts/python.exe -m pytest tests/unit/chunking/ --tb=short
+.venv/Scripts/python.exe -m pytest tests/unit/embeddings/ --tb=short
+.venv/Scripts/python.exe -m pytest tests/unit/graph/ --tb=short
+.venv/Scripts/python.exe -m pytest tests/unit/merkle/ --tb=short
+.venv/Scripts/python.exe -m pytest tests/unit/search/ --tb=short
+.venv/Scripts/python.exe -m pytest tests/unit/mcp_server/ --tb=short
+.venv/Scripts/python.exe -m pytest tests/integration/ --tb=short
+```
+
+### Automated Module Testing Script
+**Usage:**
+```cmd
+cd tests
+run_all_tests.bat
+```
+
+This script is located at `tests/run_all_tests.bat`:
+
+```batch
+@echo off
+setlocal
+
+echo ========================================
+echo Running Claude Context Test Suite
+echo ========================================
+echo.
+
+set "PYTEST=..env\Scripts\python.exe -m pytest"
+set "FAILED=0"
+
+echo [1/7] Testing Chunking module...
+%PYTEST% unit/chunking/ --tb=short -q || set "FAILED=1"
+
+echo [2/7] Testing Embeddings module...
+%PYTEST% unit/embeddings/ --tb=short -q || set "FAILED=1"
+
+echo [3/7] Testing Graph module...
+%PYTEST% unit/graph/ --tb=short -q || set "FAILED=1"
+
+echo [4/7] Testing Merkle module...
+%PYTEST% unit/merkle/ --tb=short -q || set "FAILED=1"
+
+echo [5/7] Testing Search module...
+%PYTEST% unit/search/ --tb=short -q || set "FAILED=1"
+
+echo [6/7] Testing MCP Server module...
+%PYTEST% unit/mcp_server/ --tb=short -q || set "FAILED=1"
+
+echo [7/7] Testing Integration...
+%PYTEST% integration/ --tb=short -q || set "FAILED=1"
+
+echo.
+if %FAILED%==0 (
+    echo ========================================
+    echo ALL TESTS PASSED
+    echo ========================================
+    exit /b 0
+) else (
+    echo ========================================
+    echo SOME TESTS FAILED
+    echo ========================================
+    exit /b 1
+)
+```
+
+## Running Tests
+
+### Module-Specific Testing (Recommended)
+
+```bash
+# Chunking tests (63 tests, ~9s)
+pytest tests/unit/chunking/ -v
+
+# Embeddings tests (113 tests, ~1s)
+pytest tests/unit/embeddings/ -v
+
+# Graph tests (313 tests, ~2s)
+pytest tests/unit/graph/ -v
+
+# Merkle tests (21 tests, ~1s)
+pytest tests/unit/merkle/ -v
+
+# Search tests (402 tests, ~26s)
+pytest tests/unit/search/ -v
+
+# MCP Server tests (140 tests, ~2s)
+pytest tests/unit/mcp_server/ -v
+
+# Integration tests (2 tests, ~19s)
+pytest tests/integration/ -v
+```
+
+### Quick Testing Options
+
+```bash
+# Run specific module with minimal output
+pytest tests/unit/chunking/ -q
+
+# Run specific module and stop on first failure
+pytest tests/unit/search/ -x
+
+# Run specific module with detailed failure info
+pytest tests/unit/embeddings/ --tb=long
+
+# Run specific test file
+pytest tests/unit/chunking/test_smart_dedent.py -v
+```
+
+### Coverage Testing by Module
+
+```bash
+# Generate coverage for specific module
+pytest tests/unit/search/ --cov=search --cov-report=html
+
+# Coverage for multiple modules
+pytest tests/unit/chunking/ tests/unit/embeddings/ --cov=chunking --cov=embeddings --cov-report=term-missing
+
+# Combined coverage report (run modules separately, append coverage)
+pytest tests/unit/chunking/ --cov=chunking --cov-report=xml
+pytest tests/unit/embeddings/ --cov=embeddings --cov-append --cov-report=xml
+pytest tests/unit/graph/ --cov=graph --cov-append --cov-report=xml
+# ... continue for all modules
+```
+
+## Test Organization
 
 ## Test Organization
 

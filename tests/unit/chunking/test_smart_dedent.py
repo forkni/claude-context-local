@@ -11,7 +11,8 @@ References:
 
 import ast
 
-from chunking.multi_language_chunker import _smart_dedent, _wrap_with_if_true
+from chunking.dedent_utils import smart_dedent as _smart_dedent
+from chunking.dedent_utils import wrap_with_if_true as _wrap_with_if_true
 
 
 class TestSmartDedentBasicCases:
