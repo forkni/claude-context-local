@@ -55,18 +55,10 @@ class CodeIndexManager:
             )
         )
 
-        # Log mmap configuration
+        # Log mmap configuration (simplified)
         _logger = logging.getLogger(__name__)
-        _logger.info(
-            f"[MMAP_CONFIG] CodeIndexManager: config={config is not None}, use_mmap={use_mmap}"
-        )
-        if config:
-            _logger.info(
-                f"[MMAP_CONFIG] config.mmap_storage_enabled={getattr(config, 'mmap_storage_enabled', 'NOT_FOUND')}"
-            )
-            _logger.info(
-                f"[MMAP_CONFIG] config.performance.mmap_storage_enabled={getattr(getattr(config, 'performance', None), 'mmap_storage_enabled', 'NOT_FOUND')}"
-            )
+        if use_mmap:
+            _logger.info("[MMAP] Memory-mapped vector storage enabled")
 
         self._faiss_index = FaissVectorIndex(
             self.index_path, embedder=embedder, use_mmap=use_mmap
