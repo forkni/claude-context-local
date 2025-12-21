@@ -386,6 +386,27 @@ class TestToonFormat:
         for i, field in enumerate(fields):
             assert rows[0][i] == data["items"][0][field]
 
+    def test_format_note_added_to_toon_output(self):
+        """TOON format should include interpretation hint."""
+        data = {
+            "items": [
+                {"id": "a", "score": 1.0},
+                {"id": "b", "score": 0.5},
+            ]
+        }
+
+        result = _to_toon_format(data)
+
+        # Should have format note
+        assert "_format_note" in result
+        assert (
+            result["_format_note"]
+            == "TOON format: header[count]{fields}: [[row1], [row2], ...]"
+        )
+
+        # Format note should not interfere with data
+        assert "items[2]{id,score}" in result
+
 
 class TestDataPreservation:
     """Tests verifying 100% data preservation across all formats."""

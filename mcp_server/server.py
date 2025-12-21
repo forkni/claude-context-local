@@ -122,10 +122,16 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[TextCon
         result = await handler(arguments)
 
         # Apply output formatting (formatting-only, preserves all data)
+        # Use config default if no format specified
+        from search.config import get_search_config
+
+        config = get_search_config()
+        default_format = config.output.format
+
         output_format = (
-            arguments.pop("output_format", "compact")
+            arguments.pop("output_format", default_format)
             if isinstance(arguments, dict)
-            else "compact"
+            else default_format
         )
         formatted_result = (
             format_response(result, output_format)

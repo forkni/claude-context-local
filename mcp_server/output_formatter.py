@@ -168,4 +168,10 @@ def _to_toon_format(data: Dict[str, Any]) -> Dict[str, Any]:
             # For primitives, keep as-is
             result[key] = value
 
+    # Add format interpretation hint for agent understanding
+    if result:  # Only add if we have data
+        result["_format_note"] = (
+            "TOON format: header[count]{fields}: [[row1], [row2], ...]"
+        )
+
     return result

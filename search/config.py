@@ -70,30 +70,6 @@ MODEL_REGISTRY = {
         "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
         "prompt_name": "query",  # Alternative: use model's built-in prompt (generic)
     },
-    "Qwen/Qwen3-Embedding-8B": {
-        "dimension": 4096,
-        "max_context": 32768,
-        "description": "SOTA code retrieval - 89.51% CodeSearchNet, #1 MTEB (MTEB-Code 80.68)",
-        "vram_gb": "16GB",
-        "fallback_batch_size": 64,
-        "vram_tier": "workstation",  # 20GB+ recommended
-        # Matryoshka Representation Learning (MRL) support
-        "mrl_dimensions": [
-            4096,
-            2560,
-            1024,
-            512,
-            256,
-            128,
-            64,
-            32,
-        ],  # Supported MRL dimensions
-        "truncate_dim": None,  # Optional: Set to reduce output dimension
-        # Instruction tuning for code retrieval
-        "instruction_mode": "custom",  # "custom" or "prompt_name"
-        "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
-        "prompt_name": "query",  # Alternative: use model's built-in prompt (generic)
-    },
     # Code-specific models (optimized for Python, C++, and programming languages)
     "nomic-ai/CodeRankEmbed": {
         "dimension": 768,
@@ -267,12 +243,21 @@ class RerankerConfig:
     batch_size: int = 16  # Reranker inference batch size
 
 
+@dataclass
+class OutputConfig:
+    """MCP output formatting settings (1 field)."""
+
+    format: str = (
+        "compact"  # json, compact, toon (default: compact for 30-40% token reduction)
+    )
+
+
 class SearchConfig:
     """Root configuration with nested sub-configs.
 
     Configuration organization:
-    - Split into 5 focused sub-configs for better organization
-    - embedding, search, neural_reranking, multi_hop, gpu_monitor
+    - Split into 6 focused sub-configs for better organization
+    - embedding, search_mode, performance, multi_hop, routing, reranker, output
 
     Initialization style (nested configs only):
         config = SearchConfig(embedding=EmbeddingConfig(model_name="..."))
@@ -286,6 +271,7 @@ class SearchConfig:
         multi_hop: Optional[MultiHopConfig] = None,
         routing: Optional[RoutingConfig] = None,
         reranker: Optional[RerankerConfig] = None,
+        output: Optional[OutputConfig] = None,
     ):
         """Initialize SearchConfig with nested sub-configs.
 
@@ -296,6 +282,7 @@ class SearchConfig:
             multi_hop: MultiHopConfig instance (optional, defaults to MultiHopConfig())
             routing: RoutingConfig instance (optional, defaults to RoutingConfig())
             reranker: RerankerConfig instance (optional, defaults to RerankerConfig())
+            output: OutputConfig instance (optional, defaults to OutputConfig())
         """
         # Initialize nested configs with defaults
         self.embedding = embedding if embedding is not None else EmbeddingConfig()
@@ -308,6 +295,7 @@ class SearchConfig:
         self.multi_hop = multi_hop if multi_hop is not None else MultiHopConfig()
         self.routing = routing if routing is not None else RoutingConfig()
         self.reranker = reranker if reranker is not None else RerankerConfig()
+        self.output = output if output is not None else OutputConfig()
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to flat dictionary for JSON serialization.
@@ -364,6 +352,8 @@ class SearchConfig:
             "reranker_top_k_candidates": self.reranker.top_k_candidates,
             "reranker_min_vram_gb": self.reranker.min_vram_gb,
             "reranker_batch_size": self.reranker.batch_size,
+            # OutputConfig fields
+            "output_format": self.output.format,
         }
 
     @classmethod
@@ -451,6 +441,10 @@ class SearchConfig:
             batch_size=data.get("reranker_batch_size", 16),
         )
 
+        output = OutputConfig(
+            format=data.get("output_format", "compact"),
+        )
+
         return cls(
             embedding=embedding,
             search_mode=search_mode,
@@ -458,6 +452,7 @@ class SearchConfig:
             multi_hop=multi_hop,
             routing=routing,
             reranker=reranker,
+            output=output,
         )
 
 

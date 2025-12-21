@@ -336,7 +336,7 @@ echo   9. Reset to Defaults
 echo   0. Back to Main Menu
 echo.
 set "search_choice="
-set /p search_choice="Select option (0-9): "
+set /p search_choice="Select option (0-A): "
 
 REM Handle empty input gracefully
 if not defined search_choice (
@@ -357,6 +357,8 @@ if "!search_choice!"=="6" goto configure_reranker
 if "!search_choice!"=="7" goto configure_entity_tracking
 if "!search_choice!"=="8" goto configure_mmap_storage
 if "!search_choice!"=="9" goto reset_config
+if /i "!search_choice!"=="A" goto configure_output_format
+if /i "!search_choice!"=="a" goto configure_output_format
 if "!search_choice!"=="0" goto menu_restart
 
 echo [ERROR] Invalid choice. Please select 0-9.
@@ -1412,6 +1414,78 @@ if not "!mmap_choice!"=="1" if not "!mmap_choice!"=="2" (
 )
 pause
 goto search_config_menu
+
+
+:configure_output_format
+echo.
+echo === Configure Output Format ===
+echo.
+echo Output formatting controls token usage in MCP tool responses.
+echo All formats preserve 100%% of data, only changing encoding.
+echo.
+echo Available Formats:
+echo   json    - Verbose (indent=2, all fields)        0%% reduction
+echo   compact - Omit empty fields, no indent       30-40%% reduction (default)
+echo   toon    - Tabular arrays with headers        45-55%% reduction
+echo.
+echo Token Reduction Examples (find_connections with 5 callers):
+echo   JSON:    3,259 chars (~814 tokens)
+echo   Compact: 2,167 chars (~541 tokens) - 33.5%% smaller
+echo   TOON:    1,877 chars (~469 tokens) - 42.4%% smaller
+echo.
+echo Current Setting:
+.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Output Format:', cfg.output.format)" 2>nul
+echo.
+echo   1. JSON (Verbose, Backward Compatible)
+echo   2. Compact (Recommended Default)
+echo   3. TOON (Maximum Compression)
+echo   0. Back to Search Configuration
+echo.
+set "format_choice="
+set /p format_choice="Select option (0-3): "
+
+if not defined format_choice goto search_config_menu
+if "!format_choice!"=="" goto search_config_menu
+if "!format_choice!"=="0" goto search_config_menu
+
+if "!format_choice!"=="1" (
+    echo.
+    echo [INFO] Setting output format to: json
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.output.format = 'json'; mgr.save_config(cfg); print('[OK] Output format set to json')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] All MCP tool responses will use verbose JSON format
+    )
+)
+if "!format_choice!"=="2" (
+    echo.
+    echo [INFO] Setting output format to: compact
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.output.format = 'compact'; mgr.save_config(cfg); print('[OK] Output format set to compact')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] All MCP tool responses will omit empty fields (30-40%% reduction)
+    )
+)
+if "!format_choice!"=="3" (
+    echo.
+    echo [INFO] Setting output format to: toon
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.output.format = 'toon'; mgr.save_config(cfg); print('[OK] Output format set to toon')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] All MCP tool responses will use tabular arrays (45-55%% reduction)
+        echo [WARNING] Verify agent understanding with test queries
+    )
+)
+
+if not "!format_choice!"=="1" if not "!format_choice!"=="2" if not "!format_choice!"=="3" (
+    echo [ERROR] Invalid choice. Please select 0-3.
+)
+pause
+goto search_config_menu
+
 
 :reset_config
 echo.
