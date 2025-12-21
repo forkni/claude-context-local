@@ -247,16 +247,15 @@ clean_pycache.bat
 docs/*
 !docs/BENCHMARKS.md
 !docs/claude_code_config.md
+!docs/CLAUDE_MD_TEMPLATE.md
 !docs/GIT_WORKFLOW.md
 !docs/MCP_TOOLS_REFERENCE.md
 !docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md
 !docs/ADVANCED_FEATURES_GUIDE.md
 !docs/INSTALLATION_GUIDE.md
-!docs/MODEL_MIGRATION_GUIDE.md
 !docs/PYTORCH_COMPATIBILITY.md
 !docs/TESTING_GUIDE.md
 !docs/VSCODE_SETUP.md
-!docs/PRE_COMMIT_HOOKS.md
 !docs/VERSION_HISTORY.md
 
 # Development-only documentation (local-only)

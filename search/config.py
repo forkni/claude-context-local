@@ -458,6 +458,7 @@ class SearchConfigManager:
         self.logger = logging.getLogger(__name__)
         self.config_file = config_file or self._get_default_config_path()
         self._config = None
+        self._config_mtime: Optional[float] = None  # Track file modification time
 
     def _get_default_config_path(self) -> str:
         """Get default config file path."""
@@ -477,7 +478,13 @@ class SearchConfigManager:
 
     def load_config(self) -> SearchConfig:
         """Load configuration from file and environment variables."""
-        if self._config is not None:
+        # Check if file changed since last load
+        current_mtime = None
+        if os.path.exists(self.config_file):
+            current_mtime = os.path.getmtime(self.config_file)
+
+        # Return cache only if file hasn't changed
+        if self._config is not None and current_mtime == self._config_mtime:
             return self._config
 
         # Start with defaults
@@ -500,6 +507,9 @@ class SearchConfigManager:
 
         # Create config object
         self._config = SearchConfig.from_dict(config_dict)
+
+        # Store mtime after loading
+        self._config_mtime = current_mtime
 
         self.logger.info(
             f"Search mode: {self._config.search_mode.default_mode}, "
