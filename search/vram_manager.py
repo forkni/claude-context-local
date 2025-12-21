@@ -29,9 +29,9 @@ class VRAMTier:
 
 
 # VRAM tier definitions based on GPU capabilities
-# RTX 4060 (8GB)  → laptop tier  → Qwen3-0.6B
-# RTX 3090 (24GB) → desktop tier → Qwen3-4B
-# RTX 4090 (24GB) → workstation tier → Qwen3-8B
+# RTX 4060 (8GB)  → laptop tier     → Qwen3-0.6B
+# RTX 3090 (24GB) → desktop tier    → Qwen3-4B
+# RTX 4090 (24GB) → workstation tier → Qwen3-4B (best quality)
 VRAM_TIERS: List[VRAMTier] = [
     VRAMTier(
         name="minimal",

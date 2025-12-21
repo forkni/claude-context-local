@@ -663,12 +663,13 @@ set CLAUDE_DEFAULT_PROJECT=C:\Projects\MyProject
 
 ## Model Selection Guide
 
-### Available Models (4 total)
+### Available Models (5 total)
 
 | Model | Type | Dimensions | VRAM | Best For |
 |-------|------|------------|------|----------|
 | **BGE-M3** ⭐ | General | 1024 | 3-4GB | Production baseline, hybrid search support |
 | **Qwen3-0.6B** | General | 1024 | 2.3GB | Best value, high efficiency |
+| **Qwen3-4B** | General | 1024* | 8-10GB | Best quality with MRL (4B quality @ 0.6B storage) |
 | **CodeRankEmbed** | Code | 768 | 2GB | Code-specific retrieval (CSN: 77.9 MRR) |
 | **EmbeddingGemma-300m** | General | 768 | 4-8GB | Default model, fast and efficient |
 

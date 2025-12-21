@@ -6,7 +6,7 @@ This modular reference can be embedded in any project instructions for Claude Co
 
 ---
 
-## Available MCP Tools (15)
+## Available MCP Tools (17)
 
 | Tool | Priority | Purpose | Parameters |
 |------|----------|---------|------------|
@@ -16,12 +16,14 @@ This modular reference can be embedded in any project instructions for Claude Co
 | find_similar_code | Secondary | Find alternative implementations | chunk_id (required), k=5 |
 | configure_search_mode | Config | Set search mode & weights | search_mode="hybrid", bm25_weight=0.4, dense_weight=0.6, enable_parallel=True |
 | configure_query_routing | Config | Configure multi-model routing (v0.5.4+) | enable_multi_model, default_model, confidence_threshold=0.05 |
+| configure_reranking | Config | Configure neural reranker settings | enabled, model_name, top_k_candidates=50 |
 | get_search_config_status | Config | View current configuration | *(no parameters)* |
 | get_index_status | Status | Check index health & model info | *(no parameters)* |
 | get_memory_status | Monitor | Check RAM/VRAM usage | *(no parameters)* |
 | list_projects | Management | Show indexed projects grouped by path | *(no parameters)* |
 | switch_project | Management | Change active project | project_path (required) |
 | clear_index | Reset | Delete current index (all dimensions) | *(no parameters)* |
+| delete_project | Management | Safely delete indexed project | project_path (required), force=False |
 | cleanup_resources | Cleanup | Free memory/caches (GPU + index) | *(no parameters)* |
 | list_embedding_models | Model | View available embedding models | *(no parameters)* |
 | switch_embedding_model | Model | Switch embedding model (instant <150ms) | model_name (required) |

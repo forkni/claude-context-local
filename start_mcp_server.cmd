@@ -333,6 +333,7 @@ echo   6. Configure Neural Reranker
 echo   7. Configure Entity Tracking
 echo   8. Configure Memory-Mapped Vector Storage
 echo   9. Reset to Defaults
+echo   A. Configure Output Format
 echo   0. Back to Main Menu
 echo.
 set "search_choice="

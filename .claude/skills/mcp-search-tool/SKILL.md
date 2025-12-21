@@ -49,7 +49,7 @@ What are you trying to do?
 
 ## 📚 Quick Function Index
 
-### All 16 MCP Tools at a Glance
+### All 17 MCP Tools at a Glance
 
 | Tool | Category | Purpose | Key Parameters | Jump To |
 |------|----------|---------|----------------|---------|
@@ -61,15 +61,16 @@ What are you trying to do?
 | switch_project | Management | Change active project | `project_path` | [Details](#5-switch_projectproject_path) |
 | get_index_status | Status | Check index health | *(none)* | [Details](#6-get_index_status) |
 | clear_index | Reset | Delete current index | *(none)* | [Details](#7-clear_index) |
-| configure_search_mode | Config | Set search mode & weights | `search_mode`, `bm25_weight`, `dense_weight` | [Details](#8-configure_search_modesearch_modehybrid-bm25_weight04-dense_weight06-enable_paralleltrue) |
-| get_search_config_status | Config | View current config | *(none)* | [Details](#9-get_search_config_status) |
-| configure_query_routing | Config | Multi-model routing settings | `enable_multi_model`, `default_model`, `confidence_threshold` | [Details](#10-configure_query_routingenable_multi_modelnone-default_modelnone-confidence_thresholdnone) |
-| find_similar_code | Secondary | Find functionally similar code | `chunk_id`, `k` | [Details](#11-find_similar_codechunk_id-k5) |
-| configure_reranking | Config | Neural reranking settings | `enabled`, `model_name`, `top_k_candidates` | [Details](#12-configure_rerankingenablednone-model_namenone-top_k_candidatesnone) |
-| list_embedding_models | Model | Show available models | *(none)* | [Details](#13-list_embedding_models) |
-| switch_embedding_model | Model | Change embedding model | `model_name` | [Details](#14-switch_embedding_modelmodel_name) |
-| get_memory_status | Monitor | Check RAM/VRAM usage | *(none)* | [Details](#15-get_memory_status) |
-| cleanup_resources | Cleanup | Free memory/caches | *(none)* | [Details](#16-cleanup_resources) |
+| delete_project | Reset | Safely delete indexed project | `project_path`, `force` | [Details](#8-delete_projectproject_path-forcefalse) |
+| configure_search_mode | Config | Set search mode & weights | `search_mode`, `bm25_weight`, `dense_weight` | [Details](#9-configure_search_modesearch_modehybrid-bm25_weight04-dense_weight06-enable_paralleltrue) |
+| get_search_config_status | Config | View current config | *(none)* | [Details](#10-get_search_config_status) |
+| configure_query_routing | Config | Multi-model routing settings | `enable_multi_model`, `default_model`, `confidence_threshold` | [Details](#11-configure_query_routingenable_multi_modelnone-default_modelnone-confidence_thresholdnone) |
+| find_similar_code | Secondary | Find functionally similar code | `chunk_id`, `k` | [Details](#12-find_similar_codechunk_id-k5) |
+| configure_reranking | Config | Neural reranking settings | `enabled`, `model_name`, `top_k_candidates` | [Details](#13-configure_rerankingenablednone-model_namenone-top_k_candidatesnone) |
+| list_embedding_models | Model | Show available models | *(none)* | [Details](#14-list_embedding_models) |
+| switch_embedding_model | Model | Change embedding model | `model_name` | [Details](#15-switch_embedding_modelmodel_name) |
+| get_memory_status | Monitor | Check RAM/VRAM usage | *(none)* | [Details](#16-get_memory_status) |
+| cleanup_resources | Cleanup | Free memory/caches | *(none)* | [Details](#17-cleanup_resources) |
 
 ### Usage Patterns by Task
 
@@ -501,9 +502,21 @@ switch_project("D:\Users\alexk\FORKNI\STREAM_DIFFUSION\STREAM_DIFFUSION_CUDA_0.2
 
 **Warning**: Deletes ALL dimension indices (768d, 1024d) and Merkle snapshots. Requires full re-indexing afterward.
 
+#### 8. `delete_project(project_path, force=False)`
+
+**Purpose**: Safely delete an indexed project and all associated data
+
+**Parameters**:
+- `project_path` (required): Absolute path to project directory to delete
+- `force` (default: False): Force delete even if this is the current project
+
+**Handles deletion of**: Vector indices (FAISS), metadata databases (SQLite), BM25 indices, Merkle snapshots, call graph data
+
+**Important**: Use this tool instead of manual deletion when MCP server is running. Properly closes database connections before deletion to prevent file lock errors. If files are locked, they'll be queued for automatic retry on next server startup.
+
 ### 🟢 Search Configuration Tools
 
-#### 8. `configure_search_mode(search_mode="hybrid", bm25_weight=0.4, dense_weight=0.6, enable_parallel=True)`
+#### 9. `configure_search_mode(search_mode="hybrid", bm25_weight=0.4, dense_weight=0.6, enable_parallel=True)`
 
 **Purpose**: Configure search mode and hybrid search parameters
 
@@ -526,21 +539,21 @@ switch_project("D:\Users\alexk\FORKNI\STREAM_DIFFUSION\STREAM_DIFFUSION_CUDA_0.2
 configure_search_mode("hybrid", 0.4, 0.6, true)
 ```
 
-#### 9. `get_search_config_status()`
+#### 10. `get_search_config_status()`
 
 **Purpose**: View current search configuration and available settings
 
 **Returns**: JSON with current mode, weights, features enabled
 
-#### 10. `configure_query_routing(enable_multi_model=None, default_model=None, confidence_threshold=None)`
+#### 11. `configure_query_routing(enable_multi_model=None, default_model=None, confidence_threshold=None)`
 
 **Purpose**: Configure multi-model query routing behavior
 
 **Parameters**:
 
-- `enable_multi_model` (optional): Enable/disable multi-model mode
-- `default_model` (optional): Set default model ("qwen3", "bge_m3", "coderankembed")
-- `confidence_threshold` (optional): Minimum confidence for routing (0.0-1.0, default: 0.05)
+- `enable_multi_model` (optional): Enable/disable multi-model mode (persisted)
+- `default_model` (optional): Set default model ("qwen3", "bge_m3", "coderankembed") (persisted)
+- `confidence_threshold` (optional): Minimum confidence for routing (0.0-1.0, default: 0.05) ⚠️ **Runtime-only, not persisted**
 
 **Example**:
 
@@ -550,7 +563,7 @@ configure_query_routing(enable_multi_model=True, default_model="qwen3", confiden
 
 ### 🔵 Advanced Tools
 
-#### 11. `find_similar_code(chunk_id, k=5)`
+#### 12. `find_similar_code(chunk_id, k=5)`
 
 **Purpose**: Find code chunks functionally similar to a reference chunk
 
@@ -574,7 +587,7 @@ search_code("authentication handler")
 find_similar_code("src/auth.py:10-50:function:authenticate", k=5)
 ```
 
-#### 12. `configure_reranking(enabled=None, model_name=None, top_k_candidates=None)`
+#### 13. `configure_reranking(enabled=None, model_name=None, top_k_candidates=None)`
 
 **Purpose**: Configure neural reranking for improved search quality
 
@@ -601,7 +614,7 @@ configure_reranking(enabled=True, top_k_candidates=100)
 
 **See**: `docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration` for all parameters
 
-#### 13. `list_embedding_models()`
+#### 14. `list_embedding_models()`
 
 **Purpose**: List all available embedding models with specifications
 
@@ -615,7 +628,7 @@ configure_reranking(enabled=True, top_k_candidates=100)
 - **CodeRankEmbed**: 768d, 2GB VRAM, code-specific retrieval
 - **EmbeddingGemma-300m**: 768d, 4-8GB VRAM, default model (fast)
 
-#### 14. `switch_embedding_model(model_name)`
+#### 15. `switch_embedding_model(model_name)`
 
 **Purpose**: Switch to a different embedding model without deleting indices
 
@@ -734,13 +747,13 @@ set CLAUDE_VRAM_TIER=laptop
 
 ### 🟣 Memory Management Tools
 
-#### 15. `get_memory_status()`
+#### 16. `get_memory_status()`
 
 **Purpose**: Get current memory usage for index and system
 
 **Returns**: JSON with RAM/VRAM usage, GPU status, available memory
 
-#### 16. `cleanup_resources()`
+#### 17. `cleanup_resources()`
 
 **Purpose**: Manually cleanup all resources to free memory
 
