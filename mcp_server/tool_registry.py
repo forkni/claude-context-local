@@ -1,6 +1,6 @@
 """Tool registry for low-level MCP server.
 
-Contains JSON schemas for all 15 tools following MCP specification.
+Contains JSON schemas for all 17 tools following MCP specification.
 """
 
 from typing import Any, Dict
@@ -99,6 +99,12 @@ WHEN NOT TO USE:
                     "enum": ["qwen3", "bge_m3", "coderankembed"],
                     "description": 'Override model selection ("qwen3", "bge_m3", "coderankembed"). If None, uses routing or config default.',
                 },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["json", "compact", "toon"],
+                    "default": "compact",
+                    "description": "Output format: 'json' (verbose, indent=2), 'compact' (omit empty, no indent, default), 'toon' (tabular arrays)",
+                },
             },
             "required": [],
         },
@@ -149,6 +155,12 @@ PROCESS:
                     "items": {"type": "string"},
                     "description": 'Exclude these directories from indexing (e.g., ["tests/", "vendor/"]). Uses path prefix matching. Immutable after project creation.',
                 },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["json", "compact", "toon"],
+                    "default": "compact",
+                    "description": "Output format: 'json' (verbose, indent=2), 'compact' (omit empty, no indent, default), 'toon' (tabular arrays)",
+                },
             },
             "required": ["directory_path"],
         },
@@ -178,17 +190,45 @@ WORKFLOW:
                     "default": 5,
                     "description": "Number of similar chunks to return (default: 5)",
                 },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["json", "compact", "toon"],
+                    "default": "compact",
+                    "description": "Output format: 'json' (verbose, indent=2), 'compact' (omit empty, no indent, default), 'toon' (tabular arrays)",
+                },
             },
             "required": ["chunk_id"],
         },
     },
     "get_index_status": {
         "description": "Get current status and statistics of the search index",
-        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "output_format": {
+                    "type": "string",
+                    "enum": ["json", "compact", "toon"],
+                    "default": "compact",
+                    "description": "Output format: 'json' (verbose, indent=2), 'compact' (omit empty, no indent, default), 'toon' (tabular arrays)",
+                },
+            },
+            "required": [],
+        },
     },
     "list_projects": {
         "description": "List all indexed projects with their information",
-        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "output_format": {
+                    "type": "string",
+                    "enum": ["json", "compact", "toon"],
+                    "default": "compact",
+                    "description": "Output format: 'json' (verbose, indent=2), 'compact' (omit empty, no indent, default), 'toon' (tabular arrays)",
+                },
+            },
+            "required": [],
+        },
     },
     "switch_project": {
         "description": "Switch to a different indexed project for searching",
@@ -198,14 +238,31 @@ WORKFLOW:
                 "project_path": {
                     "type": "string",
                     "description": "Path to the project directory",
-                }
+                },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["json", "compact", "toon"],
+                    "default": "compact",
+                    "description": "Output format: 'json' (verbose, indent=2), 'compact' (omit empty, no indent, default), 'toon' (tabular arrays)",
+                },
             },
             "required": ["project_path"],
         },
     },
     "clear_index": {
         "description": "Clear the entire search index and metadata for the current project. Deletes ALL dimension indices (768d, 1024d, etc.) and associated Merkle snapshots.",
-        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "output_format": {
+                    "type": "string",
+                    "enum": ["json", "compact", "toon"],
+                    "default": "compact",
+                    "description": "Output format: 'json' (verbose, indent=2), 'compact' (omit empty, no indent, default), 'toon' (tabular arrays)",
+                },
+            },
+            "required": [],
+        },
     },
     "delete_project": {
         "description": """Safely delete an indexed project and all associated data.
@@ -228,6 +285,12 @@ If files are locked, they'll be queued for automatic retry on next server startu
                     "default": False,
                     "description": "Force delete even if this is the current project (default: False)",
                 },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["json", "compact", "toon"],
+                    "default": "compact",
+                    "description": "Output format: 'json' (verbose, indent=2), 'compact' (omit empty, no indent, default), 'toon' (tabular arrays)",
+                },
             },
             "required": ["project_path"],
         },
@@ -236,7 +299,18 @@ If files are locked, they'll be queued for automatic retry on next server startu
         "description": """Get current memory usage status for the index and system.
 
 Shows available RAM/VRAM, current index memory usage, and whether GPU acceleration is active. Useful for monitoring memory consumption and optimizing performance.""",
-        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "output_format": {
+                    "type": "string",
+                    "enum": ["json", "compact", "toon"],
+                    "default": "compact",
+                    "description": "Output format: 'json' (verbose, indent=2), 'compact' (omit empty, no indent, default), 'toon' (tabular arrays)",
+                },
+            },
+            "required": [],
+        },
     },
     "configure_query_routing": {
         "description": """Configure query routing behavior for multi-model semantic search.
@@ -244,7 +318,7 @@ Shows available RAM/VRAM, current index memory usage, and whether GPU accelerati
 Args:
     enable_multi_model: Enable/disable multi-model mode (default: True via env var)
     default_model: Set default model key ("qwen3", "bge_m3", "coderankembed")
-    confidence_threshold: Minimum confidence for routing (0.0-1.0, default: 0.3)""",
+    confidence_threshold: Minimum confidence for routing (0.0-1.0, default: 0.05)""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -261,7 +335,13 @@ Args:
                     "type": "number",
                     "minimum": 0.0,
                     "maximum": 1.0,
-                    "description": "Minimum confidence for routing (0.0-1.0, default: 0.3)",
+                    "description": "Minimum confidence for routing (0.0-1.0, default: 0.05)",
+                },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["json", "compact", "toon"],
+                    "default": "compact",
+                    "description": "Output format: 'json' (verbose, indent=2), 'compact' (omit empty, no indent, default), 'toon' (tabular arrays)",
                 },
             },
             "required": [],
@@ -271,7 +351,18 @@ Args:
         "description": """Manually cleanup all resources to free memory.
 
 Forces cleanup of indexes, embedding model(s), and GPU memory. Useful when switching between large projects or when memory is running low.""",
-        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "output_format": {
+                    "type": "string",
+                    "enum": ["json", "compact", "toon"],
+                    "default": "compact",
+                    "description": "Output format: 'json' (verbose, indent=2), 'compact' (omit empty, no indent, default), 'toon' (tabular arrays)",
+                },
+            },
+            "required": [],
+        },
     },
     "configure_search_mode": {
         "description": """Configure search mode and hybrid search parameters.
@@ -309,17 +400,45 @@ Args:
                     "default": True,
                     "description": "Enable parallel BM25 + Dense search execution",
                 },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["json", "compact", "toon"],
+                    "default": "compact",
+                    "description": "Output format: 'json' (verbose, indent=2), 'compact' (omit empty, no indent, default), 'toon' (tabular arrays)",
+                },
             },
             "required": [],
         },
     },
     "get_search_config_status": {
         "description": "Get current search configuration status and available options",
-        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "output_format": {
+                    "type": "string",
+                    "enum": ["json", "compact", "toon"],
+                    "default": "compact",
+                    "description": "Output format: 'json' (verbose, indent=2), 'compact' (omit empty, no indent, default), 'toon' (tabular arrays)",
+                },
+            },
+            "required": [],
+        },
     },
     "list_embedding_models": {
         "description": "List all available embedding models with their specifications",
-        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "output_format": {
+                    "type": "string",
+                    "enum": ["json", "compact", "toon"],
+                    "default": "compact",
+                    "description": "Output format: 'json' (verbose, indent=2), 'compact' (omit empty, no indent, default), 'toon' (tabular arrays)",
+                },
+            },
+            "required": [],
+        },
     },
     "switch_embedding_model": {
         "description": """Switch to a different embedding model without deleting existing indices.
@@ -331,7 +450,13 @@ Per-model indices enable instant switching - if you've already indexed a project
                 "model_name": {
                     "type": "string",
                     "description": 'Model identifier from MODEL_REGISTRY (e.g., "BAAI/bge-m3")',
-                }
+                },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["json", "compact", "toon"],
+                    "default": "compact",
+                    "description": "Output format: 'json' (verbose, indent=2), 'compact' (omit empty, no indent, default), 'toon' (tabular arrays)",
+                },
             },
             "required": ["model_name"],
         },
@@ -378,6 +503,12 @@ RETURNS:
                     "items": {"type": "string"},
                     "description": 'Exclude these directories from symbol resolution and caller lookup (e.g., ["tests/"]). Default: None (searches all).',
                 },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["json", "compact", "toon"],
+                    "default": "compact",
+                    "description": "Output format: 'json' (verbose, indent=2), 'compact' (omit empty, no indent, default), 'toon' (tabular arrays)",
+                },
             },
             "required": [],
         },
@@ -405,6 +536,12 @@ Args:
                     "description": "Number of candidates to rerank",
                     "minimum": 5,
                     "maximum": 100,
+                },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["json", "compact", "toon"],
+                    "default": "compact",
+                    "description": "Output format: 'json' (verbose, indent=2), 'compact' (omit empty, no indent, default), 'toon' (tabular arrays)",
                 },
             },
             "required": [],

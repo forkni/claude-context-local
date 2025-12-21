@@ -25,8 +25,8 @@ from typing import Dict
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from search.metadata import MetadataStore
-from search.symbol_cache import SymbolHashCache
+from search.metadata import MetadataStore  # noqa: E402
+from search.symbol_cache import SymbolHashCache  # noqa: E402
 
 
 class CacheEfficiencyBenchmark:

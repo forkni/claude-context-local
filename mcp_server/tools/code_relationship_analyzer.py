@@ -167,45 +167,66 @@ class ImpactReport:
     stale_chunk_count: int = 0  # Count of chunk_ids not found in current index
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
-        return {
+        """Convert to dictionary for JSON serialization.
+
+        Omits empty fields to reduce token overhead.
+        """
+        result = {
             "symbol": self.symbol,
             "chunk_id": self.chunk_id,
-            "direct_callers": self.direct_callers,
-            "indirect_callers": self.indirect_callers,
-            "similar_code": self.similar_code,
-            "total_impacted": self.total_impacted,
-            "file_count": len(self.unique_files),
-            "affected_files": sorted(self.unique_files),
-            "dependency_graph": self.dependency_graph,
-            # Relationship fields
-            "parent_classes": self.parent_classes,
-            "child_classes": self.child_classes,
-            "uses_types": self.uses_types,
-            "used_as_type_in": self.used_as_type_in,
-            "imports": self.imports,
-            "imported_by": self.imported_by,
-            # Priority 2 relationships
-            "decorates": self.decorates,
-            "decorated_by": self.decorated_by,
-            "exceptions_raised": self.exceptions_raised,
-            "exception_handlers": self.exception_handlers,
-            "exceptions_caught": self.exceptions_caught,
-            "instantiates": self.instantiates,
-            "instantiated_by": self.instantiated_by,
-            # Priority 4-5 relationships (entity tracking)
-            "defines_constants": self.defines_constants,
-            "uses_constants": self.uses_constants,
-            "defines_enum_members": self.defines_enum_members,
-            "uses_defaults": self.uses_defaults,
-            "defines_class_attrs": self.defines_class_attrs,
-            "class_attr_definitions": self.class_attr_definitions,
-            "defines_fields": self.defines_fields,
-            "field_definitions": self.field_definitions,
-            "uses_context_managers": self.uses_context_managers,
-            "context_manager_usages": self.context_manager_usages,
-            "stale_chunk_count": self.stale_chunk_count,
         }
+
+        # Only include non-empty core fields
+        if self.direct_callers:
+            result["direct_callers"] = self.direct_callers
+        if self.indirect_callers:
+            result["indirect_callers"] = self.indirect_callers
+        if self.similar_code:
+            result["similar_code"] = self.similar_code
+
+        result["total_impacted"] = self.total_impacted
+        result["file_count"] = len(self.unique_files)
+
+        if self.unique_files:
+            result["affected_files"] = sorted(self.unique_files)
+        if self.dependency_graph:
+            result["dependency_graph"] = self.dependency_graph
+
+        # Only include non-empty relationship fields
+        relationship_fields = [
+            ("parent_classes", self.parent_classes),
+            ("child_classes", self.child_classes),
+            ("uses_types", self.uses_types),
+            ("used_as_type_in", self.used_as_type_in),
+            ("imports", self.imports),
+            ("imported_by", self.imported_by),
+            ("decorates", self.decorates),
+            ("decorated_by", self.decorated_by),
+            ("exceptions_raised", self.exceptions_raised),
+            ("exception_handlers", self.exception_handlers),
+            ("exceptions_caught", self.exceptions_caught),
+            ("instantiates", self.instantiates),
+            ("instantiated_by", self.instantiated_by),
+            ("defines_constants", self.defines_constants),
+            ("uses_constants", self.uses_constants),
+            ("defines_enum_members", self.defines_enum_members),
+            ("uses_defaults", self.uses_defaults),
+            ("defines_class_attrs", self.defines_class_attrs),
+            ("class_attr_definitions", self.class_attr_definitions),
+            ("defines_fields", self.defines_fields),
+            ("field_definitions", self.field_definitions),
+            ("uses_context_managers", self.uses_context_managers),
+            ("context_manager_usages", self.context_manager_usages),
+        ]
+
+        for name, value in relationship_fields:
+            if value:  # Only include if non-empty
+                result[name] = value
+
+        if self.stale_chunk_count > 0:
+            result["stale_chunk_count"] = self.stale_chunk_count
+
+        return result
 
 
 class CodeRelationshipAnalyzer:

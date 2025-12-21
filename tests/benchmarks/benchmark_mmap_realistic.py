@@ -21,8 +21,8 @@ from typing import Dict, List
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from search.faiss_index import FaissVectorIndex
-from search.mmap_vectors import MmapVectorStorage
+from search.faiss_index import FaissVectorIndex  # noqa: E402
+from search.mmap_vectors import MmapVectorStorage  # noqa: E402
 
 
 def percentile(data: List[float], p: float) -> float:
@@ -111,7 +111,7 @@ class MmapRealisticBenchmark:
         cold_times = []
         for i in range(min(10, vector_count)):
             start = time.perf_counter()
-            vector = storage.get_vector(i)
+            _vector = storage.get_vector(i)
             elapsed = (time.perf_counter() - start) * 1_000_000  # μs
             cold_times.append(elapsed)
 
@@ -126,7 +126,7 @@ class MmapRealisticBenchmark:
         warm_times = []
         for i in range(min(100, vector_count)):
             start = time.perf_counter()
-            vector = storage.get_vector(i)
+            _vector = storage.get_vector(i)
             elapsed = (time.perf_counter() - start) * 1_000_000  # μs
             warm_times.append(elapsed)
 
@@ -185,7 +185,7 @@ class MmapRealisticBenchmark:
         faiss_times = []
         for idx in indices:
             start = time.perf_counter()
-            vector = faiss_index.reconstruct(idx)
+            _vector = faiss_index.reconstruct(idx)
             elapsed = (time.perf_counter() - start) * 1_000_000  # μs
             faiss_times.append(elapsed)
 
@@ -201,7 +201,7 @@ class MmapRealisticBenchmark:
                 print("\nMmap get_vector():")
                 for idx in indices:
                     start = time.perf_counter()
-                    vector = storage.get_vector(idx)
+                    _vector = storage.get_vector(idx)
                     elapsed = (time.perf_counter() - start) * 1_000_000  # μs
                     mmap_times.append(elapsed)
 
@@ -338,7 +338,7 @@ class MmapRealisticBenchmark:
             print(f"Total disk usage:  {total_disk:.2f} MB (FAISS + mmap)")
 
         # Overall assessment
-        meets_1us = results["access_time"].get("meets_1us_claim", False)
+        _meets_1us = results["access_time"].get("meets_1us_claim", False)
         meets_2x = results["mmap_vs_faiss"].get("meets_2x_threshold", False)
 
         threshold_met = meets_2x  # Primary criterion is 2x speedup

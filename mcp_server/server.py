@@ -37,6 +37,9 @@ from mcp_server.model_pool_manager import (  # noqa: E402
     get_embedder,
 )
 
+# Output formatting
+from mcp_server.output_formatter import format_response  # noqa: E402
+
 # Configure logging
 debug_mode = os.getenv("MCP_DEBUG", "").lower() in ("1", "true", "yes")
 log_level = logging.DEBUG if debug_mode else logging.INFO
@@ -118,10 +121,32 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[TextCon
         # Call handler
         result = await handler(arguments)
 
-        # Convert to TextContent
-        result_text = (
-            json.dumps(result, indent=2) if isinstance(result, dict) else str(result)
+        # Apply output formatting (formatting-only, preserves all data)
+        output_format = (
+            arguments.pop("output_format", "compact")
+            if isinstance(arguments, dict)
+            else "compact"
         )
+        formatted_result = (
+            format_response(result, output_format)
+            if isinstance(result, dict)
+            else result
+        )
+
+        # Use compact JSON (no indent) for compact/toon formats, verbose for json format
+        if output_format in ("compact", "toon"):
+            result_text = (
+                json.dumps(formatted_result, separators=(",", ":"))
+                if isinstance(formatted_result, dict)
+                else str(formatted_result)
+            )
+        else:  # json format (backward compatible)
+            result_text = (
+                json.dumps(formatted_result, indent=2)
+                if isinstance(formatted_result, dict)
+                else str(formatted_result)
+            )
+
         return [TextContent(type="text", text=result_text)]
 
     except Exception as e:
