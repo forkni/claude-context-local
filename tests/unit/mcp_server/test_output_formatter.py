@@ -16,7 +16,7 @@ class TestFormatResponse:
     """Tests for the main format_response function."""
 
     def test_json_format_returns_unchanged(self):
-        """JSON format should return data exactly as-is."""
+        """Verbose format should return data exactly as-is."""
         data = {
             "field1": "value1",
             "field2": [1, 2, 3],
@@ -25,7 +25,7 @@ class TestFormatResponse:
             "empty_dict": {},
         }
 
-        result = format_response(data, "json")
+        result = format_response(data, "verbose")
 
         assert result == data
         assert result is data  # Same object reference
@@ -41,7 +41,7 @@ class TestFormatResponse:
         assert "empty" not in result
 
     def test_toon_format_applied(self):
-        """TOON format should convert arrays to tabular format."""
+        """Ultra format should convert arrays to tabular format."""
         data = {
             "items": [
                 {"id": "a", "score": 1.0},
@@ -49,7 +49,7 @@ class TestFormatResponse:
             ]
         }
 
-        result = format_response(data, "toon")
+        result = format_response(data, "ultra")
 
         # Should have TOON header
         assert "items[2]{id,score}" in result
@@ -441,12 +441,12 @@ class TestDataPreservation:
             "empty_field": [],
         }
 
-        json_result = format_response(data, "json")
+        verbose_result = format_response(data, "verbose")
         compact_result = format_response(data, "compact")
-        toon_result = format_response(data, "toon")
+        ultra_result = format_response(data, "ultra")
 
-        # JSON should be unchanged
-        assert json_result == data
+        # Verbose should be unchanged
+        assert verbose_result == data
 
         # Compact should have same essential data (minus empty/redundant)
         assert compact_result["symbol"]["chunk_id"] == data["symbol"]["chunk_id"]
@@ -456,11 +456,11 @@ class TestDataPreservation:
         assert compact_result["total"] == 2
         assert "empty_field" not in compact_result  # Empty omitted
 
-        # TOON should have same essential data in tabular format
-        assert toon_result["symbol"]["chunk_id"] == data["symbol"]["chunk_id"]
-        assert "callers[2]{chunk_id,kind,score}" in toon_result
-        assert len(toon_result["callers[2]{chunk_id,kind,score}"]) == 2
-        assert toon_result["total"] == 2
+        # Ultra should have same essential data in tabular format
+        assert ultra_result["symbol"]["chunk_id"] == data["symbol"]["chunk_id"]
+        assert "callers[2]{chunk_id,kind,score}" in ultra_result
+        assert len(ultra_result["callers[2]{chunk_id,kind,score}"]) == 2
+        assert ultra_result["total"] == 2
 
     def test_can_reconstruct_from_compact(self):
         """Data from compact format should be usable."""
@@ -529,9 +529,9 @@ class TestEdgeCases:
         """Empty data dict should be handled gracefully."""
         data = {}
 
-        assert format_response(data, "json") == {}
+        assert format_response(data, "verbose") == {}
         assert format_response(data, "compact") == {}
-        assert format_response(data, "toon") == {}
+        assert format_response(data, "ultra") == {}
 
     def test_all_empty_fields(self):
         """Data with only empty fields should result in empty output."""
@@ -569,7 +569,7 @@ class TestEdgeCases:
 
         # Should not crash
         compact = format_response(data, "compact")
-        _toon = format_response(data, "toon")  # Just verify no crash
+        _ultra = format_response(data, "ultra")  # Just verify no crash
 
         assert compact["primitives"] == [1, "two", 3.0]
         assert len(compact["dicts"]) == 2

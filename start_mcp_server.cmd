@@ -52,7 +52,7 @@ if "%~1"=="" (
     echo   5. Project Management
     echo   6. Advanced Options
     echo   7. Help ^& Documentation
-    echo   M. Quick Model Switch ^(Code vs General^)
+    echo   M. Quick Model Switch ^(General / Code-specific / Multi-model^)
     echo   F. Configure Output Format
     echo   0. Exit
     echo.
@@ -1415,21 +1415,21 @@ echo Output formatting controls token usage in MCP tool responses.
 echo All formats preserve 100%% of data, only changing encoding.
 echo.
 echo Available Formats:
-echo   json    - Verbose (indent=2, all fields)        0%% reduction
+echo   verbose - Verbose (indent=2, all fields)        0%% reduction
 echo   compact - Omit empty fields, no indent       30-40%% reduction (default)
-echo   toon    - Tabular arrays with headers        45-55%% reduction
+echo   ultra   - Tabular arrays with headers        45-55%% reduction
 echo.
 echo Token Reduction Examples (find_connections with 5 callers):
-echo   JSON:    3,259 chars (~814 tokens)
+echo   Verbose: 3,259 chars (~814 tokens)
 echo   Compact: 2,167 chars (~541 tokens) - 33.5%% smaller
-echo   TOON:    1,877 chars (~469 tokens) - 42.4%% smaller
+echo   Ultra:   1,877 chars (~469 tokens) - 42.4%% smaller
 echo.
 echo Current Setting:
 .\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Output Format:', cfg.output.format)" 2>nul
 echo.
-echo   1. JSON (Verbose, Backward Compatible)
+echo   1. Verbose (Full Output, Backward Compatible)
 echo   2. Compact (Recommended Default)
-echo   3. TOON (Maximum Compression)
+echo   3. Ultra (Maximum Compression)
 echo   0. Back to Search Configuration
 echo.
 set "format_choice="
@@ -1441,12 +1441,12 @@ if "!format_choice!"=="0" goto search_config_menu
 
 if "!format_choice!"=="1" (
     echo.
-    echo [INFO] Setting output format to: json
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.output.format = 'json'; mgr.save_config(cfg); print('[OK] Output format set to json')" 2>nul
+    echo [INFO] Setting output format to: verbose
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.output.format = 'verbose'; mgr.save_config(cfg); print('[OK] Output format set to verbose')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
-        echo [INFO] All MCP tool responses will use verbose JSON format
+        echo [INFO] All MCP tool responses will use verbose format (full output^)
     )
 )
 if "!format_choice!"=="2" (
@@ -1456,17 +1456,17 @@ if "!format_choice!"=="2" (
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
-        echo [INFO] All MCP tool responses will omit empty fields (30-40%% reduction)
+        echo [INFO] All MCP tool responses will omit empty fields (30-40%% reduction^)
     )
 )
 if "!format_choice!"=="3" (
     echo.
-    echo [INFO] Setting output format to: toon
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.output.format = 'toon'; mgr.save_config(cfg); print('[OK] Output format set to toon')" 2>nul
+    echo [INFO] Setting output format to: ultra
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.output.format = 'ultra'; mgr.save_config(cfg); print('[OK] Output format set to ultra')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
-        echo [INFO] All MCP tool responses will use tabular arrays (45-55%% reduction)
+        echo [INFO] All MCP tool responses will use tabular arrays (45-55%% reduction^)
         echo [WARNING] Verify agent understanding with test queries
     )
 )

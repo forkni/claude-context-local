@@ -32,9 +32,9 @@
 - **85-95% Token Reduction**: Semantic search vs traditional file reading - [benchmark](docs/BENCHMARKS.md)
 - **Multi-Model Routing**: Intelligent query routing (Qwen3, BGE-M3, CodeRankEmbed) with 100% accuracy - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md)
 - **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
-- **15 MCP Tools**: Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
+- **17 MCP Tools**: Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
 
-**Status**: ✅ Production-ready | 700+ passing tests | All 15 MCP tools operational | Windows 10/11
+**Status**: ✅ Production-ready | 750+ passing tests | All 17 MCP tools operational | Windows 10/11
 
 ## Quick Start
 
@@ -105,7 +105,9 @@ Claude Code will automatically use the semantic search tools to find relevant co
 
 ### Claude Code Integration
 
-When connected via `/mcp` → Reconnect, Claude Code gains access to 15 semantic search tools exposed as `mcp__code-search__*` functions.
+> **Note**: This is an MCP server designed exclusively for Claude Code integration. It is not a standalone search tool - it requires connection via Claude Code's `/mcp` command.
+
+When connected via `/mcp` → Reconnect, Claude Code gains access to 17 semantic search tools exposed as `mcp__code-search__*` functions.
 
 A [**SKILL.md**](.claude/skills/mcp-search-tool/SKILL.md) file in the repository provides Claude with workflow guidance for optimal tool usage, including project context validation and search mode selection.
 
@@ -288,11 +290,11 @@ claude-context-local/
 ├── search/            # FAISS + BM25 hybrid search
 ├── merkle/            # Incremental indexing with change detection
 ├── graph/             # Call graph extraction & analysis
-├── mcp_server/        # MCP server implementation (15 tools)
+├── mcp_server/        # MCP server implementation (17 tools)
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 700+ tests (unit + integration)
+└── tests/             # 750+ tests (unit + integration)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -372,6 +374,7 @@ This project draws inspiration from several excellent semantic code search imple
 | [claude-context-local](https://github.com/FarhanAliRaza/claude-context-local) | Farhan Ali Raza | Local-first approach, cross-platform support |
 | [chunkhound](https://github.com/chunkhound/chunkhound) | ChunkHound | Real-time indexing with watchdog, extensive language support (30+) |
 | [codanna](https://github.com/bartolli/codanna) | Bartolli | High-performance Rust implementation, memory-mapped storage, profile system |
+| [TOON Format](https://github.com/toon-format/toon) | TOON Format | Tabular Object Output Notation - compact data format inspiration for output formatting |
 
 This Windows-focused implementation builds upon these foundations while adding unique capabilities including multi-model query routing, per-model index storage, and Python call graph analysis.
 

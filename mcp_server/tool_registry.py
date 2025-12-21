@@ -101,9 +101,9 @@ WHEN NOT TO USE:
                 },
                 "output_format": {
                     "type": "string",
-                    "enum": ["json", "compact", "toon"],
+                    "enum": ["verbose", "compact", "ultra"],
                     "default": "compact",
-                    "description": "Output format: 'json' (verbose), 'compact' (omit empty, default), 'toon' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
                 },
             },
             "required": [],
@@ -157,9 +157,9 @@ PROCESS:
                 },
                 "output_format": {
                     "type": "string",
-                    "enum": ["json", "compact", "toon"],
+                    "enum": ["verbose", "compact", "ultra"],
                     "default": "compact",
-                    "description": "Output format: 'json' (verbose), 'compact' (omit empty, default), 'toon' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
                 },
             },
             "required": ["directory_path"],
@@ -192,9 +192,9 @@ WORKFLOW:
                 },
                 "output_format": {
                     "type": "string",
-                    "enum": ["json", "compact", "toon"],
+                    "enum": ["verbose", "compact", "ultra"],
                     "default": "compact",
-                    "description": "Output format: 'json' (verbose), 'compact' (omit empty, default), 'toon' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
                 },
             },
             "required": ["chunk_id"],
@@ -207,9 +207,9 @@ WORKFLOW:
             "properties": {
                 "output_format": {
                     "type": "string",
-                    "enum": ["json", "compact", "toon"],
+                    "enum": ["verbose", "compact", "ultra"],
                     "default": "compact",
-                    "description": "Output format: 'json' (verbose), 'compact' (omit empty, default), 'toon' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
                 },
             },
             "required": [],
@@ -222,9 +222,9 @@ WORKFLOW:
             "properties": {
                 "output_format": {
                     "type": "string",
-                    "enum": ["json", "compact", "toon"],
+                    "enum": ["verbose", "compact", "ultra"],
                     "default": "compact",
-                    "description": "Output format: 'json' (verbose), 'compact' (omit empty, default), 'toon' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
                 },
             },
             "required": [],
@@ -241,9 +241,9 @@ WORKFLOW:
                 },
                 "output_format": {
                     "type": "string",
-                    "enum": ["json", "compact", "toon"],
+                    "enum": ["verbose", "compact", "ultra"],
                     "default": "compact",
-                    "description": "Output format: 'json' (verbose), 'compact' (omit empty, default), 'toon' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
                 },
             },
             "required": ["project_path"],
@@ -256,9 +256,9 @@ WORKFLOW:
             "properties": {
                 "output_format": {
                     "type": "string",
-                    "enum": ["json", "compact", "toon"],
+                    "enum": ["verbose", "compact", "ultra"],
                     "default": "compact",
-                    "description": "Output format: 'json' (verbose), 'compact' (omit empty, default), 'toon' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
                 },
             },
             "required": [],
@@ -287,9 +287,9 @@ If files are locked, they'll be queued for automatic retry on next server startu
                 },
                 "output_format": {
                     "type": "string",
-                    "enum": ["json", "compact", "toon"],
+                    "enum": ["verbose", "compact", "ultra"],
                     "default": "compact",
-                    "description": "Output format: 'json' (verbose), 'compact' (omit empty, default), 'toon' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
                 },
             },
             "required": ["project_path"],
@@ -304,9 +304,9 @@ Shows available RAM/VRAM, current index memory usage, and whether GPU accelerati
             "properties": {
                 "output_format": {
                     "type": "string",
-                    "enum": ["json", "compact", "toon"],
+                    "enum": ["verbose", "compact", "ultra"],
                     "default": "compact",
-                    "description": "Output format: 'json' (verbose), 'compact' (omit empty, default), 'toon' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
                 },
             },
             "required": [],
@@ -339,9 +339,9 @@ Args:
                 },
                 "output_format": {
                     "type": "string",
-                    "enum": ["json", "compact", "toon"],
+                    "enum": ["verbose", "compact", "ultra"],
                     "default": "compact",
-                    "description": "Output format: 'json' (verbose), 'compact' (omit empty, default), 'toon' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
                 },
             },
             "required": [],
@@ -356,9 +356,9 @@ Forces cleanup of indexes, embedding model(s), and GPU memory. Useful when switc
             "properties": {
                 "output_format": {
                     "type": "string",
-                    "enum": ["json", "compact", "toon"],
+                    "enum": ["verbose", "compact", "ultra"],
                     "default": "compact",
-                    "description": "Output format: 'json' (verbose), 'compact' (omit empty, default), 'toon' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
                 },
             },
             "required": [],
@@ -402,9 +402,9 @@ Args:
                 },
                 "output_format": {
                     "type": "string",
-                    "enum": ["json", "compact", "toon"],
+                    "enum": ["verbose", "compact", "ultra"],
                     "default": "compact",
-                    "description": "Output format: 'json' (verbose), 'compact' (omit empty, default), 'toon' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
                 },
             },
             "required": [],
@@ -417,9 +417,9 @@ Args:
             "properties": {
                 "output_format": {
                     "type": "string",
-                    "enum": ["json", "compact", "toon"],
+                    "enum": ["verbose", "compact", "ultra"],
                     "default": "compact",
-                    "description": "Output format: 'json' (verbose), 'compact' (omit empty, default), 'toon' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
                 },
             },
             "required": [],
@@ -432,9 +432,9 @@ Args:
             "properties": {
                 "output_format": {
                     "type": "string",
-                    "enum": ["json", "compact", "toon"],
+                    "enum": ["verbose", "compact", "ultra"],
                     "default": "compact",
-                    "description": "Output format: 'json' (verbose), 'compact' (omit empty, default), 'toon' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
                 },
             },
             "required": [],
@@ -453,9 +453,9 @@ Per-model indices enable instant switching - if you've already indexed a project
                 },
                 "output_format": {
                     "type": "string",
-                    "enum": ["json", "compact", "toon"],
+                    "enum": ["verbose", "compact", "ultra"],
                     "default": "compact",
-                    "description": "Output format: 'json' (verbose), 'compact' (omit empty, default), 'toon' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
                 },
             },
             "required": ["model_name"],
@@ -505,9 +505,9 @@ RETURNS:
                 },
                 "output_format": {
                     "type": "string",
-                    "enum": ["json", "compact", "toon"],
+                    "enum": ["verbose", "compact", "ultra"],
                     "default": "compact",
-                    "description": "Output format: 'json' (verbose), 'compact' (omit empty, default), 'toon' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
                 },
             },
             "required": [],
@@ -539,9 +539,9 @@ Args:
                 },
                 "output_format": {
                     "type": "string",
-                    "enum": ["json", "compact", "toon"],
+                    "enum": ["verbose", "compact", "ultra"],
                     "default": "compact",
-                    "description": "Output format: 'json' (verbose), 'compact' (omit empty, default), 'toon' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
                 },
             },
             "required": [],

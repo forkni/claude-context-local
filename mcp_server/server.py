@@ -140,7 +140,7 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[TextCon
         )
 
         # Use compact JSON (no indent) for compact/toon formats, verbose for json format
-        if output_format in ("compact", "toon"):
+        if output_format in ("compact", "ultra"):
             result_text = (
                 json.dumps(formatted_result, separators=(",", ":"))
                 if isinstance(formatted_result, dict)

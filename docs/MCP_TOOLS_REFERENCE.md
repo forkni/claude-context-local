@@ -111,9 +111,9 @@ All 17 MCP tools support configurable output formatting via the `output_format` 
 
 | Format | Token Reduction | Use Case | Description |
 |--------|----------------|----------|-------------|
-| **json** | 0% (baseline) | Debugging, backward compatibility | Verbose JSON with indent=2, all fields included |
+| **verbose** | 0% (baseline) | Debugging, backward compatibility | Verbose JSON with indent=2, all fields included |
 | **compact** | 30-40% | Default, recommended | Omits empty fields, no indentation, removes redundant data |
-| **toon** | 45-55% | Large result sets, bandwidth-constrained | Tabular arrays with header-declared fields |
+| **ultra** | 45-55% | Large result sets, bandwidth-constrained | Tabular arrays with header-declared fields |
 
 ### Configuration
 
@@ -124,20 +124,20 @@ All 17 MCP tools support configurable output formatting via the `output_format` 
 start_mcp_server.cmd → 3. Search Configuration → A. Configure Output Format
 
 # Or directly in search_config.json
-"output_format": "compact"  # json, compact, or toon
+"output_format": "compact"  # verbose, compact, or ultra
 ```
 
 **Override per-query**:
 
 ```python
-# Use TOON format for this query only
-search_code("authentication", k=10, output_format="toon")
+# Use Ultra format for this query only
+search_code("authentication", k=10, output_format="ultra")
 find_connections(chunk_id="...", output_format="compact")
 ```
 
-### Understanding TOON Tabular Format
+### Understanding Ultra Tabular Format
 
-TOON format optimizes token usage by declaring field names once in a header, then providing data as arrays of values.
+Ultra format optimizes token usage by declaring field names once in a header, then providing data as arrays of values.
 
 #### Format Structure
 
@@ -167,7 +167,7 @@ TOON format optimizes token usage by declaring field names once in a header, the
 
 **Tokens**: ~60 chars for field names × 2 = 120 chars overhead
 
-**TOON Format** (45-55% reduction):
+**Ultra Format** (45-55% reduction):
 
 ```json
 {
@@ -175,13 +175,13 @@ TOON format optimizes token usage by declaring field names once in a header, the
     ["auth.py:10-25:function:login", "function", 0.95],
     ["auth.py:30-45:function:logout", "function", 0.87]
   ],
-  "_format_note": "TOON format: header[count]{fields}: [[row1], [row2], ...]"
+  "_format_note": "Ultra format: header[count]{fields}: [[row1], [row2], ...]"
 }
 ```
 
 **Tokens**: 36 chars for field names × 1 = 36 chars overhead (70% reduction)
 
-#### Parsing TOON Format
+#### Parsing Ultra Format
 
 **Step-by-step algorithm**:
 
@@ -210,7 +210,7 @@ TOON format optimizes token usage by declaring field names once in a header, the
 
 **Query**: `find_connections("mcp_server/output_formatter.py:109-177:function:_to_toon_format")`
 
-**TOON Response**:
+**Ultra Response**:
 
 ```json
 {
@@ -224,7 +224,7 @@ TOON format optimizes token usage by declaring field names once in a header, the
     ["search/hybrid_searcher.py:245-289:function:_format_results", "function", 0.76],
     ...
   ],
-  "_format_note": "TOON format: header[count]{fields}: [[row1], [row2], ...]"
+  "_format_note": "Ultra format: header[count]{fields}: [[row1], [row2], ...]"
 }
 ```
 

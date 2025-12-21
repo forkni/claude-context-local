@@ -245,7 +245,7 @@ class OutputConfig:
     """MCP output formatting settings (1 field)."""
 
     format: str = (
-        "toon"  # json, compact, toon (default: toon for 45-55% token reduction)
+        "ultra"  # verbose, compact, ultra (default: ultra for 45-55% token reduction)
     )
 
 

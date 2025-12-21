@@ -4,9 +4,9 @@ This module provides formatting-only optimizations that preserve ALL data
 while reducing token overhead by 30-55%.
 
 Supported formats:
-- json: Current format (indent=2, all fields) - backward compatible
+- verbose: Full format (indent=2, all fields) - backward compatible
 - compact: Omit empty fields, remove redundant data, no indent (30-40% reduction)
-- toon: TOON-inspired tabular format for arrays (45-55% reduction)
+- ultra: TOON-inspired tabular format for arrays (45-55% reduction)
 
 Key principle: NO data is filtered or limited, only formatting is optimized.
 """
@@ -21,14 +21,14 @@ def format_response(
 
     Args:
         data: Response dict from MCP tool handler
-        output_format: "json" (verbose), "compact" (default), or "toon" (tabular)
+        output_format: "verbose", "compact" (default), or "ultra" (tabular)
 
     Returns:
         Formatted response dict (same data, different structure)
     """
-    if output_format == "json":
+    if output_format == "verbose":
         return data  # Return as-is (current behavior)
-    elif output_format == "toon":
+    elif output_format == "ultra":
         return _to_toon_format(data)
     else:  # compact (default)
         return _to_compact_format(data)
