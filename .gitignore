@@ -266,6 +266,7 @@ docs/GIT_WORKFLOW_ENHANCEMENT_PLAN.md
 docs/GPU_MEMORY_LEAK_FIX.md
 docs/PER_MODEL_INDICES_IMPLEMENTATION.md
 docs/RELATIONSHIP_TYPES_IMPLEMENTATION.md
+docs/PRE_COMMIT_HOOKS.md
 
 # Evaluation and test results (temporary/generated files)
 custom_evaluation_results/
