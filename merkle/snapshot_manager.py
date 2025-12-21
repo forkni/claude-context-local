@@ -334,6 +334,35 @@ class SnapshotManager:
 
         return deleted_count
 
+    def clear_all_snapshots(self) -> int:
+        """Delete ALL snapshots for ALL projects.
+
+        This removes all snapshot and metadata files from the storage directory.
+        Use with caution - this is a destructive operation.
+
+        Returns:
+            Number of files deleted
+        """
+        deleted_count = 0
+
+        # Delete all snapshot files
+        for snapshot_file in self.storage_dir.glob("*_snapshot.json"):
+            try:
+                snapshot_file.unlink()
+                deleted_count += 1
+            except Exception:
+                pass  # Continue even if one file fails
+
+        # Delete all metadata files
+        for metadata_file in self.storage_dir.glob("*_metadata.json"):
+            try:
+                metadata_file.unlink()
+                deleted_count += 1
+            except Exception:
+                pass  # Continue even if one file fails
+
+        return deleted_count
+
     def list_snapshots(self) -> List[Dict]:
         """List all available snapshots.
 

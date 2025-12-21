@@ -41,28 +41,7 @@ class CodeIndexManager:
 
         # Initialize components
         self._metadata_store = MetadataStore(self.metadata_path)
-
-        # Determine if mmap storage should be used
-        use_mmap = (
-            getattr(config, "mmap_storage_enabled", False)
-            if config and hasattr(config, "mmap_storage_enabled")
-            else (
-                getattr(
-                    getattr(config, "performance", None), "mmap_storage_enabled", False
-                )
-                if config and hasattr(config, "performance")
-                else False
-            )
-        )
-
-        # Log mmap configuration (simplified)
-        _logger = logging.getLogger(__name__)
-        if use_mmap:
-            _logger.info("[MMAP] Memory-mapped vector storage enabled")
-
-        self._faiss_index = FaissVectorIndex(
-            self.index_path, embedder=embedder, use_mmap=use_mmap
-        )
+        self._faiss_index = FaissVectorIndex(self.index_path, embedder=embedder)
         self._logger = logging.getLogger(__name__)
         self._logger.info(
             f"[INIT] CodeIndexManager created: storage_dir={storage_dir}, project_id={project_id}"

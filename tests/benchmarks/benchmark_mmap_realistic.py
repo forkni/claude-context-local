@@ -166,7 +166,7 @@ class MmapRealisticBenchmark:
         print("-" * 70)
 
         # Load FAISS index
-        faiss_index = FaissVectorIndex(self.faiss_path, use_mmap=False)
+        faiss_index = FaissVectorIndex(self.faiss_path)
         if not faiss_index.load():
             print("⚠️  Failed to load FAISS index")
             return {"status": "failed", "reason": "failed to load FAISS"}
@@ -254,7 +254,7 @@ class MmapRealisticBenchmark:
         # Measure FAISS memory
         print("\nMeasuring FAISS memory usage...")
         mem_before = process.memory_info().rss / 1024 / 1024  # MB
-        faiss_index = FaissVectorIndex(self.faiss_path, use_mmap=False)
+        faiss_index = FaissVectorIndex(self.faiss_path)
         faiss_index.load()
         mem_after_faiss = process.memory_info().rss / 1024 / 1024  # MB
         mem_faiss = mem_after_faiss - mem_before

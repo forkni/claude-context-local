@@ -113,13 +113,12 @@ class FaissVectorIndex:
         >>> index.save()
     """
 
-    def __init__(self, index_path: Path, embedder=None, use_mmap: bool = False):
+    def __init__(self, index_path: Path, embedder=None):
         """Initialize FAISS vector index.
 
         Args:
             index_path: Path to FAISS index file
             embedder: Optional embedder for dimension validation
-            use_mmap: Enable memory-mapped vector storage for fast access
         """
         self.index_path = Path(index_path)
         self.chunk_id_path = self.index_path.parent / "chunk_ids.pkl"
@@ -130,8 +129,7 @@ class FaissVectorIndex:
         self._on_gpu: bool = False
         self._logger = logging.getLogger(__name__)
 
-        # Memory-mapped vector storage (optional)
-        self._use_mmap = use_mmap
+        # Memory-mapped vector storage (auto-enabled for >10K vectors)
         self._mmap_storage: Optional[Any] = None  # MmapVectorStorage
         self._mmap_path = (
             self.index_path.parent / f"{self.index_path.stem}_vectors.mmap"
@@ -251,8 +249,8 @@ class FaissVectorIndex:
             else:
                 self._chunk_ids = []
 
-            # Load mmap storage if available
-            if self._use_mmap and self._mmap_path.exists():
+            # Load mmap storage if available (automatic when file exists)
+            if self._mmap_path.exists():
                 try:
                     from search.mmap_vectors import MmapVectorStorage
 
@@ -310,10 +308,10 @@ class FaissVectorIndex:
         with open(self.chunk_id_path, "wb") as f:
             pickle.dump(self._chunk_ids, f)
 
-        # Save mmap copy for fast access if enabled AND above threshold
         # Auto-threshold: Only use mmap for indices >10K vectors (performance benefit)
+        # Fully automatic - no config needed
         MMAP_THRESHOLD = 10000
-        if self._use_mmap and self._index is not None:
+        if self._index is not None:
             vector_count = self._index.ntotal
             if vector_count >= MMAP_THRESHOLD:
                 try:

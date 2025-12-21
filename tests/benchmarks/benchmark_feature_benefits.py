@@ -25,12 +25,12 @@ from typing import Dict
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from tests.benchmarks.benchmark_intent_quality import (  # noqa: E402
-    IntentQualityBenchmark,
-)
-
+# ruff: noqa: I001
 from tests.benchmarks.benchmark_cache_efficiency import (  # noqa: E402
     CacheEfficiencyBenchmark,
+)
+from tests.benchmarks.benchmark_intent_quality import (  # noqa: E402
+    IntentQualityBenchmark,
 )
 from tests.benchmarks.benchmark_mmap_realistic import (  # noqa: E402
     MmapRealisticBenchmark,

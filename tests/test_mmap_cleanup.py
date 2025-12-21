@@ -15,9 +15,9 @@ def test_mmap_cleanup_on_clear():
     temp_dir = Path(tempfile.mkdtemp())
 
     try:
-        # Create index with mmap enabled
+        # Create index (mmap auto-enabled for >10K vectors)
         index_path = temp_dir / "code.index"
-        faiss_index = FaissVectorIndex(index_path, use_mmap=True)
+        faiss_index = FaissVectorIndex(index_path)
 
         # Create and populate index
         faiss_index.create(dimension=768, index_type="flat")
@@ -50,9 +50,9 @@ def test_mmap_threshold_management():
     temp_dir = Path(tempfile.mkdtemp())
 
     try:
-        # Create index with mmap enabled
+        # Create index (mmap auto-enabled for >10K vectors)
         index_path = temp_dir / "code.index"
-        faiss_index = FaissVectorIndex(index_path, use_mmap=True)
+        faiss_index = FaissVectorIndex(index_path)
 
         # Create index with few vectors (below 10K threshold)
         faiss_index.create(dimension=768, index_type="flat")

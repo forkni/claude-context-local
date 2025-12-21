@@ -53,12 +53,13 @@ if "%~1"=="" (
     echo   6. Advanced Options
     echo   7. Help ^& Documentation
     echo   M. Quick Model Switch ^(Code vs General^)
+    echo   F. Configure Output Format
     echo   0. Exit
     echo.
 
     REM Ensure we have a valid choice
     set "choice="
-    set /p choice="Select option (0-7, M): "
+    set /p choice="Select option (0-7, M, F): "
 
     REM Handle empty input or Ctrl+C gracefully
     if not defined choice (
@@ -79,9 +80,11 @@ if "%~1"=="" (
     if "!choice!"=="7" goto show_help
     if /i "!choice!"=="M" goto quick_model_switch
     if /i "!choice!"=="m" goto quick_model_switch
+    if /i "!choice!"=="F" goto configure_output_format
+    if /i "!choice!"=="f" goto configure_output_format
     if "!choice!"=="0" goto exit_cleanly
 
-    echo [ERROR] Invalid choice: "%choice%". Please select 0-7 or M.
+    echo [ERROR] Invalid choice: "%choice%". Please select 0-7, M, or F.
     echo.
     echo Press any key to try again...
     pause >nul
@@ -331,13 +334,11 @@ echo   4. Select Embedding Model
 echo   5. Configure Parallel Search
 echo   6. Configure Neural Reranker
 echo   7. Configure Entity Tracking
-echo   8. Configure Memory-Mapped Vector Storage
-echo   9. Reset to Defaults
-echo   A. Configure Output Format
+echo   8. Reset to Defaults
 echo   0. Back to Main Menu
 echo.
 set "search_choice="
-set /p search_choice="Select option (0-A): "
+set /p search_choice="Select option (0-8): "
 
 REM Handle empty input gracefully
 if not defined search_choice (
@@ -356,13 +357,10 @@ if "!search_choice!"=="4" goto select_embedding_model
 if "!search_choice!"=="5" goto configure_parallel_search
 if "!search_choice!"=="6" goto configure_reranker
 if "!search_choice!"=="7" goto configure_entity_tracking
-if "!search_choice!"=="8" goto configure_mmap_storage
-if "!search_choice!"=="9" goto reset_config
-if /i "!search_choice!"=="A" goto configure_output_format
-if /i "!search_choice!"=="a" goto configure_output_format
+if "!search_choice!"=="8" goto reset_config
 if "!search_choice!"=="0" goto menu_restart
 
-echo [ERROR] Invalid choice. Please select 0-9.
+echo [ERROR] Invalid choice. Please select 0-8.
 pause
 cls
 goto search_config_menu
@@ -689,11 +687,12 @@ for /f "tokens=1,2,3,4 delims=|" %%a in (%TEMP_PROJECTS%) do (
     echo      Path: %%c
     echo.
 )
+echo   X. Remove All Indices
 echo   0. Cancel
 
 echo.
 set "project_choice="
-set /p project_choice="Select project number to clear (0 to cancel): "
+set /p project_choice="Select project number (0 to cancel, X for all): "
 
 REM Handle cancel or empty input
 if not defined project_choice (
@@ -707,6 +706,12 @@ if "!project_choice!"=="" (
 if "!project_choice!"=="0" (
     del "%TEMP_PROJECTS%" 2>nul
     goto project_management_menu
+)
+
+REM Handle "Remove All Indices" option
+if /i "!project_choice!"=="X" (
+    del "%TEMP_PROJECTS%" 2>nul
+    goto clear_all_indices
 )
 
 REM Find the selected project
@@ -813,6 +818,11 @@ if "!INDEX_RESULT!"=="0" (
         echo [OK] Index cleared but snapshot clearing failed
         echo [INFO] This is usually not critical
     )
+
+    REM Check if this was the last index for this project path
+    REM If so, clear the current project selection
+    call .\.venv\Scripts\python.exe -c "from mcp_server.storage_manager import get_storage_dir; from mcp_server.project_persistence import load_project_selection, clear_project_selection; from pathlib import Path; storage = get_storage_dir(); projects_dir = storage / 'projects'; remaining = [p for p in projects_dir.glob('*/project_info.json') if Path(p.parent.name).exists()]; import json; project_paths = [json.load(open(p))['project_path'] for p in remaining]; selection = load_project_selection(); if selection and selection.get('last_project_path') == r'%PROJECT_PATH%' and r'%PROJECT_PATH%' not in project_paths: clear_project_selection(); print('[INFO] Current project reset to None (all indices cleared)')" 2>nul
+
     echo [INFO] Re-index via: Project Management ^> Index New Project
 ) else (
     echo.
@@ -829,6 +839,54 @@ if "!INDEX_RESULT!"=="0" (
     echo.
     echo Repair tool: scripts\batch\repair_installation.bat
     echo Manual delete: %USERPROFILE%\.claude_code_search\projects\%PROJECT_HASH%
+)
+echo.
+echo Press any key to return to the menu...
+pause >nul
+goto project_management_menu
+
+:clear_all_indices
+echo.
+echo === Remove All Indices ===
+echo.
+echo [WARNING] This will delete ALL indexed projects and reset your configuration.
+echo.
+set "confirm_all="
+set /p confirm_all="Are you ABSOLUTELY sure? Type 'YES' to confirm: "
+
+if not defined confirm_all goto project_management_menu
+if "!confirm_all!"=="" goto project_management_menu
+if /i not "!confirm_all!"=="YES" (
+    echo.
+    echo [INFO] Operation cancelled
+    pause
+    goto project_management_menu
+)
+
+REM Clear all indices
+echo.
+echo [INFO] Clearing all project indices...
+echo.
+
+REM Delete all project directories
+call .\.venv\Scripts\python.exe -c "from mcp_server.storage_manager import get_storage_dir; import shutil, gc, time; storage = get_storage_dir(); projects_dir = storage / 'projects'; gc.collect(); time.sleep(0.5); shutil.rmtree(projects_dir, ignore_errors=True) if projects_dir.exists() else None; projects_dir.mkdir(exist_ok=True); print('[OK] All project indices cleared')"
+set "CLEAR_RESULT=!ERRORLEVEL!"
+
+REM Clear all Merkle snapshots
+call .\.venv\Scripts\python.exe -c "from merkle.snapshot_manager import SnapshotManager; sm = SnapshotManager(); deleted = sm.clear_all_snapshots(); print(f'[OK] All Merkle snapshots cleared ({deleted} files)')" 2>&1
+set "SNAPSHOT_RESULT=!ERRORLEVEL!"
+
+REM Clear current project selection
+call .\.venv\Scripts\python.exe -c "from mcp_server.project_persistence import clear_project_selection; clear_project_selection(); print('[OK] Current project reset to None')" 2>nul
+set "SELECTION_RESULT=!ERRORLEVEL!"
+
+echo.
+if "!CLEAR_RESULT!"=="0" (
+    echo [OK] All indices have been removed
+    echo [INFO] You can now re-index projects via: Project Management ^> Index New Project
+) else (
+    echo [ERROR] Failed to clear all indices
+    echo [INFO] Some files may be locked. Close Claude Code and try again.
 )
 echo.
 echo Press any key to return to the menu...
@@ -911,7 +969,7 @@ REM Search Configuration Functions
 echo.
 echo [INFO] Current Search Configuration:
 if exist ".venv\Scripts\python.exe" (
-    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); print(f'  Embedding Model: {model_short} ({dim}d, {vram})'); print('  Multi-Model Routing:', 'Enabled' if config.routing.multi_model_enabled else 'Disabled'); print('  Search Mode:', config.search_mode.default_mode); print('  Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('  BM25 Weight:', config.search_mode.bm25_weight); print('  Dense Weight:', config.search_mode.dense_weight); print('  Prefer GPU:', config.performance.prefer_gpu); print('  Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'  Reranker Top-K: {config.reranker.top_k_candidates}'); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('  Mmap Vector Storage:', 'Enabled (<1us access)' if config.performance.mmap_storage_enabled else 'Disabled (FAISS reconstruct)')"
+    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); print(f'  Embedding Model: {model_short} ({dim}d, {vram})'); print('  Multi-Model Routing:', 'Enabled' if config.routing.multi_model_enabled else 'Disabled'); print('  Search Mode:', config.search_mode.default_mode); print('  Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('  BM25 Weight:', config.search_mode.bm25_weight); print('  Dense Weight:', config.search_mode.dense_weight); print('  Prefer GPU:', config.performance.prefer_gpu); print('  Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'  Reranker Top-K: {config.reranker.top_k_candidates}'); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('  Output Format:', config.output.format)"
     if "!ERRORLEVEL!" neq "0" (
         echo Error loading configuration
         echo Using defaults: hybrid mode, BM25=0.4, Dense=0.6
@@ -1349,74 +1407,6 @@ if not "!entity_choice!"=="1" if not "!entity_choice!"=="2" (
 pause
 goto search_config_menu
 
-:configure_mmap_storage
-echo.
-echo === Configure Memory-Mapped Vector Storage ===
-echo.
-echo Memory-mapped storage provides ultra-fast vector access (^<1us) by
-echo mapping vector data directly into memory via OS-level page caching.
-echo.
-echo Performance Characteristics:
-echo   - Access Time: 650-850 nanoseconds ^(validated benchmarks^)
-echo   - Cold Start: ~140us first access ^(OS page fault^)
-echo   - Storage Format: CVEC binary format with FNV-1a hash
-echo   - Fallback: FAISS reconstruct if mmap unavailable
-echo.
-echo Trade-offs:
-echo   - Enabled: Ultra-fast access, slightly larger storage ^(+4KB per vector^)
-echo   - Disabled: Standard FAISS reconstruct ^(~500-600ns, no extra storage^)
-echo.
-echo Recommendation: Enable for large projects with frequent vector access.
-echo.
-echo Current Setting:
-.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Mmap Storage:', 'Enabled (<1us access)' if cfg.performance.mmap_storage_enabled else 'Disabled (FAISS reconstruct)')" 2>nul
-echo.
-echo   1. Enable Memory-Mapped Vector Storage
-echo   2. Disable Memory-Mapped Vector Storage
-echo   0. Back to Search Configuration
-echo.
-set "mmap_choice="
-set /p mmap_choice="Select option (0-2): "
-
-if not defined mmap_choice goto search_config_menu
-if "!mmap_choice!"=="" goto search_config_menu
-if "!mmap_choice!"=="0" goto search_config_menu
-
-if "!mmap_choice!"=="1" (
-    echo.
-    echo [INFO] Enabling memory-mapped vector storage...
-    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.mmap_storage_enabled = True; mgr.save_config(cfg); print('[OK] Memory-mapped storage enabled')" 2>nul
-    if errorlevel 1 (
-        echo [ERROR] Failed to save configuration
-    ) else (
-        echo [INFO] New indexes will use mmap storage automatically
-        echo [INFO] Existing indexes need to be re-indexed to enable mmap
-        echo.
-        set "reindex_now="
-        set /p reindex_now="Re-index current project now? (y/N): "
-        if /i "!reindex_now!"=="y" (
-            echo [INFO] Please re-index via: Project Management ^> Re-index Existing Project
-        )
-    )
-)
-if "!mmap_choice!"=="2" (
-    echo.
-    echo [INFO] Disabling memory-mapped vector storage...
-    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.mmap_storage_enabled = False; mgr.save_config(cfg); print('[OK] Memory-mapped storage disabled')" 2>nul
-    if errorlevel 1 (
-        echo [ERROR] Failed to save configuration
-    ) else (
-        echo [INFO] Will use standard FAISS reconstruct for vector access
-    )
-)
-
-if not "!mmap_choice!"=="1" if not "!mmap_choice!"=="2" (
-    echo [ERROR] Invalid choice. Please select 0-2.
-)
-pause
-goto search_config_menu
-
-
 :configure_output_format
 echo.
 echo === Configure Output Format ===
@@ -1485,7 +1475,7 @@ if not "!format_choice!"=="1" if not "!format_choice!"=="2" if not "!format_choi
     echo [ERROR] Invalid choice. Please select 0-3.
 )
 pause
-goto search_config_menu
+goto menu_restart
 
 
 :reset_config
@@ -1645,7 +1635,7 @@ echo.
 echo This server enables hybrid semantic code search in Claude Code.
 echo.
 echo Key Features:
-echo   - 15 MCP Tools: Index, search, configure, manage projects
+echo   - 17 MCP Tools: Index, search, configure, manage projects
 echo   - Low-Level MCP SDK: Official Anthropic implementation
 echo   - Multi-Model Routing: BGE-M3 + Qwen3 + CodeRankEmbed ^(optional^)
 echo   - Hybrid Search: BM25 + Semantic for optimal accuracy
@@ -1661,7 +1651,7 @@ echo   4. Index: /index_directory "your-project-path"
 echo   5. Search: /search_code "your query"
 echo.
 echo Interactive Menu Usage:
-echo   start_mcp_server.cmd          - Launch interactive menu ^(8 options^)
+echo   start_mcp_server.cmd          - Launch interactive menu
 echo   start_mcp_server.cmd --help   - Show this help
 echo   start_mcp_server.cmd --debug  - Start with debug logging
 echo.

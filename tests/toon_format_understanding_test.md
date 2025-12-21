@@ -24,6 +24,7 @@ Start the interactive menu and navigate to:
 ```
 
 Or via MCP tool (if available):
+
 ```python
 # Set TOON format via config
 from search.config import SearchConfigManager
@@ -34,6 +35,7 @@ mgr.save_config(cfg)
 ```
 
 **Verification**: Check that format is set:
+
 ```python
 from search.config import get_search_config
 print(get_search_config().output.format)  # Should print: toon
@@ -50,11 +52,13 @@ Run this MCP search to get TOON-formatted results:
 ```
 
 This should return results about the `_to_toon_format` function with:
+
 - Direct callers (if any)
 - Indirect callers (if any)
 - Similar code chunks
 
 **Expected**: Response will contain TOON-formatted arrays with headers like:
+
 - `"direct_callers[N]{chunk_id,kind,score}"`
 - `"similar_code[N]{chunk_id,kind,score}"`
 
@@ -65,6 +69,7 @@ This should return results about the `_to_toon_format` function with:
 Look at the response and answer the following questions. **Write your answers in the test results file (see Step 5)**.
 
 ### Question 1: Format Note
+
 **Q1**: What is the value of the `_format_note` field in the response?
 
 **Your answer**: [Write the exact string here]
@@ -72,6 +77,7 @@ Look at the response and answer the following questions. **Write your answers in
 ---
 
 ### Question 2: Header Parsing
+
 Identify a TOON header from the response (e.g., `"direct_callers[5]{chunk_id,kind,score}"`).
 
 **Q2a**: What is the array name?
@@ -89,9 +95,11 @@ Identify a TOON header from the response (e.g., `"direct_callers[5]{chunk_id,kin
 ---
 
 ### Question 3: Row Value Extraction
+
 Using the same TOON array from Q2, look at the first row of values.
 
 Example format:
+
 ```json
 "direct_callers[5]{chunk_id,kind,score}": [
   ["mcp_server/server.py:124-149:function:handle_call_tool", "function", 0.95],
@@ -114,11 +122,13 @@ Example format:
 ---
 
 ### Question 4: Data Reconstruction
+
 Based on the TOON format, reconstruct the first result as a standard JSON object.
 
 **Q4**: Write the reconstructed object in JSON format:
 
 **Your answer**:
+
 ```json
 {
   "chunk_id": "...",
@@ -130,6 +140,7 @@ Based on the TOON format, reconstruct the first result as a standard JSON object
 ---
 
 ### Question 5: Multiple Arrays
+
 If the response contains multiple TOON arrays (e.g., both `direct_callers` and `similar_code`):
 
 **Q5a**: How many total TOON arrays are in the response?
@@ -143,6 +154,7 @@ If the response contains multiple TOON arrays (e.g., both `direct_callers` and `
 ---
 
 ### Question 6: Understanding Check
+
 **Q6**: In your own words, explain how TOON format works. What are the benefits and how do you parse it?
 
 **Your answer**: [Write 2-3 sentences explaining your understanding]

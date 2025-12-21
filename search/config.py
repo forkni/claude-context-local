@@ -210,9 +210,6 @@ class PerformanceConfig:
     enable_auto_reindex: bool = True
     max_index_age_minutes: float = 5.0
 
-    # Memory-mapped vector storage (Phase 3)
-    mmap_storage_enabled: bool = True  # Enabled by default for <1μs vector access
-
 
 @dataclass
 class MultiHopConfig:
@@ -248,7 +245,7 @@ class OutputConfig:
     """MCP output formatting settings (1 field)."""
 
     format: str = (
-        "compact"  # json, compact, toon (default: compact for 30-40% token reduction)
+        "toon"  # json, compact, toon (default: toon for 45-55% token reduction)
     )
 
 
@@ -337,7 +334,6 @@ class SearchConfig:
             "dynamic_batch_max": self.performance.dynamic_batch_max,
             "enable_auto_reindex": self.performance.enable_auto_reindex,
             "max_index_age_minutes": self.performance.max_index_age_minutes,
-            "mmap_storage_enabled": self.performance.mmap_storage_enabled,
             # MultiHopConfig fields
             "enable_multi_hop": self.multi_hop.enabled,
             "multi_hop_count": self.multi_hop.hop_count,
@@ -418,7 +414,6 @@ class SearchConfig:
             dynamic_batch_max=data.get("dynamic_batch_max", 384),
             enable_auto_reindex=data.get("enable_auto_reindex", True),
             max_index_age_minutes=data.get("max_index_age_minutes", 5.0),
-            mmap_storage_enabled=data.get("mmap_storage_enabled", False),
         )
 
         multi_hop = MultiHopConfig(
@@ -546,10 +541,6 @@ class SearchConfigManager:
             "CLAUDE_DYNAMIC_BATCH_MAX": ("dynamic_batch_max", int),
             "CLAUDE_AUTO_REINDEX": ("enable_auto_reindex", self._bool_from_env),
             "CLAUDE_MAX_INDEX_AGE": ("max_index_age_minutes", float),
-            "CLAUDE_MMAP_STORAGE_ENABLED": (
-                "mmap_storage_enabled",
-                self._bool_from_env,
-            ),
             "CLAUDE_ENABLE_MULTI_HOP": ("enable_multi_hop", self._bool_from_env),
             "CLAUDE_MULTI_HOP_COUNT": ("multi_hop_count", int),
             "CLAUDE_MULTI_HOP_EXPANSION": ("multi_hop_expansion", float),

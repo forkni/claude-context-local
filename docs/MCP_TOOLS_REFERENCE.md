@@ -118,6 +118,7 @@ All 17 MCP tools support configurable output formatting via the `output_format` 
 ### Configuration
 
 **Set default format** (persists across sessions):
+
 ```bash
 # Via interactive menu
 start_mcp_server.cmd → 3. Search Configuration → A. Configure Output Format
@@ -127,6 +128,7 @@ start_mcp_server.cmd → 3. Search Configuration → A. Configure Output Format
 ```
 
 **Override per-query**:
+
 ```python
 # Use TOON format for this query only
 search_code("authentication", k=10, output_format="toon")
@@ -140,17 +142,20 @@ TOON format optimizes token usage by declaring field names once in a header, the
 #### Format Structure
 
 **Header Pattern**: `"array_name[count]{field1,field2,field3}"`
+
 - `array_name`: Name of the array (e.g., "results", "callers")
 - `[count]`: Number of elements in the array
 - `{fields}`: Comma-separated field names in order
 
 **Data Pattern**: `[[val1, val2, val3], [val1, val2, val3], ...]`
+
 - Each row is an array of values
 - Values map to fields by position (index 0 → field1, index 1 → field2, etc.)
 
 #### Examples
 
 **Standard JSON** (baseline):
+
 ```json
 {
   "results": [
@@ -159,9 +164,11 @@ TOON format optimizes token usage by declaring field names once in a header, the
   ]
 }
 ```
+
 **Tokens**: ~60 chars for field names × 2 = 120 chars overhead
 
 **TOON Format** (45-55% reduction):
+
 ```json
 {
   "results[2]{chunk_id,kind,score}": [
@@ -171,6 +178,7 @@ TOON format optimizes token usage by declaring field names once in a header, the
   "_format_note": "TOON format: header[count]{fields}: [[row1], [row2], ...]"
 }
 ```
+
 **Tokens**: 36 chars for field names × 1 = 36 chars overhead (70% reduction)
 
 #### Parsing TOON Format
@@ -183,6 +191,7 @@ TOON format optimizes token usage by declaring field names once in a header, the
    - Fields: `["chunk_id", "kind", "score"]`
 
 2. **Map row values to fields**:
+
    ```python
    fields = ["chunk_id", "kind", "score"]
    row1 = ["auth.py:10-25:function:login", "function", 0.95]
@@ -202,6 +211,7 @@ TOON format optimizes token usage by declaring field names once in a header, the
 **Query**: `find_connections("mcp_server/output_formatter.py:109-177:function:_to_toon_format")`
 
 **TOON Response**:
+
 ```json
 {
   "symbol": "_to_toon_format",
@@ -219,6 +229,7 @@ TOON format optimizes token usage by declaring field names once in a header, the
 ```
 
 **Token Savings**:
+
 - Standard JSON: 10 similar_code results × 3 fields = 30 field name occurrences
 - TOON format: 3 field names declared once = 3 occurrences
 - **Reduction**: (30-3)/30 = 90% field name token savings for this array
@@ -235,6 +246,7 @@ Different arrays in the same response can have different schemas:
 ```
 
 Notice:
+
 - `direct_callers` has 3 fields
 - `uses_types` has 6 fields
 - Both use TOON format with appropriate headers
@@ -249,7 +261,8 @@ Notice:
 | Compact | 2,167 | ~541 | 33.5% |
 | TOON | 1,877 | ~469 | 42.4% |
 
-**Recommendation**: 
+**Recommendation**:
+
 - Use **compact** as default (good balance of readability and efficiency)
 - Use **toon** for large result sets (k > 10) or bandwidth-constrained environments
 - Use **json** only for debugging or when you need maximum readability
