@@ -5,6 +5,9 @@
 !.claude/skills/mcp-search-tool/
 .claude/skills/mcp-search-tool/*
 !.claude/skills/mcp-search-tool/SKILL.md
+!.claude/commands/
+.claude/commands/*
+!.claude/commands/mcp-search.md
 
 # Development workflow (keep in development branch only)
 .githooks/
