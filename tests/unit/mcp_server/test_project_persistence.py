@@ -1,6 +1,7 @@
 """Unit tests for project persistence module."""
 
 import json
+import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -265,6 +266,7 @@ class TestGetProjectDisplayName:
         name = get_project_display_name(path)
         assert name == "my-project"
 
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only path handling")
     def test_windows_path(self):
         """Test extracting name from Windows path."""
         path = "C:\\Users\\user\\projects\\my-project"

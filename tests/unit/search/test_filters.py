@@ -1,5 +1,9 @@
 """Unit tests for search/filters.py drive-agnostic path utilities."""
 
+import sys
+
+import pytest
+
 from search.filters import (
     compute_drive_agnostic_hash,
     compute_legacy_hash,
@@ -39,6 +43,9 @@ class TestDriveAgnosticPaths:
         # Single letter directory (not a drive on Unix)
         assert extract_drive_agnostic_path("/D/Projects") == "/D/Projects"
 
+    @pytest.mark.skipif(
+        sys.platform != "win32", reason="Windows-only drive letter handling"
+    )
     def test_compute_drive_agnostic_hash_same_for_different_drives(self):
         """Test that same project on different drives produces same hash."""
         hash1 = compute_drive_agnostic_hash("F:/Projects/MyApp")
@@ -124,6 +131,9 @@ class TestDriveAgnosticPaths:
         )
         assert not result.startswith("F:")
 
+    @pytest.mark.skipif(
+        sys.platform != "win32", reason="Windows-only drive letter handling"
+    )
     def test_legacy_vs_agnostic_hash_difference(self):
         """Test that legacy and agnostic hashes differ for drive-letter paths."""
         legacy = compute_legacy_hash("F:/Projects/MyApp")
