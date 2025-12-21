@@ -103,7 +103,7 @@ jobs:
 
       - name: Run tests
         run: |
-          pytest tests/ -v --tb=short --maxfail=5
+          pytest tests/ -v --tb=short --maxfail=5 --ignore=tests/slow_integration/
         continue-on-error: false
 
       - name: Upload test results

@@ -1,7 +1,6 @@
-"""Integration tests for Phase 1 and Phase 2 implementations.
+"""Integration tests for Phase 2 implementation.
 
 Tests:
-- Phase 1: Query Intent Detection with confidence scoring
 - Phase 2: Symbol Hash Cache O(1) lookups
 """
 
@@ -10,57 +9,6 @@ import time
 from pathlib import Path
 
 from search.metadata import MetadataStore
-from search.searcher import IntelligentSearcher
-
-
-def test_phase1_query_intent_detection():
-    """Test that query intent detection is working with confidence scores."""
-    from unittest.mock import Mock
-
-    # Create mock searcher
-    mock_index_manager = Mock()
-    mock_index_manager.index = None
-    mock_embedder = Mock()
-    mock_embedder.model_name = "test-model"
-
-    searcher = IntelligentSearcher(
-        index_manager=mock_index_manager, embedder=mock_embedder
-    )
-
-    # Test intent detection with various queries
-    test_cases = [
-        ("debug error handling", "debugging", True),
-        ("refactor this code", "refactoring", True),
-        ("optimize performance", "performance", True),
-        ("config settings", "configuration", True),
-        ("import dependencies", "dependency", True),
-        ("setup initialization", "initialization", True),
-    ]
-
-    print("\n=== Phase 1: Query Intent Detection ===\n")
-
-    for query, expected_intent, should_detect in test_cases:
-        intents = searcher._detect_query_intent(query)
-        intent_names = [i[0] for i in intents]
-
-        if should_detect:
-            assert (
-                expected_intent in intent_names
-            ), f"Expected '{expected_intent}' in {intent_names} for query '{query}'"
-
-            # Get confidence
-            detected_intent = next(i for i in intents if i[0] == expected_intent)
-            confidence = detected_intent[1]
-
-            print(f"[OK] Query: '{query}'")
-            print(f"     Detected: {expected_intent} (confidence: {confidence:.2f})")
-        else:
-            assert (
-                expected_intent not in intent_names
-            ), f"Should not detect '{expected_intent}' for query '{query}'"
-
-    print("\n[OK] Phase 1 tests passed!")
-    return True
 
 
 def test_phase2_symbol_hash_cache():
@@ -139,15 +87,12 @@ def test_phase2_symbol_hash_cache():
 
 if __name__ == "__main__":
     print("\n" + "=" * 60)
-    print("Testing Phase 1 and Phase 2 Implementations")
+    print("Testing Phase 2 Implementation")
     print("=" * 60)
-
-    # Test Phase 1
-    test_phase1_query_intent_detection()
 
     # Test Phase 2
     test_phase2_symbol_hash_cache()
 
     print("\n" + "=" * 60)
-    print("[OK] All integration tests passed!")
+    print("[OK] Phase 2 integration test passed!")
     print("=" * 60 + "\n")

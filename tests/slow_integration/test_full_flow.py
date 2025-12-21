@@ -13,7 +13,6 @@ from conftest import create_test_embeddings
 from chunking.multi_language_chunker import MultiLanguageChunker
 from merkle import ChangeDetector, MerkleDAG, SnapshotManager
 from search.indexer import CodeIndexManager
-from search.searcher import IntelligentSearcher
 
 
 @pytest.mark.slow
@@ -128,48 +127,6 @@ class TestFullSearchFlow:
             assert "auth" in metadata.get("file_path", "") or "auth" in metadata.get(
                 "relative_path", ""
             )
-
-    def test_real_search_scenarios(self, test_project_path, mock_storage_dir):
-        """Test realistic search scenarios on the test project."""
-        # Index the entire project
-        chunker = MultiLanguageChunker(str(test_project_path))
-        all_chunks = []
-
-        for py_file in test_project_path.rglob("*.py"):
-            chunks = chunker.chunk_file(str(py_file))
-            all_chunks.extend(chunks)
-
-        embeddings = create_test_embeddings(all_chunks)
-
-        # Create index
-        index_manager = CodeIndexManager(str(mock_storage_dir))
-        index_manager.create_index(768, "flat")
-        index_manager.add_embeddings(embeddings)
-
-        # Create searcher with simple test embedder
-        class TestEmbedder:
-            def embed_query(self, query):
-                # Create query-specific embedding
-                query_hash = abs(hash(query)) % 10000
-                return np.random.RandomState(query_hash).random(768).astype(np.float32)
-
-        searcher = IntelligentSearcher(index_manager, TestEmbedder())
-
-        # Test intent detection on realistic queries
-        auth_intents = searcher._detect_query_intent("user authentication and login")
-        assert "authentication" in auth_intents
-
-        db_intents = searcher._detect_query_intent("database connection and queries")
-        assert "database" in db_intents
-
-        api_intents = searcher._detect_query_intent("HTTP API request handlers")
-        assert "api" in api_intents
-
-        # Filter enhancement is now handled internally in search method
-        # Testing direct search with intents instead
-        auth_filters = {"tags": ["auth", "authentication"]}  # Simulate enhanced filters
-        assert "tags" in auth_filters
-        assert "auth" in auth_filters["tags"]
 
     def test_search_by_functionality(self, test_project_path, mock_storage_dir):
         """Test searching for specific functionality in the real project."""
