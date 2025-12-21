@@ -56,7 +56,6 @@ What are you trying to do?
 | **search_code** | 🔴 Essential | Find code with NL query or chunk_id lookup | `query`, `chunk_id`, `chunk_type`, `include_dirs`, `exclude_dirs` | [Details](#1-search_codequery-or-chunk_id-k5-search_modehybrid-model_keynone-use_routingtrue-file_patternnone-include_dirsnone-exclude_dirsnone-chunk_typenone-include_contexttrue-auto_reindextrue-max_age_minutes5) |
 | **find_connections** | 🔴 Essential | Find callers, dependencies, flow (graph analysis) | `chunk_id`, `symbol_name`, `max_depth`, `exclude_dirs` | [Details](#3-find_connectionschunk_idnone-symbol_namenone-max_depth3-exclude_dirsnone) |
 | **index_directory** | 🔴 Setup | Index project for search (one-time) | `directory_path`, `incremental`, `multi_model`, `include_dirs`, `exclude_dirs` | [Details](#2-index_directorydirectory_path-project_namenone-incrementaltrue-multi_modelnone-include_dirsnone-exclude_dirsnone) |
-| find_similar_code | Secondary | Find functionally similar code | `chunk_id`, `k` | [Details](#11-find_similar_codechunk_id-k5) |
 | list_projects | Management | Show all indexed projects | *(none)* | [Details](#4-list_projects) |
 | switch_project | Management | Change active project | `project_path` | [Details](#5-switch_projectproject_path) |
 | get_index_status | Status | Check index health | *(none)* | [Details](#6-get_index_status) |
@@ -89,7 +88,7 @@ What are you trying to do?
 
 | Document | Purpose | When to Consult |
 |----------|---------|-----------------|
-| [MCP_TOOLS_REFERENCE.md](docs/MCP_TOOLS_REFERENCE.md) | Complete tool reference (15 tools, all parameters) | Detailed parameter options, filter behaviors |
+| [MCP_TOOLS_REFERENCE.md](docs/MCP_TOOLS_REFERENCE.md) | Complete tool reference (17 tools, all parameters) | Detailed parameter options, filter behaviors |
 | [HYBRID_SEARCH_CONFIGURATION_GUIDE.md](docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md) | Search modes, weights, multi-model routing | Tuning search quality, mode selection |
 | [ADVANCED_FEATURES_GUIDE.md](docs/ADVANCED_FEATURES_GUIDE.md) | Multi-hop, graph search, call graph resolution | Understanding advanced features |
 

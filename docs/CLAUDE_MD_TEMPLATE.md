@@ -4,7 +4,7 @@ This template helps you set up a `CLAUDE.md` file in your project to maximize ef
 
 ## Why Use CLAUDE.md?
 
-- **93% Token Reduction**: Enforces search-first workflow (400 tokens vs 5,600 tokens)
+- **63% Token Reduction**: Real-world efficiency with mixed approach (benchmarked)
 - **10x Faster**: Semantic search (3-5s) vs traditional file reading (30-60s)
 - **Immediate Access**: MCP tools visible to Claude without explaining each time
 - **Project-Specific**: Customize instructions for your codebase
@@ -28,11 +28,11 @@ Create a `CLAUDE.md` file in your project root with this content:
 
 ### Performance Impact
 
-| Method | Tokens | Speed | Result |
-|--------|--------|-------|--------|
-| Traditional file reading | 5,600 tokens | 30-60s | Limited context |
-| Semantic search | 400 tokens | 3-5s | Precision targeting |
-| **Token savings** | **93%** | **10x faster** | **Cross-file relationships** |
+| Method | Tokens/Query | Speed | Result |
+|--------|--------------|-------|--------|
+| Traditional file reading | 19,524 tokens | 36s | Limited context |
+| Mixed approach (MCP + tools) | 7,200 tokens | 19s | Precision targeting |
+| **Token savings** | **63%** | **1.9x faster** | **Cross-file relationships** |
 
 ### Critical Rules
 
@@ -46,7 +46,7 @@ Create a `CLAUDE.md` file in your project root with this content:
 
 ---
 
-## Available MCP Tools (15)
+## Available MCP Tools (17)
 
 | Tool | Priority | Purpose |
 |------|----------|---------|
@@ -56,6 +56,7 @@ Create a `CLAUDE.md` file in your project root with this content:
 | find_similar_code | Secondary | Find alternative implementations |
 | configure_search_mode | Config | Set search mode (hybrid/semantic/BM25) |
 | configure_query_routing | Config | Configure multi-model routing |
+| configure_reranking | Config | Configure neural reranking |
 | get_search_config_status | Config | View current search configuration |
 | list_embedding_models | Config | List available models |
 | switch_embedding_model | Config | Switch between models |
@@ -64,6 +65,7 @@ Create a `CLAUDE.md` file in your project root with this content:
 | list_projects | Management | Show indexed projects |
 | switch_project | Management | Change active project |
 | clear_index | Reset | Delete current index |
+| delete_project | Management | Safely delete indexed project |
 | cleanup_resources | Cleanup | Free memory/caches |
 
 ### Quick Examples

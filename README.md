@@ -29,7 +29,7 @@
 ## Highlights
 
 - **Hybrid Search**: BM25 + semantic fusion (44.4% precision, 100% MRR) - [benchmarks](docs/BENCHMARKS.md)
-- **85-95% Token Reduction**: Semantic search vs traditional file reading - [benchmark](docs/BENCHMARKS.md)
+- **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
 - **Multi-Model Routing**: Intelligent query routing (Qwen3, BGE-M3, CodeRankEmbed) with 100% accuracy - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md)
 - **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
 - **17 MCP Tools**: Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
@@ -89,7 +89,24 @@ After the server starts, connect in Claude Code:
 2. Select **Reconnect** next to `code-search`
 3. Wait for "Connected" confirmation
 
-### 5. Start Searching
+### 5. Load MCP Search Context
+
+**IMPORTANT**: Run this command at the beginning of each session to load optimal search workflows:
+
+```
+/mcp-search
+```
+
+This command loads the [mcp-search-tool](.claude/skills/mcp-search-tool/SKILL.md) skill, which provides Claude with:
+- Complete MCP tool reference (all 17 tools)
+- Search-first protocol enforcement
+- 2-step workflow for relationship queries (search → find_connections)
+- Project context validation before searches
+- 40-45% additional token savings through optimal tool usage
+
+> **Tip**: Running `/mcp-search` ensures Claude uses semantic search efficiently and follows best practices for token optimization.
+
+### 6. Start Searching
 
 Now simply ask Claude Code natural questions about your codebase:
 
@@ -99,7 +116,7 @@ Now simply ask Claude Code natural questions about your codebase:
 
 Claude Code will automatically use the semantic search tools to find relevant code.
 
-**That's it!** You're now searching your code semantically with 85-95% fewer tokens.
+**That's it!** You're now searching your code semantically with up to 63% fewer tokens (real-world benchmarked).
 
 ## How It Works
 
@@ -206,6 +223,7 @@ These tools are available to Claude Code as `mcp__code-search__*` functions. You
 
 - `configure_search_mode` - Set hybrid search parameters
 - `configure_query_routing` - Configure multi-model routing
+- `configure_reranking` - Configure neural reranking
 - `get_search_config_status` - View current configuration
 - `list_embedding_models` - List available models
 - `switch_embedding_model` - Switch between models
@@ -216,6 +234,7 @@ These tools are available to Claude Code as `mcp__code-search__*` functions. You
 - `get_memory_status` - Monitor RAM/VRAM usage
 - `cleanup_resources` - Free memory and caches
 - `clear_index` - Reset search index
+- `delete_project` - Safely delete indexed project
 - `list_projects` - List indexed projects
 - `switch_project` - Switch between projects
 
@@ -333,13 +352,36 @@ scripts\batch\repair_installation.bat
 - [Installation Guide](docs/INSTALLATION_GUIDE.md) - Setup, configuration, troubleshooting
 - [MCP Tools Reference](docs/MCP_TOOLS_REFERENCE.md) - Complete tool documentation
 - [Advanced Features Guide](docs/ADVANCED_FEATURES_GUIDE.md) - Multi-model routing, graph search, optimization
-- [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) - Project setup template
+- [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) - **Setup guide for your projects** (see below)
 
 ### Configuration & Performance
 
 - [Hybrid Search Configuration](docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md) - Search modes and tuning
-- [Model Migration Guide](docs/MODEL_MIGRATION_GUIDE.md) - Switching embedding models
-- [Benchmarks](docs/BENCHMARKS.md) - Performance metrics and comparisons
+- [Benchmarks](docs/BENCHMARKS.md) - Real-world performance metrics (63% token reduction)
+
+### Using CLAUDE.md Template in Your Projects
+
+The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic search in your own projects:
+
+**Quick Setup**:
+1. Copy template content from [docs/CLAUDE_MD_TEMPLATE.md](docs/CLAUDE_MD_TEMPLATE.md)
+2. Create `CLAUDE.md` in your project root
+3. Update the `index_directory` path to match your project
+4. Claude Code automatically reads `CLAUDE.md` when you open that project
+
+**Benefits**:
+- **63% token reduction** through enforced search-first workflow
+- **Immediate MCP tool access** without explaining tools each session
+- **Project-specific instructions** for your codebase conventions
+- **Automatic context loading** for all team members
+
+**Customization**:
+- Add project-specific coding conventions
+- Include architecture notes
+- Document common patterns
+- Specify preferred search modes
+
+> **See**: [docs/CLAUDE_MD_TEMPLATE.md](docs/CLAUDE_MD_TEMPLATE.md) for complete template and usage examples
 
 ### Development
 
