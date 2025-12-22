@@ -204,7 +204,6 @@ start_mcp_server.cmd → 3 (Search Configuration)
 | **hybrid** (default) | BM25 + Semantic fusion | 487ms | 44.4% precision, 100% MRR | ✅ Operational |
 | **semantic** | Dense vector search | 487ms | 38.9% precision, 100% MRR | ✅ Operational |
 | **bm25** | Text-based sparse search | 162ms | 33.3% precision, 61.1% MRR | ✅ Operational |
-| **auto** | Adaptive mode selection | Adaptive | Context-dependent | ✅ Operational |
 
 **Configuration**: See [Hybrid Search Configuration Guide](docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md)
 
@@ -294,11 +293,12 @@ set CLAUDE_MULTI_MODEL_ENABLED=true
 | **EmbeddingGemma-300m** (default) | 768 | 4-8GB | Fast, efficient, smaller projects |
 | **BGE-M3** | 1024 | 8-16GB | Higher accuracy (+13.6% F1), production |
 | **Qwen3-0.6B** | 1024 | 2.3GB | Routing pool, high efficiency |
+| **Qwen3-4B** | 1024 | 8-10GB | Best quality with MRL, 4B parameters |
 | **CodeRankEmbed** | 768 | 2GB | Code-specific retrieval |
 
 **Instant model switching**: <150ms with per-model index storage - no re-indexing needed!
 
-**See also**: [Model Migration Guide](docs/MODEL_MIGRATION_GUIDE.md), [Advanced Features](docs/ADVANCED_FEATURES_GUIDE.md#multi-model-query-routing)
+**See also**: [Advanced Features](docs/ADVANCED_FEATURES_GUIDE.md#multi-model-query-routing)
 
 ## Architecture
 
@@ -313,7 +313,7 @@ claude-context-local/
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 750+ tests (unit + integration)
+└── tests/             # 1,054+ tests (unit + integration)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -331,6 +331,9 @@ claude-context-local/
 ```powershell
 # Comprehensive system check
 verify-installation.cmd
+
+# Verify HuggingFace authentication
+verify-hf-auth.cmd
 
 # Repair common issues
 scripts\batch\repair_installation.bat
