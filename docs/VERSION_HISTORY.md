@@ -1071,7 +1071,7 @@ set CLAUDE_MULTI_MODEL_ENABLED=false # Disable
 
 - Hybrid search implementation (BM25 + semantic)
 - RRF (Reciprocal Rank Fusion) reranking
-- Configurable search modes (hybrid/semantic/bm25/auto)
+- Configurable search modes (hybrid/semantic/bm25)
 - FAISS vector search optimization
 
 ### v0.2.x - Multi-Language Support

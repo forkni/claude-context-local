@@ -1056,7 +1056,7 @@ Startup (server starts):              0 MB VRAM (lazy loading)
 - **Traditional file reading**: ~5,600 tokens for 3 files
 - **Semantic search**: ~400 tokens for targeted results
 - **Reduction**: 63% fewer tokens used
-- **Speed**: 5-10x faster than loading full files
+- **Speed**: 2-3x faster than traditional approach
 
 ## Maintenance
 

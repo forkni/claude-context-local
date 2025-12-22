@@ -10,7 +10,7 @@ This modular reference can be embedded in any project instructions for Claude Co
 
 | Tool | Priority | Purpose | Parameters |
 |------|----------|---------|------------|
-| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=5, search_mode="auto", model_key, use_routing=True, file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5 |
+| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=5, search_mode="hybrid", model_key, use_routing=True, file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5 |
 | **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (~90% accuracy with import resolution) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs |
 | **index_directory** | 🔴 **SETUP** | Index project (multi-model support) | directory_path (required), project_name, incremental=True, multi_model=auto |
 | find_similar_code | Secondary | Find alternative implementations | chunk_id (required), k=5 |
@@ -311,7 +311,7 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 | Metric | Traditional Reading | Semantic Search (First) | Semantic Search (Cached) | Improvement |
 |--------|---------------------|-------------------------|--------------------------|-------------|
 | Tokens | 5,600 | 400 | 400 | 93% reduction |
-| Speed | 30-60s | 8-15s (includes 5-10s model load) | 3-5s | 3-10x faster |
+| Speed | 30-60s | 8-15s (includes 5-10s model load) | 3-5s | 2-3x faster |
 | VRAM | 0 MB | 0 MB → 1.5-5.3 GB (on-demand) | 1.5-5.3 GB | Lazy loading |
 | Accuracy | Hit-or-miss | Targeted | Targeted | Precision |
 
@@ -1105,7 +1105,7 @@ When multi-model mode is enabled, `index_directory` automatically indexes with *
 - Results: 3 relevant chunks (400 tokens)
 - **Total**: 400 tokens
 
-**Savings**: 63% token reduction + 3-10x speed increase
+**Savings**: 63% token reduction + 2-3x speed increase
 
 ---
 

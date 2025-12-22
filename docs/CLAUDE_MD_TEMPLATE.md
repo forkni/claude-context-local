@@ -5,7 +5,7 @@ This template helps you set up a `CLAUDE.md` file in your project to maximize ef
 ## Why Use CLAUDE.md?
 
 - **63% Token Reduction**: Real-world efficiency with mixed approach (benchmarked)
-- **10x Faster**: Semantic search (3-5s) vs traditional file reading (30-60s)
+- **2x Faster**: Mixed approach (8 min) vs traditional (15 min) - validated benchmark
 - **Immediate Access**: MCP tools visible to Claude without explaining each time
 - **Project-Specific**: Customize instructions for your codebase
 
