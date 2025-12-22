@@ -281,8 +281,8 @@ sample_dataset.json
 audit_reports/
 *-audit.json
 test-audit*.json
-tools/summarize_audit.py  # Local development tool for audit analysis
-tools/benchmark_models.py  # Local development tool for model benchmarking
+tools/summarize_audit.py
+tools/benchmark_models.py
 
 # Development-only tests (require local evaluation module, invalid imports, or gated models)
 tests/unit/test_evaluation.py
