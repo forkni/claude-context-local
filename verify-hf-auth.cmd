@@ -9,7 +9,10 @@ echo =================================================
 
 REM Set project directory to current location
 set "PROJECT_DIR=%~dp0"
-cd /d "%PROJECT_DIR%"
+pushd "%PROJECT_DIR%" || (
+    echo [ERROR] Failed to change to project directory
+    exit /b 1
+)
 
 REM Check if virtual environment exists
 if not exist ".venv" (
@@ -35,6 +38,8 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo.
-echo Verification completed. Press any key to exit.
-pause
+echo Verification completed.
+echo Press any key to exit . . .
+pause >nul
+popd
 exit /b %ERRORLEVEL%

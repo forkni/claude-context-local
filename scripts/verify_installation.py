@@ -672,7 +672,7 @@ if __name__ == "__main__":
     print()
     # Only wait for input if running interactively
     if sys.stdin.isatty():
-        print("Press any key to exit...")
+        print("Press any key to exit . . .")
         try:
             import msvcrt
 

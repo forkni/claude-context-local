@@ -1,10 +1,11 @@
 """Manages Merkle tree snapshots for persistent change tracking."""
 
-import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+
+from search.filters import compute_drive_agnostic_hash, compute_legacy_hash
 
 from .merkle_dag import MerkleDAG
 
@@ -24,21 +25,69 @@ class SnapshotManager:
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
     def get_project_id(self, project_path: str) -> str:
-        """Generate a unique ID for a project based on its path.
+        """Generate a unique ID for a project based on its path (drive-agnostic).
 
         Args:
             project_path: Path to project
 
         Returns:
-            MD5 hash of the normalized path
+            MD5 hash of the drive-agnostic path (32 chars)
         """
-        normalized_path = str(Path(project_path).resolve())
-        return hashlib.md5(normalized_path.encode()).hexdigest()
+        return compute_drive_agnostic_hash(project_path, length=32)
+
+    def _get_legacy_project_id(self, project_path: str) -> str:
+        """Generate project ID using original hashing algorithm.
+
+        Args:
+            project_path: Path to project
+
+        Returns:
+            MD5 hash of the full resolved path (32 chars)
+        """
+        return compute_legacy_hash(project_path, length=32)
+
+    def _get_model_slug_and_dimension(
+        self, dimension: Optional[int] = None
+    ) -> Tuple[str, int]:
+        """Get model slug and dimension, auto-detecting from config if needed.
+
+        Args:
+            dimension: Optional explicit dimension. If None, auto-detects from config.
+
+        Returns:
+            Tuple of (model_slug, dimension)
+        """
+        if dimension is None:
+            try:
+                # Use ServiceLocator to avoid circular dependency
+                from mcp_server.services import ServiceLocator
+                from search.config import get_model_slug
+
+                config = ServiceLocator.instance().get_config()
+                dimension = config.embedding.dimension
+                model_slug = get_model_slug(config.embedding.model_name)
+            except Exception:
+                # Fallback to default if config unavailable
+                dimension = 768
+                model_slug = "unknown"
+        else:
+            # If dimension is provided explicitly, we need to get the current model slug
+            try:
+                # Use ServiceLocator to avoid circular dependency
+                from mcp_server.services import ServiceLocator
+                from search.config import get_model_slug
+
+                config = ServiceLocator.instance().get_config()
+                model_slug = get_model_slug(config.embedding.model_name)
+            except Exception:
+                model_slug = "unknown"
+
+        return model_slug, dimension
 
     def get_snapshot_path(
         self, project_path: str, dimension: Optional[int] = None
     ) -> Path:
-        """Get the snapshot file path for a project with per-model slug and dimension suffix.
+        """Get the snapshot file path for a project, checking both new and legacy hashes.
 
         Args:
             project_path: Path to project
@@ -48,47 +97,31 @@ class SnapshotManager:
         Returns:
             Path to snapshot file with model slug and dimension suffix
         """
-        project_id = self.get_project_id(project_path)
+        model_slug, dimension = self._get_model_slug_and_dimension(dimension)
 
-        # Auto-detect dimension and model slug from current config if not provided
-        if dimension is None:
-            try:
-                # Import here to avoid circular dependency
-                import sys
-                from pathlib import Path as PathLib
-
-                # Add parent directory to path for imports
-                parent_dir = PathLib(__file__).parent.parent
-                if str(parent_dir) not in sys.path:
-                    sys.path.insert(0, str(parent_dir))
-
-                from search.config import get_model_slug, get_search_config
-
-                config = get_search_config()
-                dimension = config.model_dimension
-                model_slug = get_model_slug(config.embedding_model_name)
-            except Exception:
-                # Fallback to default if config unavailable
-                dimension = 768
-                model_slug = "unknown"
-        else:
-            # If dimension is provided explicitly, we need to get the current model slug
-            try:
-                from search.config import get_model_slug, get_search_config
-
-                config = get_search_config()
-                model_slug = get_model_slug(config.embedding_model_name)
-            except Exception:
-                model_slug = "unknown"
-
-        return (
-            self.storage_dir / f"{project_id}_{model_slug}_{dimension}d_snapshot.json"
+        # Try new hash first (drive-agnostic)
+        new_id = self.get_project_id(project_path)
+        new_path = (
+            self.storage_dir / f"{new_id}_{model_slug}_{dimension}d_snapshot.json"
         )
+        if new_path.exists():
+            return new_path
+
+        # Fallback to legacy hash for existing projects
+        legacy_id = self._get_legacy_project_id(project_path)
+        legacy_path = (
+            self.storage_dir / f"{legacy_id}_{model_slug}_{dimension}d_snapshot.json"
+        )
+        if legacy_path.exists():
+            return legacy_path
+
+        # Return new path for creation
+        return new_path
 
     def get_metadata_path(
         self, project_path: str, dimension: Optional[int] = None
     ) -> Path:
-        """Get the metadata file path for a project with per-model slug and dimension suffix.
+        """Get the metadata file path for a project, checking both new and legacy hashes.
 
         Args:
             project_path: Path to project
@@ -98,42 +131,26 @@ class SnapshotManager:
         Returns:
             Path to metadata file with model slug and dimension suffix
         """
-        project_id = self.get_project_id(project_path)
+        model_slug, dimension = self._get_model_slug_and_dimension(dimension)
 
-        # Auto-detect dimension and model slug from current config if not provided
-        if dimension is None:
-            try:
-                # Import here to avoid circular dependency
-                import sys
-                from pathlib import Path as PathLib
-
-                # Add parent directory to path for imports
-                parent_dir = PathLib(__file__).parent.parent
-                if str(parent_dir) not in sys.path:
-                    sys.path.insert(0, str(parent_dir))
-
-                from search.config import get_model_slug, get_search_config
-
-                config = get_search_config()
-                dimension = config.model_dimension
-                model_slug = get_model_slug(config.embedding_model_name)
-            except Exception:
-                # Fallback to default if config unavailable
-                dimension = 768
-                model_slug = "unknown"
-        else:
-            # If dimension is provided explicitly, we need to get the current model slug
-            try:
-                from search.config import get_model_slug, get_search_config
-
-                config = get_search_config()
-                model_slug = get_model_slug(config.embedding_model_name)
-            except Exception:
-                model_slug = "unknown"
-
-        return (
-            self.storage_dir / f"{project_id}_{model_slug}_{dimension}d_metadata.json"
+        # Try new hash first (drive-agnostic)
+        new_id = self.get_project_id(project_path)
+        new_path = (
+            self.storage_dir / f"{new_id}_{model_slug}_{dimension}d_metadata.json"
         )
+        if new_path.exists():
+            return new_path
+
+        # Fallback to legacy hash for existing projects
+        legacy_id = self._get_legacy_project_id(project_path)
+        legacy_path = (
+            self.storage_dir / f"{legacy_id}_{model_slug}_{dimension}d_metadata.json"
+        )
+        if legacy_path.exists():
+            return legacy_path
+
+        # Return new path for creation
+        return new_path
 
     def save_snapshot(self, dag: MerkleDAG, metadata: Optional[Dict] = None) -> None:
         """Save a Merkle DAG snapshot to disk.
@@ -248,6 +265,42 @@ class SnapshotManager:
         if metadata_path.exists():
             metadata_path.unlink()
 
+    def delete_snapshot_by_slug(
+        self, project_path: str, model_slug: str, dimension: int
+    ) -> int:
+        """Delete snapshot for a specific model/dimension only.
+
+        This deletes only the snapshot matching the exact model_slug and dimension,
+        leaving other model variants intact.
+
+        Args:
+            project_path: Path to project
+            model_slug: Model slug (e.g., 'bge-m3', 'coderank')
+            dimension: Model dimension (e.g., 768, 1024)
+
+        Returns:
+            Number of files deleted (0-2: snapshot + metadata)
+        """
+        project_id = self.get_project_id(project_path)
+        deleted_count = 0
+
+        snapshot_file = (
+            self.storage_dir / f"{project_id}_{model_slug}_{dimension}d_snapshot.json"
+        )
+        metadata_file = (
+            self.storage_dir / f"{project_id}_{model_slug}_{dimension}d_metadata.json"
+        )
+
+        if snapshot_file.exists():
+            snapshot_file.unlink()
+            deleted_count += 1
+
+        if metadata_file.exists():
+            metadata_file.unlink()
+            deleted_count += 1
+
+        return deleted_count
+
     def delete_all_snapshots(self, project_path: str) -> int:
         """Delete ALL dimension snapshots and metadata for a project.
 
@@ -273,6 +326,35 @@ class SnapshotManager:
 
         # Delete all metadata files for this project (all dimensions)
         for metadata_file in self.storage_dir.glob(f"{project_id}_*d_metadata.json"):
+            try:
+                metadata_file.unlink()
+                deleted_count += 1
+            except Exception:
+                pass  # Continue even if one file fails
+
+        return deleted_count
+
+    def clear_all_snapshots(self) -> int:
+        """Delete ALL snapshots for ALL projects.
+
+        This removes all snapshot and metadata files from the storage directory.
+        Use with caution - this is a destructive operation.
+
+        Returns:
+            Number of files deleted
+        """
+        deleted_count = 0
+
+        # Delete all snapshot files
+        for snapshot_file in self.storage_dir.glob("*_snapshot.json"):
+            try:
+                snapshot_file.unlink()
+                deleted_count += 1
+            except Exception:
+                pass  # Continue even if one file fails
+
+        # Delete all metadata files
+        for metadata_file in self.storage_dir.glob("*_metadata.json"):
             try:
                 metadata_file.unlink()
                 deleted_count += 1

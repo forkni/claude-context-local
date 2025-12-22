@@ -7,7 +7,6 @@ Supports multi-model indexing when CLAUDE_MULTI_MODEL_ENABLED=true.
 
 import argparse
 import asyncio
-import os
 import sys
 import time
 from pathlib import Path
@@ -34,6 +33,14 @@ def main():
         action="store_true",
         help="Index for all models in pool (Qwen3, BGE-M3, CodeRankEmbed). Auto-detects if not specified.",
     )
+    parser.add_argument(
+        "--include-dirs",
+        help='Comma-separated directories to include (e.g., "src,lib"). Immutable after project creation.',
+    )
+    parser.add_argument(
+        "--exclude-dirs",
+        help='Comma-separated directories to exclude (e.g., "tests,vendor"). Immutable after project creation.',
+    )
 
     args = parser.parse_args()
 
@@ -58,13 +65,27 @@ def main():
         else:
             mode_desc = "Force (full reindex, bypass snapshot)"
 
-    # Check multi-model mode
-    multi_model_env = os.getenv("CLAUDE_MULTI_MODEL_ENABLED", "true").lower() in (
-        "true",
-        "1",
-        "yes",
-    )
-    multi_model = args.multi_model if args.multi_model else None  # None = auto-detect
+    # Check multi-model mode from config file (priority) or environment
+    from search.config import get_search_config
+
+    config = get_search_config()
+    multi_model_config = config.routing.multi_model_enabled  # From search_config.json
+
+    # CLI flag overrides, then config, then env var fallback
+    if args.multi_model:
+        multi_model = True  # Explicit --multi-model flag
+    else:
+        # Use config file setting (user's menu selection)
+        multi_model = multi_model_config
+
+    # Parse directory filters
+    include_dirs = None
+    if args.include_dirs:
+        include_dirs = [d.strip() for d in args.include_dirs.split(",") if d.strip()]
+
+    exclude_dirs = None
+    if args.exclude_dirs:
+        exclude_dirs = [d.strip() for d in args.exclude_dirs.split(",") if d.strip()]
 
     # Display configuration
     print("=" * 70)
@@ -73,10 +94,14 @@ def main():
     print(f"Path: {project_path}")
     print(f"Mode: {mode_desc}")
     print(f"Incremental: {incremental}")
-    if multi_model or (multi_model is None and multi_model_env):
+    if multi_model:
         print("Multi-Model: Enabled (Qwen3, BGE-M3, CodeRankEmbed)")
     else:
         print("Multi-Model: Disabled (single model only)")
+    if include_dirs:
+        print(f"Include dirs: {include_dirs}")
+    if exclude_dirs:
+        print(f"Exclude dirs: {exclude_dirs}")
     print("=" * 70)
     print()
 
@@ -94,6 +119,8 @@ def main():
                     "directory_path": str(project_path),
                     "incremental": incremental,
                     "multi_model": multi_model,
+                    "include_dirs": include_dirs,
+                    "exclude_dirs": exclude_dirs,
                 }
             )
         )
@@ -150,6 +177,7 @@ def main():
                 print(f"Time taken: {result.get('time_taken', elapsed):.2f} seconds")
 
             print("=" * 70)
+            sys.stdout.flush()
             return 0
 
         else:
@@ -157,6 +185,7 @@ def main():
             error = result.get("error", "Unknown error")
             print(f"Error: {error}")
             print("=" * 70)
+            sys.stdout.flush()
             return 1
 
     except Exception as e:
@@ -171,8 +200,14 @@ def main():
         import traceback
 
         traceback.print_exc()
+        sys.stdout.flush()
         return 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    import os
+
+    exit_code = main()
+    sys.stdout.flush()
+    # Force exit to avoid hanging on model cleanup (GPU/CUDA resources)
+    os._exit(exit_code)

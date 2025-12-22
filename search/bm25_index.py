@@ -8,6 +8,8 @@ import string
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from search.filters import normalize_path
+
 try:
     from rank_bm25 import BM25Okapi
 except ImportError:
@@ -729,22 +731,34 @@ class BM25Index:
         if not self._doc_ids or not file_paths:
             return 0
 
-        self._logger.debug(f"Batch removing BM25 documents for {len(file_paths)} files")
+        self._logger.info(
+            f"[BM25_REMOVE] Checking {len(file_paths)} files against {len(self._doc_ids)} docs"
+        )
 
         # Track indices to remove
         indices_to_remove_set = set()
 
+        # Normalize all file paths for consistent matching
+        normalized_file_paths = {normalize_path(fp) for fp in file_paths}
+
         # Single pass through all doc_ids to identify documents to remove
         for i, doc_id in enumerate(self._doc_ids):
+            # Normalize doc_id for comparison
+            normalized_doc_id = normalize_path(doc_id)
+
             # Check if document belongs to any of the files
-            for file_path in file_paths:
-                if file_path in doc_id:
+            for file_path in normalized_file_paths:
+                if file_path in normalized_doc_id:
                     indices_to_remove_set.add(i)
                     break  # Found match, no need to check other files
 
         if not indices_to_remove_set:
             self._logger.info("No BM25 documents found to remove")
             return 0
+
+        self._logger.info(
+            f"[BM25_REMOVE] Found {len(indices_to_remove_set)} docs to remove"
+        )
 
         removed_count = len(indices_to_remove_set)
         self._logger.info(

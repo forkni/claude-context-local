@@ -12,10 +12,16 @@ Complete guide to advanced features in claude-context-local MCP server.
 6. [Directory Filtering](#directory-filtering)
 7. [Persistent Project Selection](#persistent-project-selection)
 8. [Model Selection Guide](#model-selection-guide)
-9. [Symbol ID Lookups (Phase 1.1)](#symbol-id-lookups-phase-11)
-10. [AI Guidance Messages (Phase 1.2)](#ai-guidance-messages-phase-12)
-11. [Dependency Analysis (Phase 1.3)](#dependency-analysis-phase-13)
-12. [Self-Healing Index Sync](#self-healing-index-sync)
+9. [VRAM Tier Management](#vram-tier-management)
+10. [Neural Reranking Configuration](#neural-reranking-configuration)
+11. [Drive-Agnostic Project Paths](#drive-agnostic-project-paths)
+12. [Progress Bar Features](#progress-bar-features)
+13. [Query Cache](#query-cache)
+14. [Symbol ID Lookups (Phase 1.1)](#symbol-id-lookups-phase-11)
+15. [AI Guidance Messages (Phase 1.2)](#ai-guidance-messages-phase-12)
+16. [Dependency Analysis (Phase 1.3)](#dependency-analysis-phase-13)
+17. [Entity Tracking (Phase 1.4)](#entity-tracking-phase-14)
+18. [Self-Healing Index Sync](#self-healing-index-sync)
 
 ---
 
@@ -543,6 +549,64 @@ find_connections(symbol_name="UserService", exclude_dirs=["tests/"])
 - Search k multiplier increased from 3x to 5x when directory filters present
 - Minimal overhead for typical filter sizes
 
+### Filter Persistence (v0.5.9+)
+
+**Feature**: User-defined filters are automatically saved and restored across server restarts and re-indexing operations.
+
+**Storage**: Filters saved to `project_info.json` in project directory
+
+**Automatic behavior**:
+
+1. **First-time indexing**: Filters from `include_dirs`/`exclude_dirs` parameters saved
+2. **Subsequent indexing**: Saved filters automatically applied (no need to re-specify)
+3. **Server restart**: Filters restored from disk
+4. **Filter changes**: Triggers full re-index to prevent stale data
+
+**Implementation**:
+
+```python
+from search.filters import get_effective_filters
+
+# Resolves: default_exclude_dirs + user_included_dirs + user_excluded_dirs
+filters = get_effective_filters(project_info)
+```
+
+**Filter Resolution Priority**:
+
+1. **Default excludes** (always applied): `["__pycache__/", ".git/", "node_modules/", ".venv/"]`
+2. **User includes** (from `include_dirs` parameter): Only search in these directories
+3. **User excludes** (from `exclude_dirs` parameter): Additional directories to exclude
+
+**project_info.json Format**:
+
+```json
+{
+  "project_path": "F:/RD_PROJECTS/COMPONENTS/claude-context-local",
+  "user_included_dirs": ["src/", "lib/"],
+  "user_excluded_dirs": ["tests/", "benchmark_results/"],
+  "created_at": "2025-12-16T10:30:00"
+}
+```
+
+**Change Detection**:
+
+When filters change during incremental indexing:
+
+- System detects mismatch between saved and current filters
+- Automatically triggers full re-index (not incremental)
+- Prevents stale results from wrong filter set
+
+**Bug Fix (v0.6.3)**:
+
+- **Issue**: Filters lost after MCP restart and re-indexing
+- **Root cause**: Field name inconsistency (`included_dirs` vs `user_included_dirs`)
+- **Fix**: Corrected field names in `index_handlers.py` and `incremental_indexer.py`
+- **Result**: Consistent filter persistence across all models during multi-model indexing
+
+**Files**: `mcp_server/index_handlers.py`, `mcp_server/search_handlers.py`, `search/filter_engine.py`, `search/filters.py`
+
+---
+
 ### Limitations
 
 - **find_connections callers**: `exclude_dirs` applies to symbol resolution only, not caller lookup (preserves test coverage visibility)
@@ -599,12 +663,13 @@ set CLAUDE_DEFAULT_PROJECT=C:\Projects\MyProject
 
 ## Model Selection Guide
 
-### Available Models (4 total)
+### Available Models (5 total)
 
 | Model | Type | Dimensions | VRAM | Best For |
 |-------|------|------------|------|----------|
 | **BGE-M3** ⭐ | General | 1024 | 3-4GB | Production baseline, hybrid search support |
 | **Qwen3-0.6B** | General | 1024 | 2.3GB | Best value, high efficiency |
+| **Qwen3-4B** | General | 1024* | 8-10GB | Best quality with MRL (4B quality @ 0.6B storage) |
 | **CodeRankEmbed** | Code | 768 | 2GB | Code-specific retrieval (CSN: 77.9 MRR) |
 | **EmbeddingGemma-300m** | General | 768 | 4-8GB | Default model, fast and efficient |
 
@@ -656,6 +721,707 @@ start_mcp_server.bat → 3 (Search Config) → 4 (Select Model)
 
 - **Code models**: `docs/Researches/CODE_SPECIFIC_EMBEDDING_MODELS.md`
 - **General models**: `docs/Researches/GENERAL_PURPOSE_EMBEDDING_MODELS.md`
+
+---
+
+## Qwen3 Instruction Tuning & MRL (v0.6.4+)
+
+**Feature**: Code-optimized query instructions and Matryoshka Representation Learning for Qwen3 models
+
+**Status**: ✅ **Production-Ready** (v0.6.4+)
+
+### Overview
+
+Qwen3 embedding models support two advanced features for improved code retrieval:
+
+1. **Instruction Tuning**: Task-specific instructions optimize query embeddings for code search
+2. **Matryoshka Representation Learning (MRL)**: Flexible output dimensions reduce storage while maintaining quality
+
+### Instruction Tuning
+
+**What it does**: Prepends code-specific instructions to queries before embedding, improving retrieval precision by 1-5%
+
+**Two modes available**:
+
+| Mode | Format | When to Use |
+|------|--------|-------------|
+| **custom** (default) | `"Instruct: Retrieve source code implementations matching the query\nQuery: {query}"` | Code search (recommended) |
+| **prompt_name** | Uses model's built-in generic prompt | General-purpose retrieval |
+
+**Configuration**:
+
+```python
+# In search/config.py MODEL_REGISTRY:
+"Qwen/Qwen3-Embedding-0.6B": {
+    "instruction_mode": "custom",  # or "prompt_name"
+    "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
+    "prompt_name": "query",  # Alternative for prompt_name mode
+}
+```
+
+**How it works**:
+
+```python
+# User query
+query = "find authentication functions"
+
+# Custom mode (default)
+# → "Instruct: Retrieve source code implementations matching the query\nQuery: find authentication functions"
+
+# Prompt name mode
+# → Sentence-transformers auto-applies model's built-in prompt
+```
+
+**Benefits**:
+
+- 1-5% retrieval precision improvement (per Qwen3 documentation)
+- Code-specific instruction optimizes for source code retrieval
+- Only affects queries, not indexed documents (no re-indexing needed)
+
+**Benchmarking**:
+
+```bash
+# Compare both modes
+python tools/benchmark_instructions.py --model Qwen/Qwen3-Embedding-0.6B
+```
+
+### Matryoshka Representation Learning (MRL)
+
+**What it does**: Reduces embedding dimension output while maintaining model quality
+
+**Status**: Enabled by default for Qwen3-4B (truncate_dim=1024)
+
+**Configuration**:
+
+```python
+# In search/config.py MODEL_REGISTRY:
+"Qwen/Qwen3-Embedding-4B": {
+    "dimension": 2560,  # Full model dimension
+    "truncate_dim": 1024,  # Output dimension (50% reduction)
+    "mrl_dimensions": [2560, 1024, 512, 256, 128, 64, 32],  # Supported dims
+}
+```
+
+**Performance**:
+
+| Dimension | Storage | Quality Drop | Use Case |
+|-----------|---------|--------------|----------|
+| 2560 (full) | 100% | 0% | Maximum quality |
+| **1024** (default) | **50%** | **~1.47%** | Best balance (matches 0.6B storage) |
+| 512 | 25% | ~3% | Extreme storage constraints |
+
+**Benefits**:
+
+- **2x storage reduction** with Qwen3-4B using truncate_dim=1024
+- Match 0.6B storage footprint while keeping 4B model quality (36 layers vs 28)
+- Minimal quality drop (~1.47% per sentence-transformers benchmarks)
+
+**How it works**:
+
+```python
+# Sentence-transformers truncates embeddings during model instantiation
+model = SentenceTransformer(
+    "Qwen/Qwen3-Embedding-4B",
+    truncate_dim=1024  # Output 1024d instead of 2560d
+)
+
+# All embeddings automatically truncated
+embedding = model.encode("query")
+# embedding.shape = (1024,) instead of (2560,)
+```
+
+**Index compatibility**:
+
+- **Requires re-indexing** if changing truncate_dim
+- Different dimensions create separate index directories
+- Example: `project_abc123_qwen3-4b_1024d/` vs `project_abc123_qwen3-4b_2560d/`
+
+### Customization
+
+**Disable MRL (use full dimension)**:
+
+```python
+# Edit search/config.py
+"Qwen/Qwen3-Embedding-4B": {
+    "truncate_dim": None,  # Use full 2560 dimensions
+}
+```
+
+**Change instruction mode**:
+
+```python
+# Edit search/config.py
+"Qwen/Qwen3-Embedding-0.6B": {
+    "instruction_mode": "prompt_name",  # Switch to built-in prompt
+}
+```
+
+**Runtime modification** (advanced):
+
+```python
+from search.config import MODEL_REGISTRY
+
+# Temporarily change for testing
+MODEL_REGISTRY["Qwen/Qwen3-Embedding-4B"]["truncate_dim"] = 512
+MODEL_REGISTRY["Qwen/Qwen3-Embedding-0.6B"]["instruction_mode"] = "prompt_name"
+```
+
+### Technical Details
+
+**Instruction priority** (in `embed_query()`):
+
+1. `instruction_mode == "prompt_name"` → Use `prompt_name` parameter in encode()
+2. `instruction_mode == "custom"` → Prepend `query_instruction` to query text
+3. Fallback → Legacy `task_instruction` or `query_prefix` (for other models)
+
+**MRL implementation**:
+
+- Passed to `SentenceTransformer` constructor as `truncate_dim` parameter
+- Applied during model loading (before any embedding generation)
+- Works with all sentence-transformers backends (PyTorch, ONNX)
+
+### References
+
+- Sentence Transformers MRL docs: <https://sbert.net/examples/sentence_transformer/training/matryoshka/README.html>
+- Qwen3 Embedding blog: <https://qwenlm.github.io/blog/qwen3-embedding/>
+- HuggingFace Matryoshka blog: <https://huggingface.co/blog/matryoshka>
+
+---
+
+## VRAM Tier Management
+
+**Feature**: Adaptive model selection and feature enablement based on available GPU memory
+
+**Version**: v0.5.17+
+
+**Status**: ✅ **Production-Ready**
+
+### Overview
+
+The VRAM Tier Management system automatically detects available GPU memory and recommends optimal configurations for models and features. This ensures the system runs efficiently regardless of hardware capabilities.
+
+### 4 VRAM Tiers
+
+| Tier | VRAM Range | Recommended Models | Features Enabled |
+|------|------------|-------------------|------------------|
+| **Minimal** | <6GB | EmbeddingGemma-300m OR CodeRankEmbed | Single-model only, no multi-model routing, no neural reranking |
+| **Laptop** | 6-10GB | BGE-M3 OR Qwen3-0.6B | Multi-model routing ENABLED, Neural reranking ENABLED |
+| **Desktop** | 10-18GB | Qwen3-4B + BGE-M3 + CodeRankEmbed | Full 3-model pool, Neural reranking ENABLED |
+| **Workstation** | 18GB+ | Full 3-model pool + neural reranking | All features ENABLED, maximum quality |
+
+### Automatic Configuration
+
+The system automatically:
+
+1. **Detects available VRAM** on GPU startup
+2. **Classifies into tier** (minimal/laptop/desktop/workstation)
+3. **Recommends optimal model** based on tier
+4. **Enables/disables features** based on available memory
+
+### Feature Enablement by Tier
+
+**Multi-Model Routing**:
+
+- Minimal tier: DISABLED (insufficient VRAM for 3 models)
+- Laptop tier+: ENABLED (loads BGE-M3, Qwen3, CodeRankEmbed)
+
+**Neural Reranking** (BAAI/bge-reranker-v2-m3, ~1.5GB VRAM):
+
+- Minimal tier: DISABLED
+- Laptop tier+: ENABLED (5-15% quality improvement)
+
+### Checking Your VRAM Tier
+
+```bash
+# Via MCP tool
+/get_memory_status
+
+# Output example:
+{
+  "vram_available": "10.5 GB",
+  "vram_tier": "laptop",
+  "recommended_models": ["BGE-M3", "Qwen3-0.6B"],
+  "multi_model_routing": "enabled",
+  "neural_reranking": "enabled"
+}
+```
+
+### GPU Memory Lifecycle (v0.5.17+ Lazy Loading)
+
+| Stage | VRAM Usage | Notes |
+|-------|------------|-------|
+| **Startup** | 0 MB | Lazy loading enabled, models not loaded |
+| **First search** | 8-15s latency | 5-10s one-time model loading + 3-5s search |
+| **After first search** | ~5.3 GB | All 3 models loaded for multi-model routing |
+| **Subsequent searches** | 3-5s latency | Models cached in memory (fast) |
+| **After cleanup** | 0 MB | `/cleanup_resources` frees all VRAM |
+
+### Batch Size Adjustment
+
+The system automatically adjusts batch sizes based on VRAM tier:
+
+| Tier | Embedding Batch Size | Indexing Speed |
+|------|---------------------|----------------|
+| Minimal (<6GB) | 8-16 | Conservative |
+| Laptop (6-10GB) | 32-64 | Balanced |
+| Desktop (10-18GB) | 64-128 | Fast |
+| Workstation (18GB+) | 128-256 | Maximum |
+
+### Environment Variable Overrides
+
+```bash
+# Force specific tier (bypass auto-detection)
+set CLAUDE_VRAM_TIER=laptop
+
+# Force enable/disable features
+set CLAUDE_MULTI_MODEL_ENABLED=true
+set CLAUDE_RERANKER_ENABLED=false
+```
+
+### Implementation Details
+
+**File**: `embeddings/vram_manager.py`
+
+**Test Coverage**: 42 unit tests
+
+**See also**: `docs/MODEL_MIGRATION_GUIDE.md` for model selection guidance
+
+---
+
+## Neural Reranking Configuration
+
+**Feature**: Cross-encoder neural reranking for improved search quality
+
+**Model**: BAAI/bge-reranker-v2-m3
+
+**Version**: v0.5.4+
+
+**Status**: ✅ **Production-Ready**
+
+### Overview
+
+Neural reranking uses a cross-encoder model to re-score initial search results, improving ranking quality by 5-15%. The reranker analyzes query-document pairs more deeply than embedding similarity alone.
+
+### Configuration Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `enabled` | `True` | Enable/disable neural reranking |
+| `model_name` | `"BAAI/bge-reranker-v2-m3"` | HuggingFace model path |
+| `top_k_candidates` | `50` | Number of candidates to rerank |
+| `min_vram_gb` | `2.0` | Minimum VRAM required |
+| `batch_size` | `16` | Reranking batch size |
+
+### How It Works
+
+1. **Initial search** returns top 50 candidates (hybrid/semantic/BM25)
+2. **Neural reranker** scores each query-candidate pair
+3. **Re-ranking** sorts by reranker scores
+4. **Top k results** returned to user
+
+### Performance Impact
+
+**Quality Improvement**:
+
+- 5-15% better ranking (validated on benchmarks)
+- 30% of queries see top result changes
+- More noticeable on semantic queries vs exact matches
+
+**Speed Impact**:
+
+- +100-200ms per search (acceptable for quality gain)
+- Depends on `top_k_candidates` and `batch_size`
+
+**VRAM Usage**:
+
+- Model loading: ~1.5GB additional VRAM
+- Only loads when reranking enabled
+
+### Environment Variable Configuration
+
+```bash
+# Enable/disable reranking
+set CLAUDE_RERANKER_ENABLED=true
+
+# Custom reranker model
+set CLAUDE_RERANKER_MODEL=BAAI/bge-reranker-v2-m3
+
+# Adjust candidates
+set CLAUDE_RERANKER_TOP_K=100
+
+# Adjust batch size (higher = faster but more VRAM)
+set CLAUDE_RERANKER_BATCH_SIZE=32
+```
+
+### Configuration via Code
+
+```python
+from search.config import SearchConfigManager, RerankerConfig
+
+mgr = SearchConfigManager()
+cfg = mgr.load_config()
+
+# Update reranker settings
+cfg.reranker = RerankerConfig(
+    enabled=True,
+    model_name="BAAI/bge-reranker-v2-m3",
+    top_k_candidates=100,
+    batch_size=32
+)
+
+mgr.save_config(cfg)
+```
+
+### MCP Tool
+
+```bash
+# Configure via MCP tool
+/configure_reranking enabled=true model_name="BAAI/bge-reranker-v2-m3" top_k_candidates=50
+```
+
+### When to Enable/Disable
+
+**Enable reranking when**:
+
+- Accuracy is critical
+- Semantic queries are common
+- VRAM is available (laptop tier+)
+- Search latency <300ms is acceptable
+
+**Disable reranking when**:
+
+- Speed is critical (<100ms searches)
+- VRAM is limited (minimal tier)
+- Exact keyword searches dominate
+- Cost optimization is priority
+
+### Benchmark Results
+
+From `tools/benchmark_models.py`:
+
+| Query Type | With Reranking | Without Reranking | Improvement |
+|------------|---------------|-------------------|-------------|
+| Semantic queries | 0.85 MRR | 0.78 MRR | +9% |
+| Keyword queries | 0.92 MRR | 0.90 MRR | +2% |
+| Mixed queries | 0.83 MRR | 0.79 MRR | +5% |
+
+**Implementation**: `search/neural_reranker.py`, `search/reranking_engine.py`
+
+---
+
+## Drive-Agnostic Project Paths
+
+**Feature**: Automatic project discovery when drive letters change (external drives)
+
+**Version**: v0.6.3+
+
+**Status**: ✅ **Production-Ready**
+
+### Problem Solved
+
+External drives often get assigned different drive letters:
+
+- F: → E: (laptop docking/undocking)
+- E: → D: (USB port change)
+- Original: `F:\RD_PROJECTS\claude-context-local`
+- Relocated: `E:\RD_PROJECTS\claude-context-local`
+
+Traditional hash-based project identification breaks when drive letters change, requiring re-indexing.
+
+### How It Works
+
+**Dual-Hash Lookup System**:
+
+1. **Drive-agnostic hash**: Based on path without drive letter
+   - Example: `/RD_PROJECTS/claude-context-local` → `abc123`
+
+2. **Legacy hash**: Based on full path (backward compatibility)
+   - Example: `F:/RD_PROJECTS/claude-context-local` → `def456`
+
+3. **Lookup priority**: Try drive-agnostic first, fallback to legacy
+
+### Automatic Path Relocation
+
+```bash
+# Project originally indexed at F:\
+/index_directory "F:\RD_PROJECTS\claude-context-local"
+
+# Later, drive becomes E:\
+/list_projects
+
+# Output shows relocation status:
+{
+  "project_path": "E:\RD_PROJECTS\claude-context-local",
+  "project_hash": "abc123_drive_agnostic",
+  "original_path": "F:\RD_PROJECTS\claude-context-local",
+  "relocated": true,
+  "model": "bge-m3",
+  "dimension": "1024d"
+}
+```
+
+### Backward Compatibility
+
+**Existing indices**: Continue to work without re-indexing
+
+**New indices**: Automatically use drive-agnostic hashing
+
+**Mixed setup**: Both hash types coexist seamlessly
+
+### Implementation Details
+
+**4 Utility Functions** (`search/filters.py`, `mcp_server/utils/path_utils.py`):
+
+1. `compute_drive_agnostic_hash(path)` - Hash without drive letter
+2. `compute_legacy_hash(path)` - Traditional full-path hash
+3. `get_effective_filters()` - Resolve default + user filters
+4. `normalize_path_filters()` - Normalize path separators
+
+**Storage**: Merkle snapshots include drive-agnostic project IDs
+
+**Test Coverage**: 20 unit tests for path utilities
+
+### Path Relocation Status
+
+`/list_projects` output now includes:
+
+```json
+{
+  "relocated": false,  // or true if drive letter changed
+  "original_path": "F:\RD_PROJECTS\project",  // when relocated=true
+  "current_path": "E:\RD_PROJECTS\project"   // always present
+}
+```
+
+### Use Cases
+
+- **Laptop docking**: F: → E: when docked/undocked
+- **USB drive rotation**: Different ports = different letters
+- **Multiple machines**: Same external drive, different letters
+- **Network drives**: Path changes across machines
+
+**See also**: `tests/unit/test_path_normalization.py` for comprehensive test cases
+
+---
+
+## Progress Bar Features
+
+**Feature**: Real-time visual feedback during indexing operations
+
+**Version**: v0.6.1+
+
+**Status**: ✅ **Production-Ready**
+
+### Overview
+
+Progress bars provide visual feedback during the two longest indexing phases: file chunking and embedding generation. This improves user experience by showing real-time progress instead of silent processing.
+
+### Two Progress Bars
+
+#### 1. Chunking Progress
+
+**When**: During file parsing and chunking (AST/Tree-sitter)
+
+**Output**:
+
+```
+Chunking files... 100% (21/21 files)
+```
+
+**Details**:
+
+- Shows file count: `(current/total files)`
+- Updates in real-time
+- Terminal-compatible: `Console(force_terminal=True)`
+
+**Implementation**: `search/incremental_indexer.py`
+
+#### 2. Embedding Progress
+
+**When**: During embedding generation (~15 seconds typical)
+
+**Output**:
+
+```
+Embedding... 100% (3/3 batches)
+```
+
+**Details**:
+
+- Shows batch count: `(current/total batches)`
+- Model warmup prevents log interference
+- Only shows for embedding phase (longest operation)
+
+**Implementation**: `embeddings/embedder.py`
+
+### Model Warmup
+
+**Problem**: First model load triggers verbose transformers logging, interleaving with progress bar
+
+**Solution**: Warmup encode before progress bar starts
+
+```python
+# Warmup: single encode to trigger model loading
+self.model.encode(["warmup"], show_progress_bar=False)
+
+# Now start progress bar (clean output)
+for batch in tqdm(batches, desc="Embedding"):
+    embeddings = self.model.encode(batch, show_progress_bar=False)
+```
+
+### Configuration
+
+**Enabled by default** - no configuration needed
+
+**Terminal compatibility**: `Console(force_terminal=True)` ensures progress bars work in:
+
+- Interactive terminals
+- Batch scripts (Windows CMD, PowerShell)
+- CI/CD environments
+- IDE integrated terminals
+
+### Performance Impact
+
+**Overhead**: Negligible (<1ms per update)
+
+**Benefits**: Improved UX, user knows system is working (not frozen)
+
+### Example Full Indexing Output
+
+```bash
+$ /index_directory "C:\Projects\MyProject"
+
+[INFO] Starting incremental indexing...
+Chunking files... 100% (109/109 files)
+[INFO] Chunking complete: 1,199 chunks
+
+[INFO] Generating embeddings...
+Embedding... 100% (15/15 batches)
+[INFO] Embeddings complete
+
+[INFO] Index saved: 109 files, 1,199 chunks
+```
+
+### Incremental Indexing
+
+Progress bars also work for incremental updates:
+
+```bash
+$ /index_directory "C:\Projects\MyProject"
+
+[INFO] Incremental update: 3 changed files
+Chunking files... 100% (3/3 files)
+Embedding... 100% (1/1 batches)
+[INFO] Index updated
+```
+
+**See also**: `CHANGELOG.md` v0.6.1 for implementation details
+
+---
+
+## Query Cache
+
+**Feature**: LRU cache for query embeddings to avoid re-encoding repeated queries
+
+**Version**: v0.5.17+
+
+**Status**: ✅ **Production-Ready**
+
+### Overview
+
+The query cache stores embedding vectors for recently searched queries, eliminating redundant encoding operations. When a query is searched multiple times, the cached embedding is reused instead of re-computing it.
+
+### How It Works
+
+1. **Query arrives**: `"find authentication functions"`
+2. **Cache check**: Hash query string, check if embedding exists
+3. **Cache hit**: Return cached embedding (instant, 0ms encoding)
+4. **Cache miss**: Encode query, store in cache, return embedding
+
+### Configuration
+
+**Default cache size**: 128 entries
+
+**Environment variable**:
+
+```bash
+# Adjust cache size (max 1000)
+set CLAUDE_QUERY_CACHE_SIZE=256
+
+# Disable cache (not recommended)
+set CLAUDE_QUERY_CACHE_SIZE=0
+```
+
+### Performance Benefits
+
+| Scenario | Without Cache | With Cache | Savings |
+|----------|--------------|------------|---------|
+| Repeated exact query | 50-100ms encoding | 0ms (instant) | 100% |
+| Similar queries | 50-100ms each | 0ms if cached | Up to 100% |
+| Bulk operations | 100+ encodings | First time only | 99%+ |
+
+### Cache Statistics
+
+```python
+from embeddings.embedder import CodeEmbedder
+
+embedder = CodeEmbedder()
+embedder.embed_query("test query")
+
+# Check cache performance
+print(f"Cache size: {embedder._query_cache_size}")
+print(f"Cache hits: {embedder._cache_hits}")
+print(f"Cache misses: {embedder._cache_misses}")
+print(f"Hit rate: {embedder._cache_hits / (embedder._cache_hits + embedder._cache_misses) * 100:.1f}%")
+```
+
+### Cache Invalidation
+
+**Automatic invalidation** when:
+
+- Cache reaches max size (LRU eviction - oldest entry removed)
+- Embedding model changes (full cache clear)
+- Server restarts (cache is in-memory only)
+
+**Manual clear**:
+
+```bash
+# Restart MCP server (clears all caches)
+/cleanup_resources  # Clears models and caches
+```
+
+### Memory Usage
+
+**Per entry**: ~4KB (1024-dimensional embedding)
+
+**Max memory** (default 128 entries): ~512KB (negligible)
+
+**Max memory** (1000 entries): ~4MB (still negligible)
+
+### Use Cases
+
+**High benefit scenarios**:
+
+- **Interactive search**: Users often refine/repeat queries
+- **Bulk analysis**: Same queries across multiple projects
+- **Testing**: Benchmark scripts with fixed query sets
+- **Development**: Repeated queries during debugging
+
+**Low benefit scenarios**:
+
+- Unique queries only (no repetition)
+- One-time searches
+- Random query generation
+
+### Implementation Details
+
+**File**: `embeddings/embedder.py`
+
+**Cache type**: LRU (Least Recently Used) dictionary
+
+**Thread safety**: Not thread-safe (single-threaded MCP server)
+
+**Persistence**: In-memory only (no disk storage)
 
 ---
 
@@ -1542,6 +2308,230 @@ def process():
 - Qualified chunk IDs stored in: `chunks_metadata.json`
 - Call relationships in: `call_graph.json`
 - Format: `{"ClassName.method": {"calls": ["OtherClass.method"], "called_by": [...]}}`
+
+---
+
+## Entity Tracking (Phase 1.4)
+
+**Feature**: Track constants, enum members, and default parameter references across the codebase
+
+**Status**: ✅ **Production-Ready** (v0.6.5+)
+
+### Overview
+
+Entity tracking enables precise discovery of how constants, enums, and default parameters are defined and used throughout your codebase. This is essential for:
+
+- **Refactoring**: Find all usages before renaming constants or enum values
+- **Impact analysis**: Identify affected code when changing default parameter values
+- **Code navigation**: Discover relationships between configuration and implementation
+
+### Tracked Entities
+
+The `find_connections` tool now returns **Phase 1.4 entity tracking relationships**:
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `defines_constants` | Module-level constant definitions | `[{"target_name": "TIMEOUT", "line": 15}]` |
+| `uses_constants` | Constant usage in functions/methods | `[{"target_name": "TIMEOUT", "line": 42}]` |
+| `defines_enum_members` | Enum member definitions | `[{"target_name": "Status.ACTIVE", "line": 8}]` |
+| `uses_defaults` | Default parameter value references | `[{"target_name": "DEFAULT_TIMEOUT", "parameter": "timeout"}]` |
+
+### Relationship Types (9 total)
+
+**Priority 4 - Definitions**:
+
+- `DEFINES_CONSTANT` - Module-level constant definitions (e.g., `TIMEOUT = 30`)
+- `DEFINES_ENUM_MEMBER` - Enum member definitions (e.g., `Status.ACTIVE = 1`)
+- `DEFINES_CLASS_ATTR` - Class attribute definitions (planned)
+- `DEFINES_FIELD` - Dataclass field definitions (planned)
+
+**Priority 5 - References**:
+
+- `USES_CONSTANT` - Constant usage in functions/methods
+- `USES_DEFAULT` - Default parameter value references
+- `USES_GLOBAL` - Global statement usage (planned)
+- `ASSERTS_TYPE` - isinstance() type assertions (planned)
+- `USES_CONTEXT_MANAGER` - Context manager usage (planned)
+
+### How It Works
+
+**Extraction Process**:
+
+1. **ConstantExtractor**:
+   - Finds module-level UPPER_CASE assignments (≥2 chars, non-private)
+   - Filters trivial values (single digits -9 to 9, empty strings)
+   - Tracks both definitions and usages
+
+2. **EnumMemberExtractor**:
+   - Detects Enum, IntEnum, StrEnum, Flag classes
+   - Creates qualified names (e.g., `Status.ACTIVE`)
+   - Supports type annotations
+
+3. **DefaultParameterExtractor**:
+   - Extracts non-literal default values (names, calls, attributes)
+   - Skips trivial defaults (None, booleans, small numbers)
+   - Tracks parameter name and default type
+
+### Usage Examples
+
+#### Find Constant Usages
+
+```bash
+# Search for constant definition
+/search_code "FAISS_INDEX_FILENAME constant"
+
+# Get connections for the constant
+/find_connections --chunk_id "search/__init__.py:15-16:module"
+```
+
+**Output**:
+
+```json
+{
+  "defines_constants": [
+    {"target_name": "FAISS_INDEX_FILENAME", "line": 15, "metadata": {"definition": true}}
+  ],
+  "uses_constants": [
+    {"target_name": "FAISS_INDEX_FILENAME", "line": 42, "source": "search/faiss_index.py:40-60:function:save_index"},
+    {"target_name": "FAISS_INDEX_FILENAME", "line": 78, "source": "search/faiss_index.py:76-95:function:load_index"}
+  ]
+}
+```
+
+#### Find Enum Member Definitions
+
+```bash
+# Search for enum class
+/search_code "RelationshipType enum"
+
+# Get all enum members
+/find_connections --chunk_id "graph/relationship_types.py:49-138:class:RelationshipType"
+```
+
+**Output**:
+
+```json
+{
+  "defines_enum_members": [
+    {"target_name": "RelationshipType.CALLS", "line": 10, "metadata": {"enum_class": "RelationshipType"}},
+    {"target_name": "RelationshipType.INHERITS", "line": 11, "metadata": {"enum_class": "RelationshipType"}},
+    {"target_name": "RelationshipType.DEFINES_CONSTANT", "line": 65, "metadata": {"enum_class": "RelationshipType"}}
+    // ... 21 total enum members
+  ]
+}
+```
+
+#### Track Default Parameter Dependencies
+
+```bash
+# Find function using constants as defaults
+/search_code "connect function with timeout"
+
+# Get default parameter dependencies
+/find_connections --chunk_id "network.py:42-58:function:connect"
+```
+
+**Output**:
+
+```json
+{
+  "uses_defaults": [
+    {
+      "target_name": "DEFAULT_TIMEOUT",
+      "line": 42,
+      "metadata": {
+        "parameter": "timeout",
+        "default_type": "name"
+      }
+    },
+    {
+      "target_name": "Config",
+      "line": 42,
+      "metadata": {
+        "parameter": "config",
+        "default_type": "call"
+      }
+    }
+  ]
+}
+```
+
+### Filtering Rules
+
+**ConstantExtractor**:
+
+- Only UPPER_CASE names (≥2 characters)
+- Excludes private constants (`_INTERNAL`)
+- Excludes trivial values (single digits, empty strings)
+- Excludes builtin constants (True, False, None)
+
+**EnumMemberExtractor**:
+
+- Supports Enum, IntEnum, StrEnum, Flag variants
+- Excludes private members (`_INTERNAL`)
+- Handles type annotations (`ACTIVE: int = 1`)
+
+**DefaultParameterExtractor**:
+
+- Tracks name references, call expressions, attribute access
+- Skips None, booleans, small numbers (-10 to 10)
+- Skips empty strings and empty collections
+- Excludes builtin defaults (list, dict, set)
+
+### Refactoring Workflows
+
+**Constant Refactoring**:
+
+```bash
+# Step 1: Find constant definition
+/search_code "MAX_RETRIES constant definition"
+
+# Step 2: Get all usages
+/find_connections --chunk_id "config.py:15-16:module"
+
+# Step 3: Review impact (check uses_constants field)
+# Step 4: Safely rename knowing all affected code
+```
+
+**Enum Migration**:
+
+```bash
+# Step 1: Find enum class
+/search_code "Status enum"
+
+# Step 2: Get all enum members and their usages
+/find_connections --chunk_id "types.py:10-25:class:Status"
+
+# Step 3: Review defines_enum_members field
+# Step 4: Migrate knowing complete member list
+```
+
+**Default Value Changes**:
+
+```bash
+# Step 1: Find constant used as default
+/search_code "DEFAULT_TIMEOUT constant"
+
+# Step 2: Get connections
+/find_connections --chunk_id "config.py:20-21:module"
+
+# Step 3: Check uses_defaults to find affected functions
+# Step 4: Update default value knowing downstream impact
+```
+
+### Requirements
+
+- **Re-indexing required**: Projects indexed before v0.6.5 need re-indexing for entity tracking to populate
+- **Python only**: Phase 1.4 supports Python AST entity extraction
+- **Module-level constants**: Only top-level constant definitions tracked (not class/function-level)
+
+### Benefits
+
+1. **Constant Discovery**: Find all usages before renaming configuration values
+2. **Enum Navigation**: Track enum members across complex codebases
+3. **Dependency Analysis**: Understand function dependencies on constants
+4. **Refactoring Safety**: Identify all affected code before making changes
+5. **Code Comprehension**: Discover how configuration flows through implementation
 
 ---
 

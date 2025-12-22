@@ -1,10 +1,10 @@
 """
 Relationship types and edge representations for Phase 3.
 
-This module defines the 12 relationship types used in code graph analysis
+This module defines the 21 relationship types used in code graph analysis
 and provides a unified data structure for relationship edges.
 
-Relationship Types:
+Core Relationship Types (Priority 1-3):
 - calls: Function calls another function
 - inherits: Class inherits from parent class
 - uses_type: Code uses type in annotation
@@ -17,6 +17,17 @@ Relationship Types:
 - overrides: Method overrides parent method
 - assigns_to: Code assigns to an attribute
 - reads_from: Code reads from an attribute
+
+Entity Tracking Enhancements (Priority 4-5):
+- defines_constant: Module-level constant definition
+- defines_enum_member: Enum member definition
+- defines_class_attr: Class attribute definition
+- defines_field: Dataclass field definition
+- uses_constant: References a constant
+- uses_default: Default parameter value
+- uses_global: global statement usage
+- asserts_type: Type assertion (isinstance)
+- uses_context_manager: Context manager usage
 
 Edge Direction:
 - Source (source_id): The code chunk creating the relationship
@@ -61,6 +72,19 @@ class RelationshipType(Enum):
     ASSIGNS_TO = "assigns_to"  # Attribute assignment
     READS_FROM = "reads_from"  # Attribute access
 
+    # Priority 4: Constants & Definitions (Entity Tracking Enhancement)
+    DEFINES_CONSTANT = "defines_constant"  # Module-level UPPER_CASE = value
+    DEFINES_ENUM_MEMBER = "defines_enum_member"  # Enum.MEMBER = value
+    DEFINES_CLASS_ATTR = "defines_class_attr"  # class Foo: attr = value
+    DEFINES_FIELD = "defines_field"  # Dataclass field definitions
+
+    # Priority 5: References & Usage (Entity Tracking Enhancement)
+    USES_CONSTANT = "uses_constant"  # References a constant
+    USES_DEFAULT = "uses_default"  # Default parameter values
+    USES_GLOBAL = "uses_global"  # global x statement
+    ASSERTS_TYPE = "asserts_type"  # assert isinstance(x, Type)
+    USES_CONTEXT_MANAGER = "uses_context_manager"  # with X() as y:
+
     @classmethod
     def from_string(cls, type_str: str) -> Optional["RelationshipType"]:
         """
@@ -98,6 +122,19 @@ class RelationshipType(Enum):
             1: [cls.CALLS, cls.INHERITS, cls.USES_TYPE, cls.IMPORTS],
             2: [cls.DECORATES, cls.RAISES, cls.CATCHES, cls.INSTANTIATES],
             3: [cls.IMPLEMENTS, cls.OVERRIDES, cls.ASSIGNS_TO, cls.READS_FROM],
+            4: [
+                cls.DEFINES_CONSTANT,
+                cls.DEFINES_ENUM_MEMBER,
+                cls.DEFINES_CLASS_ATTR,
+                cls.DEFINES_FIELD,
+            ],
+            5: [
+                cls.USES_CONSTANT,
+                cls.USES_DEFAULT,
+                cls.USES_GLOBAL,
+                cls.ASSERTS_TYPE,
+                cls.USES_CONTEXT_MANAGER,
+            ],
         }
 
 
@@ -311,12 +348,10 @@ class RelationshipEdge:
 @dataclass
 class CallEdge:
     """
-    Legacy CallEdge for backwards compatibility.
+    Call relationship edge representation.
 
-    DEPRECATED: Use RelationshipEdge instead.
-
-    This class is maintained for backwards compatibility with Phase 1 code.
-    New code should use RelationshipEdge.
+    Note: RelationshipEdge provides a more general interface for all
+    relationship types. Consider using RelationshipEdge for new code.
     """
 
     source_id: str
@@ -374,7 +409,7 @@ def get_relationship_field_mapping() -> Dict[str, tuple]:
         }
     """
     return {
-        "calls": ("direct_callers", None),  # Legacy, handled separately
+        "calls": ("direct_callers", None),  # Handled separately
         "inherits": ("parent_classes", "child_classes"),
         "uses_type": ("uses_types", "used_as_type_in"),
         "imports": ("imports", "imported_by"),
@@ -386,6 +421,16 @@ def get_relationship_field_mapping() -> Dict[str, tuple]:
         "overrides": ("overrides_methods", "overridden_by"),
         "assigns_to": ("assigned_by", None),  # Reverse lookup for attributes
         "reads_from": ("read_by", None),  # Reverse lookup for attributes
+        # Entity tracking enhancements (Priority 4-5)
+        "defines_constant": ("defines_constants", "constant_definitions"),
+        "defines_enum_member": ("defines_enum_members", "enum_member_definitions"),
+        "defines_class_attr": ("defines_class_attrs", "class_attr_definitions"),
+        "defines_field": ("defines_fields", "field_definitions"),
+        "uses_constant": ("uses_constants", "constant_usages"),
+        "uses_default": ("uses_defaults", "default_usages"),
+        "uses_global": ("uses_globals", "global_usages"),
+        "asserts_type": ("asserts_types", "type_assertions"),
+        "uses_context_manager": ("uses_context_managers", "context_manager_usages"),
     }
 
 

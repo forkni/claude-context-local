@@ -21,6 +21,8 @@ from typing import Any, Dict, Generator, List, Optional  # noqa: E402
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 
+from search.filters import normalize_path  # noqa: E402
+
 # Add the package to Python path for testing
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
@@ -88,11 +90,17 @@ def pytest_collection_modifyitems(config: Any, items: List[Any]) -> None:
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    """Clean up stale Merkle snapshots after test session completes.
+    """Clean up test-created project indices and merkle trees after test session.
 
-    Runs silently after all tests, removing orphaned merkle snapshots
-    that were created by tests but no longer have corresponding project indices.
-    Only outputs on errors/timeouts.
+    Only runs cleanup_orphaned_projects.py which safely identifies test projects by
+    checking if their project_path still exists. Test projects point to temporary
+    directories (pytest's tmp_path) that are deleted after tests, so they can be
+    safely cleaned up along with their merkle trees.
+
+    NOTE: cleanup_stale_snapshots.py is NOT run automatically because it identifies
+    "stale" snapshots by checking for missing indices, not by checking if the original
+    project path exists. This could incorrectly delete merkle trees for real projects
+    if their indices were temporarily affected by tests.
 
     Args:
         session: pytest session object
@@ -104,24 +112,27 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 
     # Only run cleanup if tests passed or had some failures (not on collection errors)
     if exitstatus in (0, 1):  # 0=passed, 1=some tests failed
-        cleanup_script = (
-            Path(__file__).parent.parent / "tools" / "cleanup_stale_snapshots.py"
+        # Only cleanup orphaned projects (those where project_path no longer exists)
+        # This safely targets test projects (temp directories) while preserving
+        # real projects (whose paths still exist on disk)
+        orphan_cleanup_script = (
+            Path(__file__).parent.parent / "tools" / "cleanup_orphaned_projects.py"
         )
 
-        if cleanup_script.exists():
+        if orphan_cleanup_script.exists():
             try:
                 # Run cleanup in non-interactive mode (auto-confirm deletion)
                 subprocess.run(
-                    [sys.executable, str(cleanup_script), "--auto"],
+                    [sys.executable, str(orphan_cleanup_script), "--auto"],
                     capture_output=True,
                     text=True,
                     timeout=30,
                 )
                 # Silent on success - no output
             except subprocess.TimeoutExpired:
-                print("\n[Cleanup] Warning: Snapshot cleanup timed out")
+                print("\n[Cleanup] Warning: Orphaned project cleanup timed out")
             except Exception as e:
-                print(f"\n[Cleanup] Warning: Snapshot cleanup failed: {e}")
+                print(f"\n[Cleanup] Warning: Orphaned project cleanup failed: {e}")
 
 
 @pytest.fixture(autouse=True)
@@ -130,7 +141,16 @@ def reset_global_state() -> Generator[None, None, None]:
 
     Uses the centralized ApplicationState.reset() for clean state management.
     Also resets the module-level globals for backward compatibility during migration.
+    Phase 4: Added ServiceLocator.reset() for DI pattern.
     """
+    # Reset ServiceLocator for Phase 4 DI (must be first to clear all services)
+    try:
+        from mcp_server.services import ServiceLocator
+
+        ServiceLocator.reset()
+    except ImportError:
+        pass  # ServiceLocator might not be available yet
+
     # Reset MCP server global state via ApplicationState
     try:
         from mcp_server.state import reset_state
@@ -438,7 +458,7 @@ def mock_snapshot_manager_for_unit_tests(
     from unittest.mock import Mock, patch
 
     # Only apply to unit tests (handle both Unix and Windows path separators)
-    test_path = str(request.fspath).replace("\\", "/")
+    test_path = normalize_path(str(request.fspath))
     if "tests/unit" not in test_path:
         yield
         return

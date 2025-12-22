@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """
-Clean up orphaned test projects without project_info.json
+Clean up orphaned and stale test projects
 
-Orphaned projects are those created manually or by test scripts
-that don't have the proper project_info.json file and won't appear
-in the Project Management menu.
+Removes two types of projects:
+1. Orphaned: Projects without project_info.json
+2. Stale: Projects with project_info.json where the project_path no longer exists
 """
 
 import gc
+import json
 import shutil
 import time
 from pathlib import Path
 
 
 def find_orphaned_projects():
-    """Find project directories without project_info.json."""
+    """Find project directories without project_info.json or with non-existent project_path."""
     storage_dir = Path.home() / ".claude_code_search" / "projects"
 
     if not storage_dir.exists():
@@ -25,7 +26,22 @@ def find_orphaned_projects():
     for project_dir in storage_dir.iterdir():
         if project_dir.is_dir():
             info_file = project_dir / "project_info.json"
+
+            # Case 1: No project_info.json (truly orphaned)
             if not info_file.exists():
+                orphaned.append(project_dir)
+                continue
+
+            # Case 2: Has project_info.json but project_path doesn't exist (stale)
+            try:
+                with open(info_file, "r", encoding="utf-8") as f:
+                    project_info = json.load(f)
+                    project_path = project_info.get("project_path", "")
+
+                    if project_path and not Path(project_path).exists():
+                        orphaned.append(project_dir)
+            except Exception:
+                # If we can't read project_info.json, treat as orphaned
                 orphaned.append(project_dir)
 
     return orphaned
@@ -43,12 +59,55 @@ def get_project_size(project_dir):
     return total_size / (1024 * 1024)  # Convert to MB
 
 
-def cleanup_project(project_dir):
-    """Remove a project directory safely."""
+def _get_full_project_id(project_dir: Path) -> str | None:
+    """Get full 32-char project_id from project_info.json.
+
+    Args:
+        project_dir: Path to project directory
+
+    Returns:
+        Full 32-char MD5 hash project_id, or None if not found
+    """
+    import hashlib
+
+    info_file = project_dir / "project_info.json"
+    if not info_file.exists():
+        return None
+
     try:
+        with open(info_file, "r", encoding="utf-8") as f:
+            project_info = json.load(f)
+            project_path = project_info.get("project_path", "")
+            if project_path:
+                # Compute full 32-char project_id from normalized path
+                normalized = str(Path(project_path).resolve())
+                return hashlib.md5(normalized.encode()).hexdigest()
+    except Exception:
+        pass
+
+    return None
+
+
+def cleanup_project(project_dir):
+    """Remove a project directory and its merkle snapshots safely."""
+    try:
+        # Get full 32-char project_id from project_info.json BEFORE deleting
+        full_project_id = _get_full_project_id(project_dir)
+
         # Force garbage collection to release any handles
         gc.collect()
         time.sleep(0.5)
+
+        # Remove merkle snapshots using full 32-char project_id
+        if full_project_id:
+            merkle_dir = Path.home() / ".claude_code_search" / "merkle"
+            if merkle_dir.exists():
+                # Match files like: {project_id}_{model}_{dim}d_snapshot.json
+                for merkle_file in merkle_dir.glob(f"{full_project_id}_*"):
+                    try:
+                        merkle_file.unlink()
+                    except Exception:
+                        pass  # Ignore errors removing merkle files
 
         # Remove directory
         shutil.rmtree(project_dir, ignore_errors=False)
@@ -65,72 +124,93 @@ def cleanup_project(project_dir):
 
 
 def main():
-    print("=" * 70)
-    print("ORPHANED PROJECTS CLEANUP")
-    print("=" * 70)
-    print()
-    print("Scanning for projects without project_info.json...")
-    print()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Cleanup orphaned test projects")
+    parser.add_argument(
+        "--auto",
+        action="store_true",
+        help="Auto-confirm deletion (for CI/testing, silent mode)",
+    )
+    args = parser.parse_args()
+
+    # Only show banner in interactive mode
+    if not args.auto:
+        print("=" * 70)
+        print("ORPHANED PROJECTS CLEANUP")
+        print("=" * 70)
+        print()
+        print("Scanning for projects without project_info.json...")
+        print()
 
     orphaned = find_orphaned_projects()
 
     if not orphaned:
-        print("No orphaned projects found.")
-        print()
-        print("All projects have proper project_info.json files.")
+        if not args.auto:
+            print("No orphaned projects found.")
+            print()
+            print("All projects have proper project_info.json files.")
         return
 
-    print(f"Found {len(orphaned)} orphaned project(s):")
-    print()
-
-    # Display orphaned projects
-    for i, project_dir in enumerate(orphaned, 1):
-        size_mb = get_project_size(project_dir)
-        print(f"{i}. {project_dir.name}")
-        print(f"   Size: {size_mb:.2f} MB")
-        print(f"   Path: {project_dir}")
+    # Display orphaned projects in interactive mode only
+    if not args.auto:
+        print(f"Found {len(orphaned)} orphaned project(s):")
         print()
 
-    # Ask for confirmation
-    print("=" * 70)
-    print()
-    choice = input("Delete all orphaned projects? (y/N): ").strip().lower()
+        for i, project_dir in enumerate(orphaned, 1):
+            size_mb = get_project_size(project_dir)
+            print(f"{i}. {project_dir.name}")
+            print(f"   Size: {size_mb:.2f} MB")
+            print(f"   Path: {project_dir}")
+            print()
 
-    if choice != "y":
-        print("Cancelled.")
-        return
+        # Ask for confirmation
+        print("=" * 70)
+        print()
+        choice = input("Delete all orphaned projects? (y/N): ").strip().lower()
 
-    # Delete orphaned projects
-    print()
-    print("Deleting orphaned projects...")
-    print()
+        if choice != "y":
+            print("Cancelled.")
+            return
 
+        # Delete orphaned projects
+        print()
+        print("Deleting orphaned projects...")
+        print()
+
+    # Delete orphaned projects (silent in auto mode)
     deleted_count = 0
     failed_count = 0
 
     for project_dir in orphaned:
-        print(f"Removing: {project_dir.name}...", end=" ")
+        if not args.auto:
+            print(f"Removing: {project_dir.name}...", end=" ")
+
         success, message = cleanup_project(project_dir)
 
         if success:
-            print(f"OK ({message})")
+            if not args.auto:
+                print(f"OK ({message})")
             deleted_count += 1
         else:
-            print(f"FAILED ({message})")
+            if not args.auto:
+                print(f"FAILED ({message})")
             failed_count += 1
 
-    print()
-    print("=" * 70)
-    print("CLEANUP SUMMARY")
-    print("=" * 70)
-    print(f"Deleted: {deleted_count}")
-    print(f"Failed: {failed_count}")
-    print()
-
-    if failed_count > 0:
-        print("Note: Some projects could not be deleted due to file locks.")
-        print("      Close all Python processes and try again.")
+    # Summary in interactive mode only
+    if not args.auto:
         print()
+        print("=" * 70)
+        print("CLEANUP SUMMARY")
+        print("=" * 70)
+        print(f"Deleted: {deleted_count}")
+        print(f"Failed: {failed_count}")
+        print()
+
+        if failed_count > 0:
+            print("Note: Some projects could not be deleted due to file locks.")
+            print("      Close all Python processes and try again.")
+            print()
 
 
 if __name__ == "__main__":

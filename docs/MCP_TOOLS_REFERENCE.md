@@ -6,22 +6,24 @@ This modular reference can be embedded in any project instructions for Claude Co
 
 ---
 
-## Available MCP Tools (15)
+## Available MCP Tools (17)
 
 | Tool | Priority | Purpose | Parameters |
 |------|----------|---------|------------|
-| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=5, search_mode="auto", model_key, use_routing=True, file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5 |
+| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=5, search_mode="hybrid", model_key, use_routing=True, file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5 |
 | **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (~90% accuracy with import resolution) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs |
 | **index_directory** | 🔴 **SETUP** | Index project (multi-model support) | directory_path (required), project_name, incremental=True, multi_model=auto |
 | find_similar_code | Secondary | Find alternative implementations | chunk_id (required), k=5 |
 | configure_search_mode | Config | Set search mode & weights | search_mode="hybrid", bm25_weight=0.4, dense_weight=0.6, enable_parallel=True |
 | configure_query_routing | Config | Configure multi-model routing (v0.5.4+) | enable_multi_model, default_model, confidence_threshold=0.05 |
+| configure_reranking | Config | Configure neural reranker settings | enabled, model_name, top_k_candidates=50 |
 | get_search_config_status | Config | View current configuration | *(no parameters)* |
 | get_index_status | Status | Check index health & model info | *(no parameters)* |
 | get_memory_status | Monitor | Check RAM/VRAM usage | *(no parameters)* |
 | list_projects | Management | Show indexed projects grouped by path | *(no parameters)* |
 | switch_project | Management | Change active project | project_path (required) |
 | clear_index | Reset | Delete current index (all dimensions) | *(no parameters)* |
+| delete_project | Management | Safely delete indexed project | project_path (required), force=False |
 | cleanup_resources | Cleanup | Free memory/caches (GPU + index) | *(no parameters)* |
 | list_embedding_models | Model | View available embedding models | *(no parameters)* |
 | switch_embedding_model | Model | Switch embedding model (instant <150ms) | model_name (required) |
@@ -101,6 +103,172 @@ find_connections(symbol_name="UserService", exclude_dirs=["tests/"])
 
 ---
 
+## Output Format Options
+
+All 17 MCP tools support configurable output formatting via the `output_format` parameter. This allows you to optimize token usage while preserving 100% of data.
+
+### Available Formats
+
+| Format | Token Reduction | Use Case | Description |
+|--------|----------------|----------|-------------|
+| **verbose** | 0% (baseline) | Debugging, backward compatibility | Verbose JSON with indent=2, all fields included |
+| **compact** | 30-40% | Default, recommended | Omits empty fields, no indentation, removes redundant data |
+| **ultra** | 45-55% | Large result sets, bandwidth-constrained | Tabular arrays with header-declared fields |
+
+### Configuration
+
+**Set default format** (persists across sessions):
+
+```bash
+# Via interactive menu
+start_mcp_server.cmd → 3. Search Configuration → A. Configure Output Format
+
+# Or directly in search_config.json
+"output_format": "compact"  # verbose, compact, or ultra
+```
+
+**Override per-query**:
+
+```python
+# Use Ultra format for this query only
+search_code("authentication", k=10, output_format="ultra")
+find_connections(chunk_id="...", output_format="compact")
+```
+
+### Understanding Ultra Tabular Format
+
+Ultra format optimizes token usage by declaring field names once in a header, then providing data as arrays of values.
+
+#### Format Structure
+
+**Header Pattern**: `"array_name[count]{field1,field2,field3}"`
+
+- `array_name`: Name of the array (e.g., "results", "callers")
+- `[count]`: Number of elements in the array
+- `{fields}`: Comma-separated field names in order
+
+**Data Pattern**: `[[val1, val2, val3], [val1, val2, val3], ...]`
+
+- Each row is an array of values
+- Values map to fields by position (index 0 → field1, index 1 → field2, etc.)
+
+#### Examples
+
+**Standard JSON** (baseline):
+
+```json
+{
+  "results": [
+    {"chunk_id": "auth.py:10-25:function:login", "kind": "function", "score": 0.95},
+    {"chunk_id": "auth.py:30-45:function:logout", "kind": "function", "score": 0.87}
+  ]
+}
+```
+
+**Tokens**: ~60 chars for field names × 2 = 120 chars overhead
+
+**Ultra Format** (45-55% reduction):
+
+```json
+{
+  "results[2]{chunk_id,kind,score}": [
+    ["auth.py:10-25:function:login", "function", 0.95],
+    ["auth.py:30-45:function:logout", "function", 0.87]
+  ],
+  "_format_note": "Ultra format: header[count]{fields}: [[row1], [row2], ...]"
+}
+```
+
+**Tokens**: 36 chars for field names × 1 = 36 chars overhead (70% reduction)
+
+#### Parsing Ultra Format
+
+**Step-by-step algorithm**:
+
+1. **Extract header**: `"results[2]{chunk_id,kind,score}"`
+   - Array name: `"results"`
+   - Count: `2`
+   - Fields: `["chunk_id", "kind", "score"]`
+
+2. **Map row values to fields**:
+
+   ```python
+   fields = ["chunk_id", "kind", "score"]
+   row1 = ["auth.py:10-25:function:login", "function", 0.95]
+   
+   # Reconstruct object
+   object1 = {
+       "chunk_id": row1[0],  # "auth.py:10-25:function:login"
+       "kind": row1[1],       # "function"
+       "score": row1[2]       # 0.95
+   }
+   ```
+
+3. **Result**: Standard JSON object reconstructed from tabular data
+
+#### Real-World Example
+
+**Query**: `find_connections("mcp_server/output_formatter.py:109-177:function:_to_toon_format")`
+
+**Ultra Response**:
+
+```json
+{
+  "symbol": "_to_toon_format",
+  "chunk_id": "mcp_server/output_formatter.py:109-177:function:_to_toon_format",
+  "direct_callers[1]{chunk_id,kind,score}": [
+    ["mcp_server/output_formatter.py:17-34:function:format_response", "function", 1.0]
+  ],
+  "similar_code[10]{chunk_id,kind,score}": [
+    ["mcp_server/output_formatter.py:37-77:function:_to_compact_format", "function", 0.82],
+    ["search/hybrid_searcher.py:245-289:function:_format_results", "function", 0.76],
+    ...
+  ],
+  "_format_note": "Ultra format: header[count]{fields}: [[row1], [row2], ...]"
+}
+```
+
+**Token Savings**:
+
+- Standard JSON: 10 similar_code results × 3 fields = 30 field name occurrences
+- TOON format: 3 field names declared once = 3 occurrences
+- **Reduction**: (30-3)/30 = 90% field name token savings for this array
+
+#### Schema Flexibility
+
+Different arrays in the same response can have different schemas:
+
+```json
+{
+  "direct_callers[1]{chunk_id,kind,score}": [...],
+  "uses_types[1]{target_name,relationship_type,kind,line,confidence,note}": [...]
+}
+```
+
+Notice:
+
+- `direct_callers` has 3 fields
+- `uses_types` has 6 fields
+- Both use TOON format with appropriate headers
+
+### Token Reduction Analysis
+
+**Test Query**: `find_connections` with 5 callers + 10 similar_code results
+
+| Format | Characters | Estimated Tokens | Reduction |
+|--------|-----------|------------------|-----------|
+| JSON | 3,259 | ~814 | 0% (baseline) |
+| Compact | 2,167 | ~541 | 33.5% |
+| TOON | 1,877 | ~469 | 42.4% |
+
+**Recommendation**:
+
+- Use **compact** as default (good balance of readability and efficiency)
+- Use **toon** for large result sets (k > 10) or bandwidth-constrained environments
+- Use **json** only for debugging or when you need maximum readability
+
+---
+
 ## Essential Workflow
 
 **Discovery & Exploration**:
@@ -143,7 +311,7 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 | Metric | Traditional Reading | Semantic Search (First) | Semantic Search (Cached) | Improvement |
 |--------|---------------------|-------------------------|--------------------------|-------------|
 | Tokens | 5,600 | 400 | 400 | 93% reduction |
-| Speed | 30-60s | 8-15s (includes 5-10s model load) | 3-5s | 3-10x faster |
+| Speed | 30-60s | 8-15s (includes 5-10s model load) | 3-5s | 2-3x faster |
 | VRAM | 0 MB | 0 MB → 1.5-5.3 GB (on-demand) | 1.5-5.3 GB | Lazy loading |
 | Accuracy | Hit-or-miss | Targeted | Targeted | Precision |
 
@@ -866,7 +1034,7 @@ When multi-model mode is enabled, `index_directory` automatically indexes with *
 
 ## Supported Features
 
-- **Languages**: Python, JS, TS, Java, Go, Rust, C, C++, C#, GLSL, Svelte (22 extensions)
+- **Languages**: Python, JavaScript, TypeScript, Go, Rust, C, C++, C#, GLSL (9 languages, 19 extensions)
 - **Parsing**: AST (Python) + Tree-sitter (all others)
 - **Search Modes**: Semantic, BM25, Hybrid
 - **Chunking**: Functions, classes, methods, interfaces, enums, modules, etc.
@@ -937,7 +1105,7 @@ When multi-model mode is enabled, `index_directory` automatically indexes with *
 - Results: 3 relevant chunks (400 tokens)
 - **Total**: 400 tokens
 
-**Savings**: 85-95% token reduction + 3-10x speed increase
+**Savings**: 63% token reduction + 2-3x speed increase
 
 ---
 

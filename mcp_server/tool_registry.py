@@ -1,6 +1,6 @@
 """Tool registry for low-level MCP server.
 
-Contains JSON schemas for all 15 tools following MCP specification.
+Contains JSON schemas for all 17 tools following MCP specification.
 """
 
 from typing import Any, Dict
@@ -99,6 +99,12 @@ WHEN NOT TO USE:
                     "enum": ["qwen3", "bge_m3", "coderankembed"],
                     "description": 'Override model selection ("qwen3", "bge_m3", "coderankembed"). If None, uses routing or config default.',
                 },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["verbose", "compact", "ultra"],
+                    "default": "compact",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                },
             },
             "required": [],
         },
@@ -139,6 +145,22 @@ PROCESS:
                     "type": "boolean",
                     "description": "Index for all models in pool (Qwen3, BGE-M3, CodeRankEmbed). Default: auto-detect from CLAUDE_MULTI_MODEL_ENABLED environment variable",
                 },
+                "include_dirs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": 'Only index files in these directories (e.g., ["src/", "lib/"]). Uses path prefix matching. Immutable after project creation.',
+                },
+                "exclude_dirs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": 'Exclude these directories from indexing (e.g., ["tests/", "vendor/"]). Uses path prefix matching. Immutable after project creation.',
+                },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["verbose", "compact", "ultra"],
+                    "default": "compact",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                },
             },
             "required": ["directory_path"],
         },
@@ -168,17 +190,45 @@ WORKFLOW:
                     "default": 5,
                     "description": "Number of similar chunks to return (default: 5)",
                 },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["verbose", "compact", "ultra"],
+                    "default": "compact",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                },
             },
             "required": ["chunk_id"],
         },
     },
     "get_index_status": {
         "description": "Get current status and statistics of the search index",
-        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "output_format": {
+                    "type": "string",
+                    "enum": ["verbose", "compact", "ultra"],
+                    "default": "compact",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                },
+            },
+            "required": [],
+        },
     },
     "list_projects": {
         "description": "List all indexed projects with their information",
-        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "output_format": {
+                    "type": "string",
+                    "enum": ["verbose", "compact", "ultra"],
+                    "default": "compact",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                },
+            },
+            "required": [],
+        },
     },
     "switch_project": {
         "description": "Switch to a different indexed project for searching",
@@ -188,20 +238,79 @@ WORKFLOW:
                 "project_path": {
                     "type": "string",
                     "description": "Path to the project directory",
-                }
+                },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["verbose", "compact", "ultra"],
+                    "default": "compact",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                },
             },
             "required": ["project_path"],
         },
     },
     "clear_index": {
         "description": "Clear the entire search index and metadata for the current project. Deletes ALL dimension indices (768d, 1024d, etc.) and associated Merkle snapshots.",
-        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "output_format": {
+                    "type": "string",
+                    "enum": ["verbose", "compact", "ultra"],
+                    "default": "compact",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                },
+            },
+            "required": [],
+        },
+    },
+    "delete_project": {
+        "description": """Safely delete an indexed project and all associated data.
+
+Properly closes database connections before deletion to prevent file lock errors.
+Handles deletion of: vector indices (FAISS), metadata databases (SQLite), BM25 indices,
+Merkle snapshots, and call graph data.
+
+IMPORTANT: Use this tool instead of manual deletion when the MCP server is running.
+If files are locked, they'll be queued for automatic retry on next server startup.""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project_path": {
+                    "type": "string",
+                    "description": "Absolute path to the project directory to delete",
+                },
+                "force": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Force delete even if this is the current project (default: False)",
+                },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["verbose", "compact", "ultra"],
+                    "default": "compact",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                },
+            },
+            "required": ["project_path"],
+        },
     },
     "get_memory_status": {
         "description": """Get current memory usage status for the index and system.
 
 Shows available RAM/VRAM, current index memory usage, and whether GPU acceleration is active. Useful for monitoring memory consumption and optimizing performance.""",
-        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "output_format": {
+                    "type": "string",
+                    "enum": ["verbose", "compact", "ultra"],
+                    "default": "compact",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                },
+            },
+            "required": [],
+        },
     },
     "configure_query_routing": {
         "description": """Configure query routing behavior for multi-model semantic search.
@@ -209,7 +318,7 @@ Shows available RAM/VRAM, current index memory usage, and whether GPU accelerati
 Args:
     enable_multi_model: Enable/disable multi-model mode (default: True via env var)
     default_model: Set default model key ("qwen3", "bge_m3", "coderankembed")
-    confidence_threshold: Minimum confidence for routing (0.0-1.0, default: 0.3)""",
+    confidence_threshold: Minimum confidence for routing (0.0-1.0, default: 0.05)""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -226,7 +335,13 @@ Args:
                     "type": "number",
                     "minimum": 0.0,
                     "maximum": 1.0,
-                    "description": "Minimum confidence for routing (0.0-1.0, default: 0.3)",
+                    "description": "Minimum confidence for routing (0.0-1.0, default: 0.05)",
+                },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["verbose", "compact", "ultra"],
+                    "default": "compact",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
                 },
             },
             "required": [],
@@ -236,7 +351,18 @@ Args:
         "description": """Manually cleanup all resources to free memory.
 
 Forces cleanup of indexes, embedding model(s), and GPU memory. Useful when switching between large projects or when memory is running low.""",
-        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "output_format": {
+                    "type": "string",
+                    "enum": ["verbose", "compact", "ultra"],
+                    "default": "compact",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                },
+            },
+            "required": [],
+        },
     },
     "configure_search_mode": {
         "description": """Configure search mode and hybrid search parameters.
@@ -274,17 +400,45 @@ Args:
                     "default": True,
                     "description": "Enable parallel BM25 + Dense search execution",
                 },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["verbose", "compact", "ultra"],
+                    "default": "compact",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                },
             },
             "required": [],
         },
     },
     "get_search_config_status": {
         "description": "Get current search configuration status and available options",
-        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "output_format": {
+                    "type": "string",
+                    "enum": ["verbose", "compact", "ultra"],
+                    "default": "compact",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                },
+            },
+            "required": [],
+        },
     },
     "list_embedding_models": {
         "description": "List all available embedding models with their specifications",
-        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "output_format": {
+                    "type": "string",
+                    "enum": ["verbose", "compact", "ultra"],
+                    "default": "compact",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                },
+            },
+            "required": [],
+        },
     },
     "switch_embedding_model": {
         "description": """Switch to a different embedding model without deleting existing indices.
@@ -296,7 +450,13 @@ Per-model indices enable instant switching - if you've already indexed a project
                 "model_name": {
                     "type": "string",
                     "description": 'Model identifier from MODEL_REGISTRY (e.g., "BAAI/bge-m3")',
-                }
+                },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["verbose", "compact", "ultra"],
+                    "default": "compact",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                },
             },
             "required": ["model_name"],
         },
@@ -342,6 +502,46 @@ RETURNS:
                     "type": "array",
                     "items": {"type": "string"},
                     "description": 'Exclude these directories from symbol resolution and caller lookup (e.g., ["tests/"]). Default: None (searches all).',
+                },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["verbose", "compact", "ultra"],
+                    "default": "compact",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                },
+            },
+            "required": [],
+        },
+    },
+    "configure_reranking": {
+        "description": """Configure neural reranker settings.
+
+Args:
+    enabled: Enable/disable neural reranking (default: True)
+    model_name: Cross-encoder model to use (default: BAAI/bge-reranker-v2-m3)
+    top_k_candidates: Number of candidates to rerank (default: 50)""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "description": "Enable/disable neural reranking",
+                },
+                "model_name": {
+                    "type": "string",
+                    "description": "Cross-encoder model name",
+                },
+                "top_k_candidates": {
+                    "type": "integer",
+                    "description": "Number of candidates to rerank",
+                    "minimum": 5,
+                    "maximum": 100,
+                },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["verbose", "compact", "ultra"],
+                    "default": "compact",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
                 },
             },
             "required": [],

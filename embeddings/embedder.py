@@ -6,12 +6,24 @@ Supports multiple embedding models including:
 """
 
 import logging
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+)
+
+from embeddings.model_cache import ModelCacheManager
+from embeddings.model_loader import ModelLoader
+from embeddings.query_cache import QueryEmbeddingCache
+from search.filters import normalize_path
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -24,6 +36,146 @@ except Exception:
     torch = None
 
 from chunking.python_ast_chunker import CodeChunk
+
+
+# Helper function to access config via ServiceLocator (avoids circular imports)
+def _get_config_via_service_locator():
+    """Get SearchConfig via ServiceLocator to avoid circular dependencies."""
+    from mcp_server.services import ServiceLocator
+
+    return ServiceLocator.instance().get_config()
+
+
+def calculate_optimal_batch_size(
+    embedding_dim: int = 768,
+    min_batch: int = 32,
+    max_batch: int = 512,
+    memory_fraction: float = 0.7,
+    model_vram_gb: float = 0.0,
+) -> int:
+    """Calculate optimal batch size based on GPU VRAM tiers (model-aware).
+
+    Uses simple GPU memory tiers for reliable batch sizing that accounts for
+    model activation memory (not just embedding output). Now subtracts model
+    VRAM from available memory to prevent OOM with large models.
+
+    Available Memory Tiers (after subtracting model VRAM):
+    - ≤8GB available: 64 batch size
+    - 8-12GB available: 128 batch size
+    - 12-20GB available: 256 batch size
+    - ≥20GB available: 512 batch size
+
+    Args:
+        embedding_dim: Embedding dimension (unused, kept for API compatibility)
+        min_batch: Minimum batch size (safety floor, default: 32)
+        max_batch: Maximum batch size (default: 512)
+        memory_fraction: Unused, kept for API compatibility
+        model_vram_gb: Model VRAM usage in GB (subtracted from available memory)
+
+    Returns:
+        Batch size based on available GPU tier, clamped to [min_batch, max_batch]
+
+    Examples:
+        >>> # RTX 4090 (24GB) with Qwen3-4B (7.5GB model)
+        >>> calculate_optimal_batch_size(model_vram_gb=7.5)
+        128  # 24 - 7.5 = 16.5GB available → tier=128
+
+        >>> # RTX 4090 (24GB) with BGE-M3 (1GB model)
+        >>> calculate_optimal_batch_size(model_vram_gb=1.0)
+        512  # 24 - 1 = 23GB available → tier=512
+    """
+    if not torch or not torch.cuda.is_available():
+        return min_batch  # CPU fallback
+
+    try:
+        # Get total GPU memory (not free, to be consistent across runs)
+        _, total_memory = torch.cuda.mem_get_info()
+        total_gb = total_memory / (1024**3)
+
+        # Calculate available memory for activations (total - model weights)
+        available_gb = total_gb - model_vram_gb
+
+        # GPU-tiered batch sizes based on AVAILABLE memory
+        if available_gb <= 8:
+            optimal_batch = 64  # Very constrained
+        elif available_gb <= 12:
+            optimal_batch = 128  # Moderate
+        elif available_gb <= 20:
+            optimal_batch = 256  # Good
+        else:  # 20GB+ available
+            optimal_batch = 512  # Excellent
+
+        # Clamp to config limits
+        result = max(min_batch, min(optimal_batch, max_batch))
+
+        # Log for debugging (show both total and available)
+        logger = logging.getLogger(__name__)
+        if model_vram_gb > 0:
+            logger.info(
+                f"[DYNAMIC_BATCH] GPU: {total_gb:.1f}GB total, "
+                f"{model_vram_gb:.1f}GB model, "
+                f"{available_gb:.1f}GB available → batch size: {result}"
+            )
+        else:
+            logger.info(
+                f"[DYNAMIC_BATCH] GPU: {total_gb:.1f}GB total → batch size: {result} (tier-based)"
+            )
+
+        return result
+
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            f"[DYNAMIC_BATCH] Failed to calculate batch size: {e}, using min_batch={min_batch}"
+        )
+        return min_batch  # Fallback on error
+
+
+def parse_vram_gb_from_registry(model_name: str) -> float:
+    """Parse VRAM estimate from MODEL_REGISTRY for upfront batch sizing.
+
+    Handles formats: "8-10GB" (range) → 10.0, "2.3GB" (exact) → 2.3, "2GB" → 2.0
+    Uses upper bound of range for conservative batch sizing.
+
+    Args:
+        model_name: Model identifier (e.g., "Qwen/Qwen3-Embedding-4B")
+
+    Returns:
+        VRAM estimate in GB, or 0.0 if not found/parseable
+
+    Examples:
+        >>> parse_vram_gb_from_registry("Qwen/Qwen3-Embedding-4B")
+        10.0  # From "8-10GB" (upper bound)
+
+        >>> parse_vram_gb_from_registry("Qwen/Qwen3-Embedding-0.6B")
+        2.3  # From "2.3GB"
+
+        >>> parse_vram_gb_from_registry("BAAI/bge-m3")
+        4.0  # From "3-4GB" (upper bound)
+    """
+    import re
+
+    from search.config import get_model_config
+
+    config = get_model_config(model_name)
+    if not config:
+        return 0.0
+
+    vram_str = config.get("vram_gb", "")
+    if not vram_str:
+        return 0.0
+
+    # Handle range format: "8-10GB" → use upper bound (10.0)
+    range_match = re.match(r"(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)GB", vram_str)
+    if range_match:
+        return float(range_match.group(2))  # Upper bound for safety
+
+    # Handle exact format: "2.3GB" or "2GB"
+    exact_match = re.match(r"(\d+(?:\.\d+)?)GB", vram_str)
+    if exact_match:
+        return float(exact_match.group(1))
+
+    return 0.0
 
 
 @dataclass
@@ -39,7 +191,7 @@ class CodeEmbedder:
     """Multi-model embedder for generating code embeddings.
 
     Supports multiple embedding models with automatic configuration detection.
-    Default model is google/embeddinggemma-300m for backward compatibility.
+    Default model is google/embeddinggemma-300m.
     """
 
     def __init__(
@@ -58,11 +210,26 @@ class CodeEmbedder:
         self._model_config = None
 
         # Query embedding cache (LRU)
-        self._query_cache_size = 128  # Configurable cache size
-        self._query_cache = {}  # Simple dict cache
-        self._cache_order = []  # Track insertion order for LRU
-        self._cache_hits = 0
-        self._cache_misses = 0
+        self._query_cache = QueryEmbeddingCache(max_size=128)
+
+        # Model cache manager
+        self._cache_manager = ModelCacheManager(
+            model_name=model_name,
+            cache_dir=cache_dir or str(Path.home() / ".cache" / "huggingface" / "hub"),
+            model_config_getter=self._get_model_config,
+        )
+
+        # Model loader
+        self._model_loader = ModelLoader(
+            model_name=model_name,
+            cache_dir=cache_dir or str(Path.home() / ".cache" / "huggingface" / "hub"),
+            device=device,
+            cache_manager=self._cache_manager,
+            model_config_getter=self._get_model_config,
+        )
+
+        # Track per-model VRAM usage
+        self._model_vram_usage: Dict[str, float] = {}  # model_key -> VRAM MB
 
         # Setup logging
         logging.basicConfig(level=logging.INFO)
@@ -119,26 +286,27 @@ class CodeEmbedder:
 
         return self._model_config
 
+    # ===== Model Loading Methods (delegated to ModelLoader) =====
+
     def _log_gpu_memory(self, stage: str):
-        """Log GPU memory usage at specific loading stages."""
-        if torch is None or not torch.cuda.is_available():
-            return
+        """Delegate to ModelLoader.log_gpu_memory()."""
+        self._model_loader.log_gpu_memory(stage)
 
-        try:
-            for gpu_id in range(torch.cuda.device_count()):
-                allocated = torch.cuda.memory_allocated(gpu_id) / 1024**3  # GB
-                reserved = torch.cuda.memory_reserved(gpu_id) / 1024**3  # GB
-                total = torch.cuda.get_device_properties(gpu_id).total_memory / 1024**3
+    def _get_torch_dtype(self):
+        """Delegate to ModelLoader.get_torch_dtype()."""
+        return self._model_loader.get_torch_dtype()
 
-                self._logger.info(
-                    f"[GPU_{gpu_id}] {stage}: "
-                    f"Allocated={allocated:.2f}GB, "
-                    f"Reserved={reserved:.2f}GB, "
-                    f"Total={total:.2f}GB "
-                    f"({allocated / total * 100:.1f}% used)"
-                )
-        except Exception as e:
-            self._logger.debug(f"GPU memory logging failed: {e}")
+    def _is_gpu_device(self) -> bool:
+        """Check if current device is GPU (cuda/mps).
+
+        Returns:
+            True if device is GPU, False if CPU.
+        """
+        if not self.device:
+            return False
+
+        device_str = str(self.device).lower()
+        return "cuda" in device_str or "mps" in device_str
 
     @property
     def model(self):
@@ -148,217 +316,10 @@ class CodeEmbedder:
         return self._model
 
     def _load_model(self):
-        """Load model with automatic cache corruption recovery and fallback."""
-        import shutil
-
-        if SentenceTransformer is None:
-            raise ImportError(
-                "sentence-transformers not found. Install with: "
-                "pip install sentence-transformers>=5.0.0"
-            )
-
-        self._logger.info(f"Loading model: {self.model_name}")
-
-        # Step 1: Validate cache integrity (comprehensive checks)
-        cache_valid, cache_reason = self._validate_model_cache()
-        cache_path_obj = self._get_model_cache_path()
-
-        # Check if cache directory exists but is corrupted
-        if cache_path_obj and cache_path_obj.exists() and not cache_valid:
-            # Step 1a: Check if corruption is due to incomplete downloads
-            has_incomplete, incomplete_msg = self._check_incomplete_downloads()
-
-            if has_incomplete and "Incomplete downloads detected" in cache_reason:
-                # Corruption is due to incomplete downloads - try cleanup first
-                self._logger.warning(
-                    f"[INCOMPLETE DOWNLOADS] {incomplete_msg}\n"
-                    f"[AUTO-CLEANUP] Removing incomplete files and retrying..."
-                )
-
-                # Clean up incomplete downloads
-                removed_count, removed_files = self._cleanup_incomplete_downloads()
-
-                if removed_count > 0:
-                    self._logger.info(
-                        f"[CLEANUP SUCCESS] Removed {removed_count} incomplete file(s)"
-                    )
-
-                    # Re-validate cache after cleanup
-                    cache_valid_retry, cache_reason_retry = self._validate_model_cache()
-
-                    if cache_valid_retry:
-                        # Cache is now valid after cleanup!
-                        self._logger.info(
-                            "[RECOVERY SUCCESS] Cache is now valid after incomplete download cleanup"
-                        )
-                        cache_valid = True
-                        cache_reason = "Valid after cleanup"
-                    else:
-                        # Still corrupted after cleanup - proceed with full cache deletion
-                        self._logger.warning(
-                            f"[CLEANUP INSUFFICIENT] Cache still corrupted after cleanup: {cache_reason_retry}\n"
-                            f"[AUTO-RECOVERY] Deleting entire cache and re-downloading..."
-                        )
-                else:
-                    self._logger.warning(
-                        "[CLEANUP FAILED] Could not remove incomplete files\n"
-                        "[AUTO-RECOVERY] Proceeding with cache deletion..."
-                    )
-
-            # Step 1b: If still corrupted, delete cache and force re-download
-            if not cache_valid:
-                # Cache exists but is corrupted - attempt automatic recovery
-                self._logger.warning(
-                    f"[CACHE CORRUPTED] {cache_reason}\n"
-                    f"[AUTO-RECOVERY] Deleting corrupted cache and re-downloading from HuggingFace..."
-                )
-
-                try:
-                    # Delete corrupted cache directory
-                    shutil.rmtree(cache_path_obj)
-                    self._logger.info(f"[DELETED] Corrupted cache: {cache_path_obj}")
-                    cache_valid = False  # Force re-download
-                except Exception as e:
-                    # Failed to delete corrupted cache - provide manual fix instructions
-                    raise RuntimeError(
-                        f"[CACHE CORRUPTION] Cache cannot be deleted automatically.\n"
-                        f"Cache path: {cache_path_obj}\n"
-                        f"Error: {e}\n\n"
-                        f"Manual fix required:\n"
-                        f"  1. Close all applications using the model\n"
-                        f"  2. Delete directory: {cache_path_obj}\n"
-                        f"  3. Re-run indexing to download fresh model\n\n"
-                        f"Alternative: Use cleanup utility:\n"
-                        f'  python tools/cleanup_model_cache.py --model "{self.model_name}"'
-                    ) from e
-
-        # Step 2: Validate model exists on HuggingFace (if no valid cache)
-        if not cache_valid:
-            # Model not cached or cache was corrupted - validate on HuggingFace Hub
-            try:
-                from huggingface_hub import model_info
-
-                self._logger.info(
-                    f"Checking if '{self.model_name}' exists on HuggingFace Hub..."
-                )
-                info = model_info(self.model_name)
-                self._logger.info(
-                    f"Model found: {info.modelId} (library: {info.library_name or 'unknown'})"
-                )
-            except ImportError:
-                self._logger.warning(
-                    "huggingface_hub not available, skipping model existence check. "
-                    "Install with: pip install huggingface_hub"
-                )
-            except Exception as e:
-                # Model not found on HuggingFace Hub
-                from search.config import MODEL_REGISTRY
-
-                available_models = list(MODEL_REGISTRY.keys())
-                raise ValueError(
-                    f"Model '{self.model_name}' not found on HuggingFace Hub!\n"
-                    f"Error: {e}\n"
-                    f"Available models in registry: {available_models}\n"
-                    f"Please check:\n"
-                    f"  1. Model name for typos (e.g., 'Qodo/Qodo-Embed-1-1.5B')\n"
-                    f"  2. Model exists on https://huggingface.co/{self.model_name}\n"
-                    f"  3. You have internet access to download the model"
-                ) from e
-
-        # Step 3: Prepare for loading (enable offline mode if cache is valid)
-        local_model_dir = None
-        if cache_valid:
-            # Only use cached path if validation passed
-            try:
-                os.environ.setdefault("HF_HUB_OFFLINE", "1")
-                os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
-                self._logger.info(
-                    "[VALIDATED CACHE] Enabling offline mode for faster startup."
-                )
-                local_model_dir = self._find_local_model_dir()
-                if local_model_dir:
-                    self._logger.info(
-                        f"Loading model from validated cache: {local_model_dir}"
-                    )
-            except Exception as _e:
-                self._logger.debug(f"Offline mode detection skipped: {_e}")
-
-        # Step 4: Load model with automatic fallback
-        resolved_device = self._resolve_device(self.device)
-        self._log_gpu_memory("BEFORE_LOAD")
-
-        try:
-            model_source = str(local_model_dir) if local_model_dir else self.model_name
-
-            self._model = SentenceTransformer(
-                model_source,
-                cache_folder=self.cache_dir,
-                device=resolved_device,
-                trust_remote_code=True,  # Required for some models like Qodo
-            )
-
-            self.device = resolved_device
-            self._logger.info(
-                f"Model loaded successfully on device: {self._model.device}"
-            )
-            self._log_gpu_memory("AFTER_LOAD")
-
-        except Exception as e:
-            # Step 5: Fallback - If loading from cache failed, try network download
-            if local_model_dir:
-                self._logger.warning(
-                    f"[CACHE LOAD FAILED] {str(e)}\n"
-                    f"[FALLBACK] Attempting network re-download..."
-                )
-
-                # Disable offline mode to allow re-download
-                os.environ.pop("HF_HUB_OFFLINE", None)
-                os.environ.pop("TRANSFORMERS_OFFLINE", None)
-
-                try:
-                    self._model = SentenceTransformer(
-                        self.model_name,  # Use model name, not local path
-                        cache_folder=self.cache_dir,
-                        device=resolved_device,
-                        trust_remote_code=True,
-                    )
-                    self.device = resolved_device
-                    self._logger.info(
-                        "[FALLBACK SUCCESS] Downloaded fresh model from HuggingFace"
-                    )
-                    self._log_gpu_memory("AFTER_FALLBACK_LOAD")
-                except Exception as e2:
-                    # Both cache and network download failed
-                    raise RuntimeError(
-                        f"[MODEL LOAD FAILED] All recovery attempts exhausted.\n\n"
-                        f"Attempted:\n"
-                        f"  ✓ Cache validation - {'PASSED' if cache_valid else 'FAILED (' + cache_reason + ')'}\n"
-                        f"  ✓ Cache load - FAILED ({str(e)})\n"
-                        f"  ✓ Network re-download - FAILED ({str(e2)})\n\n"
-                        f"Possible causes:\n"
-                        f"  1. Network connectivity issues\n"
-                        f"  2. HuggingFace Hub access blocked\n"
-                        f"  3. Model incompatible with sentence-transformers version\n"
-                        f"  4. Insufficient disk space for download\n\n"
-                        f"Manual fixes:\n"
-                        f"  1. Check internet connection and retry\n"
-                        f'  2. Clear cache: python tools/cleanup_model_cache.py --model "{self.model_name}"\n'
-                        f"  3. Verify model exists: https://huggingface.co/{self.model_name}\n"
-                        f"  4. Check disk space and permissions"
-                    ) from e2
-            else:
-                # No cache to fall back from - this is a direct download failure
-                raise RuntimeError(
-                    f"[MODEL DOWNLOAD FAILED] {str(e)}\n\n"
-                    f"Attempted:\n"
-                    f"  ✓ Cache validation - {'PASSED' if cache_valid else 'FAILED (' + cache_reason + ')'}\n"
-                    f"  ✓ Network download - FAILED\n\n"
-                    f"Please check:\n"
-                    f"  1. Internet connectivity\n"
-                    f"  2. HuggingFace Hub access\n"
-                    f"  3. Model name is correct: {self.model_name}\n"
-                    f"  4. Sufficient disk space for download"
-                ) from e
+        """Delegate to ModelLoader.load()."""
+        self._model, self.device = self._model_loader.load()
+        # Sync VRAM usage tracking from ModelLoader
+        self._model_vram_usage.update(self._model_loader.model_vram_usage)
 
     def create_embedding_content(self, chunk: CodeChunk, max_chars: int = 6000) -> str:
         """Create clean content for embedding generation with size limits."""
@@ -443,10 +404,22 @@ class CodeEmbedder:
         else:
             content_to_embed = content
 
-        embedding = self.model.encode([content_to_embed], show_progress_bar=False)[0]
+        # Use convert_to_tensor for GPU to avoid CPU<->GPU transfers
+        use_tensor = self._is_gpu_device()
+        embedding = self.model.encode(
+            [content_to_embed],
+            show_progress_bar=False,
+            convert_to_tensor=use_tensor,
+            device=self.device if use_tensor else None,
+        )[0]
+
+        # Convert back to numpy if tensor
+        # Note: bf16 tensors must be converted to float32 first (numpy doesn't support bf16)
+        if torch and torch.is_tensor(embedding):
+            embedding = embedding.cpu().float().numpy()
 
         # Create unique chunk ID with normalized path separators
-        normalized_path = str(chunk.relative_path).replace("\\", "/")
+        normalized_path = normalize_path(str(chunk.relative_path))
         chunk_id = (
             f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
         )
@@ -480,9 +453,9 @@ class CodeEmbedder:
                 if len(chunk.content) > 200
                 else chunk.content
             ),
-            # Call graph data (Phase 1: Python only)
+            # Call graph data
             "calls": [call.to_dict() for call in chunk.calls] if chunk.calls else [],
-            # Phase 3: Relationship edges (all relationship types)
+            # Relationship edges
             "relationships": (
                 [rel.to_dict() for rel in chunk.relationships]
                 if chunk.relationships
@@ -503,13 +476,39 @@ class CodeEmbedder:
 
         # Load batch size from config if not explicitly provided
         if batch_size is None:
-            from search.config import get_search_config
+            # Use ServiceLocator helper instead of inline import
+            config = _get_config_via_service_locator()
 
-            config = get_search_config()
-            batch_size = config.embedding_batch_size
-            self._logger.info(
-                f"Using batch size {batch_size} from config for {len(chunks)} chunks"
-            )
+            # Try dynamic GPU-based batch size first
+            if (
+                config.performance.enable_dynamic_batch_size
+                and config.performance.prefer_gpu
+                and torch
+                and torch.cuda.is_available()
+            ):
+                # Get model VRAM from MODEL_REGISTRY estimate (available upfront)
+                # Falls back to runtime tracking if registry doesn't have estimate
+                model_vram_gb = parse_vram_gb_from_registry(self.model_name)
+                if model_vram_gb == 0.0:
+                    # Fallback: use runtime tracking if available
+                    model_vram_mb = self._model_vram_usage.get(self.model_name, 0.0)
+                    model_vram_gb = model_vram_mb / 1024.0
+
+                batch_size = calculate_optimal_batch_size(
+                    embedding_dim=config.embedding.dimension,
+                    min_batch=config.performance.dynamic_batch_min,
+                    max_batch=config.performance.dynamic_batch_max,
+                    memory_fraction=config.performance.gpu_memory_threshold,
+                    model_vram_gb=model_vram_gb,
+                )
+                self._logger.info(
+                    f"Using dynamic GPU-optimized batch size {batch_size} for {len(chunks)} chunks"
+                )
+            else:
+                batch_size = config.embedding.batch_size
+                self._logger.info(
+                    f"Using static batch size {batch_size} from config for {len(chunks)} chunks"
+                )
         else:
             self._logger.info(
                 f"Using explicit batch size {batch_size} for {len(chunks)} chunks"
@@ -519,129 +518,125 @@ class CodeEmbedder:
         model_config = self._get_model_config()
         passage_prefix = model_config.get("passage_prefix", "")
 
-        # Process in batches for efficiency
-        for i in range(0, len(chunks), batch_size):
-            batch = chunks[i : i + batch_size]
+        # Ensure model is loaded before starting progress bar
+        # (model loads lazily on first encode() call - causes log interference)
+        if not hasattr(self, "_model_warmed_up") or not self._model_warmed_up:
+            self.model.encode(["warmup"], show_progress_bar=False)
+            self._model_warmed_up = True
 
-            # Prepend passage prefix if it exists
-            if passage_prefix:
-                batch_contents = [
-                    passage_prefix + self.create_embedding_content(chunk)
-                    for chunk in batch
-                ]
-            else:
-                batch_contents = [
-                    self.create_embedding_content(chunk) for chunk in batch
-                ]
+        # Process in batches for efficiency with progress bar
+        console = Console(force_terminal=True)
+        total_batches = (len(chunks) + batch_size - 1) // batch_size
 
-            # Generate embeddings for batch
-            batch_embeddings = self.model.encode(
-                batch_contents,
-                show_progress_bar=False,
-            )
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TextColumn("({task.completed}/{task.total} batches)"),
+            console=console,
+            transient=False,
+        ) as progress:
+            task = progress.add_task("Embedding...", total=total_batches)
+            for i in range(0, len(chunks), batch_size):
+                batch = chunks[i : i + batch_size]
 
-            # Create results
-            for _j, (chunk, embedding) in enumerate(
-                zip(batch, batch_embeddings, strict=False)
-            ):
-                # Normalize path separators for cross-platform consistency
-                normalized_path = str(chunk.relative_path).replace("\\", "/")
-                chunk_id = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
-                # Build qualified name for methods/functions inside classes
-                qualified_name = (
-                    f"{chunk.parent_name}.{chunk.name}"
-                    if chunk.parent_name and chunk.name
-                    else chunk.name
+                # Prepend passage prefix if it exists
+                if passage_prefix:
+                    batch_contents = [
+                        passage_prefix + self.create_embedding_content(chunk)
+                        for chunk in batch
+                    ]
+                else:
+                    batch_contents = [
+                        self.create_embedding_content(chunk) for chunk in batch
+                    ]
+
+                # Generate embeddings for batch
+                # Use convert_to_tensor for GPU to avoid CPU<->GPU transfers (10-20% faster)
+                use_tensor = self._is_gpu_device()
+                batch_embeddings = self.model.encode(
+                    batch_contents,
+                    show_progress_bar=False,
+                    convert_to_tensor=use_tensor,
+                    device=self.device if use_tensor else None,
                 )
-                if qualified_name:
-                    chunk_id += f":{qualified_name}"
 
-                metadata = {
-                    "file_path": chunk.file_path,
-                    "relative_path": chunk.relative_path,
-                    "folder_structure": chunk.folder_structure,
-                    "chunk_type": chunk.chunk_type,
-                    "start_line": chunk.start_line,
-                    "end_line": chunk.end_line,
-                    "name": chunk.name,
-                    "parent_name": chunk.parent_name,
-                    "docstring": chunk.docstring,
-                    "decorators": chunk.decorators,
-                    "imports": chunk.imports,
-                    "complexity_score": chunk.complexity_score,
-                    "tags": chunk.tags,
-                    "content": chunk.content,  # Full content for accurate token counting
-                    "content_preview": (
-                        chunk.content[:200] + "..."
-                        if len(chunk.content) > 200
-                        else chunk.content
-                    ),
-                    # Call graph data (Phase 1: Python only)
-                    "calls": (
-                        [call.to_dict() for call in chunk.calls] if chunk.calls else []
-                    ),
-                    # Phase 3: Relationship edges (all relationship types)
-                    "relationships": (
-                        [rel.to_dict() for rel in chunk.relationships]
-                        if chunk.relationships
-                        else []
-                    ),
-                    "language": getattr(chunk, "language", "python"),
-                }
+                # Convert back to numpy for consistency with rest of codebase
+                # Note: bf16 tensors must be converted to float32 first (numpy doesn't support bf16)
+                if torch and torch.is_tensor(batch_embeddings):
+                    batch_embeddings = batch_embeddings.cpu().float().numpy()
 
-                results.append(
-                    EmbeddingResult(
-                        embedding=embedding, chunk_id=chunk_id, metadata=metadata
+                # Create results
+                for _j, (chunk, embedding) in enumerate(
+                    zip(batch, batch_embeddings, strict=False)
+                ):
+                    # Normalize path separators for cross-platform consistency
+                    normalized_path = normalize_path(str(chunk.relative_path))
+                    chunk_id = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
+                    # Build qualified name for methods/functions inside classes
+                    qualified_name = (
+                        f"{chunk.parent_name}.{chunk.name}"
+                        if chunk.parent_name and chunk.name
+                        else chunk.name
                     )
-                )
+                    if qualified_name:
+                        chunk_id += f":{qualified_name}"
 
-            if i + batch_size < len(chunks):
-                self._logger.info(f"Processed {i + batch_size}/{len(chunks)} chunks")
+                    metadata = {
+                        "file_path": chunk.file_path,
+                        "relative_path": chunk.relative_path,
+                        "folder_structure": chunk.folder_structure,
+                        "chunk_type": chunk.chunk_type,
+                        "start_line": chunk.start_line,
+                        "end_line": chunk.end_line,
+                        "name": chunk.name,
+                        "parent_name": chunk.parent_name,
+                        "docstring": chunk.docstring,
+                        "decorators": chunk.decorators,
+                        "imports": chunk.imports,
+                        "complexity_score": chunk.complexity_score,
+                        "tags": chunk.tags,
+                        "content": chunk.content,  # Full content for accurate token counting
+                        "content_preview": (
+                            chunk.content[:200] + "..."
+                            if len(chunk.content) > 200
+                            else chunk.content
+                        ),
+                        # Call graph data (Python)
+                        "calls": (
+                            [call.to_dict() for call in chunk.calls]
+                            if chunk.calls
+                            else []
+                        ),
+                        # Relationship edges (all relationship types)
+                        "relationships": (
+                            [rel.to_dict() for rel in chunk.relationships]
+                            if chunk.relationships
+                            else []
+                        ),
+                        "language": getattr(chunk, "language", "python"),
+                    }
+
+                    results.append(
+                        EmbeddingResult(
+                            embedding=embedding, chunk_id=chunk_id, metadata=metadata
+                        )
+                    )
+
+                # Update progress bar
+                progress.update(task, advance=1)
 
         self._logger.info("Embedding generation completed")
         return results
 
-    def _get_query_cache_key(self, query: str, model_config: dict) -> str:
-        """Generate deterministic cache key from query and model config."""
-        import hashlib
-
-        key_data = f"{query}|{self.model_name}|{model_config.get('task_instruction', '')}|{model_config.get('query_prefix', '')}"
-        return hashlib.md5(key_data.encode()).hexdigest()
-
-    def _add_to_query_cache(self, key: str, embedding: np.ndarray):
-        """Add embedding to cache with LRU eviction."""
-        # Remove key if it already exists (to update order)
-        if key in self._query_cache:
-            self._cache_order.remove(key)
-
-        # Evict oldest entry if cache is full
-        if len(self._query_cache) >= self._query_cache_size:
-            oldest_key = self._cache_order.pop(0)
-            del self._query_cache[oldest_key]
-
-        # Add to cache
-        self._query_cache[key] = embedding.copy()
-        self._cache_order.append(key)
-
     def get_cache_stats(self) -> dict:
         """Get cache hit/miss statistics."""
-        total = self._cache_hits + self._cache_misses
-        hit_rate = (self._cache_hits / total * 100) if total > 0 else 0
-        return {
-            "hits": self._cache_hits,
-            "misses": self._cache_misses,
-            "hit_rate": f"{hit_rate:.1f}%",
-            "cache_size": len(self._query_cache),
-            "max_size": self._query_cache_size,
-        }
+        return self._query_cache.get_stats()
 
     def clear_query_cache(self):
         """Clear the query embedding cache."""
         self._query_cache.clear()
-        self._cache_order.clear()
-        self._cache_hits = 0
-        self._cache_misses = 0
-        self._logger.info("Query embedding cache cleared")
 
     def embed_query(self, query: str) -> np.ndarray:
         """Generate embedding for a search query with LRU caching.
@@ -655,39 +650,80 @@ class CodeEmbedder:
         # Get model-specific configuration
         model_config = self._get_model_config()
 
-        # Create cache key from query + model config
-        cache_key = self._get_query_cache_key(query, model_config)
+        # Try to get from cache
+        cached_embedding = self._query_cache.get(
+            query=query,
+            model_name=self.model_name,
+            task_instruction=model_config.get("task_instruction", ""),
+            query_prefix=model_config.get("query_prefix", ""),
+        )
 
-        # Check cache
-        if cache_key in self._query_cache:
-            self._cache_hits += 1
-            self._logger.debug(f"Cache hit for query: {query[:50]}...")
-            return self._query_cache[cache_key].copy()
-
-        self._cache_misses += 1
-        self._logger.debug(f"Cache miss for query: {query[:50]}...")
+        if cached_embedding is not None:
+            return cached_embedding
 
         # Cache miss - generate embedding
-        # Check for task_instruction (e.g., CodeRankEmbed) or query_prefix
-        task_instruction = model_config.get("task_instruction")
-        query_prefix = model_config.get("query_prefix", "")
+        # Priority: instruction_mode > task_instruction > query_prefix
+        instruction_mode = model_config.get("instruction_mode")
 
-        # Prepend prefix/instruction if it exists
-        if task_instruction:
-            # Task instructions need ": " separator
-            separator = ": " if not task_instruction.endswith(": ") else ""
-            query_to_embed = task_instruction + separator + query
-        elif query_prefix:
-            # Simple prefix (e.g., "Retrieval-document: ")
-            query_to_embed = query_prefix + query
-        else:
+        # Prepare encoding kwargs
+        encode_kwargs = {
+            "show_progress_bar": False,
+        }
+
+        # Use convert_to_tensor for GPU to avoid CPU<->GPU transfers
+        use_tensor = self._is_gpu_device()
+        if use_tensor:
+            encode_kwargs["convert_to_tensor"] = True
+            encode_kwargs["device"] = self.device
+
+        # Determine query formatting based on instruction mode
+        if instruction_mode == "prompt_name":
+            # Option A: Use sentence-transformers built-in prompt
+            prompt_name_value = model_config.get("prompt_name", "query")
+            encode_kwargs["prompt_name"] = prompt_name_value
             query_to_embed = query
+            self._logger.debug(
+                f"Using prompt_name='{prompt_name_value}' for query encoding"
+            )
+        elif instruction_mode == "custom":
+            # Option B: Custom Qwen3-style instruction format
+            query_instruction = model_config.get("query_instruction", "")
+            query_to_embed = query_instruction + query
+            self._logger.debug("Using custom instruction for query encoding")
+        else:
+            # Fallback to legacy behavior for other models
+            task_instruction = model_config.get("task_instruction")
+            query_prefix = model_config.get("query_prefix", "")
+
+            if task_instruction:
+                # Task instructions need ": " separator (e.g., CodeRankEmbed)
+                separator = ": " if not task_instruction.endswith(": ") else ""
+                query_to_embed = task_instruction + separator + query
+            elif query_prefix:
+                # Simple prefix (e.g., "Retrieval-document: ")
+                query_to_embed = query_prefix + query
+            else:
+                query_to_embed = query
 
         # Generate embedding
-        embedding = self.model.encode([query_to_embed], show_progress_bar=False)[0]
+        embedding = self.model.encode(
+            [query_to_embed],
+            **encode_kwargs,
+        )[0]
+
+        # Convert back to numpy if tensor
+        # Note: bf16 tensors must be converted to float32 first (numpy doesn't support bf16)
+        if torch and torch.is_tensor(embedding):
+            embedding = embedding.cpu().float().numpy()
 
         # Add to cache
-        self._add_to_query_cache(cache_key, embedding)
+        self._query_cache.put(
+            query=query,
+            model_name=self.model_name,
+            embedding=embedding,
+            task_instruction=model_config.get("task_instruction", ""),
+            query_prefix=model_config.get("query_prefix", ""),
+        )
 
         return embedding
 
@@ -703,6 +739,14 @@ class CodeEmbedder:
             "device": str(self._model.device),
             "status": "loaded",
         }
+
+    def get_vram_usage(self) -> Dict[str, float]:
+        """Return per-model VRAM usage in MB.
+
+        Returns:
+            Dictionary mapping model names to VRAM usage in MB.
+        """
+        return dict(self._model_vram_usage)
 
     def cleanup(self):
         """Clean up model from memory to free GPU/CPU resources."""
@@ -737,413 +781,52 @@ class CodeEmbedder:
         except Exception:
             pass
 
+    # ===== Cache Management Methods (delegated to ModelCacheManager) =====
+
     def _get_model_cache_path(self) -> Optional[Path]:
-        """Get the HuggingFace cache directory path for this model.
-
-        Returns the models--{org}--{name} directory, or None if cache_dir not set.
-        Does NOT check if the path exists.
-        """
-        if not self.cache_dir:
-            return None
-
-        cache_root = Path(self.cache_dir)
-
-        # Hugging Face cache structure: cache_dir/models--{org}--{model_name}/
-        # Handle both 'org/model_name' and 'model_name' formats
-        parts = self.model_name.split("/")
-        if len(parts) == 2:
-            org, name = parts
-            expected_model_dir_name = f"models--{org}--{name}"
-        else:
-            name = parts[0]
-            expected_model_dir_name = f"models--{name}"
-
-        return cache_root / expected_model_dir_name
+        """Delegate to ModelCacheManager.get_model_cache_path()."""
+        return self._cache_manager.get_model_cache_path()
 
     def _get_default_hf_cache_path(self) -> Optional[Path]:
-        """Get the default HuggingFace cache directory path for this model.
+        """Delegate to ModelCacheManager.get_default_hf_cache_path()."""
+        return self._cache_manager.get_default_hf_cache_path()
 
-        This is used as a fallback when trust_remote_code models ignore cache_folder.
+    def _check_config_at_location(self, cache_path: Path) -> bool:
+        """Delegate to ModelCacheManager.check_config_at_location()."""
+        return self._cache_manager.check_config_at_location(cache_path)
 
-        Returns the models--{org}--{name} directory in default HF cache.
-        """
-        default_hf_cache = Path.home() / ".cache" / "huggingface" / "hub"
+    def _check_weights_at_location(self, cache_path: Path) -> bool:
+        """Delegate to ModelCacheManager.check_weights_at_location()."""
+        return self._cache_manager.check_weights_at_location(cache_path)
 
-        # Hugging Face cache structure: cache_dir/models--{org}--{model_name}/
-        parts = self.model_name.split("/")
-        if len(parts) == 2:
-            org, name = parts
-            expected_model_dir_name = f"models--{org}--{name}"
-        else:
-            name = parts[0]
-            expected_model_dir_name = f"models--{name}"
-
-        return default_hf_cache / expected_model_dir_name
+    def _ensure_split_cache_symlink(self) -> bool:
+        """Delegate to ModelCacheManager.ensure_split_cache_symlink()."""
+        return self._cache_manager.ensure_split_cache_symlink()
 
     def _check_cache_at_location(self, cache_path: Path) -> tuple[bool, str]:
-        """Check if valid model cache exists at a specific location.
-
-        Args:
-            cache_path: Path to models--{org}--{name} directory to validate
-
-        Returns:
-            (is_valid, reason) - True if cache is complete and valid, False with reason if not
-        """
-        import json
-
-        # Check cache directory structure exists
-        if not cache_path or not cache_path.exists():
-            return False, "Cache directory not found"
-
-        try:
-            # Find snapshot directories (skip empty ones from interrupted downloads)
-            all_snapshots = list(cache_path.glob("snapshots/*"))
-            if not all_snapshots:
-                return False, "No snapshots found in cache"
-
-            # Filter out empty snapshots (common with interrupted downloads)
-            valid_snapshots = [s for s in all_snapshots if list(s.iterdir())]
-            if not valid_snapshots:
-                return False, "All snapshots are empty (interrupted downloads)"
-
-            # Use latest valid snapshot (sorted by modification time)
-            snapshot_dir = max(valid_snapshots, key=lambda p: p.stat().st_mtime)
-
-            # CRITICAL: Validate config.json exists and is valid
-            config_path = snapshot_dir / "config.json"
-            if not config_path.exists():
-                return False, "Missing config.json (corrupted download)"
-
-            # Validate config.json is valid JSON with required keys
-            try:
-                with open(config_path, "r", encoding="utf-8") as f:
-                    config = json.load(f)
-                    # Check for model_type or architectures (required by transformers)
-                    if "model_type" not in config and "architectures" not in config:
-                        return (
-                            False,
-                            "Invalid config.json (missing model_type and architectures)",
-                        )
-            except json.JSONDecodeError as e:
-                return False, f"Corrupted config.json (invalid JSON): {e}"
-            except Exception as e:
-                return False, f"Cannot read config.json: {e}"
-
-            # Validate model weights exist (single-file or sharded formats)
-            has_safetensors = (snapshot_dir / "model.safetensors").exists()
-            has_pytorch = (snapshot_dir / "pytorch_model.bin").exists()
-            has_pytorch_index = (snapshot_dir / "pytorch_model.bin.index.json").exists()
-            has_safetensors_index = (
-                snapshot_dir / "model.safetensors.index.json"
-            ).exists()
-
-            # For sharded models, validate that actual shard files exist
-            if has_safetensors_index or has_pytorch_index:
-                # Parse index.json to find shard files
-                index_file = snapshot_dir / (
-                    "model.safetensors.index.json"
-                    if has_safetensors_index
-                    else "pytorch_model.bin.index.json"
-                )
-                try:
-                    with open(index_file, "r", encoding="utf-8") as f:
-                        index_data = json.load(f)
-                        shard_files = set(index_data.get("weight_map", {}).values())
-
-                        if not shard_files:
-                            return (
-                                False,
-                                f"Invalid index file (no shards listed): {index_file.name}",
-                            )
-
-                        # Check that all shard files exist (either as actual files or symlinks)
-                        missing_shards = []
-                        incomplete_shards = []
-
-                        for shard in shard_files:
-                            shard_path = snapshot_dir / shard
-                            if not shard_path.exists():
-                                # Check if it's a symlink pointing to a blob
-                                if shard_path.is_symlink():
-                                    target = shard_path.resolve()
-                                    if not target.exists():
-                                        # Check if there's an incomplete blob
-                                        incomplete_blob = (
-                                            target.parent / f"{target.name}.incomplete"
-                                        )
-                                        if incomplete_blob.exists():
-                                            size_mb = incomplete_blob.stat().st_size / (
-                                                1024**2
-                                            )
-                                            incomplete_shards.append(
-                                                f"{shard} ({size_mb:.1f}MB incomplete)"
-                                            )
-                                        else:
-                                            missing_shards.append(
-                                                f"{shard} -> {target.name} (broken symlink)"
-                                            )
-                                else:
-                                    missing_shards.append(shard)
-
-                        if incomplete_shards:
-                            return (
-                                False,
-                                f"Incomplete downloads detected: {', '.join(incomplete_shards)}. Run cleanup to remove partial downloads.",
-                            )
-
-                        if missing_shards:
-                            return (
-                                False,
-                                f"Missing shard files: {', '.join(missing_shards)}",
-                            )
-
-                except json.JSONDecodeError as e:
-                    return False, f"Corrupted index file {index_file.name}: {e}"
-                except Exception as e:
-                    return False, f"Error validating shards: {e}"
-
-            elif not (has_safetensors or has_pytorch):
-                return False, "Missing model weights (no .safetensors or .bin files)"
-
-            # Validate tokenizer files exist (at least one)
-            tokenizer_files = [
-                "tokenizer.json",
-                "tokenizer_config.json",
-                "vocab.txt",
-                "sentencepiece.bpe.model",
-                "tokenizer.model",
-            ]
-            has_tokenizer = any((snapshot_dir / f).exists() for f in tokenizer_files)
-            if not has_tokenizer:
-                return False, "Missing tokenizer files"
-
-            # All checks passed
-            return True, f"Valid cache at {snapshot_dir}"
-
-        except Exception as e:
-            self._logger.debug(f"Error during cache validation: {e}")
-            return False, f"Validation error: {str(e)}"
+        """Delegate to ModelCacheManager.check_cache_at_location()."""
+        return self._cache_manager.check_cache_at_location(cache_path)
 
     def _validate_model_cache(self) -> tuple[bool, str]:
-        """Validate cached model integrity with fallback to default HuggingFace cache.
-
-        Checks both custom cache location and default HuggingFace cache for models
-        with trust_remote_code=True (which may ignore cache_folder parameter).
-
-        Returns:
-            (is_valid, reason) - True if cache is complete and valid in either location
-        """
-        # First, check custom cache location
-        custom_cache_path = self._get_model_cache_path()
-        custom_valid, custom_reason = self._check_cache_at_location(custom_cache_path)
-
-        if custom_valid:
-            return True, custom_reason
-
-        # Custom cache invalid - check if this is a trust_remote_code model
-        model_config = self._get_model_config()
-        requires_trust_remote_code = model_config.get("trust_remote_code", False)
-
-        if requires_trust_remote_code:
-            # Fallback: Check default HuggingFace cache location
-            # Some models with trust_remote_code ignore cache_folder and use default location
-            default_cache_path = self._get_default_hf_cache_path()
-            default_valid, default_reason = self._check_cache_at_location(
-                default_cache_path
-            )
-
-            if default_valid:
-                # Cache found in default location instead of custom location
-                self._logger.warning(
-                    f"[CACHE LOCATION MISMATCH] Model weights found in default HuggingFace cache instead of custom cache.\n"
-                    f"  Expected: {custom_cache_path}\n"
-                    f"  Found: {default_cache_path}\n"
-                    f"  Reason: Models with trust_remote_code=True may ignore cache_folder parameter.\n"
-                    f"  Impact: Model will load successfully but from default cache location."
-                )
-                return True, f"Valid (found in default HF cache): {default_reason}"
-
-        # Cache invalid in both locations
-        return False, custom_reason
+        """Delegate to ModelCacheManager.validate_cache()."""
+        return self._cache_manager.validate_cache()
 
     def _check_incomplete_downloads(self) -> tuple[bool, str]:
-        """Check if there are incomplete downloads that could cause validation failures.
-
-        Scans the blobs directory for .incomplete files from interrupted HuggingFace downloads.
-
-        Returns:
-            (has_incomplete, message) - True if incomplete files exist with descriptive message
-        """
-        try:
-            model_cache_path = self._get_model_cache_path()
-            if not model_cache_path or not model_cache_path.exists():
-                return False, "No cache directory"
-
-            blobs_dir = model_cache_path / "blobs"
-            if not blobs_dir.exists():
-                return False, "No blobs directory"
-
-            incomplete_files = list(blobs_dir.glob("*.incomplete"))
-            if not incomplete_files:
-                return False, "No incomplete downloads"
-
-            # Calculate total size of incomplete files
-            total_size = sum(f.stat().st_size for f in incomplete_files)
-            size_mb = total_size / (1024**2)
-
-            message = (
-                f"Found {len(incomplete_files)} incomplete download(s) ({size_mb:.1f} MB total). "
-                f"These may be from interrupted downloads. "
-                f"Files: {[f.name[:16] + '...' for f in incomplete_files[:3]]}"
-            )
-
-            return True, message
-
-        except Exception as e:
-            self._logger.debug(f"Error checking incomplete downloads: {e}")
-            return False, f"Error: {str(e)}"
+        """Delegate to ModelCacheManager.check_incomplete_downloads()."""
+        return self._cache_manager.check_incomplete_downloads()
 
     def _cleanup_incomplete_downloads(self) -> tuple[int, list[str]]:
-        """Detect and clean up incomplete downloads in the blobs directory.
-
-        Removes .incomplete files that were created by interrupted HuggingFace downloads.
-        This allows subsequent downloads to start fresh instead of failing validation.
-
-        Returns:
-            (count, file_list) - Number of incomplete files removed and their names
-        """
-        try:
-            model_cache_path = self._get_model_cache_path()
-            if not model_cache_path or not model_cache_path.exists():
-                return 0, []
-
-            blobs_dir = model_cache_path / "blobs"
-            if not blobs_dir.exists():
-                return 0, []
-
-            incomplete_files = []
-            removed_count = 0
-
-            # Find all .incomplete files
-            for incomplete_file in blobs_dir.glob("*.incomplete"):
-                size_mb = incomplete_file.stat().st_size / (1024**2)
-                incomplete_files.append(
-                    f"{incomplete_file.name[:16]}... ({size_mb:.1f}MB)"
-                )
-
-                try:
-                    incomplete_file.unlink()
-                    removed_count += 1
-                    self._logger.info(
-                        f"Removed incomplete download: {incomplete_file.name} ({size_mb:.1f}MB)"
-                    )
-                except Exception as e:
-                    self._logger.warning(
-                        f"Failed to remove {incomplete_file.name}: {e}"
-                    )
-
-            if removed_count > 0:
-                sum(f.stat().st_size for f in blobs_dir.glob("*.incomplete")) / (
-                    1024**2
-                )
-                self._logger.info(
-                    f"Cleanup complete: Removed {removed_count} incomplete file(s)"
-                )
-
-            return removed_count, incomplete_files
-
-        except Exception as e:
-            self._logger.warning(f"Error during incomplete file cleanup: {e}")
-            return 0, []
+        """Delegate to ModelCacheManager.cleanup_incomplete_downloads()."""
+        return self._cache_manager.cleanup_incomplete_downloads()
 
     def _is_model_cached(self) -> bool:
-        """Check if model cache exists and is valid.
-
-        Uses comprehensive validation to prevent loading corrupted caches.
-        """
-        is_valid, _ = self._validate_model_cache()
-        return is_valid
+        """Delegate to ModelCacheManager.is_cached()."""
+        return self._cache_manager.is_cached()
 
     def _find_local_model_dir(self) -> Optional[Path]:
-        """Locate the cached model directory if available.
-        Returns the path to the snapshot directory containing the model files.
-        Only returns path if cache is valid (uses _validate_model_cache).
-
-        Checks both custom cache and default HuggingFace cache for models with
-        trust_remote_code=True.
-        """
-        # Use validation to ensure cache is complete
-        is_valid, reason = self._validate_model_cache()
-        if not is_valid:
-            self._logger.debug(f"Cache not valid: {reason}")
-            return None
-
-        try:
-            # Helper to get latest snapshot from a cache path if validation passes
-            def get_latest_snapshot_if_valid(cache_path: Path) -> Optional[Path]:
-                # Check if this specific cache location is valid
-                valid, _ = self._check_cache_at_location(cache_path)
-                if not valid:
-                    return None
-
-                if cache_path and cache_path.exists():
-                    snapshots = list(cache_path.glob("snapshots/*"))
-                    # Filter out empty snapshots
-                    valid_snapshots = [s for s in snapshots if list(s.iterdir())]
-                    if valid_snapshots:
-                        return max(valid_snapshots, key=lambda p: p.stat().st_mtime)
-                return None
-
-            # First try custom cache location
-            model_cache_path = self._get_model_cache_path()
-            custom_snapshot = get_latest_snapshot_if_valid(model_cache_path)
-            if custom_snapshot:
-                return custom_snapshot
-
-            # Fallback: Check default HuggingFace cache for trust_remote_code models
-            model_config = self._get_model_config()
-            if model_config.get("trust_remote_code", False):
-                default_cache_path = self._get_default_hf_cache_path()
-                default_snapshot = get_latest_snapshot_if_valid(default_cache_path)
-                if default_snapshot:
-                    return default_snapshot
-
-        except Exception as e:
-            self._logger.debug(f"Error during _find_local_model_dir: {e}")
-            return None
-        return None
+        """Delegate to ModelCacheManager.find_local_model_dir()."""
+        return self._cache_manager.find_local_model_dir()
 
     def _resolve_device(self, requested: Optional[str]) -> str:
-        """Resolve target device string.
-        - "auto": prefer cuda, then mps, else cpu
-        - explicit values are validated and coerced to available devices
-        """
-        req = (requested or "auto").lower()
-        # If torch is not available, default to CPU
-        if torch is None:
-            return "cpu"
-        if req in ("auto", "none", ""):
-            if torch.cuda.is_available():
-                return "cuda"
-            # MPS for Apple Silicon
-            try:
-                if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                    return "mps"
-            except Exception:
-                pass
-            return "cpu"
-        # Validate explicit devices
-        if req.startswith("cuda"):
-            return "cuda" if torch.cuda.is_available() else "cpu"
-        if req == "mps":
-            try:
-                return (
-                    "mps"
-                    if hasattr(torch.backends, "mps")
-                    and torch.backends.mps.is_available()
-                    else "cpu"
-                )
-            except Exception:
-                return "cpu"
-        # Default fallback
-        return "cpu"
+        """Delegate to ModelLoader.resolve_device()."""
+        return self._model_loader.resolve_device(requested)

@@ -2,15 +2,347 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2025-11-28)
+## Current Status: All Features Operational (2025-12-22)
 
-- **Version**: 0.6.0
+- **Version**: 0.7.0
 - **Status**: Production-ready
-- **Test Coverage**: 545 unit tests + integration tests (100% pass rate)
+- **Test Coverage**: 1,054+ unit tests + integration tests (100% pass rate)
 - **Index Quality**: 109 active files, 1,199 chunks (site-packages excluded, BGE-M3 1024d, ~24 MB)
-- **Token Reduction**: 85-95% (validated benchmark)
-- **Call Graph Resolution**: Phase 4 complete (~90% accuracy)
-- **Refactoring**: Phase 7.1 complete (resolver extraction)
+- **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
+- **Recent Features**: Output Formatting (30-55% token reduction), Mmap Vector Storage, Entity Tracking, Symbol Hash Cache
+
+---
+
+## v0.7.0 - Major Release (2025-12-22)
+
+### Status: PRODUCTION-READY ✅
+
+**Major release with output formatting optimization, memory-mapped vector storage, and comprehensive refactoring**
+
+### Highlights
+
+- **MCP Output Formatting** - 30-55% token reduction with 3-tier system
+- **Memory-Mapped Vector Storage** - <1μs access, auto-enabled at 10K vectors
+- **Symbol Hash Cache** - O(1) chunk lookups for direct access
+- **Entity Tracking** - Constants, enums, and default parameter tracking
+- **Comprehensive Refactoring** - ~700 lines of dead code removed, major modules extracted
+
+### Breaking Changes
+
+- Output format options renamed: `json`→`verbose`, `toon`→`ultra`
+
+### New Features
+
+#### MCP Output Formatting (30-55% Token Reduction)
+
+- **3 format tiers**: verbose (baseline), compact (30-40%), ultra (45-55%)
+- **Ultra format**: Tabular arrays with header-declared fields
+  - Header: `"results[5]{chunk_id,kind,score}"`
+  - Data: `[[val1, val2, val3], ...]`
+- **Agent understanding**: 100% accuracy validated on fresh Claude instance
+- **Configuration**: Menu option 'F' or per-query `output_format` parameter
+- **Files**: `mcp_server/output_formatter.py` (171 lines), all 17 tool handlers
+
+#### Memory-Mapped Vector Storage
+
+- **Performance**: <1μs vector access (vs ~100μs standard)
+- **Auto-enable**: Threshold at 10,000 vectors (no configuration needed)
+- **Storage**: ~3.5 MB per model (10.5 MB total for 3 models)
+- **Files**: `search/faiss_index.py`, removed from config (fully automatic)
+
+#### Symbol Hash Cache (Phase 2)
+
+- **Complexity**: O(1) direct chunk lookups
+- **Utilization**: 97.7% bucket usage (251/256 buckets)
+- **Performance**: <1ms load/save
+- **File**: `search/symbol_hash_cache.py`
+
+### Refactoring Summary
+
+| Component | Extraction | Lines |
+|-----------|------------|-------|
+| CodeIndexManager | → GraphIntegration + BatchOperations | ~200 |
+| CodeEmbedder | → ModelLoader + ModelCacheManager + QueryCache | ~300 |
+| HybridSearcher | Removed deprecated methods (Tier 1-3) | ~150 |
+| Intent Detection | Complete removal (48% accuracy) | ~200 |
+| **Total** | | **~850 lines** |
+
+### Test Coverage
+
+- **Before**: 720 unit tests
+- **After**: 1,054+ unit tests (+46%)
+- **Pass rate**: 100%
+- **Modules**: 7 (chunking, embeddings, graph, merkle, search, mcp_server, integration)
+
+### Files Modified
+
+**Core Implementation (10+ files)**:
+
+- `mcp_server/output_formatter.py` (NEW)
+- `search/faiss_index.py` - Mmap automation
+- `search/symbol_hash_cache.py` - Hash-based lookups
+- `search/indexer.py` - GraphIntegration extraction
+- `embeddings/embedder.py` - ModelLoader extraction
+- `search/hybrid_searcher.py` - Deprecated method removal
+- All MCP tool handlers - Output format support
+
+**Tests (5+ files)**:
+
+- `tests/unit/mcp_server/test_output_formatter.py` (NEW, 34 tests)
+- Test reorganization into module directories
+- `tests/run_all_tests.bat` (NEW)
+
+---
+
+## v0.6.5 - Entity Tracking System (2025-12-16) [Included in 0.7.0]
+
+### Status: PRODUCTION-READY ✅
+
+**Added 3 new relationship extractors for tracking constants, enum members, and default parameters**
+
+### Highlights
+
+- **ConstantExtractor** - Track module-level constant definitions (UPPER_CASE) and their usages
+- **EnumMemberExtractor** - Track enum member definitions (Enum, IntEnum, StrEnum, Flag)
+- **DefaultParameterExtractor** - Track default parameter value references
+- **find_connections Integration** - Display entity tracking relationships in impact analysis
+
+### Key Changes
+
+#### New Relationship Types (9 total)
+
+**Priority 4 - Definitions**:
+
+- `DEFINES_CONSTANT` - Module-level constant definitions (e.g., `TIMEOUT = 30`)
+- `DEFINES_ENUM_MEMBER` - Enum member definitions (e.g., `Status.ACTIVE = 1`)
+- `DEFINES_CLASS_ATTR` - Class attribute definitions (planned)
+- `DEFINES_FIELD` - Dataclass field definitions (planned)
+
+**Priority 5 - References**:
+
+- `USES_CONSTANT` - Constant usage in functions/methods
+- `USES_DEFAULT` - Default parameter value references
+- `USES_GLOBAL` - Global statement usage (planned)
+- `ASSERTS_TYPE` - isinstance() type assertions (planned)
+- `USES_CONTEXT_MANAGER` - Context manager usage (planned)
+
+#### ConstantExtractor Features
+
+- **Extraction**: Module-level UPPER_CASE assignments (≥2 chars, non-private)
+- **Filtering**: Excludes trivial values (single digits -9 to 9, empty strings)
+- **Smart detection**: Distinguishes definitions from usages based on chunk type
+- **Examples**:
+  - Definition: `TIMEOUT = 30` → `DEFINES_CONSTANT`
+  - Usage: `time.sleep(TIMEOUT)` → `USES_CONSTANT`
+
+#### EnumMemberExtractor Features
+
+- **Supported variants**: Enum, IntEnum, StrEnum, Flag
+- **Qualified names**: `Status.ACTIVE`, `Priority.HIGH`
+- **Annotation support**: Handles typed enum members (`ACTIVE: int = 1`)
+- **Filtering**: Excludes private members (`_INTERNAL`)
+
+#### DefaultParameterExtractor Features
+
+- **Tracked defaults**:
+  - Name references: `def connect(timeout=DEFAULT_TIMEOUT)`
+  - Call expressions: `def init(config=Config())`
+  - Attribute access: `def connect(timeout=config.TIMEOUT)`
+- **Skipped defaults**: None, booleans, small numbers, empty strings/collections
+- **Metadata**: Includes parameter name and default type (name/call/attribute)
+
+#### find_connections Tool Integration
+
+Added 4 new fields to `ImpactReport`:
+
+- `defines_constants` - Constants defined by this code
+- `uses_constants` - Constants used by this code
+- `defines_enum_members` - Enum members defined by this code
+- `uses_defaults` - Default parameter values used by this code
+
+**Example output**:
+
+```json
+{
+  "defines_enum_members": [
+    {"target_name": "RelationshipType.CALLS", "line": 10, ...},
+    {"target_name": "RelationshipType.DEFINES_CONSTANT", "line": 65, ...}
+  ],
+  "uses_constants": [
+    {"target_name": "FAISS_INDEX_FILENAME", "line": 42, ...}
+  ],
+  "uses_defaults": [
+    {"target_name": "DEFAULT_TIMEOUT", "parameter": "timeout", ...}
+  ]
+}
+```
+
+### Files Modified
+
+**New Extractors** (3 files):
+
+- `graph/relationship_extractors/constant_extractor.py` (250 lines)
+- `graph/relationship_extractors/enum_extractor.py` (180 lines)
+- `graph/relationship_extractors/default_param_extractor.py` (299 lines)
+
+**Core Infrastructure**:
+
+- `graph/relationship_types.py` - Added 9 new RelationshipType enum values
+- `graph/relationship_extractors/__init__.py` - Exported new extractors
+- `mcp_server/tools/code_relationship_analyzer.py` - Updated ImpactReport for entity tracking
+
+**Tests** (30+ tests):
+
+- `tests/unit/test_entity_tracking_extractors.py` (522 lines)
+  - TestConstantExtractor: 8 tests
+  - TestEnumMemberExtractor: 7 tests
+  - TestDefaultParameterExtractor: 14 tests
+  - TestEntityTrackingIntegration: 1 test
+
+### Test Coverage
+
+- **Before**: 720 unit tests
+- **After**: 750+ unit tests (+30 tests, +4.2%)
+- **Pass rate**: 100%
+
+### Use Cases
+
+**Find constant usages**:
+
+```
+/find_connections --symbol_name "FAISS_INDEX_FILENAME"
+# Shows all functions using this constant
+```
+
+**Find enum member usages**:
+
+```
+/find_connections --chunk_id "types.py:10-50:class:Status"
+# Shows all enum members and their definitions
+```
+
+**Track default parameter dependencies**:
+
+```
+/find_connections --symbol_name "connect"
+# Shows constants used as default parameters
+```
+
+### Refactoring Support
+
+Entity tracking enables:
+
+- **Constant refactoring**: Find all usages before renaming
+- **Enum migration**: Track enum member references across codebase
+- **Default value changes**: Identify functions affected by constant changes
+
+---
+
+## Development Sessions
+
+### Session 2025-12-09: Phase 13-C + Test Coverage Improvements
+
+**Objective**: Complete Phase 13 refactoring arc and address critical test coverage gaps
+
+**Completed Work**:
+
+1. **Phase 13-C: Remove Property Aliases** (Commit: `2f88010`)
+   - Removed 35 backward-compatibility property aliases from SearchConfig
+   - Deleted 291 lines of alias code (lines 181-471)
+   - Migrated 20 test accesses to nested config pattern
+   - Updated test constructors to use nested config objects
+   - Files: `search/config.py`, `tests/unit/test_model_selection.py`, `tests/unit/test_config_sync.py`, `tests/unit/test_search_config.py`
+   - Result: Phase 13 arc complete (13-A → 13-B → 13-C)
+
+2. **ServiceLocator Tests** (Commit: `3d00f1e`)
+   - Created comprehensive test suite for ServiceLocator dependency injection (29 tests)
+   - Coverage: Singleton pattern, registration, factory pattern, cache invalidation
+   - Coverage: Typed convenience methods, wrapper functions, integration scenarios
+   - File: `tests/unit/test_services.py` (422 lines)
+   - Result: 150+ LOC implementation now has full test coverage
+
+3. **Fix Flaky Test** (Commit: `397e5ad`)
+   - Fixed `test_cross_file_search_patterns` with deterministic embeddings
+   - Replaced arbitrary query vector with hash-based deterministic queries
+   - Validated with 5 consecutive runs (100% pass rate, 0.91-1.02s)
+   - Removed `@pytest.mark.skip` decorator
+   - File: `tests/slow_integration/test_full_flow.py`
+   - Result: Previously flaky test now reliable
+
+4. **Decorator Tests** (Commit: `39f7967`)
+   - Created comprehensive test suite for `@error_handler` decorator (15 tests)
+   - Coverage: Success/failure handling, context enrichment, logging, metadata preservation
+   - Fixed B023 loop variable binding issue with default arguments
+   - File: `tests/unit/test_decorators.py` (267 lines)
+   - Result: Critical decorator used by all MCP handlers now fully tested
+
+**Test Count Impact**:
+
+- Before: 625 unit tests
+- After: 669 unit tests (+44 tests, +7.0%)
+- All tests passing (100% pass rate)
+
+**Refactoring Progress**:
+
+- Phase 13 (Config Splitting) - **COMPLETE** ✅
+  - Phase 13-A: Split into sub-configs ✅
+  - Phase 13-B: Migrate consumers ✅
+  - Phase 13-C: Remove aliases ✅
+- Next: Phase 14 (Further modularization opportunities)
+
+**Files Modified**: 5 files (1 refactored, 3 test fixes, 3 new test files)
+
+---
+
+## v0.6.1 - UX Improvements & Bug Fixes (2025-12-03)
+
+### Status: PRODUCTION-READY ✅
+
+**Enhanced indexing UX with progress bars and fixed critical bugs**
+
+### Highlights
+
+- **Progress Bars** - Real-time visual feedback during chunking and embedding
+- **Directory Filtering Fix** - `include_dirs` now works correctly
+- **Targeted Snapshot Deletion** - Only deletes matching model snapshots
+- **Improved Project Lists** - Shows model/dimension for disambiguation
+
+### Key Changes
+
+- **Progress Bar for Chunking** - Shows real-time progress during file chunking
+  - `Chunking files... 100% (21/21 files)`
+  - Works with both parallel and sequential modes
+  - Force terminal mode for batch script compatibility
+- **Progress Bar for Embedding** - Shows progress during longest phase
+  - `Embedding... 100% (3/3 batches)`
+  - Model warmup prevents log interference
+- **include_dirs Filter Fix** - Root directory no longer blocked by filters
+  - Fixed 0 files found when using `include_dirs`
+  - Root directory skipped from filter matching
+- **Targeted Snapshot Deletion** - New `delete_snapshot_by_slug()` method
+  - Deletes only matching model/dimension snapshot
+  - Preserves other model snapshots (e.g., keeps `coderank_768d` when deleting `bge-m3_1024d`)
+- **Model/Dimension Display** - Clear project list shows model info
+  - `claude-context-local [bge-m3 1024d]`
+  - Disambiguates duplicate project names
+
+### Bug Fixes
+
+- Fixed unescaped parenthesis causing spurious error messages in clear index
+- Fixed `delete_all_snapshots()` deleting all model variants instead of specific one
+- Fixed `include_dirs` filter blocking root directory traversal
+- Fixed progress bar not rendering in batch scripts
+- Fixed model loading logs interfering with progress bar display
+
+### Commits
+
+- `083ab61` - Fix clear index logic bugs (snapshot deletion + display)
+- `2e69ace` - Fix include_dirs filter blocking root directory
+- `0e9c8e8` - Display model/dimension in clear project list
+- `43d94d0` - Add progress bar for file chunking
+- `1d9d098` - Force terminal mode for chunking progress bar
+- `33ace99` - Add progress bar for embedding generation
+- `81e1d42` - Warm up model before progress bar
 
 ---
 
@@ -721,8 +1053,6 @@ set CLAUDE_MULTI_MODEL_ENABLED=false # Disable
 - Return to previous model: <150ms (98% faster)
 - Model comparison workflow: <1s (99% faster)
 
-**See**: `docs/PER_MODEL_INDICES_IMPLEMENTATION.md`
-
 ### Independent Merkle Snapshots
 
 - **Dimension-based change tracking**
@@ -743,7 +1073,7 @@ set CLAUDE_MULTI_MODEL_ENABLED=false # Disable
 
 - Hybrid search implementation (BM25 + semantic)
 - RRF (Reciprocal Rank Fusion) reranking
-- Configurable search modes (hybrid/semantic/bm25/auto)
+- Configurable search modes (hybrid/semantic/bm25)
 - FAISS vector search optimization
 
 ### v0.2.x - Multi-Language Support

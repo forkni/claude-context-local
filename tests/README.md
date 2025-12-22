@@ -8,11 +8,15 @@ This directory contains comprehensive tests for the Claude Context MCP semantic 
 
 **Current Status**: ✅ All tests passing (as of 2025-11-28)
 
-- **Unit Tests**: 557 tests passing (16 files, < 1s each)
-- **Fast Integration Tests**: 79 tests passing (11 files, < 5s each)
-- **Slow Integration Tests**: 76 tests passing (10 files, > 10s each)
-- **Regression Tests**: 1 test (15 checks) passing
-- **Total**: 713 tests (38 files)
+- **Unit Tests**: 1,052 tests passing across 6 modules
+  - Chunking: 63 tests
+  - Embeddings: 113 tests
+  - Graph: 313 tests
+  - Merkle: 21 tests
+  - Search: 402 tests
+  - MCP Server: 140 tests
+- **Integration Tests**: 2 tests passing
+- **Total**: 1,054 tests
 - **Execution Time**: Unit ~5s, Fast Integration ~2 min, Slow Integration ~10 min
 
 ### Recent Updates (2025-11-20)
@@ -40,22 +44,48 @@ tests/
 │   ├── glsl_project/         # GLSL shader samples
 │   ├── multi_language/       # Multi-language test files
 │   └── python_project/       # Python project samples
-├── unit/                     # Unit tests (16 files, 82 tests, < 1s each)
+├── unit/                     # Unit tests (41 files, 557 tests, < 1s each)
+│   ├── test_assignment_tracking.py # Phase 3: Assignment tracking (call graph)
 │   ├── test_bm25_index.py    # BM25 index functionality
 │   ├── test_bm25_population.py # BM25 document population
+│   ├── test_call_graph_extraction.py # Call graph extraction from AST
+│   ├── test_call_resolution.py # Call graph resolution logic
+│   ├── test_cleanup_queue.py # Project deletion cleanup queue
+│   ├── test_code_relationship_analyzer.py # Code relationship analysis
+│   ├── test_config_sync.py   # Configuration synchronization
+│   ├── test_decorators.py    # MCP server decorators
 │   ├── test_embedder.py      # Embedding generation
-│   ├── test_evaluation.py    # Evaluation framework components
+│   ├── test_faiss_vector_index.py # FAISS vector index operations
+│   ├── test_filter_engine.py # Unified filtering logic
+│   ├── test_filters.py       # Path and directory filters
+│   ├── test_gpu_monitor.py   # GPU memory monitoring
+│   ├── test_graph_storage.py # Graph storage and retrieval
 │   ├── test_hybrid_search.py # Hybrid search logic
-│   ├── test_import_resolution.py # Import-based call graph resolution
+│   ├── test_import_resolution.py # Phase 4: Import-based call graph resolution
 │   ├── test_incremental_indexer.py # Incremental indexing
+│   ├── test_index_sync.py    # BM25/Dense index synchronization
 │   ├── test_mcp_server.py    # MCP server tools
 │   ├── test_merkle.py        # Merkle tree functionality
-│   ├── test_model_selection.py # Multi-model support (Gemma/BGE-M3)
+│   ├── test_metadata_store.py # Metadata storage operations
+│   ├── test_model_selection.py # Multi-model support
+│   ├── test_multi_hop_searcher.py # Multi-hop search engine
 │   ├── test_multi_language.py # Multi-language parsing
+│   ├── test_neural_reranker.py # Neural reranking (BGE-reranker-v2-m3)
+│   ├── test_path_normalization.py # Drive-agnostic path normalization
+│   ├── test_priority1_extractors.py # Priority 1 relationship extractors
+│   ├── test_priority2_extractors.py # Priority 2 relationship extractors
+│   ├── test_project_persistence.py # Persistent project selection
+│   ├── test_qualified_chunk_ids.py # Phase 1: Self/super resolution
+│   ├── test_query_router.py  # Multi-model query routing
+│   ├── test_relationship_types.py # Code relationship type definitions
 │   ├── test_reranker.py      # RRF reranking algorithm
+│   ├── test_reranking_engine.py # Reranking engine orchestration
 │   ├── test_search_config.py # Search configuration
-│   ├── test_token_efficiency.py # Token efficiency evaluation
-│   └── test_tree_sitter.py   # Tree-sitter parsing
+│   ├── test_services.py      # MCP server services
+│   ├── test_tool_handlers.py # MCP tool handler functions
+│   ├── test_tree_sitter.py   # Tree-sitter parsing
+│   ├── test_type_annotation_resolution.py # Phase 2: Type annotation resolution
+│   └── test_vram_manager.py  # VRAM tier management
 ├── fast_integration/         # Fast integration tests (11 files, 77 tests, < 5s each)
 │   ├── test_complete_workflow.py # End-to-end workflow
 │   ├── test_cuda_detection.py # GPU/CUDA detection

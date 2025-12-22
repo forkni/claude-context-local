@@ -29,12 +29,12 @@
 ## Highlights
 
 - **Hybrid Search**: BM25 + semantic fusion (44.4% precision, 100% MRR) - [benchmarks](docs/BENCHMARKS.md)
-- **85-95% Token Reduction**: Semantic search vs traditional file reading - [benchmark](docs/BENCHMARKS.md)
+- **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
 - **Multi-Model Routing**: Intelligent query routing (Qwen3, BGE-M3, CodeRankEmbed) with 100% accuracy - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md)
 - **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
-- **15 MCP Tools**: Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
+- **17 MCP Tools**: Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
 
-**Status**: ✅ Production-ready | 700+ passing tests | All 15 MCP tools operational | Windows 10/11
+**Status**: ✅ Production-ready | 750+ passing tests | All 17 MCP tools operational | Windows 10/11
 
 ## Quick Start
 
@@ -89,7 +89,25 @@ After the server starts, connect in Claude Code:
 2. Select **Reconnect** next to `code-search`
 3. Wait for "Connected" confirmation
 
-### 5. Start Searching
+### 5. Load MCP Search Context
+
+**IMPORTANT**: Run this command at the beginning of each session to load optimal search workflows:
+
+```
+/mcp-search
+```
+
+This command loads the [mcp-search-tool](.claude/skills/mcp-search-tool/SKILL.md) skill, which provides Claude with:
+
+- Complete MCP tool reference (all 17 tools)
+- Search-first protocol enforcement
+- 2-step workflow for relationship queries (search → find_connections)
+- Project context validation before searches
+- 40-45% additional token savings through optimal tool usage
+
+> **Tip**: Running `/mcp-search` ensures Claude uses semantic search efficiently and follows best practices for token optimization.
+
+### 6. Start Searching
 
 Now simply ask Claude Code natural questions about your codebase:
 
@@ -99,13 +117,15 @@ Now simply ask Claude Code natural questions about your codebase:
 
 Claude Code will automatically use the semantic search tools to find relevant code.
 
-**That's it!** You're now searching your code semantically with 85-95% fewer tokens.
+**That's it!** You're now searching your code semantically with up to 63% fewer tokens (real-world benchmarked).
 
 ## How It Works
 
 ### Claude Code Integration
 
-When connected via `/mcp` → Reconnect, Claude Code gains access to 15 semantic search tools exposed as `mcp__code-search__*` functions.
+> **Note**: This is an MCP server designed exclusively for Claude Code integration. It is not a standalone search tool - it requires connection via Claude Code's `/mcp` command.
+
+When connected via `/mcp` → Reconnect, Claude Code gains access to 17 semantic search tools exposed as `mcp__code-search__*` functions.
 
 A [**SKILL.md**](.claude/skills/mcp-search-tool/SKILL.md) file in the repository provides Claude with workflow guidance for optimal tool usage, including project context validation and search mode selection.
 
@@ -185,7 +205,6 @@ start_mcp_server.cmd → 3 (Search Configuration)
 | **hybrid** (default) | BM25 + Semantic fusion | 487ms | 44.4% precision, 100% MRR | ✅ Operational |
 | **semantic** | Dense vector search | 487ms | 38.9% precision, 100% MRR | ✅ Operational |
 | **bm25** | Text-based sparse search | 162ms | 33.3% precision, 61.1% MRR | ✅ Operational |
-| **auto** | Adaptive mode selection | Adaptive | Context-dependent | ✅ Operational |
 
 **Configuration**: See [Hybrid Search Configuration Guide](docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md)
 
@@ -204,6 +223,7 @@ These tools are available to Claude Code as `mcp__code-search__*` functions. You
 
 - `configure_search_mode` - Set hybrid search parameters
 - `configure_query_routing` - Configure multi-model routing
+- `configure_reranking` - Configure neural reranking
 - `get_search_config_status` - View current configuration
 - `list_embedding_models` - List available models
 - `switch_embedding_model` - Switch between models
@@ -214,6 +234,7 @@ These tools are available to Claude Code as `mcp__code-search__*` functions. You
 - `get_memory_status` - Monitor RAM/VRAM usage
 - `cleanup_resources` - Free memory and caches
 - `clear_index` - Reset search index
+- `delete_project` - Safely delete indexed project
 - `list_projects` - List indexed projects
 - `switch_project` - Switch between projects
 
@@ -250,21 +271,90 @@ Everything works on CPU if GPU unavailable.
 
 ## Configuration
 
-### Environment Variables
+### Interactive Configuration
 
-```bash
-# Storage directory (default: ~/.claude_code_search)
-set CODE_SEARCH_STORAGE=C:\custom\path
+Run `start_mcp_server.cmd` and select **3. Search Configuration**:
 
-# Embedding model
-set CLAUDE_EMBEDDING_MODEL=BAAI/bge-m3  # or google/embeddinggemma-300m
-
-# Search mode
-set CLAUDE_SEARCH_MODE=hybrid  # or semantic, bm25, auto
-
-# Multi-model routing
-set CLAUDE_MULTI_MODEL_ENABLED=true
 ```
+=== Search Configuration ===
+
+  1. View Current Configuration
+  2. Set Search Mode
+  3. Configure Search Weights
+  4. Select Embedding Model
+  5. Configure Parallel Search
+  6. Configure Neural Reranker
+  7. Configure Entity Tracking
+  8. Reset to Defaults
+```
+
+#### 1. View Current Configuration
+
+Displays all current settings including model, search mode, weights, GPU status, and feature flags.
+
+#### 2. Set Search Mode
+
+| Mode | Description |
+|------|-------------|
+| **hybrid** (default) | BM25 + semantic fusion - best accuracy |
+| **semantic** | Dense vector search only - conceptual queries |
+| **bm25** | Text-based search only - exact matches, fastest |
+
+#### 3. Configure Search Weights
+
+Adjust the balance between text matching and semantic understanding:
+
+- **BM25 Weight**: 0.0-1.0 (default: 0.4) - keyword/text matching strength
+- **Dense Weight**: 0.0-1.0 (default: 0.6) - semantic understanding strength
+
+Weights should sum to 1.0.
+
+#### 4. Select Embedding Model
+
+| Model | VRAM | Best For |
+|-------|------|----------|
+| **BGE-M3** | 3-4GB | Production, hybrid search (recommended) |
+| **Qwen3-0.6B** | 2.3GB | High efficiency, excellent value |
+| **EmbeddingGemma-300m** | 4-8GB | Fast, lightweight (default) |
+| **Multi-Model Routing** | 5.3GB | Auto-routes to optimal model |
+
+**Instant switching**: <150ms with no re-indexing required.
+
+#### 5. Configure Parallel Search
+
+Enable/disable parallel execution of BM25 and semantic search:
+
+- **Enabled** (default): ~15-30ms faster, higher CPU usage
+- **Disabled**: Sequential execution, lower resource usage
+
+#### 6. Configure Neural Reranker
+
+Cross-encoder model that re-scores results for 15-25% quality improvement:
+
+- **Enable/Disable**: Requires GPU with ≥6GB VRAM
+- **Top-K Candidates**: Number of results to rerank (default: 50, range: 5-100)
+
+#### 7. Configure Entity Tracking
+
+Extract additional code relationships during indexing:
+
+- **Enabled**: Tracks enum members, default values, context managers (~25% slower indexing)
+- **Disabled** (default): Core relationships only (inheritance, imports, decorators)
+
+#### 8. Reset to Defaults
+
+Resets all settings to: hybrid mode, 0.4/0.6 weights, multi-model enabled, GPU auto-detect.
+
+### Quick Access Options
+
+From the main menu:
+
+- **M - Quick Model Switch**: Fast model switching without entering submenu
+- **F - Configure Output Format**: Control token usage (verbose/compact/ultra)
+
+### Environment Variables (Advanced)
+
+For automation and CI/CD, settings can be overridden via environment variables. See [MCP Tools Reference](docs/MCP_TOOLS_REFERENCE.md) for complete list.
 
 ### Model Selection
 
@@ -273,11 +363,14 @@ set CLAUDE_MULTI_MODEL_ENABLED=true
 | **EmbeddingGemma-300m** (default) | 768 | 4-8GB | Fast, efficient, smaller projects |
 | **BGE-M3** | 1024 | 8-16GB | Higher accuracy (+13.6% F1), production |
 | **Qwen3-0.6B** | 1024 | 2.3GB | Routing pool, high efficiency |
+| **Qwen3-4B** | 1024* | 8-10GB | Best quality, 4B parameters |
 | **CodeRankEmbed** | 768 | 2GB | Code-specific retrieval |
+
+*Qwen3-4B native dimension is 2560, reduced to 1024 via Matryoshka MRL for compatibility
 
 **Instant model switching**: <150ms with per-model index storage - no re-indexing needed!
 
-**See also**: [Model Migration Guide](docs/MODEL_MIGRATION_GUIDE.md), [Advanced Features](docs/ADVANCED_FEATURES_GUIDE.md#multi-model-query-routing)
+**See also**: [Advanced Features](docs/ADVANCED_FEATURES_GUIDE.md#multi-model-query-routing)
 
 ## Architecture
 
@@ -288,11 +381,11 @@ claude-context-local/
 ├── search/            # FAISS + BM25 hybrid search
 ├── merkle/            # Incremental indexing with change detection
 ├── graph/             # Call graph extraction & analysis
-├── mcp_server/        # MCP server implementation (15 tools)
+├── mcp_server/        # MCP server implementation (17 tools)
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 700+ tests (unit + integration)
+└── tests/             # 1,054+ tests (unit + integration)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -310,6 +403,9 @@ claude-context-local/
 ```powershell
 # Comprehensive system check
 verify-installation.cmd
+
+# Verify HuggingFace authentication
+verify-hf-auth.cmd
 
 # Repair common issues
 scripts\batch\repair_installation.bat
@@ -331,13 +427,39 @@ scripts\batch\repair_installation.bat
 - [Installation Guide](docs/INSTALLATION_GUIDE.md) - Setup, configuration, troubleshooting
 - [MCP Tools Reference](docs/MCP_TOOLS_REFERENCE.md) - Complete tool documentation
 - [Advanced Features Guide](docs/ADVANCED_FEATURES_GUIDE.md) - Multi-model routing, graph search, optimization
-- [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) - Project setup template
+- [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) - **Setup guide for your projects** (see below)
 
 ### Configuration & Performance
 
 - [Hybrid Search Configuration](docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md) - Search modes and tuning
-- [Model Migration Guide](docs/MODEL_MIGRATION_GUIDE.md) - Switching embedding models
-- [Benchmarks](docs/BENCHMARKS.md) - Performance metrics and comparisons
+- [Benchmarks](docs/BENCHMARKS.md) - Real-world performance metrics (63% token reduction)
+
+### Using CLAUDE.md Template in Your Projects
+
+The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic search in your own projects:
+
+**Quick Setup**:
+
+1. Copy template content from [docs/CLAUDE_MD_TEMPLATE.md](docs/CLAUDE_MD_TEMPLATE.md)
+2. Create `CLAUDE.md` in your project root
+3. Update the `index_directory` path to match your project
+4. Claude Code automatically reads `CLAUDE.md` when you open that project
+
+**Benefits**:
+
+- **63% token reduction** through enforced search-first workflow
+- **Immediate MCP tool access** without explaining tools each session
+- **Project-specific instructions** for your codebase conventions
+- **Automatic context loading** for all team members
+
+**Customization**:
+
+- Add project-specific coding conventions
+- Include architecture notes
+- Document common patterns
+- Specify preferred search modes
+
+> **See**: [docs/CLAUDE_MD_TEMPLATE.md](docs/CLAUDE_MD_TEMPLATE.md) for complete template and usage examples
 
 ### Development
 
@@ -349,14 +471,15 @@ scripts\batch\repair_installation.bat
 
 ## Contributing
 
-This is a research project focused on intelligent code chunking and search. Feel free to experiment with:
+Contributions welcome! Quick start:
 
-- Different chunking strategies
-- Alternative embedding models
-- Enhanced metadata extraction
-- Performance optimizations
+1. Fork and clone the repository
+2. Install: `install-windows.cmd` or `pip install -e .[dev,test]`
+3. Run tests: `pytest tests/ -v`
+4. Create a branch from `development`
+5. Submit PR to `development` branch
 
-See [Git Workflow](docs/GIT_WORKFLOW.md) for contribution guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
 ## License
 
@@ -372,6 +495,7 @@ This project draws inspiration from several excellent semantic code search imple
 | [claude-context-local](https://github.com/FarhanAliRaza/claude-context-local) | Farhan Ali Raza | Local-first approach, cross-platform support |
 | [chunkhound](https://github.com/chunkhound/chunkhound) | ChunkHound | Real-time indexing with watchdog, extensive language support (30+) |
 | [codanna](https://github.com/bartolli/codanna) | Bartolli | High-performance Rust implementation, memory-mapped storage, profile system |
+| [TOON Format](https://github.com/toon-format/toon) | TOON Format | Tabular Object Output Notation - compact data format inspiration for output formatting |
 
 This Windows-focused implementation builds upon these foundations while adding unique capabilities including multi-model query routing, per-model index storage, and Python call graph analysis.
 

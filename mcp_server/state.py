@@ -43,9 +43,7 @@ class ApplicationState:
     # Model management
     embedders: Dict[str, Any] = field(default_factory=dict)
     current_model_key: Optional[str] = None
-    current_index_model_key: Optional[str] = (
-        None  # Track index manager's model (Phase 1 fix)
-    )
+    current_index_model_key: Optional[str] = None  # Track index manager's model
     model_preload_task_started: bool = False
 
     # Search components (lazy-initialized)
@@ -105,7 +103,7 @@ class ApplicationState:
         if env_value is not None:
             self.multi_model_enabled = env_value.lower() in ("true", "1", "yes")
         else:
-            self.multi_model_enabled = config.multi_model_enabled
+            self.multi_model_enabled = config.routing.multi_model_enabled
 
     def switch_project(self, path: str) -> None:
         """Switch to a different project.
@@ -162,6 +160,37 @@ class ApplicationState:
         """Clear all cached embedder instances."""
         self.embedders = {}
 
+    def reset_search_components(self) -> None:
+        """Reset index_manager and searcher to force re-initialization.
+
+        Use this when:
+        - Clearing index files
+        - After multi-model batch indexing
+        - When search components need to be recreated
+        """
+        self.index_manager = None
+        self.searcher = None
+
+    def reset_searcher(self) -> None:
+        """Reset only the searcher (preserves index_manager).
+
+        Use this when:
+        - Search configuration changes (hybrid settings, weights, etc.)
+        - Searcher needs refresh but index is still valid
+        """
+        self.searcher = None
+
+    def reset_for_model_switch(self) -> None:
+        """Full reset including embedders for model switch.
+
+        Use this when:
+        - Switching embedding models
+        - Need to reload all model-dependent components
+        """
+        self.clear_embedders()
+        self.index_manager = None
+        self.searcher = None
+
     def __repr__(self) -> str:
         return (
             f"ApplicationState("
@@ -185,6 +214,23 @@ def get_state() -> ApplicationState:
     return _app_state
 
 
+# Register ApplicationState with ServiceLocator for dependency injection
+def _register_with_service_locator():
+    """Register ApplicationState with ServiceLocator on module import."""
+    try:
+        from mcp_server.services import ServiceLocator
+
+        locator = ServiceLocator.instance()
+        locator.register("state", _app_state)
+    except ImportError:
+        # ServiceLocator not yet available (during early initialization)
+        pass
+
+
+# Auto-register on module import
+_register_with_service_locator()
+
+
 def reset_state() -> None:
     """Reset application state to initial values.
 
@@ -194,8 +240,7 @@ def reset_state() -> None:
     _app_state.reset()
 
 
-# Backward compatibility aliases for gradual migration
-# These allow existing code to continue working while we migrate
+# Convenience functions for accessing ApplicationState
 def get_current_project() -> Optional[str]:
     """Get current project path (backward compatibility)."""
     return _app_state.current_project

@@ -33,10 +33,10 @@ class CodeChunk:
     complexity_score: int = 0  # estimated complexity
     tags: List[str] = None  # semantic tags like 'database', 'auth', 'error_handling'
 
-    # Call graph metadata (Phase 1: Python only)
+    # Call graph metadata
     calls: Optional[List["CallEdge"]] = None  # function calls made by this chunk
 
-    # Phase 3: Comprehensive relationship tracking
+    # Relationship tracking
     relationships: Optional[List] = (
         None  # All relationship types (RelationshipEdge objects)
     )

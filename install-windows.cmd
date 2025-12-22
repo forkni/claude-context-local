@@ -10,7 +10,10 @@ echo =================================================
 
 REM Set project directory to current location
 set "PROJECT_DIR=%~dp0"
-cd /d "%PROJECT_DIR%"
+pushd "%PROJECT_DIR%" || (
+    echo [ERROR] Failed to change to project directory
+    exit /b 1
+)
 
 echo Step 1: System Detection...
 echo.
@@ -82,6 +85,7 @@ echo [5] Clear Stale Snapshots/Indexes ^(Repair Tool^)
 echo [6] Verify Installation Status
 echo [7] Exit
 echo.
+set choice=
 set /p choice="Select option (1-7): "
 
 if "!choice!"=="1" goto auto_install
@@ -134,6 +138,7 @@ echo.
 echo Note: PyTorch 2.6.0 only supports CUDA 11.8 build
 echo       This build is fully compatible with CUDA 12.x systems
 echo.
+set cuda_choice=
 set /p cuda_choice="Select option (1-3): "
 
 if "!cuda_choice!"=="1" (
@@ -578,6 +583,7 @@ if exist ".venv\Scripts\python.exe" (
         echo   2. Edit: %USERPROFILE%\.claude.json manually
         echo   3. See: docs\claude_code_config.md for configuration examples
         echo.
+        set retry_config=
         set /p retry_config="Would you like to run manual configuration now? (y/N): "
         if /i "!retry_config!"=="y" (
             echo.
@@ -617,6 +623,7 @@ echo 3. Get your token: https://huggingface.co/settings/tokens
 echo 4. Create a token with 'Read' permissions
 echo.
 
+set hf_token=
 set /p "hf_token=Enter your HuggingFace token (starts with hf_): "
 
 if "!hf_token!"=="" (

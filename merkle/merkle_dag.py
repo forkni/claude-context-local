@@ -42,64 +42,30 @@ class MerkleNode:
 class MerkleDAG:
     """Merkle DAG for tracking file system changes."""
 
-    def __init__(self, root_path: str):
+    def __init__(self, root_path: str, include_dirs=None, exclude_dirs=None):
         """Initialize Merkle DAG for a directory tree.
 
         Args:
             root_path: Root directory to track
+            include_dirs: Optional list of directories to include
+            exclude_dirs: Optional list of directories to exclude
         """
         self.root_path = Path(root_path).resolve()
         self.nodes: Dict[str, MerkleNode] = {}
         self.root_node: Optional[MerkleNode] = None
-        self.ignore_patterns: Set[str] = {
-            "__pycache__",
-            ".git",
-            ".hg",
-            ".svn",
-            ".venv",
-            "venv",
-            "env",
-            ".env",
-            ".direnv",
-            "site-packages",  # Python package installations
-            "node_modules",
-            ".pnpm-store",
-            ".yarn",
-            ".pytest_cache",
-            ".mypy_cache",
-            ".ruff_cache",
-            ".pytype",
-            ".ipynb_checkpoints",
-            "build",
-            "dist",
-            "out",
-            "public",
-            ".next",
-            ".nuxt",
-            ".svelte-kit",
-            ".angular",
-            ".astro",
-            ".vite",
-            ".cache",
-            ".parcel-cache",
-            ".turbo",
-            "coverage",
-            ".coverage",
-            ".nyc_output",
-            ".gradle",
-            ".idea",
-            ".vscode",
-            ".docusaurus",
-            ".vercel",
-            ".serverless",
-            ".terraform",
-            ".mvn",
-            ".tox",
-            "target",
-            "bin",
-            "obj",
-            "_archive",  # Historical content excluded from indexing
-            "backups",  # Development backup directories
+
+        # Initialize directory filter for custom include/exclude dirs
+        from search.filters import DirectoryFilter
+
+        self.directory_filter = DirectoryFilter(include_dirs, exclude_dirs)
+
+        # Import default ignored directories from canonical source
+        from chunking.multi_language_chunker import MultiLanguageChunker
+
+        # Combine default ignored directories with file-specific patterns
+        self.ignore_patterns: Set[str] = set(
+            MultiLanguageChunker.DEFAULT_IGNORED_DIRS
+        ) | {
             "*.pyc",
             "*.pyo",
             ".DS_Store",
@@ -123,6 +89,19 @@ class MerkleDAG:
                 if name.endswith(pattern[1:]):
                     return True
             elif name == pattern:
+                return True
+
+        # Apply custom directory filters (for directories only)
+        if path.is_dir() and self.directory_filter:
+            try:
+                relative_path = str(path.relative_to(self.root_path))
+                # Root directory should never be filtered - only its contents
+                if relative_path != "." and not self.directory_filter.matches(
+                    relative_path + "/"
+                ):
+                    return True
+            except ValueError:
+                # Path not under root, ignore it
                 return True
 
         return False
@@ -261,6 +240,13 @@ class MerkleDAG:
             "root_node": self.root_node.to_dict() if self.root_node else None,
             "file_count": sum(1 for n in self.nodes.values() if n.is_file),
             "total_size": sum(n.size for n in self.nodes.values() if n.is_file),
+            # Serialize directory filters for incremental indexing
+            "include_dirs": (
+                self.directory_filter.include_dirs if self.directory_filter else None
+            ),
+            "exclude_dirs": (
+                self.directory_filter.exclude_dirs if self.directory_filter else None
+            ),
         }
 
     @classmethod
@@ -273,7 +259,12 @@ class MerkleDAG:
         Returns:
             MerkleDAG instance
         """
-        dag = cls(data["root_path"])
+        # Restore directory filters from serialized snapshot
+        dag = cls(
+            data["root_path"],
+            include_dirs=data.get("include_dirs"),
+            exclude_dirs=data.get("exclude_dirs"),
+        )
         if data["root_node"]:
             dag.root_node = MerkleNode.from_dict(data["root_node"])
 

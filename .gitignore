@@ -5,10 +5,13 @@
 !.claude/skills/mcp-search-tool/
 .claude/skills/mcp-search-tool/*
 !.claude/skills/mcp-search-tool/SKILL.md
+!.claude/commands/
+.claude/commands/*
+!.claude/commands/mcp-search.md
 
 # Development workflow (keep in development branch only)
 .githooks/
-scripts/git/
+# scripts/git/
 
 ignore/
 # Byte-compiled / optimized / DLL files
@@ -232,13 +235,16 @@ __marimo__/
 _archive/
 benchmark_results/
 analysis/
-logs/                    # Workflow execution logs and analysis reports
+/logs/                   # Workflow execution logs and analysis reports (entire directory)
+scripts/git
 CLAUDE.md
 MEMORY.md
 GEMINI.md
 BASH_STYLE_GUIDE.md
 BATCH_STYLE_GUIDE.md
+SHELL_STYLE_GUIDE.md
 SLASH_COMMAND_TESTING_PROTOCOL.md
+clean_pycache.bat
 
 # Development-only content (excluded from main branch)
 tests/
@@ -248,16 +254,15 @@ pytest.ini
 docs/*
 !docs/BENCHMARKS.md
 !docs/claude_code_config.md
+!docs/CLAUDE_MD_TEMPLATE.md
 !docs/GIT_WORKFLOW.md
 !docs/MCP_TOOLS_REFERENCE.md
 !docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md
 !docs/ADVANCED_FEATURES_GUIDE.md
 !docs/INSTALLATION_GUIDE.md
-!docs/MODEL_MIGRATION_GUIDE.md
 !docs/PYTORCH_COMPATIBILITY.md
 !docs/TESTING_GUIDE.md
 !docs/VSCODE_SETUP.md
-!docs/PRE_COMMIT_HOOKS.md
 !docs/VERSION_HISTORY.md
 
 # Development-only documentation (local-only)
@@ -268,6 +273,7 @@ docs/GIT_WORKFLOW_ENHANCEMENT_PLAN.md
 docs/GPU_MEMORY_LEAK_FIX.md
 docs/PER_MODEL_INDICES_IMPLEMENTATION.md
 docs/RELATIONSHIP_TYPES_IMPLEMENTATION.md
+docs/PRE_COMMIT_HOOKS.md
 
 # Evaluation and test results (temporary/generated files)
 custom_evaluation_results/
@@ -279,7 +285,8 @@ sample_dataset.json
 audit_reports/
 *-audit.json
 test-audit*.json
-tools/summarize_audit.py  # Local development tool for audit analysis
+tools/summarize_audit.py
+tools/benchmark_models.py
 
 # Development-only tests (require local evaluation module, invalid imports, or gated models)
 tests/unit/test_evaluation.py
@@ -291,9 +298,19 @@ tests/integration/test_semantic_search.py
 tests/integration/test_token_efficiency_workflow.py
 tests/integration/test_graph_search.py
 
+# Local development test files
+tests/test_mmap_cleanup.py
+tests/toon_format_test_results.txt
+tests/toon_format_understanding_test.md
+
 # Windows-specific temporary files
 nul
 *.bat.bak
+
+# Accidental output files from batch script redirection failures
+# (created when %LOGFILE% or %REPORTFILE% variables aren't properly set)
+Commit
+Workflow
 
 # Maintenance and cleanup scripts (local-only)
 scripts/cleanup_powershell_refs_apply.py

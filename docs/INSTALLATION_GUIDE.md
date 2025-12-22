@@ -373,6 +373,31 @@ scripts\batch\repair_installation.bat
 
 ## Dependency Management
 
+### Dependency Structure
+
+The project uses a clean separation between runtime and development dependencies:
+
+**Runtime Dependencies** (`[project.dependencies]`):
+
+- Core ML libraries: `torch`, `sentence-transformers`, `transformers`, `faiss-cpu`
+- Search components: `rank-bm25`, `nltk`, `sqlitedict`
+- MCP integration: `mcp`, `rich`, `psutil`
+- Tree-sitter parsers: Individual language parsers (Python, JS, TS, Go, Rust, C, C++, C#, GLSL, Java)
+
+**Test Dependencies** (`[project.optional-dependencies.test]`):
+
+- `pytest`, `pytest-asyncio`, `pytest-cov`, `pytest-mock`
+
+To install with test dependencies:
+
+```bash
+# UV (recommended)
+uv pip install -e ".[test]"
+
+# pip
+pip install -e ".[test]"
+```
+
 ### Why UV is Recommended
 
 1. **Advanced Dependency Resolution**
@@ -422,8 +447,9 @@ scripts\batch\repair_installation.bat
 ```bash
 # Windows - CUDA 11.8 build (compatible with CUDA 12.x)
 uv pip install torch>=2.6.0 torchvision torchaudio --python .venv\Scripts\python.exe --index-url https://download.pytorch.org/whl/cu118
-
 ```
+
+> **Note**: This project only uses `torch` directly. `torchvision` and `torchaudio` are included for PyTorch ecosystem compatibility but are not actively used by the codebase.
 
 #### pip Method (Fallback)
 
@@ -487,7 +513,19 @@ scripts\batch\start_mcp_simple.bat   # Simple mode with minimal output
 
 #### Comprehensive Test Suite
 
-The project includes 37 test files organized into professional categories:
+The project includes 37 test files organized into professional categories.
+
+**First, install test dependencies:**
+
+```powershell
+# UV (recommended)
+.venv\Scripts\uv.exe pip install -e ".[test]"
+
+# Or with pip
+.venv\Scripts\pip.exe install -e ".[test]"
+```
+
+**Then run tests:**
 
 ```powershell
 # Run all tests (37 test files)
@@ -586,7 +624,7 @@ After successful installation, verify system performance and validate token effi
 
 **Expected Results:**
 
-- ✅ **Token Savings**: 85-95% reduction vs traditional file reading
+- ✅ **Token Savings**: 63% reduction vs traditional file reading (see BENCHMARKS.md)
 - ✅ **GPU Acceleration**: 8.6x faster indexing (with CUDA GPU)
 - ✅ **Search Quality**: High precision on test scenarios
 
@@ -1017,8 +1055,8 @@ Startup (server starts):              0 MB VRAM (lazy loading)
 
 - **Traditional file reading**: ~5,600 tokens for 3 files
 - **Semantic search**: ~400 tokens for targeted results
-- **Reduction**: 85-95% fewer tokens used
-- **Speed**: 5-10x faster than loading full files
+- **Reduction**: 63% fewer tokens used
+- **Speed**: 2-3x faster than traditional approach
 
 ## Maintenance
 

@@ -3,10 +3,10 @@
 
 import sys
 
-from huggingface_hub import HfFolder, whoami
+from huggingface_hub import get_token, whoami
 
 # Get existing token or skip test
-token = HfFolder.get_token()
+token = get_token()
 
 if not token:
     print("SKIP: No HuggingFace token available")

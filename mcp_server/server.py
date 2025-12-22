@@ -4,9 +4,9 @@ AUTO-GENERATED from FastMCP backup.
 DO NOT EDIT MANUALLY - regenerate with tools/build_lowlevel_server.py
 
 Migrated from FastMCP to official MCP SDK for:
-- Explicit lifecycle management (fixes project_id=None bug)
-- Predictable state initialization (fixes SSE race conditions)
-- Better production reliability (official Anthropic implementation)
+- Explicit lifecycle management
+- Predictable state initialization
+- Better production reliability
 """
 
 import asyncio
@@ -33,15 +33,12 @@ from mcp.types import (  # noqa: E402
 )
 
 # Project imports
-from embeddings.embedder import CodeEmbedder  # noqa: E402
-from mcp_server.project_persistence import (  # noqa: E402
-    load_project_selection,
+from mcp_server.model_pool_manager import (  # noqa: E402
+    get_embedder,
 )
-from mcp_server.state import get_state  # noqa: E402
-from search.config import MODEL_POOL_CONFIG, get_search_config  # noqa: E402
-from search.hybrid_searcher import HybridSearcher  # noqa: E402
-from search.indexer import CodeIndexManager  # noqa: E402
-from search.searcher import IntelligentSearcher  # noqa: E402
+
+# Output formatting
+from mcp_server.output_formatter import format_response  # noqa: E402
 
 # Configure logging
 debug_mode = os.getenv("MCP_DEBUG", "").lower() in ("1", "true", "yes")
@@ -64,455 +61,24 @@ else:
 
 
 # ============================================================================
-# HELPER FUNCTIONS (copied from FastMCP backup)
+# HELPER FUNCTIONS - Now imported from dedicated modules
 # ============================================================================
 
-
-def get_storage_dir() -> Path:
-    """Get or create base storage directory."""
-    state = get_state()
-
-    if state.storage_dir is None:
-        storage_path = os.getenv(
-            "CODE_SEARCH_STORAGE", str(Path.home() / ".claude_code_search")
-        )
-        state.storage_dir = Path(storage_path)
-        state.storage_dir.mkdir(parents=True, exist_ok=True)
-    return state.storage_dir
-
-
-def set_current_project(project_path: str) -> None:
-    """Set the current project path."""
-    get_state().current_project = project_path
-    logger.info(
-        f"Current project set to: {Path(project_path).name if project_path else None}"
-    )
-
-
-def get_project_storage_dir(project_path: str, model_key: str = None) -> Path:
-    """Get or create project-specific storage directory with per-model dimension suffix.
-
-    Args:
-        project_path: Path to the project
-        model_key: Model key for routing (None = use config default)
-    """
-    base_dir = get_storage_dir()
-    import hashlib
-    from datetime import datetime
-
-    project_path = Path(project_path).resolve()
-    project_name = project_path.name
-    project_hash = hashlib.md5(str(project_path).encode()).hexdigest()[:8]
-    from search.config import MODEL_REGISTRY, get_model_slug, get_search_config
-
-    # Determine which model to use
-    if model_key:
-        # Use routing-selected model (map model_key to model_name via MODEL_POOL_CONFIG)
-        if model_key not in MODEL_POOL_CONFIG:
-            logger.error(
-                f"Invalid model_key: {model_key}, falling back to config default"
-            )
-            config = get_search_config()
-            model_name = config.embedding_model_name
-        else:
-            model_name = MODEL_POOL_CONFIG[model_key]
-            logger.info(
-                f"[ROUTING] Using routed model: {model_name} (key: {model_key})"
-            )
-    else:
-        # Use config default
-        config = get_search_config()
-        model_name = config.embedding_model_name
-        logger.info(f"[CONFIG] Using config default model: {model_name}")
-
-    # Validate model exists in registry (prevent silent 768d fallback)
-    model_config = MODEL_REGISTRY.get(model_name)
-    if model_config is None:
-        available_models = ", ".join(sorted(MODEL_REGISTRY.keys()))
-        raise ValueError(
-            f"Unknown embedding model: '{model_name}'\n"
-            f"This model is not registered in MODEL_REGISTRY.\n"
-            f"Available models:\n  {available_models}\n"
-            f"To add this model, update search/config.py:MODEL_REGISTRY"
-        )
-    dimension = model_config["dimension"]
-    model_slug = get_model_slug(model_name)
-    project_dir = (
-        base_dir
-        / "projects"
-        / f"{project_name}_{project_hash}_{model_slug}_{dimension}d"
-    )
-    project_dir.mkdir(parents=True, exist_ok=True)
-    logger.info(
-        f"[PER_MODEL_INDICES] Using storage: {project_dir.name} (model: {model_name}, dimension: {dimension}d)"
-    )
-    project_info_file = project_dir / "project_info.json"
-    if not project_info_file.exists():
-        project_info = {
-            "project_name": project_name,
-            "project_path": str(project_path),
-            "project_hash": project_hash,
-            "embedding_model": model_name,
-            "model_dimension": dimension,
-            "created_at": datetime.now().isoformat(),
-        }
-        with open(project_info_file, "w") as f:
-            json.dump(project_info, f, indent=2)
-    return project_dir
-
-
-def ensure_project_indexed(project_path: str) -> bool:
-    """Check if project is indexed, auto-index only for non-server directories."""
-    try:
-        project_dir = get_project_storage_dir(project_path)
-        index_dir = project_dir / "index"
-        if index_dir.exists() and (index_dir / "code.index").exists():
-            return True
-        project_path_obj = Path(project_path)
-        if project_path_obj == PROJECT_ROOT:
-            logger.info(f"Skipping auto-index of server directory: {project_path}")
-            return False
-        return False
-    except (OSError, IOError, PermissionError) as e:
-        logger.warning(f"Failed to check/auto-index project {project_path}: {e}")
-        return False
-
-
-def initialize_model_pool(lazy_load: bool = True) -> None:
-    """Initialize multi-model pool with all 3 models.
-
-    Args:
-        lazy_load: If True, models are loaded on first access. If False, all models loaded immediately.
-    """
-    state = get_state()
-
-    if not state.multi_model_enabled:
-        logger.info("Multi-model routing disabled - using single model mode")
-        return
-
-    cache_dir = get_storage_dir() / "models"
-    cache_dir.mkdir(exist_ok=True)
-
-    if lazy_load:
-        # Initialize empty slots - models will load on first get_embedder() call
-        for model_key in MODEL_POOL_CONFIG.keys():
-            state.embedders[model_key] = None
-        logger.info(
-            f"Model pool initialized in lazy mode: {list(MODEL_POOL_CONFIG.keys())}"
-        )
-    else:
-        # Eagerly load all models (WARNING: ~18-20 GB VRAM)
-        logger.info("Loading all models eagerly (this may take 30-60 seconds)...")
-        for model_key, model_name in MODEL_POOL_CONFIG.items():
-            try:
-                logger.info(f"Loading {model_key} ({model_name})...")
-                embedder = CodeEmbedder(model_name=model_name, cache_dir=str(cache_dir))
-                state.set_embedder(model_key, embedder)
-                logger.info(f"✓ {model_key} loaded successfully")
-            except Exception as e:
-                logger.error(f"✗ Failed to load {model_key}: {e}")
-                state.embedders[model_key] = None
-
-        loaded_count = sum(1 for e in state.embedders.values() if e is not None)
-        logger.info(
-            f"Model pool loaded: {loaded_count}/{len(MODEL_POOL_CONFIG)} models ready"
-        )
-
-
-def get_embedder(model_key: str = None) -> CodeEmbedder:
-    """Get embedder from multi-model pool or single-model fallback.
-
-    Args:
-        model_key: Model key from MODEL_POOL_CONFIG ("qwen3", "bge_m3", "coderankembed").
-                   If None, uses config default or falls back to BGE-M3.
-
-    Returns:
-        CodeEmbedder instance for the specified model.
-    """
-    state = get_state()
-
-    cache_dir = get_storage_dir() / "models"
-    cache_dir.mkdir(exist_ok=True)
-
-    # Multi-model mode
-    if state.multi_model_enabled:
-        # Determine which model to use
-        if model_key is None:
-            # Try to get from config, fallback to bge_m3
-            try:
-                config = get_search_config()
-                config_model_name = config.embedding_model_name
-
-                # Map config model name to model_key
-                model_key = None
-                for key, name in MODEL_POOL_CONFIG.items():
-                    if name == config_model_name:
-                        model_key = key
-                        break
-
-                if model_key is None:
-                    logger.warning(
-                        f"Config model '{config_model_name}' not in pool, using bge_m3"
-                    )
-                    model_key = "bge_m3"
-            except Exception as e:
-                logger.warning(f"Failed to load model from config: {e}, using bge_m3")
-                model_key = "bge_m3"
-
-        # Validate model_key
-        if model_key not in MODEL_POOL_CONFIG:
-            logger.error(
-                f"Invalid model_key '{model_key}', available: {list(MODEL_POOL_CONFIG.keys())}"
-            )
-            model_key = "bge_m3"  # Fallback to most reliable model
-
-        # Lazy load model if not already loaded
-        if model_key not in state.embedders or state.embedders[model_key] is None:
-            model_name = MODEL_POOL_CONFIG[model_key]
-            # Check if this is the first model being loaded (cold start)
-            is_first_load = not any(state.embedders.values())
-            if is_first_load:
-                logger.info(
-                    f"[FIRST USE] Loading embedding model {model_key} ({model_name})... "
-                    f"This is a one-time initialization (~5-10s). Subsequent searches will be fast."
-                )
-            else:
-                logger.info(f"Lazy loading {model_key} ({model_name})...")
-            try:
-                embedder = CodeEmbedder(model_name=model_name, cache_dir=str(cache_dir))
-                state.set_embedder(model_key, embedder)
-                if is_first_load:
-                    logger.info(
-                        f"✓ {model_key} loaded successfully. Ready for fast searches!"
-                    )
-                else:
-                    logger.info(f"✓ {model_key} loaded successfully")
-            except Exception as e:
-                logger.error(f"✗ Failed to load {model_key}: {e}")
-                # Fallback to bge_m3 if available
-                if (
-                    model_key != "bge_m3"
-                    and "bge_m3" in state.embedders
-                    and state.embedders["bge_m3"] is not None
-                ):
-                    logger.warning("Falling back to bge_m3")
-                    return state.embedders["bge_m3"]
-                raise
-
-        return state.embedders[model_key]
-
-    # Single-model mode (legacy fallback)
-    else:
-        # Use old singleton pattern with "default" key
-        if "default" not in state.embedders or state.embedders["default"] is None:
-            try:
-                config = get_search_config()
-                model_name = config.embedding_model_name
-                logger.info(f"Using single embedding model: {model_name}")
-            except Exception as e:
-                logger.warning(f"Failed to load model from config: {e}")
-                model_name = "google/embeddinggemma-300m"
-                logger.info(f"Falling back to default model: {model_name}")
-
-            embedder = CodeEmbedder(model_name=model_name, cache_dir=str(cache_dir))
-            state.set_embedder("default", embedder)
-            logger.info("Embedder initialized successfully")
-
-        return state.embedders["default"]
-
-
-def _maybe_start_model_preload() -> None:
-    """Preload the embedding model in the background to avoid cold-start delays."""
-    state = get_state()
-
-    if state.model_preload_task_started:
-        return
-
-    state.model_preload_task_started = True
-
-    async def _preload():
-        try:
-            logger.info("Starting background model preload")
-            _ = get_embedder().model
-            logger.info("Background model preload completed")
-        except (ImportError, RuntimeError, ValueError) as e:
-            logger.warning(f"Background model preload failed: {e}")
-
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(_preload())
-        else:
-            loop.run_until_complete(_preload())
-    except (RuntimeError, AttributeError) as e:
-        logger.debug(f"Model preload scheduling skipped: {e}")
-
-
-def _cleanup_previous_resources():
-    """Cleanup previous project resources to free memory."""
-    state = get_state()
-    try:
-        if state.index_manager is not None:
-            if (
-                hasattr(state.index_manager, "_metadata_db")
-                and state.index_manager._metadata_db is not None
-            ):
-                state.index_manager._metadata_db.close()
-            state.index_manager = None
-            logger.info("Previous index manager cleaned up")
-
-        if state.searcher is not None:
-            state.searcher = None
-            logger.info("Previous searcher cleaned up")
-
-        if state.embedders:
-            cleanup_count = 0
-            for model_key, embedder in list(state.embedders.items()):
-                if embedder is not None:
-                    try:
-                        embedder.cleanup()
-                        cleanup_count += 1
-                    except Exception as e:
-                        logger.warning(f"Failed to cleanup {model_key}: {e}")
-            state.clear_embedders()
-            logger.info(f"Cleaned up {cleanup_count} embedder(s) from pool")
-
-        try:
-            import torch
-
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                logger.info("GPU cache cleared")
-        except ImportError as e:
-            logger.debug(f"GPU cache cleanup skipped: {e}")
-    except (AttributeError, TypeError) as e:
-        logger.warning(f"Error during resource cleanup: {e}")
-
-
-def get_index_manager(
-    project_path: str = None, model_key: str = None
-) -> CodeIndexManager:
-    """Get index manager for specific project or current project.
-
-    Args:
-        project_path: Path to the project (None = use current project)
-        model_key: Model key for routing (None = use config default)
-    """
-    state = get_state()
-
-    if project_path is None:
-        if state.current_project is None:
-            project_path = str(PROJECT_ROOT)
-            logger.info(
-                f"No active project found. Using server directory: {project_path}"
-            )
-        else:
-            project_path = state.current_project
-
-    # Invalidate cache if project or model changed
-    if (
-        state.current_project != project_path
-        or state.current_index_model_key != model_key
-    ):
-        if state.current_project != project_path:
-            logger.info(
-                f"Switching project from '{state.current_project}' to '{Path(project_path).name}'"
-            )
-        if state.current_index_model_key != model_key:
-            logger.info(
-                f"Switching index model from '{state.current_index_model_key}' to '{model_key}'"
-            )
-        _cleanup_previous_resources()
-
-        state.current_project = project_path
-        state.current_index_model_key = model_key
-        state.index_manager = None
-
-    if state.index_manager is None:
-        project_dir = get_project_storage_dir(project_path, model_key=model_key)
-        index_dir = project_dir / "index"
-        index_dir.mkdir(exist_ok=True)
-
-        # Extract project_id from storage directory name
-        # Format: projectname_hash_modelslug_dimension (e.g., claude-context-local_caf2e75a_qwen3_1024d)
-        project_id = project_dir.name.rsplit("_", 1)[0]  # Remove dimension suffix
-
-        state.index_manager = CodeIndexManager(str(index_dir), project_id=project_id)
-        logger.info(
-            f"Index manager initialized for project: {Path(project_path).name} (ID: {project_id}, model_key: {model_key})"
-        )
-
-    return state.index_manager
-
-
-def get_searcher(project_path: str = None, model_key: str = None):
-    """Get searcher for specific project or current project.
-
-    Args:
-        project_path: Path to project (None = use current project)
-        model_key: Model key for routing (None = use config default)
-    """
-    state = get_state()
-
-    if project_path is None and state.current_project is None:
-        project_path = str(PROJECT_ROOT)
-        logger.info(f"No active project found. Using server directory: {project_path}")
-
-    # Invalidate cache if project or model changed
-    if (
-        state.current_project != project_path
-        or state.current_model_key != model_key
-        or state.searcher is None
-    ):
-        state.current_project = project_path or state.current_project
-        state.current_model_key = model_key
-        config = get_search_config()
-        logger.info(
-            f"[GET_SEARCHER] Initializing searcher for project: {state.current_project}"
-        )
-        if config.enable_hybrid_search:
-            project_storage = get_project_storage_dir(
-                state.current_project, model_key=model_key
-            )
-            storage_dir = project_storage / "index"
-            logger.info(f"[GET_SEARCHER] Using storage directory: {storage_dir}")
-
-            # Extract project_id from storage directory name
-            # Format: projectname_hash_dimension (e.g., claude-context-local_caf2e75a_1024d)
-            project_id = project_storage.name.rsplit("_", 1)[
-                0
-            ]  # Remove dimension suffix
-
-            state.searcher = HybridSearcher(
-                storage_dir=str(storage_dir),
-                embedder=get_embedder(model_key),
-                bm25_weight=config.bm25_weight,
-                dense_weight=config.dense_weight,
-                rrf_k=config.rrf_k_parameter,
-                max_workers=2,
-                project_id=project_id,
-            )
-            # REMOVED: get_index_manager() call that was causing state corruption
-            # The HybridSearcher already loads existing indices during initialization
-            logger.info(
-                f"HybridSearcher initialized (BM25: {config.bm25_weight}, Dense: {config.dense_weight})"
-            )
-        else:
-            state.searcher = IntelligentSearcher(
-                get_index_manager(project_path, model_key=model_key),
-                get_embedder(model_key),
-            )
-            logger.info("IntelligentSearcher initialized (semantic-only mode)")
-
-        logger.info(
-            f"Searcher initialized for project: {Path(state.current_project).name if state.current_project else 'unknown'}"
-        )
-
-    return state.searcher
-
+# Import resource management functions from resource_manager.py
+from mcp_server.resource_manager import (  # noqa: E402, F401 - Re-exported for backward compatibility
+    _cleanup_previous_resources,
+    close_project_resources,
+    initialize_server_state,
+)
+
+# Import search factory functions from search_factory.py
+from mcp_server.search_factory import (  # noqa: E402, F401 - Re-exported for backward compatibility
+    get_index_manager,
+    get_searcher,
+)
 
 # ============================================================================
-# CRITICAL FIX: Explicit lifecycle management
+# Explicit lifecycle management
 # ============================================================================
 # Server instance will be created without custom lifespan
 # Global state initialization happens in Starlette app_lifespan below
@@ -555,10 +121,38 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[TextCon
         # Call handler
         result = await handler(arguments)
 
-        # Convert to TextContent
-        result_text = (
-            json.dumps(result, indent=2) if isinstance(result, dict) else str(result)
+        # Apply output formatting (formatting-only, preserves all data)
+        # Use config default if no format specified
+        from search.config import get_search_config
+
+        config = get_search_config()
+        default_format = config.output.format
+
+        output_format = (
+            arguments.pop("output_format", default_format)
+            if isinstance(arguments, dict)
+            else default_format
         )
+        formatted_result = (
+            format_response(result, output_format)
+            if isinstance(result, dict)
+            else result
+        )
+
+        # Use compact JSON (no indent) for compact/toon formats, verbose for json format
+        if output_format in ("compact", "ultra"):
+            result_text = (
+                json.dumps(formatted_result, separators=(",", ":"))
+                if isinstance(formatted_result, dict)
+                else str(formatted_result)
+            )
+        else:  # json format (backward compatible)
+            result_text = (
+                json.dumps(formatted_result, indent=2)
+                if isinstance(formatted_result, dict)
+                else str(formatted_result)
+            )
+
         return [TextContent(type="text", text=result_text)]
 
     except Exception as e:
@@ -697,71 +291,19 @@ if __name__ == "__main__":
     if args.transport == "sse":
         logger.info(f"SSE endpoint: http://{args.host}:{args.port}")
 
-    # Windows SSE fix
-    if args.transport == "sse":
-        import platform
-
-        if platform.system() == "Windows":
-            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-            logger.info("Windows: Using SelectorEventLoop for SSE")
-
     try:
         if args.transport == "stdio":
             from mcp.server.stdio import stdio_server
 
             async def run_stdio_server():
                 """Run stdio server with proper lifecycle management."""
-                state = get_state()
-
-                # Sync multi_model_enabled from config file (with env override)
-                from search.config import get_config_manager
-
-                try:
-                    config_manager = get_config_manager()
-                    config = config_manager.load_config()
-                    state.sync_from_config(config)
-                except Exception as e:
-                    logger.warning(f"[INIT] Config sync failed (using defaults): {e}")
-
                 # Initialize global state BEFORE starting server
                 logger.info("=" * 60)
                 logger.info("SERVER STARTUP: Initializing global state")
                 logger.info("=" * 60)
 
-                # Set default project: env var > persistent selection > none
-                default_project = os.getenv("CLAUDE_DEFAULT_PROJECT", None)
-                if default_project:
-                    project_path = str(Path(default_project).resolve())
-                    state.current_project = project_path
-                    logger.info(f"[INIT] Default project (env): {project_path}")
-                else:
-                    # Try to restore from persistent selection
-                    selection = load_project_selection()
-                    if selection:
-                        restored_path = selection["last_project_path"]
-                        set_current_project(restored_path)
-                        logger.info(
-                            f"[INIT] Restored project: {Path(restored_path).name}"
-                        )
-                    else:
-                        logger.info("[INIT] No default project")
-
-                # Defer model pool initialization (Phase 3A optimization)
-                # Models will load on first search/index operation (saves 3-4GB VRAM at startup)
-                # if _multi_model_enabled and not _model_preload_task_started:
-                #     initialize_model_pool(lazy_load=True)
-                #     logger.info(
-                #         f"[INIT] Model pool initialized: {list(MODEL_POOL_CONFIG.keys())}"
-                #     )
-                #     _model_preload_task_started = True
-                logger.info("[INIT] Model loading deferred until first use (lazy mode)")
-                logger.info(
-                    f"[INIT] Available models: {list(MODEL_POOL_CONFIG.keys())}"
-                )
-
-                # Log storage directory
-                storage = get_storage_dir()
-                logger.info(f"[INIT] Storage directory: {storage}")
+                # Use shared initialization logic from resource_manager
+                initialize_server_state()
 
                 logger.info("=" * 60)
                 logger.info("SERVER READY - Accepting connections")
@@ -786,6 +328,8 @@ if __name__ == "__main__":
             asyncio.run(run_stdio_server())
         elif args.transport == "sse":
             # SSE transport using Starlette + SseServerTransport + uvicorn
+            import platform
+
             import uvicorn
             from mcp.server.sse import SseServerTransport
             from starlette.applications import Starlette
@@ -810,61 +354,15 @@ if __name__ == "__main__":
             # Starlette app with lifespan integration
             async def app_lifespan(app):
                 """Application lifecycle - initialize global state ONCE before accepting connections."""
-                state = get_state()
-
-                # Sync multi_model_enabled from config file (with env override)
-                from search.config import get_config_manager
-
-                try:
-                    config_manager = get_config_manager()
-                    config = config_manager.load_config()
-                    state.sync_from_config(config)
-                except Exception as e:
-                    logger.warning(f"[INIT] Config sync failed (using defaults): {e}")
-
                 logger.info("=" * 60)
                 logger.info("APPLICATION STARTUP: Initializing global state")
                 logger.info("=" * 60)
 
                 try:
-                    # Set default project: env var > persistent selection > none
-                    default_project = os.getenv("CLAUDE_DEFAULT_PROJECT", None)
-                    if default_project:
-                        project_path = str(Path(default_project).resolve())
-                        state.current_project = project_path
-                        logger.info(f"[INIT] Default project (env): {project_path}")
-                    else:
-                        # Try to restore from persistent selection
-                        selection = load_project_selection()
-                        if selection:
-                            restored_path = selection["last_project_path"]
-                            set_current_project(restored_path)
-                            logger.info(
-                                f"[INIT] Restored project: {Path(restored_path).name}"
-                            )
-                        else:
-                            logger.info("[INIT] No default project")
+                    # Use shared initialization logic from resource_manager
+                    initialize_server_state()
 
-                    # Initialize model pool in lazy mode
-                    if (
-                        state.multi_model_enabled
-                        and not state.model_preload_task_started
-                    ):
-                        initialize_model_pool(lazy_load=True)
-                        logger.info(
-                            f"[INIT] Model pool initialized: {list(MODEL_POOL_CONFIG.keys())}"
-                        )
-                        state.model_preload_task_started = True
-                    elif state.multi_model_enabled:
-                        logger.info("[INIT] Model pool already initialized")
-                    else:
-                        logger.info("[INIT] Single-model mode enabled")
-
-                    # Log storage directory
-                    storage = get_storage_dir()
-                    logger.info(f"[INIT] Storage directory: {storage}")
-
-                    # Optional: Pre-load embedding model
+                    # Optional: Pre-load embedding model (SSE-specific feature)
                     if os.getenv("MCP_PRELOAD_MODEL", "false").lower() in (
                         "true",
                         "1",
@@ -901,12 +399,53 @@ if __name__ == "__main__":
 
             starlette_app = Starlette(routes=routes, lifespan=app_lifespan)
 
-            # Run server
+            # Run server with Windows-specific event loop handling
             logger.info(f"Starting SSE server on {args.host}:{args.port}")
             logger.info(f"SSE endpoint: http://{args.host}:{args.port}/sse")
             logger.info(f"Message endpoint: http://{args.host}:{args.port}/messages/")
 
-            uvicorn.run(starlette_app, host=args.host, port=args.port, log_level="info")
+            # Uvicorn config (explicit asyncio loop, not uvloop)
+            config = uvicorn.Config(
+                starlette_app,
+                host=args.host,
+                port=args.port,
+                timeout_keep_alive=120,  # 2 minutes (default: 5s)
+                log_level="info",
+                loop="asyncio",  # Force asyncio (fixes uvicorn 0.36+ regression)
+            )
+            uvi_server = uvicorn.Server(config)
+
+            # Windows: Use SelectorEventLoop to prevent WinError 64
+            # (uvicorn 0.36+ ignores asyncio.set_event_loop_policy when using uvicorn.run)
+            if platform.system() == "Windows":
+                asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+                # Set exception handler for residual socket errors
+                def handle_win_socket_error(loop, context):
+                    exc = context.get("exception")
+                    if (
+                        isinstance(exc, OSError)
+                        and getattr(exc, "winerror", None) == 64
+                    ):
+                        logger.debug(
+                            f"Client disconnect (WinError 64): {context.get('message', '')}"
+                        )
+                        return
+                    loop.default_exception_handler(context)
+
+                loop.set_exception_handler(handle_win_socket_error)
+
+                logger.info(
+                    "Windows: Using SelectorEventLoop for SSE (uvicorn 0.36+ fix)"
+                )
+                try:
+                    loop.run_until_complete(uvi_server.serve())
+                finally:
+                    loop.close()
+            else:
+                asyncio.run(uvi_server.serve())
 
     except KeyboardInterrupt:
         logger.info("\nShutting down gracefully...")

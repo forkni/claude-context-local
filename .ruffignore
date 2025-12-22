@@ -1,11 +1,14 @@
 # Batch/CMD files
+
 *.cmd
 *.bat
 
 # Shell scripts
+
 *.sh
 
 # Other non-Python files
+
 *.md
 *.json
 *.yaml

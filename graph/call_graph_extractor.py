@@ -2,7 +2,7 @@
 Call graph extraction for code analysis.
 
 Extracts function call relationships from source code using AST parsing.
-Supports Python (Phase 1) with planned support for C++/GLSL (Phase 5).
+Supports Python with planned support for C++/GLSL.
 """
 
 import ast
@@ -102,7 +102,7 @@ class PythonCallGraphExtractor(CallGraphExtractor):
             {}
         )  # class_name -> list of base classes
 
-        # Initialize resolvers (Phase 2, 3, 4 extraction)
+        # Initialize resolvers
         self._type_resolver = TypeResolver()
         self._import_resolver = ImportResolver()
         self._assignment_tracker = AssignmentTracker()
@@ -153,7 +153,7 @@ class PythonCallGraphExtractor(CallGraphExtractor):
             # Try to detect class context from the code itself
             self._current_class = self._detect_enclosing_class(tree)
 
-        # Extract imports for type resolution (Phase 4)
+        # Extract imports for type resolution
         # Read from full file (not just chunk) to get all module-level imports
         # Must be done BEFORE local assignments since assignment tracker uses imports
         file_path = chunk_metadata.get("file_path", "")
@@ -166,7 +166,7 @@ class PythonCallGraphExtractor(CallGraphExtractor):
         # Update assignment tracker with current imports for alias resolution
         self._assignment_tracker.set_imports(self._imports)
 
-        # Extract type annotations from function definition (Phase 2)
+        # Extract type annotations from function definition
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 self._type_annotations = self._type_resolver.extract_type_annotations(
@@ -174,7 +174,7 @@ class PythonCallGraphExtractor(CallGraphExtractor):
                 )
                 break  # Only process the top-level function
 
-        # Extract type information from local assignments (Phase 3)
+        # Extract type information from local assignments
         # Note: Local assignments can shadow parameter annotations for same-named variables
         local_assignments = self._assignment_tracker.extract_local_assignments(tree)
         self._type_annotations.update(local_assignments)
@@ -296,14 +296,14 @@ class PythonCallGraphExtractor(CallGraphExtractor):
                         return f"super.{method_name}"
                     return method_name
 
-            # Check for type-annotated parameter or local assignment (Phases 2 & 3)
+            # Check for type-annotated parameter or local assignment
             if isinstance(receiver, ast.Name):
                 var_name = receiver.id
                 if var_name in self._type_annotations:
                     type_name = self._type_annotations[var_name]
                     return f"{type_name}.{method_name}"
 
-                # Check for imported name (Phase 4)
+                # Check for imported name
                 # Handles: from handlers import Handler; Handler.class_method()
                 # Also handles aliased: from x import Y as Z; Z.method()
                 if var_name in self._imports:
@@ -313,7 +313,7 @@ class PythonCallGraphExtractor(CallGraphExtractor):
                     class_name = qualified.split(".")[-1]
                     return f"{class_name}.{method_name}"
 
-            # Check for self.attr.method() pattern (Phase 3)
+            # Check for self.attr.method() pattern
             # e.g., self.handler.handle() where self.handler = Handler()
             if isinstance(receiver, ast.Attribute):
                 if isinstance(receiver.value, ast.Name):
@@ -380,8 +380,7 @@ class CallGraphExtractorFactory:
     """
     Factory for creating language-specific call graph extractors.
 
-    Phase 1: Python only
-    Phase 5: Add C++, GLSL support
+    Python only
     """
 
     _extractors = {

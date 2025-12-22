@@ -357,7 +357,7 @@ This shows your current configuration and available options.
 
 Parameters:
 
-- `search_mode`: "hybrid" (default), "semantic", "bm25", or "auto"
+- `search_mode`: "hybrid" (default), "semantic", or "bm25"
 - `bm25_weight`: Weight for BM25 sparse search (0.0 to 1.0)
 - `dense_weight`: Weight for dense vector search (0.0 to 1.0)
 - `enable_parallel`: Enable parallel CPU/GPU execution
@@ -369,7 +369,6 @@ Parameters:
 | **hybrid** | BM25 + Dense with RRF reranking (recommended) | General use, best balance |
 | **semantic** | Dense vector search only | Conceptual queries, code similarity |
 | **bm25** | Text-based sparse search only | Exact text matches, error messages |
-| **auto** | Automatically choose based on query | Let system decide optimal mode |
 
 ### Multi-Hop Search Configuration
 

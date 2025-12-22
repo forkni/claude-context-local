@@ -1,7 +1,9 @@
 """Query routing system for multi-model semantic search.
 
 Routes queries to the optimal embedding model based on query characteristics.
-Based on empirical verification results comparing Qwen3-0.6B, BGE-M3, and CodeRankEmbed.
+Based on empirical verification results comparing Qwen3, BGE-M3, and CodeRankEmbed.
+
+Note: Qwen3 adaptively selects Qwen3-4B (12GB+ GPUs) or Qwen3-0.6B (8GB GPUs).
 """
 
 import logging
@@ -26,6 +28,7 @@ class QueryRouter:
 
     Routing strategy based on verification results:
     - Qwen3 (3/8 wins): Implementation-heavy queries, algorithms, complete systems
+      (Adaptive: Qwen3-4B on 12GB+ GPUs, Qwen3-0.6B on 8GB GPUs)
     - BGE-M3 (3/8 wins): Workflow queries, configuration, system plumbing (most consistent)
     - CodeRankEmbed (2/8 wins): Specialized algorithms (Merkle, RRF, etc.)
     """
@@ -59,9 +62,54 @@ class QueryRouter:
                 "fusion",
                 "fuse",
                 "combine",
+                # NEW - Compound data structure phrases (SAFE)
+                "data structure",
+                "data structures",
+                "data model",
+                "data modeling",
+                "dataclass",
+                "dataclasses",
+                "pydantic",
+                # NEW - Type system compounds (SAFE)
+                "type definition",
+                "type definitions",
+                "type schema",
+                "schema definition",
+                "schema definitions",
+                "type system",
+                "type annotation",
+                "type annotations",
+                # NEW - Specific OOP compounds (SAFE)
+                "class definition",
+                "class schema",
+                "class hierarchy",
+                "interface definition",
+                "protocol definition",
+                "enum definition",
+                "struct definition",
+                # NEW - Safe single words (unambiguous)
+                "schema",
+                "struct",
+                "enum",
+                "interface",
+                "protocol",
+                "inheritance",
+                "polymorphism",
+                "generic",
+                "template",
+                # NEW - Call graph and dependency analysis (2025-12-15, moved from bge_m3)
+                "call graph",
+                "callgraph",
+                "caller",
+                "callers",
+                "callee",
+                "callees",
+                "dependency",
+                "dependencies",
+                "dependency graph",
             ],
             "weight": 1.5,  # Higher weight for specialized matches
-            "description": "Specialized algorithms (Merkle trees, RRF reranking)",
+            "description": "Specialized algorithms (Merkle trees, RRF reranking, data structures)",
         },
         "qwen3": {
             "keywords": [
@@ -131,6 +179,21 @@ class QueryRouter:
                 "async def",
                 "concurrent",
                 "concurrency",
+                # NEW - Validation and code logic (2025-12-15)
+                "validate",
+                "validation",
+                "validator",
+                "validators",
+                "handler",
+                "handlers",
+                "registry",
+                "registries",
+                "extract",
+                "extraction",
+                "extractor",
+                "parser",
+                "parsing",
+                "parse",
             ],
             "weight": 1.0,
             "description": "Implementation queries and algorithms",
@@ -187,15 +250,9 @@ class QueryRouter:
                 "connection",
                 "connect",
                 "integrate",
-                # Relationship and dependency queries
-                "caller",
-                "callers",
-                "callee",
-                "callees",
+                # Relationship queries (graph/dependency moved to coderankembed)
                 "relationship",
                 "relationships",
-                "dependency",
-                "dependencies",
                 "impact",
                 "inheritance",
                 "inherits",
@@ -203,11 +260,25 @@ class QueryRouter:
                 "uses",
                 "type usage",
                 "imports",
+                # NEW - Project and workflow terms (2025-12-15)
+                "switch",
+                "switching",
+                "verify",
+                "verification",
+                "project",
+                "projects",
             ],
             "weight": 1.0,
             "description": "Workflow and configuration queries",
         },
     }
+
+    # Explicit precedence for tie-breaking (2025-12-15)
+    # When scores are within 0.01 margin, use this order:
+    # 1. CodeRankEmbed (specialized algorithms)
+    # 2. Qwen3 (implementation logic)
+    # 3. BGE-M3 (workflow/config)
+    PRECEDENCE = ["coderankembed", "qwen3", "bge_m3"]
 
     # Default fallback model (most balanced)
     DEFAULT_MODEL = "bge_m3"
@@ -255,7 +326,8 @@ class QueryRouter:
                 scores=scores,
             )
         else:
-            best_model = max(scores, key=scores.get)
+            # Use explicit tie-breaking logic (2025-12-15)
+            best_model = self._resolve_tie(scores)
             confidence = scores[best_model]
 
             if confidence < confidence_threshold:
@@ -321,6 +393,33 @@ class QueryRouter:
             scores = {k: v / max_score for k, v in scores.items()}
 
         return scores
+
+    def _resolve_tie(self, scores: Dict[str, float]) -> str:
+        """Resolve ties using explicit precedence order.
+
+        When multiple models have scores within 0.01 margin, select based on
+        PRECEDENCE order: coderankembed > qwen3 > bge_m3.
+
+        Args:
+            scores: Dictionary mapping model_key to score
+
+        Returns:
+            Model key with highest precedence among tied models
+        """
+        if not scores:
+            return self.DEFAULT_MODEL
+
+        max_score = max(scores.values())
+        # Consider scores within 0.01 as tied
+        tied_models = [k for k, v in scores.items() if abs(v - max_score) < 0.01]
+
+        # Return first model in precedence order that's in the tie
+        for model in self.PRECEDENCE:
+            if model in tied_models:
+                return model
+
+        # Fallback (should not reach here)
+        return self.DEFAULT_MODEL
 
     def get_model_strengths(self, model_key: str) -> Optional[Dict]:
         """Get routing rule details for a specific model.
