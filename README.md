@@ -280,7 +280,7 @@ set CODE_SEARCH_STORAGE=C:\custom\path
 set CLAUDE_EMBEDDING_MODEL=BAAI/bge-m3  # or google/embeddinggemma-300m
 
 # Search mode
-set CLAUDE_SEARCH_MODE=hybrid  # or semantic, bm25, auto
+set CLAUDE_SEARCH_MODE=hybrid  # or semantic, bm25
 
 # Multi-model routing
 set CLAUDE_MULTI_MODEL_ENABLED=true
@@ -293,8 +293,10 @@ set CLAUDE_MULTI_MODEL_ENABLED=true
 | **EmbeddingGemma-300m** (default) | 768 | 4-8GB | Fast, efficient, smaller projects |
 | **BGE-M3** | 1024 | 8-16GB | Higher accuracy (+13.6% F1), production |
 | **Qwen3-0.6B** | 1024 | 2.3GB | Routing pool, high efficiency |
-| **Qwen3-4B** | 1024 | 8-10GB | Best quality with MRL, 4B parameters |
+| **Qwen3-4B** | 1024* | 8-10GB | Best quality, 4B parameters |
 | **CodeRankEmbed** | 768 | 2GB | Code-specific retrieval |
+
+*Qwen3-4B native dimension is 2560, reduced to 1024 via Matryoshka MRL for compatibility
 
 **Instant model switching**: <150ms with per-model index storage - no re-indexing needed!
 
