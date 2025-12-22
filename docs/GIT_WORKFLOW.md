@@ -362,7 +362,6 @@ git add <files>
 **Prevents Common Mistakes**:
 
 - ❌ Committing CLAUDE.md or MEMORY.md (local-only)
-- ❌ Adding tests/ to main branch (development-only)
 - ❌ Using AI attribution in commit messages
 - ❌ Non-conventional commit message format
 
@@ -727,118 +726,23 @@ Local Machine:
 Development Branch:
 ├── Core application code
 ├── Test suites (all tests)
-├── Documentation (public + TESTING_GUIDE.md)
+├── Documentation (all public docs)
 ├── Scripts and tools
 ├── pytest.ini
 └── Configuration files
 
-           ↓ merge_with_validation.bat (removes tests/, pytest.ini, TESTING_GUIDE.md)
+           ↓ merge_with_validation.bat (merges to main)
 
 Main Branch:
-├── Core application code (no tests)
-├── Documentation (public only)
+├── Core application code
+├── Test suites (all tests)
+├── Documentation (public docs only)
 ├── Scripts and tools
-├── Clean public release
-└── User-ready repository
+├── pytest.ini
+└── User-ready repository (with tests for verification)
 ```
 
-## 🔀 Understanding Modify/Delete Conflicts (Expected Behavior)
-
-### What Are Modify/Delete Conflicts?
-
-When merging `development` → `main`, you may encounter **modify/delete conflicts** for test files:
-
-```
-CONFLICT (modify/delete): tests/integration/test_example.py deleted in HEAD and modified in development
-```
-
-**This is EXPECTED and NORMAL** for the dual-branch workflow.
-
-### Why Do These Conflicts Occur?
-
-1. **Development branch**: Has test files that were recently modified (e.g., lint fixes, updates)
-2. **Main branch**: Doesn't have test files (intentionally excluded for clean public release)
-3. **Git's dilemma**: During merge, Git cannot automatically decide:
-   - Should it add the modified test files from development? (modified)
-   - Should it keep test files deleted as on main? (deleted)
-
-### Why .gitattributes Doesn't Prevent These
-
-Your `.gitattributes` file has:
-
-```gitattributes
-tests/** merge=ours
-```
-
-**Important limitation**: The `merge=ours` strategy only works for **content conflicts** (when file exists on both branches with different content), NOT for **modify/delete conflicts** (when file exists on one branch but not the other).
-
-**Git doesn't have a built-in strategy** to say "if file doesn't exist on our branch, keep it deleted during merge."
-
-### Two Workflow Options
-
-#### Option 1: Automated Script (Recommended)
-
-Use `merge_with_validation.bat` which **automatically resolves** modify/delete conflicts:
-
-```batch
-scripts\git\merge_with_validation.bat
-```
-
-**What it does**:
-
-- Detects modify/delete conflicts for test files
-- Recognizes them as expected for excluded files
-- Automatically runs `git rm` on conflicted test files
-- Completes merge with proper exclusions
-
-**Output example**:
-
-```
-⚠ Merge conflicts detected - analyzing...
-Found modify/delete conflicts for excluded files
-These are expected and will be auto-resolved...
-✓ Auto-resolved modify/delete conflicts
-✓ Merge completed successfully
-```
-
-#### Option 2: Manual Merge (Requires Manual Resolution)
-
-If you run a manual merge (e.g., `git merge development --no-ff`):
-
-**You MUST manually resolve test file conflicts**:
-
-```bash
-# 1. Identify conflicted test files
-git status --short | findstr /C:"DU "
-
-# 2. Remove test files from main (standard procedure)
-git rm tests/integration/test_file1.py tests/integration/test_file2.py tests/unit/test_file3.py
-
-# 3. Complete the merge
-git commit --no-edit
-```
-
-**This is the expected resolution** - test files should be excluded from main.
-
-### When to Use Each Approach
-
-| Scenario | Use | Why |
-|----------|-----|-----|
-| **Standard releases** | `merge_with_validation.bat` | Automated conflict resolution, full validation |
-| **Documentation merges** | `merge_docs.bat` | Specific to docs-only changes |
-| **Emergency fixes** | Manual merge + manual resolution | Full control when needed |
-| **CI/CD workflows** | GitHub Actions workflow | Automated testing + merging |
-
-### Key Takeaway
-
-**Modify/delete conflicts for test files are EXPECTED**, not errors:
-
-- ✅ Test files modified on development
-- ✅ Test files don't exist on main
-- ✅ Git requires manual decision
-- ✅ Standard resolution: `git rm tests/**`
-
-**Best practice**: Use `merge_with_validation.bat` to automate this standard procedure.
+**Note**: Tests are now included in both branches following standard Python project conventions. Users can run `pytest` to verify their installation works correctly.
 
 ---
 
@@ -1646,7 +1550,7 @@ operable program or batch file.
 git merge development --no-ff -m "Merge development into main
 
 - Applied .gitattributes merge strategies
-- Excluded development-only files (tests/, docs/)
+- Excluded development-only docs
 - Combined CHANGELOG.md changes
 - Used diff3 for better conflict resolution"
 ```

@@ -42,16 +42,9 @@
 # Changelog should combine (not diff3)
 CHANGELOG.md merge=union
 
-# FILES THAT SHOULD NEVER MERGE FROM DEVELOPMENT TO MAIN
+# DEVELOPMENT-ONLY DOCUMENTATION
 # Use "ours" strategy (keep main's version during merge)
-
-# Complete test suite (development-only) - OVERRIDES *.py pattern
-tests/** merge=ours
-
-# Test configuration (development-only) - OVERRIDES *.ini pattern
-pytest.ini merge=ours
-
-# Development-only documentation (implementation details) - OVERRIDES *.md pattern
+# These docs contain implementation details not needed in production main branch
 docs/GIT_WORKFLOW.md merge=ours
 docs/TESTING_GUIDE.md merge=ours
 docs/PRE_COMMIT_HOOKS.md merge=ours

@@ -83,8 +83,7 @@ jobs:
     name: Run Test Suite
     runs-on: ubuntu-latest
     needs: validate
-    # Only run tests on development branch (main doesn't have tests/)
-    if: github.ref == 'refs/heads/development'
+    # Run tests on both main and development branches
 
     steps:
       - name: Checkout code
@@ -143,58 +142,3 @@ jobs:
       - name: Check imports
         run: isort --check-only .
         continue-on-error: true
-
-  merge-check:
-    name: Merge Validation (Main Branch Only)
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Cleanup tests directory in main branch
-        run: |
-          if [ -d "tests" ] || [ -f "pytest.ini" ]; then
-            echo "⚠️  Test files found in main branch (from merge)"
-            echo "   Removing per .gitattributes policy..."
-
-            # Remove tests/ and pytest.ini if they exist
-            if [ -d "tests" ]; then
-              rm -rf tests/
-              echo "   ✓ Removed tests/ directory"
-            fi
-            if [ -f "pytest.ini" ]; then
-              rm -f pytest.ini
-              echo "   ✓ Removed pytest.ini"
-            fi
-
-            # Check if we're in a push event (not pull_request)
-            if [ "${{ github.event_name }}" = "push" ]; then
-              # Configure git
-              git config user.name "github-actions[bot]"
-              git config user.email "github-actions[bot]@users.noreply.github.com"
-
-              # Commit and push the cleanup
-              git add -A
-              git commit -m "chore: Remove test files from main branch (automated cleanup)
-
-Per repository policy, test files should only exist in development branch.
-This is an automated cleanup triggered by merge from development."
-              git push origin main
-
-              echo "   ✓ Cleanup committed and pushed"
-            else
-              echo "   ℹ️  Pull request event - cleanup will happen on merge"
-            fi
-          else
-            echo "✅ No test files in main (as expected)"
-          fi
-
-      - name: Report merge validation success
-        run: |
-          echo "✅ Main branch merge validation passed"
-          echo "   - Test files cleaned up (if present)"
-          echo "   - Branch protection policies enforced"

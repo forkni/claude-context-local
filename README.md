@@ -393,14 +393,15 @@ The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic s
 
 ## Contributing
 
-This is a research project focused on intelligent code chunking and search. Feel free to experiment with:
+Contributions welcome! Quick start:
 
-- Different chunking strategies
-- Alternative embedding models
-- Enhanced metadata extraction
-- Performance optimizations
+1. Fork and clone the repository
+2. Install: `install-windows.cmd` or `pip install -e .[dev,test]`
+3. Run tests: `pytest tests/ -v`
+4. Create a branch from `development`
+5. Submit PR to `development` branch
 
-See [Git Workflow](docs/GIT_WORKFLOW.md) for contribution guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
 ## License
 
