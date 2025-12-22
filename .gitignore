@@ -294,6 +294,11 @@ tests/integration/test_semantic_search.py
 tests/integration/test_token_efficiency_workflow.py
 tests/integration/test_graph_search.py
 
+# Local development test files
+tests/test_mmap_cleanup.py
+tests/toon_format_test_results.txt
+tests/toon_format_understanding_test.md
+
 # Windows-specific temporary files
 nul
 *.bat.bak
