@@ -13,6 +13,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.0] - 2025-12-22
+
+### Breaking Changes
+
+- **Output Format Rename** - Renamed MCP output format options for clarity
+  - `json` → `verbose` (unchanged behavior)
+  - `compact` (unchanged)
+  - `toon` → `ultra` (tabular format, maximum compression)
+  - Migration: Update any scripts using `output_format="toon"` to `output_format="ultra"`
+
+### Added
+
+- **MCP Output Formatting Optimization** - 30-55% token reduction across all 17 tools
+  - 3 format tiers: verbose (baseline), compact (30-40% reduction), ultra (45-55% reduction)
+  - Ultra format uses tabular arrays with header-declared fields
+  - `_format_note` interpretation hint for agent understanding
+  - 100% agent understanding accuracy validated
+  - 34 unit tests for output formatter
+  - Files: `mcp_server/output_formatter.py`, all tool handlers
+
+- **Memory-Mapped Vector Storage** - <1μs vector access performance
+  - Auto-enables at 10,000 vector threshold
+  - Fully automatic (no user configuration needed)
+  - 10.5 MB total storage for 3 models
+  - Files: `search/faiss_index.py`, `search/config.py`
+
+- **Symbol Hash Cache** - O(1) chunk lookups (Phase 2)
+  - 97.7% bucket utilization (251/256 buckets)
+  - <1ms load/save time
+  - File: `search/symbol_hash_cache.py`
+
+- **Entity Tracking System** - Track constants, enums, and default parameters
+  - 3 new extractors: ConstantExtractor, EnumMemberExtractor, DefaultParameterExtractor
+  - 9 new relationship types (Priority 4: definitions, Priority 5: references)
+  - 4 new ImpactReport fields in find_connections
+  - 30+ unit tests
+  - Files: `graph/relationship_extractors/constant_extractor.py`, `enum_extractor.py`, `default_param_extractor.py`
+
+- **VRAM Tier Management** - Adaptive model selection based on GPU memory
+  - 4 tiers: minimal (<6GB), laptop (6-10GB), desktop (10-18GB), workstation (18GB+)
+  - Automatic feature enablement (multi-model routing, neural reranking)
+  - 42 unit tests for VRAM manager
+  - Files: `embeddings/vram_manager.py`, `mcp_server/model_pool_manager.py`
+
+- **Git Automation Logging** - Comprehensive structured logging for all scripts
+  - 5 new logging functions in `scripts/git/_common.sh`
+  - Timestamps, durations, error counts, summary tables
+  - All 10 git scripts enhanced
+
+### Changed
+
+- **Test Suite Reorganization** - 1,054+ tests organized into modules
+  - Tests grouped by module: chunking, embeddings, graph, merkle, search, mcp_server
+  - Module-by-module execution for reliable results
+  - Created automated test runner `tests/run_all_tests.bat`
+
+- **Major Refactoring** (no breaking changes)
+  - CodeIndexManager → extracted GraphIntegration + BatchOperations classes
+  - CodeEmbedder → extracted ModelLoader + ModelCacheManager + QueryEmbeddingCache
+  - HybridSearcher → removed deprecated methods (Tier 1-3)
+  - Removed Intent Detection feature (~200 lines dead code)
+
+- **Default Output Format** - Changed from compact to ultra for maximum efficiency
+
+- **Mmap Storage** - Now fully automatic (removed user configuration)
+
+### Fixed
+
+- **WinError 64 in SSE Transport** - Fixed by using uvicorn programmatic API
+- **User-Defined Filters Lost After Restart** - Filters now persist correctly
+- **Model-Aware Batch Sizing** - Prevents GPU memory swapping on 8GB GPUs
+- **CI Test Failures** - Fixed GitHub Actions test dependencies and platform-specific tests
+- **MRL Dimension Naming** - Correct Merkle snapshot names for Qwen3-4B (1024d vs 2560d)
+- **Entity Tracking Display** - Fixed find_connections output for new relationship types
+
+### Removed
+
+- **Intent Detection Feature** - Removed ~200 lines (48% accuracy = ineffective)
+- **Mmap User Configuration** - Now automatic (threshold-based)
+
+---
+
 ## [0.6.4] - 2025-12-16
 
 ### Added
@@ -863,6 +945,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **v0.7.0** - Major release: Output formatting, mmap storage, entity tracking, refactoring (2025-12-22)
 - **v0.6.1** - UX Improvements: Progress bars, filter fixes, targeted snapshot deletion (2025-12-03)
 - **v0.6.0** - Release: Self-healing BM25, persistent projects, batch compliance (2025-11-28)
 - **v0.5.16** - Graph Resolver Extraction, persistent project selection, multi-hop refactoring (2025-11-24)

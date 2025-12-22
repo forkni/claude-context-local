@@ -1105,7 +1105,7 @@ When multi-model mode is enabled, `index_directory` automatically indexes with *
 - Results: 3 relevant chunks (400 tokens)
 - **Total**: 400 tokens
 
-**Savings**: 85-95% token reduction + 3-10x speed increase
+**Savings**: 63% token reduction + 3-10x speed increase
 
 ---
 

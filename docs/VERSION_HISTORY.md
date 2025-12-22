@@ -2,19 +2,97 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2025-12-16)
+## Current Status: All Features Operational (2025-12-22)
 
-- **Version**: 0.6.5
+- **Version**: 0.7.0
 - **Status**: Production-ready
-- **Test Coverage**: 750+ unit tests + integration tests (100% pass rate)
+- **Test Coverage**: 1,054+ unit tests + integration tests (100% pass rate)
 - **Index Quality**: 109 active files, 1,199 chunks (site-packages excluded, BGE-M3 1024d, ~24 MB)
-- **Token Reduction**: 85-95% (validated benchmark)
-- **Call Graph Resolution**: Phase 4 complete (~90% accuracy)
-- **Recent Features**: Entity Tracking (Constants, Enums, Defaults), Qwen3 Instruction Tuning, Matryoshka MRL
+- **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
+- **Recent Features**: Output Formatting (30-55% token reduction), Mmap Vector Storage, Entity Tracking, Symbol Hash Cache
 
 ---
 
-## v0.6.5 - Entity Tracking System (2025-12-16)
+## v0.7.0 - Major Release (2025-12-22)
+
+### Status: PRODUCTION-READY ✅
+
+**Major release with output formatting optimization, memory-mapped vector storage, and comprehensive refactoring**
+
+### Highlights
+
+- **MCP Output Formatting** - 30-55% token reduction with 3-tier system
+- **Memory-Mapped Vector Storage** - <1μs access, auto-enabled at 10K vectors
+- **Symbol Hash Cache** - O(1) chunk lookups for direct access
+- **Entity Tracking** - Constants, enums, and default parameter tracking
+- **Comprehensive Refactoring** - ~700 lines of dead code removed, major modules extracted
+
+### Breaking Changes
+
+- Output format options renamed: `json`→`verbose`, `toon`→`ultra`
+
+### New Features
+
+#### MCP Output Formatting (30-55% Token Reduction)
+
+- **3 format tiers**: verbose (baseline), compact (30-40%), ultra (45-55%)
+- **Ultra format**: Tabular arrays with header-declared fields
+  - Header: `"results[5]{chunk_id,kind,score}"`
+  - Data: `[[val1, val2, val3], ...]`
+- **Agent understanding**: 100% accuracy validated on fresh Claude instance
+- **Configuration**: Menu option 'F' or per-query `output_format` parameter
+- **Files**: `mcp_server/output_formatter.py` (171 lines), all 17 tool handlers
+
+#### Memory-Mapped Vector Storage
+
+- **Performance**: <1μs vector access (vs ~100μs standard)
+- **Auto-enable**: Threshold at 10,000 vectors (no configuration needed)
+- **Storage**: ~3.5 MB per model (10.5 MB total for 3 models)
+- **Files**: `search/faiss_index.py`, removed from config (fully automatic)
+
+#### Symbol Hash Cache (Phase 2)
+
+- **Complexity**: O(1) direct chunk lookups
+- **Utilization**: 97.7% bucket usage (251/256 buckets)
+- **Performance**: <1ms load/save
+- **File**: `search/symbol_hash_cache.py`
+
+### Refactoring Summary
+
+| Component | Extraction | Lines |
+|-----------|------------|-------|
+| CodeIndexManager | → GraphIntegration + BatchOperations | ~200 |
+| CodeEmbedder | → ModelLoader + ModelCacheManager + QueryCache | ~300 |
+| HybridSearcher | Removed deprecated methods (Tier 1-3) | ~150 |
+| Intent Detection | Complete removal (48% accuracy) | ~200 |
+| **Total** | | **~850 lines** |
+
+### Test Coverage
+
+- **Before**: 720 unit tests
+- **After**: 1,054+ unit tests (+46%)
+- **Pass rate**: 100%
+- **Modules**: 7 (chunking, embeddings, graph, merkle, search, mcp_server, integration)
+
+### Files Modified
+
+**Core Implementation (10+ files)**:
+- `mcp_server/output_formatter.py` (NEW)
+- `search/faiss_index.py` - Mmap automation
+- `search/symbol_hash_cache.py` - Hash-based lookups
+- `search/indexer.py` - GraphIntegration extraction
+- `embeddings/embedder.py` - ModelLoader extraction
+- `search/hybrid_searcher.py` - Deprecated method removal
+- All MCP tool handlers - Output format support
+
+**Tests (5+ files)**:
+- `tests/unit/mcp_server/test_output_formatter.py` (NEW, 34 tests)
+- Test reorganization into module directories
+- `tests/run_all_tests.bat` (NEW)
+
+---
+
+## v0.6.5 - Entity Tracking System (2025-12-16) [Included in 0.7.0]
 
 ### Status: PRODUCTION-READY ✅
 

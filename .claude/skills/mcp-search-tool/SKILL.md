@@ -1,6 +1,6 @@
 ---
 name: mcp-search-tool
-description: MCP semantic code search. CRITICAL 2-STEP: (1) search_code()→get chunk_id, (2) find_connections(chunk_id) for callers/deps/flow. USE CASES: codebase exploration, code patterns, relationships, impact analysis. ⚠️ NEVER Grep for caller/dependency discovery (50-60% token waste). 85-95% savings.
+description: MCP semantic code search. CRITICAL 2-STEP: (1) search_code()→get chunk_id, (2) find_connections(chunk_id) for callers/deps/flow. USE CASES: codebase exploration, code patterns, relationships, impact analysis. ⚠️ NEVER Grep for caller/dependency discovery (50-60% token waste). 63% savings (validated).
 ---
 
 # MCP Search Tool Skill
@@ -922,7 +922,7 @@ clear_index()          # Full reset (requires re-indexing)
 
 - **Traditional file reading**: ~5,600 tokens
 - **Semantic search**: ~400 tokens
-- **Savings**: **85-95% reduction** (validated benchmark)
+- **Savings**: **63% reduction** (validated benchmark)
 - **Speed**: **5-10x faster** discovery
 
 ### Search Performance (Validated)
