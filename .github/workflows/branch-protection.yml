@@ -61,7 +61,7 @@ jobs:
           echo "Checking docs/ directory..."
 
           # Allowed public documentation files (main branch)
-          ALLOWED_DOCS="ADVANCED_FEATURES_GUIDE.md|BENCHMARKS.md|claude_code_config.md|DOCUMENTATION_INDEX.md|GIT_WORKFLOW.md|HYBRID_SEARCH_CONFIGURATION_GUIDE.md|INSTALLATION_GUIDE.md|MCP_TOOLS_REFERENCE.md|MODEL_MIGRATION_GUIDE.md|PYTORCH_COMPATIBILITY.md|VERSION_HISTORY.md"
+          ALLOWED_DOCS="ADVANCED_FEATURES_GUIDE.md|BENCHMARKS.md|CLAUDE_MD_TEMPLATE.md|claude_code_config.md|DOCUMENTATION_INDEX.md|GIT_WORKFLOW.md|HYBRID_SEARCH_CONFIGURATION_GUIDE.md|INSTALLATION_GUIDE.md|MCP_TOOLS_REFERENCE.md|MODEL_MIGRATION_GUIDE.md|PYTORCH_COMPATIBILITY.md|VERSION_HISTORY.md"
 
           # Find unauthorized docs (only check on main branch)
           if [ "$GITHUB_REF" = "refs/heads/main" ]; then
@@ -71,7 +71,7 @@ jobs:
               echo "❌ ERROR: Unauthorized documentation files found on main branch:"
               echo "$UNAUTHORIZED"
               echo ""
-              echo "Only these 11 docs are allowed in main branch:"
+              echo "Only these 12 docs are allowed in main branch:"
               echo "$ALLOWED_DOCS" | tr '|' '\n'
               exit 1
             fi
