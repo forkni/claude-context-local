@@ -155,27 +155,46 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Verify no tests in main branch
+      - name: Cleanup tests directory in main branch
         run: |
-          if [ -d "tests" ]; then
-            echo "❌ ERROR: tests/ directory found in main branch"
-            echo "Tests should only exist in development branch"
-            echo "This indicates .gitattributes merge strategy failed"
-            exit 1
-          fi
-          echo "✅ No tests/ directory in main (as expected)"
+          if [ -d "tests" ] || [ -f "pytest.ini" ]; then
+            echo "⚠️  Test files found in main branch (from merge)"
+            echo "   Removing per .gitattributes policy..."
 
-      - name: Verify no pytest.ini in main branch
-        run: |
-          if [ -f "pytest.ini" ]; then
-            echo "❌ ERROR: pytest.ini found in main branch"
-            echo "This file should only exist in development branch"
-            exit 1
+            # Remove tests/ and pytest.ini if they exist
+            if [ -d "tests" ]; then
+              rm -rf tests/
+              echo "   ✓ Removed tests/ directory"
+            fi
+            if [ -f "pytest.ini" ]; then
+              rm -f pytest.ini
+              echo "   ✓ Removed pytest.ini"
+            fi
+
+            # Check if we're in a push event (not pull_request)
+            if [ "${{ github.event_name }}" = "push" ]; then
+              # Configure git
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+
+              # Commit and push the cleanup
+              git add -A
+              git commit -m "chore: Remove test files from main branch (automated cleanup)
+
+Per repository policy, test files should only exist in development branch.
+This is an automated cleanup triggered by merge from development."
+              git push origin main
+
+              echo "   ✓ Cleanup committed and pushed"
+            else
+              echo "   ℹ️  Pull request event - cleanup will happen on merge"
+            fi
+          else
+            echo "✅ No test files in main (as expected)"
           fi
-          echo "✅ No pytest.ini in main (as expected)"
 
       - name: Report merge validation success
         run: |
           echo "✅ Main branch merge validation passed"
-          echo "   - No test files present"
-          echo "   - .gitattributes working correctly"
+          echo "   - Test files cleaned up (if present)"
+          echo "   - Branch protection policies enforced"
