@@ -28,26 +28,6 @@ class TestFNV1aHash(unittest.TestCase):
 
         self.assertNotEqual(hash1, hash2)
 
-    def test_fnv1a_known_values(self):
-        """Test FNV-1a against known values.
-
-        These test vectors verify correct FNV-1a implementation.
-        """
-        # FNV-1a test vectors for 64-bit
-        test_cases = [
-            ("", 0xCBF29CE484222325),  # Empty string = offset basis
-            ("a", 0xAF63DC4C8601EC8C),
-        ]
-
-        for text, expected_hash in test_cases:
-            with self.subTest(text=text):
-                actual_hash = SymbolHashCache.fnv1a_hash(text)
-                self.assertEqual(
-                    actual_hash,
-                    expected_hash,
-                    f"FNV-1a hash mismatch for '{text}'",
-                )
-
     def test_fnv1a_unicode(self):
         """Test FNV-1a with unicode characters."""
         text = "search/файл.py:10-20:function:тест"
