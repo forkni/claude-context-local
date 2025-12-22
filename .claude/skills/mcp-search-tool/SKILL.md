@@ -506,6 +506,7 @@ switch_project("D:\Users\alexk\FORKNI\STREAM_DIFFUSION\STREAM_DIFFUSION_CUDA_0.2
 **Purpose**: Safely delete an indexed project and all associated data
 
 **Parameters**:
+
 - `project_path` (required): Absolute path to project directory to delete
 - `force` (default: False): Force delete even if this is the current project
 
@@ -597,11 +598,13 @@ find_similar_code("src/auth.py:10-50:function:authenticate", k=5)
 - `top_k_candidates` (optional): Candidates to rerank (default: 50)
 
 **When to enable**:
+
 - Accuracy is critical
 - Semantic queries are common
 - VRAM available (laptop tier+)
 
 **When to disable**:
+
 - Speed is critical (<100ms searches)
 - VRAM limited (minimal tier)
 
@@ -731,11 +734,13 @@ set CLAUDE_VRAM_TIER=laptop
 **Purpose**: Reduce storage 2x with <1.5% quality drop
 
 **How it works**:
+
 - Full model dimension: 2560
 - Truncated to: 1024 (same as Qwen3-0.6B and BGE-M3)
 - Keeps 4B model quality (36 layers)
 
 **Benefits**:
+
 - 50% storage reduction
 - Same dimension as other 1024d models → instant switching
 - Best quality for reasonable VRAM (8-10GB)

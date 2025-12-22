@@ -72,6 +72,7 @@ All linting must pass before submitting a PR.
 ### Workflow
 
 1. Create a feature branch from `development`:
+
    ```bash
    git checkout development
    git pull origin development
@@ -79,12 +80,14 @@ All linting must pass before submitting a PR.
    ```
 
 2. Make your changes and commit:
+
    ```bash
    git add .
    git commit -m "feat: Add your feature description"
    ```
 
 3. Push and create a PR:
+
    ```bash
    git push origin feature/your-feature-name
    # Then create PR on GitHub targeting 'development' branch

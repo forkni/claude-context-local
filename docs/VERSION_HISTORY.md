@@ -77,6 +77,7 @@ Complete version history and feature timeline for claude-context-local MCP serve
 ### Files Modified
 
 **Core Implementation (10+ files)**:
+
 - `mcp_server/output_formatter.py` (NEW)
 - `search/faiss_index.py` - Mmap automation
 - `search/symbol_hash_cache.py` - Hash-based lookups
@@ -86,6 +87,7 @@ Complete version history and feature timeline for claude-context-local MCP serve
 - All MCP tool handlers - Output format support
 
 **Tests (5+ files)**:
+
 - `tests/unit/mcp_server/test_output_formatter.py` (NEW, 34 tests)
 - Test reorganization into module directories
 - `tests/run_all_tests.bat` (NEW)

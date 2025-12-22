@@ -98,6 +98,7 @@ After the server starts, connect in Claude Code:
 ```
 
 This command loads the [mcp-search-tool](.claude/skills/mcp-search-tool/SKILL.md) skill, which provides Claude with:
+
 - Complete MCP tool reference (all 17 tools)
 - Search-first protocol enforcement
 - 2-step workflow for relationship queries (search → find_connections)
@@ -288,9 +289,11 @@ Run `start_mcp_server.cmd` and select **3. Search Configuration**:
 ```
 
 #### 1. View Current Configuration
+
 Displays all current settings including model, search mode, weights, GPU status, and feature flags.
 
 #### 2. Set Search Mode
+
 | Mode | Description |
 |------|-------------|
 | **hybrid** (default) | BM25 + semantic fusion - best accuracy |
@@ -298,13 +301,16 @@ Displays all current settings including model, search mode, weights, GPU status,
 | **bm25** | Text-based search only - exact matches, fastest |
 
 #### 3. Configure Search Weights
+
 Adjust the balance between text matching and semantic understanding:
+
 - **BM25 Weight**: 0.0-1.0 (default: 0.4) - keyword/text matching strength
 - **Dense Weight**: 0.0-1.0 (default: 0.6) - semantic understanding strength
 
 Weights should sum to 1.0.
 
 #### 4. Select Embedding Model
+
 | Model | VRAM | Best For |
 |-------|------|----------|
 | **BGE-M3** | 3-4GB | Production, hybrid search (recommended) |
@@ -315,26 +321,34 @@ Weights should sum to 1.0.
 **Instant switching**: <150ms with no re-indexing required.
 
 #### 5. Configure Parallel Search
+
 Enable/disable parallel execution of BM25 and semantic search:
+
 - **Enabled** (default): ~15-30ms faster, higher CPU usage
 - **Disabled**: Sequential execution, lower resource usage
 
 #### 6. Configure Neural Reranker
+
 Cross-encoder model that re-scores results for 15-25% quality improvement:
+
 - **Enable/Disable**: Requires GPU with ≥6GB VRAM
 - **Top-K Candidates**: Number of results to rerank (default: 50, range: 5-100)
 
 #### 7. Configure Entity Tracking
+
 Extract additional code relationships during indexing:
+
 - **Enabled**: Tracks enum members, default values, context managers (~25% slower indexing)
 - **Disabled** (default): Core relationships only (inheritance, imports, decorators)
 
 #### 8. Reset to Defaults
+
 Resets all settings to: hybrid mode, 0.4/0.6 weights, multi-model enabled, GPU auto-detect.
 
 ### Quick Access Options
 
 From the main menu:
+
 - **M - Quick Model Switch**: Fast model switching without entering submenu
 - **F - Configure Output Format**: Control token usage (verbose/compact/ultra)
 
@@ -425,18 +439,21 @@ scripts\batch\repair_installation.bat
 The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic search in your own projects:
 
 **Quick Setup**:
+
 1. Copy template content from [docs/CLAUDE_MD_TEMPLATE.md](docs/CLAUDE_MD_TEMPLATE.md)
 2. Create `CLAUDE.md` in your project root
 3. Update the `index_directory` path to match your project
 4. Claude Code automatically reads `CLAUDE.md` when you open that project
 
 **Benefits**:
+
 - **63% token reduction** through enforced search-first workflow
 - **Immediate MCP tool access** without explaining tools each session
 - **Project-specific instructions** for your codebase conventions
 - **Automatic context loading** for all team members
 
 **Customization**:
+
 - Add project-specific coding conventions
 - Include architecture notes
 - Document common patterns
