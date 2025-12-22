@@ -270,21 +270,77 @@ Everything works on CPU if GPU unavailable.
 
 ## Configuration
 
-### Environment Variables
+### Interactive Configuration
 
-```bash
-# Storage directory (default: ~/.claude_code_search)
-set CODE_SEARCH_STORAGE=C:\custom\path
+Run `start_mcp_server.cmd` and select **3. Search Configuration**:
 
-# Embedding model
-set CLAUDE_EMBEDDING_MODEL=BAAI/bge-m3  # or google/embeddinggemma-300m
-
-# Search mode
-set CLAUDE_SEARCH_MODE=hybrid  # or semantic, bm25
-
-# Multi-model routing
-set CLAUDE_MULTI_MODEL_ENABLED=true
 ```
+=== Search Configuration ===
+
+  1. View Current Configuration
+  2. Set Search Mode
+  3. Configure Search Weights
+  4. Select Embedding Model
+  5. Configure Parallel Search
+  6. Configure Neural Reranker
+  7. Configure Entity Tracking
+  8. Reset to Defaults
+```
+
+#### 1. View Current Configuration
+Displays all current settings including model, search mode, weights, GPU status, and feature flags.
+
+#### 2. Set Search Mode
+| Mode | Description |
+|------|-------------|
+| **hybrid** (default) | BM25 + semantic fusion - best accuracy |
+| **semantic** | Dense vector search only - conceptual queries |
+| **bm25** | Text-based search only - exact matches, fastest |
+
+#### 3. Configure Search Weights
+Adjust the balance between text matching and semantic understanding:
+- **BM25 Weight**: 0.0-1.0 (default: 0.4) - keyword/text matching strength
+- **Dense Weight**: 0.0-1.0 (default: 0.6) - semantic understanding strength
+
+Weights should sum to 1.0.
+
+#### 4. Select Embedding Model
+| Model | VRAM | Best For |
+|-------|------|----------|
+| **BGE-M3** | 3-4GB | Production, hybrid search (recommended) |
+| **Qwen3-0.6B** | 2.3GB | High efficiency, excellent value |
+| **EmbeddingGemma-300m** | 4-8GB | Fast, lightweight (default) |
+| **Multi-Model Routing** | 5.3GB | Auto-routes to optimal model |
+
+**Instant switching**: <150ms with no re-indexing required.
+
+#### 5. Configure Parallel Search
+Enable/disable parallel execution of BM25 and semantic search:
+- **Enabled** (default): ~15-30ms faster, higher CPU usage
+- **Disabled**: Sequential execution, lower resource usage
+
+#### 6. Configure Neural Reranker
+Cross-encoder model that re-scores results for 15-25% quality improvement:
+- **Enable/Disable**: Requires GPU with ≥6GB VRAM
+- **Top-K Candidates**: Number of results to rerank (default: 50, range: 5-100)
+
+#### 7. Configure Entity Tracking
+Extract additional code relationships during indexing:
+- **Enabled**: Tracks enum members, default values, context managers (~25% slower indexing)
+- **Disabled** (default): Core relationships only (inheritance, imports, decorators)
+
+#### 8. Reset to Defaults
+Resets all settings to: hybrid mode, 0.4/0.6 weights, multi-model enabled, GPU auto-detect.
+
+### Quick Access Options
+
+From the main menu:
+- **M - Quick Model Switch**: Fast model switching without entering submenu
+- **F - Configure Output Format**: Control token usage (verbose/compact/ultra)
+
+### Environment Variables (Advanced)
+
+For automation and CI/CD, settings can be overridden via environment variables. See [MCP Tools Reference](docs/MCP_TOOLS_REFERENCE.md) for complete list.
 
 ### Model Selection
 
