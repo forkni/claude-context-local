@@ -82,7 +82,6 @@ def test_phase2_symbol_hash_cache():
     print(f"[OK] Symbol cache O(1) lookups: {avg_time_us:.2f} us average")
 
     store2.close()
-    return True
 
 
 if __name__ == "__main__":
