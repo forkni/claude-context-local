@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Corrected model routing edge cases
   - Improved error handling for corrupted indices
 
+- **get_memory_status Cleanup Bug** - Fixed unintended resource cleanup when checking memory status
+  - Status check no longer triggers model switches
+  - Uses cached index_manager instead of factory method
+
 ---
 
 ## [0.7.0] - 2025-12-22
