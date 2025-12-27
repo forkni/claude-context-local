@@ -2,14 +2,52 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2025-12-22)
+## Current Status: All Features Operational (2025-12-27)
 
-- **Version**: 0.7.0
+- **Version**: 0.7.1
 - **Status**: Production-ready
 - **Test Coverage**: 1,054+ unit tests + integration tests (100% pass rate)
 - **Index Quality**: 109 active files, 1,199 chunks (site-packages excluded, BGE-M3 1024d, ~24 MB)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent Features**: Output Formatting (30-55% token reduction), Mmap Vector Storage, Entity Tracking, Symbol Hash Cache
+- **Recent Features**: Release Resources Menu Option, HTTP Cleanup Endpoint, Bug Fixes
+
+---
+
+## v0.7.1 - Patch Release (2025-12-27)
+
+### Status: PRODUCTION-READY ✅
+
+**Patch release with Release Resources menu option and bug fixes**
+
+### New Features
+
+#### Release Resources Menu Option
+- New 'X' option in `start_mcp_server.cmd` main menu
+- Positioned between 'F. Configure Output Format' and '0. Exit'
+- Frees GPU memory and cached resources on demand via HTTP
+- Calls running SSE server's `/cleanup` endpoint
+- Checks if server is running before attempting cleanup
+
+#### HTTP Cleanup Endpoint
+- New POST endpoint at `http://localhost:8765/cleanup`
+- Enables external cleanup requests to running MCP server
+- Returns JSON response: `{"success": true/false, "message": "..."}`
+- Logs all cleanup operations for debugging
+
+### Bug Fixes
+
+- **Index Validation** - Fixed 3 issues with stale index detection and model routing
+  - Corrected validation logic for detecting stale indices
+  - Fixed model routing edge cases in multi-model mode
+  - Improved error handling for corrupted index files
+- **Model Routing** - Corrected edge cases in query routing logic
+
+### Files Modified
+
+- `mcp_server/server.py` - Added `/cleanup` endpoint handler and route
+- `start_mcp_server.cmd` - Updated `:release_resources` to call HTTP endpoint via PowerShell
+- `pyproject.toml` - Version bump to 0.7.1
+- Documentation updates (CHANGELOG.md, VERSION_HISTORY.md, CLAUDE.md)
 
 ---
 

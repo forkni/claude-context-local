@@ -35,8 +35,8 @@ def _detect_indexed_model(project_path: str) -> str | None:
     """
     for model_key in MODEL_POOL_CONFIG.keys():
         project_dir = get_project_storage_dir(project_path, model_key=model_key)
-        stats_file = project_dir / "index" / "stats.json"
-        if stats_file.exists():
+        code_index_file = project_dir / "index" / "code.index"
+        if code_index_file.exists():
             logger.info(f"Detected indexed model for project: {model_key}")
             return model_key
     return None
@@ -74,7 +74,7 @@ async def handle_switch_project(arguments: Dict[str, Any]) -> dict:
     save_project_selection(str(project_path))
 
     # Verify project is indexed
-    project_dir = get_project_storage_dir(str(project_path))
+    project_dir = get_project_storage_dir(str(project_path), model_key=indexed_model)
     index_dir = project_dir / "index"
 
     if not index_dir.exists() or not (index_dir / "code.index").exists():

@@ -122,9 +122,9 @@ def _route_query_to_model(
             project_dir = get_project_storage_dir(
                 current_project, model_key=decision.model_key
             )
-            stats_file = project_dir / "index" / "stats.json"
+            code_index_file = project_dir / "index" / "code.index"
 
-            if stats_file.exists():
+            if code_index_file.exists():
                 # Routed model has valid index
                 return decision.model_key, {
                     "model_selected": decision.model_key,
@@ -157,8 +157,8 @@ def _route_query_to_model(
         # Try default model first
         logger.info(f"Trying configured default model: {default_model}")
         project_dir = get_project_storage_dir(current_project, model_key=default_model)
-        stats_file = project_dir / "index" / "stats.json"
-        if stats_file.exists():
+        code_index_file = project_dir / "index" / "code.index"
+        if code_index_file.exists():
             logger.info(f"Using configured default model: {default_model}")
             return default_model, {
                 "model_selected": default_model,
@@ -174,8 +174,8 @@ def _route_query_to_model(
             project_dir = get_project_storage_dir(
                 current_project, model_key=model_key_candidate
             )
-            stats_file = project_dir / "index" / "stats.json"
-            if stats_file.exists():
+            code_index_file = project_dir / "index" / "code.index"
+            if code_index_file.exists():
                 logger.info(f"Found indexed model: {model_key_candidate}")
                 return model_key_candidate, {
                     "model_selected": model_key_candidate,

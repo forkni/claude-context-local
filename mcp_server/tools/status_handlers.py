@@ -226,10 +226,10 @@ async def handle_get_memory_status(arguments: Dict[str, Any]) -> dict:
     index_memory = {}
     try:
         state = get_state()
-        index_manager = get_index_manager(model_key=state.current_model_key)
-        if index_manager and index_manager.index:
-            ntotal = index_manager.index.ntotal
-            dimension = index_manager.index.d
+        # Use state.index_manager directly - do not trigger model switch via factory
+        if state.index_manager and state.index_manager.index:
+            ntotal = state.index_manager.index.ntotal
+            dimension = state.index_manager.index.d
             # Rough estimate: 4 bytes per float
             estimated_mb = (ntotal * dimension * 4) / (1024**2)
             index_memory = {
