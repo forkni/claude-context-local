@@ -113,13 +113,15 @@ def resolve_qwen3_variant_for_lookup(project_hash: str, project_name: str) -> st
     # Try 0.6B first (more common on typical systems)
     qwen_variants = [
         ("Qwen/Qwen3-Embedding-0.6B", "qwen3-0.6b", 1024),
-        ("Qwen/Qwen3-Embedding-4B", "qwen3-4b", 2560),
+        ("Qwen/Qwen3-Embedding-4B", "qwen3-4b", 1024),  # Fixed: MRL uses 1024, not 2560
     ]
 
     for model_name, slug, dim in qwen_variants:
         # Check for both hash variants (drive-agnostic and legacy)
         pattern = f"{project_name}_{project_hash}_{slug}_{dim}d"
-        index_path = storage_dir / pattern / "index" / "stats.json"
+        index_path = (
+            storage_dir / pattern / "index" / "code.index"
+        )  # Fixed: check dense index
         if index_path.exists():
             logging.getLogger(__name__).debug(
                 f"[QWEN3_RESOLUTION] Found {model_name} index at {pattern}"
