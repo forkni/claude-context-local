@@ -13,6 +13,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.1] - 2025-12-27
+
+### Added
+
+- **Release Resources Menu Option** - New 'X' option in MCP launcher (`start_mcp_server.cmd`)
+  - Frees GPU memory and cached resources from main menu
+  - Calls running SSE server via HTTP `/cleanup` endpoint
+  - Clears metadata DB connections, neural reranker, embedders, and CUDA cache
+  - Positioned between 'F. Configure Output Format' and '0. Exit'
+
+- **HTTP Cleanup Endpoint** - New `/cleanup` POST endpoint in SSE server
+  - Enables external cleanup requests to running server
+  - Returns JSON success/error response
+  - Logs cleanup operations for debugging
+
+### Fixed
+
+- **Index Validation Bugs** - Resolved 3 issues with index validation and model routing
+  - Fixed validation logic for stale indices
+  - Corrected model routing edge cases
+  - Improved error handling for corrupted indices
+
+---
+
 ## [0.7.0] - 2025-12-22
 
 ### Breaking Changes
