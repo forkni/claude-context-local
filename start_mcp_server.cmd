@@ -54,12 +54,13 @@ if "%~1"=="" (
     echo   7. Help ^& Documentation
     echo   M. Quick Model Switch ^(General / Code-specific / Multi-model^)
     echo   F. Configure Output Format
+    echo   X. Release Resources
     echo   0. Exit
     echo.
 
     REM Ensure we have a valid choice
     set "choice="
-    set /p choice="Select option (0-7, M, F): "
+    set /p choice="Select option (0-7, M, F, X): "
 
     REM Handle empty input or Ctrl+C gracefully
     if not defined choice (
@@ -82,9 +83,11 @@ if "%~1"=="" (
     if /i "!choice!"=="m" goto quick_model_switch
     if /i "!choice!"=="F" goto configure_output_format
     if /i "!choice!"=="f" goto configure_output_format
+    if /i "!choice!"=="X" goto release_resources
+    if /i "!choice!"=="x" goto release_resources
     if "!choice!"=="0" goto exit_cleanly
 
-    echo [ERROR] Invalid choice: "%choice%". Please select 0-7, M, or F.
+    echo [ERROR] Invalid choice: "%choice%". Please select 0-7, M, F, or X.
     echo.
     echo Press any key to try again...
     pause >nul
@@ -1477,6 +1480,29 @@ if not "!format_choice!"=="1" if not "!format_choice!"=="2" if not "!format_choi
 pause
 goto menu_restart
 
+:release_resources
+echo.
+echo === Release Resources ===
+echo.
+echo This will free GPU memory and cached resources:
+echo   - Close metadata DB connections
+echo   - Shutdown neural reranker
+echo   - Clear cached embedders
+echo   - Clear GPU cache (CUDA)
+echo.
+echo [INFO] Releasing resources...
+.\.venv\Scripts\python.exe -c "from mcp_server.resource_manager import _cleanup_previous_resources; _cleanup_previous_resources(); import torch; torch.cuda.empty_cache() if torch.cuda.is_available() else None; print('[OK] Resources released successfully')" 2>nul
+if errorlevel 1 (
+    echo [WARNING] Some resources could not be released
+    echo [INFO] This may occur if no resources were loaded
+) else (
+    echo.
+    echo [INFO] GPU memory and caches have been freed
+)
+echo.
+echo Press any key to return to the menu...
+pause >nul
+goto menu_restart
 
 :reset_config
 echo.
