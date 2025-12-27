@@ -351,6 +351,32 @@ if __name__ == "__main__":
                     )
                 return Response()  # Prevent TypeError on disconnect
 
+            # Cleanup endpoint - trigger resource cleanup via HTTP
+            async def handle_cleanup(request):
+                """HTTP endpoint to trigger resource cleanup.
+
+                Releases GPU memory and cached resources in the running server process.
+                """
+                from starlette.responses import JSONResponse
+
+                try:
+                    logger.info(
+                        "[HTTP CLEANUP] Resource cleanup requested via /cleanup endpoint"
+                    )
+                    _cleanup_previous_resources()
+                    logger.info("[HTTP CLEANUP] Resources cleaned up successfully")
+                    return JSONResponse(
+                        {
+                            "success": True,
+                            "message": "Resources cleaned up successfully",
+                        }
+                    )
+                except Exception as e:
+                    logger.error(f"[HTTP CLEANUP] Cleanup failed: {e}")
+                    return JSONResponse(
+                        {"success": False, "error": str(e)}, status_code=500
+                    )
+
             # Starlette app with lifespan integration
             async def app_lifespan(app):
                 """Application lifecycle - initialize global state ONCE before accepting connections."""
@@ -391,9 +417,10 @@ if __name__ == "__main__":
                     _cleanup_previous_resources()
                     logger.info("[SHUTDOWN] Cleanup complete")
 
-            # Define routes: GET /sse + POST /messages/
+            # Define routes: GET /sse + POST /messages/ + POST /cleanup
             routes = [
                 Route("/sse", endpoint=handle_sse, methods=["GET"]),
+                Route("/cleanup", endpoint=handle_cleanup, methods=["POST"]),
                 Mount("/messages/", app=sse.handle_post_message),
             ]
 
@@ -403,6 +430,7 @@ if __name__ == "__main__":
             logger.info(f"Starting SSE server on {args.host}:{args.port}")
             logger.info(f"SSE endpoint: http://{args.host}:{args.port}/sse")
             logger.info(f"Message endpoint: http://{args.host}:{args.port}/messages/")
+            logger.info(f"Cleanup endpoint: http://{args.host}:{args.port}/cleanup")
 
             # Uvicorn config (explicit asyncio loop, not uvloop)
             config = uvicorn.Config(

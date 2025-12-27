@@ -1490,15 +1490,20 @@ echo   - Shutdown neural reranker
 echo   - Clear cached embedders
 echo   - Clear GPU cache (CUDA)
 echo.
-echo [INFO] Releasing resources...
-.\.venv\Scripts\python.exe -c "from mcp_server.resource_manager import _cleanup_previous_resources; _cleanup_previous_resources(); import torch; torch.cuda.empty_cache() if torch.cuda.is_available() else None; print('[OK] Resources released successfully')" 2>nul
+
+REM Check if SSE server is running on port 8765
+netstat -an 2>nul | findstr ":8765" | findstr "LISTENING" >nul 2>&1
 if errorlevel 1 (
-    echo [WARNING] Some resources could not be released
-    echo [INFO] This may occur if no resources were loaded
-) else (
+    echo [WARNING] MCP SSE Server is not running on port 8765
+    echo [INFO] Start the server first with option 1 ^(Quick Start Server^)
     echo.
-    echo [INFO] GPU memory and caches have been freed
+    pause
+    goto menu_restart
 )
+
+echo [INFO] Releasing resources via MCP server...
+echo.
+powershell -Command "try { $response = Invoke-WebRequest -Uri 'http://localhost:8765/cleanup' -Method POST -TimeoutSec 30 -UseBasicParsing; $content = $response.Content | ConvertFrom-Json; if ($content.success) { Write-Host '[OK]' $content.message } else { Write-Host '[ERROR]' $content.error } } catch { Write-Host '[ERROR] Failed to connect to MCP server:' $_.Exception.Message }"
 echo.
 echo Press any key to return to the menu...
 pause >nul
