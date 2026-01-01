@@ -234,5 +234,48 @@ class TestClass:
             assert "python" in languages
 
 
+class TestReadFileWithTimeout(TestCase):
+    """Test _read_file_with_timeout() function for file lock protection."""
+
+    def test_read_file_success(self):
+        """Test successful file read within timeout."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("def hello(): pass")
+            temp_path = f.name
+
+        try:
+            from chunking.tree_sitter import _read_file_with_timeout
+
+            content = _read_file_with_timeout(Path(temp_path), timeout=5.0)
+            assert content == "def hello(): pass"
+        finally:
+            Path(temp_path).unlink()
+
+    def test_read_file_timeout_raises_timeout_error(self):
+        """Test that timeout raises TimeoutError with descriptive message."""
+        from concurrent.futures import TimeoutError as FuturesTimeoutError
+        from unittest.mock import Mock, patch
+
+        with patch("chunking.tree_sitter.ThreadPoolExecutor") as mock_executor:
+            mock_future = Mock()
+            mock_future.result.side_effect = FuturesTimeoutError()
+            mock_executor.return_value.__enter__.return_value.submit.return_value = (
+                mock_future
+            )
+
+            from chunking.tree_sitter import _read_file_with_timeout
+
+            with pytest.raises(TimeoutError) as exc_info:
+                _read_file_with_timeout(Path("test.py"), timeout=0.1)
+            assert "timed out" in str(exc_info.value).lower()
+            assert "possibly locked" in str(exc_info.value).lower()
+
+    def test_default_timeout_is_5_seconds(self):
+        """Test that FILE_READ_TIMEOUT constant is 5 seconds."""
+        from chunking.tree_sitter import FILE_READ_TIMEOUT
+
+        assert FILE_READ_TIMEOUT == 5
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

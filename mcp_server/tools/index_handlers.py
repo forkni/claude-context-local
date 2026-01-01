@@ -616,9 +616,10 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
 
     # Step 1: Cleanup previous resources BEFORE starting indexing
     logger.info("[INDEX] Releasing previous resources before indexing...")
-    from mcp_server.resource_manager import cleanup_previous_resources
+    from mcp_server.resource_manager import ResourceManager
 
-    cleanup_previous_resources()
+    resource_manager = ResourceManager()
+    resource_manager.cleanup_previous_resources()
 
     directory_path = Path(directory_path).resolve()
     if not directory_path.exists():

@@ -739,3 +739,81 @@ def test_instruction_mode_cache_keys(mock_sentence_transformer, mock_model_loade
     stats = embedder.get_cache_stats()
     assert stats["hits"] == 1
     assert stats["misses"] == 1
+
+
+class TestCheckVramStatus:
+    """Test _check_vram_status() method in CodeEmbedder for VRAM monitoring."""
+
+    @patch("embeddings.embedder.torch")
+    def test_vram_below_warning_threshold(self, mock_torch):
+        """Test VRAM at 50% - no warnings."""
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.memory_allocated.return_value = 5 * 1024**3  # 5GB
+        mock_props = MagicMock()
+        mock_props.total_memory = 10 * 1024**3  # 10GB total
+        mock_torch.cuda.get_device_properties.return_value = mock_props
+
+        from embeddings.embedder import CodeEmbedder
+
+        # Use __new__ to skip __init__
+        embedder = CodeEmbedder.__new__(CodeEmbedder)
+        embedder._logger = MagicMock()
+
+        usage_pct, should_warn, should_abort = embedder._check_vram_status()
+
+        assert usage_pct == 0.5
+        assert should_warn is False
+        assert should_abort is False
+
+    @patch("embeddings.embedder.torch")
+    def test_vram_at_warning_threshold(self, mock_torch):
+        """Test VRAM at 90% - should warn but not abort."""
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.memory_allocated.return_value = 9 * 1024**3  # 9GB
+        mock_props = MagicMock()
+        mock_props.total_memory = 10 * 1024**3
+        mock_torch.cuda.get_device_properties.return_value = mock_props
+
+        from embeddings.embedder import CodeEmbedder
+
+        embedder = CodeEmbedder.__new__(CodeEmbedder)
+        embedder._logger = MagicMock()
+
+        usage_pct, should_warn, should_abort = embedder._check_vram_status()
+
+        assert usage_pct == 0.9
+        assert should_warn is True  # > 85%
+        assert should_abort is False  # < 95%
+
+    @patch("embeddings.embedder.torch")
+    def test_vram_at_abort_threshold(self, mock_torch):
+        """Test VRAM at 96% - should abort."""
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.memory_allocated.return_value = int(9.6 * 1024**3)  # 96%
+        mock_props = MagicMock()
+        mock_props.total_memory = 10 * 1024**3
+        mock_torch.cuda.get_device_properties.return_value = mock_props
+
+        from embeddings.embedder import CodeEmbedder
+
+        embedder = CodeEmbedder.__new__(CodeEmbedder)
+        embedder._logger = MagicMock()
+
+        usage_pct, should_warn, should_abort = embedder._check_vram_status()
+
+        assert should_warn is True
+        assert should_abort is True  # > 95%
+
+    @patch("embeddings.embedder.torch", None)
+    def test_no_gpu_available(self):
+        """Test when CUDA is not available."""
+        from embeddings.embedder import CodeEmbedder
+
+        embedder = CodeEmbedder.__new__(CodeEmbedder)
+        embedder._logger = MagicMock()
+
+        usage_pct, should_warn, should_abort = embedder._check_vram_status()
+
+        assert usage_pct == 0.0
+        assert should_warn is False
+        assert should_abort is False
