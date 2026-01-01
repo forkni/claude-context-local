@@ -3,9 +3,12 @@
 Provides consistent error handling and other cross-cutting concerns.
 """
 
+import asyncio
 import functools
 import logging
 from typing import Any, Callable, Dict, Optional
+
+import anyio
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +53,14 @@ def error_handler(
         async def wrapper(arguments: Dict[str, Any]) -> dict:
             try:
                 return await func(arguments)
+            except asyncio.CancelledError:
+                # Don't catch CancelledError - let it propagate for proper cleanup
+                logger.info(f"{action_name} cancelled by client")
+                raise
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError) as e:
+                # Client disconnected while processing - graceful degradation
+                logger.warning(f"{action_name} failed - client disconnected: {e}")
+                return {"error": "Client disconnected", "status": "cancelled"}
             except Exception as e:
                 logger.error(f"{action_name} failed: {e}", exc_info=True)
                 error_response = {"error": str(e)}
