@@ -220,8 +220,7 @@ class ImpactReport:
         ]
 
         for name, value in relationship_fields:
-            if value:  # Only include if non-empty
-                result[name] = value
+            result[name] = value  # Always include for API consistency
 
         if self.stale_chunk_count > 0:
             result["stale_chunk_count"] = self.stale_chunk_count

@@ -13,6 +13,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.2] - 2026-01-01
+
+### Added
+
+- **Unit Tests for Protection System** - 15 new tests across 4 test classes
+  - `TestReadFileWithTimeout` - File timeout handling (3 tests)
+  - `TestCheckVramStatus` - VRAM monitoring (4 tests)
+  - `TestParallelChunkerTimeouts` - Chunking timeouts (3 tests)
+  - `TestCheckFileAccessibility` - Pre-index checks (5 tests)
+  - 100% pass rate
+  - Files: `tests/unit/chunking/test_tree_sitter.py`, `tests/unit/embeddings/test_embedder.py`, `tests/unit/search/test_parallel_chunker.py`, `tests/unit/mcp_server/test_index_handlers.py`
+
+- **Test Suite Optimization** - 95.4% runtime reduction for slow integration tests
+  - 36 tests across 3 files optimized with class-scoped fixtures
+  - Runtime: 338s → 15.46s (20× speedup)
+  - Files: `tests/slow_integration/test_full_flow.py`, `test_relationship_extraction_integration.py`, `test_multi_hop_flow.py`
+
+### Fixed
+
+- **SSE Transport Error Protection** - Graceful handling of client disconnections
+  - Added `anyio.BrokenResourceError` and `ClosedResourceError` handling
+  - Extended Windows socket error handler for SSE streams
+  - Added ASGI error filter for cleaner logs
+  - Addresses MCP SDK bug #1811 (P1, Open)
+  - Files: `mcp_server/server.py`, `mcp_server/tools/decorators.py`
+
+- **6-Layer Indexing Protection System** - Prevents file locks, hangs, and VRAM exhaustion
+  - Layer 1: Resource cleanup before re-indexing (`cleanup_previous_resources()`)
+  - Layer 2: File read timeout (5s) for locked files
+  - Layer 3: PermissionError handling with `[LOCKED]` warnings
+  - Layer 4: VRAM monitoring (85% warn, 95% abort with `_check_vram_status()`)
+  - Layer 5: Progress timeout (10s/file, 300s total with future cancellation)
+  - Layer 6: Pre-index accessibility check (`_check_file_accessibility()`)
+  - Files: `chunking/tree_sitter.py`, `embeddings/embedder.py`, `search/parallel_chunker.py`, `mcp_server/tools/index_handlers.py`
+
+- **ImpactReport API Consistency** - All relationship fields now guaranteed in output
+  - `find_connections` includes empty fields (`child_classes`, `decorated_by`, etc.)
+  - Ensures predictable API contract for clients
+  - File: `mcp_server/tools/code_relationship_analyzer.py`
+
+---
+
 ## [0.7.1] - 2025-12-27
 
 ### Added
@@ -973,6 +1015,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **v0.7.2** - Reliability improvements: SSE protection, 6-layer indexing protection (2026-01-01)
+- **v0.7.1** - Bug fixes: Release Resources option, index validation, memory status (2025-12-27)
 - **v0.7.0** - Major release: Output formatting, mmap storage, entity tracking, refactoring (2025-12-22)
 - **v0.6.1** - UX Improvements: Progress bars, filter fixes, targeted snapshot deletion (2025-12-03)
 - **v0.6.0** - Release: Self-healing BM25, persistent projects, batch compliance (2025-11-28)

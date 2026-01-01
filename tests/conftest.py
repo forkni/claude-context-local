@@ -581,6 +581,7 @@ def create_test_embeddings(
             "docstring": chunk.docstring,
             "tags": chunk.tags,
             "complexity_score": chunk.complexity_score,
+            "content": chunk.content,  # Full content for BM25 indexing
             "content_preview": (
                 chunk.content[:200] + "..."
                 if len(chunk.content) > 200
