@@ -308,6 +308,34 @@ class CodeEmbedder:
         device_str = str(self.device).lower()
         return "cuda" in device_str or "mps" in device_str
 
+    def _check_vram_status(self) -> tuple[float, bool, bool]:
+        """Check VRAM usage and return (usage_pct, should_warn, should_abort).
+
+        Returns:
+            Tuple of (usage_percentage, should_warn, should_abort)
+            - usage_percentage: Current VRAM usage as percentage (0.0-1.0)
+            - should_warn: True if usage > 85%
+            - should_abort: True if usage > 95%
+        """
+        VRAM_WARNING_THRESHOLD = 0.85  # 85% usage
+        VRAM_ABORT_THRESHOLD = 0.95  # 95% usage
+
+        if not torch or not torch.cuda.is_available():
+            return 0.0, False, False
+
+        try:
+            allocated = torch.cuda.memory_allocated()
+            total = torch.cuda.get_device_properties(0).total_memory
+            usage_pct = allocated / total if total > 0 else 0.0
+
+            should_warn = usage_pct > VRAM_WARNING_THRESHOLD
+            should_abort = usage_pct > VRAM_ABORT_THRESHOLD
+
+            return usage_pct, should_warn, should_abort
+        except Exception as e:
+            self._logger.warning(f"Failed to check VRAM status: {e}")
+            return 0.0, False, False
+
     @property
     def model(self):
         """Lazy loading of the model."""
@@ -540,6 +568,21 @@ class CodeEmbedder:
             task = progress.add_task("Embedding...", total=total_batches)
             for i in range(0, len(chunks), batch_size):
                 batch = chunks[i : i + batch_size]
+
+                # Check VRAM before each batch
+                vram_pct, should_warn, should_abort = self._check_vram_status()
+
+                if should_abort:
+                    self._logger.error(
+                        f"[VRAM] Aborting embedding - VRAM at {vram_pct:.1%} (threshold: 95%)"
+                    )
+                    raise MemoryError(
+                        f"VRAM exhausted ({vram_pct:.1%}). "
+                        "Close other GPU applications and retry."
+                    )
+
+                if should_warn:
+                    self._logger.warning(f"[VRAM] High VRAM usage: {vram_pct:.1%}")
 
                 # Prepend passage prefix if it exists
                 if passage_prefix:

@@ -2,14 +2,153 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2025-12-27)
+## Current Status: All Features Operational (2026-01-01)
 
-- **Version**: 0.7.1
+- **Version**: 0.7.2
 - **Status**: Production-ready
 - **Test Coverage**: 1,054+ unit tests + integration tests (100% pass rate)
 - **Index Quality**: 109 active files, 1,199 chunks (site-packages excluded, BGE-M3 1024d, ~24 MB)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent Features**: Release Resources Menu Option, HTTP Cleanup Endpoint, Bug Fixes
+- **Recent Features**: SSE Transport Protection, 6-Layer Indexing Protection, Test Suite Optimization, Unit Tests
+
+---
+
+## v0.7.2 - Reliability Improvements (2026-01-01)
+
+### Status: PRODUCTION-READY ✅
+
+**Patch release with SSE transport protection and comprehensive indexing protection system**
+
+### Highlights
+
+- **SSE Transport Protection** - Graceful client disconnection handling
+- **6-Layer Indexing Protection** - Prevents file locks, VRAM exhaustion, timeouts
+- **Test Suite Optimization** - 95.4% faster slow integration tests (20× speedup)
+- **Comprehensive Unit Tests** - 15 new tests with 100% pass rate
+
+### Bug Fixes
+
+#### SSE Transport Error Protection
+
+**Problem**: MCP server crashed when clients disconnected during SSE streaming (anyio.BrokenResourceError, ClosedResourceError).
+
+**Solution**: Comprehensive error handling for SSE transport layer:
+
+- Added `anyio.BrokenResourceError` and `ClosedResourceError` exception handlers
+- Extended Windows socket error handler (`WinError 64`) for SSE streams
+- Added ASGI error filter to suppress "Unexpected ASGI message" warnings in logs
+- Tool cancellation handling in decorator layer (`@handle_tool_errors`)
+
+**Impact**: Zero SSE crashes, clean server logs, graceful client disconnection handling
+
+**Addresses**: MCP SDK bug #1811 (P1, Open - awaiting upstream fix)
+
+**Files Modified**:
+- `mcp_server/server.py` - SSE error handlers, ASGI filter
+- `mcp_server/tools/decorators.py` - Tool cancellation handling
+
+#### 6-Layer Indexing Protection System
+
+**Problem**: Indexing hung indefinitely on locked files (TouchDesigner, IDEs), consumed excessive VRAM, crashed on permission errors.
+
+**Solution**: Comprehensive protection at 6 critical points:
+
+| Layer | Feature | Implementation | Protection |
+|-------|---------|----------------|------------|
+| **1** | Resource Cleanup | `cleanup_previous_resources()` | Prevents duplicate model loads, clears stale connections |
+| **2** | File Read Timeout | `_read_file_with_timeout()` | 5s ThreadPoolExecutor timeout for locked files |
+| **3** | PermissionError Handling | `try/except PermissionError` | Skip locked files with `[LOCKED]` warnings |
+| **4** | VRAM Monitoring | `_check_vram_status()` | 85% warn, 95% abort threshold |
+| **5** | Progress Timeout | `future.result(timeout=10)` | 10s/file, 300s total limits |
+| **6** | Accessibility Check | `_check_file_accessibility()` | Pre-index sample validation (10 random files) |
+
+**Impact**: Zero hangs, zero crashes, graceful handling of locked files, OOM prevention
+
+**Configuration Constants**:
+```python
+FILE_READ_TIMEOUT = 5           # seconds (Layer 2)
+CHUNKING_TIMEOUT_PER_FILE = 10  # seconds (Layer 5)
+TOTAL_CHUNKING_TIMEOUT = 300    # seconds (Layer 5)
+VRAM_WARNING_THRESHOLD = 0.85   # 85% (Layer 4)
+VRAM_ABORT_THRESHOLD = 0.95     # 95% (Layer 4)
+```
+
+**Files Modified**:
+- `chunking/tree_sitter.py` - Layer 2, Layer 3
+- `embeddings/embedder.py` - Layer 4
+- `search/parallel_chunker.py` - Layer 5
+- `mcp_server/tools/index_handlers.py` - Layer 1, Layer 6
+
+### New Tests
+
+#### Unit Tests for Protection System (15 tests, 100% pass rate)
+
+**Coverage**: All 4 protection functions tested exhaustively
+
+- **TestReadFileWithTimeout** (3 tests) - `tests/unit/chunking/test_tree_sitter.py`
+  - Successful file read within timeout
+  - Timeout raises TimeoutError with descriptive message
+  - FILE_READ_TIMEOUT constant = 5 seconds
+- **TestCheckVramStatus** (4 tests) - `tests/unit/embeddings/test_embedder.py`
+  - Warning threshold (85%) detection
+  - Abort threshold (95%) detection
+  - No GPU available handling
+  - Multiple GPU device handling
+- **TestParallelChunkerTimeouts** (3 tests) - `tests/unit/search/test_parallel_chunker.py`
+  - Timeout constants defined (10s/file, 300s total)
+  - Stalled files logged on timeout
+  - Total timeout stops processing early
+- **TestCheckFileAccessibility** (5 tests) - `tests/unit/mcp_server/test_index_handlers.py`
+  - All files accessible (baseline)
+  - Empty file list handling
+  - PermissionError detection
+  - IOError detection
+  - Sample size limits file checks (10 max)
+
+**Files Modified**:
+- `tests/unit/chunking/test_tree_sitter.py` - 3 tests
+- `tests/unit/embeddings/test_embedder.py` - 4 tests
+- `tests/unit/search/test_parallel_chunker.py` - 3 tests
+- `tests/unit/mcp_server/test_index_handlers.py` - 5 tests
+
+### Test Suite Optimization
+
+**95.4% runtime reduction for slow integration tests**
+
+Converted function-scoped fixtures to class-scoped using `tmp_path_factory`:
+
+| Test File | Before | After | Improvement |
+|-----------|--------|-------|-------------|
+| `test_full_flow.py` | ~88s | 1.91s | 98.2% faster |
+| `test_relationship_extraction_integration.py` | ~180s | 3.34s | 98.1% faster |
+| `test_multi_hop_flow.py` | ~70s | 10.21s | 85.4% faster |
+| **Total** | **~338s** | **15.46s** | **95.4% faster** |
+
+**Impact**: Developer feedback loop improved from 5-6 minutes to 15 seconds
+
+**Files Modified**:
+- `tests/slow_integration/test_full_flow.py` - Class-scoped indexed fixture
+- `tests/slow_integration/test_relationship_extraction_integration.py` - Session/class fixtures
+- `tests/slow_integration/test_multi_hop_flow.py` - Class-scoped hybrid searcher fixture
+
+### Bug Fixes (Additional)
+
+#### ImpactReport API Consistency
+
+**Problem**: `find_connections` omitted empty relationship fields (`child_classes`, `decorated_by`), breaking client expectations.
+
+**Solution**: Modified `ImpactReport.to_dict()` to always include all relationship fields.
+
+**File**: `mcp_server/tools/code_relationship_analyzer.py:223`
+
+### Technical Details
+
+**Commit History**:
+1. `01c2649` - SSE Transport Error Protection (Session 1, 2026-01-01)
+2. `7e5b1e2` - 6-Layer Indexing Protection System (Session 1, 2026-01-01)
+3. `61b71ba` - Unit Tests for Protection System (Session 2, 2026-01-01)
+
+**Session Documentation**: See `MEMORY.md` entries for 2026-01-01 sessions
 
 ---
 

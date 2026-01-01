@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
+import anyio
+
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
@@ -155,6 +157,10 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[TextCon
 
         return [TextContent(type="text", text=result_text)]
 
+    except asyncio.CancelledError:
+        # Don't catch CancelledError - let it propagate for proper cleanup
+        logger.info(f"[TOOL_CANCELLED] {name} was cancelled by client")
+        raise
     except Exception as e:
         logger.error(f"[TOOL_ERROR] {name}: {e}", exc_info=True)
         error_response = {"error": str(e), "tool": name, "arguments": arguments}
@@ -408,6 +414,13 @@ if __name__ == "__main__":
                     logger.info("APPLICATION READY - Accepting connections")
                     logger.info("=" * 60)
 
+                    # Suppress noisy ASGI errors for disconnected clients
+                    # (secondary errors after BrokenResourceError)
+                    logging.getLogger("uvicorn.error").addFilter(
+                        lambda record: "Unexpected ASGI message"
+                        not in record.getMessage()
+                    )
+
                     yield  # Application runs
 
                 finally:
@@ -453,6 +466,7 @@ if __name__ == "__main__":
                 # Set exception handler for residual socket errors
                 def handle_win_socket_error(loop, context):
                     exc = context.get("exception")
+                    # Handle Windows socket errors
                     if (
                         isinstance(exc, OSError)
                         and getattr(exc, "winerror", None) == 64
@@ -460,6 +474,12 @@ if __name__ == "__main__":
                         logger.debug(
                             f"Client disconnect (WinError 64): {context.get('message', '')}"
                         )
+                        return
+                    # Handle anyio stream errors (SSE disconnections)
+                    if isinstance(
+                        exc, (anyio.BrokenResourceError, anyio.ClosedResourceError)
+                    ):
+                        logger.debug(f"SSE stream closed: {exc}")
                         return
                     loop.default_exception_handler(context)
 

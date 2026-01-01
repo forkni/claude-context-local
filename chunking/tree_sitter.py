@@ -17,6 +17,8 @@ Supported languages (8 tree-sitter + 1 AST):
 
 import logging
 import warnings
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -128,6 +130,40 @@ __all__ = [
 ]
 
 
+# File read timeout configuration (5 seconds)
+FILE_READ_TIMEOUT = 5
+
+
+def _read_file_with_timeout(file_path: Path, timeout: float = FILE_READ_TIMEOUT) -> str:
+    """Read file with timeout protection against locked files.
+
+    Args:
+        file_path: Path to file to read
+        timeout: Timeout in seconds (default: 5s)
+
+    Returns:
+        File contents as string
+
+    Raises:
+        TimeoutError: If file read exceeds timeout (likely locked)
+        PermissionError: If file is not accessible
+        UnicodeDecodeError: If file encoding is invalid
+    """
+
+    def read_file():
+        with open(file_path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(read_file)
+        try:
+            return future.result(timeout=timeout)
+        except FuturesTimeoutError:
+            raise TimeoutError(
+                f"File read timed out after {timeout}s (possibly locked): {file_path}"
+            ) from None
+
+
 class TreeSitterChunker:
     """Main tree-sitter chunker that delegates to language-specific implementations."""
 
@@ -214,8 +250,15 @@ class TreeSitterChunker:
 
         if content is None:
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
+                content = _read_file_with_timeout(Path(file_path))
+            except TimeoutError as e:
+                logger.warning(f"[TIMEOUT] {e}")
+                return []
+            except PermissionError:
+                logger.warning(
+                    f"[LOCKED] Cannot access file (permission denied): {file_path}"
+                )
+                return []
             except UnicodeDecodeError:
                 logger.warning(
                     f"UTF-8 decode failed for {file_path}, trying with error handling"

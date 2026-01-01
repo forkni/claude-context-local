@@ -1,7 +1,8 @@
 """Parallel file chunking with progress tracking."""
 
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from pathlib import Path
 from typing import TYPE_CHECKING, List
 
@@ -19,6 +20,10 @@ if TYPE_CHECKING:
     from chunking.python_ast_chunker import CodeChunk
 
 logger = logging.getLogger(__name__)
+
+# Chunking timeout configuration
+CHUNKING_TIMEOUT_PER_FILE = 10  # seconds per file max
+TOTAL_CHUNKING_TIMEOUT = 300  # 5 minutes total max
 
 
 class ParallelChunker:
@@ -54,6 +59,8 @@ class ParallelChunker:
             List of CodeChunk objects from all files
         """
         all_chunks = []
+        start_time = time.time()
+        stalled_files = []
 
         # Use parallel chunking if enabled and there are multiple files
         if self.enable_parallel and len(file_paths) > 1:
@@ -79,13 +86,31 @@ class ParallelChunker:
                     task = progress.add_task("Chunking files...", total=len(file_paths))
                     for future in as_completed(future_to_path):
                         file_path = future_to_path[future]
+                        elapsed = time.time() - start_time
+
+                        # Check total timeout
+                        if elapsed > TOTAL_CHUNKING_TIMEOUT:
+                            logger.error(
+                                f"[TIMEOUT] Chunking exceeded {TOTAL_CHUNKING_TIMEOUT}s total timeout"
+                            )
+                            # Cancel remaining futures
+                            for f in future_to_path:
+                                if not f.done():
+                                    f.cancel()
+                            break
+
                         try:
-                            chunks = future.result()
+                            chunks = future.result(timeout=CHUNKING_TIMEOUT_PER_FILE)
                             if chunks:
                                 all_chunks.extend(chunks)
                                 logger.debug(
                                     f"Chunked {file_path}: {len(chunks)} chunks"
                                 )
+                        except TimeoutError:
+                            logger.warning(
+                                f"[TIMEOUT] File chunking timed out: {file_path}"
+                            )
+                            stalled_files.append(file_path)
                         except Exception as e:
                             logger.warning(f"Failed to chunk {file_path}: {e}")
                         finally:
@@ -104,9 +129,28 @@ class ParallelChunker:
             ) as progress:
                 task = progress.add_task("Chunking files...", total=len(file_paths))
                 for file_path in file_paths:
+                    elapsed = time.time() - start_time
+
+                    # Check total timeout
+                    if elapsed > TOTAL_CHUNKING_TIMEOUT:
+                        logger.error(
+                            f"[TIMEOUT] Chunking exceeded {TOTAL_CHUNKING_TIMEOUT}s total timeout"
+                        )
+                        break
+
                     full_path = Path(project_path) / file_path
+                    file_start_time = time.time()
                     try:
                         chunks = self.chunker.chunk_file(str(full_path))
+                        file_elapsed = time.time() - file_start_time
+
+                        # Check per-file timeout
+                        if file_elapsed > CHUNKING_TIMEOUT_PER_FILE:
+                            logger.warning(
+                                f"[TIMEOUT] File chunking took {file_elapsed:.1f}s (>{CHUNKING_TIMEOUT_PER_FILE}s): {file_path}"
+                            )
+                            stalled_files.append(file_path)
+
                         if chunks:
                             all_chunks.extend(chunks)
                             logger.debug(f"Chunked {file_path}: {len(chunks)} chunks")
@@ -114,5 +158,11 @@ class ParallelChunker:
                         logger.warning(f"Failed to chunk {file_path}: {e}")
                     finally:
                         progress.update(task, advance=1)
+
+        # Log summary if there were stalled files
+        if stalled_files:
+            logger.warning(
+                f"[SUMMARY] {len(stalled_files)} files skipped/slow due to timeout (possibly locked)"
+            )
 
         return all_chunks

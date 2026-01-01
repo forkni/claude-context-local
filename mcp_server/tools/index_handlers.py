@@ -41,6 +41,39 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------------
 
 
+def _check_file_accessibility(
+    file_paths: list[Path], sample_size: int = 50
+) -> list[Path]:
+    """Quick check for file accessibility. Returns list of inaccessible files.
+
+    Args:
+        file_paths: List of file paths to check
+        sample_size: Number of files to sample (default: 50)
+
+    Returns:
+        List of inaccessible file paths
+    """
+    import random
+
+    if not file_paths:
+        return []
+
+    sample = random.sample(file_paths, min(sample_size, len(file_paths)))
+    inaccessible = []
+
+    for fp in sample:
+        try:
+            with open(fp, "r", encoding="utf-8") as f:
+                f.read(1)  # Just read 1 byte to check access
+        except (PermissionError, IOError):
+            inaccessible.append(fp)
+        except Exception:
+            # Skip other exceptions (encoding errors, etc.)
+            pass
+
+    return inaccessible
+
+
 def _create_indexer_for_model(
     model_key: str | None, directory_path: str, index_dir: Path
 ) -> tuple:
@@ -581,9 +614,43 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
         f"[INDEX] directory={directory_path}, incremental={incremental}, multi_model={multi_model}"
     )
 
+    # Step 1: Cleanup previous resources BEFORE starting indexing
+    logger.info("[INDEX] Releasing previous resources before indexing...")
+    from mcp_server.resource_manager import ResourceManager
+
+    resource_manager = ResourceManager()
+    resource_manager.cleanup_previous_resources()
+
     directory_path = Path(directory_path).resolve()
     if not directory_path.exists():
         return {"error": f"Directory does not exist: {directory_path}"}
+
+    # Step 2: Optional pre-index accessibility check (sample files for locks)
+    try:
+        # Quick file accessibility check on a sample of files
+        from chunking.tree_sitter import TreeSitterChunker
+
+        supported_exts = TreeSitterChunker.get_supported_extensions()
+        sample_files = []
+
+        # Collect a sample of files with supported extensions
+        for ext in supported_exts:
+            sample_files.extend(list(directory_path.rglob(f"*{ext}"))[:10])
+            if len(sample_files) >= 50:
+                break
+
+        if sample_files:
+            inaccessible = _check_file_accessibility(sample_files, sample_size=50)
+            if inaccessible:
+                logger.warning(
+                    f"[ACCESSIBILITY] {len(inaccessible)}/{len(sample_files)} sampled files "
+                    f"are currently locked or inaccessible. Indexing will skip these files.\n"
+                    f"  Example: {inaccessible[0]}\n"
+                    f"  Tip: Close other programs (TouchDesigner, IDEs) that may have files open."
+                )
+    except Exception as e:
+        # Don't fail indexing if accessibility check fails
+        logger.debug(f"[ACCESSIBILITY] Check failed (non-critical): {e}")
 
     # Check if project already exists and handle filter immutability
     # First call without filters to check existence
