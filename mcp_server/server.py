@@ -383,6 +383,81 @@ if __name__ == "__main__":
                         {"success": False, "error": str(e)}, status_code=500
                     )
 
+            # Config reload endpoint - reload search_config.json
+            async def handle_reload_config(request):
+                """HTTP endpoint to reload config from search_config.json.
+
+                Allows UI config changes to sync with running server.
+                """
+                from starlette.responses import JSONResponse
+
+                try:
+                    logger.info("[HTTP CONFIG] Config reload requested")
+
+                    # Reload config from file
+                    from search.config import SearchConfigManager
+
+                    config_manager = SearchConfigManager()
+                    config_manager.load_config()  # Re-reads search_config.json
+
+                    # Get updated values for response
+                    config = config_manager.config
+
+                    logger.info(
+                        f"[HTTP CONFIG] Reloaded: mode={config.search_mode.default_mode}, "
+                        f"entity_tracking={config.performance.enable_entity_tracking}"
+                    )
+
+                    return JSONResponse(
+                        {
+                            "success": True,
+                            "config": {
+                                "search_mode": config.search_mode.default_mode,
+                                "bm25_weight": config.search_mode.bm25_weight,
+                                "dense_weight": config.search_mode.dense_weight,
+                                "entity_tracking": config.performance.enable_entity_tracking,
+                                "reranker_enabled": config.reranker.enabled,
+                            },
+                        }
+                    )
+                except Exception as e:
+                    logger.error(f"[HTTP CONFIG] Reload failed: {e}")
+                    return JSONResponse({"error": str(e)}, status_code=500)
+
+            # Project switch endpoint - switch active project
+            async def handle_switch_project_http(request):
+                """HTTP endpoint for UI project switching.
+
+                Allows UI project switch to sync with running server.
+                """
+                from starlette.responses import JSONResponse
+
+                try:
+                    body = await request.json()
+                    project_path = body.get("project_path")
+
+                    if not project_path:
+                        return JSONResponse(
+                            {"error": "project_path required"}, status_code=400
+                        )
+
+                    logger.info(
+                        f"[HTTP SWITCH] Project switch requested: {project_path}"
+                    )
+
+                    from mcp_server.tools.config_handlers import handle_switch_project
+
+                    result = await handle_switch_project({"project_path": project_path})
+
+                    logger.info(
+                        f"[HTTP SWITCH] Switch complete: {result.get('project')}"
+                    )
+                    return JSONResponse(result)
+
+                except Exception as e:
+                    logger.error(f"[HTTP SWITCH] Failed: {e}")
+                    return JSONResponse({"error": str(e)}, status_code=500)
+
             # Starlette app with lifespan integration
             async def app_lifespan(app):
                 """Application lifecycle - initialize global state ONCE before accepting connections."""
@@ -430,10 +505,18 @@ if __name__ == "__main__":
                     _cleanup_previous_resources()
                     logger.info("[SHUTDOWN] Cleanup complete")
 
-            # Define routes: GET /sse + POST /messages/ + POST /cleanup
+            # Define routes: GET /sse + POST /messages/ + POST /cleanup + POST /reload_config + POST /switch_project
             routes = [
                 Route("/sse", endpoint=handle_sse, methods=["GET"]),
                 Route("/cleanup", endpoint=handle_cleanup, methods=["POST"]),
+                Route(
+                    "/reload_config", endpoint=handle_reload_config, methods=["POST"]
+                ),
+                Route(
+                    "/switch_project",
+                    endpoint=handle_switch_project_http,
+                    methods=["POST"],
+                ),
                 Mount("/messages/", app=sse.handle_post_message),
             ]
 
@@ -444,6 +527,12 @@ if __name__ == "__main__":
             logger.info(f"SSE endpoint: http://{args.host}:{args.port}/sse")
             logger.info(f"Message endpoint: http://{args.host}:{args.port}/messages/")
             logger.info(f"Cleanup endpoint: http://{args.host}:{args.port}/cleanup")
+            logger.info(
+                f"Config reload endpoint: http://{args.host}:{args.port}/reload_config"
+            )
+            logger.info(
+                f"Project switch endpoint: http://{args.host}:{args.port}/switch_project"
+            )
 
             # Uvicorn config (explicit asyncio loop, not uvloop)
             config = uvicorn.Config(

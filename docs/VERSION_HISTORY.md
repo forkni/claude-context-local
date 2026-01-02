@@ -9,21 +9,138 @@ Complete version history and feature timeline for claude-context-local MCP serve
 - **Test Coverage**: 1,249+ unit tests + integration tests (100% pass rate)
 - **Index Quality**: 109 active files, 1,199 chunks (site-packages excluded, BGE-M3 1024d, ~24 MB)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent Features**: Multi-Model State Management Fix, Manual Test Discovery Fix
+- **Recent Features**: HTTP Config Sync for UI, Entity Tracking Config Fix, Multi-Model State Management Fix
 
 ---
 
-## v0.7.3 - GitHub Actions CI Fixes (2026-01-02)
+## v0.7.3 - UI/Server Sync & Config Fixes (2026-01-02)
 
 ### Status: PRODUCTION-READY ✅
 
-**Patch release fixing GitHub Actions test failures and multi-model state management**
+**Patch release with HTTP config sync, entity tracking fix, and GitHub Actions CI fixes**
 
 ### Highlights
 
+- **HTTP Config Sync** - Real-time UI ↔ MCP server state synchronization via HTTP endpoints
+- **Entity Tracking Config Fix** - Config setting now properly applied during indexing
 - **Multi-Model State Management Fix** - Resolved 0 chunks issue after multi-model indexing
 - **Manual Test Discovery Fix** - Prevented pytest from discovering manual test helpers
 - **Test Suite**: 1,249 tests passing (was 86 passed, 1 failed, 4 errors)
+
+### New Features
+
+#### HTTP Config Sync for UI Operations
+
+**Problem**: UI operations (project switch, config changes) ran in separate Python processes, creating isolated singleton states. Changes made via UI menu didn't sync with the running MCP server, and no server logs appeared for UI operations.
+
+**Architecture Issue**:
+```
+UI Batch Script Process          MCP Server Process
+┌────────────────────┐           ┌────────────────────┐
+│ switch_project_    │           │ Running MCP Server │
+│ helper.py          │           │ (stdio/SSE)        │
+│                    │           │                    │
+│ Own _app_state ─────┼─────X────┼───> _app_state     │
+│ singleton          │  NO IPC   │   singleton        │
+└────────────────────┘           └────────────────────┘
+```
+
+**Solution**: Added HTTP endpoints to SSE server for live state synchronization:
+
+1. **New HTTP Endpoints** (`mcp_server/server.py`):
+   - `POST /reload_config` - Reloads `search_config.json` in running server
+   - `POST /switch_project` - Switches active project in running server
+   - Both endpoints log operations with `[HTTP CONFIG]` and `[HTTP SWITCH]` prefixes
+
+2. **HTTP Notification Helper** (`tools/notify_server.py`):
+   - `notify_config_reload()` - Tell server to reload config
+   - `notify_project_switch(path)` - Tell server to switch project
+   - Graceful fallback when server not running (SSE mode)
+
+3. **UI Integration** (`start_mcp_server.cmd`):
+   - Calls `notify_server.py reload_config` after all config changes:
+     - Search mode (hybrid/semantic/BM25)
+     - Weights (BM25/Dense)
+     - Entity tracking (enable/disable)
+     - Neural reranker (enable/disable/top-k)
+
+4. **Project Switch Helper Update** (`tools/switch_project_helper.py`):
+   - Tries HTTP endpoint first (for running SSE server)
+   - Falls back to direct call if server not running
+   - Clear console messages indicating which method used
+
+**Impact**:
+- ✅ All UI config changes sync to running server instantly
+- ✅ All UI operations visible in server logs with clear prefixes
+- ✅ No server restart needed for config/project changes
+- ✅ Graceful degradation when server not running
+
+**Example Server Logs**:
+```
+14:48:41 - [HTTP SWITCH] Project switch requested: D:\...\STREAM_DIFFUSION
+14:48:42 - Current project set to: STREAM_DIFFUSION_0.3.0_TOX
+14:48:42 - [HTTP SWITCH] Switch complete: D:\...\STREAM_DIFFUSION
+INFO:     ::1:58304 - "POST /switch_project HTTP/1.1" 200 OK
+```
+
+**Files Modified**:
+- `mcp_server/server.py` - HTTP endpoints (lines 386-459, 504-529)
+- `tools/notify_server.py` - NEW file (~130 lines)
+- `tools/switch_project_helper.py` - HTTP-first logic (lines 60-88)
+- `start_mcp_server.cmd` - Notifier calls (lines 1020-1021, 1060-1061, 1254-1255, 1265-1266, 1278-1279, 1400-1401, 1412-1413)
+
+**Limitations**:
+- Only works in SSE mode (not stdio mode)
+- Stdio mode users should use MCP tools directly (already working)
+
+#### Entity Tracking Configuration Fix
+
+**Problem**: UI showed "Entity Tracking: Enabled" but indexing logs showed "Initialized 9 relationship extractors (entity tracking disabled)" instead of expected 12 extractors.
+
+**Root Cause**: `MultiLanguageChunker` was instantiated WITHOUT passing the `enable_entity_tracking` parameter in 3 locations in `mcp_server/tools/index_handlers.py`. Since the parameter defaults to `False` in the constructor, the config setting was ignored.
+
+**Code Flow Analysis**:
+
+1. **Config correctly stored**: `"enable_entity_tracking": true` in `search_config.json` (line 22)
+
+2. **UI correctly read**: Config via `cfg.performance.enable_entity_tracking` (returns `True`)
+
+3. **Bug**: Chunkers created WITHOUT entity tracking parameter:
+   - Line 91 (`_create_indexer_for_model`): Missing parameter
+   - Lines 293-304 (`_index_with_all_models`): Missing parameter
+   - Lines 754-762 (`handle_index_directory` single-model path): Missing parameter
+
+4. **Why `IncrementalIndexer` didn't fix it**:
+   ```python
+   # search/incremental_indexer.py:84-87
+   self.chunker = chunker or MultiLanguageChunker(
+       ...
+       enable_entity_tracking=config.performance.enable_entity_tracking,
+   )
+   ```
+   Logic is `chunker or ...` - since a chunker WAS passed (with wrong settings), the config-aware fallback never executed.
+
+**Solution**: Pass `enable_entity_tracking=config.performance.enable_entity_tracking` to all 3 `MultiLanguageChunker` instantiations:
+
+```python
+# Example fix (line 754-762):
+config = get_config()
+chunker = MultiLanguageChunker(
+    str(directory_path),
+    include_dirs,
+    exclude_dirs,
+    enable_entity_tracking=config.performance.enable_entity_tracking,
+)
+```
+
+**Impact**: Entity tracking config now properly applied, indexing logs correctly show:
+```
+Initialized 12 relationship extractors (foundation + core + data models + entity tracking)
+```
+
+**Files Modified**: `mcp_server/tools/index_handlers.py:91-94, 296-304, 754-762`
+
+**Verification**: User confirmed fix working with re-index showing 12 extractors
 
 ### Bug Fixes
 
