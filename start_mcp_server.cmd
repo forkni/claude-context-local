@@ -1016,6 +1016,9 @@ if defined SEARCH_MODE (
         echo [ERROR] Failed to save configuration
         set "CLAUDE_SEARCH_MODE=!SEARCH_MODE!"
         echo [INFO] Set as environment variable for this session only
+    ) else (
+        REM Notify running MCP server to reload config
+        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
     )
 ) else (
     echo [ERROR] Invalid choice
@@ -1053,6 +1056,9 @@ if errorlevel 1 (
     set "CLAUDE_BM25_WEIGHT=%bm25_weight%"
     set "CLAUDE_DENSE_WEIGHT=%dense_weight%"
     echo [INFO] Set as environment variables for this session only
+) else (
+    REM Notify running MCP server to reload config
+    .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
 )
 pause
 goto search_config_menu
@@ -1244,6 +1250,9 @@ if "!reranker_choice!"=="1" (
     .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.enabled = True; mgr.save_config(cfg); print('[OK] Neural reranker enabled')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
+    ) else (
+        REM Notify running MCP server to reload config
+        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
     )
 )
 if "!reranker_choice!"=="2" (
@@ -1252,6 +1261,9 @@ if "!reranker_choice!"=="2" (
     .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.enabled = False; mgr.save_config(cfg); print('[OK] Neural reranker disabled')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
+    ) else (
+        REM Notify running MCP server to reload config
+        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
     )
 )
 if "!reranker_choice!"=="3" (
@@ -1262,6 +1274,9 @@ if "!reranker_choice!"=="3" (
         .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.top_k_candidates = int('!top_k!'); mgr.save_config(cfg); print('[OK] Top-K set to !top_k!')" 2>nul
         if errorlevel 1 (
             echo [ERROR] Failed to save configuration
+        ) else (
+            REM Notify running MCP server to reload config
+            .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
         )
     )
 )
@@ -1391,6 +1406,8 @@ if "!entity_choice!"=="1" (
         echo [ERROR] Failed to save configuration
     ) else (
         echo [INFO] Re-index project to apply changes
+        REM Notify running MCP server to reload config
+        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
     )
 )
 if "!entity_choice!"=="2" (
@@ -1401,6 +1418,8 @@ if "!entity_choice!"=="2" (
         echo [ERROR] Failed to save configuration
     ) else (
         echo [INFO] Re-index project to apply changes
+        REM Notify running MCP server to reload config
+        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
     )
 )
 

@@ -13,6 +13,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.3] - 2026-01-02
+
+### Added
+
+- **HTTP Config Sync for UI Operations** - Real-time config synchronization between UI and running MCP server
+  - New `/reload_config` HTTP endpoint for SSE mode - reloads `search_config.json` without restart
+  - New `/switch_project` HTTP endpoint for SSE mode - switches active project in running server
+  - New `tools/notify_server.py` helper for HTTP notifications to running server
+  - UI batch script now calls notifier after all config changes (search mode, weights, entity tracking, reranker)
+  - `tools/switch_project_helper.py` tries HTTP first, falls back to direct call if server not running
+  - Server logs all UI operations with `[HTTP CONFIG]` and `[HTTP SWITCH]` prefixes
+  - Resolves UI ↔ MCP server state disconnect and missing server logs for UI operations
+  - Files: `mcp_server/server.py`, `tools/notify_server.py`, `tools/switch_project_helper.py`, `start_mcp_server.cmd`
+
+### Fixed
+
+- **Entity Tracking Configuration** - Fixed `enable_entity_tracking` config not being applied during indexing
+  - `MultiLanguageChunker` now receives `enable_entity_tracking` parameter from config in all 3 instantiation paths
+  - Resolves UI showing "Entity Tracking: Enabled" while indexing logs showed "entity tracking disabled" (9 vs 12 extractors)
+  - Root cause: Parameter defaulted to `False` in constructor, config setting was ignored
+  - Files: `mcp_server/tools/index_handlers.py:91-94, 296-304, 754-762`
+
+- **Multi-Model State Management** - Fixed `state.current_model_key` not being set after multi-model indexing
+  - After `_index_with_all_models()` completes, `state.current_model_key` is now properly set to the restored config default model
+  - Resolves issue where `handle_get_index_status()` returned 0 chunks after successful indexing
+  - Root cause: Model key mismatch between indexing path and status query path
+  - File: `mcp_server/tools/index_handlers.py:374-379`
+
+- **Manual Test Discovery** - Renamed helper functions to prevent pytest discovery
+  - Renamed 4 functions in `tests/manual/test_sse_cancellation.py` from `test_*` to `_simulate_*`
+  - Prevents pytest from discovering manual testing helpers as unit tests
+  - Resolves 4 fixture errors in GitHub Actions CI
+  - File: `tests/manual/test_sse_cancellation.py:31-58, 71-106`
+
+---
+
 ## [0.7.2] - 2026-01-01
 
 ### Added

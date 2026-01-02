@@ -2,6 +2,9 @@
 """
 Project Switcher Helper
 CLI wrapper for batch files to switch between indexed projects.
+
+Tries to notify running MCP server via HTTP first (SSE mode),
+then falls back to direct call if server is not running.
 """
 
 import argparse
@@ -13,6 +16,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from mcp_server.tool_handlers import handle_switch_project
+
+try:
+    import requests
+
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
 
 
 def main():
@@ -47,7 +57,35 @@ def main():
         print("[INFO] Switching project...")
         print()
 
-        result = asyncio.run(handle_switch_project({"project_path": str(project_path)}))
+        # Try HTTP endpoint first (for running SSE server)
+        http_success = False
+        if REQUESTS_AVAILABLE:
+            try:
+                print("[INFO] Checking for running MCP server (SSE mode)...")
+                response = requests.post(
+                    "http://localhost:8765/switch_project",
+                    json={"project_path": str(project_path)},
+                    timeout=5,
+                )
+                if response.status_code == 200:
+                    result = response.json()
+                    http_success = True
+                    print("[OK] Notified running MCP server via HTTP")
+                    print()
+            except requests.exceptions.ConnectionError:
+                print("[INFO] MCP server not running in SSE mode")
+                print("[INFO] Using direct switch (will apply on server start)")
+                print()
+            except Exception as e:
+                print(f"[WARN] HTTP notification failed: {e}")
+                print("[INFO] Using direct switch instead")
+                print()
+
+        # Fallback to direct call if HTTP failed or not available
+        if not http_success:
+            result = asyncio.run(
+                handle_switch_project({"project_path": str(project_path)})
+            )
 
         # Display results
         print()
