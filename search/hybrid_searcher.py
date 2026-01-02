@@ -3,6 +3,7 @@
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -111,37 +112,15 @@ class HybridSearcher:
             self._logger.error(f"[INIT] Failed to create BM25Index: {e}")
             raise
 
-        # Try to load existing BM25 index
-        self._logger.info(f"[INIT] BM25 storage path: {self.storage_dir / 'bm25'}")
-        bm25_loaded = self.bm25_index.load()
-        if bm25_loaded:
-            self._logger.info(
-                f"[INIT] Loaded existing BM25 index with {self.bm25_index.size} documents"
-            )
-        else:
-            self._logger.info("[INIT] No existing BM25 index found, starting fresh")
-            # Log what files we're looking for
-            bm25_dir = self.storage_dir / "bm25"
-            self._logger.debug(f"[INIT] BM25 directory exists: {bm25_dir.exists()}")
-            if bm25_dir.exists():
-                files = list(bm25_dir.iterdir())
-                self._logger.debug(
-                    f"[INIT] BM25 files found: {[f.name for f in files]}"
-                )
-
         # Dense index uses the main storage directory where existing indices are stored
         self._logger.info(f"[INIT] Initializing dense index at: {self.storage_dir}")
         self.dense_index = CodeIndexManager(
             str(self.storage_dir), project_id=project_id, config=config
         )
-        # Dense index loads automatically in its __init__
-        dense_count = self.dense_index.index.ntotal if self.dense_index.index else 0
-        if dense_count > 0:
-            self._logger.info(
-                f"[INIT] Loaded existing dense index with {dense_count} vectors"
-            )
-        else:
-            self._logger.info("[INIT] No existing dense index found, starting fresh")
+
+        # Load both indices in parallel for faster startup
+        self._logger.info(f"[INIT] BM25 storage path: {self.storage_dir / 'bm25'}")
+        bm25_loaded, dense_count = self._load_indices_parallel()
 
         # Log final initialization status
         total_bm25 = self.bm25_index.size
@@ -209,6 +188,64 @@ class HybridSearcher:
 
         # Dimension validation (safety check)
         self._validate_dimensions()
+
+    def _load_bm25_index(self) -> bool:
+        """Load BM25 index and return success status.
+
+        Returns:
+            bool: True if index was loaded, False if starting fresh
+        """
+        bm25_loaded = self.bm25_index.load()
+        if bm25_loaded:
+            self._logger.info(
+                f"[INIT] Loaded existing BM25 index with {self.bm25_index.size} documents"
+            )
+        else:
+            self._logger.info("[INIT] No existing BM25 index found, starting fresh")
+            # Log what files we're looking for
+            bm25_dir = self.storage_dir / "bm25"
+            self._logger.debug(f"[INIT] BM25 directory exists: {bm25_dir.exists()}")
+            if bm25_dir.exists():
+                files = list(bm25_dir.iterdir())
+                self._logger.debug(
+                    f"[INIT] BM25 files found: {[f.name for f in files]}"
+                )
+        return bm25_loaded
+
+    def _load_dense_index(self) -> int:
+        """Load dense index and return vector count.
+
+        Returns:
+            int: Number of vectors in the loaded index, 0 if starting fresh
+        """
+        # Dense index loads automatically in its __init__
+        dense_count = self.dense_index.index.ntotal if self.dense_index.index else 0
+        if dense_count > 0:
+            self._logger.info(
+                f"[INIT] Loaded existing dense index with {dense_count} vectors"
+            )
+        else:
+            self._logger.info("[INIT] No existing dense index found, starting fresh")
+        return dense_count
+
+    def _load_indices_parallel(self) -> tuple[bool, int]:
+        """Load BM25 and dense indices in parallel using ThreadPoolExecutor.
+
+        Returns:
+            tuple: (bm25_loaded: bool, dense_count: int)
+        """
+        self._logger.info("[INIT] Loading indices in parallel...")
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            # Submit both load operations
+            bm25_future = executor.submit(self._load_bm25_index)
+            dense_future = executor.submit(self._load_dense_index)
+
+            # Wait for both to complete and get results
+            bm25_loaded = bm25_future.result()
+            dense_count = dense_future.result()
+
+        self._logger.info("[INIT] Parallel index loading complete")
+        return bm25_loaded, dense_count
 
     def __enter__(self):
         return self

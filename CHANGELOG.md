@@ -27,6 +27,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Resolves UI ↔ MCP server state disconnect and missing server logs for UI operations
   - Files: `mcp_server/server.py`, `tools/notify_server.py`, `tools/switch_project_helper.py`, `start_mcp_server.cmd`
 
+- **Server Startup Optimizations** - 100-400ms faster startup, 5-10s faster first search
+  - Phase 1: Defer VRAM tier detection (50-200ms savings) - commit f3991cb
+    - Moved VRAM detection from `initialize_server_state()` to first `get_embedder()` call
+    - Lazy detection in `ModelPoolManager` with tier caching
+    - Files: `mcp_server/resource_manager.py`, `mcp_server/model_pool_manager.py`
+  - Phase 2: Enable SSE pre-warming by default (5-10s first-search savings) - commit 476895f
+    - Changed `MCP_PRELOAD_MODEL` default from `"false"` to `"true"` for SSE mode
+    - Embedding model pre-loads during server startup
+    - Environment variable override available
+    - Files: `mcp_server/server.py`
+  - Phase 3: Parallel index loading (50-100ms savings) - commit b40eee1
+    - BM25 and dense indices load concurrently using `ThreadPoolExecutor`
+    - New `_load_indices_parallel()` method in `HybridSearcher`
+    - Files: `search/hybrid_searcher.py`
+  - Test coverage: 16 unit tests (100% pass rate)
+    - `tests/unit/test_vram_lazy_detection.py` (3 tests)
+    - `tests/unit/test_sse_prewarm_default.py` (8 tests)
+    - `tests/unit/test_parallel_index_loading.py` (5 tests)
+
 ### Fixed
 
 - **Entity Tracking Configuration** - Fixed `enable_entity_tracking` config not being applied during indexing
