@@ -470,7 +470,8 @@ if __name__ == "__main__":
                     initialize_server_state()
 
                     # Optional: Pre-load embedding model (SSE-specific feature)
-                    if os.getenv("MCP_PRELOAD_MODEL", "false").lower() in (
+                    # Default: true for SSE mode (long-running servers benefit from pre-warming)
+                    if os.getenv("MCP_PRELOAD_MODEL", "true").lower() in (
                         "true",
                         "1",
                         "yes",
