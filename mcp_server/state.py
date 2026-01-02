@@ -157,7 +157,20 @@ class ApplicationState:
         self.embedders[model_key] = embedder
 
     def clear_embedders(self) -> None:
-        """Clear all cached embedder instances."""
+        """Clear all cached embedder instances and release GPU memory."""
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        # Call cleanup on each embedder to release GPU memory
+        for model_key, embedder in self.embedders.items():
+            if hasattr(embedder, "cleanup"):
+                try:
+                    logger.info(f"[CLEANUP] Releasing embedder: {model_key}")
+                    embedder.cleanup()
+                except Exception as e:
+                    logger.warning(f"[CLEANUP] Failed to cleanup {model_key}: {e}")
+
         self.embedders = {}
 
     def reset_search_components(self) -> None:
