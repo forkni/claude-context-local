@@ -142,6 +142,56 @@ Initialized 12 relationship extractors (foundation + core + data models + entity
 
 **Verification**: User confirmed fix working with re-index showing 12 extractors
 
+#### Server Startup Optimizations
+
+**3-phase optimization for faster startup and first search**
+
+**Phase 1: Defer VRAM Tier Detection** (50-200ms savings)
+
+- **Problem**: `VRAMTierManager.detect_tier()` called during server startup via `initialize_server_state()`
+- **Solution**: Moved VRAM detection to first model load
+- **Implementation**:
+  - Removed from `resource_manager.py:180-196` (startup path)
+  - Added lazy detection in `model_pool_manager.py:get_embedder()` on first call
+  - Tier result cached for subsequent calls
+- **Files**: `mcp_server/resource_manager.py`, `mcp_server/model_pool_manager.py`
+- **Tests**: `tests/unit/test_vram_lazy_detection.py` (3 tests)
+
+**Phase 2: Enable SSE Pre-warming by Default** (5-10s first-search savings)
+
+- **Problem**: First search in SSE mode took 5-10s for model loading
+- **Solution**: Pre-load embedding model during SSE server startup
+- **Implementation**:
+  - Changed `MCP_PRELOAD_MODEL` default from `"false"` to `"true"` (line 474)
+  - Pre-load logic executes during `app_lifespan()` startup
+  - Environment variable override: `set MCP_PRELOAD_MODEL=false` to disable
+  - stdio mode unchanged (remains lazy)
+- **Files**: `mcp_server/server.py:472-487`
+- **Tests**: `tests/unit/test_sse_prewarm_default.py` (8 tests)
+
+**Phase 3: Parallel Index Loading** (50-100ms savings)
+
+- **Problem**: BM25 and dense indices loaded sequentially
+- **Solution**: Concurrent loading using `ThreadPoolExecutor`
+- **Implementation**:
+  - New `_load_indices_parallel()` method in `HybridSearcher`
+  - Uses `ThreadPoolExecutor(max_workers=2)` for concurrent I/O
+  - Helper methods: `_load_bm25_index()`, `_load_dense_index()`
+- **Files**: `search/hybrid_searcher.py:231-248`
+- **Tests**: `tests/unit/test_parallel_index_loading.py` (5 tests)
+
+**Total Impact**:
+
+- Startup: 100-300ms faster (VRAM defer + parallel loading)
+- First search (SSE): 5-10s faster (model pre-loaded)
+- Test coverage: 16 unit tests (100% pass rate)
+
+**Commits**:
+
+- `f3991cb` - Phase 1: Defer VRAM detection
+- `476895f` - Phase 2: SSE pre-warming default
+- `b40eee1` - Phase 3: Parallel index loading
+
 ### Bug Fixes
 
 #### Multi-Model State Management
