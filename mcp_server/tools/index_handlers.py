@@ -88,7 +88,10 @@ def _create_indexer_for_model(
         tuple: (indexer, embedder, chunker)
     """
     config = get_config()
-    chunker = MultiLanguageChunker(directory_path)
+    chunker = MultiLanguageChunker(
+        directory_path,
+        enable_entity_tracking=config.performance.enable_entity_tracking,
+    )
     embedder = get_embedder(model_key)
 
     if config.search_mode.enable_hybrid:
@@ -289,14 +292,19 @@ def _index_with_all_models(
             index_dir = project_dir / "index"
             index_dir.mkdir(exist_ok=True)
 
+            # Load config for chunker initialization
+            config = get_config()
+
             # Initialize components for this model
             chunker = MultiLanguageChunker(
-                str(directory_path), include_dirs, exclude_dirs
+                str(directory_path),
+                include_dirs,
+                exclude_dirs,
+                enable_entity_tracking=config.performance.enable_entity_tracking,
             )
             embedder = get_embedder(model_key)
 
             # Create fresh indexer instance directly (bypass global cache)
-            config = get_config()
             if config.search_mode.enable_hybrid:
                 project_id = project_dir.name.rsplit("_", 1)[0]
                 indexer = HybridSearcher(
@@ -362,6 +370,13 @@ def _index_with_all_models(
         state = get_state()
         state.reset_search_components()
         logger.info(f"Restored original model: {original_model}")
+
+        # Set current_model_key for subsequent operations
+        # (same pattern used in model_pool_manager.py:151-155)
+        for key, name in MODEL_POOL_CONFIG.items():
+            if name == original_model:
+                state.current_model_key = key
+                break
 
     return results
 
@@ -742,12 +757,18 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
         index_dir = project_dir / "index"
         index_dir.mkdir(exist_ok=True)
 
+        # Load config for chunker initialization
+        config = get_config()
+
         # Initialize components using cached getter functions
-        chunker = MultiLanguageChunker(str(directory_path), include_dirs, exclude_dirs)
+        chunker = MultiLanguageChunker(
+            str(directory_path),
+            include_dirs,
+            exclude_dirs,
+            enable_entity_tracking=config.performance.enable_entity_tracking,
+        )
         embedder = get_embedder()
         searcher_instance = get_searcher(str(directory_path))
-
-        config = get_config()
         indexer = (
             searcher_instance
             if config.search_mode.enable_hybrid

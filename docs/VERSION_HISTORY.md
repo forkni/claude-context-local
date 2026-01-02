@@ -2,14 +2,90 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-01-01)
+## Current Status: All Features Operational (2026-01-02)
 
-- **Version**: 0.7.2
+- **Version**: 0.7.3
 - **Status**: Production-ready
-- **Test Coverage**: 1,054+ unit tests + integration tests (100% pass rate)
+- **Test Coverage**: 1,249+ unit tests + integration tests (100% pass rate)
 - **Index Quality**: 109 active files, 1,199 chunks (site-packages excluded, BGE-M3 1024d, ~24 MB)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent Features**: SSE Transport Protection, 6-Layer Indexing Protection, Test Suite Optimization, Unit Tests
+- **Recent Features**: Multi-Model State Management Fix, Manual Test Discovery Fix
+
+---
+
+## v0.7.3 - GitHub Actions CI Fixes (2026-01-02)
+
+### Status: PRODUCTION-READY ✅
+
+**Patch release fixing GitHub Actions test failures and multi-model state management**
+
+### Highlights
+
+- **Multi-Model State Management Fix** - Resolved 0 chunks issue after multi-model indexing
+- **Manual Test Discovery Fix** - Prevented pytest from discovering manual test helpers
+- **Test Suite**: 1,249 tests passing (was 86 passed, 1 failed, 4 errors)
+
+### Bug Fixes
+
+#### Multi-Model State Management
+
+**Problem**: After multi-model indexing with `_index_with_all_models()`, `handle_get_index_status()` returned 0 chunks even though indexing succeeded.
+
+**Root Cause**: Model key mismatch between indexing and status query:
+
+1. During indexing: `_index_with_all_models()` indexed all 3 models (qwen3, bge_m3, coderankembed)
+2. After indexing: `state.reset_search_components()` was called but `state.current_model_key` remained `None`
+3. During status query: `handle_get_index_status()` called `get_index_manager(model_key=None)`
+4. Result: Used config default model's storage path, which may not match where indexing wrote `stats.json`
+5. Outcome: `get_stats()` returned `total_chunks: 0` because `stats.json` not found at that path
+
+**Solution**: Set `state.current_model_key` after multi-model indexing completes:
+
+```python
+# Set current_model_key for subsequent operations
+# (same pattern used in model_pool_manager.py:151-155)
+for key, name in MODEL_POOL_CONFIG.items():
+    if name == original_model:
+        state.current_model_key = key
+        break
+```
+
+**Impact**: `test_delete_project_full_workflow` now passes, status queries work correctly after multi-model indexing
+
+**File Modified**: `mcp_server/tools/index_handlers.py:374-379`
+
+#### Manual Test Discovery
+
+**Problem**: Pytest discovered 4 functions in `tests/manual/test_sse_cancellation.py` as tests, causing fixture errors:
+
+- `test_cancelled_error_handler(arguments)` - ❌ fixture 'arguments' not found
+- `test_broken_resource_handler(arguments)` - ❌ fixture 'arguments' not found
+- `test_closed_resource_handler(arguments)` - ❌ fixture 'arguments' not found
+- `test_normal_exception_handler(arguments)` - ❌ fixture 'arguments' not found
+
+**Root Cause**: Functions named `test_*` are discovered by pytest due to `pytest.ini` setting `python_functions = test_*`. These are not pytest tests - they are helper functions decorated with `@error_handler("Test operation")` for manual SSE error simulation. The actual entry point is `run_tests()` for manual execution.
+
+**Solution**: Renamed functions to not start with `test_` prefix:
+
+- `test_cancelled_error_handler` → `_simulate_cancelled_error`
+- `test_broken_resource_handler` → `_simulate_broken_resource`
+- `test_closed_resource_handler` → `_simulate_closed_resource`
+- `test_normal_exception_handler` → `_simulate_normal_exception`
+
+Updated all calls in `run_tests()` function to use new names.
+
+**Impact**: Pytest now collects 0 items from this file (no longer discovered as tests), GitHub Actions CI passes
+
+**File Modified**: `tests/manual/test_sse_cancellation.py:31-58, 71-106`
+
+### Technical Details
+
+**Commit History**:
+1. `fix: resolve multi-model state management and manual test discovery issues` (2026-01-02)
+
+**Test Results**:
+- Before: 86 passed, 1 failed, 4 errors
+- After: 1,249 passed ✅
 
 ---
 
