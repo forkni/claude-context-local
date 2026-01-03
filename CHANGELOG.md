@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Applied same pattern to `NeuralReranker.cleanup()` for consistency
   - Files: `embeddings/embedder.py:794-807`, `search/neural_reranker.py:131-141`
 
+- **Removed Broken Performance Tools Menu** - Removed non-functional menu option
+  - Removed "Performance Tools" menu (former option 4) with two broken features
+  - Memory Usage Report had undefined `gpu_name` variable bug
+  - Auto-Tune Search called non-existent `tools\auto_tune_search.py` (archived)
+  - Removed 73 lines of broken code from launcher
+  - File: `start_mcp_server.cmd`
+
 ### Added
 
 - **Neural Reranker Feature Visibility** - Added Neural Reranking to key documentation

@@ -49,7 +49,7 @@ if "%~1"=="" (
     echo   2. Installation ^& Setup
     echo   3. Search Configuration
     echo   4. Project Management
-    echo   5. Advanced Options
+    echo   5. Developer Options
     echo   6. Help ^& Documentation
     echo   M. Quick Model Switch ^(General / Code-specific / Multi-model^)
     echo   F. Configure Output Format
@@ -431,7 +431,7 @@ goto project_management_menu
 
 :advanced_menu
 echo.
-echo === Advanced Options ===
+echo === Developer Options ===
 echo.
 echo   1. Start Server in Debug Mode
 echo   2. Run Unit Tests
