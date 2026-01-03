@@ -94,36 +94,58 @@ Test-ConfigField "Server has 'type' field" `
     -Condition ($null -ne $Server.type) `
     -ErrorMessage "Missing 'type' field (should be 'stdio')"
 
-# Test 6: Server type is 'stdio'
-Test-ConfigField "Server type is 'stdio'" `
-    -Condition ($Server.type -eq "stdio") `
-    -ErrorMessage "Expected type='stdio', got '$($Server.type)'"
+# Test 6: Server type is valid (stdio or sse)
+$validTypes = @("stdio", "sse")
+$isValidType = $validTypes -contains $Server.type
+Test-ConfigField "Server type is valid (stdio or sse)" `
+    -Condition $isValidType `
+    -ErrorMessage "Expected type='stdio' or 'sse', got '$($Server.type)'"
 
-# Test 7: Server has 'command' field
-Test-ConfigField "Server has 'command' field" `
-    -Condition ($null -ne $Server.command) `
-    -ErrorMessage "Missing 'command' field"
+# Transport-specific validation
+if ($Server.type -eq "stdio") {
+    # Test 7a: STDIO - Server has 'command' field
+    Test-ConfigField "Server has 'command' field (stdio mode)" `
+        -Condition ($null -ne $Server.command) `
+        -ErrorMessage "Missing 'command' field for stdio transport"
 
-# Test 8: Command path exists
-if ($Server.command) {
-    $commandExists = Test-Path $Server.command
-    Test-ConfigField "Command path exists" `
-        -Condition $commandExists `
-        -ErrorMessage "Path not found: $($Server.command)"
+    # Test 8a: STDIO - Command path exists
+    if ($Server.command) {
+        $commandExists = Test-Path $Server.command
+        Test-ConfigField "Command path exists" `
+            -Condition $commandExists `
+            -ErrorMessage "Path not found: $($Server.command)"
+    }
+
+    # Test 9a: STDIO - Server has 'args' field (CRITICAL)
+    $hasArgs = $null -ne $Server.args
+    Test-ConfigField "Server has 'args' field (stdio mode)" `
+        -Condition $hasArgs `
+        -ErrorMessage "Missing 'args' field - this can cause connection failures!"
+
+    # Test 10a: STDIO - Args is an array (if present)
+    if ($hasArgs) {
+        $argsIsArray = $Server.args -is [Array]
+        Test-ConfigField "Args field is an array" `
+            -Condition $argsIsArray `
+            -ErrorMessage "Args must be an array, got type: $($Server.args.GetType().Name)"
+    }
 }
+elseif ($Server.type -eq "sse") {
+    # Test 7b: SSE - Server has 'url' field
+    Test-ConfigField "Server has 'url' field (sse mode)" `
+        -Condition ($null -ne $Server.url) `
+        -ErrorMessage "Missing 'url' field for SSE transport"
 
-# Test 9: Server has 'args' field (CRITICAL)
-$hasArgs = $null -ne $Server.args
-Test-ConfigField "Server has 'args' field" `
-    -Condition $hasArgs `
-    -ErrorMessage "Missing 'args' field - this can cause connection failures!"
+    # Test 8b: SSE - URL is valid format
+    if ($Server.url) {
+        $urlIsValid = $Server.url -match "^https?://.+:\d+(/.*)?$"
+        Test-ConfigField "URL is valid format" `
+            -Condition $urlIsValid `
+            -ErrorMessage "Invalid URL format: $($Server.url) (expected http://host:port or https://host:port)"
+    }
 
-# Test 10: Args is an array (if present)
-if ($hasArgs) {
-    $argsIsArray = $Server.args -is [Array]
-    Test-ConfigField "Args field is an array" `
-        -Condition $argsIsArray `
-        -ErrorMessage "Args must be an array, got type: $($Server.args.GetType().Name)"
+    # SSE mode doesn't require 'args' field
+    Write-Host "[INFO] SSE mode - 'command' and 'args' fields not required" -ForegroundColor Gray
 }
 
 # Test 11: Server has 'env' field (CRITICAL)
@@ -140,14 +162,27 @@ if ($hasEnv) {
         -ErrorMessage "Env must be an object, got type: $($Server.env.GetType().Name)"
 }
 
-# Test 13: PYTHONPATH is set in env
+# Test 13: PYTHONPATH validation (optional for SSE)
 if ($hasEnv) {
     $hasPythonPath = $null -ne $Server.env.PYTHONPATH
-    Test-ConfigField "PYTHONPATH is set in env" `
-        -Condition $hasPythonPath `
-        -ErrorMessage "PYTHONPATH not found in env - module imports may fail"
 
-    # Test 14: PYTHONPATH directory exists
+    if ($Server.type -eq "stdio") {
+        # PYTHONPATH required for stdio mode
+        Test-ConfigField "PYTHONPATH is set in env (stdio mode)" `
+            -Condition $hasPythonPath `
+            -ErrorMessage "PYTHONPATH not found in env - module imports may fail"
+    }
+    elseif ($Server.type -eq "sse") {
+        # PYTHONPATH optional for SSE mode (server manages its own environment)
+        if ($hasPythonPath) {
+            Write-Host "[INFO] PYTHONPATH set in env (optional for SSE mode)" -ForegroundColor Gray
+        }
+        else {
+            Write-Host "[INFO] PYTHONPATH not set (optional for SSE mode - server manages environment)" -ForegroundColor Gray
+        }
+    }
+
+    # Test 14: PYTHONPATH directory exists (if set)
     if ($hasPythonPath) {
         $pythonPathExists = Test-Path $Server.env.PYTHONPATH
         Test-ConfigField "PYTHONPATH directory exists" `
@@ -156,12 +191,22 @@ if ($hasEnv) {
     }
 }
 
-# Test 15: PYTHONUNBUFFERED is set in env
+# Test 15: PYTHONUNBUFFERED validation (optional for SSE)
 if ($hasEnv) {
     $hasUnbuffered = $null -ne $Server.env.PYTHONUNBUFFERED
-    Test-ConfigField "PYTHONUNBUFFERED is set in env" `
-        -Condition $hasUnbuffered `
-        -ErrorMessage "PYTHONUNBUFFERED not set - output buffering may cause delays"
+
+    if ($Server.type -eq "stdio") {
+        # PYTHONUNBUFFERED recommended for stdio mode
+        Test-ConfigField "PYTHONUNBUFFERED is set in env (stdio mode)" `
+            -Condition $hasUnbuffered `
+            -ErrorMessage "PYTHONUNBUFFERED not set - output buffering may cause delays"
+    }
+    elseif ($Server.type -eq "sse") {
+        # PYTHONUNBUFFERED not needed for SSE mode
+        if ($hasUnbuffered) {
+            Write-Host "[INFO] PYTHONUNBUFFERED set (not needed for SSE mode)" -ForegroundColor Gray
+        }
+    }
 }
 
 # Summary
@@ -172,13 +217,22 @@ Write-Host "Passed: $TestsPassed" -ForegroundColor Green
 Write-Host "Failed: $TestsFailed" -ForegroundColor $(if ($TestsFailed -gt 0) { "Red" } else { "Green" })
 Write-Host ""
 
-# Critical field validation
+# Critical field validation (transport-specific)
 $criticalFailures = @()
-if (-not $hasArgs) {
-    $criticalFailures += "Missing 'args' field"
+
+# For stdio mode: args is critical
+if ($Server.type -eq "stdio" -and -not $hasArgs) {
+    $criticalFailures += "Missing 'args' field (required for stdio mode)"
 }
-if (-not $hasEnv) {
-    $criticalFailures += "Missing 'env' field"
+
+# For SSE mode: url is critical
+if ($Server.type -eq "sse" -and -not $Server.url) {
+    $criticalFailures += "Missing 'url' field (required for SSE mode)"
+}
+
+# env field recommended but not critical for SSE
+if ($Server.type -eq "stdio" -and -not $hasEnv) {
+    $criticalFailures += "Missing 'env' field (required for stdio mode)"
 }
 
 if ($criticalFailures.Count -gt 0) {
