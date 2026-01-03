@@ -40,5 +40,11 @@
   "reranker_top_k_candidates": 50,
   "reranker_min_vram_gb": 2.0,
   "reranker_batch_size": 16,
-  "output_format": "ultra"
+  "output_format": "ultra",
+  "enable_greedy_merge": true,
+  "min_chunk_tokens": 50,
+  "max_merged_tokens": 1000,
+  "enable_large_node_splitting": false,
+  "max_chunk_lines": 100,
+  "token_estimation": "tiktoken"
 }

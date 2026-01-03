@@ -274,10 +274,26 @@ class TreeSitterChunker:
                 return []
 
         try:
-            return chunker.chunk_code(content)
+            # Get config for merge settings
+            config = self._get_chunking_config()
+            return chunker.chunk_code(content, config=config)
         except Exception as e:
             logger.warning(f"Tree-sitter parsing failed for {file_path}: {e}")
             return []
+
+    def _get_chunking_config(self):
+        """Get ChunkingConfig from ServiceLocator.
+
+        Returns:
+            ChunkingConfig if available, None otherwise
+        """
+        try:
+            from mcp_server.services import ServiceLocator
+
+            config = ServiceLocator.instance().get_config()
+            return config.chunking if config else None
+        except (ImportError, AttributeError):
+            return None
 
     def is_supported(self, file_path: str) -> bool:
         """Check if a file type is supported.

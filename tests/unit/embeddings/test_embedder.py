@@ -817,3 +817,283 @@ class TestCheckVramStatus:
         assert usage_pct == 0.0
         assert should_warn is False
         assert should_abort is False
+
+
+class TestContextExtraction:
+    """Test context extraction features (v0.8.0+) for import and class signatures."""
+
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_extract_import_context_basic(
+        self, mock_sentence_transformer, mock_model_loader_st, tmp_path
+    ):
+        """Test basic import context extraction."""
+        from embeddings.embedder import CodeEmbedder
+
+        # Create test file with imports
+        test_file = tmp_path / "test.py"
+        test_file.write_text(
+            "import os\nimport sys\nfrom pathlib import Path\n\ndef func():\n    pass\n"
+        )
+
+        # Create embedder (model not needed for this test)
+        embedder = CodeEmbedder.__new__(CodeEmbedder)
+        embedder._logger = MagicMock()
+
+        # Extract imports
+        import_context = embedder._extract_import_context(
+            str(test_file), max_imports=10
+        )
+
+        assert "import os" in import_context
+        assert "import sys" in import_context
+        assert "from pathlib import Path" in import_context
+        assert "def func()" not in import_context  # Should stop at first non-import
+
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_extract_import_context_with_max_limit(
+        self, mock_sentence_transformer, mock_model_loader_st, tmp_path
+    ):
+        """Test import extraction with max_imports limit."""
+        from embeddings.embedder import CodeEmbedder
+
+        # Create test file with many imports
+        test_file = tmp_path / "test.py"
+        imports = "\n".join([f"import module{i}" for i in range(20)])
+        test_file.write_text(f"{imports}\n\ndef func():\n    pass\n")
+
+        embedder = CodeEmbedder.__new__(CodeEmbedder)
+        embedder._logger = MagicMock()
+
+        # Extract only 5 imports
+        import_context = embedder._extract_import_context(str(test_file), max_imports=5)
+
+        lines = import_context.split("\n")
+        assert len(lines) == 5
+        assert all("import module" in line for line in lines)
+
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_extract_import_context_no_imports(
+        self, mock_sentence_transformer, mock_model_loader_st, tmp_path
+    ):
+        """Test extraction from file with no imports."""
+        from embeddings.embedder import CodeEmbedder
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("def func():\n    pass\n")
+
+        embedder = CodeEmbedder.__new__(CodeEmbedder)
+        embedder._logger = MagicMock()
+
+        import_context = embedder._extract_import_context(
+            str(test_file), max_imports=10
+        )
+
+        assert import_context == ""  # Should return empty string
+
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_get_class_signature_for_method(
+        self, mock_sentence_transformer, mock_model_loader_st, tmp_path
+    ):
+        """Test class signature extraction for method chunks."""
+        from embeddings.embedder import CodeEmbedder
+
+        # Create test file with class
+        test_file = tmp_path / "test.py"
+        test_file.write_text(
+            'class MyClass:\n    """MyClass docstring."""\n\n    def method(self):\n        pass\n'
+        )
+
+        embedder = CodeEmbedder.__new__(CodeEmbedder)
+        embedder._logger = MagicMock()
+
+        # Create mock chunk for a method
+        mock_chunk = CodeChunk(
+            file_path=str(test_file),
+            relative_path="test.py",
+            folder_structure=".",
+            chunk_type="method",
+            start_line=4,
+            end_line=5,
+            name="method",
+            parent_name="MyClass",
+            docstring="",
+            content="def method(self):\n    pass",
+            decorators=[],
+            imports=[],
+            complexity_score=1.0,
+            tags=[],
+            calls=[],
+            relationships=[],
+        )
+
+        class_signature = embedder._get_class_signature(mock_chunk, max_lines=5)
+
+        assert "class MyClass:" in class_signature
+        assert "MyClass docstring" in class_signature
+
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_get_class_signature_non_method(
+        self, mock_sentence_transformer, mock_model_loader_st
+    ):
+        """Test that class signature is not extracted for non-method chunks."""
+        from embeddings.embedder import CodeEmbedder
+
+        embedder = CodeEmbedder.__new__(CodeEmbedder)
+        embedder._logger = MagicMock()
+
+        # Create mock chunk for a function (not a method)
+        mock_chunk = CodeChunk(
+            file_path="/fake/path.py",
+            relative_path="path.py",
+            folder_structure=".",
+            chunk_type="function",  # Not "method"
+            start_line=1,
+            end_line=2,
+            name="func",
+            parent_name=None,
+            docstring="",
+            content="def func():\n    pass",
+            decorators=[],
+            imports=[],
+            complexity_score=1.0,
+            tags=[],
+            calls=[],
+            relationships=[],
+        )
+
+        class_signature = embedder._get_class_signature(mock_chunk)
+
+        assert class_signature == ""  # Should return empty for non-methods
+
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    @patch("embeddings.embedder._get_config_via_service_locator")
+    def test_create_embedding_content_with_context(
+        self,
+        mock_config_getter,
+        mock_sentence_transformer,
+        mock_model_loader_st,
+        tmp_path,
+    ):
+        """Test that create_embedding_content includes import and class context."""
+        from embeddings.embedder import CodeEmbedder
+        from search.config import EmbeddingConfig, SearchConfig
+
+        # Create test file
+        test_file = tmp_path / "test.py"
+        test_file.write_text(
+            "import os\nfrom pathlib import Path\n\nclass TestClass:\n    "
+            '"""Test class."""\n\n    def method(self):\n        return True\n'
+        )
+
+        # Mock configuration with context enabled
+        mock_config = SearchConfig(
+            embedding=EmbeddingConfig(
+                enable_import_context=True,
+                enable_class_context=True,
+                max_import_lines=10,
+                max_class_signature_lines=5,
+            )
+        )
+        mock_config_getter.return_value = mock_config
+
+        # Create embedder
+        embedder = CodeEmbedder.__new__(CodeEmbedder)
+        embedder._logger = MagicMock()
+
+        # Create mock chunk for a method
+        mock_chunk = CodeChunk(
+            file_path=str(test_file),
+            relative_path="test.py",
+            folder_structure=".",
+            chunk_type="method",
+            start_line=7,
+            end_line=8,
+            name="method",
+            parent_name="TestClass",
+            docstring="",
+            content="def method(self):\n    return True",
+            decorators=[],
+            imports=[],
+            complexity_score=1.0,
+            tags=[],
+            calls=[],
+            relationships=[],
+        )
+
+        embedding_content = embedder.create_embedding_content(mock_chunk)
+
+        # Verify all context is included
+        assert "# Imports:" in embedding_content
+        assert "import os" in embedding_content
+        assert "from pathlib import Path" in embedding_content
+        assert "# Parent class:" in embedding_content
+        assert "class TestClass:" in embedding_content
+        assert "Test class." in embedding_content
+        assert "def method(self):" in embedding_content
+
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    @patch("embeddings.embedder._get_config_via_service_locator")
+    def test_create_embedding_content_context_disabled(
+        self,
+        mock_config_getter,
+        mock_sentence_transformer,
+        mock_model_loader_st,
+        tmp_path,
+    ):
+        """Test that context can be disabled via configuration."""
+        from embeddings.embedder import CodeEmbedder
+        from search.config import EmbeddingConfig, SearchConfig
+
+        # Create test file
+        test_file = tmp_path / "test.py"
+        test_file.write_text(
+            "import os\n\nclass TestClass:\n    def method(self):\n        return True\n"
+        )
+
+        # Mock configuration with context DISABLED
+        mock_config = SearchConfig(
+            embedding=EmbeddingConfig(
+                enable_import_context=False,  # Disabled
+                enable_class_context=False,  # Disabled
+            )
+        )
+        mock_config_getter.return_value = mock_config
+
+        embedder = CodeEmbedder.__new__(CodeEmbedder)
+        embedder._logger = MagicMock()
+
+        mock_chunk = CodeChunk(
+            file_path=str(test_file),
+            relative_path="test.py",
+            folder_structure=".",
+            chunk_type="method",
+            start_line=4,
+            end_line=5,
+            name="method",
+            parent_name="TestClass",
+            docstring="",
+            content="def method(self):\n    return True",
+            decorators=[],
+            imports=[],
+            complexity_score=1.0,
+            tags=[],
+            calls=[],
+            relationships=[],
+        )
+
+        embedding_content = embedder.create_embedding_content(mock_chunk)
+
+        # Verify context is NOT included
+        assert "# Imports:" not in embedding_content
+        assert "import os" not in embedding_content
+        assert "# Parent class:" not in embedding_content
+        assert "class TestClass:" not in embedding_content
+        # But code content should still be present
+        assert "def method(self):" in embedding_content

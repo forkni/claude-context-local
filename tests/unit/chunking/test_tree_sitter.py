@@ -3,10 +3,12 @@
 import tempfile
 from pathlib import Path
 from unittest import TestCase
+from unittest.mock import MagicMock
 
 import pytest
 
 from chunking.tree_sitter import JavaScriptChunker, PythonChunker, TreeSitterChunker
+from search.config import ChunkingConfig
 
 
 class TestPythonChunker(TestCase):
@@ -189,6 +191,7 @@ class TestTreeSitterChunker(TestCase):
     def test_chunk_python_file(self):
         """Test chunking a Python file."""
         import chunking.tree_sitter as tsf
+        from mcp_server.services import ServiceLocator
 
         if "python" not in tsf.AVAILABLE_LANGUAGES:
             self.skipTest("tree-sitter-python not installed")
@@ -203,10 +206,20 @@ class TestClass:
 """
         file_path.write_text(code)
 
-        chunks = self.chunker.chunk_file(str(file_path))
+        # Disable greedy merge for this test to check basic chunking behavior
+        mock_config = MagicMock()
+        mock_config.chunking = ChunkingConfig(enable_greedy_merge=False)
 
-        assert len(chunks) >= 2
-        assert all(c.language == "python" for c in chunks)
+        locator = ServiceLocator.instance()
+        locator.register("config", mock_config)
+
+        try:
+            chunks = self.chunker.chunk_file(str(file_path))
+
+            assert len(chunks) >= 2
+            assert all(c.language == "python" for c in chunks)
+        finally:
+            ServiceLocator.reset()
 
     def test_unsupported_file(self):
         """Test handling of unsupported file types."""

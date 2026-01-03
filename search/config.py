@@ -147,12 +147,18 @@ def resolve_qwen3_variant_for_lookup(project_hash: str, project_name: str) -> st
 
 @dataclass
 class EmbeddingConfig:
-    """Embedding model configuration (4 fields)."""
+    """Embedding model configuration (8 fields)."""
 
     model_name: str = "google/embeddinggemma-300m"
     dimension: int = 768
     batch_size: int = 128  # Dynamic based on model, see MODEL_REGISTRY
     query_cache_size: int = 128  # LRU cache size for query embeddings
+
+    # Context Enhancement Features (v0.8.0+)
+    enable_import_context: bool = True  # Include import statements in embeddings
+    enable_class_context: bool = True  # Include parent class signature for methods
+    max_import_lines: int = 10  # Maximum import lines to extract
+    max_class_signature_lines: int = 5  # Maximum lines for class signature
 
 
 @dataclass
@@ -251,12 +257,29 @@ class OutputConfig:
     )
 
 
+@dataclass
+class ChunkingConfig:
+    """Chunking algorithm settings (6 fields)."""
+
+    # Greedy Sibling Merging (cAST algorithm - EMNLP 2025)
+    enable_greedy_merge: bool = True  # Enable cAST greedy sibling merging
+    min_chunk_tokens: int = 50  # Minimum tokens before considering merge
+    max_merged_tokens: int = 1000  # Maximum tokens for merged chunk
+
+    # Large function splitting (Task 3.4 - placeholder for future implementation)
+    enable_large_node_splitting: bool = False  # Split functions > max_chunk_lines
+    max_chunk_lines: int = 100  # Maximum lines before AST block splitting
+
+    # Token estimation method
+    token_estimation: str = "whitespace"  # "whitespace" (fast) or "tiktoken" (accurate)
+
+
 class SearchConfig:
     """Root configuration with nested sub-configs.
 
     Configuration organization:
-    - Split into 6 focused sub-configs for better organization
-    - embedding, search_mode, performance, multi_hop, routing, reranker, output
+    - Split into 7 focused sub-configs for better organization
+    - embedding, search_mode, performance, multi_hop, routing, reranker, output, chunking
 
     Initialization style (nested configs only):
         config = SearchConfig(embedding=EmbeddingConfig(model_name="..."))
@@ -271,6 +294,7 @@ class SearchConfig:
         routing: Optional[RoutingConfig] = None,
         reranker: Optional[RerankerConfig] = None,
         output: Optional[OutputConfig] = None,
+        chunking: Optional[ChunkingConfig] = None,
     ):
         """Initialize SearchConfig with nested sub-configs.
 
@@ -282,6 +306,7 @@ class SearchConfig:
             routing: RoutingConfig instance (optional, defaults to RoutingConfig())
             reranker: RerankerConfig instance (optional, defaults to RerankerConfig())
             output: OutputConfig instance (optional, defaults to OutputConfig())
+            chunking: ChunkingConfig instance (optional, defaults to ChunkingConfig())
         """
         # Initialize nested configs with defaults
         self.embedding = embedding if embedding is not None else EmbeddingConfig()
@@ -295,6 +320,7 @@ class SearchConfig:
         self.routing = routing if routing is not None else RoutingConfig()
         self.reranker = reranker if reranker is not None else RerankerConfig()
         self.output = output if output is not None else OutputConfig()
+        self.chunking = chunking if chunking is not None else ChunkingConfig()
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to flat dictionary for JSON serialization.
@@ -352,6 +378,13 @@ class SearchConfig:
             "reranker_batch_size": self.reranker.batch_size,
             # OutputConfig fields
             "output_format": self.output.format,
+            # ChunkingConfig fields
+            "enable_greedy_merge": self.chunking.enable_greedy_merge,
+            "min_chunk_tokens": self.chunking.min_chunk_tokens,
+            "max_merged_tokens": self.chunking.max_merged_tokens,
+            "enable_large_node_splitting": self.chunking.enable_large_node_splitting,
+            "max_chunk_lines": self.chunking.max_chunk_lines,
+            "token_estimation": self.chunking.token_estimation,
         }
 
     @classmethod
@@ -384,6 +417,11 @@ class SearchConfig:
             dimension=data.get("model_dimension", 768),
             batch_size=data.get("embedding_batch_size", 128),
             query_cache_size=data.get("query_cache_size", 128),
+            # Context enhancement (v0.8.0+)
+            enable_import_context=data.get("enable_import_context", True),
+            enable_class_context=data.get("enable_class_context", True),
+            max_import_lines=data.get("max_import_lines", 10),
+            max_class_signature_lines=data.get("max_class_signature_lines", 5),
         )
 
         search_mode = SearchModeConfig(
@@ -442,6 +480,15 @@ class SearchConfig:
             format=data.get("output_format", "compact"),
         )
 
+        chunking = ChunkingConfig(
+            enable_greedy_merge=data.get("enable_greedy_merge", True),
+            min_chunk_tokens=data.get("min_chunk_tokens", 50),
+            max_merged_tokens=data.get("max_merged_tokens", 1000),
+            enable_large_node_splitting=data.get("enable_large_node_splitting", False),
+            max_chunk_lines=data.get("max_chunk_lines", 100),
+            token_estimation=data.get("token_estimation", "whitespace"),
+        )
+
         return cls(
             embedding=embedding,
             search_mode=search_mode,
@@ -450,6 +497,7 @@ class SearchConfig:
             routing=routing,
             reranker=reranker,
             output=output,
+            chunking=chunking,
         )
 
 

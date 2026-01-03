@@ -347,11 +347,13 @@ echo   4. Select Embedding Model       - Choose model by VRAM ^(BGE-M3/Qwen3^)
 echo   5. Configure Parallel Search    - Run BM25+Dense in parallel ^(faster^)
 echo   6. Configure Neural Reranker    - Cross-encoder reranking ^(+5-15%% quality^)
 echo   7. Configure Entity Tracking    - Track symbols across searches
-echo   8. Reset to Defaults            - Restore optimal default settings
+echo   8. Configure Context Enhancement - Import/class context in embeddings ^(+1-5%% quality^)
+echo   A. Configure Chunking Settings  - Greedy merge, token thresholds ^(+4.3 Recall@5^)
+echo   9. Reset to Defaults            - Restore optimal default settings
 echo   0. Back to Main Menu
 echo.
 set "search_choice="
-set /p search_choice="Select option (0-8): "
+set /p search_choice="Select option (0-9, A): "
 
 REM Handle empty input gracefully
 if not defined search_choice (
@@ -370,10 +372,12 @@ if "!search_choice!"=="4" goto select_embedding_model
 if "!search_choice!"=="5" goto configure_parallel_search
 if "!search_choice!"=="6" goto configure_reranker
 if "!search_choice!"=="7" goto configure_entity_tracking
-if "!search_choice!"=="8" goto reset_config
+if "!search_choice!"=="8" goto configure_context_enhancement
+if /i "!search_choice!"=="A" goto configure_chunking
+if "!search_choice!"=="9" goto reset_config
 if "!search_choice!"=="0" goto menu_restart
 
-echo [ERROR] Invalid choice. Please select 0-8.
+echo [ERROR] Invalid choice. Please select 0-9 or A.
 pause
 cls
 goto search_config_menu
@@ -952,7 +956,7 @@ REM Search Configuration Functions
 echo.
 echo [INFO] Current Search Configuration:
 if exist ".venv\Scripts\python.exe" (
-    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); print(f'  Embedding Model: {model_short} ({dim}d, {vram})'); print('  Multi-Model Routing:', 'Enabled' if config.routing.multi_model_enabled else 'Disabled'); print('  Search Mode:', config.search_mode.default_mode); print('  Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('  BM25 Weight:', config.search_mode.bm25_weight); print('  Dense Weight:', config.search_mode.dense_weight); print('  Prefer GPU:', config.performance.prefer_gpu); print('  Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'  Reranker Top-K: {config.reranker.top_k_candidates}'); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('  Output Format:', config.output.format)"
+    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); print(f'  Embedding Model: {model_short} ({dim}d, {vram})'); print('  Multi-Model Routing:', 'Enabled' if config.routing.multi_model_enabled else 'Disabled'); print('  Search Mode:', config.search_mode.default_mode); print('  Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('  BM25 Weight:', config.search_mode.bm25_weight); print('  Dense Weight:', config.search_mode.dense_weight); print('  Prefer GPU:', config.performance.prefer_gpu); print('  Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'  Reranker Top-K: {config.reranker.top_k_candidates}'); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('  Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('  Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print('  Greedy Merge:', 'Enabled' if config.chunking.enable_greedy_merge else 'Disabled'); print(f'  Min Chunk Tokens: {config.chunking.min_chunk_tokens}'); print(f'  Max Merged Tokens: {config.chunking.max_merged_tokens}'); print('  Output Format:', config.output.format)"
     if "!ERRORLEVEL!" neq "0" (
         echo Error loading configuration
         echo Using defaults: hybrid mode, BM25=0.4, Dense=0.6
@@ -1405,6 +1409,233 @@ if "!entity_choice!"=="2" (
 
 if not "!entity_choice!"=="1" if not "!entity_choice!"=="2" (
     echo [ERROR] Invalid choice. Please select 0-2.
+)
+pause
+goto search_config_menu
+
+:configure_context_enhancement
+echo.
+echo === Configure Context Enhancement ===
+echo.
+echo Context Enhancement includes import statements and class signatures in embeddings.
+echo This improves retrieval quality by 1-5%% for method and class searches.
+echo.
+echo Features:
+echo   - Import Context: Include import statements from file header
+echo   - Class Context: Include parent class signature for methods
+echo.
+echo Current Settings:
+.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Import Context:', 'Enabled' if cfg.embedding.enable_import_context else 'Disabled'); print('  Class Context:', 'Enabled' if cfg.embedding.enable_class_context else 'Disabled'); print('  Max Import Lines:', cfg.embedding.max_import_lines); print('  Max Class Signature Lines:', cfg.embedding.max_class_signature_lines)" 2>nul
+echo.
+echo   1. Enable Import Context
+echo   2. Disable Import Context
+echo   3. Enable Class Context
+echo   4. Disable Class Context
+echo   5. Set Max Import Lines
+echo   6. Set Max Class Signature Lines
+echo   0. Back to Search Configuration
+echo.
+set "ctx_choice="
+set /p ctx_choice="Select option (0-6): "
+
+if not defined ctx_choice goto search_config_menu
+if "!ctx_choice!"=="" goto search_config_menu
+if "!ctx_choice!"=="0" goto search_config_menu
+
+if "!ctx_choice!"=="1" (
+    echo.
+    echo [INFO] Enabling import context...
+    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.embedding.enable_import_context = True; mgr.save_config(cfg); print('[OK] Import context enabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Re-index project to apply changes
+        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+    )
+)
+if "!ctx_choice!"=="2" (
+    echo.
+    echo [INFO] Disabling import context...
+    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.embedding.enable_import_context = False; mgr.save_config(cfg); print('[OK] Import context disabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Re-index project to apply changes
+        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+    )
+)
+if "!ctx_choice!"=="3" (
+    echo.
+    echo [INFO] Enabling class context...
+    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.embedding.enable_class_context = True; mgr.save_config(cfg); print('[OK] Class context enabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Re-index project to apply changes
+        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+    )
+)
+if "!ctx_choice!"=="4" (
+    echo.
+    echo [INFO] Disabling class context...
+    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.embedding.enable_class_context = False; mgr.save_config(cfg); print('[OK] Class context disabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Re-index project to apply changes
+        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+    )
+)
+if "!ctx_choice!"=="5" (
+    echo.
+    set "max_lines="
+    set /p max_lines="Enter max import lines (1-50, current default: 10): "
+    if defined max_lines (
+        echo [INFO] Setting max import lines to: !max_lines!
+        .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.embedding.max_import_lines = int('!max_lines!'); mgr.save_config(cfg); print('[OK] Max import lines updated to !max_lines!')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Failed to save configuration. Please enter a valid number.
+        ) else (
+            echo [INFO] Re-index project to apply changes
+            .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+)
+if "!ctx_choice!"=="6" (
+    echo.
+    set "max_sig_lines="
+    set /p max_sig_lines="Enter max class signature lines (1-20, current default: 5): "
+    if defined max_sig_lines (
+        echo [INFO] Setting max class signature lines to: !max_sig_lines!
+        .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.embedding.max_class_signature_lines = int('!max_sig_lines!'); mgr.save_config(cfg); print('[OK] Max class signature lines updated to !max_sig_lines!')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Failed to save configuration. Please enter a valid number.
+        ) else (
+            echo [INFO] Re-index project to apply changes
+            .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+)
+
+if not "!ctx_choice!"=="1" if not "!ctx_choice!"=="2" if not "!ctx_choice!"=="3" if not "!ctx_choice!"=="4" if not "!ctx_choice!"=="5" if not "!ctx_choice!"=="6" (
+    echo [ERROR] Invalid choice. Please select 0-6.
+)
+pause
+goto search_config_menu
+
+:configure_chunking
+echo.
+echo === Configure Chunking Settings ===
+echo.
+echo Chunking settings control how code is split into semantic units.
+echo Greedy Merge (cAST algorithm) combines small chunks for better retrieval.
+echo.
+echo Benefits:
+echo   - +4.3 Recall@5 improvement (EMNLP 2025 academic validation)
+echo   - 20-30%% fewer chunks (merged getters/setters)
+echo   - Denser embeddings with more context per vector
+echo.
+echo Current Settings:
+.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Greedy Merge:', 'Enabled' if cfg.chunking.enable_greedy_merge else 'Disabled'); print('  Min Chunk Tokens:', cfg.chunking.min_chunk_tokens); print('  Max Merged Tokens:', cfg.chunking.max_merged_tokens); print('  Token Estimation:', cfg.chunking.token_estimation)" 2>nul
+echo.
+echo   1. Enable Greedy Merge        - Merge small chunks (recommended)
+echo   2. Disable Greedy Merge       - Keep all chunks separate
+echo   3. Set Min Chunk Tokens       - Minimum size before merging (default: 50)
+echo   4. Set Max Merged Tokens      - Maximum merged chunk size (default: 1000)
+echo   5. Set Token Estimation       - whitespace (fast) or tiktoken (accurate)
+echo   0. Back to Search Configuration
+echo.
+set "chunk_choice="
+set /p chunk_choice="Select option (0-5): "
+
+if not defined chunk_choice goto search_config_menu
+if "!chunk_choice!"=="" goto search_config_menu
+if "!chunk_choice!"=="0" goto search_config_menu
+
+if "!chunk_choice!"=="1" (
+    echo.
+    echo [INFO] Enabling greedy merge...
+    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_greedy_merge = True; mgr.save_config(cfg); print('[OK] Greedy merge enabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Re-index project to apply changes
+        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+    )
+)
+if "!chunk_choice!"=="2" (
+    echo.
+    echo [INFO] Disabling greedy merge...
+    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_greedy_merge = False; mgr.save_config(cfg); print('[OK] Greedy merge disabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Re-index project to apply changes
+        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+    )
+)
+if "!chunk_choice!"=="3" (
+    echo.
+    set "min_tokens="
+    set /p min_tokens="Enter min chunk tokens (10-500, current default: 50): "
+    if defined min_tokens (
+        echo [INFO] Setting min chunk tokens to: !min_tokens!
+        .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.min_chunk_tokens = int('!min_tokens!'); mgr.save_config(cfg); print('[OK] Min chunk tokens updated to !min_tokens!')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Failed to save configuration. Please enter a valid number.
+        ) else (
+            echo [INFO] Re-index project to apply changes
+            .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+)
+if "!chunk_choice!"=="4" (
+    echo.
+    set "max_tokens="
+    set /p max_tokens="Enter max merged tokens (500-3000, current default: 1000): "
+    if defined max_tokens (
+        echo [INFO] Setting max merged tokens to: !max_tokens!
+        .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.max_merged_tokens = int('!max_tokens!'); mgr.save_config(cfg); print('[OK] Max merged tokens updated to !max_tokens!')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Failed to save configuration. Please enter a valid number.
+        ) else (
+            echo [INFO] Re-index project to apply changes
+            .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+)
+if "!chunk_choice!"=="5" (
+    echo.
+    echo Select token estimation method:
+    echo   1. whitespace - Fast, approximate (recommended)
+    echo   2. tiktoken   - Accurate, slower (requires tiktoken package)
+    echo.
+    set "token_method="
+    set /p token_method="Enter choice (1-2): "
+    if "!token_method!"=="1" (
+        echo [INFO] Setting token estimation to whitespace...
+        .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.token_estimation = 'whitespace'; mgr.save_config(cfg); print('[OK] Token estimation set to whitespace')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Failed to save configuration
+        ) else (
+            echo [INFO] Re-index project to apply changes
+            .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+    if "!token_method!"=="2" (
+        echo [INFO] Setting token estimation to tiktoken...
+        .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.token_estimation = 'tiktoken'; mgr.save_config(cfg); print('[OK] Token estimation set to tiktoken')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Failed to save configuration
+        ) else (
+            echo [INFO] Re-index project to apply changes
+            .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+)
+
+if not "!chunk_choice!"=="1" if not "!chunk_choice!"=="2" if not "!chunk_choice!"=="3" if not "!chunk_choice!"=="4" if not "!chunk_choice!"=="5" (
+    echo [ERROR] Invalid choice. Please select 0-5.
 )
 pause
 goto search_config_menu
