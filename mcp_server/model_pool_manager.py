@@ -284,3 +284,13 @@ def get_embedder(model_key: Optional[str] = None) -> CodeEmbedder:
     Backward-compatible wrapper for ModelPoolManager.get_embedder().
     """
     return get_model_pool_manager().get_embedder(model_key)
+
+
+def reset_pool_manager() -> None:
+    """Reset the module-level ModelPoolManager singleton.
+
+    Call this during cleanup to ensure all model references are released.
+    This forces a fresh ModelPoolManager instance to be created on next access.
+    """
+    global _model_pool_manager
+    _model_pool_manager = None

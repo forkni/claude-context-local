@@ -795,16 +795,40 @@ class CodeEmbedder:
         """Clean up model from memory to free GPU/CPU resources."""
         if self._model is not None:
             try:
-                # Delete model directly (PyTorch 2.x handles CUDA cleanup)
-                del self._model
-                self._model = None
-                # Force garbage collection before clearing CUDA cache
                 import gc
 
+                # Step 1: Move model to CPU (frees VRAM immediately)
+                if torch is not None and torch.cuda.is_available():
+                    self._logger.info("Moving model from GPU to CPU...")
+                    self._model = self._model.cpu()
+                    torch.cuda.synchronize()  # Wait for GPU operations
+                    torch.cuda.empty_cache()
+                    self._logger.info("VRAM freed")
+
+                # Step 2: Delete model reference (allows RAM to be freed)
+                del self._model
+                self._model = None
+                self._logger.info("Model reference deleted")
+
+                # Step 3: Clear query cache (numpy arrays)
+                if hasattr(self, "_query_cache"):
+                    self._query_cache.clear()
+                    self._logger.info("Query cache cleared")
+
+                # Step 4: Clear model loader reference
+                if hasattr(self, "_model_loader"):
+                    self._model_loader = None
+                    self._logger.info("Model loader reference released")
+
+                # Step 5: Force garbage collection (frees RAM)
                 gc.collect()
+                self._logger.info("RAM freed via garbage collection")
+
+                # Step 6: Final CUDA cache clear
                 if torch is not None and torch.cuda.is_available():
                     torch.cuda.empty_cache()
-                self._logger.info("Model cleaned up and memory freed")
+
+                self._logger.info("Model cleanup complete - VRAM and RAM freed")
             except Exception as e:
                 self._logger.warning(f"Error during model cleanup: {e}")
 
