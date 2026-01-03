@@ -65,7 +65,7 @@ class User:
 """
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def session_embedder():
     """Session-scoped embedder to avoid reloading model for each test."""
     embedder = CodeEmbedder()
@@ -73,9 +73,10 @@ def session_embedder():
     embedder.cleanup()
 
 
-@pytest.fixture
-def temp_project(tmp_path):
+@pytest.fixture(scope="class")
+def temp_project(tmp_path_factory):
     """Create temporary project with sample code."""
+    tmp_path = tmp_path_factory.mktemp("test_phase3")
     project_dir = tmp_path / "test_phase3"
     project_dir.mkdir()
 
@@ -86,7 +87,7 @@ def temp_project(tmp_path):
     return project_dir
 
 
-@pytest.fixture
+@pytest.fixture(scope="class")
 def indexed_project(temp_project, session_embedder):
     """Index the temporary project with graph storage."""
     # Create chunker and index manager
@@ -517,9 +518,10 @@ class ServiceClass:
 """
 
 
-@pytest.fixture
-def temp_project_priority2(tmp_path):
+@pytest.fixture(scope="class")
+def temp_project_priority2(tmp_path_factory):
     """Create temporary project with Priority 2 relationship code."""
+    tmp_path = tmp_path_factory.mktemp("test_priority2")
     project_dir = tmp_path / "test_priority2"
     project_dir.mkdir()
 
@@ -530,7 +532,7 @@ def temp_project_priority2(tmp_path):
     return project_dir
 
 
-@pytest.fixture
+@pytest.fixture(scope="class")
 def indexed_project_priority2(temp_project_priority2, session_embedder):
     """Index the temporary project with Priority 2 relationships."""
     # Create chunker and index manager

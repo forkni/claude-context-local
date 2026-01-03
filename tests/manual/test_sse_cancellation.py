@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 # Test 1: Verify CancelledError propagation
 @error_handler("Test operation")
-async def test_cancelled_error_handler(arguments):
+async def _simulate_cancelled_error(arguments):
     """Test that CancelledError is propagated, not caught."""
     await asyncio.sleep(0.1)
     raise asyncio.CancelledError()
@@ -36,7 +36,7 @@ async def test_cancelled_error_handler(arguments):
 
 # Test 2: Verify BrokenResourceError handling
 @error_handler("Test operation")
-async def test_broken_resource_handler(arguments):
+async def _simulate_broken_resource(arguments):
     """Test that BrokenResourceError is caught gracefully."""
     await asyncio.sleep(0.1)
     raise anyio.BrokenResourceError()
@@ -44,7 +44,7 @@ async def test_broken_resource_handler(arguments):
 
 # Test 3: Verify ClosedResourceError handling
 @error_handler("Test operation")
-async def test_closed_resource_handler(arguments):
+async def _simulate_closed_resource(arguments):
     """Test that ClosedResourceError is caught gracefully."""
     await asyncio.sleep(0.1)
     raise anyio.ClosedResourceError()
@@ -52,7 +52,7 @@ async def test_closed_resource_handler(arguments):
 
 # Test 4: Verify normal exceptions still work
 @error_handler("Test operation")
-async def test_normal_exception_handler(arguments):
+async def _simulate_normal_exception(arguments):
     """Test that normal exceptions are handled as before."""
     await asyncio.sleep(0.1)
     raise ValueError("Test error")
@@ -68,7 +68,7 @@ async def run_tests():
     # Test 1: CancelledError should propagate
     print("[TEST 1] CancelledError propagation...")
     try:
-        await test_cancelled_error_handler({})
+        await _simulate_cancelled_error({})
         print("  [FAIL] CancelledError was caught (should propagate)")
         return False
     except asyncio.CancelledError:
@@ -77,7 +77,7 @@ async def run_tests():
 
     # Test 2: BrokenResourceError should be caught
     print("[TEST 2] BrokenResourceError handling...")
-    result = await test_broken_resource_handler({})
+    result = await _simulate_broken_resource({})
     if (
         result.get("error") == "Client disconnected"
         and result.get("status") == "cancelled"
@@ -90,7 +90,7 @@ async def run_tests():
 
     # Test 3: ClosedResourceError should be caught
     print("[TEST 3] ClosedResourceError handling...")
-    result = await test_closed_resource_handler({})
+    result = await _simulate_closed_resource({})
     if (
         result.get("error") == "Client disconnected"
         and result.get("status") == "cancelled"
@@ -103,7 +103,7 @@ async def run_tests():
 
     # Test 4: Normal exceptions should still work
     print("[TEST 4] Normal exception handling...")
-    result = await test_normal_exception_handler({})
+    result = await _simulate_normal_exception({})
     if "error" in result and "Test error" in result["error"]:
         print("  [PASS] Normal exceptions handled as before")
     else:

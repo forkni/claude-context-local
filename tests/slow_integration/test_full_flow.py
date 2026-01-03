@@ -19,15 +19,59 @@ from search.indexer import CodeIndexManager
 class TestFullSearchFlow:
     """Integration tests using real Python project files."""
 
-    @pytest.fixture
+    @pytest.fixture(scope="class")
     def test_project_path(self):
         """Path to the test Python project."""
         return Path(__file__).parent.parent / "test_data" / "python_project"
 
-    @pytest.fixture
+    @pytest.fixture(scope="class")
     def multi_lang_project_path(self):
         """Path to the multi-language test project."""
         return Path(__file__).parent.parent / "test_data" / "multi_language"
+
+    @pytest.fixture(scope="class")
+    def indexed_project_data(self, test_project_path, tmp_path_factory):
+        """Create indexed project data once for the whole class."""
+        # Create storage directory using tmp_path_factory for class scope
+        tmp_path = tmp_path_factory.mktemp("full_flow_test")
+        storage_dir = tmp_path / "test_storage"
+        storage_dir.mkdir(parents=True)
+        (storage_dir / "models").mkdir()
+        (storage_dir / "index").mkdir()
+        (storage_dir / "cache").mkdir()
+
+        # Chunk the project once
+        chunker = MultiLanguageChunker(str(test_project_path))
+        all_chunks = []
+        for py_file in test_project_path.rglob("*.py"):
+            chunks = chunker.chunk_file(str(py_file))
+            all_chunks.extend(chunks)
+
+        # Create embeddings once
+        embeddings = create_test_embeddings(all_chunks)
+
+        # Create and populate index once
+        index_manager = CodeIndexManager(str(storage_dir))
+        index_manager.create_index(768, "flat")
+        index_manager.add_embeddings(embeddings)
+
+        yield {
+            "chunks": all_chunks,
+            "embeddings": embeddings,
+            "index_manager": index_manager,
+            "storage_dir": storage_dir,
+            "chunker": chunker,
+        }
+
+    @pytest.fixture
+    def mock_storage_dir(self, tmp_path):
+        """Create a temporary storage directory for tests needing isolation."""
+        storage_dir = tmp_path / "test_storage"
+        storage_dir.mkdir(parents=True)
+        (storage_dir / "models").mkdir()
+        (storage_dir / "index").mkdir()
+        (storage_dir / "cache").mkdir()
+        return storage_dir
 
     def test_real_project_chunking(self, test_project_path):
         """Test chunking the real Python test project."""
@@ -69,29 +113,11 @@ class TestFullSearchFlow:
             len(found_names) >= 3
         ), f"Should find expected classes/functions, found {found_names}"
 
-    def test_real_project_indexing_and_search(
-        self, test_project_path, mock_storage_dir
-    ):
+    def test_real_project_indexing_and_search(self, indexed_project_data):
         """Test indexing and searching the real Python project."""
-        # Step 1: Chunk the project
-        chunker = MultiLanguageChunker(str(test_project_path))
-        all_chunks = []
-
-        for py_file in test_project_path.rglob("*.py"):
-            chunks = chunker.chunk_file(str(py_file))
-            all_chunks.extend(chunks)
-
-        # Limit chunks for test performance
-        test_chunks = all_chunks[:20]
-        assert len(test_chunks) > 10, "Should have enough chunks for testing"
-
-        # Step 2: Create embeddings
-        embeddings = create_test_embeddings(test_chunks)
-
-        # Step 3: Index the embeddings
-        index_manager = CodeIndexManager(str(mock_storage_dir))
-        index_manager.create_index(768, "flat")
-        index_manager.add_embeddings(embeddings)
+        # Use pre-indexed data from fixture
+        index_manager = indexed_project_data["index_manager"]
+        embeddings = indexed_project_data["embeddings"]
 
         assert len(index_manager.chunk_ids) == len(embeddings)
 
@@ -128,21 +154,10 @@ class TestFullSearchFlow:
                 "relative_path", ""
             )
 
-    def test_search_by_functionality(self, test_project_path, mock_storage_dir):
+    def test_search_by_functionality(self, indexed_project_data):
         """Test searching for specific functionality in the real project."""
-        # Index the project
-        chunker = MultiLanguageChunker(str(test_project_path))
-        all_chunks = []
-
-        for py_file in test_project_path.rglob("*.py"):
-            chunks = chunker.chunk_file(str(py_file))
-            all_chunks.extend(chunks)
-
-        embeddings = create_test_embeddings(all_chunks)
-
-        index_manager = CodeIndexManager(str(mock_storage_dir))
-        index_manager.create_index(768, "flat")
-        index_manager.add_embeddings(embeddings)
+        # Use pre-indexed data from fixture
+        index_manager = indexed_project_data["index_manager"]
 
         # Search for authentication-related code
         auth_results = index_manager.search(
@@ -330,26 +345,18 @@ class TestFullSearchFlow:
             len(found_validators) >= 1
         ), f"Should find at least one validation function, found: {found_validators}"
 
-    def test_project_statistics_and_insights(self, test_project_path, mock_storage_dir):
+    def test_project_statistics_and_insights(self, indexed_project_data):
         """Test getting insights about the indexed project."""
-        chunker = MultiLanguageChunker(str(test_project_path))
-        all_chunks = []
-
-        for py_file in test_project_path.rglob("*.py"):
-            chunks = chunker.chunk_file(str(py_file))
-            all_chunks.extend(chunks)
-
-        embeddings = create_test_embeddings(all_chunks)
-
-        index_manager = CodeIndexManager(str(mock_storage_dir))
-        index_manager.create_index(768, "flat")
-        index_manager.add_embeddings(embeddings)
+        # Use pre-indexed data from fixture
+        index_manager = indexed_project_data["index_manager"]
+        embeddings = indexed_project_data["embeddings"]
+        storage_dir = indexed_project_data["storage_dir"]
 
         # Save and check statistics
         index_manager.save_index()
 
         # Verify stats file exists and contains expected data
-        stats_file = mock_storage_dir / "stats.json"
+        stats_file = storage_dir / "stats.json"
         assert stats_file.exists()
 
         with open(stats_file) as f:
@@ -453,20 +460,11 @@ class TestFullSearchFlow:
             # Should have more chunks now
             assert len(index_manager.chunk_ids) > initial_count
 
-    def test_search_with_context(self, test_project_path, mock_storage_dir):
+    def test_search_with_context(self, indexed_project_data):
         """Test enhanced search with context and relationships."""
-        chunker = MultiLanguageChunker(str(test_project_path))
-        all_chunks = []
-
-        for py_file in test_project_path.rglob("*.py"):
-            chunks = chunker.chunk_file(str(py_file))
-            all_chunks.extend(chunks)
-
-        embeddings = create_test_embeddings(all_chunks)
-
-        index_manager = CodeIndexManager(str(mock_storage_dir))
-        index_manager.create_index(768, "flat")
-        index_manager.add_embeddings(embeddings)
+        # Use pre-indexed data from fixture
+        index_manager = indexed_project_data["index_manager"]
+        embeddings = indexed_project_data["embeddings"]
 
         # Test search with similarity threshold
         np.ones(768, dtype=np.float32) * 0.5
@@ -581,20 +579,10 @@ class TestFullSearchFlow:
             new_manager.create_index(768, "flat")
             assert new_manager.index is not None
 
-    def test_search_modes_and_filtering(self, test_project_path, mock_storage_dir):
+    def test_search_modes_and_filtering(self, indexed_project_data):
         """Test different search modes and advanced filtering."""
-        chunker = MultiLanguageChunker(str(test_project_path))
-        all_chunks = []
-
-        for py_file in test_project_path.rglob("*.py"):
-            chunks = chunker.chunk_file(str(py_file))
-            all_chunks.extend(chunks)
-
-        embeddings = create_test_embeddings(all_chunks)
-
-        index_manager = CodeIndexManager(str(mock_storage_dir))
-        index_manager.create_index(768, "flat")
-        index_manager.add_embeddings(embeddings)
+        # Use pre-indexed data from fixture
+        index_manager = indexed_project_data["index_manager"]
 
         query_embedding = np.ones(768, dtype=np.float32) * 0.5
 

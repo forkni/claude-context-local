@@ -53,27 +53,63 @@ class TestHybridSearchIntegration:
             mock_st.return_value = mock_model
             yield mock_st
 
-    def setup_method(self):
-        """Set up test environment with real components."""
-        self.temp_dir = Path(tempfile.mkdtemp())
-        self.project_dir = self.temp_dir / "test_project"
-        self.storage_dir = self.temp_dir / "storage"
+    @pytest.fixture(scope="class")
+    def indexed_hybrid_environment(self, tmp_path_factory):
+        """Create indexed environment once per class with pre-indexed data."""
+        # Create temp directories using tmp_path_factory for class scope
+        tmp_path = tmp_path_factory.mktemp("hybrid_search_test")
+        project_dir = tmp_path / "test_project"
+        storage_dir = tmp_path / "storage"
 
-        # Create test project structure
-        self.project_dir.mkdir(parents=True)
-        self.storage_dir.mkdir(parents=True)
+        project_dir.mkdir(parents=True)
+        storage_dir.mkdir(parents=True)
 
         # Create test files
-        self.create_test_files()
+        self._create_test_files_in_dir(project_dir)
 
-        # Initialize components
-        self.embedder = None
-        self.chunker = None
-        self.hybrid_searcher = None
-        self.incremental_indexer = None
+        # Initialize components ONCE for the whole class
+        try:
+            embedder = CodeEmbedder()
+            chunker = MultiLanguageChunker(str(project_dir))
+            hybrid_searcher = HybridSearcher(
+                storage_dir=str(storage_dir), bm25_weight=0.4, dense_weight=0.6
+            )
+            incremental_indexer = IncrementalIndexer(
+                indexer=hybrid_searcher,
+                embedder=embedder,
+                chunker=chunker,
+            )
 
-    def create_test_files(self):
-        """Create test Python files for indexing."""
+            # Do initial indexing ONCE
+            result = incremental_indexer.incremental_index(
+                str(project_dir), project_name="test_project", force_full=True
+            )
+
+            # Return environment and components for tests
+            yield {
+                "temp_dir": tmp_path,
+                "project_dir": project_dir,
+                "storage_dir": storage_dir,
+                "embedder": embedder,
+                "chunker": chunker,
+                "hybrid_searcher": hybrid_searcher,
+                "incremental_indexer": incremental_indexer,
+                "indexed": result.success,
+            }
+
+            # Cleanup
+            hybrid_searcher.shutdown()
+            embedder.cleanup()
+
+        except Exception as e:
+            pytest.skip(f"Could not initialize environment: {e}")
+        finally:
+            # Cleanup
+            shutil.rmtree(tmp_path, ignore_errors=True)
+
+    @staticmethod
+    def _create_test_files_in_dir(project_dir):
+        """Create test Python files for indexing in the given directory."""
         test_files = {
             "calculator.py": '''
 def add_numbers(a, b):
@@ -185,51 +221,64 @@ class DatabaseConnection:
         }
 
         for filename, content in test_files.items():
-            file_path = self.project_dir / filename
+            file_path = project_dir / filename
             file_path.write_text(content)
 
-    def initialize_components(self):
+    def initialize_components(self, project_dir, storage_dir):
         """Initialize all components for testing."""
         try:
             # Initialize embedder
-            self.embedder = CodeEmbedder()
+            embedder = CodeEmbedder()
 
             # Initialize chunker
-            self.chunker = MultiLanguageChunker(str(self.project_dir))
+            chunker = MultiLanguageChunker(str(project_dir))
 
             # Initialize hybrid searcher
-            self.hybrid_searcher = HybridSearcher(
-                storage_dir=str(self.storage_dir), bm25_weight=0.4, dense_weight=0.6
+            hybrid_searcher = HybridSearcher(
+                storage_dir=str(storage_dir), bm25_weight=0.4, dense_weight=0.6
             )
 
             # Initialize incremental indexer
             # This should work with HybridSearcher as indexer
-            self.incremental_indexer = IncrementalIndexer(
-                indexer=self.hybrid_searcher,
-                embedder=self.embedder,
-                chunker=self.chunker,
+            incremental_indexer = IncrementalIndexer(
+                indexer=hybrid_searcher,
+                embedder=embedder,
+                chunker=chunker,
             )
+
+            return {
+                "embedder": embedder,
+                "chunker": chunker,
+                "hybrid_searcher": hybrid_searcher,
+                "incremental_indexer": incremental_indexer,
+            }
 
         except Exception as e:
             pytest.skip(f"Could not initialize components: {e}")
 
-    def test_hybrid_searcher_has_add_embeddings_method(self):
+    def test_hybrid_searcher_has_add_embeddings_method(
+        self, indexed_hybrid_environment
+    ):
         """Test that HybridSearcher has add_embeddings method."""
-        self.initialize_components()
+        # Use pre-initialized components from fixture
 
         # This should not fail
         assert hasattr(
-            self.hybrid_searcher, "add_embeddings"
+            indexed_hybrid_environment["hybrid_searcher"], "add_embeddings"
         ), "HybridSearcher missing add_embeddings method required by incremental indexer"
 
-    def test_incremental_indexing_with_hybrid_search(self):
+    def test_incremental_indexing_with_hybrid_search(self, indexed_hybrid_environment):
         """Test that incremental indexing works with hybrid search."""
-        self.initialize_components()
+        # Use pre-initialized components from fixture
 
         # Attempt to index the project
         try:
-            result = self.incremental_indexer.incremental_index(
-                str(self.project_dir), project_name="test_project", force_full=True
+            result = indexed_hybrid_environment[
+                "incremental_indexer"
+            ].incremental_index(
+                str(indexed_hybrid_environment["project_dir"]),
+                project_name="test_project",
+                force_full=True,
             )
 
             assert result.success, f"Indexing failed: {result.error}"
@@ -241,42 +290,46 @@ class DatabaseConnection:
             else:
                 raise
 
-    def test_hybrid_indices_are_populated(self):
+    def test_hybrid_indices_are_populated(self, indexed_hybrid_environment):
         """Test that both BM25 and dense indices are populated after indexing."""
-        self.initialize_components()
+        # Use pre-initialized components from fixture
 
         # Index the project
-        result = self.incremental_indexer.incremental_index(
-            str(self.project_dir), project_name="test_project", force_full=True
+        result = indexed_hybrid_environment["incremental_indexer"].incremental_index(
+            str(indexed_hybrid_environment["project_dir"]),
+            project_name="test_project",
+            force_full=True,
         )
 
         assert result.success, "Indexing must succeed for this test"
 
         # Check that HybridSearcher is ready (both indices populated)
-        assert (
-            self.hybrid_searcher.is_ready
-        ), "HybridSearcher should be ready after indexing (both BM25 and dense indices populated)"
+        assert indexed_hybrid_environment[
+            "hybrid_searcher"
+        ].is_ready, "HybridSearcher should be ready after indexing (both BM25 and dense indices populated)"
 
         # Check BM25 index specifically
-        assert (
-            not self.hybrid_searcher.bm25_index.is_empty
-        ), "BM25 index should not be empty after indexing"
+        assert not indexed_hybrid_environment[
+            "hybrid_searcher"
+        ].bm25_index.is_empty, "BM25 index should not be empty after indexing"
 
         # Check dense index specifically
         assert (
-            self.hybrid_searcher.dense_index.index is not None
+            indexed_hybrid_environment["hybrid_searcher"].dense_index.index is not None
         ), "Dense index should exist after indexing"
         assert (
-            self.hybrid_searcher.dense_index.index.ntotal > 0
+            indexed_hybrid_environment["hybrid_searcher"].dense_index.index.ntotal > 0
         ), "Dense index should contain vectors after indexing"
 
-    def test_hybrid_search_returns_results(self):
+    def test_hybrid_search_returns_results(self, indexed_hybrid_environment):
         """Test that hybrid search returns results from both indices."""
-        self.initialize_components()
+        # Use pre-initialized components from fixture
 
         # Index the project
-        result = self.incremental_indexer.incremental_index(
-            str(self.project_dir), project_name="test_project", force_full=True
+        result = indexed_hybrid_environment["incremental_indexer"].incremental_index(
+            str(indexed_hybrid_environment["project_dir"]),
+            project_name="test_project",
+            force_full=True,
         )
         assert result.success, "Indexing must succeed"
 
@@ -295,7 +348,7 @@ class DatabaseConnection:
         ]
 
         for query in queries_to_test:
-            results = self.hybrid_searcher.search(query, k=5)
+            results = indexed_hybrid_environment["hybrid_searcher"].search(query, k=5)
             assert len(results) > 0, f"No results found for query: '{query}'"
 
             # Check that results have the expected format
@@ -307,13 +360,15 @@ class DatabaseConnection:
                     result.score > 0
                 ), f"Result score should be positive: {result.score}"
 
-    def test_bm25_vs_dense_results_differ(self):
+    def test_bm25_vs_dense_results_differ(self, indexed_hybrid_environment):
         """Test that BM25-only and dense-only searches return different results."""
-        self.initialize_components()
+        # Use pre-initialized components from fixture
 
         # Index the project
-        result = self.incremental_indexer.incremental_index(
-            str(self.project_dir), project_name="test_project", force_full=True
+        result = indexed_hybrid_environment["incremental_indexer"].incremental_index(
+            str(indexed_hybrid_environment["project_dir"]),
+            project_name="test_project",
+            force_full=True,
         )
         assert result.success, "Indexing must succeed"
 
@@ -321,10 +376,14 @@ class DatabaseConnection:
         query = "user authentication"
 
         # Get BM25-only results
-        bm25_results = self.hybrid_searcher._search_bm25(query, k=5, min_score=0.0)
+        bm25_results = indexed_hybrid_environment["hybrid_searcher"]._search_bm25(
+            query, k=5, min_score=0.0
+        )
 
         # Get dense-only results
-        dense_results = self.hybrid_searcher._search_dense(query, k=5, filters=None)
+        dense_results = indexed_hybrid_environment["hybrid_searcher"]._search_dense(
+            query, k=5, filters=None
+        )
 
         # Both should return results
         assert len(bm25_results) > 0, "BM25 search should return results"
@@ -340,24 +399,32 @@ class DatabaseConnection:
             bm25_doc_ids != dense_doc_ids
         ), "BM25 and dense search should return different results for semantic queries"
 
-    def test_hybrid_reranking_combines_results(self):
+    def test_hybrid_reranking_combines_results(self, indexed_hybrid_environment):
         """Test that hybrid reranking properly combines BM25 and dense results."""
-        self.initialize_components()
+        # Use pre-initialized components from fixture
 
         # Index the project
-        result = self.incremental_indexer.incremental_index(
-            str(self.project_dir), project_name="test_project", force_full=True
+        result = indexed_hybrid_environment["incremental_indexer"].incremental_index(
+            str(indexed_hybrid_environment["project_dir"]),
+            project_name="test_project",
+            force_full=True,
         )
         assert result.success, "Indexing must succeed"
 
         query = "calculate sum"
 
         # Get results from both searches
-        bm25_results = self.hybrid_searcher._search_bm25(query, k=10, min_score=0.0)
-        dense_results = self.hybrid_searcher._search_dense(query, k=10, filters=None)
+        bm25_results = indexed_hybrid_environment["hybrid_searcher"]._search_bm25(
+            query, k=10, min_score=0.0
+        )
+        dense_results = indexed_hybrid_environment["hybrid_searcher"]._search_dense(
+            query, k=10, filters=None
+        )
 
         # Get hybrid results
-        hybrid_results = self.hybrid_searcher.search(query, k=5, use_parallel=False)
+        hybrid_results = indexed_hybrid_environment["hybrid_searcher"].search(
+            query, k=5, use_parallel=False
+        )
 
         # Hybrid results should exist
         assert len(hybrid_results) > 0, "Hybrid search should return results"
@@ -373,21 +440,27 @@ class DatabaseConnection:
             or len(hybrid_chunk_ids & dense_chunk_ids) > 0
         ), "Hybrid results should include documents from BM25 or dense searches"
 
-    def test_parallel_vs_sequential_search(self):
+    def test_parallel_vs_sequential_search(self, indexed_hybrid_environment):
         """Test that parallel and sequential search modes work and return similar results."""
-        self.initialize_components()
+        # Use pre-initialized components from fixture
 
         # Index the project
-        result = self.incremental_indexer.incremental_index(
-            str(self.project_dir), project_name="test_project", force_full=True
+        result = indexed_hybrid_environment["incremental_indexer"].incremental_index(
+            str(indexed_hybrid_environment["project_dir"]),
+            project_name="test_project",
+            force_full=True,
         )
         assert result.success, "Indexing must succeed"
 
         query = "database connection"
 
         # Get results with both modes
-        parallel_results = self.hybrid_searcher.search(query, k=5, use_parallel=True)
-        sequential_results = self.hybrid_searcher.search(query, k=5, use_parallel=False)
+        parallel_results = indexed_hybrid_environment["hybrid_searcher"].search(
+            query, k=5, use_parallel=True
+        )
+        sequential_results = indexed_hybrid_environment["hybrid_searcher"].search(
+            query, k=5, use_parallel=False
+        )
 
         # Both should return results
         assert len(parallel_results) > 0, "Parallel search should return results"
@@ -403,22 +476,26 @@ class DatabaseConnection:
             overlap >= len(parallel_results) // 2
         ), "Parallel and sequential search should have significant overlap in results"
 
-    def test_index_persistence(self):
+    def test_index_persistence(self, indexed_hybrid_environment):
         """Test that hybrid indices persist across searcher instances."""
-        self.initialize_components()
+        # Use pre-initialized components from fixture
 
         # Index with first searcher instance
-        result = self.incremental_indexer.incremental_index(
-            str(self.project_dir), project_name="test_project", force_full=True
+        result = indexed_hybrid_environment["incremental_indexer"].incremental_index(
+            str(indexed_hybrid_environment["project_dir"]),
+            project_name="test_project",
+            force_full=True,
         )
         assert result.success, "Initial indexing must succeed"
 
         # Save indices
-        self.hybrid_searcher.save_indices()
+        indexed_hybrid_environment["hybrid_searcher"].save_indices()
 
         # Create new searcher instance
         new_searcher = HybridSearcher(
-            storage_dir=str(self.storage_dir), bm25_weight=0.4, dense_weight=0.6
+            storage_dir=str(indexed_hybrid_environment["storage_dir"]),
+            bm25_weight=0.4,
+            dense_weight=0.6,
         )
 
         # Load indices
@@ -435,18 +512,20 @@ class DatabaseConnection:
         results = new_searcher.search(query, k=3)
         assert len(results) > 0, "Search should work with loaded indices"
 
-    def test_incremental_updates(self):
+    def test_incremental_updates(self, indexed_hybrid_environment):
         """Test that incremental updates work with hybrid search."""
-        self.initialize_components()
+        # Use pre-initialized components from fixture
 
         # Initial indexing
-        result = self.incremental_indexer.incremental_index(
-            str(self.project_dir), project_name="test_project", force_full=True
+        result = indexed_hybrid_environment["incremental_indexer"].incremental_index(
+            str(indexed_hybrid_environment["project_dir"]),
+            project_name="test_project",
+            force_full=True,
         )
         assert result.success, "Initial indexing must succeed"
 
         # Add a new file
-        new_file = self.project_dir / "new_module.py"
+        new_file = indexed_hybrid_environment["project_dir"] / "new_module.py"
         new_file.write_text(
             '''
 def process_data(data_list):
@@ -464,8 +543,12 @@ def validate_item(item):
         )
 
         # Incremental update
-        update_result = self.incremental_indexer.incremental_index(
-            str(self.project_dir), project_name="test_project", force_full=False
+        update_result = indexed_hybrid_environment[
+            "incremental_indexer"
+        ].incremental_index(
+            str(indexed_hybrid_environment["project_dir"]),
+            project_name="test_project",
+            force_full=False,
         )
 
         assert update_result.success, "Incremental update must succeed"
@@ -473,72 +556,88 @@ def validate_item(item):
         assert update_result.chunks_added > 0, "New chunks should be added"
 
         # Verify that new content is searchable
-        results = self.hybrid_searcher.search("process data", k=3)
+        results = indexed_hybrid_environment["hybrid_searcher"].search(
+            "process data", k=3
+        )
         assert len(results) > 0, "New content should be searchable"
 
         # Check that at least one result is from the new file
         new_file_results = [r for r in results if "new_module.py" in r.chunk_id]
         assert len(new_file_results) > 0, "Should find results from new file"
 
-    def test_search_mode_configuration(self):
+    def test_search_mode_configuration(self, indexed_hybrid_environment):
         """Test search mode configuration and switching."""
-        self.initialize_components()
+        # Use pre-initialized components from fixture
 
         # Index the project
-        result = self.incremental_indexer.incremental_index(
-            str(self.project_dir), project_name="test_project", force_full=True
+        result = indexed_hybrid_environment["incremental_indexer"].incremental_index(
+            str(indexed_hybrid_environment["project_dir"]),
+            project_name="test_project",
+            force_full=True,
         )
         assert result.success, "Indexing must succeed"
 
         # Test weight adjustment
-        original_bm25_weight = self.hybrid_searcher.bm25_weight
-        original_dense_weight = self.hybrid_searcher.dense_weight
+        original_bm25_weight = indexed_hybrid_environment["hybrid_searcher"].bm25_weight
+        original_dense_weight = indexed_hybrid_environment[
+            "hybrid_searcher"
+        ].dense_weight
 
         # Change weights
-        self.hybrid_searcher.bm25_weight = 0.8
-        self.hybrid_searcher.dense_weight = 0.2
+        indexed_hybrid_environment["hybrid_searcher"].bm25_weight = 0.8
+        indexed_hybrid_environment["hybrid_searcher"].dense_weight = 0.2
 
         # Search should still work
-        results = self.hybrid_searcher.search("user authentication", k=3)
+        results = indexed_hybrid_environment["hybrid_searcher"].search(
+            "user authentication", k=3
+        )
         assert len(results) > 0, "Search should work with different weights"
 
         # Restore weights
-        self.hybrid_searcher.bm25_weight = original_bm25_weight
-        self.hybrid_searcher.dense_weight = original_dense_weight
+        indexed_hybrid_environment["hybrid_searcher"].bm25_weight = original_bm25_weight
+        indexed_hybrid_environment["hybrid_searcher"].dense_weight = (
+            original_dense_weight
+        )
 
-    def test_error_handling(self):
+    def test_error_handling(self, indexed_hybrid_environment):
         """Test error handling in hybrid search system."""
-        self.initialize_components()
+        # Use pre-initialized components from fixture
 
         # Test search on empty index
-        results = self.hybrid_searcher.search("test query", k=5)
+        results = indexed_hybrid_environment["hybrid_searcher"].search(
+            "test query", k=5
+        )
         assert results == [], "Search on empty index should return empty results"
 
         # Test with invalid query
-        results = self.hybrid_searcher.search("", k=5)
+        results = indexed_hybrid_environment["hybrid_searcher"].search("", k=5)
         assert isinstance(results, list), "Empty query should return list"
 
         # Test with zero k
-        result = self.incremental_indexer.incremental_index(
-            str(self.project_dir), project_name="test_project", force_full=True
+        result = indexed_hybrid_environment["incremental_indexer"].incremental_index(
+            str(indexed_hybrid_environment["project_dir"]),
+            project_name="test_project",
+            force_full=True,
         )
         assert result.success, "Indexing must succeed"
 
-        results = self.hybrid_searcher.search("test", k=0)
+        results = indexed_hybrid_environment["hybrid_searcher"].search("test", k=0)
         assert len(results) == 0, "k=0 should return no results"
 
-    def test_statistics_and_monitoring(self):
+    def test_statistics_and_monitoring(self, indexed_hybrid_environment):
         """Test statistics collection and monitoring features."""
-        self.initialize_components()
+        # Use pre-initialized components from fixture
 
         # Index the project
-        result = self.incremental_indexer.incremental_index(
-            str(self.project_dir), project_name="test_project", force_full=True
+        result = indexed_hybrid_environment["incremental_indexer"].incremental_index(
+            str(indexed_hybrid_environment["project_dir"]),
+            project_name="test_project",
+            force_full=True,
         )
         assert result.success, "Indexing must succeed"
 
         # Get initial stats
-        stats = self.hybrid_searcher.stats
+        stats = indexed_hybrid_environment["hybrid_searcher"].stats
         assert "bm25_stats" in stats, "Stats should include BM25 information"
         assert "dense_stats" in stats, "Stats should include dense information"
         assert "gpu_memory" in stats, "Stats should include GPU memory information"
@@ -546,27 +645,16 @@ def validate_item(item):
         # Perform some searches to generate performance stats
         queries = ["calculate", "user", "database", "API"]
         for query in queries:
-            self.hybrid_searcher.search(query, k=3)
+            indexed_hybrid_environment["hybrid_searcher"].search(query, k=3)
 
         # Get search mode stats
-        search_stats = self.hybrid_searcher.get_search_mode_stats()
+        search_stats = indexed_hybrid_environment[
+            "hybrid_searcher"
+        ].get_search_mode_stats()
         assert search_stats["total_searches"] == len(
             queries
         ), "Should track search count"
         assert "average_times" in search_stats, "Should include timing information"
-
-    def teardown_method(self):
-        """Clean up test environment."""
-        try:
-            if hasattr(self, "hybrid_searcher") and self.hybrid_searcher:
-                self.hybrid_searcher.shutdown()
-        except Exception:
-            pass
-
-        try:
-            shutil.rmtree(self.temp_dir, ignore_errors=True)
-        except Exception:
-            pass
 
 
 @pytest.mark.slow
@@ -578,7 +666,7 @@ class TestHybridSearchConfigIntegration:
         self.temp_dir = Path(tempfile.mkdtemp())
         self.config_file = self.temp_dir / "search_config.json"
 
-    def test_config_file_loading(self):
+    def test_config_file_loading(self, indexed_hybrid_environment):
         """Test loading configuration from file."""
         # Create test config
         config_data = {
@@ -602,7 +690,7 @@ class TestHybridSearchConfigIntegration:
         assert config.search_mode.dense_weight == 0.7
         assert config.performance.use_parallel_search
 
-    def test_hybrid_searcher_uses_config(self):
+    def test_hybrid_searcher_uses_config(self, indexed_hybrid_environment):
         """Test that HybridSearcher respects configuration."""
         # Create config with specific weights
         config_data = {

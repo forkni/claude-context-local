@@ -44,15 +44,16 @@ class TestSemanticSearch:
             mock_st.return_value = mock_model
             yield mock_st
 
-    @pytest.fixture
+    @pytest.fixture(scope="class")
     def test_project_path(self):
         """Path to the test Python project."""
         return Path(__file__).parent.parent / "test_data" / "python_project"
 
-    @pytest.fixture
-    def indexed_searcher(self, test_project_path, tmp_path):
+    @pytest.fixture(scope="class")
+    def indexed_searcher(self, test_project_path, tmp_path_factory):
         """Create a searcher with pre-indexed test data."""
-        # Create index directory
+        # Create index directory using tmp_path_factory for class scope
+        tmp_path = tmp_path_factory.mktemp("semantic_search_test")
         index_dir = tmp_path / "test_index"
         index_dir.mkdir(parents=True, exist_ok=True)
 
