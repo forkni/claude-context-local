@@ -55,6 +55,28 @@ Complete version history and feature timeline for claude-context-local MCP serve
 - ✅ Unified cleanup pattern across codebase
 - ✅ Tests: 21/21 embedder tests, 12/12 reranker tests passing
 
+#### Removed Broken Performance Tools Menu
+
+**Problem**: Menu option 4 "Performance Tools" contained two non-functional features:
+1. **Memory Usage Report** - Had undefined `gpu_name` variable, causing crashes
+2. **Auto-Tune Search** - Called non-existent `tools\auto_tune_search.py` (archived)
+
+**Root Cause**: Features were experimental and never completed:
+- Memory report assumed GPU detection logic that wasn't implemented
+- Auto-tune script was archived but menu entry remained
+
+**Solution**:
+1. **Removed entire Performance Tools menu section** from `start_mcp_server.cmd`:
+   - Removed menu option 4 from main menu
+   - Removed Performance Tools submenu (73 lines of code)
+   - Cleaned up broken auto-tune and memory report functions
+
+**Impact**:
+- ✅ Eliminates crashes from undefined `gpu_name` variable
+- ✅ Removes confusing menu options for non-existent features
+- ✅ Cleaner UI with only functional options
+- ✅ 73 lines of broken code removed
+
 ### New Features
 
 #### Neural Reranker Documentation Enhancement
