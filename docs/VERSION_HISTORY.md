@@ -17,14 +17,43 @@ Complete version history and feature timeline for claude-context-local MCP serve
 
 ### Status: PRODUCTION-READY ✅
 
-**Patch release focusing on documentation clarity, UI menu explanations, and debug mode timing**
+**Patch release focusing on RAM cleanup fix, documentation clarity, UI menu explanations, and debug mode timing**
 
 ### Highlights
 
+- **RAM Cleanup Fix** - Fixed RAM increasing during "Release Resources" operation
 - **Neural Reranker Feature Visibility** - Added to README and Help menu with quality metrics
 - **Search Configuration Menu Explanations** - All options now have clear descriptions
 - **Debug Mode Startup Timing** - Precise timing measurements for optimization
 - **MCP Workflow Clarification** - Fixed Index/Search instructions for correct `/mcp-search` usage
+
+### Bug Fixes
+
+#### RAM Cleanup in Release Resources
+
+**Problem**: During "Release Resources" (X option in menu), VRAM was properly released but RAM increased by 2-5GB.
+
+**Root Cause**: `CodeEmbedder.cleanup()` used `.to("cpu")` to move model from GPU to CPU before deletion - a legacy PyTorch 1.x workaround that copied the entire model to RAM.
+
+**Solution**:
+1. **Removed `.to("cpu")` call** in `embeddings/embedder.py:794-807`:
+   - PyTorch 2.x handles CUDA cleanup automatically
+   - Direct deletion with `del self._model` is sufficient
+
+2. **Added `gc.collect()` before `empty_cache()`**:
+   - Forces garbage collection before clearing CUDA cache
+   - Ensures thorough memory cleanup
+   - Reordered cleanup: `del` → `gc.collect()` → `empty_cache()`
+
+3. **Applied same pattern to `NeuralReranker.cleanup()`** (`search/neural_reranker.py:131-141`):
+   - Consistency across all cleanup methods
+   - Added `gc.collect()` for thorough cleanup
+
+**Impact**:
+- ✅ RAM no longer increases during cleanup
+- ✅ Both VRAM and RAM properly released
+- ✅ Unified cleanup pattern across codebase
+- ✅ Tests: 21/21 embedder tests, 12/12 reranker tests passing
 
 ### New Features
 

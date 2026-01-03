@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.7.4] - 2026-01-03
 
+### Fixed
+
+- **RAM Cleanup in Release Resources** - Fixed RAM increasing during VRAM release
+  - Removed `.to("cpu")` call in `CodeEmbedder.cleanup()` that was copying 2-5GB model to RAM
+  - Legacy PyTorch 1.x workaround no longer needed in PyTorch 2.x
+  - Added `gc.collect()` before `empty_cache()` for thorough cleanup
+  - Applied same pattern to `NeuralReranker.cleanup()` for consistency
+  - Files: `embeddings/embedder.py:794-807`, `search/neural_reranker.py:131-141`
+
 ### Added
 
 - **Neural Reranker Feature Visibility** - Added Neural Reranking to key documentation
