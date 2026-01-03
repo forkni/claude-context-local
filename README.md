@@ -29,6 +29,7 @@
 ## Highlights
 
 - **Hybrid Search**: BM25 + semantic fusion (44.4% precision, 100% MRR) - [benchmarks](docs/BENCHMARKS.md)
+- **Neural Reranking**: Cross-encoder model (BAAI/bge-reranker-v2-m3) improves ranking quality by 5-15% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
 - **Multi-Model Routing**: Intelligent query routing (Qwen3, BGE-M3, CodeRankEmbed) with 100% accuracy - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md)
 - **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
@@ -54,6 +55,8 @@ Double-click `install-windows.cmd` and follow the prompts:
 
 ### 2. Index Your Project
 
+**Option A: Via UI Menu** (recommended for first-time setup)
+
 Double-click `start_mcp_server.cmd` and select **5. Project Management**:
 
 ```
@@ -67,6 +70,15 @@ Double-click `start_mcp_server.cmd` and select **5. Project Management**:
 ```
 
 Enter your project path when prompted (e.g., `C:\Projects\MyApp`).
+
+**Option B: Via Claude Code** (after loading `/mcp-search` skill)
+
+Simply ask Claude naturally:
+```
+"Index my project at C:\Projects\MyApp"
+```
+
+Claude will use the MCP tools internally to index your project.
 
 ### 3. Start Server
 
@@ -109,13 +121,15 @@ This command loads the [mcp-search-tool](.claude/skills/mcp-search-tool/SKILL.md
 
 ### 6. Start Searching
 
-Now simply ask Claude Code natural questions about your codebase:
+Simply ask Claude Code natural questions about your codebase:
 
 - "Find authentication functions in my project"
 - "Show me error handling patterns"
 - "Where is the database connection setup?"
 
-Claude Code will automatically use the semantic search tools to find relevant code.
+Claude Code will automatically use the MCP tools internally to find relevant code.
+
+> **Note**: The `/mcp-search` skill must be loaded first (step 5 above). MCP tools like `search_code` and `find_connections` are not exposed as direct slash commands - they are called internally by Claude when you ask natural language questions.
 
 **That's it!** You're now searching your code semantically with up to 63% fewer tokens (real-world benchmarked).
 

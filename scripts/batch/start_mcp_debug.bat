@@ -45,11 +45,28 @@ echo [DEBUG] Press Ctrl+C to stop the server
 echo [DEBUG] =======================================
 echo.
 
-REM Start the MCP server with debug output (low-level SDK)
-.\.venv\Scripts\python.exe -m mcp_server.server --transport stdio
+REM Capture start time
+for /f "tokens=1-4 delims=:.," %%a in ("%TIME%") do (
+    set /a "START_TIME=(((%%a*60)+1%%b %% 100)*60+1%%c %% 100)*100+1%%d %% 100"
+)
+
+echo [DEBUG] Server starting at %TIME%...
+echo.
+
+REM Start the MCP server with debug output (SSE transport)
+.\.venv\Scripts\python.exe -m mcp_server.server --transport sse --host localhost --port 8765
 set "SERVER_EXIT_CODE=%ERRORLEVEL%"
 
+REM Capture end time and calculate duration
+for /f "tokens=1-4 delims=:.," %%a in ("%TIME%") do (
+    set /a "END_TIME=(((%%a*60)+1%%b %% 100)*60+1%%c %% 100)*100+1%%d %% 100"
+)
+set /a "DURATION=(END_TIME-START_TIME)/100"
+
 echo.
+echo [DEBUG] =======================================
+echo [DEBUG] Server stopped at %TIME%
+echo [DEBUG] Total runtime: %DURATION% seconds
 echo [DEBUG] =======================================
 if %SERVER_EXIT_CODE% equ 0 (
     echo [DEBUG] MCP server stopped normally (exit code: 0)

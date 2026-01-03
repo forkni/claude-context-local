@@ -13,6 +13,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.4] - 2026-01-03
+
+### Added
+
+- **Neural Reranker Feature Visibility** - Added Neural Reranking to key documentation
+  - Added to `README.md` Highlights section with 5-15% quality improvement metric
+  - Added to `start_mcp_server.cmd` Help & Documentation menu Key Features
+  - Cross-encoder model (BAAI/bge-reranker-v2-m3) now prominently featured
+  - Links to advanced features documentation for detailed configuration
+  - Files: `README.md:32`, `start_mcp_server.cmd:1624`
+
+- **Search Configuration Menu Explanations** - Added helpful descriptions to all menu options
+  - Each option now includes purpose, benefits, and recommendations
+  - Examples: "Hybrid recommended", "faster", "+5-15% quality", "VRAM (BGE-M3/Qwen3)"
+  - Improves user experience by clarifying what each setting does
+  - File: `start_mcp_server.cmd:343-351`
+
+- **Debug Mode Startup Timing** - Added precise timing measurements for optimization
+  - Captures startup timer at server launch with `perf_counter()`
+  - Logs completion time at "APPLICATION READY" state
+  - Shows total startup duration in debug logs (e.g., "Startup completed in 3.35 seconds")
+  - Works for both SSE and stdio transports
+  - Only active when `MCP_DEBUG=1` environment variable is set
+  - File: `mcp_server/server.py:47, 297-300, 322-325, 501-504`
+
+### Changed
+
+- **Index/Search Workflow Documentation** - Clarified correct MCP tool usage
+  - Updated `README.md` Section 2 (Index) to show `/mcp-search` skill requirement
+  - Updated `README.md` Section 6 (Search) to remove direct MCP command examples
+  - Updated `start_mcp_server.cmd` Quick Start instructions
+  - Clarified that users run `/mcp-search` first, then ask Claude naturally
+  - Explained that MCP tools like `search_code` are called internally, not as slash commands
+  - Files: `README.md:56-81, 122-134`, `start_mcp_server.cmd:1634-1635`
+
+### Documentation
+
+- Complete documentation update across README and launcher UI
+- Improved clarity on Neural Reranking feature benefits
+- Better user guidance for search configuration options
+- Correct workflow for Claude Code integration
+
+---
+
 ## [0.7.3] - 2026-01-02
 
 ### Added
