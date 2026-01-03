@@ -48,10 +48,9 @@ if "%~1"=="" (
     echo   1. Quick Start Server
     echo   2. Installation ^& Setup
     echo   3. Search Configuration
-    echo   4. Performance Tools
-    echo   5. Project Management
-    echo   6. Advanced Options
-    echo   7. Help ^& Documentation
+    echo   4. Project Management
+    echo   5. Advanced Options
+    echo   6. Help ^& Documentation
     echo   M. Quick Model Switch ^(General / Code-specific / Multi-model^)
     echo   F. Configure Output Format
     echo   X. Release Resources
@@ -60,7 +59,7 @@ if "%~1"=="" (
 
     REM Ensure we have a valid choice
     set "choice="
-    set /p choice="Select option (0-7, M, F, X): "
+    set /p choice="Select option (0-6, M, F, X): "
 
     REM Handle empty input or Ctrl+C gracefully
     if not defined choice (
@@ -75,10 +74,9 @@ if "%~1"=="" (
     if "!choice!"=="1" goto start_server_dual_sse
     if "!choice!"=="2" goto installation_menu
     if "!choice!"=="3" goto search_config_menu
-    if "!choice!"=="4" goto performance_menu
-    if "!choice!"=="5" goto project_management_menu
-    if "!choice!"=="6" goto advanced_menu
-    if "!choice!"=="7" goto show_help
+    if "!choice!"=="4" goto project_management_menu
+    if "!choice!"=="5" goto advanced_menu
+    if "!choice!"=="6" goto show_help
     if /i "!choice!"=="M" goto quick_model_switch
     if /i "!choice!"=="m" goto quick_model_switch
     if /i "!choice!"=="F" goto configure_output_format
@@ -87,7 +85,7 @@ if "%~1"=="" (
     if /i "!choice!"=="x" goto release_resources
     if "!choice!"=="0" goto exit_cleanly
 
-    echo [ERROR] Invalid choice: "%choice%". Please select 0-7, M, F, or X.
+    echo [ERROR] Invalid choice: "%choice%". Please select 0-6, M, F, or X.
     echo.
     echo Press any key to try again...
     pause >nul
@@ -198,9 +196,21 @@ goto menu_restart
 
 :debug_mode
 echo.
-echo [INFO] Starting in Debug Mode...
-call scripts\batch\start_mcp_debug.bat
-goto end
+echo [INFO] Starting Debug SSE Server on port 8765...
+echo [INFO] Server URL: http://localhost:8765/sse
+echo [INFO] Debug flags: MCP_DEBUG=1, CLAUDE_SEARCH_DEBUG=1
+echo ==================================================
+echo.
+
+REM Validate batch file exists
+if not exist "scripts\batch\start_mcp_debug.bat" (
+    echo [ERROR] Batch file not found: scripts\batch\start_mcp_debug.bat
+    pause
+    goto menu_restart
+)
+
+start "MCP Debug Server (8765)" cmd /k "scripts\batch\start_mcp_debug.bat"
+goto menu_restart
 
 :run_unit_tests
 echo.
@@ -330,14 +340,14 @@ goto installation_menu
 echo.
 echo === Search Configuration ===
 echo.
-echo   1. View Current Configuration
-echo   2. Set Search Mode ^(Hybrid/Semantic/BM25^)
-echo   3. Configure Search Weights ^(BM25 vs Dense^)
-echo   4. Select Embedding Model
-echo   5. Configure Parallel Search
-echo   6. Configure Neural Reranker
-echo   7. Configure Entity Tracking
-echo   8. Reset to Defaults
+echo   1. View Current Configuration   - Show all active settings
+echo   2. Set Search Mode              - Hybrid/Semantic/BM25 ^(Hybrid recommended^)
+echo   3. Configure Search Weights     - Balance text vs semantic matching
+echo   4. Select Embedding Model       - Choose model by VRAM ^(BGE-M3/Qwen3^)
+echo   5. Configure Parallel Search    - Run BM25+Dense in parallel ^(faster^)
+echo   6. Configure Neural Reranker    - Cross-encoder reranking ^(+5-15%% quality^)
+echo   7. Configure Entity Tracking    - Track symbols across searches
+echo   8. Reset to Defaults            - Restore optimal default settings
 echo   0. Back to Main Menu
 echo.
 set "search_choice="
@@ -367,36 +377,6 @@ echo [ERROR] Invalid choice. Please select 0-8.
 pause
 cls
 goto search_config_menu
-
-:performance_menu
-echo.
-echo === Performance Tools ===
-echo.
-echo   1. Auto-Tune Search Parameters
-echo   2. Memory Usage Report
-echo   0. Back to Main Menu
-echo.
-set "perf_choice="
-set /p perf_choice="Select option (0-2): "
-
-REM Handle empty input gracefully
-if not defined perf_choice (
-    cls
-    goto performance_menu
-)
-if "!perf_choice!"=="" (
-    cls
-    goto performance_menu
-)
-
-if "!perf_choice!"=="1" goto auto_tune_direct
-if "!perf_choice!"=="2" goto memory_report
-if "!perf_choice!"=="0" goto menu_restart
-
-echo [ERROR] Invalid choice. Please select 0-2.
-pause
-cls
-goto performance_menu
 
 :project_management_menu
 echo.
@@ -1549,53 +1529,6 @@ if errorlevel 1 (
 pause
 goto search_config_menu
 
-REM Performance Functions
-:auto_tune_direct
-echo.
-echo [INFO] Auto-Tune Search Parameters
-echo ================================================================
-echo This will optimize hybrid search weights for your codebase:
-echo   - Test 3 strategic configurations
-echo   - Build index once, test parameters quickly
-echo   - Provide recommended settings
-echo.
-echo Estimated time: ~2 minutes
-echo.
-set "confirm="
-set /p confirm="Continue with auto-tuning? (y/N): "
-REM Handle empty input - treat as "no"
-if not defined confirm goto performance_menu
-if "!confirm!"=="" goto performance_menu
-if /i not "!confirm!"=="y" goto performance_menu
-
-echo.
-echo [INFO] Starting auto-tuning process...
-echo.
-call .\.venv\Scripts\python.exe tools\auto_tune_search.py --project "." --dataset evaluation\datasets\debug_scenarios.json --current-f1 0.367
-if errorlevel 1 (
-    echo.
-    echo [ERROR] Auto-tuning failed!
-    echo Check that the project is indexed and datasets exist.
-) else (
-    echo.
-    echo [OK] Auto-tuning completed successfully!
-    echo Results saved in benchmark_results\tuning\
-    echo Logs saved in benchmark_results\logs\
-)
-pause
-goto performance_menu
-
-:memory_report
-echo.
-echo [INFO] System memory usage report...
-call .\.venv\Scripts\python.exe -c "import psutil; import torch; print('  System RAM:', psutil.virtual_memory().total // (1024**3), 'GB'); print('  Available RAM:', psutil.virtual_memory().available // (1024**3), 'GB'); print('  RAM Usage:', str(psutil.virtual_memory().percent) + '%%'); gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'Not available'; print('  GPU:', gpu_name); gpu_mem = torch.cuda.get_device_properties(0).total_memory // (1024**3) if torch.cuda.is_available() else 0; print('  GPU Memory:', str(gpu_mem) + ' GB') if gpu_mem else print('  GPU Memory: N/A')"
-if errorlevel 1 (
-    echo Error: Unable to retrieve system information
-    echo Make sure psutil is installed: pip install psutil
-)
-pause
-goto performance_menu
-
 :install_cuda
 echo.
 echo [INFO] Installing PyTorch with CUDA support...
@@ -1688,6 +1621,7 @@ echo Key Features:
 echo   - 17 MCP Tools: Index, search, configure, manage projects
 echo   - Low-Level MCP SDK: Official Anthropic implementation
 echo   - Multi-Model Routing: BGE-M3 + Qwen3 + CodeRankEmbed ^(optional^)
+echo   - Neural Reranking: Cross-encoder model ^(5-15%% quality boost^)
 echo   - Hybrid Search: BM25 + Semantic for optimal accuracy
 echo   - 85-95%% Token Reduction: Validated benchmark results
 echo   - Multi-language Support: 9 languages, 19 extensions
@@ -1697,8 +1631,8 @@ echo Quick Start:
 echo   1. Run: install-windows.cmd ^(first time setup^)
 echo   2. Verify: verify-installation.cmd ^(test installation^)
 echo   3. Configure: scripts\batch\manual_configure.bat
-echo   4. Index: /index_directory "your-project-path"
-echo   5. Search: /search_code "your query"
+echo   4. In Claude Code: Run /mcp-search to load the skill
+echo   5. Ask Claude naturally: "index my project" or "search for X"
 echo.
 echo Interactive Menu Usage:
 echo   start_mcp_server.cmd          - Launch interactive menu

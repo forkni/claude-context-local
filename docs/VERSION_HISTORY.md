@@ -2,14 +2,158 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-01-02)
+## Current Status: All Features Operational (2026-01-03)
 
-- **Version**: 0.7.3
+- **Version**: 0.7.4
 - **Status**: Production-ready
 - **Test Coverage**: 1,249+ unit tests + integration tests (100% pass rate)
 - **Index Quality**: 109 active files, 1,199 chunks (site-packages excluded, BGE-M3 1024d, ~24 MB)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent Features**: HTTP Config Sync for UI, Entity Tracking Config Fix, Multi-Model State Management Fix
+- **Recent Features**: Neural Reranker Documentation, Search Config Menu Explanations, Debug Mode Timing, MCP Workflow Clarification
+
+---
+
+## v0.7.4 - Documentation & UX Improvements (2026-01-03)
+
+### Status: PRODUCTION-READY ✅
+
+**Patch release focusing on documentation clarity, UI menu explanations, and debug mode timing**
+
+### Highlights
+
+- **Neural Reranker Feature Visibility** - Added to README and Help menu with quality metrics
+- **Search Configuration Menu Explanations** - All options now have clear descriptions
+- **Debug Mode Startup Timing** - Precise timing measurements for optimization
+- **MCP Workflow Clarification** - Fixed Index/Search instructions for correct `/mcp-search` usage
+
+### New Features
+
+#### Neural Reranker Documentation Enhancement
+
+**Added Neural Reranking to key documentation locations**:
+
+1. **README.md Highlights** (line 32):
+   - Added feature: "Cross-encoder model (BAAI/bge-reranker-v2-m3) improves ranking quality by 5-15%"
+   - Links to `ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration`
+
+2. **Help & Documentation Menu** (`start_mcp_server.cmd:1624`):
+   - Added to Key Features: "Neural Reranking: Cross-encoder model (5-15% quality boost)"
+
+**Impact**:
+- Users now aware of Neural Reranking feature without digging through docs
+- Quality improvement metric (5-15%) clearly communicated
+- Easy access to detailed configuration documentation
+
+#### Search Configuration Menu Explanations
+
+**Added helpful descriptions to all menu options** (`start_mcp_server.cmd:343-351`):
+
+| Option | Description |
+|--------|-------------|
+| View Current Configuration | Show all active settings |
+| Set Search Mode | Hybrid/Semantic/BM25 (Hybrid recommended) |
+| Configure Search Weights | Balance text vs semantic matching |
+| Select Embedding Model | Choose model by VRAM (BGE-M3/Qwen3) |
+| Configure Parallel Search | Run BM25+Dense in parallel (faster) |
+| Configure Neural Reranker | Cross-encoder reranking (+5-15% quality) |
+| Configure Entity Tracking | Track symbols across searches |
+| Reset to Defaults | Restore optimal default settings |
+
+**Before**:
+```
+1. View Current Configuration
+2. Set Search Mode (Hybrid/Semantic/BM25)
+```
+
+**After**:
+```
+1. View Current Configuration   - Show all active settings
+2. Set Search Mode              - Hybrid/Semantic/BM25 (Hybrid recommended)
+```
+
+**Impact**:
+- Users understand what each option does without trial-and-error
+- Clear recommendations (Hybrid mode, quality boost percentages)
+- Performance benefits highlighted (faster, +5-15% quality)
+
+#### Debug Mode Startup Timing
+
+**Added precise timing measurements for optimization** (`mcp_server/server.py`):
+
+**Implementation**:
+- Captures `time.perf_counter()` at server startup
+- Logs completion at "APPLICATION READY" / "SERVER READY" states
+- Displays total startup duration (e.g., "Startup completed in 3.35 seconds")
+- Works for both SSE and stdio transports
+- Only active when `MCP_DEBUG=1` environment variable is set
+
+**Example Output**:
+```
+00:57:09 - __main__ - INFO - [DEBUG] Startup timer started at 00:57:09
+...
+00:57:13 - __main__ - INFO - [DEBUG] Startup completed in 3.35 seconds
+```
+
+**Impact**:
+- Developers can track startup performance improvements
+- Easy to measure impact of optimization changes
+- Helps identify slow initialization paths
+
+### Changed
+
+#### Index/Search Workflow Documentation
+
+**Fixed incorrect MCP tool usage instructions**:
+
+**Problem**: Documentation incorrectly showed MCP tools as direct slash commands:
+```
+4. Index: Menu option 5 (UI) OR /index_directory "path" (MCP)
+5. Search: Ask Claude naturally OR /search_code "query" (MCP)
+```
+
+**Issue**: MCP tools are NOT exposed as slash commands in Claude Code. Users must:
+1. Run `/mcp-search` to load SKILL.md into context
+2. Ask Claude naturally (Claude uses MCP tools internally)
+
+**Fixed Locations**:
+
+1. **README.md Section 2 (Index)** (lines 56-81):
+   - Removed "Option B: Via Claude Code MCP Commands" with `/index_directory`
+   - Changed to: "Option B: Via Claude Code (after loading `/mcp-search` skill)"
+   - Shows natural language: "Index my project at C:\Projects\MyApp"
+   - Explains: "Claude will use the MCP tools internally"
+
+2. **README.md Section 6 (Search)** (lines 122-134):
+   - Removed "Option B: Direct MCP Commands" showing `/search_code`, `/find_connections`
+   - Added note: "MCP tools are not exposed as direct slash commands"
+   - Clarified: "Called internally by Claude when you ask natural language questions"
+
+3. **Help & Documentation Quick Start** (`start_mcp_server.cmd:1634-1635`):
+   - Changed from: `/index_directory "path"` and `/search_code "query"`
+   - Changed to: "Run /mcp-search in Claude Code to load the skill"
+   - Then: "Ask Claude naturally: 'index my project' or 'search for X'"
+
+**Correct Workflow**:
+```
+1. Start server (menu option 1)
+2. Connect in Claude Code (/mcp → Reconnect)
+3. Run /mcp-search to load the skill
+4. Ask Claude naturally:
+   - "Index my project at C:\Projects\MyApp"
+   - "Search for authentication functions"
+```
+
+**Impact**:
+- Users no longer confused about non-existent slash commands
+- Clear workflow: load skill → ask naturally
+- Proper explanation of internal MCP tool usage
+
+### Documentation
+
+- Complete documentation update across README and launcher UI
+- Improved clarity on Neural Reranking feature benefits
+- Better user guidance for search configuration options
+- Correct workflow for Claude Code integration
 
 ---
 

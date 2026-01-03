@@ -795,13 +795,15 @@ class CodeEmbedder:
         """Clean up model from memory to free GPU/CPU resources."""
         if self._model is not None:
             try:
-                # Move model to CPU and delete
-                if hasattr(self._model, "to"):
-                    self._model.to("cpu")
-                if torch is not None and torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                # Delete model directly (PyTorch 2.x handles CUDA cleanup)
                 del self._model
                 self._model = None
+                # Force garbage collection before clearing CUDA cache
+                import gc
+
+                gc.collect()
+                if torch is not None and torch.cuda.is_available():
+                    torch.cuda.empty_cache()
                 self._logger.info("Model cleaned up and memory freed")
             except Exception as e:
                 self._logger.warning(f"Error during model cleanup: {e}")

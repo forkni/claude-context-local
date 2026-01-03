@@ -293,6 +293,12 @@ if __name__ == "__main__":
     logger.info("=" * 60)
     logger.info("MCP Server Starting (Low-Level SDK)")
     logger.info("=" * 60)
+    if debug_mode:
+        import time
+
+        global _startup_time
+        _startup_time = time.perf_counter()
+        logger.info(f"[DEBUG] Startup timer started at {time.strftime('%H:%M:%S')}")
     logger.info(f"Transport: {args.transport}")
     if args.transport == "sse":
         logger.info(f"SSE endpoint: http://{args.host}:{args.port}")
@@ -313,6 +319,13 @@ if __name__ == "__main__":
 
                 logger.info("=" * 60)
                 logger.info("SERVER READY - Accepting connections")
+                if debug_mode:
+                    import time
+
+                    startup_duration = time.perf_counter() - _startup_time
+                    logger.info(
+                        f"[DEBUG] Startup completed in {startup_duration:.2f} seconds"
+                    )
                 logger.info("=" * 60)
 
                 # Run server using stdio transport (OFFICIAL MCP SDK PATTERN)
@@ -488,6 +501,13 @@ if __name__ == "__main__":
 
                     logger.info("=" * 60)
                     logger.info("APPLICATION READY - Accepting connections")
+                    if debug_mode:
+                        import time
+
+                        startup_duration = time.perf_counter() - _startup_time
+                        logger.info(
+                            f"[DEBUG] Startup completed in {startup_duration:.2f} seconds"
+                        )
                     logger.info("=" * 60)
 
                     # Suppress noisy ASGI errors for disconnected clients

@@ -134,6 +134,9 @@ class NeuralReranker:
             self._logger.info("Cleaning up reranker model")
             del self._model
             self._model = None
+            import gc
+
+            gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
