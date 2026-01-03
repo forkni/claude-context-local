@@ -33,7 +33,7 @@ dependencies = [
     "mcp>=1.25.0",
     "nltk>=3.8",
     "pandas>=2.0.0",  # Required by datasets (transitive dependency of sentence-transformers)
-    "psutil>=7.1.3",
+    "psutil>=7.2.1",
     "rank-bm25>=0.2.2",
     "torch>=2.6.0",
     "torchvision>=0.21.0",
@@ -74,7 +74,7 @@ test = [
 ]
 dev = [
     "black>=25.11.0",
-    "isort>=6.1.0",
+    "isort>=7.0.0",
     "ruff>=0.14.10",
     "pip-audit>=2.10.0",
     "pip-licenses>=5.5.0",
@@ -93,7 +93,7 @@ include = ["chunking*", "embeddings*", "mcp_server*", "search*", "merkle*"]
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2026-01-01 (pip-audit - 0 vulnerabilities)
+# Last audit: 2026-01-03 (pip-audit - 0 vulnerabilities)
 #
 # Direct dependency security updates:
 # mcp>=1.25.0        # Fixes CVE-2025-66416 (DNS rebinding vulnerability)
@@ -108,19 +108,20 @@ include = ["chunking*", "embeddings*", "mcp_server*", "search*", "merkle*"]
 # Verification: .venv/Scripts/pip-audit --format json | .venv/Scripts/python.exe tools/summarize_audit.py
 #
 # Transitive dependency version constraints (cannot upgrade):
-# fsspec<=2025.10.0   # datasets 4.4.1 requires fsspec[http]<=2025.10.0
+# fsspec<=2025.10.0   # datasets 4.4.2 requires fsspec[http]<=2025.10.0
 # sympy==1.13.1       # torch 2.6.0 requires sympy==1.13.1 (pinned)
 # huggingface-hub<1.0 # transformers 4.57.3 requires huggingface-hub>=0.34.0,<1.0
 # numpy<2.4.0         # Multiple packages constrain numpy (faiss, scipy, pandas, etc.)
 # torch==2.6.0        # Pinned by torchaudio, torchvision exact version match
 #
-# Successfully updated dependencies (tested 2026-01-01):
-# Low-risk tools: ruff (0.13.3→0.14.10), pip-audit (2.9.0→2.10.0), psutil (7.0.0→7.1.3), rich (14.1.0→14.2.0)
-# ML-adjacent: scipy (1.16.2→1.16.3), scikit-learn (1.7.1→1.8.0), networkx (3.5→3.6.1)
-# ML-adjacent: pydantic (2.11.7→2.12.5), starlette (0.47.2→0.50.0), uvicorn (0.35.0→0.38.0)
-# ML-CORE: transformers (4.56.2→4.57.3), sentence-transformers (5.1.1→5.2.0)
-# ML-CORE: safetensors (0.6.2→0.7.0), accelerate (1.10.1→1.12.0)
-# All 1,259 tests passed, embedding sanity check: 1.000000 similarity (perfect)
+# Successfully updated dependencies (tested 2026-01-03):
+# Safe patches: coverage (7.13.0→7.13.1), datasets (4.4.1→4.4.2), filelock (3.20.1→3.20.2)
+# Safe patches: flatbuffers (25.9.23→25.12.19), importlib_metadata (8.7.0→8.7.1)
+# Safe patches: jaraco.context (6.0.1→6.0.2), jaraco.functools (4.3.0→4.4.0)
+# Safe patches: psutil (7.1.3→7.2.1), pyparsing (3.2.5→3.3.1)
+# Safe patches: sse-starlette (3.0.4→3.1.2), uv (0.9.18→0.9.21), uvicorn (0.38.0→0.40.0)
+# Major versions: isort (6.1.0→7.0.0), MarkupSafe (2.1.5→3.0.3), pillow (11.3.0→12.1.0), pyarrow (21.0.0→22.0.0)
+# All 1,160 tests passed, no dependency conflicts
 
 [tool.uv]
 index-url = "https://pypi.org/simple"
