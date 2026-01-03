@@ -4,12 +4,72 @@ Complete version history and feature timeline for claude-context-local MCP serve
 
 ## Current Status: All Features Operational (2026-01-03)
 
-- **Version**: 0.7.4
+- **Version**: 0.7.5
 - **Status**: Production-ready
-- **Test Coverage**: 1,249+ unit tests + integration tests (100% pass rate)
+- **Test Coverage**: 1,054+ unit tests + 14 slow integration tests (100% pass rate)
 - **Index Quality**: 109 active files, 1,199 chunks (site-packages excluded, BGE-M3 1024d, ~24 MB)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent Features**: Neural Reranker Documentation, Search Config Menu Explanations, Debug Mode Timing, MCP Workflow Clarification
+- **Recent Fix**: Critical HybridSearcher reference mismatch bug, slow integration tests
+
+---
+
+## v0.7.5 - Critical Bug Fix & Test Fixes (2026-01-03)
+
+### Status: PRODUCTION-READY ✅
+
+**Patch release fixing critical production bug in HybridSearcher.clear_index() and slow integration tests**
+
+### Highlights
+
+- **Critical Bug Fix** - HybridSearcher.clear_index() reference mismatch causing empty search results
+- **Test Suite Fixes** - All 14 slow integration tests now passing
+
+### Bug Fixes
+
+#### Critical: HybridSearcher.clear_index() Reference Mismatch
+
+**Problem**: After calling `IncrementalIndexer.incremental_index(force_full=True)`, all searches returned empty results even though indexing succeeded.
+
+**Root Cause**: When `HybridSearcher.clear_index()` created new BM25 and dense index instances:
+- It updated `HybridSearcher`'s own references (`self.bm25_index`, `self.dense_index`)
+- But left `SearchExecutor` and `MultiHopSearcher` with stale references to old empty indices
+- New data was added to new indices, but searches used old empty indices
+
+**Solution** (`search/hybrid_searcher.py:862-867`):
+```python
+def clear_index(self) -> None:
+    self.index_sync.clear_index()
+    self.bm25_index = self.index_sync.bm25_index
+    self.dense_index = self.index_sync.dense_index
+    self.reranking_engine.metadata_store = self.dense_index.metadata_store
+
+    # Update SearchExecutor references to new indices
+    self.search_executor.bm25_index = self.bm25_index
+    self.search_executor.dense_index = self.dense_index
+
+    # Update MultiHopSearcher reference to new dense index
+    self.multi_hop_searcher.dense_index = self.dense_index
+```
+
+**Impact**:
+- ✅ force_full=True re-indexing now works correctly
+- ✅ All searches return proper results after re-indexing
+- ✅ Backward compatible (no API changes)
+- ✅ Affected all code using force_full=True parameter
+
+#### Slow Integration Test Fixes
+
+**Problem**: 7 out of 14 slow integration tests failing in `test_hybrid_search_integration.py`
+
+**Fixes**:
+1. Removed unused `indexed_hybrid_environment` fixture parameter from 2 config tests
+2. Updated API calls from `hybrid_searcher._search_bm25()` to `search_executor.search_bm25()`
+3. Fixed `test_error_handling` expectations for class-scoped fixtures
+4. Fixed `test_statistics_and_monitoring` search count assertion (changed `== 4` to `>= 4` for accumulated counts)
+
+**Results**:
+- Before: 7 failed, 7 passed (14 total)
+- After: 14 passed, 0 failed ✅
 
 ---
 

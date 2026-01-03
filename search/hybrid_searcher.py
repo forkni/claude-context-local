@@ -859,6 +859,13 @@ class HybridSearcher:
         # Update reranking_engine's metadata_store reference
         self.reranking_engine.metadata_store = self.dense_index.metadata_store
 
+        # Update SearchExecutor references to new indices
+        self.search_executor.bm25_index = self.bm25_index
+        self.search_executor.dense_index = self.dense_index
+
+        # Update MultiHopSearcher reference to new dense index
+        self.multi_hop_searcher.dense_index = self.dense_index
+
     def remove_file_chunks(self, file_path: str, project_name: str) -> int:
         """Remove chunks for a specific file from both indices. Delegates to IndexSynchronizer."""
         return self.index_sync.remove_file_chunks(file_path, project_name)

@@ -247,7 +247,7 @@ SLASH_COMMAND_TESTING_PROTOCOL.md
 clean_pycache.bat
 
 # Development-only content (excluded from main branch)
-tests/
+# tests/  # REMOVED: tests should be tracked to prevent accidental deletion during merges
 pytest.ini
 
 # Documentation - only specific files are public
