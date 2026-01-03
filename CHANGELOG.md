@@ -13,6 +13,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.5] - 2026-01-03
+
+### Fixed
+
+- **Critical: HybridSearcher.clear_index() Reference Mismatch** - Fixed production bug causing empty search results after force_full=True
+  - SearchExecutor and MultiHopSearcher now receive updated index references after clear_index()
+  - Previously held stale references to old empty indices after re-indexing
+  - Affected all code using IncrementalIndexer.incremental_index(force_full=True)
+  - File: `search/hybrid_searcher.py:862-867`
+
+- **Slow Integration Tests** - Fixed 7 failing tests in test_hybrid_search_integration.py
+  - Removed unused fixture parameters from TestHybridSearchConfigIntegration tests
+  - Updated API calls from `_search_bm25` to `search_executor.search_bm25`
+  - Fixed test_error_handling expectations for class-scoped fixtures
+  - Fixed test_statistics_and_monitoring search count assertion (accumulates across tests)
+  - Test results: 14/14 passed (was 7 failed, 7 passed)
+  - File: `tests/slow_integration/test_hybrid_search_integration.py`
+
+---
+
 ## [0.7.4] - 2026-01-03
 
 ### Fixed
