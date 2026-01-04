@@ -37,13 +37,21 @@ def estimate_tokens(content: str, method: str = "whitespace") -> int:
             import tiktoken
 
             enc = tiktoken.get_encoding("cl100k_base")
-            return len(enc.encode(content))
+            token_count = len(enc.encode(content))
+            logger.debug(f"tiktoken: {len(content)} chars -> {token_count} tokens")
+            return token_count
         except ImportError:
             # Fall back to whitespace if tiktoken not installed
+            logger.warning(
+                "tiktoken not installed, falling back to whitespace estimation. "
+                "Install with: pip install tiktoken"
+            )
             pass
 
     # Whitespace approximation: split on whitespace and count words
-    return len(content.split())
+    token_count = len(content.split())
+    logger.debug(f"whitespace: {len(content)} chars -> {token_count} tokens")
+    return token_count
 
 
 @dataclass
