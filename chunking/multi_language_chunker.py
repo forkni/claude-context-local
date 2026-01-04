@@ -435,6 +435,11 @@ class MultiLanguageChunker:
 
             code_chunks.append(chunk)
 
+        # Propagate merge stats from TreeSitterChunk to CodeChunk
+        # (ParallelChunker checks chunks[0]._merge_stats for logging)
+        if tree_chunks and code_chunks and hasattr(tree_chunks[0], "_merge_stats"):
+            code_chunks[0]._merge_stats = tree_chunks[0]._merge_stats
+
         return code_chunks
 
     def chunk_directory(

@@ -223,7 +223,7 @@ class LanguageChunker(ABC):
         min_tokens: int = 50,
         max_merged_tokens: int = 1000,
         token_method: str = "whitespace",
-    ) -> List[TreeSitterChunk]:
+    ) -> Tuple[List[TreeSitterChunk], int, int]:
         """Merge adjacent small chunks using cAST greedy algorithm.
 
         Implements the greedy sibling merging from the cAST paper (EMNLP 2025):
@@ -239,17 +239,20 @@ class LanguageChunker(ABC):
             token_method: Token estimation method ("whitespace" or "tiktoken")
 
         Returns:
-            List of chunks with small siblings merged
+            Tuple of (merged_chunks, original_count, merged_count):
+                - merged_chunks: List of chunks with small siblings merged
+                - original_count: Number of chunks before merging
+                - merged_count: Number of chunks after merging
 
         Example:
             >>> # Three tiny getter methods (10 tokens each)
             >>> chunks = [get_name(), get_age(), get_email()]
-            >>> merged = chunker._greedy_merge_small_chunks(chunks, min_tokens=50)
-            >>> len(merged)  # All 3 merged into 1
-            1
+            >>> merged, orig, final = chunker._greedy_merge_small_chunks(chunks, min_tokens=50)
+            >>> orig, final  # 3 chunks merged into 1
+            (3, 1)
         """
         if not chunks or len(chunks) == 1:
-            return chunks
+            return chunks, len(chunks), len(chunks)
 
         result: List[TreeSitterChunk] = []
         current_group: List[TreeSitterChunk] = []
@@ -298,13 +301,14 @@ class LanguageChunker(ABC):
         if current_group:
             result.append(self._create_merged_chunk(current_group))
 
-        # Log summary at INFO level
-        logger.info(
-            f"Greedy merge complete: {len(chunks)} chunks → {len(result)} chunks, "
-            f"{total_tokens_estimated} tokens estimated using {token_method}"
+        # Log at DEBUG level (per-file details suppressed during progress bar)
+        # Summary will be aggregated and logged by parallel_chunker
+        logger.debug(
+            f"Greedy merge: {len(chunks)} → {len(result)} chunks, "
+            f"{total_tokens_estimated} tokens ({token_method})"
         )
 
-        return result
+        return result, len(chunks), len(result)
 
     def _get_block_boundary_types(self) -> Set[str]:
         """Get node types that are valid split boundaries.
@@ -565,27 +569,48 @@ class LanguageChunker(ABC):
                 )
             )
 
+        # Track original chunk count before merging
+        original_count = len(chunks)
+
         # Apply greedy sibling merging if enabled
         if config and config.enable_greedy_merge and len(chunks) > 1:
-            chunks = self._greedy_merge_small_chunks(
+            chunks, _, _ = self._greedy_merge_small_chunks(
                 chunks,
                 min_tokens=config.min_chunk_tokens,
                 max_merged_tokens=config.max_merged_tokens,
                 token_method=config.token_estimation,
             )
 
+        # Store merge stats in first chunk's metadata for ParallelChunker aggregation
+        # Format: (original_count, merged_count)
+        if chunks and config and config.enable_greedy_merge:
+            if not hasattr(chunks[0], "_merge_stats"):
+                # Add temporary attribute for stats propagation
+                chunks[0]._merge_stats = (original_count, len(chunks))
+
         return chunks
 
     def _get_chunking_config(self) -> Optional["ChunkingConfig"]:
-        """Get ChunkingConfig from ServiceLocator or return None.
+        """Get ChunkingConfig from ServiceLocator or direct config load.
 
         Returns:
             ChunkingConfig if available, None otherwise
         """
+        # Try ServiceLocator first (MCP server context)
         try:
             from mcp_server.services import ServiceLocator
 
             config = ServiceLocator.instance().get_config()
+            if config and config.chunking:
+                return config.chunking
+        except (ImportError, AttributeError):
+            pass  # ServiceLocator not available, fall through to direct config
+
+        # Fallback: Load config directly (batch indexing context)
+        try:
+            from search.config import get_search_config
+
+            config = get_search_config()
             return config.chunking if config else None
         except (ImportError, AttributeError):
             return None

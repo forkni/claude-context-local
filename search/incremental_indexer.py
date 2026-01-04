@@ -1,5 +1,6 @@
 """Incremental indexing using Merkle tree change detection."""
 
+import gc
 import logging
 import time
 from dataclasses import dataclass
@@ -186,6 +187,18 @@ class IncrementalIndexer:
             # Check if we should do full index
             if force_full or not self.snapshot_manager.has_snapshot(project_path):
                 logger.info(f"Performing full index for {project_name}")
+
+                # Free VRAM before full reindex to speed up indexing and prevent memory pressure
+                if force_full:
+                    logger.info("Freeing VRAM before force_full reindex...")
+                else:
+                    logger.info("Freeing VRAM before initial indexing...")
+                try:
+                    self.embedder.cleanup()
+                    logger.info("VRAM cleanup completed successfully")
+                except Exception as e:
+                    logger.warning(f"VRAM cleanup failed (continuing with index): {e}")
+
                 return self._full_index(project_path, project_name, start_time)
 
             # Detect changes
@@ -762,6 +775,49 @@ class IncrementalIndexer:
             logger.info(
                 f"Auto-reindexing {project_path} (index older than {max_age_minutes} minutes)"
             )
+
+            # Free VRAM before re-indexing to prevent OOM in multi-model mode
+            logger.info("Freeing VRAM before auto-reindex (multi-model cleanup)...")
+            try:
+                # Import here to avoid circular dependencies
+                from mcp_server.model_pool_manager import reset_pool_manager
+                from mcp_server.services import get_state
+
+                state = get_state()
+
+                # Clear ALL embedders in multi-model pool (not just self.embedder)
+                if state.embedders:
+                    embedder_count = len(state.embedders)
+                    logger.info(
+                        f"Clearing {embedder_count} cached embedder(s) before reindex: "
+                        f"{list(state.embedders.keys())}"
+                    )
+                    state.clear_embedders()
+                    logger.info("Embedder pool cleared - VRAM released")
+
+                # Reset ModelPoolManager singleton to release all model references
+                reset_pool_manager()
+                logger.info("ModelPoolManager singleton reset")
+
+                # Force garbage collection and GPU cache cleanup
+                gc.collect()
+                logger.info("Garbage collection completed")
+
+                try:
+                    import torch
+
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        logger.info("GPU cache cleared")
+                except ImportError:
+                    pass
+
+                logger.info("Multi-model VRAM cleanup completed successfully")
+            except Exception as e:
+                logger.warning(
+                    f"Multi-model VRAM cleanup failed (continuing with reindex): {e}"
+                )
+
             return self.incremental_index(project_path, project_name)
         else:
             logger.debug(f"Index for {project_path} is fresh, skipping reindex")

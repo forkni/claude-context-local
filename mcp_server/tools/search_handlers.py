@@ -411,7 +411,10 @@ async def handle_search_code(arguments: Dict[str, Any]) -> dict:
     chunk_type = arguments.get("chunk_type")
     include_context = arguments.get("include_context", True)
     auto_reindex = arguments.get("auto_reindex", True)
-    max_age_minutes = arguments.get("max_age_minutes", 5)
+    # Use config default instead of hardcoded 5 (respects search_config.json)
+    max_age_minutes = arguments.get(
+        "max_age_minutes", get_config().performance.max_index_age_minutes
+    )
     use_routing = arguments.get("use_routing", True)
     model_key = arguments.get("model_key")
 

@@ -29,7 +29,7 @@ MODEL_REGISTRY = {
         "dimension": 1024,
         "max_context": 8192,
         "description": "Recommended upgrade, hybrid search support",
-        "vram_gb": "3-4GB",
+        "vram_gb": "1-1.5GB",  # Updated from "3-4GB" (actual measured: 1.07GB)
         "fallback_batch_size": 256,  # Used when dynamic sizing disabled
     },
     "Qwen/Qwen3-Embedding-0.6B": {
@@ -51,9 +51,8 @@ MODEL_REGISTRY = {
         "dimension": 2560,
         "max_context": 32768,
         "description": "Best value upgrade - 87.93% CodeSearchNet, +6% vs 0.6B (MTEB-Code 80.06)",
-        "vram_gb": "8-10GB",
-        "fallback_batch_size": 128,
-        "max_batch_override": 64,  # Conservative limit: prevent VRAM spillover to shared memory (PCIe)
+        "vram_gb": "7.5-8GB",  # Updated from "8-10GB" (actual measured: 7.55GB)
+        "fallback_batch_size": 64,  # Conservative fallback (model-aware calculation handles dynamic sizing)
         "vram_tier": "desktop",  # 12GB+ recommended
         # Matryoshka Representation Learning (MRL) support
         "mrl_dimensions": [
@@ -76,7 +75,7 @@ MODEL_REGISTRY = {
         "dimension": 768,
         "max_context": 8192,
         "description": "Code-specific embedding model (CSN: 77.9 MRR, CoIR: 60.1 NDCG@10)",
-        "vram_gb": "2GB",
+        "vram_gb": "0.5-0.6GB",  # Updated from "2GB" (actual measured: 0.52GB)
         "fallback_batch_size": 128,
         "model_type": "code-specific",
         "task_instruction": "Represent this query for searching relevant code",  # Required query prefix
@@ -204,7 +203,8 @@ class PerformanceConfig:
 
     # GPU Configuration
     prefer_gpu: bool = True
-    gpu_memory_threshold: float = 0.8
+    gpu_memory_threshold: float = 0.65  # Conservative for fragmentation headroom
+    vram_limit_fraction: float = 0.80  # Hard VRAM ceiling (80% of dedicated)
 
     # Precision Configuration (fp16/bf16 for faster inference)
     enable_fp16: bool = True  # Enable fp16 for GPU (30-50% faster inference)
@@ -212,7 +212,9 @@ class PerformanceConfig:
 
     # Dynamic Batch Sizing (GPU-based optimization)
     enable_dynamic_batch_size: bool = True  # Enable GPU-based auto-sizing
-    dynamic_batch_min: int = 32  # Minimum batch size for safety
+    dynamic_batch_min: int = (
+        16  # Minimum batch size (lowered for fragmentation headroom)
+    )
     dynamic_batch_max: int = 384  # Maximum batch size (safer for 8-16GB GPUs)
 
     # Auto-reindexing

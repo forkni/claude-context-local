@@ -196,15 +196,19 @@ class TestGreedyMergeSmallChunks:
 
     def test_empty_list(self, chunker):
         """Empty input returns empty output."""
-        result = chunker._greedy_merge_small_chunks([])
+        result, orig, merged = chunker._greedy_merge_small_chunks([])
         assert result == []
+        assert orig == 0
+        assert merged == 0
 
     def test_single_chunk(self, chunker):
         """Single chunk returns unchanged."""
         chunk = self._make_chunk("foo", tokens=30)
-        result = chunker._greedy_merge_small_chunks([chunk])
+        result, orig, merged = chunker._greedy_merge_small_chunks([chunk])
         assert len(result) == 1
         assert result[0] is chunk
+        assert orig == 1
+        assert merged == 1
 
     def test_all_small_chunks_merge(self, chunker):
         """All small chunks merge into one."""
@@ -213,12 +217,14 @@ class TestGreedyMergeSmallChunks:
             self._make_chunk("b", tokens=10, start_line=3, end_line=3),
             self._make_chunk("c", tokens=10, start_line=5, end_line=5),
         ]
-        result = chunker._greedy_merge_small_chunks(
+        result, orig, merged = chunker._greedy_merge_small_chunks(
             chunks, min_tokens=50, max_merged_tokens=1000
         )
         assert len(result) == 1
         assert result[0].node_type == "merged"
         assert result[0].metadata["merged_count"] == 3
+        assert orig == 3
+        assert merged == 1
 
     def test_large_chunk_not_merged(self, chunker):
         """Large chunks remain separate."""
@@ -227,7 +233,7 @@ class TestGreedyMergeSmallChunks:
             self._make_chunk("large", tokens=100),
             self._make_chunk("small2", tokens=10),
         ]
-        result = chunker._greedy_merge_small_chunks(
+        result, orig, merged = chunker._greedy_merge_small_chunks(
             chunks, min_tokens=50, max_merged_tokens=1000
         )
         # Large chunk should be in results unchanged
@@ -237,6 +243,7 @@ class TestGreedyMergeSmallChunks:
                 large_found = True
                 assert r.node_type == "function_definition"
         assert large_found
+        assert orig == 3
 
     def test_max_size_limit_prevents_merge(self, chunker):
         """Merging stops at max_merged_tokens."""
@@ -245,11 +252,13 @@ class TestGreedyMergeSmallChunks:
             self._make_chunk("b", tokens=40, start_line=3, end_line=3),
         ]
         # max_merged_tokens=70 means these two (40+40=80) won't merge together
-        result = chunker._greedy_merge_small_chunks(
+        result, orig, merged = chunker._greedy_merge_small_chunks(
             chunks, min_tokens=50, max_merged_tokens=70
         )
         # Both are < 50 tokens, but together > 70, so each gets its own merged chunk
         assert len(result) == 2
+        assert orig == 2
+        assert merged == 2
 
     def test_different_parent_class_not_merged(self, chunker):
         """Chunks with different parent_class are not merged."""
@@ -259,7 +268,7 @@ class TestGreedyMergeSmallChunks:
             self._make_chunk("c", tokens=10, parent_class="ClassB"),
             self._make_chunk("d", tokens=10, parent_class="ClassB"),
         ]
-        result = chunker._greedy_merge_small_chunks(
+        result, orig, merged = chunker._greedy_merge_small_chunks(
             chunks, min_tokens=50, max_merged_tokens=1000
         )
         # a+b should merge (same parent), c+d should merge (same parent)
@@ -267,6 +276,8 @@ class TestGreedyMergeSmallChunks:
         assert all(r.node_type == "merged" for r in result)
         assert result[0].parent_class == "ClassA"
         assert result[1].parent_class == "ClassB"
+        assert orig == 4
+        assert merged == 2
 
     def test_none_parent_class_merged(self, chunker):
         """Chunks with None parent_class can merge."""
@@ -274,11 +285,13 @@ class TestGreedyMergeSmallChunks:
             self._make_chunk("a", tokens=10, parent_class=None),
             self._make_chunk("b", tokens=10, parent_class=None),
         ]
-        result = chunker._greedy_merge_small_chunks(
+        result, orig, merged = chunker._greedy_merge_small_chunks(
             chunks, min_tokens=50, max_merged_tokens=1000
         )
         assert len(result) == 1
         assert result[0].node_type == "merged"
+        assert orig == 2
+        assert merged == 1
 
     def test_preserves_line_numbers(self, chunker):
         """Merged chunk has correct start/end lines."""
@@ -287,12 +300,14 @@ class TestGreedyMergeSmallChunks:
             self._make_chunk("b", tokens=10, start_line=10, end_line=12),
             self._make_chunk("c", tokens=10, start_line=15, end_line=20),
         ]
-        result = chunker._greedy_merge_small_chunks(
+        result, orig, merged = chunker._greedy_merge_small_chunks(
             chunks, min_tokens=50, max_merged_tokens=1000
         )
         assert len(result) == 1
         assert result[0].start_line == 5
         assert result[0].end_line == 20
+        assert orig == 3
+        assert merged == 1
 
     def test_all_large_chunks_unchanged(self, chunker):
         """When all chunks are large, none are merged."""
@@ -301,11 +316,13 @@ class TestGreedyMergeSmallChunks:
             self._make_chunk("b", tokens=100),
             self._make_chunk("c", tokens=100),
         ]
-        result = chunker._greedy_merge_small_chunks(
+        result, orig, merged = chunker._greedy_merge_small_chunks(
             chunks, min_tokens=50, max_merged_tokens=1000
         )
         assert len(result) == 3
         assert all(r.node_type == "function_definition" for r in result)
+        assert orig == 3
+        assert merged == 3
 
 
 class TestChunkCodeWithMerging:
