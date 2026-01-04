@@ -239,8 +239,11 @@ class TestNoOOMDuringReindex:
         # Load all 3 models
         pool_manager.initialize_pool(lazy_load=True)
         embedder_qwen3 = pool_manager.get_embedder("qwen3")
-        pool_manager.get_embedder("bge_m3")
-        pool_manager.get_embedder("coderankembed")
+        _ = embedder_qwen3.model  # Force model loading into VRAM
+        embedder_bge = pool_manager.get_embedder("bge_m3")
+        _ = embedder_bge.model  # Force model loading into VRAM
+        embedder_code = pool_manager.get_embedder("coderankembed")
+        _ = embedder_code.model  # Force model loading into VRAM
 
         # Check VRAM before cleanup
         vram_before = torch.cuda.memory_allocated() / (1024**3)  # GB

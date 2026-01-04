@@ -13,6 +13,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.2] - 2026-01-04
+
+### Added
+- **Performance Settings Submenu** - Groups GPU acceleration and Auto-Reindex configuration under one menu
+- **Current Settings Display** - Shows active settings when entering each of 12 configuration menus
+- **Multi-Model Routing Status** - Visible in both model selection menus with improved labeling
+- **Model-Aware Batch Calculation** - Empirical activation memory estimation for optimal batch sizing
+
+### Changed
+- Logging tag standardization: All `[save]` tags now uppercase `[SAVE]` for consistency
+- Batch size logs now show "128 chunks" instead of ambiguous "128"
+- Suppressed INFO logs during Rich progress bars to prevent line mixing
+- **BREAKING**: `enable_greedy_merge` default changed from `True` to `False` (opt-in)
+
+### Fixed
+- **Auto-Reindex Timeout** - Now respects configured `max_index_age_minutes` (was hardcoded to 5 minutes)
+- **Multi-Model VRAM Cleanup** - Properly frees all ~15 GB before reindex (was only ~7.5 GB, caused OOM)
+- **Model Loader Preservation** - Fixed AttributeError on lazy reload after cleanup
+- **Windows VRAM Spillover** - Hard limit prevents silent overflow to system RAM (97% bandwidth loss)
+- **CI Test Failures** - 5 integration tests fixed by changing greedy merge default
+
+### Performance
+- VRAM safety: All 3 models (~15 GB) properly released during auto-reindex
+- Fail-fast OOM instead of silent spillover to shared memory
+- 18% CUDA memory fragmentation overhead now accounted for
+
+---
+
 ## [0.8.1] - 2026-01-03
 
 ### Added

@@ -202,7 +202,7 @@ def calculate_optimal_batch_size(
             f"available: {available_gb:.1f}GB → "
             f"target: {target_activation_gb:.1f}GB ({memory_fraction:.0%} × {fragmentation_overhead:.0%} frag), "
             f"cost: {gb_per_item:.2f}GB/item → "
-            f"batch: {result}"
+            f"batch: {result} chunks"
         )
 
         return result
@@ -1186,12 +1186,12 @@ class CodeEmbedder:
                     self._query_cache.clear()
                     self._logger.info("Query cache cleared")
 
-                # Step 4: Keep model loader for potential reload (lazy loading)
-                # Note: Model loader is lightweight (~1KB), preserves reload capability
-                # Clearing it breaks lazy reload after cleanup (AttributeError on next use)
-                # if hasattr(self, "_model_loader"):
-                #     self._model_loader = None
-                #     self._logger.info("Model loader reference released")
+                # Step 4: Clear model loader to prevent lazy reload (CRITICAL for VRAM cleanup)
+                # Preserving model loader causes immediate reload when .model is accessed
+                # This defeats cleanup purpose - forces creation of fresh embedder instead
+                if hasattr(self, "_model_loader"):
+                    self._model_loader = None
+                    self._logger.info("Model loader cleared - lazy reload disabled")
 
                 # Step 5: Force garbage collection (frees RAM)
                 gc.collect()

@@ -2,6 +2,7 @@
 
 import gc
 import logging
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -75,7 +76,12 @@ class IncrementalIndexer:
             include_dirs: Optional list of directories to include
             exclude_dirs: Optional list of directories to exclude
         """
-        self.indexer = indexer or Indexer()
+        if indexer is None:
+            # Create indexer with temporary storage directory for testing
+            temp_dir = tempfile.mkdtemp(prefix="incremental_index_")
+            self.indexer = Indexer(temp_dir)
+        else:
+            self.indexer = indexer
         self.embedder = embedder or CodeEmbedder()
 
         # Load configuration for chunker initialization
@@ -817,6 +823,20 @@ class IncrementalIndexer:
                 logger.warning(
                     f"Multi-model VRAM cleanup failed (continuing with reindex): {e}"
                 )
+
+            # Cleanup OUR OWN embedder reference before creating a new one
+            # This prevents VRAM accumulation (old embedder + new embedder)
+            if hasattr(self, "embedder") and hasattr(self.embedder, "cleanup"):
+                logger.info("Cleaning up IncrementalIndexer's embedder reference...")
+                self.embedder.cleanup()
+                logger.info("IncrementalIndexer's embedder cleaned")
+
+            # Refresh embedder after cleanup - old one can't reload (model loader cleared)
+            # This ensures cleanup happens before model is loaded for reindex
+            from mcp_server.model_pool_manager import get_embedder
+
+            self.embedder = get_embedder()
+            logger.info("Embedder refreshed after cleanup - ready for reindex")
 
             return self.incremental_index(project_path, project_name)
         else:

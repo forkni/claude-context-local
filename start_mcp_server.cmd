@@ -346,6 +346,7 @@ echo   3. Select Embedding Model           - Choose model by VRAM ^(BGE-M3/Qwen3
 echo   4. Configure Neural Reranker        - Cross-encoder reranking ^(+5-15%% quality^)
 echo   5. Entity Tracking Configuration    - Symbol tracking, import/class context
 echo   6. Configure Chunking Settings      - Greedy merge, AST splitting ^(+4.3 Recall@5^)
+echo   7. Performance Settings             - GPU acceleration, auto-reindex
 echo   9. Reset to Defaults                - Restore optimal default settings
 echo   0. Back to Main Menu
 echo.
@@ -368,6 +369,7 @@ if "!search_choice!"=="3" goto select_embedding_model
 if "!search_choice!"=="4" goto configure_reranker
 if "!search_choice!"=="5" goto entity_tracking_menu
 if "!search_choice!"=="6" goto configure_chunking
+if "!search_choice!"=="7" goto performance_settings_menu
 if "!search_choice!"=="9" goto reset_config
 if "!search_choice!"=="0" goto menu_restart
 
@@ -379,6 +381,9 @@ goto search_config_menu
 :search_mode_menu
 echo.
 echo === Search Mode Configuration ===
+echo.
+echo Current Settings:
+.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Search Mode:', cfg.search_mode.default_mode); print('  BM25 Weight:', cfg.search_mode.bm25_weight); print('  Dense Weight:', cfg.search_mode.dense_weight); print('  Parallel Search:', 'Enabled' if cfg.performance.use_parallel_search else 'Disabled')" 2>nul
 echo.
 echo   1. Set Search Mode              - Hybrid/Semantic/BM25 ^(Hybrid recommended^)
 echo   2. Configure Search Weights     - Balance BM25 vs semantic matching
@@ -411,6 +416,9 @@ goto search_mode_menu
 :entity_tracking_menu
 echo.
 echo === Entity Tracking Configuration ===
+echo.
+echo Current Settings:
+.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Entity Tracking:', 'Enabled' if cfg.performance.enable_entity_tracking else 'Disabled'); print('  Import Context:', 'Enabled' if cfg.embedding.enable_import_context else 'Disabled'); print('  Class Context:', 'Enabled' if cfg.embedding.enable_class_context else 'Disabled')" 2>nul
 echo.
 echo   1. Configure Entity Tracking    - Enable/disable symbol tracking
 echo   2. Configure Context Enhancement - Import/class context in embeddings ^(+1-5%% quality^)
@@ -1010,7 +1018,7 @@ REM Search Configuration Functions
 echo.
 echo [INFO] Current Search Configuration:
 if exist ".venv\Scripts\python.exe" (
-    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); print(f'  Embedding Model: {model_short} ({dim}d, {vram})'); print('    Multi-Model Routing:', 'Enabled' if config.routing.multi_model_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print(); print('  Chunking Settings:'); print('    Greedy Merge:', 'Enabled' if config.chunking.enable_greedy_merge else 'Disabled'); print(f'      Min Chunk Tokens: {config.chunking.min_chunk_tokens}'); print(f'      Max Merged Tokens: {config.chunking.max_merged_tokens}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'      Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print(); print('  Performance:'); print('    Prefer GPU:', config.performance.prefer_gpu); print(); print('  Output Format:', config.output.format)"
+    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); print(f'  Embedding Model: {model_short} ({dim}d, {vram})'); print('    Multi-Model Routing:', 'Enabled' if config.routing.multi_model_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print(); print('  Chunking Settings:'); print('    Greedy Merge:', 'Enabled' if config.chunking.enable_greedy_merge else 'Disabled'); print(f'      Min Chunk Tokens: {config.chunking.min_chunk_tokens}'); print(f'      Max Merged Tokens: {config.chunking.max_merged_tokens}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'      Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print(); print('  Performance:'); print('    Prefer GPU:', config.performance.prefer_gpu); print('    Auto-Reindex:', 'Enabled' if config.performance.enable_auto_reindex else 'Disabled'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(); print('  Output Format:', config.output.format)"
     if "!ERRORLEVEL!" neq "0" (
         echo Error loading configuration
         echo Using defaults: hybrid mode, BM25=0.4, Dense=0.6
@@ -1105,9 +1113,12 @@ goto search_mode_menu
 echo.
 echo === Select Embedding Model ===
 echo.
-echo Current Model:
-.\.venv\Scripts\python.exe -c "from search.config import get_search_config; print('  ', get_search_config().embedding.model_name)" 2>nul
-if errorlevel 1 echo   google/embeddinggemma-300m ^(default^)
+echo Current Settings:
+.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Model:', cfg.embedding.model_name); print('  Multi-Model Routing:', 'Enabled' if cfg.routing.multi_model_enabled else 'Disabled')" 2>nul
+if errorlevel 1 (
+    echo   Model: google/embeddinggemma-300m ^(default^)
+    echo   Multi-Model Routing: Disabled
+)
 echo.
 echo RECOMMENDED MODELS ^(Validated 2025-11^):
 echo.
@@ -1123,7 +1134,7 @@ echo   [DEFAULT] - Fast and lightweight
 echo   3. EmbeddingGemma ^(768d, 4-8GB^)
 echo      Best for: Quick start, resource-constrained systems
 echo.
-echo   [ADVANCED]
+echo   [MULTI-MODEL] - Most comprehensive choice
 echo   4. Multi-Model Routing ^(5.3GB total, 100%% accuracy^)
 echo      Smart routing across BGE-M3 + Qwen3 + CodeRankEmbed
 echo.
@@ -1256,6 +1267,59 @@ if not "!parallel_choice!"=="1" if not "!parallel_choice!"=="2" (
 pause
 goto search_mode_menu
 
+:configure_gpu_acceleration
+echo.
+echo === Configure GPU Acceleration ===
+echo.
+echo GPU acceleration uses CUDA for faster embeddings and search operations.
+echo.
+echo When GPU is:
+echo   - Preferred: Use GPU if available ^(faster, higher VRAM usage^)
+echo   - Not Preferred: Use CPU only ^(slower, no VRAM usage^)
+echo.
+echo Recommendation: Keep ENABLED if you have a CUDA-capable GPU.
+echo.
+echo Current Setting:
+.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Prefer GPU:', 'True' if cfg.performance.prefer_gpu else 'False')" 2>nul
+echo.
+echo   1. Enable GPU Acceleration
+echo   2. Disable GPU Acceleration
+echo   0. Back to Performance Settings
+echo.
+set "gpu_choice="
+set /p gpu_choice="Select option (0-2): "
+
+if not defined gpu_choice goto performance_settings_menu
+if "!gpu_choice!"=="" goto performance_settings_menu
+if "!gpu_choice!"=="0" goto performance_settings_menu
+
+if "!gpu_choice!"=="1" (
+    echo.
+    echo [INFO] Enabling GPU acceleration...
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.performance.prefer_gpu = True; mgr.save_config(cfg); print('[OK] GPU acceleration enabled and saved')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] GPU will be used if CUDA is available
+    )
+)
+if "!gpu_choice!"=="2" (
+    echo.
+    echo [INFO] Disabling GPU acceleration...
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.performance.prefer_gpu = False; mgr.save_config(cfg); print('[OK] GPU acceleration disabled and saved')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] CPU will be used for all operations
+    )
+)
+
+if not "!gpu_choice!"=="1" if not "!gpu_choice!"=="2" (
+    echo [ERROR] Invalid choice. Please select 0-2.
+)
+pause
+goto performance_settings_menu
+
 :configure_reranker
 echo.
 echo === Configure Neural Reranker ===
@@ -1325,15 +1389,114 @@ if not "!reranker_choice!"=="1" if not "!reranker_choice!"=="2" if not "!reranke
 pause
 goto search_config_menu
 
+:performance_settings_menu
+echo.
+echo === Performance Settings ===
+echo.
+echo Current Settings:
+.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Prefer GPU:', 'True' if cfg.performance.prefer_gpu else 'False'); print('  Auto-Reindex:', 'Enabled' if cfg.performance.enable_auto_reindex else 'Disabled'); print('    Max Age:', cfg.performance.max_index_age_minutes, 'minutes')" 2>nul
+echo.
+echo   1. Configure GPU Acceleration   - Prefer GPU for embeddings/search
+echo   2. Configure Auto-Reindex       - Auto-refresh when index is stale
+echo   0. Back to Search Configuration
+echo.
+set "perf_choice="
+set /p perf_choice="Select option (0-2): "
+
+REM Handle empty input gracefully
+if not defined perf_choice (
+    cls
+    goto performance_settings_menu
+)
+if "!perf_choice!"=="" (
+    cls
+    goto performance_settings_menu
+)
+
+if "!perf_choice!"=="1" goto configure_gpu_acceleration
+if "!perf_choice!"=="2" goto configure_auto_reindex
+if "!perf_choice!"=="0" goto search_config_menu
+
+echo [ERROR] Invalid choice. Please select 0-2.
+pause
+cls
+goto performance_settings_menu
+
+:configure_auto_reindex
+echo.
+echo === Configure Auto-Reindex ===
+echo.
+echo Auto-reindex automatically refreshes the index when it becomes stale.
+echo This prevents searching outdated code without manual reindexing.
+echo.
+echo Current Setting:
+.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Auto-Reindex:', 'Enabled' if cfg.performance.enable_auto_reindex else 'Disabled'); print('  Max Age:', cfg.performance.max_index_age_minutes, 'minutes')" 2>nul
+echo.
+echo   1. Enable Auto-Reindex
+echo   2. Disable Auto-Reindex
+echo   3. Set Max Age ^(minutes^)
+echo   0. Back to Performance Settings
+echo.
+set "auto_reindex_choice="
+set /p auto_reindex_choice="Select option (0-3): "
+
+if not defined auto_reindex_choice goto performance_settings_menu
+if "!auto_reindex_choice!"=="" goto performance_settings_menu
+if "!auto_reindex_choice!"=="0" goto performance_settings_menu
+
+if "!auto_reindex_choice!"=="1" (
+    echo.
+    echo [INFO] Enabling auto-reindex...
+    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.enable_auto_reindex = True; mgr.save_config(cfg); print('[OK] Auto-reindex enabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        REM Notify running MCP server to reload config
+        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+    )
+)
+if "!auto_reindex_choice!"=="2" (
+    echo.
+    echo [INFO] Disabling auto-reindex...
+    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.enable_auto_reindex = False; mgr.save_config(cfg); print('[OK] Auto-reindex disabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        REM Notify running MCP server to reload config
+        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+    )
+)
+if "!auto_reindex_choice!"=="3" (
+    echo.
+    set "max_age="
+    set /p max_age="Enter Max Age in minutes (0.01-1440, default 60): "
+    if defined max_age (
+        .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.max_index_age_minutes = float('!max_age!'); mgr.save_config(cfg); print('[OK] Max age set to !max_age! minutes')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Failed to save configuration
+        ) else (
+            REM Notify running MCP server to reload config
+            .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+)
+
+if not "!auto_reindex_choice!"=="1" if not "!auto_reindex_choice!"=="2" if not "!auto_reindex_choice!"=="3" (
+    echo [ERROR] Invalid choice. Please select 0-3.
+)
+pause
+goto performance_settings_menu
+
 :quick_model_switch
 echo.
 echo === Quick Model Switch ===
 echo.
-echo Current Model:
+echo Current Settings:
 if exist ".venv\Scripts\python.exe" (
-    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); print(f'  {model} ({dim}d, {vram})')" 2>nul
+    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); print(f'  Model: {model} ({dim}d, {vram})'); print('  Multi-Model Routing:', 'Enabled' if cfg.routing.multi_model_enabled else 'Disabled')" 2>nul
 ) else (
-    echo   google/embeddinggemma-300m ^(default^)
+    echo   Model: google/embeddinggemma-300m ^(default^)
+    echo   Multi-Model Routing: Disabled
 )
 echo.
 echo Recommended Models ^(Validated 2025-11^):
@@ -1347,7 +1510,7 @@ echo.
 echo   [DEFAULT] - Fast and lightweight
 echo   3. EmbeddingGemma ^(768d, 4-8GB^)
 echo.
-echo   [ADVANCED]
+echo   [MULTI-MODEL] - Most comprehensive choice
 echo   M. Multi-Model Routing ^(5.3GB, 100%% accuracy^)
 echo.
 echo   A. View All Models ^(full registry^)

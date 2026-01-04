@@ -160,21 +160,21 @@ class GraphIntegration:
         graph_status = "not None" if self.storage is not None else "None"
         graph_nodes = len(self.storage) if self.storage else 0
         self._logger.info(
-            f"[save] Graph storage check: storage={graph_status}, nodes={graph_nodes}"
+            f"[SAVE] Graph storage check: storage={graph_status}, nodes={graph_nodes}"
         )
 
         if self.storage is not None and len(self.storage) > 0:
             try:
                 self._logger.info(
-                    f"[save] Saving call graph with {len(self.storage)} nodes to {self.storage.graph_path}"
+                    f"[SAVE] Saving call graph with {len(self.storage)} nodes to {self.storage.graph_path}"
                 )
                 self.storage.save()
-                self._logger.info("[save] Successfully saved call graph")
+                self._logger.info("[SAVE] Successfully saved call graph")
             except Exception as e:
-                self._logger.warning(f"[save] Failed to save call graph: {e}")
+                self._logger.warning(f"[SAVE] Failed to save call graph: {e}")
         else:
             skip_reason = "None" if self.storage is None else "empty (0 nodes)"
-            self._logger.info(f"[save] Skipping graph save: storage is {skip_reason}")
+            self._logger.info(f"[SAVE] Skipping graph save: storage is {skip_reason}")
 
     def clear(self) -> None:
         """Clear call graph."""

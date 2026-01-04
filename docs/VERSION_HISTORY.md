@@ -2,14 +2,67 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-01-03)
+## Current Status: All Features Operational (2026-01-04)
 
-- **Version**: 0.8.1
+- **Version**: 0.8.2
 - **Status**: Production-ready
 - **Test Coverage**: 1,191+ unit tests + 14 slow integration tests (100% pass rate)
 - **Index Quality**: 109 active files, 789 chunks (34% reduction via greedy merge, BGE-M3 1024d, ~16 MB)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
 - **Recent Feature**: cAST greedy sibling merging (EMNLP 2025), +4.3 Recall@5 improvement
+
+---
+
+## v0.8.2 - UI Enhancements & VRAM Fixes (2026-01-04)
+
+### Status: PRODUCTION-READY ✅
+
+Critical bug fixes for VRAM management during auto-reindex, plus UI improvements for better configuration visibility.
+
+### Highlights
+
+- **Multi-Model VRAM Cleanup** - Auto-reindex now frees all ~15 GB before reindexing (prevents OOM)
+- **Performance Settings Menu** - GPU and Auto-Reindex settings grouped under one submenu
+- **Current Settings Display** - All 12 menus now show active configuration on entry
+- **Windows VRAM Safety** - Hard limit prevents silent spillover to system RAM
+
+### Bug Fixes
+
+#### Auto-Reindex VRAM Cleanup (Critical)
+- **Problem**: Only freed ~7.5 GB (one model), left ~8 GB in VRAM causing OOM
+- **Solution**: Comprehensive cleanup via `state.clear_embedders()` and `reset_pool_manager()`
+- **Impact**: Frees all ~15 GB (Qwen3-4B 7.73 GB + BGE-M3 1.08 GB + CodeRankEmbed 0.52 GB)
+
+#### Auto-Reindex Timeout Configuration
+- **Problem**: Hardcoded 5-minute timeout ignored user configuration
+- **Solution**: Now uses `get_config().performance.max_index_age_minutes`
+- **File**: `mcp_server/tools/search_handlers.py:414-417`
+
+#### Windows VRAM Spillover Prevention
+- **Problem**: GPU silently overflowed to system RAM with 97% bandwidth reduction
+- **Solution**: Hard VRAM limit at 80% + conservative batch calculation at 65%
+- **Impact**: Fail-fast OOM instead of silent performance degradation
+
+### UI/UX Improvements
+
+- Performance Settings submenu grouping GPU + Auto-Reindex options
+- Current settings display in all 12 configuration menus
+- Multi-model routing status visible in model selection menus
+- Label improvement: `[ADVANCED]` → `[MULTI-MODEL] - Most comprehensive choice`
+
+### Breaking Changes
+
+- `enable_greedy_merge` default changed from `True` to `False`
+- Users wanting chunk merging must explicitly enable it
+
+### Files Modified
+
+- `embeddings/embedder.py` - VRAM limit, batch calculation, logging clarity
+- `search/incremental_indexer.py` - Multi-model cleanup before reindex
+- `search/config.py` - Default configuration changes
+- `mcp_server/tools/search_handlers.py` - Config-based timeout
+- `search/graph_integration.py` - Logging tag standardization
+- `start_mcp_server.cmd` - Performance Settings menu, current settings displays
 
 ---
 

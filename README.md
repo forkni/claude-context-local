@@ -33,9 +33,9 @@
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
 - **Multi-Model Routing**: Intelligent query routing (Qwen3, BGE-M3, CodeRankEmbed) with 100% accuracy - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md)
 - **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
-- **17 MCP Tools**: Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
+- **18 MCP Tools**: Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
 
-**Status**: ✅ Production-ready | 1000+ passing tests | All 18 MCP tools operational | Windows 10/11
+**Status**: ✅ Production-ready | 1,068+ passing tests | All 18 MCP tools operational | Windows 10/11
 
 ## Quick Start
 
@@ -398,7 +398,7 @@ claude-context-local/
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 1,054+ tests (unit + integration)
+└── tests/             # 1,068+ tests (unit + integration)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -476,7 +476,7 @@ The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic s
 
 ### Development
 
-- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (700+ passing)
+- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (1,068+ passing)
 - [Git Workflow](docs/GIT_WORKFLOW.md) - Contributing guidelines
 - [Version History](docs/VERSION_HISTORY.md) - Changelog
 
