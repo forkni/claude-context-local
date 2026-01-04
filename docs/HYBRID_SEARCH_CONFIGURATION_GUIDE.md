@@ -80,17 +80,24 @@ All hybrid search features have been **comprehensively tested** and validated fo
 
 ```json
 {
-  "default_search_mode": "hybrid",
-  "enable_hybrid_search": true,
-  "bm25_weight": 0.4,
-  "dense_weight": 0.6,
-  "bm25_use_stemming": true,
-  "enable_multi_hop": true,
-  "multi_hop_count": 2,
-  "multi_hop_expansion": 0.3,
-  "use_parallel_search": true,
-  "rrf_k_parameter": 100
+  "search_mode": {
+    "default_mode": "hybrid",
+    "enable_hybrid": true,
+    "bm25_weight": 0.4,
+    "dense_weight": 0.6,
+    "bm25_use_stemming": true
+  },
+  "performance": {
+    "use_parallel_search": true
+  },
+  "multi_hop": {
+    "enable_multi_hop": true,
+    "multi_hop_count": 2,
+    "multi_hop_expansion": 0.3,
+    "rrf_k_parameter": 100
+  }
 }
+```
 ```
 
 **Validation**: Empirically tested with 256+ queries across multiple codebases.
@@ -530,16 +537,20 @@ Create a `search_config.json` file in your project root:
 
 ```json
 {
-  "default_search_mode": "hybrid",
-  "enable_hybrid_search": true,
-  "bm25_weight": 0.4,
-  "dense_weight": 0.6,
-  "bm25_use_stemming": true,
-  "use_parallel_search": true,
-  "rrf_k_parameter": 100,
-  "prefer_gpu": true,
-  "enable_auto_reindex": true,
-  "max_index_age_minutes": 5.0
+  "search_mode": {
+    "default_mode": "hybrid",
+    "enable_hybrid": true,
+    "bm25_weight": 0.4,
+    "dense_weight": 0.6,
+    "bm25_use_stemming": true,
+    "rrf_k_parameter": 100
+  },
+  "performance": {
+    "use_parallel_search": true,
+    "prefer_gpu": true,
+    "enable_auto_reindex": true,
+    "max_index_age_minutes": 5.0
+  }
 }
 ```
 
@@ -762,26 +773,32 @@ start_mcp_server.bat
 
 ```json
 {
-  "default_search_mode": "hybrid",
-  "enable_hybrid_search": true,
-  "bm25_weight": 0.4,
-  "dense_weight": 0.6,
-  "bm25_use_stemming": true,
-  "use_parallel_search": true,
-  "rrf_k_parameter": 100,
-  "prefer_gpu": true,
-  "gpu_batch_size": 32,
-  "cpu_chunk_size": 100,
-  "max_worker_threads": 4,
-  "enable_auto_reindex": true,
-  "max_index_age_minutes": 5.0,
-  "enable_multi_hop": true,
-  "multi_hop_count": 2,
-  "multi_hop_expansion": 0.3,
-  "force_reindex_on_startup": false,
-  "gpu_memory_threshold": 0.8,
-  "cache_embeddings": true,
-  "debug_mode": false
+  "search_mode": {
+    "default_mode": "hybrid",
+    "enable_hybrid": true,
+    "bm25_weight": 0.4,
+    "dense_weight": 0.6,
+    "bm25_use_stemming": true,
+    "rrf_k_parameter": 100
+  },
+  "performance": {
+    "use_parallel_search": true,
+    "prefer_gpu": true,
+    "gpu_batch_size": 32,
+    "cpu_chunk_size": 100,
+    "max_worker_threads": 4,
+    "enable_auto_reindex": true,
+    "max_index_age_minutes": 5.0,
+    "force_reindex_on_startup": false,
+    "gpu_memory_threshold": 0.8,
+    "cache_embeddings": true,
+    "debug_mode": false
+  },
+  "multi_hop": {
+    "enable_multi_hop": true,
+    "multi_hop_count": 2,
+    "multi_hop_expansion": 0.3
+  }
 }
 ```
 

@@ -13,6 +13,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.1] - 2026-01-03
+
+### Added
+- `configure_chunking` MCP tool (18th tool) for runtime chunking configuration
+- Nested JSON configuration structure (8 sections: embedding, search_mode, etc.)
+- Context enhancement parameters in EmbeddingConfig (v0.8.0+)
+- UI menu reorganization with hierarchical submenus
+
+### Changed
+- `search_config.json` format: flat → nested structure (backward compatible)
+- Menu structure: "Search Mode Configuration" and "Entity Tracking Configuration" are now submenus
+- Updated documentation to reflect 18 MCP tools
+
+### Fixed
+- 4 unit tests updated for nested config structure
+
+---
+
 ## [0.8.0] - 2026-01-03
 
 ### Added

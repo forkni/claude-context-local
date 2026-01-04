@@ -4,12 +4,34 @@ Complete version history and feature timeline for claude-context-local MCP serve
 
 ## Current Status: All Features Operational (2026-01-03)
 
-- **Version**: 0.8.0
+- **Version**: 0.8.1
 - **Status**: Production-ready
 - **Test Coverage**: 1,191+ unit tests + 14 slow integration tests (100% pass rate)
 - **Index Quality**: 109 active files, 789 chunks (34% reduction via greedy merge, BGE-M3 1024d, ~16 MB)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
 - **Recent Feature**: cAST greedy sibling merging (EMNLP 2025), +4.3 Recall@5 improvement
+
+---
+
+## v0.8.1 - Configuration System Enhancement (2026-01-03)
+
+### New Features
+- **Nested JSON Configuration**: `search_config.json` now uses organized sections
+- **configure_chunking MCP Tool**: Runtime configuration of chunking parameters
+- **UI Menu Reorganization**: Hierarchical submenus for better organization
+
+### Configuration Structure (8 sections)
+- `embedding`: Model settings + context enhancement
+- `search_mode`: Search algorithm settings
+- `performance`: Parallelization + GPU settings
+- `multi_hop`: Multi-hop search settings
+- `routing`: Multi-model routing
+- `reranker`: Neural reranker settings
+- `output`: Output format
+- `chunking`: Chunk merging + splitting settings
+
+### Breaking Changes
+- None (backward compatible with flat format)
 
 ---
 

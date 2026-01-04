@@ -6,7 +6,7 @@ This modular reference can be embedded in any project instructions for Claude Co
 
 ---
 
-## Available MCP Tools (17)
+## Available MCP Tools (18)
 
 | Tool | Priority | Purpose | Parameters |
 |------|----------|---------|------------|
@@ -17,6 +17,7 @@ This modular reference can be embedded in any project instructions for Claude Co
 | configure_search_mode | Config | Set search mode & weights | search_mode="hybrid", bm25_weight=0.4, dense_weight=0.6, enable_parallel=True |
 | configure_query_routing | Config | Configure multi-model routing (v0.5.4+) | enable_multi_model, default_model, confidence_threshold=0.05 |
 | configure_reranking | Config | Configure neural reranker settings | enabled, model_name, top_k_candidates=50 |
+| configure_chunking | Config | Configure code chunking settings | enable_greedy_merge, min_chunk_tokens, max_merged_tokens, token_estimation, enable_large_node_splitting, max_chunk_lines |
 | get_search_config_status | Config | View current configuration | *(no parameters)* |
 | get_index_status | Status | Check index health & model info | *(no parameters)* |
 | get_memory_status | Monitor | Check RAM/VRAM usage | *(no parameters)* |
@@ -105,7 +106,7 @@ find_connections(symbol_name="UserService", exclude_dirs=["tests/"])
 
 ## Output Format Options
 
-All 17 MCP tools support configurable output formatting via the `output_format` parameter. This allows you to optimize token usage while preserving 100% of data.
+All 18 MCP tools support configurable output formatting via the `output_format` parameter. This allows you to optimize token usage while preserving 100% of data.
 
 ### Available Formats
 
@@ -302,6 +303,34 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 ```
 /configure_search_mode "hybrid" 0.4 0.6   # Set mode + weights
 /get_search_config_status                 # Check current config
+```
+
+---
+
+## Chunking Configuration
+
+### configure_chunking
+
+**Purpose**: Configure code chunking settings at runtime
+
+**Parameters**:
+- `enable_greedy_merge` (bool): Enable/disable greedy chunk merging (default: True)
+- `min_chunk_tokens` (int): Minimum tokens before merge (10-500, default: 50)
+- `max_merged_tokens` (int): Maximum tokens for merged chunks (100-5000, default: 1000)
+- `token_estimation` (str): Token estimation method - "whitespace" (fast) or "tiktoken" (accurate, default: "whitespace")
+- `enable_large_node_splitting` (bool): Enable AST block splitting for large functions (default: False)
+- `max_chunk_lines` (int): Maximum lines per chunk before splitting at AST boundaries (10-1000, default: 100)
+
+**Returns**: Updated configuration + system message
+
+**Note**: Re-index project to apply changes
+
+### Commands
+
+```
+/configure_chunking --enable_greedy_merge true --min_chunk_tokens 50
+/configure_chunking --enable_large_node_splitting true --max_chunk_lines 100
+/get_search_config_status  # View current chunking settings
 ```
 
 ---
