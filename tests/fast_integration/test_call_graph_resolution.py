@@ -11,10 +11,13 @@ Expected improvement:
 
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from graph.call_graph_extractor import PythonCallGraphExtractor
 from graph.graph_storage import CodeGraphStorage
+from mcp_server.services import ServiceLocator
+from search.config import ChunkingConfig
 
 
 class TestCallGraphResolutionIntegration:
@@ -25,6 +28,12 @@ class TestCallGraphResolutionIntegration:
         self.temp_dir = tempfile.mkdtemp()
         self.project_path = Path(self.temp_dir)
 
+        # Disable greedy merge for these tests to check individual method chunks
+        mock_config = MagicMock()
+        mock_config.chunking = ChunkingConfig(enable_greedy_merge=False)
+        self.locator = ServiceLocator.instance()
+        self.locator.register("config", mock_config)
+
         # Create test files
         self._create_test_files()
 
@@ -33,6 +42,10 @@ class TestCallGraphResolutionIntegration:
         self.graph = CodeGraphStorage(
             project_id="test_resolution", storage_dir=self.project_path / ".graph"
         )
+
+    def teardown_method(self):
+        """Clean up ServiceLocator."""
+        ServiceLocator.reset()
 
     def _create_test_files(self):
         """Create test Python files with multiple classes having 'extract' methods."""
@@ -300,13 +313,6 @@ class Calculator:
         assert (
             len(resolved_calls) >= 1
         ), f"Expected Calculator.validate, got {[c.callee_name for c in validate_calls]}"
-
-    def teardown_method(self):
-        """Clean up test fixtures."""
-        import shutil
-
-        if hasattr(self, "temp_dir"):
-            shutil.rmtree(self.temp_dir, ignore_errors=True)
 
 
 class TestCallGraphBackwardCompatibility:

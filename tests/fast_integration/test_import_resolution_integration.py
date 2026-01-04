@@ -7,9 +7,12 @@ Tests the full pipeline with import-based type inference.
 import os
 import shutil
 import tempfile
+from unittest.mock import MagicMock
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from graph.call_graph_extractor import PythonCallGraphExtractor
+from mcp_server.services import ServiceLocator
+from search.config import ChunkingConfig
 
 
 class TestImportResolutionEndToEnd:
@@ -17,12 +20,19 @@ class TestImportResolutionEndToEnd:
 
     def setup_method(self):
         """Set up test fixtures."""
+        # Disable greedy merge for these tests to check individual method chunks
+        mock_config = MagicMock()
+        mock_config.chunking = ChunkingConfig(enable_greedy_merge=False)
+        self.locator = ServiceLocator.instance()
+        self.locator.register("config", mock_config)
+
         self.extractor = PythonCallGraphExtractor()
         self.chunker = MultiLanguageChunker()
         self.temp_dir = tempfile.mkdtemp()
 
     def teardown_method(self):
         """Clean up test fixtures."""
+        ServiceLocator.reset()
         shutil.rmtree(self.temp_dir)
 
     def test_import_resolution_in_chunked_file(self):
