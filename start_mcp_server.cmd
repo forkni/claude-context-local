@@ -340,20 +340,17 @@ goto installation_menu
 echo.
 echo === Search Configuration ===
 echo.
-echo   1. View Current Configuration   - Show all active settings
-echo   2. Set Search Mode              - Hybrid/Semantic/BM25 ^(Hybrid recommended^)
-echo   3. Configure Search Weights     - Balance text vs semantic matching
-echo   4. Select Embedding Model       - Choose model by VRAM ^(BGE-M3/Qwen3^)
-echo   5. Configure Parallel Search    - Run BM25+Dense in parallel ^(faster^)
-echo   6. Configure Neural Reranker    - Cross-encoder reranking ^(+5-15%% quality^)
-echo   7. Configure Entity Tracking    - Track symbols across searches
-echo   8. Configure Context Enhancement - Import/class context in embeddings ^(+1-5%% quality^)
-echo   A. Configure Chunking Settings  - Greedy merge, token thresholds ^(+4.3 Recall@5^)
-echo   9. Reset to Defaults            - Restore optimal default settings
+echo   1. View Current Configuration       - Show all active settings
+echo   2. Search Mode Configuration        - Mode, weights, parallel search
+echo   3. Select Embedding Model           - Choose model by VRAM ^(BGE-M3/Qwen3^)
+echo   4. Configure Neural Reranker        - Cross-encoder reranking ^(+5-15%% quality^)
+echo   5. Entity Tracking Configuration    - Symbol tracking, import/class context
+echo   6. Configure Chunking Settings      - Greedy merge, AST splitting ^(+4.3 Recall@5^)
+echo   9. Reset to Defaults                - Restore optimal default settings
 echo   0. Back to Main Menu
 echo.
 set "search_choice="
-set /p search_choice="Select option (0-9, A): "
+set /p search_choice="Select option (0-9): "
 
 REM Handle empty input gracefully
 if not defined search_choice (
@@ -366,21 +363,80 @@ if "!search_choice!"=="" (
 )
 
 if "!search_choice!"=="1" goto view_config
-if "!search_choice!"=="2" goto set_search_mode
-if "!search_choice!"=="3" goto set_weights
-if "!search_choice!"=="4" goto select_embedding_model
-if "!search_choice!"=="5" goto configure_parallel_search
-if "!search_choice!"=="6" goto configure_reranker
-if "!search_choice!"=="7" goto configure_entity_tracking
-if "!search_choice!"=="8" goto configure_context_enhancement
-if /i "!search_choice!"=="A" goto configure_chunking
+if "!search_choice!"=="2" goto search_mode_menu
+if "!search_choice!"=="3" goto select_embedding_model
+if "!search_choice!"=="4" goto configure_reranker
+if "!search_choice!"=="5" goto entity_tracking_menu
+if "!search_choice!"=="6" goto configure_chunking
 if "!search_choice!"=="9" goto reset_config
 if "!search_choice!"=="0" goto menu_restart
 
-echo [ERROR] Invalid choice. Please select 0-9 or A.
+echo [ERROR] Invalid choice. Please select 0-9.
 pause
 cls
 goto search_config_menu
+
+:search_mode_menu
+echo.
+echo === Search Mode Configuration ===
+echo.
+echo   1. Set Search Mode              - Hybrid/Semantic/BM25 ^(Hybrid recommended^)
+echo   2. Configure Search Weights     - Balance BM25 vs semantic matching
+echo   3. Configure Parallel Search    - Run BM25+Dense in parallel ^(faster^)
+echo   0. Back to Search Configuration
+echo.
+set "mode_choice="
+set /p mode_choice="Select option (0-3): "
+
+REM Handle empty input gracefully
+if not defined mode_choice (
+    cls
+    goto search_mode_menu
+)
+if "!mode_choice!"=="" (
+    cls
+    goto search_mode_menu
+)
+
+if "!mode_choice!"=="1" goto set_search_mode
+if "!mode_choice!"=="2" goto set_weights
+if "!mode_choice!"=="3" goto configure_parallel_search
+if "!mode_choice!"=="0" goto search_config_menu
+
+echo [ERROR] Invalid choice. Please select 0-3.
+pause
+cls
+goto search_mode_menu
+
+:entity_tracking_menu
+echo.
+echo === Entity Tracking Configuration ===
+echo.
+echo   1. Configure Entity Tracking    - Enable/disable symbol tracking
+echo   2. Configure Context Enhancement - Import/class context in embeddings ^(+1-5%% quality^)
+echo   0. Back to Search Configuration
+echo.
+set "entity_choice="
+set /p entity_choice="Select option (0-2): "
+
+REM Handle empty input gracefully
+if not defined entity_choice (
+    cls
+    goto entity_tracking_menu
+)
+if "!entity_choice!"=="" (
+    cls
+    goto entity_tracking_menu
+)
+
+if "!entity_choice!"=="1" goto configure_entity_tracking
+if "!entity_choice!"=="2" goto configure_context_enhancement
+if "!entity_choice!"=="0" goto search_config_menu
+
+echo [ERROR] Invalid choice. Please select 0-2.
+pause
+cls
+goto entity_tracking_menu
 
 :project_management_menu
 echo.
@@ -956,7 +1012,7 @@ REM Search Configuration Functions
 echo.
 echo [INFO] Current Search Configuration:
 if exist ".venv\Scripts\python.exe" (
-    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); print(f'  Embedding Model: {model_short} ({dim}d, {vram})'); print('  Multi-Model Routing:', 'Enabled' if config.routing.multi_model_enabled else 'Disabled'); print('  Search Mode:', config.search_mode.default_mode); print('  Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('  BM25 Weight:', config.search_mode.bm25_weight); print('  Dense Weight:', config.search_mode.dense_weight); print('  Prefer GPU:', config.performance.prefer_gpu); print('  Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'  Reranker Top-K: {config.reranker.top_k_candidates}'); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('  Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('  Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print('  Greedy Merge:', 'Enabled' if config.chunking.enable_greedy_merge else 'Disabled'); print(f'  Min Chunk Tokens: {config.chunking.min_chunk_tokens}'); print(f'  Max Merged Tokens: {config.chunking.max_merged_tokens}'); print('  Output Format:', config.output.format)"
+    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); print(f'  Embedding Model: {model_short} ({dim}d, {vram})'); print('    Multi-Model Routing:', 'Enabled' if config.routing.multi_model_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print(); print('  Chunking Settings:'); print('    Greedy Merge:', 'Enabled' if config.chunking.enable_greedy_merge else 'Disabled'); print(f'      Min Chunk Tokens: {config.chunking.min_chunk_tokens}'); print(f'      Max Merged Tokens: {config.chunking.max_merged_tokens}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'      Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print(); print('  Performance:'); print('    Prefer GPU:', config.performance.prefer_gpu); print(); print('  Output Format:', config.output.format)"
     if "!ERRORLEVEL!" neq "0" (
         echo Error loading configuration
         echo Using defaults: hybrid mode, BM25=0.4, Dense=0.6
@@ -977,15 +1033,15 @@ echo Available Search Modes:
 echo   1. Hybrid ^(BM25 + Semantic, Recommended^)
 echo   2. Semantic Only ^(Dense vector search^)
 echo   3. BM25 Only ^(Text-based search^)
-echo   0. Back to Search Configuration
+echo   0. Back to Search Mode Configuration
 echo.
 set "mode_choice="
 set /p mode_choice="Select mode (0-3): "
 
 REM Handle empty input or back option
-if not defined mode_choice goto search_config_menu
-if "!mode_choice!"=="" goto search_config_menu
-if "!mode_choice!"=="0" goto search_config_menu
+if not defined mode_choice goto search_mode_menu
+if "!mode_choice!"=="" goto search_mode_menu
+if "!mode_choice!"=="0" goto search_mode_menu
 
 set "SEARCH_MODE="
 if "!mode_choice!"=="1" set "SEARCH_MODE=hybrid"
@@ -1008,7 +1064,7 @@ if defined SEARCH_MODE (
     echo [ERROR] Invalid choice
 )
 pause
-goto search_config_menu
+goto search_mode_menu
 
 :set_weights
 echo.
@@ -1022,15 +1078,15 @@ set "bm25_weight="
 set /p bm25_weight="Enter BM25 weight (0.0-1.0, or press Enter to cancel): "
 
 REM Handle empty input - cancel and go back
-if not defined bm25_weight goto search_config_menu
-if "!bm25_weight!"=="" goto search_config_menu
+if not defined bm25_weight goto search_mode_menu
+if "!bm25_weight!"=="" goto search_mode_menu
 
 set "dense_weight="
 set /p dense_weight="Enter Dense weight (0.0-1.0, or press Enter to cancel): "
 
 REM Handle empty input - cancel and go back
-if not defined dense_weight goto search_config_menu
-if "!dense_weight!"=="" goto search_config_menu
+if not defined dense_weight goto search_mode_menu
+if "!dense_weight!"=="" goto search_mode_menu
 
 echo [INFO] Saving weights - BM25: %bm25_weight%, Dense: %dense_weight%
 REM Persist to config file via Python
@@ -1045,7 +1101,7 @@ if errorlevel 1 (
     .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
 )
 pause
-goto search_config_menu
+goto search_mode_menu
 
 :select_embedding_model
 echo.
@@ -1170,14 +1226,14 @@ echo Current Setting:
 echo.
 echo   1. Enable Parallel Search
 echo   2. Disable Parallel Search
-echo   0. Back to Search Configuration
+echo   0. Back to Search Mode Configuration
 echo.
 set "parallel_choice="
 set /p parallel_choice="Select option (0-2): "
 
-if not defined parallel_choice goto search_config_menu
-if "!parallel_choice!"=="" goto search_config_menu
-if "!parallel_choice!"=="0" goto search_config_menu
+if not defined parallel_choice goto search_mode_menu
+if "!parallel_choice!"=="" goto search_mode_menu
+if "!parallel_choice!"=="0" goto search_mode_menu
 
 if "!parallel_choice!"=="1" (
     echo.
@@ -1200,7 +1256,7 @@ if not "!parallel_choice!"=="1" if not "!parallel_choice!"=="2" (
     echo [ERROR] Invalid choice. Please select 0-2.
 )
 pause
-goto search_config_menu
+goto search_mode_menu
 
 :configure_reranker
 echo.
@@ -1373,14 +1429,14 @@ echo Current Setting:
 echo.
 echo   1. Enable Entity Tracking
 echo   2. Disable Entity Tracking
-echo   0. Back to Search Configuration
+echo   0. Back to Entity Tracking Configuration
 echo.
 set "entity_choice="
 set /p entity_choice="Select option (0-2): "
 
-if not defined entity_choice goto search_config_menu
-if "!entity_choice!"=="" goto search_config_menu
-if "!entity_choice!"=="0" goto search_config_menu
+if not defined entity_choice goto entity_tracking_menu
+if "!entity_choice!"=="" goto entity_tracking_menu
+if "!entity_choice!"=="0" goto entity_tracking_menu
 
 if "!entity_choice!"=="1" (
     echo.
@@ -1411,7 +1467,7 @@ if not "!entity_choice!"=="1" if not "!entity_choice!"=="2" (
     echo [ERROR] Invalid choice. Please select 0-2.
 )
 pause
-goto search_config_menu
+goto entity_tracking_menu
 
 :configure_context_enhancement
 echo.
@@ -1433,14 +1489,14 @@ echo   3. Enable Class Context
 echo   4. Disable Class Context
 echo   5. Set Max Import Lines
 echo   6. Set Max Class Signature Lines
-echo   0. Back to Search Configuration
+echo   0. Back to Entity Tracking Configuration
 echo.
 set "ctx_choice="
 set /p ctx_choice="Select option (0-6): "
 
-if not defined ctx_choice goto search_config_menu
-if "!ctx_choice!"=="" goto search_config_menu
-if "!ctx_choice!"=="0" goto search_config_menu
+if not defined ctx_choice goto entity_tracking_menu
+if "!ctx_choice!"=="" goto entity_tracking_menu
+if "!ctx_choice!"=="0" goto entity_tracking_menu
 
 if "!ctx_choice!"=="1" (
     echo.
@@ -1521,7 +1577,7 @@ if not "!ctx_choice!"=="1" if not "!ctx_choice!"=="2" if not "!ctx_choice!"=="3"
     echo [ERROR] Invalid choice. Please select 0-6.
 )
 pause
-goto search_config_menu
+goto entity_tracking_menu
 
 :configure_chunking
 echo.
@@ -1536,17 +1592,20 @@ echo   - 20-30%% fewer chunks (merged getters/setters)
 echo   - Denser embeddings with more context per vector
 echo.
 echo Current Settings:
-.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Greedy Merge:', 'Enabled' if cfg.chunking.enable_greedy_merge else 'Disabled'); print('  Min Chunk Tokens:', cfg.chunking.min_chunk_tokens); print('  Max Merged Tokens:', cfg.chunking.max_merged_tokens); print('  Token Estimation:', cfg.chunking.token_estimation)" 2>nul
+.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Greedy Merge:', 'Enabled' if cfg.chunking.enable_greedy_merge else 'Disabled'); print('  Min Chunk Tokens:', cfg.chunking.min_chunk_tokens); print('  Max Merged Tokens:', cfg.chunking.max_merged_tokens); print('  Token Estimation:', cfg.chunking.token_estimation); print('  Large Node Splitting:', 'Enabled' if cfg.chunking.enable_large_node_splitting else 'Disabled'); print('  Max Chunk Lines:', cfg.chunking.max_chunk_lines)" 2>nul
 echo.
 echo   1. Enable Greedy Merge        - Merge small chunks (recommended)
 echo   2. Disable Greedy Merge       - Keep all chunks separate
 echo   3. Set Min Chunk Tokens       - Minimum size before merging (default: 50)
 echo   4. Set Max Merged Tokens      - Maximum merged chunk size (default: 1000)
 echo   5. Set Token Estimation       - whitespace (fast) or tiktoken (accurate)
+echo   6. Enable Large Node Splitting - Split functions ^> max_chunk_lines at AST boundaries
+echo   7. Disable Large Node Splitting - Keep large functions intact
+echo   8. Set Max Chunk Lines        - Split threshold in lines (default: 100)
 echo   0. Back to Search Configuration
 echo.
 set "chunk_choice="
-set /p chunk_choice="Select option (0-5): "
+set /p chunk_choice="Select option (0-8): "
 
 if not defined chunk_choice goto search_config_menu
 if "!chunk_choice!"=="" goto search_config_menu
@@ -1633,9 +1692,49 @@ if "!chunk_choice!"=="5" (
         )
     )
 )
+if "!chunk_choice!"=="6" (
+    echo.
+    echo [INFO] Enabling large node splitting...
+    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_large_node_splitting = True; mgr.save_config(cfg); print('[OK] Large node splitting enabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Functions exceeding max_chunk_lines will be split at AST boundaries
+        echo [INFO] Re-index project to apply changes
+        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+    )
+)
+if "!chunk_choice!"=="7" (
+    echo.
+    echo [INFO] Disabling large node splitting...
+    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_large_node_splitting = False; mgr.save_config(cfg); print('[OK] Large node splitting disabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Large functions will remain intact
+        echo [INFO] Re-index project to apply changes
+        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+    )
+)
+if "!chunk_choice!"=="8" (
+    echo.
+    set "max_lines="
+    set /p max_lines="Enter max chunk lines (10-500, current default: 100): "
+    if defined max_lines (
+        echo [INFO] Setting max chunk lines to: !max_lines!
+        .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.max_chunk_lines = int('!max_lines!'); mgr.save_config(cfg); print('[OK] Max chunk lines updated to !max_lines!')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Failed to save configuration. Please enter a valid number.
+        ) else (
+            echo [INFO] Functions exceeding !max_lines! lines will be split (if enabled^)
+            echo [INFO] Re-index project to apply changes
+            .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+)
 
-if not "!chunk_choice!"=="1" if not "!chunk_choice!"=="2" if not "!chunk_choice!"=="3" if not "!chunk_choice!"=="4" if not "!chunk_choice!"=="5" (
-    echo [ERROR] Invalid choice. Please select 0-5.
+if not "!chunk_choice!"=="1" if not "!chunk_choice!"=="2" if not "!chunk_choice!"=="3" if not "!chunk_choice!"=="4" if not "!chunk_choice!"=="5" if not "!chunk_choice!"=="6" if not "!chunk_choice!"=="7" if not "!chunk_choice!"=="8" (
+    echo [ERROR] Invalid choice. Please select 0-8.
 )
 pause
 goto search_config_menu
@@ -1742,11 +1841,35 @@ goto menu_restart
 :reset_config
 echo.
 echo [INFO] Resetting to default configuration:
-echo   - Search Mode: hybrid
-echo   - BM25 Weight: 0.4
-echo   - Dense Weight: 0.6
-echo   - Multi-Model: true
-echo   - GPU: auto
+echo.
+echo   Search Mode:
+echo     - Mode: hybrid
+echo     - BM25 Weight: 0.4
+echo     - Dense Weight: 0.6
+echo     - Parallel Search: Enabled
+echo.
+echo   Embedding Model: google/embeddinggemma-300m ^(768d^)
+echo     - Multi-Model Routing: Enabled
+echo.
+echo   Neural Reranker:
+echo     - Enabled: True
+echo     - Top-K Candidates: 50
+echo.
+echo   Entity Tracking:
+echo     - Entity Tracking: Disabled ^(faster indexing^)
+echo     - Import Context: Enabled
+echo     - Class Context: Enabled
+echo.
+echo   Chunking Settings:
+echo     - Greedy Merge: Enabled
+echo     - Min Chunk Tokens: 50
+echo     - Max Merged Tokens: 1000
+echo     - Large Node Splitting: Disabled ^(preserve full functions^)
+echo     - Max Chunk Lines: 100
+echo     - Token Estimation: whitespace
+echo.
+echo   Output Format: ultra ^(45-55%% token reduction^)
+echo.
 REM Persist defaults to config file via Python
 .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager, SearchConfig; mgr = SearchConfigManager(); cfg = SearchConfig(); mgr.save_config(cfg); print('[OK] Configuration reset to defaults and saved')" 2>nul
 if errorlevel 1 (
@@ -1849,7 +1972,7 @@ echo.
 echo This server enables hybrid semantic code search in Claude Code.
 echo.
 echo Key Features:
-echo   - 17 MCP Tools: Index, search, configure, manage projects
+echo   - 18 MCP Tools: Index, search, configure, manage projects
 echo   - Low-Level MCP SDK: Official Anthropic implementation
 echo   - Multi-Model Routing: BGE-M3 + Qwen3 + CodeRankEmbed ^(optional^)
 echo   - Neural Reranking: Cross-encoder model ^(5-15%% quality boost^)
