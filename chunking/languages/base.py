@@ -255,9 +255,11 @@ class LanguageChunker(ABC):
         current_group: List[TreeSitterChunk] = []
         current_tokens: int = 0
         current_parent: Optional[str] = None
+        total_tokens_estimated: int = 0  # Track for summary logging
 
         for chunk in chunks:
             chunk_tokens = estimate_tokens(chunk.content, token_method)
+            total_tokens_estimated += chunk_tokens
             chunk_parent = chunk.parent_class
 
             start_new_group = False
@@ -295,6 +297,12 @@ class LanguageChunker(ABC):
         # Flush remaining group
         if current_group:
             result.append(self._create_merged_chunk(current_group))
+
+        # Log summary at INFO level
+        logger.info(
+            f"Greedy merge complete: {len(chunks)} chunks → {len(result)} chunks, "
+            f"{total_tokens_estimated} tokens estimated using {token_method}"
+        )
 
         return result
 
