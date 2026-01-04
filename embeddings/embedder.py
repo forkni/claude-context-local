@@ -52,6 +52,7 @@ def calculate_optimal_batch_size(
     max_batch: int = 512,
     memory_fraction: float = 0.7,
     model_vram_gb: float = 0.0,
+    model_name: Optional[str] = None,
 ) -> int:
     """Calculate optimal batch size based on GPU VRAM tiers (model-aware).
 
@@ -65,12 +66,16 @@ def calculate_optimal_batch_size(
     - 12-20GB available: 256 batch size
     - ≥20GB available: 512 batch size
 
+    Per-model overrides: Some models (e.g., Qwen3-4B) may have max_batch_override
+    set in MODEL_REGISTRY to prevent VRAM exhaustion due to large activation memory.
+
     Args:
         embedding_dim: Embedding dimension (unused, kept for API compatibility)
         min_batch: Minimum batch size (safety floor, default: 32)
         max_batch: Maximum batch size (default: 512)
         memory_fraction: Unused, kept for API compatibility
         model_vram_gb: Model VRAM usage in GB (subtracted from available memory)
+        model_name: Optional model name to check for max_batch_override in registry
 
     Returns:
         Batch size based on available GPU tier, clamped to [min_batch, max_batch]
@@ -104,6 +109,21 @@ def calculate_optimal_batch_size(
             optimal_batch = 256  # Good
         else:  # 20GB+ available
             optimal_batch = 512  # Excellent
+
+        # Check for per-model batch size override (e.g., Qwen3-4B)
+        if model_name:
+            from search.config import MODEL_REGISTRY
+
+            model_config = MODEL_REGISTRY.get(model_name, {})
+            max_batch_override = model_config.get("max_batch_override")
+            if max_batch_override:
+                logger = logging.getLogger(__name__)
+                if optimal_batch > max_batch_override:
+                    logger.info(
+                        f"[DYNAMIC_BATCH] Applying model-specific limit: "
+                        f"{optimal_batch} → {max_batch_override} (model: {model_name})"
+                    )
+                    optimal_batch = max_batch_override
 
         # Clamp to config limits
         result = max(min_batch, min(optimal_batch, max_batch))
@@ -667,6 +687,7 @@ class CodeEmbedder:
                     max_batch=config.performance.dynamic_batch_max,
                     memory_fraction=config.performance.gpu_memory_threshold,
                     model_vram_gb=model_vram_gb,
+                    model_name=self.model_name,
                 )
                 self._logger.info(
                     f"Using dynamic GPU-optimized batch size {batch_size} for {len(chunks)} chunks"
@@ -691,6 +712,9 @@ class CodeEmbedder:
             self.model.encode(["warmup"], show_progress_bar=False)
             self._model_warmed_up = True
 
+        # Log VRAM usage after model load
+        self._log_vram_usage("MODEL_LOADED")
+
         # Process in batches for efficiency with progress bar
         console = Console(force_terminal=True)
         total_batches = (len(chunks) + batch_size - 1) // batch_size
@@ -707,6 +731,10 @@ class CodeEmbedder:
             task = progress.add_task("Embedding...", total=total_batches)
             for i in range(0, len(chunks), batch_size):
                 batch = chunks[i : i + batch_size]
+                batch_num = (i // batch_size) + 1
+
+                # Log VRAM before batch
+                self._log_vram_usage("BATCH_START", batch_num)
 
                 # Check VRAM before each batch
                 vram_pct, should_warn, should_abort = self._check_vram_status()
@@ -805,6 +833,9 @@ class CodeEmbedder:
                             embedding=embedding, chunk_id=chunk_id, metadata=metadata
                         )
                     )
+
+                # Log VRAM after batch
+                self._log_vram_usage("BATCH_END", batch_num)
 
                 # Update progress bar
                 progress.update(task, advance=1)
@@ -929,6 +960,42 @@ class CodeEmbedder:
             Dictionary mapping model names to VRAM usage in MB.
         """
         return dict(self._model_vram_usage)
+
+    def _log_vram_usage(self, phase: str, batch_idx: int = 0):
+        """Log current VRAM usage for debugging memory issues.
+
+        Args:
+            phase: Description of current phase (e.g., "MODEL_LOADED", "BATCH_START")
+            batch_idx: Optional batch index for batch-specific logging
+        """
+        if torch is None or not torch.cuda.is_available():
+            return
+
+        try:
+            allocated = torch.cuda.memory_allocated() / (1024**3)
+            reserved = torch.cuda.memory_reserved() / (1024**3)
+            total = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            usage_percent = (allocated / total) * 100
+
+            # Include batch index in message if provided
+            batch_info = f"[Batch {batch_idx}] " if batch_idx > 0 else ""
+
+            self._logger.info(
+                f"[VRAM] {batch_info}{phase}: "
+                f"Allocated={allocated:.2f}GB, "
+                f"Reserved={reserved:.2f}GB, "
+                f"Total={total:.1f}GB "
+                f"({usage_percent:.1f}% used)"
+            )
+
+            # Warn if VRAM usage is high (>90%)
+            if usage_percent > 90:
+                self._logger.warning(
+                    f"[VRAM] High memory usage detected ({usage_percent:.1f}%). "
+                    f"Consider reducing batch_size to avoid OOM."
+                )
+        except Exception as e:
+            self._logger.debug(f"Failed to log VRAM usage: {e}")
 
     def cleanup(self):
         """Clean up model from memory to free GPU/CPU resources."""
