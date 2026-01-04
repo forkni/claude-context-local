@@ -683,8 +683,6 @@ if errorlevel 1 (
     echo [OK] Force re-indexing completed successfully.
 )
 echo.
-echo Press any key to return to the menu...
-pause >nul
 goto menu_restart
 
 :list_projects_menu
