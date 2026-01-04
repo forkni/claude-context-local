@@ -377,7 +377,9 @@ class TestChunkingConfig:
     def test_default_values(self):
         """Default values are sensible."""
         config = ChunkingConfig()
-        assert config.enable_greedy_merge is True
+        assert (
+            config.enable_greedy_merge is False
+        )  # Opt-in behavior (changed from True)
         assert config.min_chunk_tokens == 50
         assert config.max_merged_tokens == 1000
         assert config.token_estimation == "whitespace"
