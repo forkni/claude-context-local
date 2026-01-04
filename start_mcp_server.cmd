@@ -1923,14 +1923,14 @@ echo.
 echo   1. Verbose (Full Output, Backward Compatible)
 echo   2. Compact (Recommended Default)
 echo   3. Ultra (Maximum Compression)
-echo   0. Back to Search Configuration
+echo   0. Back to Main Menu
 echo.
 set "format_choice="
 set /p format_choice="Select option (0-3): "
 
-if not defined format_choice goto search_config_menu
-if "!format_choice!"=="" goto search_config_menu
-if "!format_choice!"=="0" goto search_config_menu
+if not defined format_choice goto menu_restart
+if "!format_choice!"=="" goto menu_restart
+if "!format_choice!"=="0" goto menu_restart
 
 if "!format_choice!"=="1" (
     echo.
@@ -1995,8 +1995,6 @@ echo [INFO] Releasing resources via MCP server...
 echo.
 powershell -Command "try { $response = Invoke-WebRequest -Uri 'http://localhost:8765/cleanup' -Method POST -TimeoutSec 30 -UseBasicParsing; $content = $response.Content | ConvertFrom-Json; if ($content.success) { Write-Host '[OK]' $content.message } else { Write-Host '[ERROR]' $content.error } } catch { Write-Host '[ERROR] Failed to connect to MCP server:' $_.Exception.Message }"
 echo.
-echo Press any key to return to the menu...
-pause >nul
 goto menu_restart
 
 :reset_config
