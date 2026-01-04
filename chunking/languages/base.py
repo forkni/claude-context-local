@@ -195,7 +195,7 @@ class LanguageChunker(ABC):
 
         # Copy parent info from first chunk (all should have same parent)
         first_meta = chunks[0].metadata
-        for key in ["parent_name", "parent_type"]:
+        for key in ["parent_name", "parent_type", "name"]:
             if key in first_meta:
                 merged_metadata[key] = first_meta[key]
 

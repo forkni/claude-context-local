@@ -262,7 +262,7 @@ class ChunkingConfig:
     """Chunking algorithm settings (6 fields)."""
 
     # Greedy Sibling Merging (cAST algorithm - EMNLP 2025)
-    enable_greedy_merge: bool = True  # Enable cAST greedy sibling merging
+    enable_greedy_merge: bool = False  # Opt-in cAST greedy sibling merging
     min_chunk_tokens: int = 50  # Minimum tokens before considering merge
     max_merged_tokens: int = 1000  # Maximum tokens for merged chunk
 
@@ -521,7 +521,7 @@ class SearchConfig:
             )
 
             chunking = ChunkingConfig(
-                enable_greedy_merge=chunking_data.get("enable_greedy_merge", True),
+                enable_greedy_merge=chunking_data.get("enable_greedy_merge", False),
                 min_chunk_tokens=chunking_data.get("min_chunk_tokens", 50),
                 max_merged_tokens=chunking_data.get("max_merged_tokens", 1000),
                 enable_large_node_splitting=chunking_data.get(
@@ -615,7 +615,7 @@ class SearchConfig:
             )
 
             chunking = ChunkingConfig(
-                enable_greedy_merge=data.get("enable_greedy_merge", True),
+                enable_greedy_merge=data.get("enable_greedy_merge", False),
                 min_chunk_tokens=data.get("min_chunk_tokens", 50),
                 max_merged_tokens=data.get("max_merged_tokens", 1000),
                 enable_large_node_splitting=data.get(
