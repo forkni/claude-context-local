@@ -75,8 +75,10 @@ class TestSearchConfigModelFields:
 
         config = SearchConfig(embedding=EmbeddingConfig(model_name="BAAI/bge-m3"))
         config_dict = config.to_dict()
-        assert "embedding_model_name" in config_dict
-        assert config_dict["embedding_model_name"] == "BAAI/bge-m3"
+        # Check nested structure (v0.8.0+)
+        assert "embedding" in config_dict
+        assert isinstance(config_dict["embedding"], dict)
+        assert config_dict["embedding"]["model_name"] == "BAAI/bge-m3"
 
     def test_config_from_dict(self):
         """Test config deserialization."""
@@ -129,11 +131,17 @@ class TestSearchConfigManager:
 
     def test_environment_variable_override(self, monkeypatch):
         """Test that CLAUDE_EMBEDDING_MODEL env var works."""
-        monkeypatch.setenv("CLAUDE_EMBEDDING_MODEL", "BAAI/bge-m3")
+        import tempfile
+        from pathlib import Path
 
-        mgr = SearchConfigManager()
-        config = mgr.load_config()
-        assert config.embedding.model_name == "BAAI/bge-m3"
+        # Use temp config file to avoid loading user's real config
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = Path(tmpdir) / "test_config.json"
+            monkeypatch.setenv("CLAUDE_EMBEDDING_MODEL", "BAAI/bge-m3")
+
+            mgr = SearchConfigManager(config_file=str(config_file))
+            config = mgr.load_config()
+            assert config.embedding.model_name == "BAAI/bge-m3"
 
 
 @pytest.mark.usefixtures("mock_sentence_transformer")

@@ -253,3 +253,61 @@ async def handle_configure_reranking(arguments: Dict[str, Any]) -> dict:
         },
         "system_message": "Reranker configuration updated. Changes take effect on next search.",
     }
+
+
+@error_handler("Configure chunking")
+async def handle_configure_chunking(arguments: Dict[str, Any]) -> dict:
+    """Configure code chunking settings.
+
+    Args:
+        arguments: Dict with optional keys:
+            - enable_greedy_merge: Enable/disable greedy chunk merging
+            - min_chunk_tokens: Minimum token count before considering merge
+            - max_merged_tokens: Maximum token count for merged chunks
+            - token_estimation: Token estimation method ("whitespace" or "tiktoken")
+            - enable_large_node_splitting: Enable/disable AST block splitting
+            - max_chunk_lines: Maximum lines per chunk before splitting
+
+    Returns:
+        Dict with success status and updated config
+    """
+    config_manager = get_config_manager()
+    config = config_manager.load_config()
+
+    enable_greedy_merge = arguments.get("enable_greedy_merge")
+    min_chunk_tokens = arguments.get("min_chunk_tokens")
+    max_merged_tokens = arguments.get("max_merged_tokens")
+    token_estimation = arguments.get("token_estimation")
+    enable_large_node_splitting = arguments.get("enable_large_node_splitting")
+    max_chunk_lines = arguments.get("max_chunk_lines")
+
+    if enable_greedy_merge is not None:
+        config.chunking.enable_greedy_merge = enable_greedy_merge
+    if min_chunk_tokens is not None:
+        config.chunking.min_chunk_tokens = min_chunk_tokens
+    if max_merged_tokens is not None:
+        config.chunking.max_merged_tokens = max_merged_tokens
+    if token_estimation is not None:
+        if token_estimation in ["whitespace", "tiktoken"]:
+            config.chunking.token_estimation = token_estimation
+        else:
+            return {"error": f"Invalid token_estimation: {token_estimation}"}
+    if enable_large_node_splitting is not None:
+        config.chunking.enable_large_node_splitting = enable_large_node_splitting
+    if max_chunk_lines is not None:
+        config.chunking.max_chunk_lines = max_chunk_lines
+
+    config_manager.save_config(config)
+
+    return {
+        "success": True,
+        "config": {
+            "enable_greedy_merge": config.chunking.enable_greedy_merge,
+            "min_chunk_tokens": config.chunking.min_chunk_tokens,
+            "max_merged_tokens": config.chunking.max_merged_tokens,
+            "token_estimation": config.chunking.token_estimation,
+            "enable_large_node_splitting": config.chunking.enable_large_node_splitting,
+            "max_chunk_lines": config.chunking.max_chunk_lines,
+        },
+        "system_message": "Chunking configuration updated. Re-index project to apply changes.",
+    }

@@ -35,7 +35,7 @@
 - **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
 - **17 MCP Tools**: Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
 
-**Status**: ✅ Production-ready | 1000+ passing tests | All 17 MCP tools operational | Windows 10/11
+**Status**: ✅ Production-ready | 1000+ passing tests | All 18 MCP tools operational | Windows 10/11
 
 ## Quick Start
 
@@ -57,7 +57,7 @@ Double-click `install-windows.cmd` and follow the prompts:
 
 **Option A: Via UI Menu** (recommended for first-time setup)
 
-Double-click `start_mcp_server.cmd` and select **5. Project Management**:
+Double-click `start_mcp_server.cmd` and select **4. Project Management**:
 
 ```
 === Project Management ===
@@ -111,7 +111,7 @@ After the server starts, connect in Claude Code:
 
 This command loads the [mcp-search-tool](.claude/skills/mcp-search-tool/SKILL.md) skill, which provides Claude with:
 
-- Complete MCP tool reference (all 17 tools)
+- Complete MCP tool reference (all 18 tools)
 - Search-first protocol enforcement
 - 2-step workflow for relationship queries (search → find_connections)
 - Project context validation before searches
@@ -139,7 +139,7 @@ Claude Code will automatically use the MCP tools internally to find relevant cod
 
 > **Note**: This is an MCP server designed exclusively for Claude Code integration. It is not a standalone search tool - it requires connection via Claude Code's `/mcp` command.
 
-When connected via `/mcp` → Reconnect, Claude Code gains access to 17 semantic search tools exposed as `mcp__code-search__*` functions.
+When connected via `/mcp` → Reconnect, Claude Code gains access to 18 semantic search tools exposed as `mcp__code-search__*` functions.
 
 A [**SKILL.md**](.claude/skills/mcp-search-tool/SKILL.md) file in the repository provides Claude with workflow guidance for optimal tool usage, including project context validation and search mode selection.
 
@@ -176,7 +176,7 @@ Ask Claude Code to index your project:
 Or use the interactive menu:
 
 ```bash
-start_mcp_server.cmd → 5 (Project Management)
+start_mcp_server.cmd → 4 (Project Management)
   → 1 (Index New Project) or 2 (Re-index Existing) or 3 (Force Re-index)
 ```
 
@@ -292,14 +292,13 @@ Run `start_mcp_server.cmd` and select **3. Search Configuration**:
 ```
 === Search Configuration ===
 
-  1. View Current Configuration
-  2. Set Search Mode
-  3. Configure Search Weights
-  4. Select Embedding Model
-  5. Configure Parallel Search
-  6. Configure Neural Reranker
-  7. Configure Entity Tracking
-  8. Reset to Defaults
+  1. View Current Configuration       - Show all active settings
+  2. Search Mode Configuration        - Mode, weights, parallel search
+  3. Select Embedding Model           - Choose model by VRAM (BGE-M3/Qwen3)
+  4. Configure Neural Reranker        - Cross-encoder reranking (+5-15% quality)
+  5. Entity Tracking Configuration    - Symbol tracking, import/class context
+  6. Configure Chunking Settings      - Greedy merge, AST splitting (+4.3 Recall@5)
+  9. Reset to Defaults                - Restore optimal default settings
 ```
 
 #### 1. View Current Configuration
@@ -395,7 +394,7 @@ claude-context-local/
 ├── search/            # FAISS + BM25 hybrid search
 ├── merkle/            # Incremental indexing with change detection
 ├── graph/             # Call graph extraction & analysis
-├── mcp_server/        # MCP server implementation (17 tools)
+├── mcp_server/        # MCP server implementation (18 tools)
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation

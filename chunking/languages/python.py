@@ -38,6 +38,57 @@ class PythonChunker(LanguageChunker):
             "decorated_definition",
         }
 
+    def _get_block_boundary_types(self) -> Set[str]:
+        """Python-specific block boundary types for splitting large functions.
+
+        These node types represent logical split points in Python code.
+
+        Returns:
+            Set of Python tree-sitter node types
+        """
+        return {
+            "for_statement",  # for loops
+            "if_statement",  # if/elif/else blocks
+            "while_statement",  # while loops
+            "try_statement",  # try/except/finally blocks
+            "with_statement",  # context managers
+            "match_statement",  # match/case (Python 3.10+)
+        }
+
+    def _extract_signature(self, node: Any, source_bytes: bytes) -> str:
+        """Extract Python function signature including decorators.
+
+        Handles:
+        - Simple functions: def foo(args):
+        - Decorated functions: @decorator\\ndef foo(args):
+        - Async functions: async def foo(args):
+
+        Args:
+            node: function_definition or decorated_definition node
+            source_bytes: Source code bytes
+
+        Returns:
+            Complete signature string
+        """
+        content = self.get_node_text(node, source_bytes)
+        lines = content.split("\n")
+
+        sig_lines = []
+        seen_def = False
+        for line in lines:
+            sig_lines.append(line)
+            stripped = line.strip()
+
+            # Track if we've seen the def line
+            if stripped.startswith(("def ", "async def ")):
+                seen_def = True
+
+            # Stop after finding a line ending with ':' (after seeing def)
+            if seen_def and stripped.endswith(":"):
+                break
+
+        return "\n".join(sig_lines)
+
     def extract_metadata(self, node: Any, source: bytes) -> Dict[str, Any]:
         """Extract Python-specific metadata."""
         metadata = {"node_type": node.type}

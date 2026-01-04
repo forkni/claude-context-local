@@ -77,6 +77,12 @@ class ResourceManager:
                 state.clear_embedders()
                 logger.info("Embedder pool cleared - VRAM released")
 
+            # Reset ModelPoolManager singleton to release all model references
+            from mcp_server.model_pool_manager import reset_pool_manager
+
+            reset_pool_manager()
+            logger.info("ModelPoolManager singleton reset")
+
             # Force garbage collection to immediately free GPU memory
             gc.collect()
             logger.info("Garbage collection completed")

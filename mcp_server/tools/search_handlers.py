@@ -239,7 +239,9 @@ def _check_auto_reindex(
         indexer = get_index_manager(project_path, model_key=selected_model_key)
 
     embedder = get_embedder(selected_model_key)
-    chunker = MultiLanguageChunker(project_path)
+    chunker = MultiLanguageChunker(
+        project_path, enable_entity_tracking=config.performance.enable_entity_tracking
+    )
     incremental_indexer = IncrementalIndexer(
         indexer=indexer,
         embedder=embedder,

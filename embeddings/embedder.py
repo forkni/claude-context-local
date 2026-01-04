@@ -349,10 +349,148 @@ class CodeEmbedder:
         # Sync VRAM usage tracking from ModelLoader
         self._model_vram_usage.update(self._model_loader.model_vram_usage)
 
+    def _extract_import_context(self, file_path: str, max_imports: int = 10) -> str:
+        """Extract first N import statements from file header.
+
+        Args:
+            file_path: Absolute path to the source file
+            max_imports: Maximum number of import lines to extract
+
+        Returns:
+            String containing import statements, or empty string if none found
+        """
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                lines = []
+                for line in f:
+                    stripped = line.strip()
+                    # Collect import statements
+                    if stripped.startswith(("import ", "from ")):
+                        lines.append(line.rstrip())
+                        if len(lines) >= max_imports:
+                            break
+                    # Stop at first non-import, non-comment, non-blank line
+                    elif (
+                        stripped
+                        and not stripped.startswith("#")
+                        and not stripped.startswith('"""')
+                        and not stripped.startswith("'''")
+                    ):
+                        # Check if we've already collected imports
+                        if lines:
+                            break
+                        # Otherwise keep scanning (might have docstring before imports)
+                return "\n".join(lines)
+        except Exception as e:
+            self._logger.debug(
+                f"Failed to extract import context from {file_path}: {e}"
+            )
+            return ""
+
+    def _get_class_signature(self, chunk: CodeChunk, max_lines: int = 5) -> str:
+        """Extract parent class signature (header + docstring) for method chunks.
+
+        Args:
+            chunk: CodeChunk with chunk_type='method' and parent_name set
+            max_lines: Maximum number of lines to extract from class definition
+
+        Returns:
+            String containing class signature, or empty string if not a method
+        """
+        # Only applicable to methods
+        if chunk.chunk_type != "method" or not chunk.parent_name:
+            return ""
+
+        try:
+            with open(chunk.file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            # Find class definition containing this method
+            # Pattern: "class ClassName" or "class ClassName(BaseClass)"
+            import re
+
+            class_pattern = rf"^class\s+{re.escape(chunk.parent_name)}\s*[\(:]"
+
+            match = re.search(class_pattern, content, re.MULTILINE)
+            if not match:
+                return ""
+
+            # Extract class header + first few lines (likely docstring)
+            start = match.start()
+            lines = content[start:].split("\n")[:max_lines]
+            signature = "\n".join(lines).strip()
+
+            # Clean up: if docstring is incomplete, truncate at opening quote
+            if '"""' in signature or "'''" in signature:
+                # Find first opening quote
+                first_quote_idx = min(
+                    signature.find('"""') if '"""' in signature else len(signature),
+                    signature.find("'''") if "'''" in signature else len(signature),
+                )
+                # Find matching closing quote
+                if '"""' in signature[first_quote_idx:]:
+                    close_idx = signature.find('"""', first_quote_idx + 3)
+                    if close_idx != -1:
+                        signature = signature[: close_idx + 3]
+                elif "'''" in signature[first_quote_idx:]:
+                    close_idx = signature.find("'''", first_quote_idx + 3)
+                    if close_idx != -1:
+                        signature = signature[: close_idx + 3]
+
+            return signature
+
+        except Exception as e:
+            self._logger.debug(
+                f"Failed to extract class signature for {chunk.parent_name}: {e}"
+            )
+            return ""
+
     def create_embedding_content(self, chunk: CodeChunk, max_chars: int = 6000) -> str:
-        """Create clean content for embedding generation with size limits."""
+        """Create clean content for embedding generation with size limits.
+
+        Supports context enhancement features (v0.8.0+):
+        - Import context: Include import statements from file header
+        - Class context: Include parent class signature for methods
+
+        Configuration is controlled via search/config.py EmbeddingConfig:
+        - enable_import_context (bool, default: True)
+        - enable_class_context (bool, default: True)
+        - max_import_lines (int, default: 10)
+        - max_class_signature_lines (int, default: 5)
+        """
         # Prepare clean content without fabricated headers
         content_parts = []
+
+        # Get configuration via ServiceLocator
+        try:
+            config = _get_config_via_service_locator()
+            enable_import_ctx = config.embedding.enable_import_context
+            enable_class_ctx = config.embedding.enable_class_context
+            max_import_lines = config.embedding.max_import_lines
+            max_class_sig_lines = config.embedding.max_class_signature_lines
+        except Exception as e:
+            self._logger.debug(f"Failed to load context config, using defaults: {e}")
+            # Fallback to defaults
+            enable_import_ctx = True
+            enable_class_ctx = True
+            max_import_lines = 10
+            max_class_sig_lines = 5
+
+        # NEW: Add import context from file header (if enabled and available)
+        if enable_import_ctx:
+            import_context = self._extract_import_context(
+                chunk.file_path, max_imports=max_import_lines
+            )
+            if import_context:
+                content_parts.append(f"# Imports:\n{import_context}\n")
+
+        # NEW: Add class context for methods (skeleton approach, if enabled)
+        if enable_class_ctx:
+            class_context = self._get_class_signature(
+                chunk, max_lines=max_class_sig_lines
+            )
+            if class_context:
+                content_parts.append(f"# Parent class:\n{class_context}\n")
 
         # Add docstring if available (important context for code understanding)
         docstring_budget = 300
@@ -366,8 +504,9 @@ class CodeEmbedder:
             content_parts.append(f'"""{docstring}"""')
 
         # Calculate remaining budget for code content
-        docstring_len = len(content_parts[0]) if content_parts else 0
-        remaining_budget = max_chars - docstring_len - 10  # small buffer
+        # Account for import context, class context, and docstring
+        context_len = sum(len(part) for part in content_parts)
+        remaining_budget = max_chars - context_len - 10  # small buffer
 
         # Add the actual code content, truncating if necessary
         if len(chunk.content) <= remaining_budget:
@@ -379,7 +518,7 @@ class CodeEmbedder:
                 # Keep first few lines (signature) and last few lines (return/conclusion)
                 head_lines = []
                 tail_lines = []
-                current_length = docstring_len
+                current_length = context_len
 
                 # Add head lines (function signature, early logic)
                 for _i, line in enumerate(lines[: min(len(lines) // 2, 20)]):
@@ -795,16 +934,40 @@ class CodeEmbedder:
         """Clean up model from memory to free GPU/CPU resources."""
         if self._model is not None:
             try:
-                # Delete model directly (PyTorch 2.x handles CUDA cleanup)
-                del self._model
-                self._model = None
-                # Force garbage collection before clearing CUDA cache
                 import gc
 
+                # Step 1: Move model to CPU (frees VRAM immediately)
+                if torch is not None and torch.cuda.is_available():
+                    self._logger.info("Moving model from GPU to CPU...")
+                    self._model = self._model.cpu()
+                    torch.cuda.synchronize()  # Wait for GPU operations
+                    torch.cuda.empty_cache()
+                    self._logger.info("VRAM freed")
+
+                # Step 2: Delete model reference (allows RAM to be freed)
+                del self._model
+                self._model = None
+                self._logger.info("Model reference deleted")
+
+                # Step 3: Clear query cache (numpy arrays)
+                if hasattr(self, "_query_cache"):
+                    self._query_cache.clear()
+                    self._logger.info("Query cache cleared")
+
+                # Step 4: Clear model loader reference
+                if hasattr(self, "_model_loader"):
+                    self._model_loader = None
+                    self._logger.info("Model loader reference released")
+
+                # Step 5: Force garbage collection (frees RAM)
                 gc.collect()
+                self._logger.info("RAM freed via garbage collection")
+
+                # Step 6: Final CUDA cache clear
                 if torch is not None and torch.cuda.is_available():
                     torch.cuda.empty_cache()
-                self._logger.info("Model cleaned up and memory freed")
+
+                self._logger.info("Model cleanup complete - VRAM and RAM freed")
             except Exception as e:
                 self._logger.warning(f"Error during model cleanup: {e}")
 
