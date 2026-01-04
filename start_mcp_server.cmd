@@ -1927,6 +1927,9 @@ pause
 goto end
 
 :menu_restart
+echo.
+echo Press any key to return to main menu...
+pause >nul
 cls
 goto start
 
