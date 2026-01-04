@@ -65,6 +65,6 @@
     "max_merged_tokens": 1000,
     "enable_large_node_splitting": false,
     "max_chunk_lines": 100,
-    "token_estimation": "whitespace"
+    "token_estimation": "tiktoken"
   }
 }

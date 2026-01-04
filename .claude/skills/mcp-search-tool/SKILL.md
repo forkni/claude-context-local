@@ -49,7 +49,7 @@ What are you trying to do?
 
 ## 📚 Quick Function Index
 
-### All 17 MCP Tools at a Glance
+### All 18 MCP Tools at a Glance
 
 | Tool | Category | Purpose | Key Parameters | Jump To |
 |------|----------|---------|----------------|---------|
@@ -66,6 +66,7 @@ What are you trying to do?
 | configure_query_routing | Config | Multi-model routing settings | `enable_multi_model`, `default_model`, `confidence_threshold` | [Details](#11-configure_query_routingenable_multi_modelnone-default_modelnone-confidence_thresholdnone) |
 | find_similar_code | Secondary | Find functionally similar code | `chunk_id`, `k` | [Details](#12-find_similar_codechunk_id-k5) |
 | configure_reranking | Config | Neural reranking settings | `enabled`, `model_name`, `top_k_candidates` | [Details](#13-configure_rerankingenablednone-model_namenone-top_k_candidatesnone) |
+| configure_chunking | Config | Configure code chunking settings | `enable_greedy_merge`, `min_chunk_tokens`, `max_merged_tokens`, `token_estimation`, `enable_large_node_splitting`, `max_chunk_lines` | [Details](#18-configure_chunkingenable_greedy_mergenone-min_chunk_tokensnone-max_merged_tokensnone-token_estimationnone-enable_large_node_splittingnone-max_chunk_linesnone) |
 | list_embedding_models | Model | Show available models | *(none)* | [Details](#14-list_embedding_models) |
 | switch_embedding_model | Model | Change embedding model | `model_name` | [Details](#15-switch_embedding_modelmodel_name) |
 | get_memory_status | Monitor | Check RAM/VRAM usage | *(none)* | [Details](#16-get_memory_status) |
@@ -88,7 +89,7 @@ What are you trying to do?
 
 | Document | Purpose | When to Consult |
 |----------|---------|-----------------|
-| [MCP_TOOLS_REFERENCE.md](docs/MCP_TOOLS_REFERENCE.md) | Complete tool reference (17 tools, all parameters) | Detailed parameter options, filter behaviors |
+| [MCP_TOOLS_REFERENCE.md](docs/MCP_TOOLS_REFERENCE.md) | Complete tool reference (18 tools, all parameters) | Detailed parameter options, filter behaviors |
 | [HYBRID_SEARCH_CONFIGURATION_GUIDE.md](docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md) | Search modes, weights, multi-model routing | Tuning search quality, mode selection |
 | [ADVANCED_FEATURES_GUIDE.md](docs/ADVANCED_FEATURES_GUIDE.md) | Multi-hop, graph search, call graph resolution | Understanding advanced features |
 
@@ -766,6 +767,36 @@ set CLAUDE_VRAM_TIER=laptop
 - Switching between large projects
 - Memory running low
 - GPU memory needs to be freed
+
+#### 18. `configure_chunking(enable_greedy_merge=None, min_chunk_tokens=None, max_merged_tokens=None, token_estimation=None, enable_large_node_splitting=None, max_chunk_lines=None)`
+
+**Purpose**: Configure code chunking settings at runtime
+
+**Parameters**:
+
+- `enable_greedy_merge` (optional): Enable/disable greedy chunk merging (default: True)
+- `min_chunk_tokens` (optional): Minimum tokens before merge (10-500, default: 50)
+- `max_merged_tokens` (optional): Maximum tokens for merged chunks (100-5000, default: 1000)
+- `token_estimation` (optional): Token estimation method - "whitespace" (fast) or "tiktoken" (accurate, default: "whitespace")
+- `enable_large_node_splitting` (optional): Enable AST block splitting for large functions (default: False)
+- `max_chunk_lines` (optional): Maximum lines per chunk before splitting at AST boundaries (10-1000, default: 100)
+
+**Returns**: Updated configuration + system message
+
+**Note**: Re-index project to apply changes
+
+**Example**:
+
+```bash
+# Enable greedy merging with custom token limits
+configure_chunking(enable_greedy_merge=True, min_chunk_tokens=50, max_merged_tokens=1000)
+
+# Enable large node splitting for better granularity
+configure_chunking(enable_large_node_splitting=True, max_chunk_lines=100)
+
+# View current chunking settings
+get_search_config_status()
+```
 
 ## Search Modes Explained
 
