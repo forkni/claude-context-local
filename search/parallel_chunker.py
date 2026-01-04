@@ -74,6 +74,12 @@ class ParallelChunker:
 
                 # Collect results as they complete with progress bar
                 console = Console(force_terminal=True)
+
+                # Suppress INFO logs during progress bar to prevent line mixing
+                root_logger = logging.getLogger()
+                original_log_level = root_logger.level
+                root_logger.setLevel(logging.WARNING)
+
                 with Progress(
                     SpinnerColumn(),
                     TextColumn("[progress.description]{task.description}"),
@@ -115,9 +121,18 @@ class ParallelChunker:
                             logger.warning(f"Failed to chunk {file_path}: {e}")
                         finally:
                             progress.update(task, advance=1)
+
+                # Restore original log level
+                root_logger.setLevel(original_log_level)
         else:
             # Sequential chunking (fallback or single file)
             console = Console(force_terminal=True)
+
+            # Suppress INFO logs during progress bar to prevent line mixing
+            root_logger = logging.getLogger()
+            original_log_level = root_logger.level
+            root_logger.setLevel(logging.WARNING)
+
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
@@ -158,6 +173,9 @@ class ParallelChunker:
                         logger.warning(f"Failed to chunk {file_path}: {e}")
                     finally:
                         progress.update(task, advance=1)
+
+            # Restore original log level
+            root_logger.setLevel(original_log_level)
 
         # Log summary if there were stalled files
         if stalled_files:

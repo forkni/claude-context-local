@@ -719,6 +719,10 @@ class CodeEmbedder:
         console = Console(force_terminal=True)
         total_batches = (len(chunks) + batch_size - 1) // batch_size
 
+        # Suppress INFO logs during progress bar to prevent line mixing
+        original_log_level = self._logger.level
+        self._logger.setLevel(logging.WARNING)
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -839,6 +843,9 @@ class CodeEmbedder:
 
                 # Update progress bar
                 progress.update(task, advance=1)
+
+        # Restore original log level
+        self._logger.setLevel(original_log_level)
 
         self._logger.info("Embedding generation completed")
         return results

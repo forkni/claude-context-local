@@ -53,7 +53,7 @@ MODEL_REGISTRY = {
         "description": "Best value upgrade - 87.93% CodeSearchNet, +6% vs 0.6B (MTEB-Code 80.06)",
         "vram_gb": "8-10GB",
         "fallback_batch_size": 128,
-        "max_batch_override": 128,  # Prevent VRAM exhaustion: 36-layer model has large activation memory
+        "max_batch_override": 64,  # Conservative limit: prevent VRAM spillover to shared memory (PCIe)
         "vram_tier": "desktop",  # 12GB+ recommended
         # Matryoshka Representation Learning (MRL) support
         "mrl_dimensions": [
