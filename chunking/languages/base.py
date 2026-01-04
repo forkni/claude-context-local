@@ -290,6 +290,168 @@ class LanguageChunker(ABC):
 
         return result
 
+    def _get_block_boundary_types(self) -> Set[str]:
+        """Get node types that are valid split boundaries.
+
+        Override in language-specific chunkers for language-appropriate boundaries.
+        Default returns empty set (no splitting).
+
+        Returns:
+            Set of node type names that can be split points
+        """
+        return set()
+
+    def _extract_signature(self, node: Any, source_bytes: bytes) -> str:
+        """Extract function/method signature from a node.
+
+        Override in language-specific chunkers for proper signature extraction.
+        Default returns first line(s) until colon.
+
+        Args:
+            node: Tree-sitter node (function_definition, decorated_definition, etc.)
+            source_bytes: Source code bytes
+
+        Returns:
+            Signature string including decorators, def line, and opening colon
+        """
+        content = self.get_node_text(node, source_bytes)
+        lines = content.split("\n")
+        sig_lines = []
+        for line in lines:
+            sig_lines.append(line)
+            if line.rstrip().endswith(":"):
+                break
+        return "\n".join(sig_lines)
+
+    def _find_body_node(self, node: Any) -> Optional[Any]:
+        """Find the body/block child node of a function definition.
+
+        Args:
+            node: Function definition node
+
+        Returns:
+            Body block node or None
+        """
+        for child in node.children:
+            if child.type == "block":
+                return child
+            # Handle decorated_definition: need to find the inner function first
+            if child.type in ("function_definition", "class_definition"):
+                return self._find_body_node(child)
+        return None
+
+    def _create_split_chunk(
+        self,
+        signature: str,
+        nodes: List[Any],
+        source_bytes: bytes,
+        original_node: Any,
+        parent_info: Optional[Dict[str, Any]],
+    ) -> TreeSitterChunk:
+        """Create a single split chunk with signature prefix.
+
+        Args:
+            signature: Function signature to prefix
+            nodes: List of AST nodes in this chunk
+            source_bytes: Source code bytes
+            original_node: Original function node (for metadata)
+            parent_info: Parent class info
+
+        Returns:
+            TreeSitterChunk with prefixed content
+        """
+        # Get content from nodes
+        start_byte = nodes[0].start_byte
+        end_byte = nodes[-1].end_byte
+        body_content = source_bytes[start_byte:end_byte].decode("utf-8")
+
+        # Prefix with signature and docstring marker
+        content = f"{signature}\n    # ... (split block)\n{body_content}"
+
+        # Calculate lines
+        start_line = nodes[0].start_point[0] + 1
+        end_line = nodes[-1].end_point[0] + 1
+
+        # Build metadata
+        metadata = self.extract_metadata(original_node, source_bytes)
+        metadata["split_block"] = True
+        if parent_info:
+            metadata.update(parent_info)
+
+        parent_class_name = parent_info.get("parent_name") if parent_info else None
+
+        return TreeSitterChunk(
+            content=content,
+            start_line=start_line,
+            end_line=end_line,
+            node_type="split_block",
+            language=self.language_name,
+            metadata=metadata,
+            parent_class=parent_class_name,
+        )
+
+    def _split_large_node(
+        self,
+        node: Any,
+        source_bytes: bytes,
+        parent_info: Optional[Dict[str, Any]],
+        max_lines: int,
+    ) -> List[TreeSitterChunk]:
+        """Split a large function node at logical AST boundaries.
+
+        Algorithm:
+        1. Extract function signature for context prefix
+        2. Find the function body block
+        3. Iterate body children, accumulating until split boundary reached
+        4. Create chunks with signature prefix + accumulated statements
+
+        Args:
+            node: Tree-sitter node exceeding max_lines
+            source_bytes: Source code bytes
+            parent_info: Parent class information for methods
+            max_lines: Maximum lines threshold from config
+
+        Returns:
+            List of TreeSitterChunk objects with split content,
+            or empty list if splitting not applicable
+        """
+        split_types = self._get_block_boundary_types()
+        if not split_types:
+            # No split types defined, return empty list
+            return []
+
+        # Extract signature and body
+        signature = self._extract_signature(node, source_bytes)
+        body_node = self._find_body_node(node)
+
+        if not body_node:
+            return []  # No body found, use default
+
+        chunks = []
+        current_nodes = []
+
+        for child in body_node.children:
+            # Check if this is a split boundary and we have accumulated content
+            if child.type in split_types and current_nodes:
+                # Create chunk from accumulated nodes
+                chunk = self._create_split_chunk(
+                    signature, current_nodes, source_bytes, node, parent_info
+                )
+                chunks.append(chunk)
+                current_nodes = []
+
+            current_nodes.append(child)
+
+        # Flush remaining nodes
+        if current_nodes:
+            chunk = self._create_split_chunk(
+                signature, current_nodes, source_bytes, node, parent_info
+            )
+            chunks.append(chunk)
+
+        # Only split if actually multiple chunks
+        return chunks if len(chunks) > 1 else []
+
     def chunk_code(
         self,
         source_code: str,
@@ -309,10 +471,30 @@ class LanguageChunker(ABC):
         tree = self.parser.parse(source_bytes)
         chunks = []
 
+        # Get config BEFORE traverse (needed for splitting decision in closure)
+        if config is None:
+            config = self._get_chunking_config()
+
         def traverse(node, depth=0, parent_info=None):
             """Recursively traverse the tree and extract chunks."""
             if self.should_chunk_node(node):
                 start_line, end_line = self.get_line_numbers(node)
+                node_lines = end_line - start_line + 1
+
+                # Check if large node splitting is enabled and node exceeds threshold
+                if (
+                    config
+                    and config.enable_large_node_splitting
+                    and node_lines > config.max_chunk_lines
+                    and node.type in ("function_definition", "decorated_definition")
+                ):
+                    split_chunks = self._split_large_node(
+                        node, source_bytes, parent_info, config.max_chunk_lines
+                    )
+                    if split_chunks:
+                        chunks.extend(split_chunks)
+                        return  # Don't create regular chunk or traverse children
+
                 content = self.get_node_text(node, source_bytes)
                 metadata = self.extract_metadata(node, source_bytes)
 
@@ -368,9 +550,6 @@ class LanguageChunker(ABC):
             )
 
         # Apply greedy sibling merging if enabled
-        if config is None:
-            config = self._get_chunking_config()
-
         if config and config.enable_greedy_merge and len(chunks) > 1:
             chunks = self._greedy_merge_small_chunks(
                 chunks,

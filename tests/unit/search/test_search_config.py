@@ -27,8 +27,11 @@ class TestSearchConfig:
         config_dict = config.to_dict()
 
         assert isinstance(config_dict, dict)
-        assert config_dict["default_search_mode"] == "hybrid"
-        assert config_dict["enable_hybrid_search"] is True
+        # Check nested structure (v0.8.0+)
+        assert "search_mode" in config_dict
+        assert isinstance(config_dict["search_mode"], dict)
+        assert config_dict["search_mode"]["default_mode"] == "hybrid"
+        assert config_dict["search_mode"]["enable_hybrid"] is True
 
     def test_from_dict_creation(self):
         """Test creation from dictionary."""
@@ -110,12 +113,14 @@ class TestSearchConfigManager:
         # Verify file was created
         assert os.path.exists(self.config_file)
 
-        # Verify content
+        # Verify content (nested structure v0.8.0+)
         with open(self.config_file, "r") as f:
             saved_data = json.load(f)
 
-        assert saved_data["default_search_mode"] == "bm25"
-        assert saved_data["bm25_weight"] == 0.7
+        assert "search_mode" in saved_data
+        assert isinstance(saved_data["search_mode"], dict)
+        assert saved_data["search_mode"]["default_mode"] == "bm25"
+        assert saved_data["search_mode"]["bm25_weight"] == 0.7
 
     def test_auto_mode_detection(self):
         """Test automatic search mode detection."""

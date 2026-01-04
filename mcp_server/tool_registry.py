@@ -1,6 +1,6 @@
 """Tool registry for low-level MCP server.
 
-Contains JSON schemas for all 17 tools following MCP specification.
+Contains JSON schemas for all 18 tools following MCP specification.
 """
 
 from typing import Any, Dict
@@ -536,6 +536,60 @@ Args:
                     "description": "Number of candidates to rerank",
                     "minimum": 5,
                     "maximum": 100,
+                },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["verbose", "compact", "ultra"],
+                    "default": "compact",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                },
+            },
+            "required": [],
+        },
+    },
+    "configure_chunking": {
+        "description": """Configure code chunking settings.
+
+Args:
+    enable_greedy_merge: Enable/disable greedy chunk merging (default: True)
+    min_chunk_tokens: Minimum token count before considering merge (default: 50)
+    max_merged_tokens: Maximum token count for merged chunks (default: 1000)
+    token_estimation: Token estimation method - "whitespace" (fast) or "tiktoken" (accurate) (default: "whitespace")
+    enable_large_node_splitting: Enable/disable AST block splitting for large functions (default: False)
+    max_chunk_lines: Maximum lines per chunk before splitting at AST boundaries (default: 100)""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "enable_greedy_merge": {
+                    "type": "boolean",
+                    "description": "Enable/disable greedy chunk merging",
+                },
+                "min_chunk_tokens": {
+                    "type": "integer",
+                    "description": "Minimum token count before considering merge",
+                    "minimum": 10,
+                    "maximum": 500,
+                },
+                "max_merged_tokens": {
+                    "type": "integer",
+                    "description": "Maximum token count for merged chunks",
+                    "minimum": 100,
+                    "maximum": 5000,
+                },
+                "token_estimation": {
+                    "type": "string",
+                    "enum": ["whitespace", "tiktoken"],
+                    "description": "Token estimation method - 'whitespace' (fast) or 'tiktoken' (accurate)",
+                },
+                "enable_large_node_splitting": {
+                    "type": "boolean",
+                    "description": "Enable/disable AST block splitting for large functions",
+                },
+                "max_chunk_lines": {
+                    "type": "integer",
+                    "description": "Maximum lines per chunk before splitting at AST boundaries",
+                    "minimum": 10,
+                    "maximum": 1000,
                 },
                 "output_format": {
                     "type": "string",

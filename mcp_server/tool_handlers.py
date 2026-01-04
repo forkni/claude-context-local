@@ -13,6 +13,7 @@ consistent error handling via the @error_handler decorator.
 
 # Re-export all handlers from new modules for backward compatibility
 from mcp_server.tools.config_handlers import (
+    handle_configure_chunking,
     handle_configure_query_routing,
     handle_configure_reranking,
     handle_configure_search_mode,
@@ -46,11 +47,12 @@ __all__ = [
     "handle_cleanup_resources",
     "handle_get_search_config_status",
     "handle_list_embedding_models",
-    # Config handlers (5)
+    # Config handlers (6)
     "handle_switch_project",
     "handle_configure_query_routing",
     "handle_configure_reranking",
     "handle_configure_search_mode",
+    "handle_configure_chunking",
     "handle_switch_embedding_model",
     # Search handlers (3)
     "handle_search_code",
