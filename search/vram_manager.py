@@ -30,8 +30,8 @@ class VRAMTier:
 
 # VRAM tier definitions based on GPU capabilities
 # RTX 4060 (8GB)  → laptop tier     → Qwen3-0.6B
-# RTX 3090 (24GB) → desktop tier    → Qwen3-4B
-# RTX 4090 (24GB) → workstation tier → Qwen3-4B (best quality)
+# RTX 3090 (24GB) → desktop tier    → Qwen3-0.6B (OOM prevention)
+# RTX 4090 (24GB) → workstation tier → Qwen3-0.6B (OOM prevention)
 VRAM_TIERS: List[VRAMTier] = [
     VRAMTier(
         name="minimal",
@@ -53,7 +53,7 @@ VRAM_TIERS: List[VRAMTier] = [
         name="desktop",
         min_vram_gb=10,
         max_vram_gb=18,
-        recommended_model="Qwen/Qwen3-Embedding-4B",  # Upgrade to 4B
+        recommended_model="Qwen/Qwen3-Embedding-0.6B",  # Keep 0.6B for OOM prevention
         multi_model_enabled=True,
         neural_reranking_enabled=True,
     ),
@@ -61,7 +61,7 @@ VRAM_TIERS: List[VRAMTier] = [
         name="workstation",
         min_vram_gb=18,
         max_vram_gb=999,  # No upper limit
-        recommended_model="Qwen/Qwen3-Embedding-4B",  # Max model (8B removed for safety)
+        recommended_model="Qwen/Qwen3-Embedding-0.6B",  # Keep 0.6B for OOM prevention
         multi_model_enabled=True,
         neural_reranking_enabled=True,
     ),
@@ -78,7 +78,7 @@ class VRAMTierManager:
         >>> manager = VRAMTierManager()
         >>> tier = manager.detect_tier()
         >>> print(f"Tier: {tier.name}, Model: {tier.recommended_model}")
-        Tier: desktop, Model: Qwen/Qwen3-Embedding-4B
+        Tier: desktop, Model: Qwen/Qwen3-Embedding-0.6B
     """
 
     def __init__(self):

@@ -541,6 +541,10 @@ class HybridSearcher:
         Returns:
             Search results (reranked for hybrid mode, direct for single modes)
         """
+        # Reset session-level OOM tracking at start of new search
+        if hasattr(self, "reranking_engine") and self.reranking_engine:
+            self.reranking_engine.reset_session_state()
+
         # Check if indices are ready based on search mode
         if search_mode == "bm25":
             if self.bm25_index.is_empty:

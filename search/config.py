@@ -9,9 +9,9 @@ from typing import Any, Dict, Optional
 # Model registry with specifications
 # Multi-model pool configuration for query routing
 # Maps model keys to full model names in MODEL_REGISTRY
-# Note: "qwen3" uses adaptive selection (4B max on all tiers, 0.6B fallback on minimal/laptop <10GB)
+# Note: "qwen3" now uses 0.6B for all tiers to prevent OOM (5.8% quality vs 4B for 6.8x less VRAM)
 MODEL_POOL_CONFIG = {
-    "qwen3": "Qwen/Qwen3-Embedding-4B",  # Adaptive: 0.6B (minimal/laptop) or 4B (desktop/workstation)
+    "qwen3": "Qwen/Qwen3-Embedding-0.6B",  # Use 0.6B for all tiers to prevent OOM
     "bge_m3": "BAAI/bge-m3",
     "coderankembed": "nomic-ai/CodeRankEmbed",
 }

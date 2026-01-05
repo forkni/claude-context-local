@@ -326,7 +326,7 @@ Weights should sum to 1.0.
 
 | Model | VRAM | Best For |
 |-------|------|----------|
-| **BGE-M3** | 3-4GB | Production, hybrid search (recommended) |
+| **BGE-M3** | 1-1.5GB | Production, hybrid search (recommended) |
 | **Qwen3-0.6B** | 2.3GB | High efficiency, excellent value |
 | **EmbeddingGemma-300m** | 4-8GB | Fast, lightweight (default) |
 | **Multi-Model Routing** | 5.3GB | Auto-routes to optimal model |

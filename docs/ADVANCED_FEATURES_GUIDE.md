@@ -668,7 +668,7 @@ set CLAUDE_DEFAULT_PROJECT=C:\Projects\MyProject
 
 | Model | Type | Dimensions | VRAM | Best For |
 |-------|------|------------|------|----------|
-| **BGE-M3** ⭐ | General | 1024 | 3-4GB | Production baseline, hybrid search support |
+| **BGE-M3** ⭐ | General | 1024 | 1-1.5GB | Production baseline, hybrid search support |
 | **Qwen3-0.6B** | General | 1024 | 2.3GB | Best value, high efficiency |
 | **Qwen3-4B** | General | 1024* | 8-10GB | Best quality with MRL (4B quality @ 0.6B storage) |
 | **CodeRankEmbed** | Code | 768 | 2GB | Code-specific retrieval (CSN: 77.9 MRR) |
@@ -711,12 +711,12 @@ start_mcp_server.bat → 3 (Search Config) → 4 (Select Model)
 **For Code Projects:**
 
 - ✅ **CodeRankEmbed** - Code-specific retrieval (CSN: 77.9 MRR, CoIR: 60.1 NDCG@10), 2GB VRAM
-- ✅ **BGE-M3** - General-purpose with hybrid search support, 3-4GB VRAM
+- ✅ **BGE-M3** - General-purpose with hybrid search support, 1-1.5GB VRAM
 
 **For General Text/Documents:**
 
 - ✅ **Qwen3-0.6B** - Best value, high efficiency, 2.3GB VRAM
-- ✅ **BGE-M3** - Production baseline, 3-4GB VRAM
+- ✅ **BGE-M3** - Production baseline, 1-1.5GB VRAM
 
 ### Detailed Research
 

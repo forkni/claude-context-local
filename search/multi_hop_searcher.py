@@ -228,6 +228,10 @@ class MultiHopSearcher:
         Returns:
             List of SearchResult objects with discovered related code
         """
+        # Reset session-level OOM tracking at start of new search
+        if hasattr(self, "reranking_engine") and self.reranking_engine:
+            self.reranking_engine.reset_session_state()
+
         # Validate parameters
         hops, expansion_factor = self.validate_params(hops, expansion_factor)
 

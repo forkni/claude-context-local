@@ -39,7 +39,7 @@ class TestModelRegistry:
         assert config is not None
         assert config["dimension"] == 1024
         assert config.get("passage_prefix") is None  # BGE-M3 doesn't use prompts
-        assert config["vram_gb"] == "3-4GB"
+        assert config["vram_gb"] == "1-1.5GB"  # Actual measured: 1.07GB
 
     def test_unknown_model_returns_none(self):
         """Test that unknown model returns None."""

@@ -235,7 +235,7 @@ def parse_vram_gb_from_registry(model_name: str) -> float:
         2.3  # From "2.3GB"
 
         >>> parse_vram_gb_from_registry("BAAI/bge-m3")
-        4.0  # From "3-4GB" (upper bound)
+        1.5  # From "1-1.5GB" (upper bound, actual measured: 1.07GB)
     """
     import re
 

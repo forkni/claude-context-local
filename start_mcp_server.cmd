@@ -1123,7 +1123,7 @@ echo.
 echo RECOMMENDED MODELS ^(Validated 2025-11^):
 echo.
 echo   [OPTIMAL CHOICE] - Production-validated
-echo   1. BGE-M3 [RECOMMENDED] ^(1024d, 3-4GB, MTEB: 61.85^)
+echo   1. BGE-M3 [RECOMMENDED] ^(1024d, 1-1.5GB, MTEB: 61.85^)
 echo      Best for: Code + docs, proven optimal in hybrid search
 echo.
 echo   [HIGH EFFICIENCY] - Best value/performance
@@ -1190,7 +1190,7 @@ echo.
 echo === Enable Multi-Model Routing ===
 echo.
 echo This will enable intelligent query routing across:
-echo   - BGE-M3 ^(1024d, 3-4GB^)
+echo   - BGE-M3 ^(1024d, 1-1.5GB^)
 echo   - Qwen3-0.6B ^(1024d, 2.3GB^)
 echo   - CodeRankEmbed ^(768d, ~2GB^)
 echo.
@@ -1502,7 +1502,7 @@ echo.
 echo Recommended Models ^(Validated 2025-11^):
 echo.
 echo   [OPTIMAL] - Production-validated
-echo   1. BGE-M3 [RECOMMENDED] ^(1024d, 3-4GB, MTEB: 61.85^)
+echo   1. BGE-M3 [RECOMMENDED] ^(1024d, 1-1.5GB, MTEB: 61.85^)
 echo.
 echo   [HIGH EFFICIENCY] - Best value
 echo   2. Qwen3-0.6B ^(1024d, 2.3GB, MTEB: 75.42^)

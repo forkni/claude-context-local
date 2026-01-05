@@ -57,10 +57,11 @@ class TestRerankingEngine:
     def test_should_enable_neural_reranking_sufficient_vram(self, mock_torch):
         """Test neural reranking enabled with sufficient VRAM."""
         mock_torch.cuda.is_available.return_value = True
-        mock_device = MagicMock()
-        mock_device.total_memory = 8 * 1024**3  # 8GB total
-        mock_torch.cuda.get_device_properties.return_value = mock_device
-        mock_torch.cuda.memory_allocated.return_value = 0
+        # Mock mem_get_info to return (free_memory, total_memory)
+        mock_torch.cuda.mem_get_info.return_value = (
+            5 * 1024**3,  # 5GB free
+            8 * 1024**3,  # 8GB total
+        )
 
         with patch("search.config.get_search_config") as mock_config:
             config = MagicMock()
@@ -205,10 +206,11 @@ class TestRerankingEngine:
         """
         # Setup: GPU available with sufficient VRAM
         mock_torch.cuda.is_available.return_value = True
-        mock_device = MagicMock()
-        mock_device.total_memory = 8 * 1024**3  # 8GB
-        mock_torch.cuda.get_device_properties.return_value = mock_device
-        mock_torch.cuda.memory_allocated.return_value = 0
+        # Mock mem_get_info to return (free_memory, total_memory)
+        mock_torch.cuda.mem_get_info.return_value = (
+            5 * 1024**3,  # 5GB free
+            8 * 1024**3,  # 8GB total
+        )
 
         # Mock NeuralReranker
         mock_reranker_instance = MagicMock()
