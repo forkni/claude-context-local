@@ -115,7 +115,10 @@ class HybridSearcher:
         # Dense index uses the main storage directory where existing indices are stored
         self._logger.info(f"[INIT] Initializing dense index at: {self.storage_dir}")
         self.dense_index = CodeIndexManager(
-            str(self.storage_dir), project_id=project_id, config=config
+            str(self.storage_dir),
+            embedder=embedder,
+            project_id=project_id,
+            config=config,
         )
 
         # Load both indices in parallel for faster startup
@@ -156,6 +159,7 @@ class HybridSearcher:
             bm25_use_stemming=bm25_use_stemming,
             project_id=project_id,
             config=self.config,
+            embedder=embedder,
         )
 
         # Search executor (handles core search execution logic)

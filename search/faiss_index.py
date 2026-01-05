@@ -352,12 +352,21 @@ class FaissVectorIndex:
 
         Raises:
             ValueError: If no index exists (call create() first)
+            ValueError: If embedding dimension doesn't match index dimension
         """
         if self._index is None:
             raise ValueError("No index exists. Call create() first.")
 
         if len(embeddings) == 0:
             return
+
+        # Dimension validation before FAISS operations
+        if embeddings.shape[1] != self._index.d:
+            raise ValueError(
+                f"Embedding dimension mismatch: embeddings have {embeddings.shape[1]}d "
+                f"but index expects {self._index.d}d. The index was likely created with "
+                f"a different embedding model. Clear the index and re-index the project."
+            )
 
         # Normalize embeddings for cosine similarity
         faiss.normalize_L2(embeddings)
@@ -384,6 +393,7 @@ class FaissVectorIndex:
 
         Raises:
             ValueError: If no index exists or index is empty
+            ValueError: If query dimension doesn't match index dimension
         """
         if self._index is None:
             raise ValueError("No index exists")
@@ -394,6 +404,16 @@ class FaissVectorIndex:
         # Normalize query for cosine similarity
         if query.ndim == 1:
             query = query.reshape(1, -1)
+
+        # Dimension validation before FAISS search
+        query_dim = query.shape[1]
+        if query_dim != self._index.d:
+            raise ValueError(
+                f"FATAL: Dimension mismatch between query ({query_dim}d) and "
+                f"index ({self._index.d}d). The index was likely created with "
+                f"a different embedding model. Clear the index and re-index the project."
+            )
+
         faiss.normalize_L2(query)
 
         # Search

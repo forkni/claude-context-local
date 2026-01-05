@@ -442,3 +442,87 @@ class TestFaissVectorIndexBatchOperations:
             assert index.ntotal == 15
             assert len(index.chunk_ids) == 15
             assert index.chunk_ids == ids1 + ids2
+
+
+class TestFaissVectorIndexDimensionValidation:
+    """Tests for dimension mismatch validation in add() and search()."""
+
+    def test_add_dimension_mismatch_raises_error(self):
+        """Test that adding embeddings with wrong dimension raises ValueError."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            index_path = Path(tmpdir) / "test.index"
+            index = FaissVectorIndex(index_path)
+            index.create(768, "flat")
+
+            # Try to add embeddings with wrong dimension (1024 instead of 768)
+            rng = np.random.RandomState(42)
+            wrong_dim_embeddings = rng.randn(5, 1024).astype(np.float32)
+            chunk_ids = [f"chunk_{i}" for i in range(5)]
+
+            with pytest.raises(
+                ValueError,
+                match="Embedding dimension mismatch: embeddings have 1024d but index expects 768d",
+            ):
+                index.add(wrong_dim_embeddings, chunk_ids)
+
+            # Verify index is unchanged
+            assert index.ntotal == 0
+
+    def test_search_dimension_mismatch_raises_error(self):
+        """Test that searching with wrong dimension query raises ValueError."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            index_path = Path(tmpdir) / "test.index"
+            index = FaissVectorIndex(index_path)
+            index.create(768, "flat")
+
+            # Add some vectors
+            rng = np.random.RandomState(42)
+            embeddings = rng.randn(10, 768).astype(np.float32)
+            chunk_ids = [f"chunk_{i}" for i in range(10)]
+            index.add(embeddings, chunk_ids)
+
+            # Try to search with wrong dimension query (1024 instead of 768)
+            wrong_dim_query = rng.randn(1024).astype(np.float32)
+
+            with pytest.raises(
+                ValueError,
+                match="FATAL: Dimension mismatch between query \\(1024d\\) and index \\(768d\\)",
+            ):
+                index.search(wrong_dim_query, k=5)
+
+    def test_add_correct_dimension_succeeds(self):
+        """Test that adding embeddings with correct dimension succeeds."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            index_path = Path(tmpdir) / "test.index"
+            index = FaissVectorIndex(index_path)
+            index.create(768, "flat")
+
+            # Add embeddings with correct dimension
+            rng = np.random.RandomState(42)
+            embeddings = rng.randn(5, 768).astype(np.float32)
+            chunk_ids = [f"chunk_{i}" for i in range(5)]
+
+            # Should succeed
+            index.add(embeddings, chunk_ids)
+            assert index.ntotal == 5
+
+    def test_search_correct_dimension_succeeds(self):
+        """Test that searching with correct dimension query succeeds."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            index_path = Path(tmpdir) / "test.index"
+            index = FaissVectorIndex(index_path)
+            index.create(768, "flat")
+
+            # Add vectors
+            rng = np.random.RandomState(42)
+            embeddings = rng.randn(10, 768).astype(np.float32)
+            chunk_ids = [f"chunk_{i}" for i in range(10)]
+            index.add(embeddings, chunk_ids)
+
+            # Search with correct dimension
+            query = rng.randn(768).astype(np.float32)
+
+            # Should succeed
+            distances, indices = index.search(query, k=5)
+            assert len(distances) == 5
+            assert len(indices) == 5
