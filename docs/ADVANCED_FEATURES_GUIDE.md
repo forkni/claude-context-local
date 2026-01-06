@@ -889,7 +889,6 @@ MODEL_REGISTRY["Qwen/Qwen3-Embedding-0.6B"]["instruction_mode"] = "prompt_name"
 
 ---
 
-
 ## Context Enhancement (v0.8.0+)
 
 **Feature**: Enrich code embeddings with surrounding context for improved retrieval accuracy
@@ -989,6 +988,7 @@ class DataProcessor:
 **Default settings are optimal** for most use cases. Adjust only if needed:
 
 - **Increase limits**: If your codebase has many imports or complex class hierarchies
+
   ```json
   {
     "embedding": {
@@ -999,6 +999,7 @@ class DataProcessor:
   ```
 
 - **Disable context**: If you want minimal token usage per chunk
+
   ```json
   {
     "embedding": {
@@ -1011,6 +1012,7 @@ class DataProcessor:
 **Note**: Changes require re-indexing the project to take effect.
 
 ---
+
 ## VRAM Tier Management
 
 **Feature**: Adaptive model selection and feature enablement based on available GPU memory

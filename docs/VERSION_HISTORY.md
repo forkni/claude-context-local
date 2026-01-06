@@ -29,16 +29,19 @@ Critical bug fixes for VRAM management during auto-reindex, plus UI improvements
 ### Bug Fixes
 
 #### Auto-Reindex VRAM Cleanup (Critical)
+
 - **Problem**: Only freed ~7.5 GB (one model), left ~8 GB in VRAM causing OOM
 - **Solution**: Comprehensive cleanup via `state.clear_embedders()` and `reset_pool_manager()`
 - **Impact**: Frees all ~15 GB (Qwen3-4B 7.73 GB + BGE-M3 1.08 GB + CodeRankEmbed 0.52 GB)
 
 #### Auto-Reindex Timeout Configuration
+
 - **Problem**: Hardcoded 5-minute timeout ignored user configuration
 - **Solution**: Now uses `get_config().performance.max_index_age_minutes`
 - **File**: `mcp_server/tools/search_handlers.py:414-417`
 
 #### Windows VRAM Spillover Prevention
+
 - **Problem**: GPU silently overflowed to system RAM with 97% bandwidth reduction
 - **Solution**: Hard VRAM limit at 80% + conservative batch calculation at 65%
 - **Impact**: Fail-fast OOM instead of silent performance degradation
@@ -69,11 +72,13 @@ Critical bug fixes for VRAM management during auto-reindex, plus UI improvements
 ## v0.8.1 - Configuration System Enhancement (2026-01-03)
 
 ### New Features
+
 - **Nested JSON Configuration**: `search_config.json` now uses organized sections
 - **configure_chunking MCP Tool**: Runtime configuration of chunking parameters
 - **UI Menu Reorganization**: Hierarchical submenus for better organization
 
 ### Configuration Structure (8 sections)
+
 - `embedding`: Model settings + context enhancement
 - `search_mode`: Search algorithm settings
 - `performance`: Parallelization + GPU settings
@@ -84,6 +89,7 @@ Critical bug fixes for VRAM management during auto-reindex, plus UI improvements
 - `chunking`: Chunk merging + splitting settings
 
 ### Breaking Changes
+
 - None (backward compatible with flat format)
 
 ---
@@ -109,6 +115,7 @@ Critical bug fixes for VRAM management during auto-reindex, plus UI improvements
 **Implementation of EMNLP 2025 chunking algorithm for better retrieval quality**:
 
 **Core Algorithm** (`chunking/languages/base.py`):
+
 1. **Token Estimation** - New `estimate_tokens()` function:
    - Supports whitespace (fast, ~1ms) and tiktoken (accurate, ~5ms) methods
    - Used to determine chunk sizes before merging decisions
@@ -125,6 +132,7 @@ Critical bug fixes for VRAM management during auto-reindex, plus UI improvements
    - Tracks original chunks via `merged_from` list
 
 **Configuration System** (`search/config.py`):
+
 - New `ChunkingConfig` dataclass with 6 fields:
   - `enable_greedy_merge` (bool, default: True)
   - `min_chunk_tokens` (int, default: 50)
@@ -136,6 +144,7 @@ Critical bug fixes for VRAM management during auto-reindex, plus UI improvements
 - Accessible via ServiceLocator dependency injection
 
 **Pipeline Integration**:
+
 - `LanguageChunker.chunk_code()` - Accepts optional `ChunkingConfig` parameter, applies greedy merge when enabled
 - `TreeSitterChunker.chunk_file()` - Fetches config via ServiceLocator, passes to language chunker
 - `_get_chunking_config()` - Helper method to retrieve config from ServiceLocator
@@ -145,6 +154,7 @@ Critical bug fixes for VRAM management during auto-reindex, plus UI improvements
 **New interactive menu for chunking settings** (`start_mcp_server.cmd`):
 
 **Menu Structure**:
+
 - New option "A. Configure Chunking Settings" in Search Configuration menu (line 351)
 - 5 sub-options (lines 1526-1641):
   1. Enable Greedy Merge - Turn on chunk merging (recommended)
@@ -154,6 +164,7 @@ Critical bug fixes for VRAM management during auto-reindex, plus UI improvements
   5. Set Token Estimation - Choose whitespace (fast) or tiktoken (accurate)
 
 **Features**:
+
 - Real-time display of current settings using Python config reader
 - Helpful descriptions explaining benefits (+4.3 Recall@5 from EMNLP 2025)
 - Integrated with `view_config` (line 959) to show chunking settings
@@ -164,6 +175,7 @@ Critical bug fixes for VRAM management during auto-reindex, plus UI improvements
 **New test file** (`tests/unit/chunking/test_greedy_merge.py`):
 
 **4 Test Classes (137 tests total)**:
+
 1. `TestEstimateTokens` - Token estimation function
    - Tests whitespace and tiktoken methods
    - Validates accuracy and fallback behavior
@@ -190,17 +202,20 @@ Critical bug fixes for VRAM management during auto-reindex, plus UI improvements
 #### Chunk Reduction (34% - Exceeded Expectations)
 
 **Indexing Results**:
+
 - **Before**: 1,199 chunks per model
 - **After**: 789 chunks per model
 - **Reduction**: 410 fewer chunks (34.2%)
 - **Comparison**: Exceeded EMNLP 2025 paper expectation of 20-30%
 
 **Multi-Model Consistency**:
+
 - All 3 embedding models indexed identically (789 chunks each)
 - Multi-model indexing time: 69.91 seconds for 3 models
 - Storage savings: ~33% reduction in FAISS index size
 
 **Merged Chunk Analysis**:
+
 - Small methods successfully merged (getters, setters, small utilities)
 - Proper sibling grouping by `parent_class` maintained
 - Token limits respected (min 50, max 1,000 tokens per merged chunk)
@@ -209,6 +224,7 @@ Critical bug fixes for VRAM management during auto-reindex, plus UI improvements
 #### Search Quality Maintained
 
 **MCP Testing Results** (8 comprehensive queries):
+
 - Top result relevance scores: 0.85-0.97 (excellent quality)
 - Greedy merge implementation search: 0.86 score
 - ChunkingConfig search: 0.90 score
@@ -216,11 +232,13 @@ Critical bug fixes for VRAM management during auto-reindex, plus UI improvements
 - Direct chunk_id lookup: 0.97 score (O(1) retrieval working)
 
 **find_connections Validation** (3 dependency analyses):
+
 - `_greedy_merge_small_chunks`: 1 direct caller, 11 total impacted symbols
 - `ChunkingConfig`: 52 symbols connected across 23 files (high connectivity expected)
 - `ServiceLocator`: 12 symbols connected across 9 files
 
 **Expected Quality Improvement**:
+
 - +4.3 Recall@5 (per EMNLP 2025 academic validation)
 - Merged chunks provide denser semantic context per embedding
 - Multi-model routing functioning correctly (qwen3, bge_m3, coderankembed)
@@ -228,17 +246,21 @@ Critical bug fixes for VRAM management during auto-reindex, plus UI improvements
 ### Files Modified
 
 **Core Implementation**:
+
 - `search/config.py` - Added ChunkingConfig dataclass (6 fields)
-- `chunking/languages/base.py` - Added estimate_tokens(), _greedy_merge_small_chunks(), _create_merged_chunk()
+- `chunking/languages/base.py` - Added estimate_tokens(),_greedy_merge_small_chunks(),_create_merged_chunk()
 - `chunking/tree_sitter.py` - Added _get_chunking_config(), config passing
 
 **Configuration**:
+
 - `search_config.json` - Added 6 chunking configuration fields
 
 **UI**:
+
 - `start_mcp_server.cmd` - Added menu option A with 5 sub-options, updated view_config
 
 **Tests**:
+
 - `tests/unit/chunking/test_greedy_merge.py` - New test file (137 tests)
 - `tests/unit/chunking/test_multi_language.py` - Updated for ChunkingConfig integration
 - `tests/unit/chunking/test_tree_sitter.py` - Updated for ChunkingConfig integration
@@ -248,17 +270,20 @@ Critical bug fixes for VRAM management during auto-reindex, plus UI improvements
 ### Validation
 
 **Test Coverage**:
+
 - 1,191+ unit tests (100% pass rate)
 - 137 new tests for greedy merge functionality
 - All existing tests passing with merged chunks
 
 **MCP Testing**:
+
 - 8 semantic search queries validated
 - 3 find_connections dependency analyses performed
 - Entity tracking confirmed working with merged chunks
 - Import/class context extraction verified
 
 **Production Readiness**:
+
 - ✅ Configuration system fully integrated
 - ✅ UI menu operational with 5 sub-options
 - ✅ 34% chunk reduction achieved
@@ -287,11 +312,13 @@ Critical bug fixes for VRAM management during auto-reindex, plus UI improvements
 **Problem**: After calling `IncrementalIndexer.incremental_index(force_full=True)`, all searches returned empty results even though indexing succeeded.
 
 **Root Cause**: When `HybridSearcher.clear_index()` created new BM25 and dense index instances:
+
 - It updated `HybridSearcher`'s own references (`self.bm25_index`, `self.dense_index`)
 - But left `SearchExecutor` and `MultiHopSearcher` with stale references to old empty indices
 - New data was added to new indices, but searches used old empty indices
 
 **Solution** (`search/hybrid_searcher.py:862-867`):
+
 ```python
 def clear_index(self) -> None:
     self.index_sync.clear_index()
@@ -308,6 +335,7 @@ def clear_index(self) -> None:
 ```
 
 **Impact**:
+
 - ✅ force_full=True re-indexing now works correctly
 - ✅ All searches return proper results after re-indexing
 - ✅ Backward compatible (no API changes)
@@ -318,12 +346,14 @@ def clear_index(self) -> None:
 **Problem**: 7 out of 14 slow integration tests failing in `test_hybrid_search_integration.py`
 
 **Fixes**:
+
 1. Removed unused `indexed_hybrid_environment` fixture parameter from 2 config tests
 2. Updated API calls from `hybrid_searcher._search_bm25()` to `search_executor.search_bm25()`
 3. Fixed `test_error_handling` expectations for class-scoped fixtures
 4. Fixed `test_statistics_and_monitoring` search count assertion (changed `== 4` to `>= 4` for accumulated counts)
 
 **Results**:
+
 - Before: 7 failed, 7 passed (14 total)
 - After: 14 passed, 0 failed ✅
 
@@ -352,6 +382,7 @@ def clear_index(self) -> None:
 **Root Cause**: `CodeEmbedder.cleanup()` used `.to("cpu")` to move model from GPU to CPU before deletion - a legacy PyTorch 1.x workaround that copied the entire model to RAM.
 
 **Solution**:
+
 1. **Removed `.to("cpu")` call** in `embeddings/embedder.py:794-807`:
    - PyTorch 2.x handles CUDA cleanup automatically
    - Direct deletion with `del self._model` is sufficient
@@ -366,6 +397,7 @@ def clear_index(self) -> None:
    - Added `gc.collect()` for thorough cleanup
 
 **Impact**:
+
 - ✅ RAM no longer increases during cleanup
 - ✅ Both VRAM and RAM properly released
 - ✅ Unified cleanup pattern across codebase
@@ -374,20 +406,24 @@ def clear_index(self) -> None:
 #### Removed Broken Performance Tools Menu
 
 **Problem**: Menu option 4 "Performance Tools" contained two non-functional features:
+
 1. **Memory Usage Report** - Had undefined `gpu_name` variable, causing crashes
 2. **Auto-Tune Search** - Called non-existent `tools\auto_tune_search.py` (archived)
 
 **Root Cause**: Features were experimental and never completed:
+
 - Memory report assumed GPU detection logic that wasn't implemented
 - Auto-tune script was archived but menu entry remained
 
 **Solution**:
+
 1. **Removed entire Performance Tools menu section** from `start_mcp_server.cmd`:
    - Removed menu option 4 from main menu
    - Removed Performance Tools submenu (73 lines of code)
    - Cleaned up broken auto-tune and memory report functions
 
 **Impact**:
+
 - ✅ Eliminates crashes from undefined `gpu_name` variable
 - ✅ Removes confusing menu options for non-existent features
 - ✅ Cleaner UI with only functional options
@@ -407,6 +443,7 @@ def clear_index(self) -> None:
    - Added to Key Features: "Neural Reranking: Cross-encoder model (5-15% quality boost)"
 
 **Impact**:
+
 - Users now aware of Neural Reranking feature without digging through docs
 - Quality improvement metric (5-15%) clearly communicated
 - Easy access to detailed configuration documentation
@@ -427,18 +464,21 @@ def clear_index(self) -> None:
 | Reset to Defaults | Restore optimal default settings |
 
 **Before**:
+
 ```
 1. View Current Configuration
 2. Set Search Mode (Hybrid/Semantic/BM25)
 ```
 
 **After**:
+
 ```
 1. View Current Configuration   - Show all active settings
 2. Set Search Mode              - Hybrid/Semantic/BM25 (Hybrid recommended)
 ```
 
 **Impact**:
+
 - Users understand what each option does without trial-and-error
 - Clear recommendations (Hybrid mode, quality boost percentages)
 - Performance benefits highlighted (faster, +5-15% quality)
@@ -448,6 +488,7 @@ def clear_index(self) -> None:
 **Added precise timing measurements for optimization** (`mcp_server/server.py`):
 
 **Implementation**:
+
 - Captures `time.perf_counter()` at server startup
 - Logs completion at "APPLICATION READY" / "SERVER READY" states
 - Displays total startup duration (e.g., "Startup completed in 3.35 seconds")
@@ -455,6 +496,7 @@ def clear_index(self) -> None:
 - Only active when `MCP_DEBUG=1` environment variable is set
 
 **Example Output**:
+
 ```
 00:57:09 - __main__ - INFO - [DEBUG] Startup timer started at 00:57:09
 ...
@@ -462,6 +504,7 @@ def clear_index(self) -> None:
 ```
 
 **Impact**:
+
 - Developers can track startup performance improvements
 - Easy to measure impact of optimization changes
 - Helps identify slow initialization paths
@@ -473,12 +516,14 @@ def clear_index(self) -> None:
 **Fixed incorrect MCP tool usage instructions**:
 
 **Problem**: Documentation incorrectly showed MCP tools as direct slash commands:
+
 ```
 4. Index: Menu option 5 (UI) OR /index_directory "path" (MCP)
 5. Search: Ask Claude naturally OR /search_code "query" (MCP)
 ```
 
 **Issue**: MCP tools are NOT exposed as slash commands in Claude Code. Users must:
+
 1. Run `/mcp-search` to load SKILL.md into context
 2. Ask Claude naturally (Claude uses MCP tools internally)
 
@@ -501,6 +546,7 @@ def clear_index(self) -> None:
    - Then: "Ask Claude naturally: 'index my project' or 'search for X'"
 
 **Correct Workflow**:
+
 ```
 1. Start server (menu option 1)
 2. Connect in Claude Code (/mcp → Reconnect)
@@ -511,6 +557,7 @@ def clear_index(self) -> None:
 ```
 
 **Impact**:
+
 - Users no longer confused about non-existent slash commands
 - Clear workflow: load skill → ask naturally
 - Proper explanation of internal MCP tool usage
@@ -545,6 +592,7 @@ def clear_index(self) -> None:
 **Problem**: UI operations (project switch, config changes) ran in separate Python processes, creating isolated singleton states. Changes made via UI menu didn't sync with the running MCP server, and no server logs appeared for UI operations.
 
 **Architecture Issue**:
+
 ```
 UI Batch Script Process          MCP Server Process
 ┌────────────────────┐           ┌────────────────────┐
@@ -581,12 +629,14 @@ UI Batch Script Process          MCP Server Process
    - Clear console messages indicating which method used
 
 **Impact**:
+
 - ✅ All UI config changes sync to running server instantly
 - ✅ All UI operations visible in server logs with clear prefixes
 - ✅ No server restart needed for config/project changes
 - ✅ Graceful degradation when server not running
 
 **Example Server Logs**:
+
 ```
 14:48:41 - [HTTP SWITCH] Project switch requested: D:\...\STREAM_DIFFUSION
 14:48:42 - Current project set to: STREAM_DIFFUSION_0.3.0_TOX
@@ -595,12 +645,14 @@ INFO:     ::1:58304 - "POST /switch_project HTTP/1.1" 200 OK
 ```
 
 **Files Modified**:
+
 - `mcp_server/server.py` - HTTP endpoints (lines 386-459, 504-529)
 - `tools/notify_server.py` - NEW file (~130 lines)
 - `tools/switch_project_helper.py` - HTTP-first logic (lines 60-88)
 - `start_mcp_server.cmd` - Notifier calls (lines 1020-1021, 1060-1061, 1254-1255, 1265-1266, 1278-1279, 1400-1401, 1412-1413)
 
 **Limitations**:
+
 - Only works in SSE mode (not stdio mode)
 - Stdio mode users should use MCP tools directly (already working)
 
@@ -622,6 +674,7 @@ INFO:     ::1:58304 - "POST /switch_project HTTP/1.1" 200 OK
    - Lines 754-762 (`handle_index_directory` single-model path): Missing parameter
 
 4. **Why `IncrementalIndexer` didn't fix it**:
+
    ```python
    # search/incremental_indexer.py:84-87
    self.chunker = chunker or MultiLanguageChunker(
@@ -629,6 +682,7 @@ INFO:     ::1:58304 - "POST /switch_project HTTP/1.1" 200 OK
        enable_entity_tracking=config.performance.enable_entity_tracking,
    )
    ```
+
    Logic is `chunker or ...` - since a chunker WAS passed (with wrong settings), the config-aware fallback never executed.
 
 **Solution**: Pass `enable_entity_tracking=config.performance.enable_entity_tracking` to all 3 `MultiLanguageChunker` instantiations:
@@ -645,6 +699,7 @@ chunker = MultiLanguageChunker(
 ```
 
 **Impact**: Entity tracking config now properly applied, indexing logs correctly show:
+
 ```
 Initialized 12 relationship extractors (foundation + core + data models + entity tracking)
 ```
@@ -759,9 +814,11 @@ Updated all calls in `run_tests()` function to use new names.
 ### Technical Details
 
 **Commit History**:
+
 1. `fix: resolve multi-model state management and manual test discovery issues` (2026-01-02)
 
 **Test Results**:
+
 - Before: 86 passed, 1 failed, 4 errors
 - After: 1,249 passed ✅
 
@@ -798,6 +855,7 @@ Updated all calls in `run_tests()` function to use new names.
 **Addresses**: MCP SDK bug #1811 (P1, Open - awaiting upstream fix)
 
 **Files Modified**:
+
 - `mcp_server/server.py` - SSE error handlers, ASGI filter
 - `mcp_server/tools/decorators.py` - Tool cancellation handling
 
@@ -819,6 +877,7 @@ Updated all calls in `run_tests()` function to use new names.
 **Impact**: Zero hangs, zero crashes, graceful handling of locked files, OOM prevention
 
 **Configuration Constants**:
+
 ```python
 FILE_READ_TIMEOUT = 5           # seconds (Layer 2)
 CHUNKING_TIMEOUT_PER_FILE = 10  # seconds (Layer 5)
@@ -828,6 +887,7 @@ VRAM_ABORT_THRESHOLD = 0.95     # 95% (Layer 4)
 ```
 
 **Files Modified**:
+
 - `chunking/tree_sitter.py` - Layer 2, Layer 3
 - `embeddings/embedder.py` - Layer 4
 - `search/parallel_chunker.py` - Layer 5
@@ -860,6 +920,7 @@ VRAM_ABORT_THRESHOLD = 0.95     # 95% (Layer 4)
   - Sample size limits file checks (10 max)
 
 **Files Modified**:
+
 - `tests/unit/chunking/test_tree_sitter.py` - 3 tests
 - `tests/unit/embeddings/test_embedder.py` - 4 tests
 - `tests/unit/search/test_parallel_chunker.py` - 3 tests
@@ -881,6 +942,7 @@ Converted function-scoped fixtures to class-scoped using `tmp_path_factory`:
 **Impact**: Developer feedback loop improved from 5-6 minutes to 15 seconds
 
 **Files Modified**:
+
 - `tests/slow_integration/test_full_flow.py` - Class-scoped indexed fixture
 - `tests/slow_integration/test_relationship_extraction_integration.py` - Session/class fixtures
 - `tests/slow_integration/test_multi_hop_flow.py` - Class-scoped hybrid searcher fixture
@@ -898,6 +960,7 @@ Converted function-scoped fixtures to class-scoped using `tmp_path_factory`:
 ### Technical Details
 
 **Commit History**:
+
 1. `01c2649` - SSE Transport Error Protection (Session 1, 2026-01-01)
 2. `7e5b1e2` - 6-Layer Indexing Protection System (Session 1, 2026-01-01)
 3. `61b71ba` - Unit Tests for Protection System (Session 2, 2026-01-01)
@@ -915,6 +978,7 @@ Converted function-scoped fixtures to class-scoped using `tmp_path_factory`:
 ### New Features
 
 #### Release Resources Menu Option
+
 - New 'X' option in `start_mcp_server.cmd` main menu
 - Positioned between 'F. Configure Output Format' and '0. Exit'
 - Frees GPU memory and cached resources on demand via HTTP
@@ -922,6 +986,7 @@ Converted function-scoped fixtures to class-scoped using `tmp_path_factory`:
 - Checks if server is running before attempting cleanup
 
 #### HTTP Cleanup Endpoint
+
 - New POST endpoint at `http://localhost:8765/cleanup`
 - Enables external cleanup requests to running MCP server
 - Returns JSON response: `{"success": true/false, "message": "..."}`

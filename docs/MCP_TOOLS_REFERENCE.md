@@ -314,6 +314,7 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 **Purpose**: Configure code chunking settings at runtime
 
 **Parameters**:
+
 - `enable_greedy_merge` (bool): Enable/disable greedy chunk merging (default: True)
 - `min_chunk_tokens` (int): Minimum tokens before merge (10-500, default: 50)
 - `max_merged_tokens` (int): Maximum tokens for merged chunks (100-5000, default: 1000)

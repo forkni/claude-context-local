@@ -98,6 +98,7 @@ All hybrid search features have been **comprehensively tested** and validated fo
   }
 }
 ```
+
 ```
 
 **Validation**: Empirically tested with 256+ queries across multiple codebases.
