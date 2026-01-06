@@ -307,7 +307,7 @@ if __name__ == "__main__":
         if args.transport == "stdio":
             from mcp.server.stdio import stdio_server
 
-            async def run_stdio_server():
+            async def run_stdio_server() -> None:
                 """Run stdio server with proper lifecycle management."""
                 # Initialize global state BEFORE starting server
                 logger.info("=" * 60)
@@ -352,14 +352,14 @@ if __name__ == "__main__":
             import uvicorn
             from mcp.server.sse import SseServerTransport
             from starlette.applications import Starlette
-            from starlette.responses import Response
+            from starlette.responses import JSONResponse, Response
             from starlette.routing import Mount, Route
 
             # Create SSE transport with message endpoint
             sse = SseServerTransport("/messages/")
 
             # SSE handler - establishes bidirectional streams
-            async def handle_sse(request):
+            async def handle_sse(request) -> Response:
                 async with sse.connect_sse(
                     request.scope, request.receive, request._send
                 ) as streams:
@@ -371,12 +371,11 @@ if __name__ == "__main__":
                 return Response()  # Prevent TypeError on disconnect
 
             # Cleanup endpoint - trigger resource cleanup via HTTP
-            async def handle_cleanup(request):
+            async def handle_cleanup(request) -> JSONResponse:
                 """HTTP endpoint to trigger resource cleanup.
 
                 Releases GPU memory and cached resources in the running server process.
                 """
-                from starlette.responses import JSONResponse
 
                 try:
                     logger.info(
@@ -402,8 +401,6 @@ if __name__ == "__main__":
 
                 Allows UI config changes to sync with running server.
                 """
-                from starlette.responses import JSONResponse
-
                 try:
                     logger.info("[HTTP CONFIG] Config reload requested")
 
@@ -443,8 +440,6 @@ if __name__ == "__main__":
 
                 Allows UI project switch to sync with running server.
                 """
-                from starlette.responses import JSONResponse
-
                 try:
                     body = await request.json()
                     project_path = body.get("project_path")

@@ -192,6 +192,7 @@ def index_project(
 
 
 def main():
+    """Entry point for project indexer CLI."""
     parser = argparse.ArgumentParser(description="Index project for semantic search")
     parser.add_argument("project_path", nargs="?", help="Path to project directory")
     parser.add_argument(

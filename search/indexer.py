@@ -2,6 +2,7 @@
 
 import json
 import logging
+import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -65,7 +66,7 @@ class CodeIndexManager:
         # Load existing index
         self._faiss_index.load()
 
-    def _check_dependencies(self):
+    def _check_dependencies(self) -> None:
         """Check if required dependencies are available."""
         if faiss is None:
             raise ImportError(
@@ -78,7 +79,7 @@ class CodeIndexManager:
             )
 
     @property
-    def index(self):
+    def index(self) -> Optional["faiss.Index"]:
         """Access to underlying FAISS index."""
         return self._faiss_index.index
 
@@ -98,7 +99,7 @@ class CodeIndexManager:
         return self._faiss_index.is_on_gpu
 
     @property
-    def metadata_store(self):
+    def metadata_store(self) -> MetadataStore:
         """Access to metadata storage layer.
 
         Returns the MetadataStore instance for chunk metadata operations.
@@ -184,7 +185,7 @@ class CodeIndexManager:
         # Commit metadata in a single transaction for performance
         try:
             self.metadata_store.commit()
-        except Exception:
+        except sqlite3.Error:
             # If commit is unavailable for some reason, continue without failing
             pass
 
@@ -468,7 +469,7 @@ class CodeIndexManager:
         # Commit removals in batch
         try:
             self.metadata_store.commit()
-        except Exception:
+        except sqlite3.Error:
             pass
         return len(chunks_to_remove)
 
@@ -504,7 +505,7 @@ class CodeIndexManager:
             clear_index_callback=self.clear_index,
         )
 
-    def save_index(self):
+    def save_index(self) -> None:
         """Save the FAISS index and chunk IDs to disk."""
         # Delegate FAISS index and chunk ID saving to FaissVectorIndex
         self._faiss_index.save()
@@ -721,7 +722,7 @@ class CodeIndexManager:
 
         return is_valid, issues
 
-    def clear_index(self):
+    def clear_index(self) -> None:
         """Clear the entire index and metadata."""
         # Close metadata store
         if self._metadata_store is not None:

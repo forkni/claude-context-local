@@ -48,7 +48,7 @@ def get_available_memory() -> Dict[str, int]:
             memory_info["gpu_available"] = (
                 gpu_props.total_memory - torch.cuda.memory_allocated(0)
             )
-        except Exception:
+        except RuntimeError:
             pass
 
     return memory_info
@@ -495,7 +495,7 @@ class FaissVectorIndex:
             if get_num_gpus is None:
                 return False
             return get_num_gpus() > 0
-        except Exception:
+        except (RuntimeError, AttributeError):
             return False
 
     def move_to_gpu(self) -> bool:

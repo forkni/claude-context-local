@@ -67,7 +67,7 @@ except ImportError:
 
 try:
     import torch
-except Exception:
+except ImportError:
     torch = None
 
 
@@ -311,7 +311,7 @@ class CodeEmbedder:
                 fraction = config.performance.vram_limit_fraction
             else:
                 fraction = 0.90
-        except Exception:
+        except (RuntimeError, AttributeError):
             fraction = 0.90
         set_vram_limit(fraction)
 
@@ -394,11 +394,11 @@ class CodeEmbedder:
 
     # ===== Model Loading Methods (delegated to ModelLoader) =====
 
-    def _log_gpu_memory(self, stage: str):
+    def _log_gpu_memory(self, stage: str) -> None:
         """Delegate to ModelLoader.log_gpu_memory()."""
         self._model_loader.log_gpu_memory(stage)
 
-    def _get_torch_dtype(self):
+    def _get_torch_dtype(self) -> "torch.dtype":
         """Delegate to ModelLoader.get_torch_dtype()."""
         return self._model_loader.get_torch_dtype()
 
@@ -443,13 +443,13 @@ class CodeEmbedder:
             return 0.0, False, False
 
     @property
-    def model(self):
+    def model(self) -> Optional[SentenceTransformer]:
         """Lazy loading of the model."""
         if self._model is None:
             self._load_model()
         return self._model
 
-    def _load_model(self):
+    def _load_model(self) -> None:
         """Delegate to ModelLoader.load()."""
         self._model, self.device = self._model_loader.load()
         # Sync VRAM usage tracking from ModelLoader
@@ -1002,7 +1002,7 @@ class CodeEmbedder:
         """Get cache hit/miss statistics."""
         return self._query_cache.get_stats()
 
-    def clear_query_cache(self):
+    def clear_query_cache(self) -> None:
         """Clear the query embedding cache."""
         self._query_cache.clear()
 
@@ -1171,7 +1171,7 @@ class CodeEmbedder:
             self._logger.debug(f"Failed to get model VRAM: {e}")
             return 0.0
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clean up model from memory to free GPU/CPU resources."""
         if self._model is not None:
             try:

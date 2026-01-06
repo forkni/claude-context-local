@@ -83,7 +83,7 @@ class ApplicationState:
 
             config = get_search_config()
             self.sync_from_config(config)
-        except Exception:
+        except (AttributeError, KeyError, RuntimeError):
             # Fallback to env var if config unavailable
             self.multi_model_enabled = os.getenv(
                 "CLAUDE_MULTI_MODEL_ENABLED", "true"

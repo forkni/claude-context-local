@@ -66,7 +66,7 @@ class SnapshotManager:
                 config = ServiceLocator.instance().get_config()
                 dimension = config.embedding.dimension
                 model_slug = get_model_slug(config.embedding.model_name)
-            except Exception:
+            except (AttributeError, KeyError, RuntimeError):
                 # Fallback to default if config unavailable
                 dimension = 768
                 model_slug = "unknown"
@@ -79,7 +79,7 @@ class SnapshotManager:
 
                 config = ServiceLocator.instance().get_config()
                 model_slug = get_model_slug(config.embedding.model_name)
-            except Exception:
+            except (AttributeError, KeyError, RuntimeError):
                 model_slug = "unknown"
 
         return model_slug, dimension
@@ -321,7 +321,7 @@ class SnapshotManager:
             try:
                 snapshot_file.unlink()
                 deleted_count += 1
-            except Exception:
+            except OSError:
                 pass  # Continue even if one file fails
 
         # Delete all metadata files for this project (all dimensions)
@@ -329,7 +329,7 @@ class SnapshotManager:
             try:
                 metadata_file.unlink()
                 deleted_count += 1
-            except Exception:
+            except OSError:
                 pass  # Continue even if one file fails
 
         return deleted_count
@@ -350,7 +350,7 @@ class SnapshotManager:
             try:
                 snapshot_file.unlink()
                 deleted_count += 1
-            except Exception:
+            except OSError:
                 pass  # Continue even if one file fails
 
         # Delete all metadata files
@@ -358,7 +358,7 @@ class SnapshotManager:
             try:
                 metadata_file.unlink()
                 deleted_count += 1
-            except Exception:
+            except OSError:
                 pass  # Continue even if one file fails
 
         return deleted_count
@@ -376,7 +376,7 @@ class SnapshotManager:
                 with open(metadata_file, "r") as f:
                     metadata = json.load(f)
                     snapshots.append(metadata)
-            except Exception:
+            except (OSError, json.JSONDecodeError):
                 continue
 
         return sorted(snapshots, key=lambda x: x.get("last_snapshot", ""), reverse=True)

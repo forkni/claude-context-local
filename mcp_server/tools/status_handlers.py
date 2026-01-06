@@ -237,7 +237,7 @@ async def handle_get_memory_status(arguments: Dict[str, Any]) -> dict:
                 "dimension": dimension,
                 "estimated_mb": round(estimated_mb, 2),
             }
-    except Exception:
+    except (AttributeError, RuntimeError):
         pass
 
     # Collect per-model VRAM breakdown
@@ -249,7 +249,7 @@ async def handle_get_memory_status(arguments: Dict[str, Any]) -> dict:
                 usage = embedder.get_vram_usage()
                 if usage:
                     per_model_vram[model_key] = usage
-    except Exception:
+    except (AttributeError, RuntimeError):
         pass
 
     return {

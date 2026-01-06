@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, Optional
 
 try:
     import torch
-except Exception:
+except ImportError:
     torch = None
 
 try:
@@ -161,7 +161,7 @@ class ModelLoader:
             try:
                 if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
                     return "mps"
-            except Exception:
+            except (AttributeError, RuntimeError):
                 pass
             return "cpu"
         # Validate explicit devices
@@ -175,7 +175,7 @@ class ModelLoader:
                     and torch.backends.mps.is_available()
                     else "cpu"
                 )
-            except Exception:
+            except RuntimeError:
                 return "cpu"
         # Default fallback
         return "cpu"

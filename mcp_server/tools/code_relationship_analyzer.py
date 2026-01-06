@@ -674,7 +674,7 @@ class CodeRelationshipAnalyzer:
             callee_symbol = callee_id.split(":")[-1] if ":" in callee_id else callee_id
             # Check both full chunk_id and symbol name
             return callee_id in callees or callee_symbol in callees
-        except Exception:
+        except (KeyError, AttributeError):
             return False
 
     def _extract_result_info(self, result, chunk_id: str) -> Dict[str, Any]:

@@ -18,6 +18,7 @@ from mcp_server.tool_handlers import handle_index_directory
 
 
 def main():
+    """Entry point for batch indexing CLI."""
     parser = argparse.ArgumentParser(
         description="Index project for semantic code search"
     )

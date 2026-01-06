@@ -275,6 +275,7 @@ class CodeSearchHelper:
 
 
 def main():
+    """Entry point for semantic code search helper CLI."""
     parser = argparse.ArgumentParser(description="Semantic Code Search Helper")
     parser.add_argument(
         "query",

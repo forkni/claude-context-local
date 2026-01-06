@@ -50,7 +50,7 @@ def _get_full_project_id(project_dir: Path, short_hash: str) -> str | None:
                 # Validate that short hash matches first 8 chars
                 if full_hash[:8] == short_hash:
                     return full_hash
-        except Exception:
+        except json.JSONDecodeError:
             # If we can't read/parse project_info, skip this project
             pass
 

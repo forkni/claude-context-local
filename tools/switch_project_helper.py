@@ -26,6 +26,7 @@ except ImportError:
 
 
 def main():
+    """Entry point for project switch helper CLI."""
     parser = argparse.ArgumentParser(
         description="Switch to a different indexed project for semantic code search"
     )

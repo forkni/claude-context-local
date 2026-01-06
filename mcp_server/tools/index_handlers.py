@@ -67,7 +67,7 @@ def _check_file_accessibility(
                 f.read(1)  # Just read 1 byte to check access
         except (PermissionError, IOError):
             inaccessible.append(fp)
-        except Exception:
+        except (UnicodeDecodeError, OSError):
             # Skip other exceptions (encoding errors, etc.)
             pass
 

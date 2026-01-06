@@ -101,7 +101,7 @@ class TextPreprocessor:
         if word_tokenize:
             try:
                 tokens = word_tokenize(text.lower())
-            except Exception:
+            except (LookupError, RuntimeError):
                 tokens = text.lower().split()
         else:
             tokens = text.lower().split()
