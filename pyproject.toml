@@ -26,6 +26,7 @@ keywords = [
     "python",
 ]
 dependencies = [
+    "aiohttp>=3.13.3",  # Security: Fixes CVE-2025-69223 through CVE-2025-69230
     "einops>=0.8.0",  # Required for CodeRankEmbed model
     "faiss-cpu>=1.13.1",
     "FlagEmbedding>=1.3.0",
