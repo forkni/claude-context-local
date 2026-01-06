@@ -12,7 +12,6 @@ from typing import Optional
 
 from mcp_server.services import get_state
 from search.config import (
-    MODEL_POOL_CONFIG,
     MODEL_REGISTRY,
     get_model_slug,
     get_search_config,
@@ -157,10 +156,15 @@ class StorageManager:
         new_hash = compute_drive_agnostic_hash(str(project_path))
         legacy_hash = compute_legacy_hash(str(project_path))
 
+        # Get configured pool (respects user's multi_model_pool setting)
+        from mcp_server.model_pool_manager import get_model_pool_manager
+
+        pool_config = get_model_pool_manager()._get_pool_config()
+
         # Determine which model to use
         if model_key:
-            # Use routing-selected model (map model_key to model_name via MODEL_POOL_CONFIG)
-            if model_key not in MODEL_POOL_CONFIG:
+            # Use routing-selected model (map model_key to model_name via pool config)
+            if model_key not in pool_config:
                 logger.error(
                     f"Invalid model_key: {model_key}, falling back to config default"
                 )
@@ -175,7 +179,7 @@ class StorageManager:
                     f"[ROUTING] Resolved qwen3 to actual variant: {model_name} (key: {model_key})"
                 )
             else:
-                model_name = MODEL_POOL_CONFIG[model_key]
+                model_name = pool_config[model_key]
                 logger.info(
                     f"[ROUTING] Using routed model: {model_name} (key: {model_key})"
                 )

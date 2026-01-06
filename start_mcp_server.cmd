@@ -230,8 +230,6 @@ if "!ERRORLEVEL!" neq "0" (
 )
 echo.
 echo.
-echo Press any key to return to the menu...
-pause >nul
 goto menu_restart
 
 :run_fast_integration_tests
@@ -252,8 +250,6 @@ if "!ERRORLEVEL!" neq "0" (
     echo [OK] All fast integration tests passed!
 )
 echo.
-echo Press any key to return to the menu...
-pause >nul
 goto menu_restart
 
 :run_slow_integration_tests
@@ -275,8 +271,6 @@ if "!ERRORLEVEL!" neq "0" (
     echo [OK] All slow integration tests passed!
 )
 echo.
-echo Press any key to return to the menu...
-pause >nul
 goto menu_restart
 
 :run_regression_tests
@@ -298,8 +292,6 @@ if "!ERRORLEVEL!" neq "0" (
     echo [OK] All regression tests passed!
 )
 echo.
-echo Press any key to return to the menu...
-pause >nul
 goto menu_restart
 
 :installation_menu
@@ -629,8 +621,6 @@ if errorlevel 1 (
     echo [OK] Indexing completed successfully.
 )
 echo.
-echo Press any key to return to the menu...
-pause >nul
 goto menu_restart
 
 :reindex_existing_project
@@ -660,8 +650,6 @@ if errorlevel 1 (
     echo [OK] Re-indexing completed successfully.
 )
 echo.
-echo Press any key to return to the menu...
-pause >nul
 goto menu_restart
 
 :force_reindex_project
@@ -1142,14 +1130,20 @@ echo   [MULTI-MODEL] - Most comprehensive choice
 echo   4. Multi-Model Routing ^(5.3GB total, 100%% accuracy^)
 echo      Smart routing across BGE-M3 + Qwen3 + CodeRankEmbed
 echo.
-echo   5. Custom model path
+echo   [LIGHTWEIGHT MULTI-MODEL] - For 8GB VRAM GPUs
+echo   5. Lightweight-Speed Multi-Model ^(1.65GB total^)
+echo      BGE-M3 + gte-modernbert ^(144 docs/s, 79.31 CoIR^)
+echo   6. Lightweight-Accuracy Multi-Model ^(2.3GB total^)
+echo      BGE-M3 + C2LLM-0.5B ^(#1 MTEB-Code 75.46, PMA pooling^)
+echo.
+echo   7. Custom model path
 echo   0. Back to Search Configuration
 echo.
 echo IMPORTANT: BGE-M3 validated 100%% identical to code-specific models
 echo in hybrid search mode ^(30-query test, Nov 2025^). Choose by VRAM.
 echo.
 set "model_choice="
-set /p model_choice="Select model (0-5): "
+set /p model_choice="Select model (0-7): "
 
 if not defined model_choice goto search_config_menu
 if "!model_choice!"=="" goto search_config_menu
@@ -1160,7 +1154,9 @@ if "!model_choice!"=="1" set "SELECTED_MODEL=BAAI/bge-m3"
 if "!model_choice!"=="2" set "SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B"
 if "!model_choice!"=="3" set "SELECTED_MODEL=google/embeddinggemma-300m"
 if "!model_choice!"=="4" goto enable_multi_model
-if "!model_choice!"=="5" (
+if "!model_choice!"=="5" goto enable_lightweight_speed
+if "!model_choice!"=="6" goto enable_lightweight_accuracy
+if "!model_choice!"=="7" (
     set /p "SELECTED_MODEL=Enter model name or path: "
 )
 
@@ -1214,6 +1210,104 @@ if /i "!confirm_multi!"=="y" (
         echo [ERROR] Failed to save to config file
         set "CLAUDE_MULTI_MODEL_ENABLED=true"
         echo [INFO] Set as environment variable for this session only
+    )
+) else (
+    echo [INFO] Cancelled
+)
+pause
+goto search_config_menu
+
+:enable_lightweight_speed
+echo.
+echo === Enable Lightweight-Speed Multi-Model ===
+echo.
+echo This will enable lightweight query routing across:
+echo   - BGE-M3 ^(1024d, ~1.07GB^) - General-purpose baseline
+echo   - gte-modernbert-base ^(768d, ~0.28GB^) - Code-specific queries
+echo   - gte-reranker-modernbert-base ^(~0.30GB^) - Lightweight reranker
+echo.
+echo Total VRAM: ~1.65GB ^(69%% reduction vs full pool^)
+echo Performance: 144 docs/sec indexing ^(3x faster^)
+echo Quality: 79.31 CoIR score ^(+32%% vs CodeRankEmbed^)
+echo.
+echo Best for:
+echo   - 8GB VRAM GPUs ^(RTX 3060/4060/3070^)
+echo   - Fast indexing and high throughput
+echo   - Individual functions/snippets ^(<8k tokens^)
+echo.
+set "confirm_lightweight_speed="
+set /p confirm_lightweight_speed="Enable lightweight-speed multi-model? (y/N): "
+if /i "!confirm_lightweight_speed!"=="y" (
+    REM Persist to config file via Python
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.routing.multi_model_enabled = True; cfg.routing.multi_model_pool = 'lightweight-speed'; cfg.reranker.enabled = True; cfg.reranker.model_name = 'Alibaba-NLP/gte-reranker-modernbert-base'; mgr.save_config(cfg); print('[OK] Lightweight-speed multi-model enabled and saved to config')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save to config file
+    ) else (
+        echo.
+        echo [OK] Lightweight-speed configuration saved
+        echo [INFO] Pool: BGE-M3 + gte-modernbert-base
+        echo [INFO] Reranker: gte-reranker-modernbert-base
+        echo [INFO] Total VRAM: ~1.65GB
+        echo.
+        echo [WARNING] Existing indexes need to be rebuilt for multi-model pool
+        echo [INFO] Next time you index a project, it will use the lightweight-speed pool
+        echo.
+        set "reindex_now="
+        set /p reindex_now="Clear old indexes now? (y/N): "
+        if /i "!reindex_now!"=="y" (
+            echo [INFO] Clearing old indexes and Merkle snapshots...
+            .\.venv\Scripts\python.exe -c "from mcp_server.storage_manager import get_storage_dir; from merkle.snapshot_manager import SnapshotManager; import shutil; import json; storage = get_storage_dir(); sm = SnapshotManager(); cleared = 0; projects = list((storage / 'projects').glob('*/project_info.json')); [sm.delete_all_snapshots(json.load(open(p))['project_path']) or shutil.rmtree(p.parent) if p.exists() and (cleared := cleared + 1) else None for p in projects]; print(f'[OK] Cleared indexes and snapshots for {cleared} projects')" 2>nul
+            echo [OK] Indexes and Merkle snapshots cleared. Re-index projects via: /index_directory "path"
+        )
+    )
+) else (
+    echo [INFO] Cancelled
+)
+pause
+goto search_config_menu
+
+:enable_lightweight_accuracy
+echo.
+echo === Enable Lightweight-Accuracy Multi-Model ===
+echo.
+echo This will enable lightweight query routing across:
+echo   - BGE-M3 ^(1024d, ~1.07GB^) - General-purpose baseline
+echo   - C2LLM-0.5B ^(896d, ~0.93GB^) - Code-specific queries
+echo   - gte-reranker-modernbert-base ^(~0.30GB^) - Lightweight reranker
+echo.
+echo Total VRAM: ~2.3GB ^(57%% reduction vs full pool^)
+echo Performance: ~50 docs/sec indexing
+echo Quality: MTEB-Code 75.46 ^(#1 ranked, PMA pooling^)
+echo.
+echo Best for:
+echo   - 8GB VRAM GPUs ^(RTX 3060/4060/3070^)
+echo   - Long code files ^(>8k tokens, up to 32k^)
+echo   - Complex structural understanding
+echo.
+set "confirm_lightweight_accuracy="
+set /p confirm_lightweight_accuracy="Enable lightweight-accuracy multi-model? (y/N): "
+if /i "!confirm_lightweight_accuracy!"=="y" (
+    REM Persist to config file via Python
+    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.routing.multi_model_enabled = True; cfg.routing.multi_model_pool = 'lightweight-accuracy'; cfg.reranker.enabled = True; cfg.reranker.model_name = 'Alibaba-NLP/gte-reranker-modernbert-base'; mgr.save_config(cfg); print('[OK] Lightweight-accuracy multi-model enabled and saved to config')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save to config file
+    ) else (
+        echo.
+        echo [OK] Lightweight-accuracy configuration saved
+        echo [INFO] Pool: BGE-M3 + C2LLM-0.5B
+        echo [INFO] Reranker: gte-reranker-modernbert-base
+        echo [INFO] Total VRAM: ~2.3GB
+        echo.
+        echo [WARNING] Existing indexes need to be rebuilt for multi-model pool
+        echo [INFO] Next time you index a project, it will use the lightweight-accuracy pool
+        echo.
+        set "reindex_now="
+        set /p reindex_now="Clear old indexes now? (y/N): "
+        if /i "!reindex_now!"=="y" (
+            echo [INFO] Clearing old indexes and Merkle snapshots...
+            .\.venv\Scripts\python.exe -c "from mcp_server.storage_manager import get_storage_dir; from merkle.snapshot_manager import SnapshotManager; import shutil; import json; storage = get_storage_dir(); sm = SnapshotManager(); cleared = 0; projects = list((storage / 'projects').glob('*/project_info.json')); [sm.delete_all_snapshots(json.load(open(p))['project_path']) or shutil.rmtree(p.parent) if p.exists() and (cleared := cleared + 1) else None for p in projects]; print(f'[OK] Cleared indexes and snapshots for {cleared} projects')" 2>nul
+            echo [OK] Indexes and Merkle snapshots cleared. Re-index projects via: /index_directory "path"
+        )
     )
 ) else (
     echo [INFO] Cancelled
@@ -2235,7 +2329,7 @@ REM System Status Functions
 echo [Runtime Status]
 if exist ".venv\Scripts\python.exe" (
     REM Display model status
-    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = cfg.routing.multi_model_enabled; print('Model: [MULTI] BGE-M3 + Qwen3 + CodeRankEmbed (5.3GB total)') if multi_enabled else print(f'Model: [SINGLE] {model_short} ({dim}d, {vram})'); print('       Active routing across all 3 models') if multi_enabled else print('Tip: Press M for Quick Model Switch')" 2>nul
+    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = cfg.routing.multi_model_enabled; pool = cfg.routing.multi_model_pool or 'full'; print('Model: [MULTI] BGE-M3 + gte-modernbert (1.65GB total)' if pool == 'lightweight-speed' else 'Model: [MULTI] BGE-M3 + gte-modernbert (2.3GB total)' if pool == 'lightweight-accuracy' else 'Model: [MULTI] BGE-M3 + Qwen3 + CodeRankEmbed (5.3GB total)') if multi_enabled else print(f'Model: [SINGLE] {model_short} ({dim}d, {vram})'); print(f'       Active routing - {pool} pool') if multi_enabled else print('Tip: Press M for Quick Model Switch')" 2>nul
     REM Display current project using helper script
     .\.venv\Scripts\python.exe scripts\get_current_project.py 2>nul
 ) else (

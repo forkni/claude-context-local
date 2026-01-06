@@ -16,6 +16,19 @@ MODEL_POOL_CONFIG = {
     "coderankembed": "nomic-ai/CodeRankEmbed",
 }
 
+# Lightweight pool configurations for 8GB VRAM GPUs
+# Preset 1: Speed-focused (1.65GB total VRAM)
+MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED = {
+    "gte_modernbert": "Alibaba-NLP/gte-modernbert-base",
+    "bge_m3": "BAAI/bge-m3",
+}
+
+# Preset 2: Accuracy-focused (2.3GB total VRAM)
+MODEL_POOL_CONFIG_LIGHTWEIGHT_ACCURACY = {
+    "c2llm": "codefuse-ai/C2LLM-0.5B",
+    "bge_m3": "BAAI/bge-m3",
+}
+
 MODEL_REGISTRY = {
     "google/embeddinggemma-300m": {
         "dimension": 768,
@@ -80,6 +93,23 @@ MODEL_REGISTRY = {
         "model_type": "code-specific",
         "task_instruction": "Represent this query for searching relevant code",  # Required query prefix
         "trust_remote_code": True,
+    },
+    "Alibaba-NLP/gte-modernbert-base": {
+        "dimension": 768,
+        "max_context": 8192,
+        "description": "Lightweight code-optimized model (CoIR: 79.31 NDCG@10, 144 docs/s throughput)",
+        "vram_gb": "0.28GB",
+        "fallback_batch_size": 256,
+        "model_type": "code-optimized",
+    },
+    "codefuse-ai/C2LLM-0.5B": {
+        "dimension": 896,
+        "max_context": 32768,
+        "description": "#1 MTEB-Code (75.46), PMA pooling for long-context aggregation",
+        "vram_gb": "0.93GB",
+        "fallback_batch_size": 64,
+        "model_type": "code-optimized",
+        "trust_remote_code": True,  # Required for C2LLM custom architecture
     },
 }
 
@@ -237,10 +267,13 @@ class MultiHopConfig:
 
 @dataclass
 class RoutingConfig:
-    """Multi-model routing settings (2 fields)."""
+    """Multi-model routing settings (3 fields)."""
 
     multi_model_enabled: bool = True  # Enable intelligent query routing across models
     default_model: str = "bge_m3"  # Default model key for routing (most balanced)
+    multi_model_pool: Optional[str] = (
+        None  # Pool type: "full", "lightweight-speed", or "lightweight-accuracy"
+    )
 
 
 @dataclass
@@ -400,6 +433,7 @@ class SearchConfig:
             "routing": {
                 "multi_model_enabled": self.routing.multi_model_enabled,
                 "default_model": self.routing.default_model,
+                "multi_model_pool": self.routing.multi_model_pool,
             },
             "intent": {
                 "enabled": self.intent.enabled,
@@ -538,6 +572,7 @@ class SearchConfig:
             routing = RoutingConfig(
                 multi_model_enabled=routing_data.get("multi_model_enabled", True),
                 default_model=routing_data.get("default_model", "bge_m3"),
+                multi_model_pool=routing_data.get("multi_model_pool", None),
             )
 
             intent = IntentConfig(
@@ -642,6 +677,7 @@ class SearchConfig:
             routing = RoutingConfig(
                 multi_model_enabled=data.get("multi_model_enabled", True),
                 default_model=data.get("routing_default_model", "bge_m3"),
+                multi_model_pool=data.get("routing_multi_model_pool", None),
             )
 
             intent = IntentConfig(

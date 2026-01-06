@@ -16,7 +16,6 @@ from mcp_server.storage_manager import (
 )
 from mcp_server.tools.decorators import error_handler
 from search.config import (
-    MODEL_POOL_CONFIG,
     MODEL_REGISTRY,
     get_config_manager,
 )
@@ -33,7 +32,10 @@ def _detect_indexed_model(project_path: str) -> str | None:
     Returns:
         Model key if found, None otherwise
     """
-    for model_key in MODEL_POOL_CONFIG.keys():
+    from mcp_server.model_pool_manager import get_model_pool_manager
+
+    pool_config = get_model_pool_manager()._get_pool_config()
+    for model_key in pool_config.keys():
         project_dir = get_project_storage_dir(project_path, model_key=model_key)
         code_index_file = project_dir / "index" / "code.index"
         if code_index_file.exists():
@@ -117,7 +119,10 @@ async def handle_configure_query_routing(arguments: Dict[str, Any]) -> dict:
         config_manager.save_config(config)
 
     if default_model is not None:
-        if default_model in MODEL_POOL_CONFIG:
+        from mcp_server.model_pool_manager import get_model_pool_manager
+
+        pool_config = get_model_pool_manager()._get_pool_config()
+        if default_model in pool_config:
             # Persist to config file
             config.routing.default_model = default_model
             changes["default_model"] = default_model

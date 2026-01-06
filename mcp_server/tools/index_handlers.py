@@ -24,7 +24,6 @@ from mcp_server.storage_manager import (
 )
 from mcp_server.tools.decorators import error_handler
 from search.config import (
-    MODEL_POOL_CONFIG,
     MODEL_REGISTRY,
     SearchConfigManager,
 )
@@ -233,7 +232,11 @@ def _index_with_all_models(
     original_model = original_config.embedding.model_name
 
     try:
-        for model_key, model_name in MODEL_POOL_CONFIG.items():
+        # Use pool from manager (respects config file setting)
+        from mcp_server.model_pool_manager import get_model_pool_manager
+
+        pool_config = get_model_pool_manager()._get_pool_config()
+        for model_key, model_name in pool_config.items():
             # Apply VRAM tier selection for qwen3 (selects 0.6B/4B/8B based on available VRAM)
             if model_key == "qwen3":
                 from search.vram_manager import VRAMTierManager
@@ -288,7 +291,11 @@ def _index_with_all_models(
                 pass
 
             # Get project storage for this model
-            project_dir = get_project_storage_dir(str(directory_path))
+            project_dir = get_project_storage_dir(
+                str(directory_path),
+                include_dirs=include_dirs,
+                exclude_dirs=exclude_dirs,
+            )
             index_dir = project_dir / "index"
             index_dir.mkdir(exist_ok=True)
 
@@ -373,7 +380,7 @@ def _index_with_all_models(
 
         # Set current_model_key for subsequent operations
         # (same pattern used in model_pool_manager.py:151-155)
-        for key, name in MODEL_POOL_CONFIG.items():
+        for key, name in pool_config.items():
             if name == original_model:
                 state.current_model_key = key
                 break
@@ -717,7 +724,10 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
         # (needed for both first index AND filter changes in multi-model setup)
         if get_state().multi_model_enabled:
             # Update each model's project_info.json
-            for model_key in MODEL_POOL_CONFIG.keys():
+            from mcp_server.model_pool_manager import get_model_pool_manager
+
+            pool_config = get_model_pool_manager()._get_pool_config()
+            for model_key in pool_config.keys():
                 update_project_filters(
                     str(directory_path),
                     include_dirs,

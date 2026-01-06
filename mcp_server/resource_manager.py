@@ -151,7 +151,7 @@ def initialize_server_state() -> None:
     from mcp_server.project_persistence import load_project_selection
     from mcp_server.services import get_state
     from mcp_server.storage_manager import get_storage_dir, set_current_project
-    from search.config import MODEL_POOL_CONFIG, get_config_manager
+    from search.config import get_config_manager
 
     state = get_state()
 
@@ -181,7 +181,10 @@ def initialize_server_state() -> None:
 
     # 3. Lazy model loading
     logger.info("[INIT] Model loading deferred until first use (lazy mode)")
-    logger.info(f"[INIT] Available models: {list(MODEL_POOL_CONFIG.keys())}")
+    from mcp_server.model_pool_manager import get_model_pool_manager
+
+    pool_config = get_model_pool_manager()._get_pool_config()
+    logger.info(f"[INIT] Available models: {list(pool_config.keys())}")
 
     # 3.5. VRAM tier detection - DEFERRED to first model load
     logger.info("[INIT] VRAM tier detection deferred until first model request")

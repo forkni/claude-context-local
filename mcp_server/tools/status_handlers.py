@@ -17,7 +17,6 @@ from mcp_server.storage_manager import get_storage_dir
 from mcp_server.tools.decorators import error_handler
 from merkle.snapshot_manager import SnapshotManager
 from search.config import (
-    MODEL_POOL_CONFIG,
     MODEL_REGISTRY,
 )
 from search.hybrid_searcher import HybridSearcher
@@ -296,12 +295,14 @@ async def handle_get_search_config_status(arguments: Dict[str, Any]) -> dict:
 @error_handler("List models")
 async def handle_list_embedding_models(arguments: Dict[str, Any]) -> dict:
     """List all available embedding models."""
+    from mcp_server.model_pool_manager import get_model_pool_manager
     from mcp_server.state import get_state
 
     state = get_state()
 
     # Build reverse mapping: model_name -> model_key
-    name_to_key = {v: k for k, v in MODEL_POOL_CONFIG.items()}
+    pool_config = get_model_pool_manager()._get_pool_config()
+    name_to_key = {v: k for k, v in pool_config.items()}
 
     models = []
     for model_name, config in MODEL_REGISTRY.items():

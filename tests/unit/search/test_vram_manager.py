@@ -56,16 +56,24 @@ class TestVRAMTiers:
         # Minimal tier has everything disabled
         assert minimal.multi_model_enabled is False
         assert minimal.neural_reranking_enabled is False
+        assert minimal.multi_model_pool is None
+        assert minimal.reranker_model is None
 
-        # Laptop tier: single-model for 8GB safety, but reranker enabled
-        assert laptop.multi_model_enabled is False  # Disabled for OOM prevention
-        assert laptop.neural_reranking_enabled is True  # Reranker fits with BGE-M3
+        # Laptop tier: lightweight multi-model for 8GB GPUs
+        assert laptop.multi_model_enabled is True  # Enabled with lightweight pool
+        assert laptop.neural_reranking_enabled is True  # Lightweight reranker
+        assert laptop.multi_model_pool == "lightweight-speed"  # Default speed preset
+        assert laptop.reranker_model == "lightweight"  # gte-reranker-modernbert
 
-        # Higher tiers enable multi-model
+        # Higher tiers enable full multi-model pool
         assert desktop.multi_model_enabled is True
         assert desktop.neural_reranking_enabled is True
+        assert desktop.multi_model_pool == "full"
+        assert desktop.reranker_model == "full"
         assert workstation.multi_model_enabled is True
         assert workstation.neural_reranking_enabled is True
+        assert workstation.multi_model_pool == "full"
+        assert workstation.reranker_model == "full"
 
 
 class TestVRAMTierManager:
@@ -107,10 +115,10 @@ class TestVRAMTierManager:
 
                 assert tier.name == "laptop"
                 assert tier.recommended_model == "BAAI/bge-m3"
-                assert (
-                    tier.multi_model_enabled is False
-                )  # Changed: disabled for OOM prevention
+                assert tier.multi_model_enabled is True  # Enabled with lightweight pool
                 assert tier.neural_reranking_enabled is True
+                assert tier.multi_model_pool == "lightweight-speed"  # Default preset
+                assert tier.reranker_model == "lightweight"
 
     def test_detect_tier_desktop(self):
         """Test tier detection for desktop VRAM (10-18GB)."""
@@ -205,7 +213,7 @@ class TestVRAMTierManager:
 
     def test_should_enable_multi_model(self):
         """Test multi-model enablement check."""
-        # Mock laptop tier (multi-model disabled for OOM prevention)
+        # Mock laptop tier (multi-model enabled with lightweight pool)
         with patch("torch.cuda.is_available", return_value=True):
             with patch("torch.cuda.get_device_properties") as mock_get_props:
                 mock_props = MagicMock()
@@ -213,7 +221,9 @@ class TestVRAMTierManager:
                 mock_get_props.return_value = mock_props
 
                 manager = VRAMTierManager()
-                assert manager.should_enable_multi_model() is False  # Changed
+                assert (
+                    manager.should_enable_multi_model() is True
+                )  # Enabled with lightweight
 
         # Mock minimal tier (multi-model disabled)
         with patch("torch.cuda.is_available", return_value=True):

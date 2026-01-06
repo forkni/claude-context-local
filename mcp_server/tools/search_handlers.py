@@ -102,8 +102,6 @@ def _route_query_to_model(
     Returns:
         tuple: (selected_model_key, routing_info_dict)
     """
-    from search.config import MODEL_POOL_CONFIG
-
     # User-specified override always wins
     if model_key is not None:
         return model_key, {
@@ -169,7 +167,10 @@ def _route_query_to_model(
             }
 
         # Then scan remaining models (excluding default since we already checked it)
-        for model_key_candidate in MODEL_POOL_CONFIG.keys():
+        from mcp_server.model_pool_manager import get_model_pool_manager
+
+        pool_config = get_model_pool_manager()._get_pool_config()
+        for model_key_candidate in pool_config.keys():
             if model_key_candidate == default_model:
                 continue  # Already checked above
             project_dir = get_project_storage_dir(

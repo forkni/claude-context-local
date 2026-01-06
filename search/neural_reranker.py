@@ -5,6 +5,13 @@ from typing import List, Optional
 
 import torch
 
+# Reranker model registry
+# Maps reranker type to model name for environment/menu configuration
+RERANKER_MODELS = {
+    "full": "BAAI/bge-reranker-v2-m3",  # ~1.5GB VRAM, production quality
+    "lightweight": "Alibaba-NLP/gte-reranker-modernbert-base",  # ~0.3GB VRAM, efficient
+}
+
 
 class NeuralReranker:
     """Cross-encoder neural reranker using BAAI/bge-reranker-v2-m3.

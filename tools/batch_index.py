@@ -96,7 +96,21 @@ def main():
     print(f"Mode: {mode_desc}")
     print(f"Incremental: {incremental}")
     if multi_model:
-        print("Multi-Model: Enabled (Qwen3, BGE-M3, CodeRankEmbed)")
+        # Show correct pool based on config
+        from search.config import get_search_config
+
+        try:
+            config = get_search_config()
+            pool_type = config.routing.multi_model_pool or "full"
+        except Exception:
+            pool_type = "full"
+
+        if pool_type == "lightweight-speed":
+            print("Multi-Model: Enabled (BGE-M3 + gte-modernbert, 1.65GB)")
+        elif pool_type == "lightweight-accuracy":
+            print("Multi-Model: Enabled (BGE-M3 + C2LLM-0.5B, 2.3GB)")
+        else:
+            print("Multi-Model: Enabled (Qwen3, BGE-M3, CodeRankEmbed)")
     else:
         print("Multi-Model: Disabled (single model only)")
     if include_dirs:
