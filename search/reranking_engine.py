@@ -61,6 +61,16 @@ class RerankingEngine:
                 self._logger.warning("Neural reranking disabled: No GPU available")
                 return False
 
+            # If shared memory is allowed, skip VRAM threshold check
+            if (
+                hasattr(config, "performance")
+                and config.performance.allow_shared_memory
+            ):
+                self._logger.info(
+                    "Neural reranking enabled: allow_shared_memory=True (will use system RAM if needed)"
+                )
+                return True
+
             # Get actual free memory from CUDA driver (accounts for all processes)
             free_memory, total_memory = torch.cuda.mem_get_info(0)
             free_gb = free_memory / (1024**3)

@@ -205,6 +205,9 @@ class PerformanceConfig:
     prefer_gpu: bool = True
     gpu_memory_threshold: float = 0.65  # Conservative for fragmentation headroom
     vram_limit_fraction: float = 0.80  # Hard VRAM ceiling (80% of dedicated)
+    allow_shared_memory: bool = (
+        False  # Allow spillover to system RAM (slower but reliable)
+    )
 
     # Precision Configuration (fp16/bf16 for faster inference)
     enable_fp16: bool = True  # Enable fp16 for GPU (30-50% faster inference)
@@ -378,6 +381,8 @@ class SearchConfig:
                 "enable_entity_tracking": self.performance.enable_entity_tracking,
                 "prefer_gpu": self.performance.prefer_gpu,
                 "gpu_memory_threshold": self.performance.gpu_memory_threshold,
+                "vram_limit_fraction": self.performance.vram_limit_fraction,
+                "allow_shared_memory": self.performance.allow_shared_memory,
                 "enable_fp16": self.performance.enable_fp16,
                 "prefer_bf16": self.performance.prefer_bf16,
                 "enable_dynamic_batch_size": self.performance.enable_dynamic_batch_size,
@@ -508,6 +513,8 @@ class SearchConfig:
                 ),
                 prefer_gpu=performance_data.get("prefer_gpu", True),
                 gpu_memory_threshold=performance_data.get("gpu_memory_threshold", 0.8),
+                vram_limit_fraction=performance_data.get("vram_limit_fraction", 0.80),
+                allow_shared_memory=performance_data.get("allow_shared_memory", False),
                 enable_fp16=performance_data.get("enable_fp16", True),
                 prefer_bf16=performance_data.get("prefer_bf16", True),
                 enable_dynamic_batch_size=performance_data.get(

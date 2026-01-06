@@ -971,6 +971,50 @@ python -c "import torch; print('GPU memory:', torch.cuda.get_device_properties(0
 
 ### GPU Acceleration
 
+#### VRAM Management Settings (v0.8.3+)
+
+Two new settings are available to manage GPU memory allocation on systems with limited VRAM (8GB laptops):
+
+**1. Allow Shared Memory** (`allow_shared_memory`):
+
+- **Default**: `false` (strict VRAM limit, faster but may OOM)
+- **Enabled**: Allows PyTorch to spill to system RAM when dedicated VRAM is full (slower but reliable)
+- **Use When**: Experiencing OOM errors with neural reranker on 8GB VRAM laptops
+- **Access**: `start_mcp_server.cmd` → 3 (Search Config) → 7 (Performance) → 3 (Allow Shared Memory)
+
+**2. VRAM Limit Fraction** (`vram_limit_fraction`):
+
+- **Default**: `0.80` (80% of dedicated VRAM)
+- **Range**: 70% - 95%
+- **Purpose**: Sets hard ceiling for dedicated VRAM usage to prevent shared memory spillover
+- **Access**: `start_mcp_server.cmd` → 3 (Search Config) → 7 (Performance) → 4 (Adjust VRAM Limit)
+
+**Recommended Configurations**:
+
+| GPU VRAM | Configuration | Notes |
+|----------|---------------|-------|
+| **8GB Laptop** | `allow_shared_memory: true` | Reliability over speed |
+| **10-12GB** | `vram_limit_fraction: 0.80` (default) | Balanced |
+| **16GB+** | `vram_limit_fraction: 0.85-0.90` | More headroom |
+| **24GB+** | `vram_limit_fraction: 0.90-0.95` | Maximum capacity |
+
+**How They Work Together**:
+
+1. **Batch Sizing**: `gpu_memory_threshold` (70%) calculates optimal batch size
+2. **Hard Ceiling**: `vram_limit_fraction` (80%) enforces VRAM limit
+3. **Spillover Control**: `allow_shared_memory` (false) prevents slow shared memory usage
+
+**When `allow_shared_memory=true`**:
+- `vram_limit_fraction` is ignored (no hard limit set)
+- PyTorch can use system RAM when VRAM is full (slower but won't OOM)
+- Recommended for 8GB VRAM laptops to ensure neural reranker works reliably
+
+**Configuration File**: Settings are persisted in `search_config.json` under `performance` section.
+
+**Note**: Changes require MCP server restart to take effect.
+
+---
+
 ### Runtime Performance (v0.5.17+)
 
 **Lazy Model Loading**: Embedding models load on-demand during first search, not at server startup.

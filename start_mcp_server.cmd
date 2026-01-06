@@ -346,7 +346,7 @@ echo   3. Select Embedding Model           - Choose model by VRAM ^(BGE-M3/Qwen3
 echo   4. Configure Neural Reranker        - Cross-encoder reranking ^(+5-15%% quality^)
 echo   5. Entity Tracking Configuration    - Symbol tracking, import/class context
 echo   6. Configure Chunking Settings      - Greedy merge, AST splitting ^(+4.3 Recall@5^)
-echo   7. Performance Settings             - GPU acceleration, auto-reindex
+echo   7. Performance Settings             - GPU acceleration, VRAM management, auto-reindex
 echo   9. Reset to Defaults                - Restore optimal default settings
 echo   0. Back to Main Menu
 echo.
@@ -1401,14 +1401,15 @@ echo.
 echo === Performance Settings ===
 echo.
 echo Current Settings:
-.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Prefer GPU:', 'True' if cfg.performance.prefer_gpu else 'False'); print('  Auto-Reindex:', 'Enabled' if cfg.performance.enable_auto_reindex else 'Disabled'); print('    Max Age:', cfg.performance.max_index_age_minutes, 'minutes')" 2>nul
+.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Prefer GPU:', 'True' if cfg.performance.prefer_gpu else 'False'); print('  Auto-Reindex:', 'Enabled' if cfg.performance.enable_auto_reindex else 'Disabled'); print('    Max Age:', cfg.performance.max_index_age_minutes, 'minutes'); print(f'  VRAM Limit: {cfg.performance.vram_limit_fraction:.0%%}'); print('  Allow Shared Memory:', 'Enabled' if cfg.performance.allow_shared_memory else 'Disabled')" 2>nul
 echo.
 echo   1. Configure GPU Acceleration   - Prefer GPU for embeddings/search
 echo   2. Configure Auto-Reindex       - Auto-refresh when index is stale
+echo   3. Configure GPU Memory         - VRAM limits and shared memory options
 echo   0. Back to Search Configuration
 echo.
 set "perf_choice="
-set /p perf_choice="Select option (0-2): "
+set /p perf_choice="Select option (0-3): "
 
 REM Handle empty input gracefully
 if not defined perf_choice (
@@ -1422,9 +1423,10 @@ if "!perf_choice!"=="" (
 
 if "!perf_choice!"=="1" goto configure_gpu_acceleration
 if "!perf_choice!"=="2" goto configure_auto_reindex
+if "!perf_choice!"=="3" goto configure_gpu_memory
 if "!perf_choice!"=="0" goto search_config_menu
 
-echo [ERROR] Invalid choice. Please select 0-2.
+echo [ERROR] Invalid choice. Please select 0-3.
 pause
 cls
 goto performance_settings_menu
@@ -1493,6 +1495,129 @@ if not "!auto_reindex_choice!"=="1" if not "!auto_reindex_choice!"=="2" if not "
 )
 pause
 goto performance_settings_menu
+
+:configure_gpu_memory
+echo.
+echo === GPU Memory Configuration ===
+echo.
+echo Current Settings:
+.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print(f'  VRAM Limit: {cfg.performance.vram_limit_fraction:.0%%}'); print('  Allow Shared Memory:', 'Enabled' if cfg.performance.allow_shared_memory else 'Disabled')" 2>nul
+echo.
+echo   1. Adjust VRAM Limit          - Set hard ceiling (70-95%%)
+echo   2. Allow Shared Memory        - Enable system RAM spillover (slower)
+echo   0. Back to Performance Settings
+echo.
+set "gpu_mem_choice="
+set /p gpu_mem_choice="Select option (0-2): "
+
+if not defined gpu_mem_choice goto performance_settings_menu
+if "!gpu_mem_choice!"=="" goto performance_settings_menu
+if "!gpu_mem_choice!"=="0" goto performance_settings_menu
+
+if "!gpu_mem_choice!"=="1" goto configure_vram_limit
+if "!gpu_mem_choice!"=="2" goto configure_shared_memory
+
+echo [ERROR] Invalid choice. Please select 0-2.
+pause
+cls
+goto configure_gpu_memory
+
+:configure_vram_limit
+echo.
+echo === Adjust VRAM Limit ===
+echo.
+echo Sets the hard ceiling for dedicated VRAM usage.
+echo   70%% = Extra safety margin
+echo   80%% = Default (recommended)
+echo   90%% = Maximum VRAM (higher OOM risk)
+echo   95%% = Aggressive (use with shared memory enabled)
+echo.
+echo   1. 70%% (Conservative)
+echo   2. 80%% (Default)
+echo   3. 85%% (Moderate)
+echo   4. 90%% (Aggressive)
+echo   5. 95%% (Maximum)
+echo   0. Back to GPU Memory
+echo.
+set "vram_limit_choice="
+set /p vram_limit_choice="Select option (0-5): "
+
+if not defined vram_limit_choice goto configure_gpu_memory
+if "!vram_limit_choice!"=="" goto configure_gpu_memory
+if "!vram_limit_choice!"=="0" goto configure_gpu_memory
+
+set "vram_value="
+if "!vram_limit_choice!"=="1" set "vram_value=0.70"
+if "!vram_limit_choice!"=="2" set "vram_value=0.80"
+if "!vram_limit_choice!"=="3" set "vram_value=0.85"
+if "!vram_limit_choice!"=="4" set "vram_value=0.90"
+if "!vram_limit_choice!"=="5" set "vram_value=0.95"
+
+if defined vram_value (
+    echo.
+    echo [INFO] Setting VRAM limit to !vram_value!...
+    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.vram_limit_fraction = !vram_value!; mgr.save_config(cfg); print('[OK] VRAM limit set to !vram_value!')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] MCP server restart required for this setting to take effect
+        REM Notify running MCP server to reload config
+        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+    )
+) else (
+    echo [ERROR] Invalid choice. Please select 0-5.
+)
+pause
+goto configure_gpu_memory
+
+:configure_shared_memory
+echo.
+echo === Allow Shared Memory ===
+echo.
+echo When enabled, PyTorch can spill to system RAM when VRAM is full.
+echo This is SLOWER but prevents OOM errors on 8GB VRAM laptops.
+echo.
+echo   1. Enable (Reliable, slower - for 8GB VRAM)
+echo   2. Disable (Fast, may OOM - for 10GB+ VRAM)
+echo   0. Back to GPU Memory
+echo.
+set "shared_mem_choice="
+set /p shared_mem_choice="Select option (0-2): "
+
+if not defined shared_mem_choice goto configure_gpu_memory
+if "!shared_mem_choice!"=="" goto configure_gpu_memory
+if "!shared_mem_choice!"=="0" goto configure_gpu_memory
+
+if "!shared_mem_choice!"=="1" (
+    echo.
+    echo [INFO] Enabling shared memory spillover...
+    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.allow_shared_memory = True; mgr.save_config(cfg); print('[OK] Shared memory enabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] MCP server restart required for this setting to take effect
+        REM Notify running MCP server to reload config
+        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+    )
+)
+if "!shared_mem_choice!"=="2" (
+    echo.
+    echo [INFO] Disabling shared memory spillover...
+    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.allow_shared_memory = False; mgr.save_config(cfg); print('[OK] Shared memory disabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] MCP server restart required for this setting to take effect
+        REM Notify running MCP server to reload config
+        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+    )
+)
+
+if not "!shared_mem_choice!"=="1" if not "!shared_mem_choice!"=="2" (
+    echo [ERROR] Invalid choice. Please select 0-2.
+)
+pause
+goto configure_gpu_memory
 
 :quick_model_switch
 echo.
