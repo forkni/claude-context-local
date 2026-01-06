@@ -13,6 +13,82 @@ Complete version history and feature timeline for claude-context-local MCP serve
 
 ---
 
+## v0.8.3 - Complexity Score Display Fix (2026-01-05)
+
+### Status: BUG FIX + FEATURE ENHANCEMENT ✅
+
+Fixed critical bug where cyclomatic complexity was calculated correctly but lost during chunk conversion, and added `complexity` field to all search result output formats.
+
+### Highlights
+
+- **Bug Fix**: Complexity score no longer hardcoded to 0 (now extracted from TreeSitterChunk metadata)
+- **Feature**: `complexity` field now visible in verbose, compact, and ultra output formats
+- **Documentation**: Complete complexity scoring guide added to ADVANCED_FEATURES_GUIDE.md
+
+### Bug Fixes
+
+#### Complexity Score Data Loss (Critical)
+
+- **Problem**: Complexity calculated correctly in `PythonChunker.extract_metadata()` but hardcoded to 0 at `multi_language_chunker.py:416` during `TreeSitterChunk` → `CodeChunk` conversion
+- **Solution**: Extract complexity from metadata: `complexity_score=tchunk.metadata.get("complexity_score", 0)`
+- **File**: `chunking/multi_language_chunker.py:416`
+- **Impact**: Complexity values now preserved through full pipeline (chunking → embedding → storage → search results)
+
+### Features
+
+#### Complexity Field in Search Results
+
+- **Added**: `complexity` field to `_format_search_results()` for both IntelligentSearcher and HybridSearcher formats
+- **File**: `mcp_server/tools/search_handlers.py:325-327, 340-342`
+- **Format**: Short field name `complexity` (not `complexity_score`) for token efficiency
+- **Visibility**: Appears in all output formats (verbose, compact, ultra)
+- **Scope**: Functions and methods only (classes/modules excluded by design)
+
+### Documentation Updates
+
+#### MCP Tools Reference (`docs/MCP_TOOLS_REFERENCE.md`)
+
+- Added "Search Result Fields" section documenting all result fields
+- Includes complexity field definition and usage examples
+- Location: Lines 107-139
+
+#### MCP Search Skill (`\.claude\skills\mcp-search-tool\SKILL.md`)
+
+- Added result fields table to search_code documentation
+- Location: Lines 363-374
+
+#### Advanced Features Guide (`docs/ADVANCED_FEATURES_GUIDE.md`)
+
+- Added comprehensive "Complexity Scoring" section
+- Includes: formula, thresholds, use cases, examples, implementation details
+- Location: Lines 2731-2863
+
+### Test Coverage
+
+- Existing: 16/16 complexity calculation tests passing (`tests/unit/chunking/test_complexity_scoring.py`)
+- Added: Pipeline integration test verifying complexity preservation through full flow
+- Total: 17 tests, 100% pass rate
+
+### Breaking Changes
+
+**None** - Backward compatible:
+
+- Missing complexity defaults to not shown
+- Only affects functions/methods (as intended)
+- Requires re-indexing to populate correct values
+
+### Notes
+
+**Re-indexing Required**: After upgrade, users must re-index projects to populate correct complexity values:
+
+```bash
+index_directory("F:\\path\\to\\project")
+```
+
+**Python Only**: Complexity scoring currently only supported for Python (other languages TBD)
+
+---
+
 ## v0.8.2 - UI Enhancements & VRAM Fixes (2026-01-04)
 
 ### Status: PRODUCTION-READY ✅

@@ -360,6 +360,19 @@ search_code("token merging implementation", k=10)
 - **BM25 mode**: 3-8ms average (fastest for exact symbols)
 - **Auto mode**: 52-57ms average
 
+**Result Fields**:
+
+| Field | Type | Always Present | Description |
+|-------|------|----------------|-------------|
+| `chunk_id` | string | ✅ | Unique identifier (format: `"file:lines:type:name"`) |
+| `kind` | string | ✅ | Chunk type (`function`, `class`, `method`, etc.) |
+| `score` | float | ✅ | Relevance score (0.0-1.0) |
+| `complexity` | int | ⚠️ Optional | Cyclomatic complexity (functions/methods only, Python) |
+| `graph` | object | ⚠️ Optional | Call relationships (`calls`, `called_by` arrays) |
+| `reranker_score` | float | ⚠️ Optional | Neural reranker score (when enabled) |
+
+**Note**: `file` and `lines` fields are present in verbose mode but omitted in compact/ultra modes since `chunk_id` contains this information.
+
 #### 2. `index_directory(directory_path, project_name=None, incremental=True, multi_model=None, include_dirs=None, exclude_dirs=None)`
 
 **Purpose**: Index a project for semantic search (one-time setup)

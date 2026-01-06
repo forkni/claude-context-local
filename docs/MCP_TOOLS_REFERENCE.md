@@ -104,6 +104,42 @@ find_connections(symbol_name="UserService", exclude_dirs=["tests/"])
 
 ---
 
+## Search Result Fields
+
+The `search_code` tool returns results with the following fields:
+
+| Field | Type | Always Present | Description |
+|-------|------|----------------|-------------|
+| `chunk_id` | string | ✅ | Unique identifier (format: `"file:lines:type:name"`) |
+| `kind` | string | ✅ | Chunk type (`function`, `class`, `method`, etc.) |
+| `score` | float | ✅ | Relevance score (0.0-1.0, rounded to 2 decimals) |
+| `file` | string | ✅ (verbose only) | Relative file path (omitted in compact/ultra since `chunk_id` contains this) |
+| `lines` | string | ✅ (verbose only) | Line range (e.g., `"10-25"`, omitted in compact/ultra) |
+| `name` | string | ⚠️ Optional | Symbol name (when available) |
+| `complexity` | integer | ⚠️ Optional | Cyclomatic complexity (functions/methods only) |
+| `reranker_score` | float | ⚠️ Optional | Neural reranker score (when reranking enabled, rounded to 4 decimals) |
+| `graph` | object | ⚠️ Optional | Call relationships (`calls`, `called_by` arrays) |
+
+### Field Details
+
+**`complexity`** (Cyclomatic Complexity):
+
+- **Only present for**: Functions and methods (Python only currently)
+- **Calculation**: CC = 1 + decision_points (if/elif, for, while, except, and/or, ternary, match/case)
+- **Use cases**:
+  - Identify complex code needing refactoring (CC > 10 is high complexity)
+  - Prioritize code review focus areas
+  - Find simple entry points for code understanding (CC = 1-2)
+- **Example**: `"complexity": 5` indicates 5 decision paths through the function
+
+**`graph`** (Call Relationships):
+
+- **Structure**: `{"calls": ["chunk_id1", ...], "called_by": ["chunk_id2", ...]}`
+- **Only present when**: Graph storage is available and relationships exist
+- **Use with**: `find_connections` for detailed dependency analysis
+
+---
+
 ## Output Format Options
 
 All 18 MCP tools support configurable output formatting via the `output_format` parameter. This allows you to optimize token usage while preserving 100% of data.

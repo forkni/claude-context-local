@@ -30,7 +30,7 @@
     "max_chunking_workers": 4,
     "enable_entity_tracking": true,
     "prefer_gpu": true,
-    "gpu_memory_threshold": 0.75,
+    "gpu_memory_threshold": 0.85,
     "enable_fp16": true,
     "prefer_bf16": true,
     "enable_dynamic_batch_size": true,

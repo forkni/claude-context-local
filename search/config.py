@@ -241,6 +241,17 @@ class RoutingConfig:
 
 
 @dataclass
+class IntentConfig:
+    """Intent classification settings (5 fields)."""
+
+    enabled: bool = True  # Enable intent classification for query routing
+    confidence_threshold: float = 0.3  # Minimum confidence for intent-specific routing
+    default_intent: str = "HYBRID"  # Default intent when confidence is low
+    enable_navigational_redirect: bool = True  # Auto-redirect to find_connections
+    log_classifications: bool = True  # Log intent classification decisions
+
+
+@dataclass
 class RerankerConfig:
     """Neural reranker settings (5 fields)."""
 
@@ -281,8 +292,8 @@ class SearchConfig:
     """Root configuration with nested sub-configs.
 
     Configuration organization:
-    - Split into 7 focused sub-configs for better organization
-    - embedding, search_mode, performance, multi_hop, routing, reranker, output, chunking
+    - Split into 8 focused sub-configs for better organization
+    - embedding, search_mode, performance, multi_hop, routing, intent, reranker, output, chunking
 
     Initialization style (nested configs only):
         config = SearchConfig(embedding=EmbeddingConfig(model_name="..."))
@@ -295,6 +306,7 @@ class SearchConfig:
         performance: Optional[PerformanceConfig] = None,
         multi_hop: Optional[MultiHopConfig] = None,
         routing: Optional[RoutingConfig] = None,
+        intent: Optional[IntentConfig] = None,
         reranker: Optional[RerankerConfig] = None,
         output: Optional[OutputConfig] = None,
         chunking: Optional[ChunkingConfig] = None,
@@ -307,6 +319,7 @@ class SearchConfig:
             performance: PerformanceConfig instance (optional, defaults to PerformanceConfig())
             multi_hop: MultiHopConfig instance (optional, defaults to MultiHopConfig())
             routing: RoutingConfig instance (optional, defaults to RoutingConfig())
+            intent: IntentConfig instance (optional, defaults to IntentConfig())
             reranker: RerankerConfig instance (optional, defaults to RerankerConfig())
             output: OutputConfig instance (optional, defaults to OutputConfig())
             chunking: ChunkingConfig instance (optional, defaults to ChunkingConfig())
@@ -321,6 +334,7 @@ class SearchConfig:
         )
         self.multi_hop = multi_hop if multi_hop is not None else MultiHopConfig()
         self.routing = routing if routing is not None else RoutingConfig()
+        self.intent = intent if intent is not None else IntentConfig()
         self.reranker = reranker if reranker is not None else RerankerConfig()
         self.output = output if output is not None else OutputConfig()
         self.chunking = chunking if chunking is not None else ChunkingConfig()
@@ -382,6 +396,13 @@ class SearchConfig:
                 "multi_model_enabled": self.routing.multi_model_enabled,
                 "default_model": self.routing.default_model,
             },
+            "intent": {
+                "enabled": self.intent.enabled,
+                "confidence_threshold": self.intent.confidence_threshold,
+                "default_intent": self.intent.default_intent,
+                "enable_navigational_redirect": self.intent.enable_navigational_redirect,
+                "log_classifications": self.intent.log_classifications,
+            },
             "reranker": {
                 "enabled": self.reranker.enabled,
                 "model_name": self.reranker.model_name,
@@ -426,6 +447,7 @@ class SearchConfig:
             performance_data = data.get("performance", {})
             multi_hop_data = data.get("multi_hop", {})
             routing_data = data.get("routing", {})
+            intent_data = data.get("intent", {})
             reranker_data = data.get("reranker", {})
             output_data = data.get("output", {})
             chunking_data = data.get("chunking", {})
@@ -509,6 +531,16 @@ class SearchConfig:
             routing = RoutingConfig(
                 multi_model_enabled=routing_data.get("multi_model_enabled", True),
                 default_model=routing_data.get("default_model", "bge_m3"),
+            )
+
+            intent = IntentConfig(
+                enabled=intent_data.get("enabled", True),
+                confidence_threshold=intent_data.get("confidence_threshold", 0.3),
+                default_intent=intent_data.get("default_intent", "HYBRID"),
+                enable_navigational_redirect=intent_data.get(
+                    "enable_navigational_redirect", True
+                ),
+                log_classifications=intent_data.get("log_classifications", True),
             )
 
             reranker = RerankerConfig(
@@ -605,6 +637,16 @@ class SearchConfig:
                 default_model=data.get("routing_default_model", "bge_m3"),
             )
 
+            intent = IntentConfig(
+                enabled=data.get("intent_enabled", True),
+                confidence_threshold=data.get("intent_confidence_threshold", 0.3),
+                default_intent=data.get("intent_default_intent", "HYBRID"),
+                enable_navigational_redirect=data.get(
+                    "intent_enable_navigational_redirect", True
+                ),
+                log_classifications=data.get("intent_log_classifications", True),
+            )
+
             reranker = RerankerConfig(
                 enabled=data.get("reranker_enabled", True),
                 model_name=data.get("reranker_model_name", "BAAI/bge-reranker-v2-m3"),
@@ -634,6 +676,7 @@ class SearchConfig:
             performance=performance,
             multi_hop=multi_hop,
             routing=routing,
+            intent=intent,
             reranker=reranker,
             output=output,
             chunking=chunking,

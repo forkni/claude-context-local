@@ -23,6 +23,7 @@ Complete guide to advanced features in claude-context-local MCP server.
 17. [Dependency Analysis (Phase 1.3)](#dependency-analysis-phase-13)
 18. [Entity Tracking (Phase 1.4)](#entity-tracking-phase-14)
 19. [Self-Healing Index Sync](#self-healing-index-sync)
+20. [Complexity Scoring](#complexity-scoring)
 
 ---
 
@@ -2724,6 +2725,145 @@ Incremental indexing only processes **changed files**, leaving unchanged files d
 - **Detection**: Negligible (<1ms)
 - **Resync**: ~5 seconds for 4000+ documents
 - **Only runs when needed**: No impact on normal operations
+
+---
+
+## Complexity Scoring
+
+**Feature**: Automatic cyclomatic complexity calculation for Python functions and methods, included in search results
+
+**Version**: v0.8.3+ (bug fix - previously calculated but not displayed)
+
+### What is Cyclomatic Complexity?
+
+**Cyclomatic Complexity (CC)** measures the number of independent execution paths through code, indicating its complexity and testability.
+
+**Formula**: `CC = 1 + decision_points`
+
+**Decision Points Counted**:
+
+- `if/elif` statements
+- `for/while` loops
+- `except` handlers
+- Boolean operators (`and`, `or` in conditions)
+- Ternary expressions (`x if condition else y`)
+- `match/case` statements (Python 3.10+)
+- Comprehensions with `if` clause
+
+**Complexity Thresholds**:
+
+| CC Range | Complexity | Recommendation |
+|----------|------------|----------------|
+| 1-5 | Low | Simple, easy to test |
+| 6-10 | Moderate | Acceptable complexity |
+| 11-20 | High | Consider refactoring |
+| 21+ | Very High | Strongly recommend refactoring |
+
+### Usage in Search Results
+
+The `complexity` field appears automatically in `search_code` results for Python functions and methods:
+
+```json
+{
+  "chunk_id": "auth.py:15-42:function:authenticate_user",
+  "kind": "function",
+  "score": 0.95,
+  "complexity": 7
+}
+```
+
+**Available in all output formats**: verbose, compact, and ultra
+
+### Use Cases
+
+**1. Identify Complex Code Needing Refactoring**
+
+```python
+# Find high-complexity functions (CC > 10)
+search_code("complex business logic", chunk_type="function", k=20)
+# Review results with complexity > 10
+```
+
+**2. Prioritize Code Review Focus**
+
+High complexity = more bugs, harder to test → review first
+
+**3. Find Simple Entry Points**
+
+```python
+# Find simple functions (CC = 1-2) for understanding codebase
+search_code("data validation", chunk_type="function", k=10)
+# Start with complexity = 1 or 2
+```
+
+**4. Track Refactoring Progress**
+
+Before: `complexity: 15`
+After refactoring: `complexity: 5`
+
+### Implementation Details
+
+**Calculation**: Performed during chunking via AST traversal in `chunking/languages/python.py`
+
+**Storage**: Stored in chunk metadata in SQLite database
+
+**Languages Supported**: Python only (currently)
+
+**Performance**: <1ms overhead per function (negligible)
+
+### Example Complexity Calculations
+
+**Simple function (CC = 1)**:
+
+```python
+def simple_add(a, b):
+    return a + b  # No decision points
+```
+
+**Moderate function (CC = 3)**:
+
+```python
+def validate_input(value):
+    if value is None:  # +1
+        return False
+    if value < 0:  # +1
+        return False
+    return True  # Base = 1
+```
+
+**Complex function (CC = 7)**:
+
+```python
+def process_order(order):
+    if not order.valid:  # +1
+        raise ValueError()
+
+    if order.priority == "high":  # +1
+        queue = high_priority
+    elif order.priority == "medium":  # +1
+        queue = medium_priority
+    else:
+        queue = low_priority
+
+    try:  # +1 for except
+        result = queue.process(order)
+    except TimeoutError:
+        retry_queue.add(order)
+
+    return result if result else None  # +1 for ternary
+```
+
+### Configuration
+
+**Automatic**: No configuration needed - complexity is calculated and displayed by default
+
+**Disable** (if needed): Not currently supported (minimal overhead)
+
+### Limitations
+
+1. **Python only**: Other languages not yet supported
+2. **Functions/methods only**: Classes and modules don't have complexity scores
+3. **Simplified calculation**: Doesn't account for all edge cases (uses practical heuristic)
 
 ---
 

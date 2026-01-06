@@ -21,6 +21,7 @@ from search.config import get_config_manager
 from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
+from search.intent_classifier import IntentClassifier, QueryIntent
 from search.metadata import MetadataStore
 from search.query_router import QueryRouter
 
@@ -321,6 +322,9 @@ def _format_search_results(results: list) -> list[dict]:
             }
             if hasattr(result, "name") and result.name:
                 item["name"] = result.name
+            # Add complexity score if available (functions only)
+            if hasattr(result, "complexity_score") and result.complexity_score:
+                item["complexity"] = result.complexity_score
         else:
             # HybridSearcher result format
             item = {
@@ -333,6 +337,9 @@ def _format_search_results(results: list) -> list[dict]:
             # Add reranker score if available (neural reranking)
             if "reranker_score" in result.metadata:
                 item["reranker_score"] = round(result.metadata["reranker_score"], 4)
+            # Add complexity score if available (functions only)
+            if result.metadata.get("complexity_score"):
+                item["complexity"] = result.metadata["complexity_score"]
         formatted_results.append(item)
     return formatted_results
 
@@ -402,6 +409,48 @@ async def handle_search_code(arguments: Dict[str, Any]) -> dict:
     # FAST PATH: Direct chunk_id lookup
     if chunk_id:
         return _handle_chunk_id_lookup(chunk_id)
+
+    # Intent Classification (Phase 2)
+    config = get_config()
+    if config.intent.enabled:
+        intent_classifier = IntentClassifier(
+            confidence_threshold=config.intent.confidence_threshold,
+            enable_logging=config.intent.log_classifications,
+        )
+        intent_decision = intent_classifier.classify(query)
+
+        logger.info(
+            f"[INTENT] query='{query[:50]}...' -> {intent_decision.intent.value} "
+            f"(conf={intent_decision.confidence:.2f}, reason={intent_decision.reason})"
+        )
+
+        # Redirect NAVIGATIONAL queries to find_connections
+        if (
+            intent_decision.intent == QueryIntent.NAVIGATIONAL
+            and intent_decision.confidence >= config.intent.confidence_threshold
+            and config.intent.enable_navigational_redirect
+        ):
+            symbol_name = intent_decision.suggested_params.get("symbol_name")
+            if symbol_name:
+                logger.info(
+                    f"[INTENT] Redirecting NAVIGATIONAL query to find_connections: {symbol_name}"
+                )
+                return await handle_find_connections(
+                    {
+                        "symbol_name": symbol_name,
+                        "exclude_dirs": arguments.get("exclude_dirs"),
+                        "max_depth": 3,
+                    }
+                )
+
+        # Adjust k parameter for GLOBAL queries
+        if intent_decision.intent == QueryIntent.GLOBAL:
+            suggested_k = intent_decision.suggested_params.get("k", k)
+            if suggested_k > k:
+                logger.info(
+                    f"[INTENT] Increasing k from {k} to {suggested_k} for GLOBAL query"
+                )
+                k = suggested_k
 
     # NORMAL PATH: Search by query
     search_mode = arguments.get("search_mode", "auto")
