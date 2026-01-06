@@ -192,7 +192,12 @@ class TreeSitterChunker:
     }
 
     def __init__(self):
-        """Initialize the tree-sitter chunker."""
+        """Initialize the tree-sitter chunker.
+
+        Attributes:
+            chunkers: Dictionary mapping file suffixes to initialized LanguageChunker
+                instances. Lazily populated as files are processed.
+        """
         self.chunkers: Dict[str, LanguageChunker] = {}
 
     def get_chunker(self, file_path: str) -> Optional[LanguageChunker]:

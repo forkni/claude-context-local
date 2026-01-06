@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from graph.call_graph_extractor import CallEdge
 
 
-@dataclass
+@dataclass(slots=True)
 class CodeChunk:
     """Represents a semantically meaningful chunk of code."""
 
@@ -44,6 +44,9 @@ class CodeChunk:
     # Evaluation framework compatibility
     language: str = "python"  # programming language
     chunk_id: Optional[str] = None  # unique identifier for evaluation
+
+    # Internal metadata (for merge statistics tracking)
+    _merge_stats: Optional[tuple] = None  # (original_count, merged_count)
 
     def __post_init__(self):
         if self.decorators is None:

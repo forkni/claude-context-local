@@ -456,7 +456,8 @@ class QueryRouter:
 
             config = get_search_config()
             return config.routing.multi_model_pool or "full"
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Config unavailable, using full pool: {e}")
             return "full"
 
     def _get_routing_rules(self) -> tuple[dict, list, str]:

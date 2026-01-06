@@ -4,9 +4,21 @@ Tests routing accuracy for all 20 benchmark queries plus edge cases.
 Validates keyword matching, tie-breaking logic, and confidence thresholds.
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from search.query_router import QueryRouter
+
+
+@pytest.fixture(autouse=True)
+def mock_full_pool_config():
+    """Mock config to use full model pool for all tests."""
+    with patch("search.config.get_search_config") as mock_config:
+        mock_routing = MagicMock()
+        mock_routing.multi_model_pool = "full"
+        mock_config.return_value.routing = mock_routing
+        yield
 
 
 class TestQueryRouterBenchmarkQueries:

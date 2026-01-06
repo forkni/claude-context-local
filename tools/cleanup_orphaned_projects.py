@@ -15,7 +15,11 @@ from pathlib import Path
 
 
 def find_orphaned_projects():
-    """Find project directories without project_info.json or with non-existent project_path."""
+    """Find project directories without project_info.json or with non-existent project_path.
+
+    Returns:
+        List of Path objects for orphaned project directories.
+    """
     storage_dir = Path.home() / ".claude_code_search" / "projects"
 
     if not storage_dir.exists():
@@ -48,7 +52,14 @@ def find_orphaned_projects():
 
 
 def get_project_size(project_dir):
-    """Calculate total size of project directory in MB."""
+    """Calculate total size of project directory in MB.
+
+    Args:
+        project_dir: Path to the project directory to measure.
+
+    Returns:
+        Total size in megabytes as a float.
+    """
     total_size = 0
     try:
         for file in project_dir.rglob("*"):
@@ -89,7 +100,14 @@ def _get_full_project_id(project_dir: Path) -> str | None:
 
 
 def cleanup_project(project_dir):
-    """Remove a project directory and its merkle snapshots safely."""
+    """Remove a project directory and its merkle snapshots safely.
+
+    Args:
+        project_dir: Path to the project directory to remove.
+
+    Returns:
+        Tuple of (success: bool, message: str) indicating cleanup result.
+    """
     try:
         # Get full 32-char project_id from project_info.json BEFORE deleting
         full_project_id = _get_full_project_id(project_dir)

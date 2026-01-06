@@ -138,7 +138,7 @@ class RelationshipType(Enum):
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class RelationshipEdge:
     """
     Unified representation of a relationship edge in the code graph.
@@ -345,7 +345,7 @@ class RelationshipEdge:
 # ===== Legacy Support =====
 
 
-@dataclass
+@dataclass(slots=True)
 class CallEdge:
     """
     Call relationship edge representation.

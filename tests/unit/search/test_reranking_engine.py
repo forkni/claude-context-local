@@ -48,6 +48,7 @@ class TestRerankingEngine:
             config = MagicMock()
             config.reranker.enabled = True
             config.reranker.min_vram_gb = 4  # Requires 4GB
+            config.performance.allow_shared_memory = False  # Test pure VRAM check
             mock_config.return_value = config
 
             result = self.engine.should_enable_neural_reranking()

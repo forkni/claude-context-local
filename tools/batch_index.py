@@ -18,7 +18,14 @@ from mcp_server.tool_handlers import handle_index_directory
 
 
 def main():
-    """Entry point for batch indexing CLI."""
+    """Entry point for batch indexing CLI.
+
+    Parses command-line arguments for project indexing configuration
+    including path, mode, multi-model, and directory filters.
+
+    Returns:
+        Exit code: 0 for success, 1 for failure.
+    """
     parser = argparse.ArgumentParser(
         description="Index project for semantic code search"
     )
@@ -102,7 +109,8 @@ def main():
         try:
             config = get_search_config()
             pool_type = config.routing.multi_model_pool or "full"
-        except Exception:
+        except Exception as e:
+            print(f"Config unavailable, using full pool: {e}")
             pool_type = "full"
 
         if pool_type == "lightweight-speed":

@@ -12,6 +12,8 @@ from typing import Any, Dict, Optional, Tuple
 import numpy as np
 import psutil
 
+from search.exceptions import IndexError as SearchIndexError
+
 try:
     import faiss
 except ImportError:
@@ -175,7 +177,9 @@ class FaissVectorIndex:
             ValueError: If index_type is not supported
         """
         if faiss is None:
-            raise ImportError("FAISS is not installed")
+            raise SearchIndexError(
+                "FAISS is not installed. Install with: pip install faiss-cpu"
+            )
 
         if index_type == "flat":
             # Simple flat index for exact search
@@ -456,8 +460,8 @@ class FaissVectorIndex:
 
                     gc.collect()
                     torch.cuda.empty_cache()
-            except Exception:
-                pass
+            except Exception as e:
+                self._logger.debug(f"GPU cache cleanup failed (non-critical): {e}")
             finally:
                 self._on_gpu = False
 

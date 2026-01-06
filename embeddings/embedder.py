@@ -26,7 +26,18 @@ from chunking.python_ast_chunker import CodeChunk
 from embeddings.model_cache import ModelCacheManager
 from embeddings.model_loader import ModelLoader
 from embeddings.query_cache import QueryEmbeddingCache
+from search.exceptions import VRAMExhaustedError
 from search.filters import normalize_path
+
+# ===== BATCH SIZE MEMORY ESTIMATION CONSTANTS =====
+# Empirically derived from OOM analysis: 2.67GB fragmentation / 14.74GB allocated = 18% overhead
+FRAGMENTATION_OVERHEAD = 0.82  # 1.0 - 0.18 = 82% usable VRAM, 18% fragmentation
+
+# Activation memory costs per batch item (GB) based on model size tier
+# Larger models have deeper layer stacks → more activation memory per item
+GB_PER_ITEM_LARGE_MODEL = 0.40  # ~400MB per item (e.g., Qwen3-4B: 36 layers)
+GB_PER_ITEM_MEDIUM_MODEL = 0.08  # ~80MB per item (e.g., BGE-M3: ~12 layers)
+GB_PER_ITEM_SMALL_MODEL = 0.04  # ~40MB per item (e.g., CodeRankEmbed: ~6 layers)
 
 
 # Configure PyTorch CUDA allocator BEFORE any torch imports
@@ -110,8 +121,8 @@ def set_vram_limit(fraction: float = 0.90) -> bool:
                 "[VRAM_LIMIT] Shared memory allowed - skipping hard VRAM limit"
             )
             return True  # Don't set limit, allow spillover
-    except Exception:
-        pass  # Config not available, use default behavior
+    except Exception as e:
+        logging.getLogger(__name__).debug(f"Config not available, using defaults: {e}")
 
     try:
         torch.cuda.set_per_process_memory_fraction(fraction, device=0)
@@ -183,9 +194,7 @@ def calculate_optimal_batch_size(
         # Apply fragmentation factor: PyTorch reserves ~18% extra for block management
         # Validated from OOM analysis: 2.67GB fragmentation / 14.74GB allocated = 18% overhead
         # This accounts for "reserved but unallocated" memory that can't be used for tensors
-        fragmentation_overhead = (
-            0.82  # 1.0 - 0.18 = 0.82 (82% usable, 18% fragmentation)
-        )
+        fragmentation_overhead = FRAGMENTATION_OVERHEAD
 
         # Target VRAM for activations (leave headroom for CUDA overhead + fragmentation)
         target_activation_gb = available_gb * memory_fraction * fragmentation_overhead
@@ -193,13 +202,13 @@ def calculate_optimal_batch_size(
         # Determine activation cost per batch item based on model size
         # Larger models have deeper layer stacks → more activation memory per item
         if model_vram_gb >= 6:  # Large models (e.g., Qwen3-4B: 7.5GB, 36 layers)
-            gb_per_item = 0.40  # ~400MB activation memory per batch item
+            gb_per_item = GB_PER_ITEM_LARGE_MODEL
             model_tier = "large"
         elif model_vram_gb >= 2:  # Medium models (e.g., BGE-M3: 2GB, ~12 layers)
-            gb_per_item = 0.08  # ~80MB activation memory per batch item
+            gb_per_item = GB_PER_ITEM_MEDIUM_MODEL
             model_tier = "medium"
         else:  # Small models (e.g., CodeRankEmbed: 0.5GB, ~6 layers)
-            gb_per_item = 0.04  # ~40MB activation memory per batch item
+            gb_per_item = GB_PER_ITEM_SMALL_MODEL
             model_tier = "small"
 
         # Calculate optimal batch size based on activation memory budget
@@ -851,7 +860,7 @@ class CodeEmbedder:
                     self._logger.error(
                         f"[VRAM] Aborting embedding - VRAM at {vram_pct:.1%} (threshold: 95%)"
                     )
-                    raise MemoryError(
+                    raise VRAMExhaustedError(
                         f"VRAM exhausted ({vram_pct:.1%}). "
                         "Close other GPU applications and retry."
                     )
@@ -1244,6 +1253,8 @@ class CodeEmbedder:
         try:
             self.cleanup()
         except Exception:
+            # Intentional: cleanup during interpreter shutdown may fail
+            # Logging is unreliable in __del__, so suppress is acceptable
             pass
 
     # ===== Cache Management Methods (delegated to ModelCacheManager) =====

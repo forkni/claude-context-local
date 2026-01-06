@@ -1,5 +1,13 @@
 """Search and indexing module."""
 
+from .exceptions import (
+    CodeSearchError,
+    ConfigurationError,
+    IndexError,
+    ModelLoadError,
+    SearchError,
+    VRAMExhaustedError,
+)
 from .gpu_monitor import GPUMemoryMonitor
 from .multi_hop_searcher import MultiHopSearcher
 from .reranking_engine import RerankingEngine
@@ -8,7 +16,13 @@ from .reranking_engine import RerankingEngine
 # Import directly from search.index_sync when needed
 
 __all__ = [
+    "CodeSearchError",
+    "ConfigurationError",
     "GPUMemoryMonitor",
+    "IndexError",
+    "ModelLoadError",
     "MultiHopSearcher",
     "RerankingEngine",
+    "SearchError",
+    "VRAMExhaustedError",
 ]

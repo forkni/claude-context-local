@@ -62,6 +62,11 @@ class CallGraphExtractor:
     """
 
     def __init__(self):
+        """Initialize the base call graph extractor.
+
+        Attributes:
+            logger: Logger instance for the extractor class.
+        """
         self.logger = logging.getLogger(self.__class__.__name__)
 
     def extract_calls(
@@ -95,6 +100,20 @@ class PythonCallGraphExtractor(CallGraphExtractor):
     """
 
     def __init__(self):
+        """Initialize the Python call graph extractor.
+
+        Sets up class context tracking and initializes resolvers for type,
+        import, and assignment resolution.
+
+        Attributes:
+            _current_class: Current class name being processed (for self/super resolution).
+            _class_bases: Mapping of class names to their list of base classes.
+            _type_resolver: TypeResolver instance for type annotation resolution.
+            _import_resolver: ImportResolver instance for import statement resolution.
+            _assignment_tracker: AssignmentTracker instance for variable assignment tracking.
+            _type_annotations: Mapping of parameter names to their type names.
+            _imports: Mapping of imported names/aliases to qualified names.
+        """
         super().__init__()
         # Class context tracking for self/super resolution
         self._current_class: Optional[str] = None

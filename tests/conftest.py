@@ -396,8 +396,11 @@ def embedder_with_cleanup(mock_storage_dir: Path) -> Generator[Any, None, None]:
     # Cleanup after test
     try:
         embedder.cleanup()
-    except Exception:
-        pass
+    except Exception as e:
+        # Test cleanup - log but don't fail test
+        import warnings
+
+        warnings.warn(f"Embedder cleanup failed: {e}", stacklevel=2)
 
 
 @pytest.fixture

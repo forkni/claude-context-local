@@ -8,6 +8,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Set
 
+from search.exceptions import SearchError
 from search.filters import (
     matches_directory_filter,
     normalize_path,
@@ -281,17 +282,17 @@ class CodeRelationshipAnalyzer:
             ImpactReport with structured impact data
 
         Raises:
-            ValueError: If neither chunk_id nor symbol_name provided
+            SearchError: If neither chunk_id nor symbol_name provided
         """
         if not chunk_id and not symbol_name:
-            raise ValueError("Must provide either chunk_id or symbol_name")
+            raise SearchError("Must provide either chunk_id or symbol_name")
 
         # Step 1: Get the target symbol
         if chunk_id:
             # Direct lookup - returns reranker.SearchResult
             target_result = self.searcher.get_by_chunk_id(chunk_id)
             if not target_result:
-                raise ValueError(f"Chunk not found: {chunk_id}")
+                raise SearchError(f"Chunk not found: {chunk_id}")
             target_id = chunk_id
         else:
             # Search by name - returns reranker.SearchResult
@@ -304,7 +305,7 @@ class CodeRelationshipAnalyzer:
                 symbol_name, k=30, filters=filters if filters else None
             )
             if not results:
-                raise ValueError(f"Symbol not found: {symbol_name}")
+                raise SearchError(f"Symbol not found: {symbol_name}")
 
             # Preference ranking: class > type_definition > interface > function > method
             # This ensures "HybridSearcher" finds the class, not a method with same name

@@ -66,6 +66,8 @@ class MmapVectorStorage:
     VERSION = 1
     HEADER_SIZE = 24  # magic(4) + version(4) + dim(4) + count(4) + reserved(8)
 
+    __slots__ = ("_path", "_dimension", "_mmap", "_file", "_count", "_entry_size")
+
     def __init__(self, path: Path, dimension: int):
         """Initialize MmapVectorStorage.
 
