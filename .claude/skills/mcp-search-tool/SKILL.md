@@ -367,7 +367,7 @@ search_code("token merging implementation", k=10)
 | `chunk_id` | string | ✅ | Unique identifier (format: `"file:lines:type:name"`) |
 | `kind` | string | ✅ | Chunk type (`function`, `class`, `method`, etc.) |
 | `score` | float | ✅ | Relevance score (0.0-1.0) |
-| `complexity` | int | ⚠️ Optional | Cyclomatic complexity (functions/methods only, Python) |
+| `complexity_score` | int | ⚠️ Optional | Cyclomatic complexity (functions/methods only, Python) |
 | `graph` | object | ⚠️ Optional | Call relationships (`calls`, `called_by` arrays) |
 | `reranker_score` | float | ⚠️ Optional | Neural reranker score (when enabled) |
 

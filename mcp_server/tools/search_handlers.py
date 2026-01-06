@@ -325,7 +325,7 @@ def _format_search_results(results: list) -> list[dict]:
                 item["name"] = result.name
             # Add complexity score if available (functions only)
             if hasattr(result, "complexity_score") and result.complexity_score:
-                item["complexity"] = result.complexity_score
+                item["complexity_score"] = result.complexity_score
         else:
             # HybridSearcher result format
             item = {
@@ -340,7 +340,7 @@ def _format_search_results(results: list) -> list[dict]:
                 item["reranker_score"] = round(result.metadata["reranker_score"], 4)
             # Add complexity score if available (functions only)
             if result.metadata.get("complexity_score"):
-                item["complexity"] = result.metadata["complexity_score"]
+                item["complexity_score"] = result.metadata["complexity_score"]
         formatted_results.append(item)
     return formatted_results
 

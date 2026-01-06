@@ -2,14 +2,90 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-01-04)
+## Current Status: All Features Operational (2026-01-06)
 
-- **Version**: 0.8.2
+- **Version**: 0.8.4
 - **Status**: Production-ready
 - **Test Coverage**: 1,191+ unit tests + 14 slow integration tests (100% pass rate)
 - **Index Quality**: 109 active files, 789 chunks (34% reduction via greedy merge, BGE-M3 1024d, ~16 MB)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent Feature**: cAST greedy sibling merging (EMNLP 2025), +4.3 Recall@5 improvement
+- **Recent Feature**: Ultra format bug fix - complexity scores now preserved in all output formats
+
+---
+
+## v0.8.4 - Ultra Format Bug Fix & Field Rename (2026-01-06)
+
+### Status: BUG FIX ✅
+
+Fixed critical bug in ultra format where complexity scores were dropped when first search result lacked the field, and renamed field from `complexity` to `complexity_score` for clarity.
+
+### Highlights
+
+- **Bug Fix**: Ultra format now collects ALL fields from ALL results (not just first result)
+- **Field Rename**: `complexity` → `complexity_score` for consistency with internal representation
+- **Verification**: All 3 features confirmed working (complexity scores, intent logic, lightweight pool routing)
+
+### Bug Fixes
+
+#### Ultra Format Field Loss (Critical)
+
+- **Problem**: `_to_toon_format()` used only first item's fields to build TOON header. When first result lacked `complexity` (e.g., JavaScript file), subsequent Python results' complexity values were silently dropped.
+- **Solution**: Collect ALL unique fields from ALL items using `set()` union across all results
+- **File**: `mcp_server/output_formatter.py:137-152`
+- **Impact**: Ultra format now includes all optional fields present in any result
+
+**Before** (buggy):
+```python
+first_item = value[0]
+for field_name in first_item.keys():
+    fields.append(field_name)
+```
+
+**After** (fixed):
+```python
+all_fields = set()
+for item in value:
+    all_fields.update(item.keys())
+for field_name in sorted(all_fields):
+    if all(item.get(field_name) in ([], {}, None, "") for item in value):
+        continue  # Skip fields empty in all items
+    fields.append(field_name)
+```
+
+### Changes
+
+#### Field Rename: complexity → complexity_score
+
+- **Rationale**: Match internal representation (`CodeChunk.complexity_score`) for clarity
+- **Files Changed**:
+  - `mcp_server/tools/search_handlers.py:328, 343` - Output field name
+  - `docs/MCP_TOOLS_REFERENCE.md:119, 125, 133` - Documentation
+  - `.claude/skills/mcp-search-tool/SKILL.md:370` - Skill documentation
+- **Impact**: User-facing field name change (minor breaking change)
+
+### Verification Results
+
+All 3 features confirmed working via MCP search queries:
+
+| Feature | Status | Evidence |
+|---------|--------|----------|
+| **Complexity Scores** | ✅ Working | Values 6, 2, 4 visible in ultra format |
+| **Intent Classification** | ✅ Working | NAVIGATIONAL queries auto-redirect to find_connections |
+| **Lightweight Pool Routing** | ✅ Working | GTE-ModernBERT (code/impl/validate), BGE-M3 (config/serialize) |
+
+### Test Coverage
+
+- **Manual Verification**: 6 test queries across all formats (verbose, compact, ultra)
+- **Routing**: Validated lightweight pool routing (BGE-M3 + GTE-ModernBERT)
+- **Intent**: Confirmed NAVIGATIONAL auto-redirect working
+
+### Breaking Changes
+
+**Minor** - Field name change:
+
+- Old: `"complexity": 5`
+- New: `"complexity_score": 5`
+- **Migration**: Update any parsing code expecting `complexity` field
 
 ---
 
