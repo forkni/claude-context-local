@@ -122,6 +122,8 @@ class SearchFactory:
         from mcp_server.server import PROJECT_ROOT
         from mcp_server.services import get_config, get_state
         from mcp_server.storage_manager import get_project_storage_dir
+        from search.dimension_validator import validate_embedder_index_compatibility
+        from search.exceptions import DimensionMismatchError
         from search.hybrid_searcher import HybridSearcher
         from search.searcher import IntelligentSearcher
 
@@ -157,6 +159,17 @@ class SearchFactory:
                 storage_dir = project_storage / "index"
                 logger.info(f"[GET_SEARCHER] Using storage directory: {storage_dir}")
 
+                # Pre-validate dimension compatibility
+                embedder = get_embedder(effective_model_key)
+
+                try:
+                    validate_embedder_index_compatibility(
+                        embedder, project_storage, raise_on_mismatch=True
+                    )
+                except DimensionMismatchError as e:
+                    logger.error(f"Cannot create searcher: {e}")
+                    raise  # Let caller handle recovery
+
                 # Extract project_id from storage directory name
                 # Format: projectname_hash_dimension (e.g., claude-context-local_caf2e75a_1024d)
                 project_id = project_storage.name.rsplit("_", 1)[
@@ -165,7 +178,7 @@ class SearchFactory:
 
                 state.searcher = HybridSearcher(
                     storage_dir=str(storage_dir),
-                    embedder=get_embedder(effective_model_key),
+                    embedder=embedder,
                     bm25_weight=config.search_mode.bm25_weight,
                     dense_weight=config.search_mode.dense_weight,
                     rrf_k=config.search_mode.rrf_k_parameter,

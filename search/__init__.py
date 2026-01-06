@@ -3,6 +3,7 @@
 from .exceptions import (
     CodeSearchError,
     ConfigurationError,
+    DimensionMismatchError,
     IndexError,
     ModelLoadError,
     SearchError,
@@ -18,6 +19,7 @@ from .reranking_engine import RerankingEngine
 __all__ = [
     "CodeSearchError",
     "ConfigurationError",
+    "DimensionMismatchError",
     "GPUMemoryMonitor",
     "IndexError",
     "ModelLoadError",

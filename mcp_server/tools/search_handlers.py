@@ -18,6 +18,7 @@ from mcp_server.storage_manager import get_project_storage_dir
 from mcp_server.tools.code_relationship_analyzer import CodeRelationshipAnalyzer
 from mcp_server.tools.decorators import error_handler
 from search.config import get_config_manager
+from search.exceptions import DimensionMismatchError
 from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
@@ -228,19 +229,30 @@ def _check_auto_reindex(
         except Exception as e:
             logger.warning(f"[AUTO_REINDEX] Failed to load filters: {e}")
 
+    # Validate dimension compatibility BEFORE creating searcher
+    from search.dimension_validator import validate_embedder_index_compatibility
+
+    embedder = get_embedder(selected_model_key)
+
+    try:
+        validate_embedder_index_compatibility(
+            embedder, project_storage, raise_on_mismatch=True
+        )
+    except DimensionMismatchError as e:
+        logger.warning(f"Dimension mismatch detected, will trigger full reindex: {e}")
+        # Continue - the incremental_indexer will handle reindex
+
     config = get_config()
     if config.search_mode.enable_hybrid:
         storage_dir = project_storage / "index"
         indexer = HybridSearcher(
             storage_dir=str(storage_dir),
-            embedder=get_embedder(selected_model_key),
+            embedder=embedder,
             bm25_weight=config.search_mode.bm25_weight,
             dense_weight=config.search_mode.dense_weight,
         )
     else:
         indexer = get_index_manager(project_path, model_key=selected_model_key)
-
-    embedder = get_embedder(selected_model_key)
     chunker = MultiLanguageChunker(
         project_path, enable_entity_tracking=config.performance.enable_entity_tracking
     )
@@ -478,14 +490,39 @@ async def handle_search_code(arguments: Dict[str, Any]) -> dict:
     # Check and perform auto-reindex if index is stale
     current_project = get_state().current_project
     if auto_reindex and current_project:
-        reindexed = _check_auto_reindex(
-            current_project, selected_model_key, max_age_minutes
-        )
-        if reindexed:
-            get_state().searcher = None
+        try:
+            reindexed = _check_auto_reindex(
+                current_project, selected_model_key, max_age_minutes
+            )
+            if reindexed:
+                get_state().searcher = None
+        except DimensionMismatchError as e:
+            # Recovery: Return helpful error with suggested action
+            return {
+                "error": "Dimension mismatch",
+                "message": str(e),
+                "recovery_suggestion": (
+                    f"Run index_directory with force_reindex=True to rebuild "
+                    f"the index for model {e.embedder_model}"
+                ),
+                "embedder_dimension": e.embedder_dim,
+                "index_dimension": e.index_dim,
+            }
 
     # Execute search with selected model index
-    searcher = get_searcher(model_key=selected_model_key)
+    try:
+        searcher = get_searcher(model_key=selected_model_key)
+    except DimensionMismatchError as e:
+        return {
+            "error": "Dimension mismatch",
+            "message": str(e),
+            "recovery_suggestion": (
+                f"Run index_directory with force_reindex=True to rebuild "
+                f"the index for model {e.embedder_model}"
+            ),
+            "embedder_dimension": e.embedder_dim,
+            "index_dimension": e.index_dim,
+        }
 
     # Check if index ready - support both HybridSearcher and IntelligentSearcher
     total_chunks = 0

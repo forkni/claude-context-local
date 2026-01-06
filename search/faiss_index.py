@@ -228,13 +228,14 @@ class FaissVectorIndex:
                     ]
 
                     if stored_dim != current_model_dim:
-                        self._logger.warning(
-                            f"Index dimension mismatch detected!\n"
+                        self._logger.error(
+                            f"CRITICAL: Index dimension mismatch!\n"
                             f"  Stored index: {stored_dim} dimensions\n"
-                            f"  Current model: {current_model_dim} dimensions\n"
-                            f"  Model: {self.embedder.model_name}\n"
-                            f"This index was created with a different embedding model.\n"
-                            f"Creating new index for current model..."
+                            f"  Current embedder: {current_model_dim} dimensions\n"
+                            f"  Embedder model: {self.embedder.model_name}\n"
+                            f"  Index path: {self.index_path}\n"
+                            f"This indicates the wrong index was loaded for this model.\n"
+                            f"Clearing incompatible index to force reindex..."
                         )
                         # Clear the incompatible index
                         self._index = None

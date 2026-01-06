@@ -106,3 +106,33 @@ class ConfigurationError(CodeSearchError):
     """
 
     pass
+
+
+class DimensionMismatchError(ConfigurationError):
+    """Exception raised when embedder and index dimensions don't match.
+
+    This typically occurs when:
+    - Model routing selects a different model than what was indexed
+    - The per-model index directory lookup returns wrong directory
+    - Manual model switching without reindexing
+
+    Attributes:
+        embedder_dim: Dimension of the current embedder
+        index_dim: Dimension of the stored index
+        embedder_model: Name of the current embedding model
+        index_model: Name of the model used to create the index
+    """
+
+    def __init__(
+        self,
+        message: str,
+        embedder_dim: int | None = None,
+        index_dim: int | None = None,
+        embedder_model: str | None = None,
+        index_model: str | None = None,
+    ):
+        super().__init__(message)
+        self.embedder_dim = embedder_dim
+        self.index_dim = index_dim
+        self.embedder_model = embedder_model
+        self.index_model = index_model
