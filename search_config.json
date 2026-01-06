@@ -1,7 +1,7 @@
 {
   "embedding": {
-    "model_name": "nomic-ai/CodeRankEmbed",
-    "dimension": 768,
+    "model_name": "BAAI/bge-m3",
+    "dimension": 1024,
     "batch_size": 128,
     "query_cache_size": 128,
     "enable_import_context": true,
@@ -46,7 +46,7 @@
     "initial_k_multiplier": 2.0
   },
   "routing": {
-    "multi_model_enabled": true,
+    "multi_model_enabled": false,
     "default_model": "bge_m3"
   },
   "reranker": {

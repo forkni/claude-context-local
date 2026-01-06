@@ -38,7 +38,12 @@ class TestVRAMTiers:
     def test_recommended_models(self):
         """Test that each tier has a recommended model."""
         for tier in VRAM_TIERS:
-            assert tier.recommended_model.startswith("Qwen/")
+            # Models can be BGE-M3 or Qwen variants
+            assert tier.recommended_model in [
+                "BAAI/bge-m3",
+                "Qwen/Qwen3-Embedding-0.6B",
+                "Qwen/Qwen3-Embedding-4B",
+            ]
             assert len(tier.recommended_model) > 5
 
     def test_feature_enablement_progression(self):
@@ -52,11 +57,11 @@ class TestVRAMTiers:
         assert minimal.multi_model_enabled is False
         assert minimal.neural_reranking_enabled is False
 
-        # Laptop tier enables features
-        assert laptop.multi_model_enabled is True
-        assert laptop.neural_reranking_enabled is True
+        # Laptop tier: single-model for 8GB safety, but reranker enabled
+        assert laptop.multi_model_enabled is False  # Disabled for OOM prevention
+        assert laptop.neural_reranking_enabled is True  # Reranker fits with BGE-M3
 
-        # Higher tiers maintain enablement
+        # Higher tiers enable multi-model
         assert desktop.multi_model_enabled is True
         assert desktop.neural_reranking_enabled is True
         assert workstation.multi_model_enabled is True
@@ -84,7 +89,7 @@ class TestVRAMTierManager:
                 tier = manager.detect_tier()
 
                 assert tier.name == "minimal"
-                assert tier.recommended_model == "Qwen/Qwen3-Embedding-0.6B"
+                assert tier.recommended_model == "BAAI/bge-m3"
                 assert tier.multi_model_enabled is False
                 assert tier.neural_reranking_enabled is False
 
@@ -101,8 +106,10 @@ class TestVRAMTierManager:
                 tier = manager.detect_tier()
 
                 assert tier.name == "laptop"
-                assert tier.recommended_model == "Qwen/Qwen3-Embedding-0.6B"
-                assert tier.multi_model_enabled is True
+                assert tier.recommended_model == "BAAI/bge-m3"
+                assert (
+                    tier.multi_model_enabled is False
+                )  # Changed: disabled for OOM prevention
                 assert tier.neural_reranking_enabled is True
 
     def test_detect_tier_desktop(self):
@@ -168,7 +175,7 @@ class TestVRAMTierManager:
 
             # Should fall back to minimal tier
             assert tier.name == "minimal"
-            assert tier.recommended_model == "Qwen/Qwen3-Embedding-0.6B"
+            assert tier.recommended_model == "BAAI/bge-m3"
 
     def test_torch_not_available(self):
         """Test behavior when PyTorch is not installed."""
@@ -184,8 +191,8 @@ class TestVRAMTierManager:
         """Test getting model for specific tier."""
         manager = VRAMTierManager()
 
-        assert manager.get_model_for_tier("minimal") == "Qwen/Qwen3-Embedding-0.6B"
-        assert manager.get_model_for_tier("laptop") == "Qwen/Qwen3-Embedding-0.6B"
+        assert manager.get_model_for_tier("minimal") == "BAAI/bge-m3"
+        assert manager.get_model_for_tier("laptop") == "BAAI/bge-m3"
         assert manager.get_model_for_tier("desktop") == "Qwen/Qwen3-Embedding-0.6B"
         assert manager.get_model_for_tier("workstation") == "Qwen/Qwen3-Embedding-0.6B"
 
@@ -198,7 +205,7 @@ class TestVRAMTierManager:
 
     def test_should_enable_multi_model(self):
         """Test multi-model enablement check."""
-        # Mock laptop tier (multi-model enabled)
+        # Mock laptop tier (multi-model disabled for OOM prevention)
         with patch("torch.cuda.is_available", return_value=True):
             with patch("torch.cuda.get_device_properties") as mock_get_props:
                 mock_props = MagicMock()
@@ -206,7 +213,7 @@ class TestVRAMTierManager:
                 mock_get_props.return_value = mock_props
 
                 manager = VRAMTierManager()
-                assert manager.should_enable_multi_model() is True
+                assert manager.should_enable_multi_model() is False  # Changed
 
         # Mock minimal tier (multi-model disabled)
         with patch("torch.cuda.is_available", return_value=True):
@@ -274,7 +281,7 @@ class TestVRAMTierManager:
                 manager_4060 = VRAMTierManager()
                 tier_4060 = manager_4060.detect_tier()
                 assert tier_4060.name == "laptop"
-                assert tier_4060.recommended_model == "Qwen/Qwen3-Embedding-0.6B"
+                assert tier_4060.recommended_model == "BAAI/bge-m3"
 
                 # RTX 3090 (24GB)
                 mock_props.total_memory = 24 * (1024**3)

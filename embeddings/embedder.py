@@ -191,6 +191,15 @@ def calculate_optimal_batch_size(
         # Calculate optimal batch size based on activation memory budget
         optimal_batch = int(target_activation_gb / gb_per_item)
 
+        # Apply tier-aware batch limits for small GPUs
+        # This prevents OOM on 8GB and 6GB GPUs where batch sizes need to be conservative
+        if total_gb <= 6:  # minimal tier (<6GB) - Check FIRST
+            max_batch = min(max_batch, 16)
+            min_batch = min(min_batch, 2)
+        elif total_gb <= 10:  # laptop tier (6-10GB)
+            max_batch = min(max_batch, 32)
+            min_batch = min(min_batch, 4)
+
         # Clamp to safe bounds
         result = max(min_batch, min(optimal_batch, max_batch))
 

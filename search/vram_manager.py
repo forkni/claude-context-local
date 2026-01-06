@@ -29,15 +29,15 @@ class VRAMTier:
 
 
 # VRAM tier definitions based on GPU capabilities
-# RTX 4060 (8GB)  → laptop tier     → Qwen3-0.6B
-# RTX 3090 (24GB) → desktop tier    → Qwen3-0.6B (OOM prevention)
-# RTX 4090 (24GB) → workstation tier → Qwen3-0.6B (OOM prevention)
+# RTX 4060 (8GB)  → laptop tier     → BGE-M3 (single-model, OOM prevention)
+# RTX 3090 (24GB) → desktop tier    → Qwen3-0.6B (multi-model enabled)
+# RTX 4090 (24GB) → workstation tier → Qwen3-0.6B (multi-model enabled)
 VRAM_TIERS: List[VRAMTier] = [
     VRAMTier(
         name="minimal",
         min_vram_gb=0,
         max_vram_gb=6,
-        recommended_model="Qwen/Qwen3-Embedding-0.6B",
+        recommended_model="BAAI/bge-m3",  # Changed: smallest viable model (1.07GB)
         multi_model_enabled=False,  # Too little VRAM for multi-model
         neural_reranking_enabled=False,  # Disable to conserve VRAM
     ),
@@ -45,8 +45,8 @@ VRAM_TIERS: List[VRAMTier] = [
         name="laptop",
         min_vram_gb=6,
         max_vram_gb=10,
-        recommended_model="Qwen/Qwen3-Embedding-0.6B",
-        multi_model_enabled=True,  # Can support multi-model (tight)
+        recommended_model="BAAI/bge-m3",  # Changed from Qwen3-0.6B for 8GB safety
+        multi_model_enabled=False,  # Disable for 8GB safety (single model only)
         neural_reranking_enabled=True,  # Reranker fits (~1.5GB)
     ),
     VRAMTier(

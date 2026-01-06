@@ -1122,6 +1122,10 @@ if errorlevel 1 (
 echo.
 echo RECOMMENDED MODELS ^(Validated 2025-11^):
 echo.
+echo   [8GB GPU WARNING] ^(RTX 4060 Laptop, GTX 1080, etc.^)
+echo   For 8GB GPUs: Use BGE-M3 ^(option 1^), do NOT enable Multi-Model
+echo   Multi-model loads 5.3GB ^+ batch overhead = OOM risk
+echo.
 echo   [OPTIMAL CHOICE] - Production-validated
 echo   1. BGE-M3 [RECOMMENDED] ^(1024d, 1-1.5GB, MTEB: 61.85^)
 echo      Best for: Code + docs, proven optimal in hybrid search
@@ -1197,6 +1201,9 @@ echo.
 echo Total VRAM: 5.3GB
 echo Routing Accuracy: 100%% ^(validated^)
 echo Performance: 15-25%% quality improvement on complex queries
+echo.
+echo [WARNING] Requires 10+ GB VRAM. NOT recommended for 8GB GPUs.
+echo For 8GB GPUs, choose option 1 ^(BGE-M3^) instead.
 echo.
 set "confirm_multi="
 set /p confirm_multi="Enable multi-model routing? (y/N): "
