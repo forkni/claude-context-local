@@ -10,11 +10,7 @@ from typing import Dict, Optional
 from embeddings.embedder import CodeEmbedder
 from mcp_server.services import get_config, get_state
 from mcp_server.storage_manager import get_storage_dir
-from search.config import (
-    MODEL_POOL_CONFIG,
-    MODEL_POOL_CONFIG_LIGHTWEIGHT_ACCURACY,
-    MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED,
-)
+from search.config import MODEL_POOL_CONFIG, MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +40,6 @@ class ModelPoolManager:
                     "Using lightweight-speed model pool from config (1.65GB total)"
                 )
                 return MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED
-            elif pool_type == "lightweight-accuracy":
-                logger.info(
-                    "Using lightweight-accuracy model pool from config (2.3GB total)"
-                )
-                return MODEL_POOL_CONFIG_LIGHTWEIGHT_ACCURACY
             elif pool_type == "full":
                 logger.info("Using full model pool from config (5.3GB total)")
                 return MODEL_POOL_CONFIG
@@ -62,9 +53,6 @@ class ModelPoolManager:
         if pool_type in ["lightweight-speed", "lightweight_speed"]:
             logger.info("Using lightweight-speed model pool (1.65GB total)")
             return MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED
-        elif pool_type in ["lightweight-accuracy", "lightweight_accuracy"]:
-            logger.info("Using lightweight-accuracy model pool (2.3GB total)")
-            return MODEL_POOL_CONFIG_LIGHTWEIGHT_ACCURACY
         elif pool_type == "full":
             logger.info("Using full model pool (5.3GB total)")
             return MODEL_POOL_CONFIG
@@ -81,11 +69,6 @@ class ModelPoolManager:
                     f"VRAM tier '{tier.name}' → lightweight-speed pool (1.65GB total)"
                 )
                 return MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED
-            elif tier.multi_model_pool == "lightweight-accuracy":
-                logger.info(
-                    f"VRAM tier '{tier.name}' → lightweight-accuracy pool (2.3GB total)"
-                )
-                return MODEL_POOL_CONFIG_LIGHTWEIGHT_ACCURACY
             elif tier.multi_model_pool == "full":
                 logger.info(f"VRAM tier '{tier.name}' → full model pool (5.3GB total)")
                 return MODEL_POOL_CONFIG
@@ -114,7 +97,7 @@ class ModelPoolManager:
         cache_dir = get_storage_dir() / "models"
         cache_dir.mkdir(exist_ok=True)
 
-        # Get pool configuration (full, lightweight-speed, or lightweight-accuracy)
+        # Get pool configuration (full or lightweight-speed)
         pool_config = self._get_pool_config()
 
         if lazy_load:
@@ -164,7 +147,7 @@ class ModelPoolManager:
         cache_dir = get_storage_dir() / "models"
         cache_dir.mkdir(exist_ok=True)
 
-        # Get pool configuration (full, lightweight-speed, or lightweight-accuracy)
+        # Get pool configuration (full or lightweight-speed)
         pool_config = self._get_pool_config()
 
         # PRIORITY: Explicit model_key override takes precedence over multi_model_enabled setting

@@ -138,27 +138,26 @@ class TestMultiModelCleanupBeforeReindex:
         reason="Multi-model mode disabled",
     )
     def test_clears_all_models_before_reindex(self, temp_project, cleanup_state):
-        """Verify all 3 models are cleared before auto-reindex."""
+        """Verify all models in pool are cleared before auto-reindex."""
         state = get_state()
         pool_manager = get_model_pool_manager()
 
         # Initialize multi-model pool (lazy loading)
         pool_manager.initialize_pool(lazy_load=True)
 
-        # Load all 3 models by requesting them
-        embedder_qwen3 = pool_manager.get_embedder("qwen3")
+        # Load all models in the pool by requesting them
+        # Note: lightweight-speed pool has gte_modernbert + bge_m3
+        embedder_gte = pool_manager.get_embedder("gte_modernbert")
         pool_manager.get_embedder("bge_m3")  # Load but don't need reference
-        pool_manager.get_embedder("coderankembed")  # Load but don't need reference
 
-        # Verify all 3 loaded
-        assert state.embedders.get("qwen3") is not None
+        # Verify all models loaded
+        assert state.embedders.get("gte_modernbert") is not None
         assert state.embedders.get("bge_m3") is not None
-        assert state.embedders.get("coderankembed") is not None
         initial_count = len(state.embedders)
-        assert initial_count >= 3
+        assert initial_count >= 2
 
         # Create indexer and perform initial index
-        indexer = IncrementalIndexer(embedder=embedder_qwen3)
+        indexer = IncrementalIndexer(embedder=embedder_gte)
         result = indexer.incremental_index(str(temp_project), "test_project")
         assert result.success
 

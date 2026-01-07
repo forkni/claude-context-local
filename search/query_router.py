@@ -290,10 +290,10 @@ class QueryRouter:
     CONFIDENCE_THRESHOLD = 0.05
 
     # Lightweight routing rules for 2-model pools (8GB VRAM GPUs)
-    # Used when multi_model_pool="lightweight-speed" or "lightweight-accuracy"
-    # Both use BGE-M3 + one code-specific model (gte_modernbert or c2llm)
+    # Used when multi_model_pool="lightweight-speed"
+    # Uses BGE-M3 + GTE-ModernBERT (proven combination)
     ROUTING_RULES_LIGHTWEIGHT = {
-        "code_model": {  # Maps to gte_modernbert OR c2llm depending on preset
+        "code_model": {  # Maps to gte_modernbert
             "keywords": [
                 # Code implementation and algorithms (VALIDATED: 5/11 wins)
                 "implementation",
@@ -377,7 +377,7 @@ class QueryRouter:
                 "change detection",
             ],
             "weight": 1.5,  # Prioritize code model for code queries
-            "description": "Code-specific queries (routes to gte-modernbert or C2LLM)",
+            "description": "Code-specific queries (routes to gte-modernbert)",
         },
         "bge_m3": {
             "keywords": [
@@ -449,7 +449,7 @@ class QueryRouter:
         """Get the configured multi-model pool type.
 
         Returns:
-            Pool type: "full", "lightweight-speed", or "lightweight-accuracy"
+            Pool type: "full" or "lightweight-speed"
         """
         try:
             from search.config import get_search_config
@@ -468,7 +468,7 @@ class QueryRouter:
         """
         pool_type = self._get_active_pool_type()
 
-        if pool_type in ("lightweight-speed", "lightweight-accuracy"):
+        if pool_type == "lightweight-speed":
             return (
                 self.ROUTING_RULES_LIGHTWEIGHT,
                 self.PRECEDENCE_LIGHTWEIGHT,
@@ -486,7 +486,6 @@ class QueryRouter:
 
         For lightweight pools, maps 'code_model' to actual model:
         - 'gte_modernbert' for lightweight-speed
-        - 'c2llm' for lightweight-accuracy
 
         Args:
             model_key: Model key from routing decision
@@ -500,8 +499,6 @@ class QueryRouter:
         pool_type = self._get_active_pool_type()
         if pool_type == "lightweight-speed":
             return "gte_modernbert"
-        elif pool_type == "lightweight-accuracy":
-            return "c2llm"
         return model_key  # Fallback (shouldn't happen)
 
     def route(

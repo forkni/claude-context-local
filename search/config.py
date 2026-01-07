@@ -16,16 +16,10 @@ MODEL_POOL_CONFIG = {
     "coderankembed": "nomic-ai/CodeRankEmbed",
 }
 
-# Lightweight pool configurations for 8GB VRAM GPUs
-# Preset 1: Speed-focused (1.65GB total VRAM)
+# Lightweight pool configuration for 8GB VRAM GPUs
+# Speed-focused with proven performance (1.65GB total VRAM)
 MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED = {
     "gte_modernbert": "Alibaba-NLP/gte-modernbert-base",
-    "bge_m3": "BAAI/bge-m3",
-}
-
-# Preset 2: Accuracy-focused (2.3GB total VRAM)
-MODEL_POOL_CONFIG_LIGHTWEIGHT_ACCURACY = {
-    "c2llm": "codefuse-ai/C2LLM-0.5B",
     "bge_m3": "BAAI/bge-m3",
 }
 
@@ -101,15 +95,6 @@ MODEL_REGISTRY = {
         "vram_gb": "0.28GB",
         "fallback_batch_size": 256,
         "model_type": "code-optimized",
-    },
-    "codefuse-ai/C2LLM-0.5B": {
-        "dimension": 896,
-        "max_context": 32768,
-        "description": "#1 MTEB-Code (75.46), PMA pooling for long-context aggregation",
-        "vram_gb": "0.93GB",
-        "fallback_batch_size": 64,
-        "model_type": "code-optimized",
-        "trust_remote_code": True,  # Required for C2LLM custom architecture
     },
 }
 

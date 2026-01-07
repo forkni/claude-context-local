@@ -18,7 +18,7 @@ class VRAMTier:
         recommended_model: Full model name from MODEL_REGISTRY
         multi_model_enabled: Whether multi-model routing should be enabled
         neural_reranking_enabled: Whether neural reranking should be enabled
-        multi_model_pool: Pool type for multi-model ("full", "lightweight-speed", "lightweight-accuracy")
+        multi_model_pool: Pool type for multi-model ("full", "lightweight-speed")
         reranker_model: Reranker type ("full", "lightweight")
     """
 
@@ -28,9 +28,7 @@ class VRAMTier:
     recommended_model: str
     multi_model_enabled: bool
     neural_reranking_enabled: bool
-    multi_model_pool: Optional[str] = (
-        None  # "full", "lightweight-speed", or "lightweight-accuracy"
-    )
+    multi_model_pool: Optional[str] = None  # "full" or "lightweight-speed"
     reranker_model: Optional[str] = None  # "full" or "lightweight"
 
 

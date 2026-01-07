@@ -115,8 +115,6 @@ def main():
 
         if pool_type == "lightweight-speed":
             print("Multi-Model: Enabled (BGE-M3 + gte-modernbert, 1.65GB)")
-        elif pool_type == "lightweight-accuracy":
-            print("Multi-Model: Enabled (BGE-M3 + C2LLM-0.5B, 2.3GB)")
         else:
             print("Multi-Model: Enabled (Qwen3, BGE-M3, CodeRankEmbed)")
     else:

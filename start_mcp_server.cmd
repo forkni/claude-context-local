@@ -1006,7 +1006,7 @@ REM Search Configuration Functions
 echo.
 echo [INFO] Current Search Configuration:
 if exist ".venv\Scripts\python.exe" (
-    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); print(f'  Embedding Model: {model_short} ({dim}d, {vram})'); print('    Multi-Model Routing:', 'Enabled' if config.routing.multi_model_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print(); print('  Chunking Settings:'); print('    Greedy Merge:', 'Enabled' if config.chunking.enable_greedy_merge else 'Disabled'); print(f'      Min Chunk Tokens: {config.chunking.min_chunk_tokens}'); print(f'      Max Merged Tokens: {config.chunking.max_merged_tokens}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'      Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print(); print('  Performance:'); print('    Prefer GPU:', config.performance.prefer_gpu); print('    Auto-Reindex:', 'Enabled' if config.performance.enable_auto_reindex else 'Disabled'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(); print('  Output Format:', config.output.format)"
+    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = config.routing.multi_model_enabled; pool = config.routing.multi_model_pool or 'full'; model_display = f'BGE-M3 + gte-modernbert ({pool})' if multi_enabled and pool == 'lightweight-speed' else f'BGE-M3 + Qwen3 + CodeRankEmbed ({pool})' if multi_enabled else f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print('    Multi-Model Routing:', 'Enabled' if multi_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print(); print('  Chunking Settings:'); print('    Greedy Merge:', 'Enabled' if config.chunking.enable_greedy_merge else 'Disabled'); print(f'      Min Chunk Tokens: {config.chunking.min_chunk_tokens}'); print(f'      Max Merged Tokens: {config.chunking.max_merged_tokens}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'      Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    Allow Shared Memory: {\"Enabled\" if config.performance.allow_shared_memory else \"Disabled\"}'); print(); print('  Output Format:', config.output.format)"
     if "!ERRORLEVEL!" neq "0" (
         echo Error loading configuration
         echo Using defaults: hybrid mode, BM25=0.4, Dense=0.6
@@ -1108,42 +1108,29 @@ if errorlevel 1 (
     echo   Multi-Model Routing: Disabled
 )
 echo.
-echo RECOMMENDED MODELS ^(Validated 2025-11^):
+echo Choose by your GPU VRAM:
 echo.
-echo   [8GB GPU WARNING] ^(RTX 4060 Laptop, GTX 1080, etc.^)
-echo   For 8GB GPUs: Use BGE-M3 ^(option 1^), do NOT enable Multi-Model
-echo   Multi-model loads 5.3GB ^+ batch overhead = OOM risk
+echo   [8GB VRAM] ^(RTX 3060, RTX 4060 Laptop, GTX 1080^)
+echo   1. BGE-M3 ^(1024d, 1-1.5GB^) - RECOMMENDED
+echo      Production-validated, optimal for hybrid search
 echo.
-echo   [OPTIMAL CHOICE] - Production-validated
-echo   1. BGE-M3 [RECOMMENDED] ^(1024d, 1-1.5GB, MTEB: 61.85^)
-echo      Best for: Code + docs, proven optimal in hybrid search
+echo   2. EmbeddingGemma ^(768d, 300M params^)
+echo      Lightweight alternative, minimal VRAM
 echo.
-echo   [HIGH EFFICIENCY] - Best value/performance
-echo   2. Qwen3-0.6B ^(1024d, 2.3GB, MTEB: 75.42^)
-echo      Best for: General-purpose, excellent value
+echo   3. Lightweight Multi-Model ^(1.65GB^)
+echo      BGE-M3 + gte-modernbert, smart routing
 echo.
-echo   [DEFAULT] - Fast and lightweight
-echo   3. EmbeddingGemma ^(768d, 4-8GB^)
-echo      Best for: Quick start, resource-constrained systems
+echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+^)
+echo   4. Qwen3-0.6B ^(1024d, 2.3GB^)
+echo      High efficiency, best value/performance
 echo.
-echo   [MULTI-MODEL] - Most comprehensive choice
-echo   4. Multi-Model Routing ^(5.3GB total, 100%% accuracy^)
-echo      Smart routing across BGE-M3 + Qwen3 + CodeRankEmbed
+echo   5. Full Multi-Model Routing ^(5.3GB^)
+echo      BGE-M3 + Qwen3 + CodeRankEmbed, 100%% accuracy
 echo.
-echo   [LIGHTWEIGHT MULTI-MODEL] - For 8GB VRAM GPUs
-echo   5. Lightweight-Speed Multi-Model ^(1.65GB total^)
-echo      BGE-M3 + gte-modernbert ^(144 docs/s, 79.31 CoIR^)
-echo   6. Lightweight-Accuracy Multi-Model ^(2.3GB total^)
-echo      BGE-M3 + C2LLM-0.5B ^(#1 MTEB-Code 75.46, PMA pooling^)
-echo.
-echo   7. Custom model path
 echo   0. Back to Search Configuration
 echo.
-echo IMPORTANT: BGE-M3 validated 100%% identical to code-specific models
-echo in hybrid search mode ^(30-query test, Nov 2025^). Choose by VRAM.
-echo.
 set "model_choice="
-set /p model_choice="Select model (0-7): "
+set /p model_choice="Select model (0-5): "
 
 if not defined model_choice goto search_config_menu
 if "!model_choice!"=="" goto search_config_menu
@@ -1151,14 +1138,10 @@ if "!model_choice!"=="0" goto search_config_menu
 
 set "SELECTED_MODEL="
 if "!model_choice!"=="1" set "SELECTED_MODEL=BAAI/bge-m3"
-if "!model_choice!"=="2" set "SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B"
-if "!model_choice!"=="3" set "SELECTED_MODEL=google/embeddinggemma-300m"
-if "!model_choice!"=="4" goto enable_multi_model
-if "!model_choice!"=="5" goto enable_lightweight_speed
-if "!model_choice!"=="6" goto enable_lightweight_accuracy
-if "!model_choice!"=="7" (
-    set /p "SELECTED_MODEL=Enter model name or path: "
-)
+if "!model_choice!"=="2" set "SELECTED_MODEL=google/embeddinggemma-300m"
+if "!model_choice!"=="3" goto enable_lightweight_speed
+if "!model_choice!"=="4" set "SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B"
+if "!model_choice!"=="5" goto enable_multi_model
 
 if defined SELECTED_MODEL (
     echo.
@@ -1266,54 +1249,9 @@ if /i "!confirm_lightweight_speed!"=="y" (
 pause
 goto search_config_menu
 
-:enable_lightweight_accuracy
-echo.
-echo === Enable Lightweight-Accuracy Multi-Model ===
-echo.
-echo This will enable lightweight query routing across:
-echo   - BGE-M3 ^(1024d, ~1.07GB^) - General-purpose baseline
-echo   - C2LLM-0.5B ^(896d, ~0.93GB^) - Code-specific queries
-echo   - gte-reranker-modernbert-base ^(~0.30GB^) - Lightweight reranker
-echo.
-echo Total VRAM: ~2.3GB ^(57%% reduction vs full pool^)
-echo Performance: ~50 docs/sec indexing
-echo Quality: MTEB-Code 75.46 ^(#1 ranked, PMA pooling^)
-echo.
-echo Best for:
-echo   - 8GB VRAM GPUs ^(RTX 3060/4060/3070^)
-echo   - Long code files ^(>8k tokens, up to 32k^)
-echo   - Complex structural understanding
-echo.
-set "confirm_lightweight_accuracy="
-set /p confirm_lightweight_accuracy="Enable lightweight-accuracy multi-model? (y/N): "
-if /i "!confirm_lightweight_accuracy!"=="y" (
-    REM Persist to config file via Python
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.routing.multi_model_enabled = True; cfg.routing.multi_model_pool = 'lightweight-accuracy'; cfg.reranker.enabled = True; cfg.reranker.model_name = 'Alibaba-NLP/gte-reranker-modernbert-base'; mgr.save_config(cfg); print('[OK] Lightweight-accuracy multi-model enabled and saved to config')" 2>nul
-    if errorlevel 1 (
-        echo [ERROR] Failed to save to config file
-    ) else (
-        echo.
-        echo [OK] Lightweight-accuracy configuration saved
-        echo [INFO] Pool: BGE-M3 + C2LLM-0.5B
-        echo [INFO] Reranker: gte-reranker-modernbert-base
-        echo [INFO] Total VRAM: ~2.3GB
-        echo.
-        echo [WARNING] Existing indexes need to be rebuilt for multi-model pool
-        echo [INFO] Next time you index a project, it will use the lightweight-accuracy pool
-        echo.
-        set "reindex_now="
-        set /p reindex_now="Clear old indexes now? (y/N): "
-        if /i "!reindex_now!"=="y" (
-            echo [INFO] Clearing old indexes and Merkle snapshots...
-            .\.venv\Scripts\python.exe -c "from mcp_server.storage_manager import get_storage_dir; from merkle.snapshot_manager import SnapshotManager; import shutil; import json; storage = get_storage_dir(); sm = SnapshotManager(); cleared = 0; projects = list((storage / 'projects').glob('*/project_info.json')); [sm.delete_all_snapshots(json.load(open(p))['project_path']) or shutil.rmtree(p.parent) if p.exists() and (cleared := cleared + 1) else None for p in projects]; print(f'[OK] Cleared indexes and snapshots for {cleared} projects')" 2>nul
-            echo [OK] Indexes and Merkle snapshots cleared. Re-index projects via: /index_directory "path"
-        )
-    )
-) else (
-    echo [INFO] Cancelled
-)
-pause
-goto search_config_menu
+REM :enable_lightweight_accuracy function removed
+REM C2LLM-0.5B had excessive VRAM usage (5-7.6GB vs advertised 0.93GB)
+REM Use lightweight-speed pool (BGE-M3 + GTE-ModernBERT) instead
 
 :configure_parallel_search
 echo.
@@ -2329,7 +2267,7 @@ REM System Status Functions
 echo [Runtime Status]
 if exist ".venv\Scripts\python.exe" (
     REM Display model status
-    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = cfg.routing.multi_model_enabled; pool = cfg.routing.multi_model_pool or 'full'; print('Model: [MULTI] BGE-M3 + gte-modernbert (1.65GB total)' if pool == 'lightweight-speed' else 'Model: [MULTI] BGE-M3 + gte-modernbert (2.3GB total)' if pool == 'lightweight-accuracy' else 'Model: [MULTI] BGE-M3 + Qwen3 + CodeRankEmbed (5.3GB total)') if multi_enabled else print(f'Model: [SINGLE] {model_short} ({dim}d, {vram})'); print(f'       Active routing - {pool} pool') if multi_enabled else print('Tip: Press M for Quick Model Switch')" 2>nul
+    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = cfg.routing.multi_model_enabled; pool = cfg.routing.multi_model_pool or 'full'; print('Model: [MULTI] BGE-M3 + gte-modernbert (1.65GB total)' if pool == 'lightweight-speed' else 'Model: [MULTI] BGE-M3 + Qwen3 + CodeRankEmbed (5.3GB total)') if multi_enabled else print(f'Model: [SINGLE] {model_short} ({dim}d, {vram})'); print(f'       Active routing - {pool} pool') if multi_enabled else print('Tip: Press M for Quick Model Switch')" 2>nul
     REM Display current project using helper script
     .\.venv\Scripts\python.exe scripts\get_current_project.py 2>nul
 ) else (
