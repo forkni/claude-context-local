@@ -611,6 +611,7 @@ if defined exclude_filter if not "!exclude_filter!"=="" (
     echo [INFO] Exclude dirs: !exclude_filter!
 )
 echo.
+echo [INFO] Loading Python modules...
 
 call .\.venv\Scripts\python.exe tools\batch_index.py --path "!new_project_path!" --mode new !filter_args!
 if errorlevel 1 (
@@ -640,6 +641,7 @@ echo [INFO] Re-indexing: %SELECTED_PROJECT_NAME%
 echo [INFO] Path: %SELECTED_PROJECT_PATH%
 echo [INFO] Mode: Incremental (detects changes only, uses batch removal)
 echo.
+echo [INFO] Loading Python modules...
 
 call .\.venv\Scripts\python.exe tools\batch_index.py --path "%SELECTED_PROJECT_PATH%" --mode incremental
 if errorlevel 1 (
@@ -669,6 +671,7 @@ echo [INFO] Force reindexing: %SELECTED_PROJECT_NAME%
 echo [INFO] Path: %SELECTED_PROJECT_PATH%
 echo [INFO] Mode: Full (bypasses snapshot, indexes everything)
 echo.
+echo [INFO] Loading Python modules...
 
 call .\.venv\Scripts\python.exe tools\batch_index.py --path "%SELECTED_PROJECT_PATH%" --mode force
 if errorlevel 1 (
