@@ -9,6 +9,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Dict
 
 # Add project root directory to path for module imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -82,7 +83,7 @@ def find_projects(search_path: str = "C:\\Projects") -> list:
 
 def index_project(
     project_path: str, include_subfolders: bool = True, force_full: bool = False
-) -> dict:
+) -> Dict:
     """
     Index a project focusing on code files.
 

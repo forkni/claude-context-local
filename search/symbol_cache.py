@@ -18,7 +18,7 @@ import json
 import logging
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +187,7 @@ class SymbolHashCache:
             return  # No changes to save
 
         # Prepare data structure
-        cache_data = {
+        cache_data: Dict[str, Any] = {
             "version": 1,
             "bucket_count": self.BUCKET_COUNT,
             "total_symbols": self._total_symbols,
@@ -259,7 +259,7 @@ class SymbolHashCache:
             f"{len(self._buckets)} buckets from {self._cache_path}"
         )
 
-    def get_stats(self) -> Dict[str, any]:
+    def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics.
 
         Returns:

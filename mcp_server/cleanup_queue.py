@@ -8,7 +8,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import Dict, List
 
 from mcp_server.storage_manager import get_storage_dir
 
@@ -68,7 +68,7 @@ class CleanupQueue:
         self._save()
         logger.info(f"Added to cleanup queue: {project_dir} (reason: {reason})")
 
-    def process(self) -> dict:
+    def process(self) -> Dict:
         """Attempt to process pending cleanup tasks.
 
         This is called automatically on server startup. Each queued item is

@@ -14,7 +14,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class IntentDecision:
     confidence: float
     reason: str
     scores: Dict[str, float]
-    suggested_params: Dict[str, any] = field(default_factory=dict)
+    suggested_params: Dict[str, Any] = field(default_factory=dict)
 
 
 class IntentClassifier:
@@ -52,7 +52,7 @@ class IntentClassifier:
     """
 
     # Intent classification rules (keyword + pattern matching)
-    INTENT_RULES = {
+    INTENT_RULES: Dict[str, Dict[str, Any]] = {
         "local": {
             "keywords": [
                 # Definition/implementation queries
@@ -341,7 +341,7 @@ class IntentClassifier:
 
     def _extract_suggested_params(
         self, query: str, intent: QueryIntent
-    ) -> Dict[str, any]:
+    ) -> Dict[str, Any]:
         """Extract suggested parameters based on classified intent.
 
         Args:
@@ -351,7 +351,7 @@ class IntentClassifier:
         Returns:
             Dictionary with suggested parameters for downstream tools.
         """
-        params = {}
+        params: Dict[str, Any] = {}
 
         if intent == QueryIntent.GLOBAL:
             # Suggest larger k for architectural queries

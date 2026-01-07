@@ -30,7 +30,11 @@ class CodeIndexManager:
     """Manages FAISS vector index and metadata storage for code chunks."""
 
     def __init__(
-        self, storage_dir: str, embedder=None, project_id: str = None, config=None
+        self,
+        storage_dir: str,
+        embedder=None,
+        project_id: str | None = None,
+        config=None,
     ):
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)

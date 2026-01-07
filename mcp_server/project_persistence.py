@@ -8,7 +8,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 from search.filters import find_project_at_different_drive
 
@@ -137,7 +137,7 @@ def clear_project_selection() -> bool:
         return False
 
 
-def get_selection_for_display() -> dict:
+def get_selection_for_display() -> Dict:
     """Get project selection info formatted for display.
 
     Returns:
