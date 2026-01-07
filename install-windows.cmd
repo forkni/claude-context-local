@@ -377,7 +377,7 @@ goto :eof
 :install_cpu_mode
 call :setup_environment
 echo [INFO] Installing PyTorch CPU-only version...
-.venv\Scripts\uv.exe pip install torch torchvision torchaudio
+".venv\Scripts\uv.exe" pip install torch torchvision torchaudio
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] PyTorch CPU installation failed
     pause
@@ -389,11 +389,11 @@ goto :eof
 
 :install_with_index
 set "INDEX_URL=%~1"
-.venv\Scripts\uv.exe pip install torch torchvision torchaudio --index-url %INDEX_URL%
+".venv\Scripts\uv.exe" pip install torch torchvision torchaudio --index-url %INDEX_URL%
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] PyTorch installation failed with index %INDEX_URL%
     echo [INFO] Falling back to CPU-only installation...
-    .venv\Scripts\uv.exe pip install torch torchvision torchaudio
+    ".venv\Scripts\uv.exe" pip install torch torchvision torchaudio
     if %ERRORLEVEL% neq 0 (
         echo [ERROR] Fallback installation also failed
         pause
@@ -423,14 +423,14 @@ if not exist ".venv" (
 )
 
 echo [INFO] Installing package managers...
-.venv\Scripts\python.exe -m pip install --upgrade pip setuptools wheel
+".venv\Scripts\python.exe" -m pip install --upgrade pip setuptools wheel
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Failed to upgrade pip
     pause
     exit /b 1
 )
 
-.venv\Scripts\python.exe -m pip install uv
+".venv\Scripts\python.exe" -m pip install uv
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Failed to install UV package manager
     pause
@@ -444,14 +444,14 @@ echo [INFO] Installing remaining dependencies...
 
 REM Install transformers preview for EmbeddingGemma support
 echo [INFO] Installing transformers with EmbeddingGemma support...
-.venv\Scripts\python.exe -m pip install "git+https://github.com/huggingface/transformers@v4.56.0-Embedding-Gemma-preview"
+".venv\Scripts\python.exe" -m pip install "git+https://github.com/huggingface/transformers@v4.56.0-Embedding-Gemma-preview"
 if %ERRORLEVEL% neq 0 (
     echo [WARNING] Transformers preview installation failed - continuing with standard version
 )
 
 REM Install all other dependencies using UV
 echo [INFO] Installing all project dependencies...
-.venv\Scripts\uv.exe sync
+".venv\Scripts\uv.exe" sync
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Dependency installation failed
     pause
@@ -460,7 +460,7 @@ if %ERRORLEVEL% neq 0 (
 echo [OK] All dependencies installed
 
 echo [INFO] Downloading NLTK data...
-.venv\Scripts\python.exe -c "import nltk; nltk.download('stopwords', quiet=True); nltk.download('punkt', quiet=True); print('[OK] NLTK data downloaded')"
+".venv\Scripts\python.exe" -c "import nltk; nltk.download('stopwords', quiet=True); nltk.download('punkt', quiet=True); print('[OK] NLTK data downloaded')"
 if %ERRORLEVEL% neq 0 (
     echo [WARNING] NLTK data download failed - continuing
 )
@@ -474,35 +474,35 @@ echo.
 echo === Installation Verification ===
 
 echo [INFO] Testing Python environment...
-.venv\Scripts\python.exe --version
+".venv\Scripts\python.exe" --version
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Python virtual environment test failed
     goto :eof
 )
 
 echo [INFO] Testing PyTorch installation...
-.venv\Scripts\python.exe -c "import torch; print('[OK] PyTorch version:', torch.__version__); print('[OK] CUDA available:', torch.cuda.is_available()); print('[OK] Device count:', torch.cuda.device_count() if torch.cuda.is_available() else 'CPU-only'); print('[OK] Device:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
+".venv\Scripts\python.exe" -c "import torch; print('[OK] PyTorch version:', torch.__version__); print('[OK] CUDA available:', torch.cuda.is_available()); print('[OK] Device count:', torch.cuda.device_count() if torch.cuda.is_available() else 'CPU-only'); print('[OK] Device:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] PyTorch test failed
     goto :eof
 )
 
 echo [INFO] Testing EmbeddingGemma model loading...
-.venv\Scripts\python.exe -c "from sentence_transformers import SentenceTransformer; model = SentenceTransformer('google/embeddinggemma-300m'); print('[OK] EmbeddingGemma loaded successfully'); print('[OK] Model device:', model.device)" 2>nul
+".venv\Scripts\python.exe" -c "from sentence_transformers import SentenceTransformer; model = SentenceTransformer('google/embeddinggemma-300m'); print('[OK] EmbeddingGemma loaded successfully'); print('[OK] Model device:', model.device)" 2>nul
 if %ERRORLEVEL% neq 0 (
     echo [WARNING] EmbeddingGemma test failed - model will be downloaded on first use
     echo [INFO] This is normal if the model hasn't been downloaded yet
 )
 
 echo [INFO] Testing hybrid search dependencies...
-.venv\Scripts\python.exe -c "import rank_bm25; import nltk; print('[OK] BM25 and NLTK available')"
+".venv\Scripts\python.exe" -c "import rank_bm25; import nltk; print('[OK] BM25 and NLTK available')"
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Hybrid search dependencies test failed
     goto :eof
 )
 
 echo [INFO] Testing MCP server...
-.venv\Scripts\python.exe -m mcp_server.server --help >nul 2>&1
+".venv\Scripts\python.exe" -m mcp_server.server --help >nul 2>&1
 if %ERRORLEVEL% neq 0 (
     echo [WARNING] MCP server test failed - check configuration
 ) else (
@@ -565,7 +565,7 @@ REM Use the reliable Python script directly (no Claude CLI dependency)
 if exist ".venv\Scripts\python.exe" (
     echo [INFO] Using Python configuration script (reliable method)
     echo.
-    .venv\Scripts\python.exe scripts\manual_configure.py --global --force
+    ".venv\Scripts\python.exe" scripts\manual_configure.py --global --force
 
     if %ERRORLEVEL% equ 0 (
         echo.
@@ -594,7 +594,7 @@ if exist ".venv\Scripts\python.exe" (
     echo [WARNING] Virtual environment not ready, skipping MCP configuration
     echo [INFO] You can configure Claude Code later using:
     echo   1. Run: scripts\batch\manual_configure.bat
-    echo   2. Or: .venv\Scripts\python.exe scripts\manual_configure.py --global
+    echo   2. Or: ".venv\Scripts\python.exe" scripts\manual_configure.py --global
     echo.
 )
 
@@ -605,7 +605,7 @@ echo === HuggingFace Authentication Check ===
 echo [INFO] Checking HuggingFace authentication for EmbeddingGemma model...
 
 REM Test current authentication status
-.venv\Scripts\python.exe -c "from huggingface_hub import whoami; info = whoami(); print('[OK] Authenticated as:', info['name'])" 2>nul
+".venv\Scripts\python.exe" -c "from huggingface_hub import whoami; info = whoami(); print('[OK] Authenticated as:', info['name'])" 2>nul
 if %ERRORLEVEL% equ 0 (
     echo [OK] HuggingFace authentication already configured
     goto end
@@ -635,7 +635,7 @@ if "!hf_token!"=="" (
 REM Validate and test the token
 echo [INFO] Testing provided token...
 set "HF_TOKEN=!hf_token!"
-.venv\Scripts\python.exe -c "import os; from huggingface_hub import login, whoami; login(token=os.environ.get('HF_TOKEN'), add_to_git_credential=False); info = whoami(); print('[OK] Authentication successful! User:', info['name'])"
+".venv\Scripts\python.exe" -c "import os; from huggingface_hub import login, whoami; login(token=os.environ.get('HF_TOKEN'), add_to_git_credential=False); info = whoami(); print('[OK] Authentication successful! User:', info['name'])"
 
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Authentication failed. Please check your token and try again.

@@ -16,11 +16,18 @@ pushd "%PROJECT_DIR%" || (
     exit /b 1
 )
 
+REM Check if Python exists
+if not exist ".venv\Scripts\python.exe" (
+    echo [ERROR] Python not found. Run install-windows.cmd first.
+    popd
+    exit /b 1
+)
+
 REM Run the Python verification script
-.venv\Scripts\python.exe scripts\verify_installation.py
+".venv\Scripts\python.exe" scripts\verify_installation.py
 
 REM Capture exit code
 set "EXIT_CODE=%ERRORLEVEL%"
 
 popd
-exit /b %EXIT_CODE%
+exit /b !EXIT_CODE!

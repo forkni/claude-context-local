@@ -26,7 +26,7 @@ REM Run the verification script
 echo [INFO] Running HuggingFace verification...
 echo.
 
-.venv\Scripts\python.exe scripts\verify_hf_auth.py
+".venv\Scripts\python.exe" scripts\verify_hf_auth.py
 
 if %ERRORLEVEL% neq 0 (
     echo.
@@ -37,9 +37,12 @@ if %ERRORLEVEL% neq 0 (
     echo   install-windows.bat
 )
 
+REM Capture exit code before popd
+set "EXIT_CODE=%ERRORLEVEL%"
+
 echo.
 echo Verification completed.
 echo Press any key to exit . . .
 pause >nul
 popd
-exit /b %ERRORLEVEL%
+exit /b %EXIT_CODE%

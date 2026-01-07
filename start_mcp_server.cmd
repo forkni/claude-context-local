@@ -144,7 +144,7 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 REM Start the MCP server with stdio
-call .\.venv\Scripts\python.exe -m mcp_server.server --transport stdio
+".\.venv\Scripts\python.exe" -m mcp_server.server --transport stdio
 set "SERVER_EXIT_CODE=!ERRORLEVEL!"
 
 echo.
@@ -219,7 +219,7 @@ echo.
 echo [INFO] Running unit tests for core components...
 echo [INFO] This will test chunking, indexing, search, and utility modules.
 echo.
-call .\.venv\Scripts\python.exe -m pytest tests/unit/ -v --tb=short
+".\.venv\Scripts\python.exe" -m pytest tests/unit/ -v --tb=short
 if "!ERRORLEVEL!" neq "0" (
     echo.
     echo [WARNING] Some tests failed. Check output above for details.
@@ -240,7 +240,7 @@ echo [INFO] Running fast integration tests (^< 5s each)...
 echo [INFO] This will test quick workflows, system integration, and MCP server functionality.
 echo [INFO] Expected duration: ~2 minutes
 echo.
-call .\.venv\Scripts\python.exe -m pytest tests/fast_integration/ -v --tb=short
+".\.venv\Scripts\python.exe" -m pytest tests/fast_integration/ -v --tb=short
 if "!ERRORLEVEL!" neq "0" (
     echo.
     echo [WARNING] Some tests failed. Check output above for details.
@@ -261,7 +261,7 @@ echo [INFO] This will test complete workflows, advanced features, and relationsh
 echo [INFO] Expected duration: ~10 minutes
 echo [WARNING] These tests use real embeddings and take significant time.
 echo.
-call .\.venv\Scripts\python.exe -m pytest tests/slow_integration/ -v --tb=short
+".\.venv\Scripts\python.exe" -m pytest tests/slow_integration/ -v --tb=short
 if "!ERRORLEVEL!" neq "0" (
     echo.
     echo [WARNING] Some tests failed. Check output above for details.
@@ -375,7 +375,7 @@ echo.
 echo === Search Mode Configuration ===
 echo.
 echo Current Settings:
-.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Search Mode:', cfg.search_mode.default_mode); print('  BM25 Weight:', cfg.search_mode.bm25_weight); print('  Dense Weight:', cfg.search_mode.dense_weight); print('  Parallel Search:', 'Enabled' if cfg.performance.use_parallel_search else 'Disabled')" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Search Mode:', cfg.search_mode.default_mode); print('  BM25 Weight:', cfg.search_mode.bm25_weight); print('  Dense Weight:', cfg.search_mode.dense_weight); print('  Parallel Search:', 'Enabled' if cfg.performance.use_parallel_search else 'Disabled')" 2>nul
 echo.
 echo   1. Set Search Mode              - Hybrid/Semantic/BM25 ^(Hybrid recommended^)
 echo   2. Configure Search Weights     - Balance BM25 vs semantic matching
@@ -410,7 +410,7 @@ echo.
 echo === Entity Tracking Configuration ===
 echo.
 echo Current Settings:
-.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Entity Tracking:', 'Enabled' if cfg.performance.enable_entity_tracking else 'Disabled'); print('  Import Context:', 'Enabled' if cfg.embedding.enable_import_context else 'Disabled'); print('  Class Context:', 'Enabled' if cfg.embedding.enable_class_context else 'Disabled')" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Entity Tracking:', 'Enabled' if cfg.performance.enable_entity_tracking else 'Disabled'); print('  Import Context:', 'Enabled' if cfg.embedding.enable_import_context else 'Disabled'); print('  Class Context:', 'Enabled' if cfg.embedding.enable_class_context else 'Disabled')" 2>nul
 echo.
 echo   1. Configure Entity Tracking    - Enable/disable symbol tracking
 echo   2. Configure Context Enhancement - Import/class context in embeddings ^(+1-5%% quality^)
@@ -613,7 +613,7 @@ if defined exclude_filter if not "!exclude_filter!"=="" (
 echo.
 echo [INFO] Loading Python modules...
 
-call .\.venv\Scripts\python.exe tools\batch_index.py --path "!new_project_path!" --mode new !filter_args!
+".\.venv\Scripts\python.exe" tools\batch_index.py --path "!new_project_path!" --mode new !filter_args!
 if errorlevel 1 (
     echo.
     echo [ERROR] Indexing failed with exit code: !ERRORLEVEL!
@@ -643,7 +643,7 @@ echo [INFO] Mode: Incremental (detects changes only, uses batch removal)
 echo.
 echo [INFO] Loading Python modules...
 
-call .\.venv\Scripts\python.exe tools\batch_index.py --path "%SELECTED_PROJECT_PATH%" --mode incremental
+".\.venv\Scripts\python.exe" tools\batch_index.py --path "%SELECTED_PROJECT_PATH%" --mode incremental
 if errorlevel 1 (
     echo.
     echo [ERROR] Re-indexing failed with exit code: %ERRORLEVEL%
@@ -673,7 +673,7 @@ echo [INFO] Mode: Full (bypasses snapshot, indexes everything)
 echo.
 echo [INFO] Loading Python modules...
 
-call .\.venv\Scripts\python.exe tools\batch_index.py --path "%SELECTED_PROJECT_PATH%" --mode force
+".\.venv\Scripts\python.exe" tools\batch_index.py --path "%SELECTED_PROJECT_PATH%" --mode force
 if errorlevel 1 (
     echo.
     echo [ERROR] Force re-indexing failed with exit code: %ERRORLEVEL%
@@ -688,7 +688,7 @@ goto menu_restart
 echo.
 echo === Indexed Projects ===
 echo.
-.\.venv\Scripts\python.exe scripts\list_projects_display.py 2>nul
+".\.venv\Scripts\python.exe" scripts\list_projects_display.py 2>nul
 if errorlevel 1 (
     echo [ERROR] Could not retrieve project list
     echo [INFO] Storage directory may not exist yet
@@ -704,7 +704,7 @@ echo.
 
 REM Get list of projects and store in temp file
 set "TEMP_PROJECTS=%TEMP%\mcp_projects.txt"
-call .\.venv\Scripts\python.exe -c "from mcp_server.storage_manager import get_storage_dir; from pathlib import Path; import json; storage = get_storage_dir(); projects = list((storage / 'projects').glob('*/project_info.json')); [print(f'{i+1}|{json.load(open(p))[\"project_name\"]}|{json.load(open(p))[\"project_path\"]}|{p.parent.name}') for i, p in enumerate(projects)]" > "%TEMP_PROJECTS%" 2>nul
+".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; from pathlib import Path; import json; storage = get_storage_dir(); projects = list((storage / 'projects').glob('*/project_info.json')); [print(f'{i+1}|{json.load(open(p))[\"project_name\"]}|{json.load(open(p))[\"project_path\"]}|{p.parent.name}') for i, p in enumerate(projects)]" > "%TEMP_PROJECTS%" 2>nul
 
 REM Check if any projects exist
 findstr /R "." "%TEMP_PROJECTS%" >nul 2>&1
@@ -818,7 +818,7 @@ echo [INFO] Clearing index for %PROJECT_NAME%...
 echo.
 
 REM Clear the index directory with DB cleanup
-call .\.venv\Scripts\python.exe -c "from mcp_server.storage_manager import get_storage_dir; import shutil, time, gc; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; gc.collect(); time.sleep(0.5); shutil.rmtree(project_dir, ignore_errors=False) if project_dir.exists() else None; print('Index: cleared')"
+".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; import shutil, time, gc; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; gc.collect(); time.sleep(0.5); shutil.rmtree(project_dir, ignore_errors=False) if project_dir.exists() else None; print('Index: cleared')"
 set "INDEX_RESULT=!ERRORLEVEL!"
 
 REM Handle locked files
@@ -831,7 +831,7 @@ if "!INDEX_RESULT!" neq "0" (
     if /i "!retry!"=="y" (
         echo [INFO] Attempting force cleanup...
         timeout /t 2 /nobreak >nul
-        call .\.venv\Scripts\python.exe -c "from mcp_server.storage_manager import get_storage_dir; import shutil, time; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; time.sleep(1); shutil.rmtree(project_dir, ignore_errors=True)"
+        ".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; import shutil, time; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; time.sleep(1); shutil.rmtree(project_dir, ignore_errors=True)"
 
         if exist "%USERPROFILE%\.claude_code_search\projects\%PROJECT_HASH%" (
             echo [WARNING] Force cleanup partially successful
@@ -845,7 +845,7 @@ if "!INDEX_RESULT!" neq "0" (
 
 REM Clear the Merkle snapshot (matching model/dimension only)
 REM Parse model_slug and dimension from PROJECT_HASH
-call .\.venv\Scripts\python.exe -c "project_hash = '%PROJECT_HASH%'; parts = project_hash.rsplit('_', 2); model_slug = parts[-2]; dimension = int(parts[-1].rstrip('d')); from merkle.snapshot_manager import SnapshotManager; sm = SnapshotManager(); deleted = sm.delete_snapshot_by_slug(r'%PROJECT_PATH%', model_slug, dimension); print(f'Snapshot: cleared {deleted} files ({model_slug} {dimension}d)')" 2>&1
+".\.venv\Scripts\python.exe" -c "project_hash = '%PROJECT_HASH%'; parts = project_hash.rsplit('_', 2); model_slug = parts[-2]; dimension = int(parts[-1].rstrip('d')); from merkle.snapshot_manager import SnapshotManager; sm = SnapshotManager(); deleted = sm.delete_snapshot_by_slug(r'%PROJECT_PATH%', model_slug, dimension); print(f'Snapshot: cleared {deleted} files ({model_slug} {dimension}d)')" 2>&1
 set "SNAPSHOT_RESULT=!ERRORLEVEL!"
 
 echo.
@@ -861,7 +861,7 @@ if "!INDEX_RESULT!"=="0" (
 
     REM Check if this was the last index for this project path
     REM If so, clear the current project selection
-    call .\.venv\Scripts\python.exe -c "from mcp_server.storage_manager import get_storage_dir; from mcp_server.project_persistence import load_project_selection, clear_project_selection; from pathlib import Path; storage = get_storage_dir(); projects_dir = storage / 'projects'; remaining = [p for p in projects_dir.glob('*/project_info.json') if Path(p.parent.name).exists()]; import json; project_paths = [json.load(open(p))['project_path'] for p in remaining]; selection = load_project_selection(); if selection and selection.get('last_project_path') == r'%PROJECT_PATH%' and r'%PROJECT_PATH%' not in project_paths: clear_project_selection(); print('[INFO] Current project reset to None (all indices cleared)')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; from mcp_server.project_persistence import load_project_selection, clear_project_selection; from pathlib import Path; storage = get_storage_dir(); projects_dir = storage / 'projects'; remaining = [p for p in projects_dir.glob('*/project_info.json') if Path(p.parent.name).exists()]; import json; project_paths = [json.load(open(p))['project_path'] for p in remaining]; selection = load_project_selection(); if selection and selection.get('last_project_path') == r'%PROJECT_PATH%' and r'%PROJECT_PATH%' not in project_paths: clear_project_selection(); print('[INFO] Current project reset to None (all indices cleared)')" 2>nul
 
     echo [INFO] Re-index via: Project Management ^> Index New Project
 ) else (
@@ -909,15 +909,15 @@ echo [INFO] Clearing all project indices...
 echo.
 
 REM Delete all project directories
-call .\.venv\Scripts\python.exe -c "from mcp_server.storage_manager import get_storage_dir; import shutil, gc, time; storage = get_storage_dir(); projects_dir = storage / 'projects'; gc.collect(); time.sleep(0.5); shutil.rmtree(projects_dir, ignore_errors=True) if projects_dir.exists() else None; projects_dir.mkdir(exist_ok=True); print('[OK] All project indices cleared')"
+".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; import shutil, gc, time; storage = get_storage_dir(); projects_dir = storage / 'projects'; gc.collect(); time.sleep(0.5); shutil.rmtree(projects_dir, ignore_errors=True) if projects_dir.exists() else None; projects_dir.mkdir(exist_ok=True); print('[OK] All project indices cleared')"
 set "CLEAR_RESULT=!ERRORLEVEL!"
 
 REM Clear all Merkle snapshots
-call .\.venv\Scripts\python.exe -c "from merkle.snapshot_manager import SnapshotManager; sm = SnapshotManager(); deleted = sm.clear_all_snapshots(); print(f'[OK] All Merkle snapshots cleared ({deleted} files)')" 2>&1
+".\.venv\Scripts\python.exe" -c "from merkle.snapshot_manager import SnapshotManager; sm = SnapshotManager(); deleted = sm.clear_all_snapshots(); print(f'[OK] All Merkle snapshots cleared ({deleted} files)')" 2>&1
 set "SNAPSHOT_RESULT=!ERRORLEVEL!"
 
 REM Clear current project selection
-call .\.venv\Scripts\python.exe -c "from mcp_server.project_persistence import clear_project_selection; clear_project_selection(); print('[OK] Current project reset to None')" 2>nul
+".\.venv\Scripts\python.exe" -c "from mcp_server.project_persistence import clear_project_selection; clear_project_selection(); print('[OK] Current project reset to None')" 2>nul
 set "SELECTION_RESULT=!ERRORLEVEL!"
 
 echo.
@@ -937,7 +937,7 @@ goto project_management_menu
 echo.
 echo === Storage Statistics ===
 echo.
-call .\.venv\Scripts\python.exe -c "from mcp_server.storage_manager import get_storage_dir; from pathlib import Path; import os; storage = get_storage_dir(); total_size = sum(f.stat().st_size for f in storage.rglob('*') if f.is_file()) // (1024**2); project_count = len(list((storage / 'projects').glob('*/project_info.json'))); index_count = len(list(storage.glob('projects/*/index/code.index'))); print(f'Storage Location: {storage}'); print(f'Total Size: {total_size} MB'); print(f'Indexed Projects: {project_count}'); print(f'Active Indexes: {index_count}'); models_size = sum(f.stat().st_size for f in (storage / 'models').rglob('*') if f.is_file()) // (1024**2) if (storage / 'models').exists() else 0; print(f'Model Cache: {models_size} MB')" 2>nul
+".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; from pathlib import Path; import os; storage = get_storage_dir(); total_size = sum(f.stat().st_size for f in storage.rglob('*') if f.is_file()) // (1024**2); project_count = len(list((storage / 'projects').glob('*/project_info.json'))); index_count = len(list(storage.glob('projects/*/index/code.index'))); print(f'Storage Location: {storage}'); print(f'Total Size: {total_size} MB'); print(f'Indexed Projects: {project_count}'); print(f'Active Indexes: {index_count}'); models_size = sum(f.stat().st_size for f in (storage / 'models').rglob('*') if f.is_file()) // (1024**2) if (storage / 'models').exists() else 0; print(f'Model Cache: {models_size} MB')" 2>nul
 if errorlevel 1 (
     echo [ERROR] Could not retrieve storage statistics
 )
@@ -963,7 +963,7 @@ echo [INFO] Switching to: %SELECTED_PROJECT_NAME%
 echo [INFO] Path: %SELECTED_PROJECT_PATH%
 echo.
 
-call .\.venv\Scripts\python.exe tools\switch_project_helper.py --path "%SELECTED_PROJECT_PATH%"
+".\.venv\Scripts\python.exe" tools\switch_project_helper.py --path "%SELECTED_PROJECT_PATH%"
 echo.
 echo Press any key to return to the menu...
 pause >nul
@@ -1009,7 +1009,7 @@ REM Search Configuration Functions
 echo.
 echo [INFO] Current Search Configuration:
 if exist ".venv\Scripts\python.exe" (
-    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = config.routing.multi_model_enabled; pool = config.routing.multi_model_pool or 'full'; model_display = f'BGE-M3 + gte-modernbert ({pool})' if multi_enabled and pool == 'lightweight-speed' else f'BGE-M3 + Qwen3 + CodeRankEmbed ({pool})' if multi_enabled else f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print('    Multi-Model Routing:', 'Enabled' if multi_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print(); print('  Chunking Settings:'); print('    Greedy Merge:', 'Enabled' if config.chunking.enable_greedy_merge else 'Disabled'); print(f'      Min Chunk Tokens: {config.chunking.min_chunk_tokens}'); print(f'      Max Merged Tokens: {config.chunking.max_merged_tokens}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'      Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    Allow Shared Memory: {\"Enabled\" if config.performance.allow_shared_memory else \"Disabled\"}'); print(); print('  Output Format:', config.output.format)"
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = config.routing.multi_model_enabled; pool = config.routing.multi_model_pool or 'full'; model_display = f'BGE-M3 + gte-modernbert ({pool})' if multi_enabled and pool == 'lightweight-speed' else f'BGE-M3 + Qwen3 + CodeRankEmbed ({pool})' if multi_enabled else f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print('    Multi-Model Routing:', 'Enabled' if multi_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print(); print('  Chunking Settings:'); print('    Greedy Merge:', 'Enabled' if config.chunking.enable_greedy_merge else 'Disabled'); print(f'      Min Chunk Tokens: {config.chunking.min_chunk_tokens}'); print(f'      Max Merged Tokens: {config.chunking.max_merged_tokens}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'      Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    Allow Shared Memory: {\"Enabled\" if config.performance.allow_shared_memory else \"Disabled\"}'); print(); print('  Output Format:', config.output.format)"
     if "!ERRORLEVEL!" neq "0" (
         echo Error loading configuration
         echo Using defaults: hybrid mode, BM25=0.4, Dense=0.6
@@ -1048,14 +1048,14 @@ if "!mode_choice!"=="3" set "SEARCH_MODE=bm25"
 if defined SEARCH_MODE (
     echo [INFO] Setting search mode to: !SEARCH_MODE!
     REM Persist to config file via Python
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.search_mode.default_mode = '!SEARCH_MODE!'; cfg.search_mode.enable_hybrid = '!SEARCH_MODE!' == 'hybrid'; mgr.save_config(cfg); print('[OK] Search mode saved to config file')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.search_mode.default_mode = '!SEARCH_MODE!'; cfg.search_mode.enable_hybrid = '!SEARCH_MODE!' == 'hybrid'; mgr.save_config(cfg); print('[OK] Search mode saved to config file')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
         set "CLAUDE_SEARCH_MODE=!SEARCH_MODE!"
         echo [INFO] Set as environment variable for this session only
     ) else (
         REM Notify running MCP server to reload config
-        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
 ) else (
     echo [ERROR] Invalid choice
@@ -1068,7 +1068,7 @@ echo.
 echo [INFO] Configure search weights ^(must sum to 1.0^)
 echo.
 REM Show current values from config
-.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print(f'   Current: BM25={cfg.search_mode.bm25_weight}, Dense={cfg.search_mode.dense_weight}')" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print(f'   Current: BM25={cfg.search_mode.bm25_weight}, Dense={cfg.search_mode.dense_weight}')" 2>nul
 if errorlevel 1 echo    Current: BM25=0.4, Dense=0.6 ^(default^)
 echo.
 set "bm25_weight="
@@ -1087,7 +1087,7 @@ if "!dense_weight!"=="" goto search_mode_menu
 
 echo [INFO] Saving weights - BM25: %bm25_weight%, Dense: %dense_weight%
 REM Persist to config file via Python
-.\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.search_mode.bm25_weight = float('%bm25_weight%'); cfg.search_mode.dense_weight = float('%dense_weight%'); mgr.save_config(cfg); print('[OK] Weights saved to config file')" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.search_mode.bm25_weight = float('%bm25_weight%'); cfg.search_mode.dense_weight = float('%dense_weight%'); mgr.save_config(cfg); print('[OK] Weights saved to config file')" 2>nul
 if errorlevel 1 (
     echo [ERROR] Failed to save configuration
     set "CLAUDE_BM25_WEIGHT=%bm25_weight%"
@@ -1095,7 +1095,7 @@ if errorlevel 1 (
     echo [INFO] Set as environment variables for this session only
 ) else (
     REM Notify running MCP server to reload config
-    .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+    ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
 )
 pause
 goto search_mode_menu
@@ -1105,7 +1105,7 @@ echo.
 echo === Select Embedding Model ===
 echo.
 echo Current Settings:
-.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Model:', cfg.embedding.model_name); print('  Multi-Model Routing:', 'Enabled' if cfg.routing.multi_model_enabled else 'Disabled')" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Model:', cfg.embedding.model_name); print('  Multi-Model Routing:', 'Enabled' if cfg.routing.multi_model_enabled else 'Disabled')" 2>nul
 if errorlevel 1 (
     echo   Model: google/embeddinggemma-300m ^(default^)
     echo   Multi-Model Routing: Disabled
@@ -1149,7 +1149,7 @@ if "!model_choice!"=="5" goto enable_multi_model
 if defined SELECTED_MODEL (
     echo.
     echo [INFO] Configuring model: !SELECTED_MODEL!
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding.model_name = '!SELECTED_MODEL!'; cfg.routing.multi_model_enabled = False; mgr.save_config(cfg); print('[OK] Model configuration saved')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding.model_name = '!SELECTED_MODEL!'; cfg.routing.multi_model_enabled = False; mgr.save_config(cfg); print('[OK] Model configuration saved')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
@@ -1161,7 +1161,7 @@ if defined SELECTED_MODEL (
         set /p reindex_now="Clear old indexes now? (y/N): "
         if /i "!reindex_now!"=="y" (
             echo [INFO] Clearing old indexes and Merkle snapshots...
-            .\.venv\Scripts\python.exe -c "from mcp_server.storage_manager import get_storage_dir; from merkle.snapshot_manager import SnapshotManager; import shutil; import json; storage = get_storage_dir(); sm = SnapshotManager(); cleared = 0; projects = list((storage / 'projects').glob('*/project_info.json')); [sm.delete_all_snapshots(json.load(open(p))['project_path']) or shutil.rmtree(p.parent) if p.exists() and (cleared := cleared + 1) else None for p in projects]; print(f'[OK] Cleared indexes and snapshots for {cleared} projects')" 2>nul
+            ".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; from merkle.snapshot_manager import SnapshotManager; import shutil; import json; storage = get_storage_dir(); sm = SnapshotManager(); cleared = 0; projects = list((storage / 'projects').glob('*/project_info.json')); [sm.delete_all_snapshots(json.load(open(p))['project_path']) or shutil.rmtree(p.parent) if p.exists() and (cleared := cleared + 1) else None for p in projects]; print(f'[OK] Cleared indexes and snapshots for {cleared} projects')" 2>nul
             echo [OK] Indexes and Merkle snapshots cleared ^(all dimensions^). Re-index projects via: /index_directory "path"
         )
     )
@@ -1191,7 +1191,7 @@ set "confirm_multi="
 set /p confirm_multi="Enable multi-model routing? (y/N): "
 if /i "!confirm_multi!"=="y" (
     REM Persist to config file via Python
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.routing.multi_model_enabled = True; mgr.save_config(cfg); print('[OK] Multi-model routing enabled and saved to config')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.routing.multi_model_enabled = True; mgr.save_config(cfg); print('[OK] Multi-model routing enabled and saved to config')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save to config file
         set "CLAUDE_MULTI_MODEL_ENABLED=true"
@@ -1225,7 +1225,7 @@ set "confirm_lightweight_speed="
 set /p confirm_lightweight_speed="Enable lightweight-speed multi-model? (y/N): "
 if /i "!confirm_lightweight_speed!"=="y" (
     REM Persist to config file via Python
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.routing.multi_model_enabled = True; cfg.routing.multi_model_pool = 'lightweight-speed'; cfg.reranker.enabled = True; cfg.reranker.model_name = 'Alibaba-NLP/gte-reranker-modernbert-base'; mgr.save_config(cfg); print('[OK] Lightweight-speed multi-model enabled and saved to config')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.routing.multi_model_enabled = True; cfg.routing.multi_model_pool = 'lightweight-speed'; cfg.reranker.enabled = True; cfg.reranker.model_name = 'Alibaba-NLP/gte-reranker-modernbert-base'; mgr.save_config(cfg); print('[OK] Lightweight-speed multi-model enabled and saved to config')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save to config file
     ) else (
@@ -1242,7 +1242,7 @@ if /i "!confirm_lightweight_speed!"=="y" (
         set /p reindex_now="Clear old indexes now? (y/N): "
         if /i "!reindex_now!"=="y" (
             echo [INFO] Clearing old indexes and Merkle snapshots...
-            .\.venv\Scripts\python.exe -c "from mcp_server.storage_manager import get_storage_dir; from merkle.snapshot_manager import SnapshotManager; import shutil; import json; storage = get_storage_dir(); sm = SnapshotManager(); cleared = 0; projects = list((storage / 'projects').glob('*/project_info.json')); [sm.delete_all_snapshots(json.load(open(p))['project_path']) or shutil.rmtree(p.parent) if p.exists() and (cleared := cleared + 1) else None for p in projects]; print(f'[OK] Cleared indexes and snapshots for {cleared} projects')" 2>nul
+            ".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; from merkle.snapshot_manager import SnapshotManager; import shutil; import json; storage = get_storage_dir(); sm = SnapshotManager(); cleared = 0; projects = list((storage / 'projects').glob('*/project_info.json')); [sm.delete_all_snapshots(json.load(open(p))['project_path']) or shutil.rmtree(p.parent) if p.exists() and (cleared := cleared + 1) else None for p in projects]; print(f'[OK] Cleared indexes and snapshots for {cleared} projects')" 2>nul
             echo [OK] Indexes and Merkle snapshots cleared. Re-index projects via: /index_directory "path"
         )
     )
@@ -1273,7 +1273,7 @@ echo.
 echo Recommendation: Keep ENABLED unless you have resource constraints.
 echo.
 echo Current Setting:
-.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Parallel Search:', 'Enabled' if cfg.performance.use_parallel_search else 'Disabled')" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Parallel Search:', 'Enabled' if cfg.performance.use_parallel_search else 'Disabled')" 2>nul
 echo.
 echo   1. Enable Parallel Search
 echo   2. Disable Parallel Search
@@ -1289,7 +1289,7 @@ if "!parallel_choice!"=="0" goto search_mode_menu
 if "!parallel_choice!"=="1" (
     echo.
     echo [INFO] Enabling parallel search...
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.performance.use_parallel_search = True; mgr.save_config(cfg); print('[OK] Parallel search enabled and saved')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.performance.use_parallel_search = True; mgr.save_config(cfg); print('[OK] Parallel search enabled and saved')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     )
@@ -1297,7 +1297,7 @@ if "!parallel_choice!"=="1" (
 if "!parallel_choice!"=="2" (
     echo.
     echo [INFO] Disabling parallel search...
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.performance.use_parallel_search = False; mgr.save_config(cfg); print('[OK] Parallel search disabled and saved')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.performance.use_parallel_search = False; mgr.save_config(cfg); print('[OK] Parallel search disabled and saved')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     )
@@ -1322,7 +1322,7 @@ echo.
 echo Recommendation: Keep ENABLED if you have a CUDA-capable GPU.
 echo.
 echo Current Setting:
-.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Prefer GPU:', 'True' if cfg.performance.prefer_gpu else 'False')" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Prefer GPU:', 'True' if cfg.performance.prefer_gpu else 'False')" 2>nul
 echo.
 echo   1. Enable GPU Acceleration
 echo   2. Disable GPU Acceleration
@@ -1338,7 +1338,7 @@ if "!gpu_choice!"=="0" goto performance_settings_menu
 if "!gpu_choice!"=="1" (
     echo.
     echo [INFO] Enabling GPU acceleration...
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.performance.prefer_gpu = True; mgr.save_config(cfg); print('[OK] GPU acceleration enabled and saved')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.performance.prefer_gpu = True; mgr.save_config(cfg); print('[OK] GPU acceleration enabled and saved')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
@@ -1348,7 +1348,7 @@ if "!gpu_choice!"=="1" (
 if "!gpu_choice!"=="2" (
     echo.
     echo [INFO] Disabling GPU acceleration...
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.performance.prefer_gpu = False; mgr.save_config(cfg); print('[OK] GPU acceleration disabled and saved')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.performance.prefer_gpu = False; mgr.save_config(cfg); print('[OK] GPU acceleration disabled and saved')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
@@ -1374,7 +1374,7 @@ echo   - GPU with >= 6GB VRAM ^(auto-disabled on insufficient VRAM^)
 echo   - Additional latency: +150-300ms per search
 echo.
 echo Current Setting:
-.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Neural Reranker:', 'Enabled' if cfg.reranker.enabled else 'Disabled'); print('  Model:', cfg.reranker.model_name); print('  Top-K Candidates:', cfg.reranker.top_k_candidates)" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Neural Reranker:', 'Enabled' if cfg.reranker.enabled else 'Disabled'); print('  Model:', cfg.reranker.model_name); print('  Top-K Candidates:', cfg.reranker.top_k_candidates)" 2>nul
 echo.
 echo   1. Enable Neural Reranker
 echo   2. Disable Neural Reranker
@@ -1391,23 +1391,23 @@ if "!reranker_choice!"=="0" goto search_config_menu
 if "!reranker_choice!"=="1" (
     echo.
     echo [INFO] Enabling neural reranker...
-    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.enabled = True; mgr.save_config(cfg); print('[OK] Neural reranker enabled')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.enabled = True; mgr.save_config(cfg); print('[OK] Neural reranker enabled')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
         REM Notify running MCP server to reload config
-        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
 )
 if "!reranker_choice!"=="2" (
     echo.
     echo [INFO] Disabling neural reranker...
-    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.enabled = False; mgr.save_config(cfg); print('[OK] Neural reranker disabled')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.enabled = False; mgr.save_config(cfg); print('[OK] Neural reranker disabled')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
         REM Notify running MCP server to reload config
-        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
 )
 if "!reranker_choice!"=="3" (
@@ -1415,12 +1415,12 @@ if "!reranker_choice!"=="3" (
     set "top_k="
     set /p top_k="Enter Top-K candidates (5-100, default 50): "
     if defined top_k (
-        .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.top_k_candidates = int('!top_k!'); mgr.save_config(cfg); print('[OK] Top-K set to !top_k!')" 2>nul
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.top_k_candidates = int('!top_k!'); mgr.save_config(cfg); print('[OK] Top-K set to !top_k!')" 2>nul
         if errorlevel 1 (
             echo [ERROR] Failed to save configuration
         ) else (
             REM Notify running MCP server to reload config
-            .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
         )
     )
 )
@@ -1436,7 +1436,7 @@ echo.
 echo === Performance Settings ===
 echo.
 echo Current Settings:
-.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Prefer GPU:', 'True' if cfg.performance.prefer_gpu else 'False'); print('  Auto-Reindex:', 'Enabled' if cfg.performance.enable_auto_reindex else 'Disabled'); print('    Max Age:', cfg.performance.max_index_age_minutes, 'minutes'); print(f'  VRAM Limit: {cfg.performance.vram_limit_fraction:.0%%}'); print('  Allow Shared Memory:', 'Enabled' if cfg.performance.allow_shared_memory else 'Disabled')" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Prefer GPU:', 'True' if cfg.performance.prefer_gpu else 'False'); print('  Auto-Reindex:', 'Enabled' if cfg.performance.enable_auto_reindex else 'Disabled'); print('    Max Age:', cfg.performance.max_index_age_minutes, 'minutes'); print(f'  VRAM Limit: {cfg.performance.vram_limit_fraction:.0%%}'); print('  Allow Shared Memory:', 'Enabled' if cfg.performance.allow_shared_memory else 'Disabled')" 2>nul
 echo.
 echo   1. Configure GPU Acceleration   - Prefer GPU for embeddings/search
 echo   2. Configure Auto-Reindex       - Auto-refresh when index is stale
@@ -1474,7 +1474,7 @@ echo Auto-reindex automatically refreshes the index when it becomes stale.
 echo This prevents searching outdated code without manual reindexing.
 echo.
 echo Current Setting:
-.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Auto-Reindex:', 'Enabled' if cfg.performance.enable_auto_reindex else 'Disabled'); print('  Max Age:', cfg.performance.max_index_age_minutes, 'minutes')" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Auto-Reindex:', 'Enabled' if cfg.performance.enable_auto_reindex else 'Disabled'); print('  Max Age:', cfg.performance.max_index_age_minutes, 'minutes')" 2>nul
 echo.
 echo   1. Enable Auto-Reindex
 echo   2. Disable Auto-Reindex
@@ -1491,23 +1491,23 @@ if "!auto_reindex_choice!"=="0" goto performance_settings_menu
 if "!auto_reindex_choice!"=="1" (
     echo.
     echo [INFO] Enabling auto-reindex...
-    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.enable_auto_reindex = True; mgr.save_config(cfg); print('[OK] Auto-reindex enabled')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.enable_auto_reindex = True; mgr.save_config(cfg); print('[OK] Auto-reindex enabled')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
         REM Notify running MCP server to reload config
-        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
 )
 if "!auto_reindex_choice!"=="2" (
     echo.
     echo [INFO] Disabling auto-reindex...
-    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.enable_auto_reindex = False; mgr.save_config(cfg); print('[OK] Auto-reindex disabled')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.enable_auto_reindex = False; mgr.save_config(cfg); print('[OK] Auto-reindex disabled')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
         REM Notify running MCP server to reload config
-        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
 )
 if "!auto_reindex_choice!"=="3" (
@@ -1515,12 +1515,12 @@ if "!auto_reindex_choice!"=="3" (
     set "max_age="
     set /p max_age="Enter Max Age in minutes (0.01-1440, default 60): "
     if defined max_age (
-        .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.max_index_age_minutes = float('!max_age!'); mgr.save_config(cfg); print('[OK] Max age set to !max_age! minutes')" 2>nul
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.max_index_age_minutes = float('!max_age!'); mgr.save_config(cfg); print('[OK] Max age set to !max_age! minutes')" 2>nul
         if errorlevel 1 (
             echo [ERROR] Failed to save configuration
         ) else (
             REM Notify running MCP server to reload config
-            .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
         )
     )
 )
@@ -1536,7 +1536,7 @@ echo.
 echo === GPU Memory Configuration ===
 echo.
 echo Current Settings:
-.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print(f'  VRAM Limit: {cfg.performance.vram_limit_fraction:.0%%}'); print('  Allow Shared Memory:', 'Enabled' if cfg.performance.allow_shared_memory else 'Disabled')" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print(f'  VRAM Limit: {cfg.performance.vram_limit_fraction:.0%%}'); print('  Allow Shared Memory:', 'Enabled' if cfg.performance.allow_shared_memory else 'Disabled')" 2>nul
 echo.
 echo   1. Adjust VRAM Limit          - Set hard ceiling (70-95%%)
 echo   2. Allow Shared Memory        - Enable system RAM spillover (slower)
@@ -1591,13 +1591,13 @@ if "!vram_limit_choice!"=="5" set "vram_value=0.95"
 if defined vram_value (
     echo.
     echo [INFO] Setting VRAM limit to !vram_value!...
-    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.vram_limit_fraction = !vram_value!; mgr.save_config(cfg); print('[OK] VRAM limit set to !vram_value!')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.vram_limit_fraction = !vram_value!; mgr.save_config(cfg); print('[OK] VRAM limit set to !vram_value!')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
         echo [INFO] MCP server restart required for this setting to take effect
         REM Notify running MCP server to reload config
-        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
 ) else (
     echo [ERROR] Invalid choice. Please select 0-5.
@@ -1626,25 +1626,25 @@ if "!shared_mem_choice!"=="0" goto configure_gpu_memory
 if "!shared_mem_choice!"=="1" (
     echo.
     echo [INFO] Enabling shared memory spillover...
-    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.allow_shared_memory = True; mgr.save_config(cfg); print('[OK] Shared memory enabled')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.allow_shared_memory = True; mgr.save_config(cfg); print('[OK] Shared memory enabled')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
         echo [INFO] MCP server restart required for this setting to take effect
         REM Notify running MCP server to reload config
-        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
 )
 if "!shared_mem_choice!"=="2" (
     echo.
     echo [INFO] Disabling shared memory spillover...
-    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.allow_shared_memory = False; mgr.save_config(cfg); print('[OK] Shared memory disabled')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.allow_shared_memory = False; mgr.save_config(cfg); print('[OK] Shared memory disabled')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
         echo [INFO] MCP server restart required for this setting to take effect
         REM Notify running MCP server to reload config
-        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
 )
 
@@ -1660,7 +1660,7 @@ echo === Quick Model Switch ===
 echo.
 echo Current Settings:
 if exist ".venv\Scripts\python.exe" (
-    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); print(f'  Model: {model} ({dim}d, {vram})'); print('  Multi-Model Routing:', 'Enabled' if cfg.routing.multi_model_enabled else 'Disabled')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); print(f'  Model: {model} ({dim}d, {vram})'); print('  Multi-Model Routing:', 'Enabled' if cfg.routing.multi_model_enabled else 'Disabled')" 2>nul
 ) else (
     echo   Model: google/embeddinggemma-300m ^(default^)
     echo   Multi-Model Routing: Disabled
@@ -1712,7 +1712,7 @@ if defined SELECTED_MODEL (
     echo.
 
     REM Use Python to switch model
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager, MODEL_REGISTRY; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding.model_name = '!SELECTED_MODEL!'; cfg.embedding.dimension = MODEL_REGISTRY['!SELECTED_MODEL!']['dimension']; cfg.routing.multi_model_enabled = False; mgr.save_config(cfg); print('[OK] Model switched successfully'); print(f'[INFO] Dimension: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"dimension\"]}d'); print(f'[INFO] VRAM: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"vram_gb\"]}')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager, MODEL_REGISTRY; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding.model_name = '!SELECTED_MODEL!'; cfg.embedding.dimension = MODEL_REGISTRY['!SELECTED_MODEL!']['dimension']; cfg.routing.multi_model_enabled = False; mgr.save_config(cfg); print('[OK] Model switched successfully'); print(f'[INFO] Dimension: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"dimension\"]}d'); print(f'[INFO] VRAM: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"vram_gb\"]}')" 2>nul
 
     if errorlevel 1 (
         echo [ERROR] Failed to switch model
@@ -1753,7 +1753,7 @@ echo   - Decorators, exceptions, instantiations
 echo   - Class attributes, dataclass fields, constants
 echo.
 echo Current Setting:
-.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Entity Tracking:', 'Enabled' if cfg.performance.enable_entity_tracking else 'Disabled')" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Entity Tracking:', 'Enabled' if cfg.performance.enable_entity_tracking else 'Disabled')" 2>nul
 echo.
 echo   1. Enable Entity Tracking
 echo   2. Disable Entity Tracking
@@ -1769,25 +1769,25 @@ if "!entity_choice!"=="0" goto entity_tracking_menu
 if "!entity_choice!"=="1" (
     echo.
     echo [INFO] Enabling entity tracking...
-    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.enable_entity_tracking = True; mgr.save_config(cfg); print('[OK] Entity tracking enabled')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.enable_entity_tracking = True; mgr.save_config(cfg); print('[OK] Entity tracking enabled')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
         echo [INFO] Re-index project to apply changes
         REM Notify running MCP server to reload config
-        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
 )
 if "!entity_choice!"=="2" (
     echo.
     echo [INFO] Disabling entity tracking...
-    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.enable_entity_tracking = False; mgr.save_config(cfg); print('[OK] Entity tracking disabled')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.enable_entity_tracking = False; mgr.save_config(cfg); print('[OK] Entity tracking disabled')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
         echo [INFO] Re-index project to apply changes
         REM Notify running MCP server to reload config
-        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
 )
 
@@ -1809,7 +1809,7 @@ echo   - Import Context: Include import statements from file header
 echo   - Class Context: Include parent class signature for methods
 echo.
 echo Current Settings:
-.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Import Context:', 'Enabled' if cfg.embedding.enable_import_context else 'Disabled'); print('  Class Context:', 'Enabled' if cfg.embedding.enable_class_context else 'Disabled'); print('  Max Import Lines:', cfg.embedding.max_import_lines); print('  Max Class Signature Lines:', cfg.embedding.max_class_signature_lines)" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Import Context:', 'Enabled' if cfg.embedding.enable_import_context else 'Disabled'); print('  Class Context:', 'Enabled' if cfg.embedding.enable_class_context else 'Disabled'); print('  Max Import Lines:', cfg.embedding.max_import_lines); print('  Max Class Signature Lines:', cfg.embedding.max_class_signature_lines)" 2>nul
 echo.
 echo   1. Enable Import Context
 echo   2. Disable Import Context
@@ -1829,45 +1829,45 @@ if "!ctx_choice!"=="0" goto entity_tracking_menu
 if "!ctx_choice!"=="1" (
     echo.
     echo [INFO] Enabling import context...
-    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.embedding.enable_import_context = True; mgr.save_config(cfg); print('[OK] Import context enabled')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.embedding.enable_import_context = True; mgr.save_config(cfg); print('[OK] Import context enabled')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
         echo [INFO] Re-index project to apply changes
-        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
 )
 if "!ctx_choice!"=="2" (
     echo.
     echo [INFO] Disabling import context...
-    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.embedding.enable_import_context = False; mgr.save_config(cfg); print('[OK] Import context disabled')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.embedding.enable_import_context = False; mgr.save_config(cfg); print('[OK] Import context disabled')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
         echo [INFO] Re-index project to apply changes
-        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
 )
 if "!ctx_choice!"=="3" (
     echo.
     echo [INFO] Enabling class context...
-    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.embedding.enable_class_context = True; mgr.save_config(cfg); print('[OK] Class context enabled')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.embedding.enable_class_context = True; mgr.save_config(cfg); print('[OK] Class context enabled')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
         echo [INFO] Re-index project to apply changes
-        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
 )
 if "!ctx_choice!"=="4" (
     echo.
     echo [INFO] Disabling class context...
-    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.embedding.enable_class_context = False; mgr.save_config(cfg); print('[OK] Class context disabled')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.embedding.enable_class_context = False; mgr.save_config(cfg); print('[OK] Class context disabled')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
         echo [INFO] Re-index project to apply changes
-        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
 )
 if "!ctx_choice!"=="5" (
@@ -1876,12 +1876,12 @@ if "!ctx_choice!"=="5" (
     set /p max_lines="Enter max import lines (1-50, current default: 10): "
     if defined max_lines (
         echo [INFO] Setting max import lines to: !max_lines!
-        .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.embedding.max_import_lines = int('!max_lines!'); mgr.save_config(cfg); print('[OK] Max import lines updated to !max_lines!')" 2>nul
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.embedding.max_import_lines = int('!max_lines!'); mgr.save_config(cfg); print('[OK] Max import lines updated to !max_lines!')" 2>nul
         if errorlevel 1 (
             echo [ERROR] Failed to save configuration. Please enter a valid number.
         ) else (
             echo [INFO] Re-index project to apply changes
-            .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
         )
     )
 )
@@ -1891,12 +1891,12 @@ if "!ctx_choice!"=="6" (
     set /p max_sig_lines="Enter max class signature lines (1-20, current default: 5): "
     if defined max_sig_lines (
         echo [INFO] Setting max class signature lines to: !max_sig_lines!
-        .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.embedding.max_class_signature_lines = int('!max_sig_lines!'); mgr.save_config(cfg); print('[OK] Max class signature lines updated to !max_sig_lines!')" 2>nul
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.embedding.max_class_signature_lines = int('!max_sig_lines!'); mgr.save_config(cfg); print('[OK] Max class signature lines updated to !max_sig_lines!')" 2>nul
         if errorlevel 1 (
             echo [ERROR] Failed to save configuration. Please enter a valid number.
         ) else (
             echo [INFO] Re-index project to apply changes
-            .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
         )
     )
 )
@@ -1920,7 +1920,7 @@ echo   - 20-30%% fewer chunks (merged getters/setters)
 echo   - Denser embeddings with more context per vector
 echo.
 echo Current Settings:
-.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Greedy Merge:', 'Enabled' if cfg.chunking.enable_greedy_merge else 'Disabled'); print('  Min Chunk Tokens:', cfg.chunking.min_chunk_tokens); print('  Max Merged Tokens:', cfg.chunking.max_merged_tokens); print('  Token Estimation:', cfg.chunking.token_estimation); print('  Large Node Splitting:', 'Enabled' if cfg.chunking.enable_large_node_splitting else 'Disabled'); print('  Max Chunk Lines:', cfg.chunking.max_chunk_lines)" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Greedy Merge:', 'Enabled' if cfg.chunking.enable_greedy_merge else 'Disabled'); print('  Min Chunk Tokens:', cfg.chunking.min_chunk_tokens); print('  Max Merged Tokens:', cfg.chunking.max_merged_tokens); print('  Token Estimation:', cfg.chunking.token_estimation); print('  Large Node Splitting:', 'Enabled' if cfg.chunking.enable_large_node_splitting else 'Disabled'); print('  Max Chunk Lines:', cfg.chunking.max_chunk_lines)" 2>nul
 echo.
 echo   1. Enable Greedy Merge        - Merge small chunks (recommended)
 echo   2. Disable Greedy Merge       - Keep all chunks separate
@@ -1942,23 +1942,23 @@ if "!chunk_choice!"=="0" goto search_config_menu
 if "!chunk_choice!"=="1" (
     echo.
     echo [INFO] Enabling greedy merge...
-    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_greedy_merge = True; mgr.save_config(cfg); print('[OK] Greedy merge enabled')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_greedy_merge = True; mgr.save_config(cfg); print('[OK] Greedy merge enabled')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
         echo [INFO] Re-index project to apply changes
-        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
 )
 if "!chunk_choice!"=="2" (
     echo.
     echo [INFO] Disabling greedy merge...
-    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_greedy_merge = False; mgr.save_config(cfg); print('[OK] Greedy merge disabled')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_greedy_merge = False; mgr.save_config(cfg); print('[OK] Greedy merge disabled')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
         echo [INFO] Re-index project to apply changes
-        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
 )
 if "!chunk_choice!"=="3" (
@@ -1967,12 +1967,12 @@ if "!chunk_choice!"=="3" (
     set /p min_tokens="Enter min chunk tokens (10-500, current default: 50): "
     if defined min_tokens (
         echo [INFO] Setting min chunk tokens to: !min_tokens!
-        .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.min_chunk_tokens = int('!min_tokens!'); mgr.save_config(cfg); print('[OK] Min chunk tokens updated to !min_tokens!')" 2>nul
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.min_chunk_tokens = int('!min_tokens!'); mgr.save_config(cfg); print('[OK] Min chunk tokens updated to !min_tokens!')" 2>nul
         if errorlevel 1 (
             echo [ERROR] Failed to save configuration. Please enter a valid number.
         ) else (
             echo [INFO] Re-index project to apply changes
-            .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
         )
     )
 )
@@ -1982,12 +1982,12 @@ if "!chunk_choice!"=="4" (
     set /p max_tokens="Enter max merged tokens (500-3000, current default: 1000): "
     if defined max_tokens (
         echo [INFO] Setting max merged tokens to: !max_tokens!
-        .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.max_merged_tokens = int('!max_tokens!'); mgr.save_config(cfg); print('[OK] Max merged tokens updated to !max_tokens!')" 2>nul
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.max_merged_tokens = int('!max_tokens!'); mgr.save_config(cfg); print('[OK] Max merged tokens updated to !max_tokens!')" 2>nul
         if errorlevel 1 (
             echo [ERROR] Failed to save configuration. Please enter a valid number.
         ) else (
             echo [INFO] Re-index project to apply changes
-            .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
         )
     )
 )
@@ -2001,47 +2001,47 @@ if "!chunk_choice!"=="5" (
     set /p token_method="Enter choice (1-2): "
     if "!token_method!"=="1" (
         echo [INFO] Setting token estimation to whitespace...
-        .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.token_estimation = 'whitespace'; mgr.save_config(cfg); print('[OK] Token estimation set to whitespace')" 2>nul
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.token_estimation = 'whitespace'; mgr.save_config(cfg); print('[OK] Token estimation set to whitespace')" 2>nul
         if errorlevel 1 (
             echo [ERROR] Failed to save configuration
         ) else (
             echo [INFO] Re-index project to apply changes
-            .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
         )
     )
     if "!token_method!"=="2" (
         echo [INFO] Setting token estimation to tiktoken...
-        .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.token_estimation = 'tiktoken'; mgr.save_config(cfg); print('[OK] Token estimation set to tiktoken')" 2>nul
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.token_estimation = 'tiktoken'; mgr.save_config(cfg); print('[OK] Token estimation set to tiktoken')" 2>nul
         if errorlevel 1 (
             echo [ERROR] Failed to save configuration
         ) else (
             echo [INFO] Re-index project to apply changes
-            .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
         )
     )
 )
 if "!chunk_choice!"=="6" (
     echo.
     echo [INFO] Enabling large node splitting...
-    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_large_node_splitting = True; mgr.save_config(cfg); print('[OK] Large node splitting enabled')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_large_node_splitting = True; mgr.save_config(cfg); print('[OK] Large node splitting enabled')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
         echo [INFO] Functions exceeding max_chunk_lines will be split at AST boundaries
         echo [INFO] Re-index project to apply changes
-        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
 )
 if "!chunk_choice!"=="7" (
     echo.
     echo [INFO] Disabling large node splitting...
-    .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_large_node_splitting = False; mgr.save_config(cfg); print('[OK] Large node splitting disabled')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_large_node_splitting = False; mgr.save_config(cfg); print('[OK] Large node splitting disabled')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
         echo [INFO] Large functions will remain intact
         echo [INFO] Re-index project to apply changes
-        .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
 )
 if "!chunk_choice!"=="8" (
@@ -2050,13 +2050,13 @@ if "!chunk_choice!"=="8" (
     set /p max_lines="Enter max chunk lines (10-500, current default: 100): "
     if defined max_lines (
         echo [INFO] Setting max chunk lines to: !max_lines!
-        .\.venv\Scripts\python.exe -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.max_chunk_lines = int('!max_lines!'); mgr.save_config(cfg); print('[OK] Max chunk lines updated to !max_lines!')" 2>nul
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.max_chunk_lines = int('!max_lines!'); mgr.save_config(cfg); print('[OK] Max chunk lines updated to !max_lines!')" 2>nul
         if errorlevel 1 (
             echo [ERROR] Failed to save configuration. Please enter a valid number.
         ) else (
             echo [INFO] Functions exceeding !max_lines! lines will be split (if enabled^)
             echo [INFO] Re-index project to apply changes
-            .\.venv\Scripts\python.exe tools\notify_server.py reload_config >nul 2>&1
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
         )
     )
 )
@@ -2085,7 +2085,7 @@ echo   Compact: 2,167 chars (~541 tokens) - 33.5%% smaller
 echo   Ultra:   1,877 chars (~469 tokens) - 42.4%% smaller
 echo.
 echo Current Setting:
-.\.venv\Scripts\python.exe -c "from search.config import get_search_config; cfg = get_search_config(); print('  Output Format:', cfg.output.format)" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Output Format:', cfg.output.format)" 2>nul
 echo.
 echo   1. Verbose (Full Output, Backward Compatible)
 echo   2. Compact (Recommended Default)
@@ -2102,7 +2102,7 @@ if "!format_choice!"=="0" goto menu_restart
 if "!format_choice!"=="1" (
     echo.
     echo [INFO] Setting output format to: verbose
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.output.format = 'verbose'; mgr.save_config(cfg); print('[OK] Output format set to verbose')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.output.format = 'verbose'; mgr.save_config(cfg); print('[OK] Output format set to verbose')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
@@ -2112,7 +2112,7 @@ if "!format_choice!"=="1" (
 if "!format_choice!"=="2" (
     echo.
     echo [INFO] Setting output format to: compact
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.output.format = 'compact'; mgr.save_config(cfg); print('[OK] Output format set to compact')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.output.format = 'compact'; mgr.save_config(cfg); print('[OK] Output format set to compact')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
@@ -2122,7 +2122,7 @@ if "!format_choice!"=="2" (
 if "!format_choice!"=="3" (
     echo.
     echo [INFO] Setting output format to: ultra
-    .\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.output.format = 'ultra'; mgr.save_config(cfg); print('[OK] Output format set to ultra')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.output.format = 'ultra'; mgr.save_config(cfg); print('[OK] Output format set to ultra')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
@@ -2197,7 +2197,7 @@ echo.
 echo   Output Format: ultra ^(45-55%% token reduction^)
 echo.
 REM Persist defaults to config file via Python
-.\.venv\Scripts\python.exe -c "from search.config import SearchConfigManager, SearchConfig; mgr = SearchConfigManager(); cfg = SearchConfig(); mgr.save_config(cfg); print('[OK] Configuration reset to defaults and saved')" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager, SearchConfig; mgr = SearchConfigManager(); cfg = SearchConfig(); mgr.save_config(cfg); print('[OK] Configuration reset to defaults and saved')" 2>nul
 if errorlevel 1 (
     echo [ERROR] Failed to reset config file
     set "CLAUDE_SEARCH_MODE=hybrid"
@@ -2231,7 +2231,7 @@ set "CUDA_VISIBLE_DEVICES="
 set "FORCE_CPU_MODE=1"
 echo [OK] CPU-only mode enabled
 echo [INFO] Starting MCP server in CPU-only mode...
-.\.venv\Scripts\python.exe -m mcp_server.server
+".\.venv\Scripts\python.exe" -m mcp_server.server
 goto end
 
 :test_install
@@ -2239,7 +2239,7 @@ echo.
 echo [INFO] Running installation tests...
 if exist "tests\unit\test_imports.py" (
     echo [INFO] Testing core imports and MCP server functionality...
-    call .\.venv\Scripts\python.exe -m pytest tests\unit\test_imports.py tests\unit\test_mcp_server.py -v --tb=short
+    call ".\.venv\Scripts\python.exe" -m pytest tests\unit\test_imports.py tests\unit\test_mcp_server.py -v --tb=short
     if "!ERRORLEVEL!" neq "0" (
         echo [WARNING] Some tests failed. Check output above for details.
     ) else (
@@ -2247,7 +2247,7 @@ if exist "tests\unit\test_imports.py" (
     )
 ) else (
     echo [INFO] Pytest not available, running basic import test...
-    call .\.venv\Scripts\python.exe -c "try: import mcp_server.server; print('[OK] MCP server imports successfully'); except Exception as e: print(f'[ERROR] Import failed: {e}')"
+    call ".\.venv\Scripts\python.exe" -c "try: import mcp_server.server; print('[OK] MCP server imports successfully'); except Exception as e: print(f'[ERROR] Import failed: {e}')"
 )
 pause
 goto end
@@ -2270,9 +2270,9 @@ REM System Status Functions
 echo [Runtime Status]
 if exist ".venv\Scripts\python.exe" (
     REM Display model status
-    .\.venv\Scripts\python.exe -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = cfg.routing.multi_model_enabled; pool = cfg.routing.multi_model_pool or 'full'; print('Model: [MULTI] BGE-M3 + gte-modernbert (1.65GB total)' if pool == 'lightweight-speed' else 'Model: [MULTI] BGE-M3 + Qwen3 + CodeRankEmbed (5.3GB total)') if multi_enabled else print(f'Model: [SINGLE] {model_short} ({dim}d, {vram})'); print(f'       Active routing - {pool} pool') if multi_enabled else print('Tip: Press M for Quick Model Switch')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = cfg.routing.multi_model_enabled; pool = cfg.routing.multi_model_pool or 'full'; print('Model: [MULTI] BGE-M3 + gte-modernbert (1.65GB total)' if pool == 'lightweight-speed' else 'Model: [MULTI] BGE-M3 + Qwen3 + CodeRankEmbed (5.3GB total)') if multi_enabled else print(f'Model: [SINGLE] {model_short} ({dim}d, {vram})'); print(f'       Active routing - {pool} pool') if multi_enabled else print('Tip: Press M for Quick Model Switch')" 2>nul
     REM Display current project using helper script
-    .\.venv\Scripts\python.exe scripts\get_current_project.py 2>nul
+    ".\.venv\Scripts\python.exe" scripts\get_current_project.py 2>nul
 ) else (
     echo Runtime: Python | Status: Not installed
 )
@@ -2282,11 +2282,11 @@ goto :eof
 :show_detailed_status
 echo System Configuration:
 if exist ".venv\Scripts\python.exe" (
-    .\.venv\Scripts\python.exe -c "import sys; print(f'  Python: {sys.version.split()[0]}')" 2>nul
-    .\.venv\Scripts\python.exe -c "import torch; print(f'  PyTorch: {torch.__version__}'); print(f'  CUDA Available: {torch.cuda.is_available()}')" 2>nul
-    .\.venv\Scripts\python.exe -c "import torch; [print(f'  GPU Count: {torch.cuda.device_count()}') or [print(f'    GPU {i}: {torch.cuda.get_device_name(i)}') for i in range(torch.cuda.device_count())] if torch.cuda.is_available() else print('  Note: Running in CPU-only mode')]" 2>nul
-    .\.venv\Scripts\python.exe -c "import psutil; print(f'  System RAM: {psutil.virtual_memory().total // (1024**3)} GB'); print(f'  Available RAM: {psutil.virtual_memory().available // (1024**3)} GB')" 2>nul
-    .\.venv\Scripts\python.exe -c "try: import rank_bm25, nltk; print('  Hybrid Search: BM25 + Semantic ✓'); except ImportError: print('  Hybrid Search: Not available ✗')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "import sys; print(f'  Python: {sys.version.split()[0]}')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "import torch; print(f'  PyTorch: {torch.__version__}'); print(f'  CUDA Available: {torch.cuda.is_available()}')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "import torch; [print(f'  GPU Count: {torch.cuda.device_count()}') or [print(f'    GPU {i}: {torch.cuda.get_device_name(i)}') for i in range(torch.cuda.device_count())] if torch.cuda.is_available() else print('  Note: Running in CPU-only mode')]" 2>nul
+    ".\.venv\Scripts\python.exe" -c "import psutil; print(f'  System RAM: {psutil.virtual_memory().total // (1024**3)} GB'); print(f'  Available RAM: {psutil.virtual_memory().available // (1024**3)} GB')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "try: import rank_bm25, nltk; print('  Hybrid Search: BM25 + Semantic ✓'); except ImportError: print('  Hybrid Search: Not available ✗')" 2>nul
 ) else (
     echo   Python: Not installed
     echo   Status: Run install-windows.bat first
@@ -2358,7 +2358,7 @@ set "ACTION_DESC=%~1"
 
 REM Get grouped project list
 set "TEMP_PROJECTS=%TEMP%\mcp_projects_select_grouped.txt"
-call .\.venv\Scripts\python.exe scripts\list_projects_parseable.py > "%TEMP_PROJECTS%" 2>nul
+call ".\.venv\Scripts\python.exe" scripts\list_projects_parseable.py > "%TEMP_PROJECTS%" 2>nul
 
 REM Check if any projects exist
 findstr /R "." "%TEMP_PROJECTS%" >nul 2>&1
