@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 @error_handler("Status check")
-async def handle_get_index_status(arguments: Dict[str, Any]) -> dict:
+async def handle_get_index_status(arguments: Dict[str, Any]) -> Dict:
     """Get current status and statistics of the search index."""
     state = get_state()
 
@@ -99,7 +99,7 @@ async def handle_get_index_status(arguments: Dict[str, Any]) -> dict:
 
 
 @error_handler("List projects")
-async def handle_list_projects(arguments: Dict[str, Any]) -> dict:
+async def handle_list_projects(arguments: Dict[str, Any]) -> Dict:
     """List all indexed projects grouped by path with model details."""
     base_dir = get_storage_dir()
     projects_dir = base_dir / "projects"
@@ -184,7 +184,7 @@ async def handle_list_projects(arguments: Dict[str, Any]) -> dict:
 
 
 @error_handler("Memory status check")
-async def handle_get_memory_status(arguments: Dict[str, Any]) -> dict:
+async def handle_get_memory_status(arguments: Dict[str, Any]) -> Dict:
     """Get current memory usage status."""
     import psutil
     import torch
@@ -262,14 +262,14 @@ async def handle_get_memory_status(arguments: Dict[str, Any]) -> dict:
 
 
 @error_handler("Resource cleanup")
-async def handle_cleanup_resources(arguments: Dict[str, Any]) -> dict:
+async def handle_cleanup_resources(arguments: Dict[str, Any]) -> Dict:
     """Manually cleanup all resources to free memory."""
     _cleanup_previous_resources()
     return {"success": True, "message": "Resources cleaned up successfully"}
 
 
 @error_handler("Config status check")
-async def handle_get_search_config_status(arguments: Dict[str, Any]) -> dict:
+async def handle_get_search_config_status(arguments: Dict[str, Any]) -> Dict:
     """Get current search configuration status."""
     config = get_config()
     return {
@@ -293,7 +293,7 @@ async def handle_get_search_config_status(arguments: Dict[str, Any]) -> dict:
 
 
 @error_handler("List models")
-async def handle_list_embedding_models(arguments: Dict[str, Any]) -> dict:
+async def handle_list_embedding_models(arguments: Dict[str, Any]) -> Dict:
     """List all available embedding models."""
     from mcp_server.model_pool_manager import get_model_pool_manager
     from mcp_server.state import get_state

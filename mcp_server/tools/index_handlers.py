@@ -126,7 +126,7 @@ def _run_indexing(
     incremental: bool,
     include_dirs=None,
     exclude_dirs=None,
-) -> dict:
+) -> Dict:
     """Run the indexing process and return results.
 
     Args:
@@ -169,7 +169,7 @@ def _run_indexing(
 
 def _build_index_response(
     results: list[dict], directory_path: str, multi_model: bool, incremental: bool
-) -> dict:
+) -> Dict:
     """Build the final index response.
 
     Args:
@@ -394,7 +394,7 @@ def _index_with_all_models(
 
 
 @error_handler("Clear index")
-async def handle_clear_index(arguments: Dict[str, Any]) -> dict:
+async def handle_clear_index(arguments: Dict[str, Any]) -> Dict:
     """Clear the entire search index for ALL models."""
     import shutil
 
@@ -470,7 +470,7 @@ async def handle_clear_index(arguments: Dict[str, Any]) -> dict:
 
 
 @error_handler("Delete project")
-async def handle_delete_project(arguments: Dict[str, Any]) -> dict:
+async def handle_delete_project(arguments: Dict[str, Any]) -> Dict:
     """Delete an indexed project completely (indices + Merkle snapshots).
 
     This tool properly closes database connections before deletion to prevent
@@ -612,7 +612,7 @@ async def handle_delete_project(arguments: Dict[str, Any]) -> dict:
 
 
 @error_handler("Index")
-async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
+async def handle_index_directory(arguments: Dict[str, Any]) -> Dict:
     """Index a directory for code search with multi-model support.
 
     Uses extracted helper functions for clarity:

@@ -35,7 +35,7 @@ def error_handler(
 
     Example:
         >>> @error_handler("Search")
-        >>> async def handle_search_code(arguments: Dict[str, Any]) -> dict:
+        >>> async def handle_search_code(arguments: Dict[str, Any]) -> Dict:
         >>>     # ... business logic ...
         >>>     return {"results": [...]}
 
@@ -43,14 +43,14 @@ def error_handler(
         >>>     "Switch model",
         >>>     error_context=lambda args: {"available_models": ["qwen3", "bge_m3"]}
         >>> )
-        >>> async def handle_switch_embedding_model(arguments: Dict[str, Any]) -> dict:
+        >>> async def handle_switch_embedding_model(arguments: Dict[str, Any]) -> Dict:
         >>>     # ... business logic ...
         >>>     return {"success": True}
     """
 
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
-        async def wrapper(arguments: Dict[str, Any]) -> dict:
+        async def wrapper(arguments: Dict[str, Any]) -> Dict:
             try:
                 return await func(arguments)
             except asyncio.CancelledError:

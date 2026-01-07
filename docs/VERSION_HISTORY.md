@@ -35,6 +35,7 @@ Fixed critical bug in ultra format where complexity scores were dropped when fir
 - **Impact**: Ultra format now includes all optional fields present in any result
 
 **Before** (buggy):
+
 ```python
 first_item = value[0]
 for field_name in first_item.keys():
@@ -42,6 +43,7 @@ for field_name in first_item.keys():
 ```
 
 **After** (fixed):
+
 ```python
 all_fields = set()
 for item in value:

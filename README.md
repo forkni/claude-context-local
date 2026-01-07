@@ -74,6 +74,7 @@ Enter your project path when prompted (e.g., `C:\Projects\MyApp`).
 **Option B: Via Claude Code** (after loading `/mcp-search` skill)
 
 Simply ask Claude naturally:
+
 ```
 "Index my project at C:\Projects\MyApp"
 ```

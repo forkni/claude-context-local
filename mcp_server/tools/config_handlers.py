@@ -45,7 +45,7 @@ def _detect_indexed_model(project_path: str) -> str | None:
 
 
 @error_handler("Project switch")
-async def handle_switch_project(arguments: Dict[str, Any]) -> dict:
+async def handle_switch_project(arguments: Dict[str, Any]) -> Dict:
     """Switch to a different indexed project."""
     project_path = arguments["project_path"]
 
@@ -96,7 +96,7 @@ async def handle_switch_project(arguments: Dict[str, Any]) -> dict:
 
 
 @error_handler("Configure routing")
-async def handle_configure_query_routing(arguments: Dict[str, Any]) -> dict:
+async def handle_configure_query_routing(arguments: Dict[str, Any]) -> Dict:
     """Configure query routing behavior."""
     enable_multi_model = arguments.get("enable_multi_model")
     default_model = arguments.get("default_model")
@@ -147,7 +147,7 @@ async def handle_configure_query_routing(arguments: Dict[str, Any]) -> dict:
 
 
 @error_handler("Configure search mode")
-async def handle_configure_search_mode(arguments: Dict[str, Any]) -> dict:
+async def handle_configure_search_mode(arguments: Dict[str, Any]) -> Dict:
     """Configure search mode and parameters."""
     search_mode = arguments.get("search_mode", "hybrid")
     bm25_weight = arguments.get("bm25_weight", 0.4)
@@ -188,7 +188,7 @@ async def handle_configure_search_mode(arguments: Dict[str, Any]) -> dict:
     "Switch model",
     error_context=lambda args: {"available_models": list(MODEL_REGISTRY.keys())},
 )
-async def handle_switch_embedding_model(arguments: Dict[str, Any]) -> dict:
+async def handle_switch_embedding_model(arguments: Dict[str, Any]) -> Dict:
     """Switch to a different embedding model."""
     model_name = arguments["model_name"]
 
@@ -219,7 +219,7 @@ async def handle_switch_embedding_model(arguments: Dict[str, Any]) -> dict:
 
 
 @error_handler("Configure reranking")
-async def handle_configure_reranking(arguments: Dict[str, Any]) -> dict:
+async def handle_configure_reranking(arguments: Dict[str, Any]) -> Dict:
     """Configure neural reranker settings.
 
     Args:
@@ -261,7 +261,7 @@ async def handle_configure_reranking(arguments: Dict[str, Any]) -> dict:
 
 
 @error_handler("Configure chunking")
-async def handle_configure_chunking(arguments: Dict[str, Any]) -> dict:
+async def handle_configure_chunking(arguments: Dict[str, Any]) -> Dict:
     """Configure code chunking settings.
 
     Args:

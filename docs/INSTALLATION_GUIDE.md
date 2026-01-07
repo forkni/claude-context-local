@@ -1005,6 +1005,7 @@ Two new settings are available to manage GPU memory allocation on systems with l
 3. **Spillover Control**: `allow_shared_memory` (false) prevents slow shared memory usage
 
 **When `allow_shared_memory=true`**:
+
 - `vram_limit_fraction` is ignored (no hard limit set)
 - PyTorch can use system RAM when VRAM is full (slower but won't OOM)
 - Recommended for 8GB VRAM laptops to ensure neural reranker works reliably

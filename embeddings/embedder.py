@@ -60,7 +60,7 @@ def _configure_cuda_allocator():
     # max_split_size_mb: Prevent large block splitting (reduces fragmentation slivers)
     #   Blocks >512MB won't be split, reducing memory fragmentation
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = (
-        "garbage_collection_threshold:0.8," "max_split_size_mb:512"
+        "garbage_collection_threshold:0.8,max_split_size_mb:512"
     )
     logging.getLogger(__name__).info(
         "[CUDA_ALLOC] Configured allocator: "
@@ -1021,7 +1021,7 @@ class CodeEmbedder:
         self._logger.info("Embedding generation completed")
         return results
 
-    def get_cache_stats(self) -> dict:
+    def get_cache_stats(self) -> Dict:
         """Get cache hit/miss statistics."""
         return self._query_cache.get_stats()
 

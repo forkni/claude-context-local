@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------------
 
 
-def _handle_chunk_id_lookup(chunk_id: str) -> dict:
+def _handle_chunk_id_lookup(chunk_id: str) -> Dict:
     """Handle direct O(1) chunk lookup by chunk_id.
 
     Args:
@@ -289,7 +289,7 @@ def _get_index_manager_from_searcher(searcher) -> CodeIndexManager | None:
 
 def _get_graph_data_for_chunk(
     index_manager: CodeIndexManager, chunk_id: str
-) -> dict | None:
+) -> Dict | None:
     """Get graph relationship data for a chunk.
 
     Args:
@@ -388,7 +388,7 @@ def _enrich_results_with_graph_data(
 
 
 @error_handler("Search")
-async def handle_search_code(arguments: Dict[str, Any]) -> dict:
+async def handle_search_code(arguments: Dict[str, Any]) -> Dict:
     """Search code with natural language query.
 
     Supports two modes:
@@ -608,7 +608,7 @@ async def handle_search_code(arguments: Dict[str, Any]) -> dict:
 
 
 @error_handler("Find similar")
-async def handle_find_similar_code(arguments: Dict[str, Any]) -> dict:
+async def handle_find_similar_code(arguments: Dict[str, Any]) -> Dict:
     """Find code chunks similar to a reference chunk."""
     chunk_id = arguments["chunk_id"]
     k = arguments.get("k", 5)
@@ -650,7 +650,7 @@ async def handle_find_similar_code(arguments: Dict[str, Any]) -> dict:
         "symbol_name": args.get("symbol_name"),
     },
 )
-async def handle_find_connections(arguments: Dict[str, Any]) -> dict:
+async def handle_find_connections(arguments: Dict[str, Any]) -> Dict:
     """Find all code connections to a given symbol."""
     chunk_id = arguments.get("chunk_id")
     symbol_name = arguments.get("symbol_name")
