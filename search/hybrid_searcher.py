@@ -5,16 +5,22 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from .config import SearchConfig
 
 try:
     import torch
 except ImportError:
     torch = None
 
+from graph.graph_storage import CodeGraphStorage
+
 from .bm25_index import BM25Index
+from .ego_graph_retriever import EgoGraphRetriever
 from .gpu_monitor import GPUMemoryMonitor
 from .index_sync import IndexSynchronizer
 from .indexer import CodeIndexManager
@@ -184,6 +190,29 @@ class HybridSearcher:
             reranking_engine=self.reranking_engine,
             logger=self._logger,
         )
+
+        # Ego-graph retrieval (RepoGraph-style k-hop expansion)
+        # Initialize graph storage if project_id is provided
+        self.graph_storage = None
+        self.ego_graph_retriever = None
+        if project_id:
+            try:
+                # Graph storage in parent of storage_dir (same as graph_integration.py)
+                graph_dir = self.storage_dir.parent
+                self.graph_storage = CodeGraphStorage(
+                    project_id=project_id, storage_dir=graph_dir
+                )
+                self.ego_graph_retriever = EgoGraphRetriever(self.graph_storage)
+                self._logger.info(
+                    f"[INIT] Ego-graph retrieval initialized for project: {project_id}"
+                )
+            except Exception as e:
+                self._logger.warning(
+                    f"[INIT] Failed to initialize ego-graph retrieval: {e}. "
+                    "Ego-graph expansion will be disabled."
+                )
+                self.graph_storage = None
+                self.ego_graph_retriever = None
 
         # Backward compatibility
         self.max_workers = max_workers
@@ -527,6 +556,7 @@ class HybridSearcher:
         use_parallel: bool = True,
         min_bm25_score: float = 0.0,
         filters: Optional[Dict[str, Any]] = None,
+        config: Optional["SearchConfig"] = None,
     ) -> List[SearchResult]:
         """
         Search using configurable approach (hybrid, semantic-only, or BM25-only).
@@ -541,6 +571,7 @@ class HybridSearcher:
             use_parallel: Whether to run BM25 and dense search in parallel (hybrid mode only)
             min_bm25_score: Minimum BM25 score threshold
             filters: Optional filters for dense search
+            config: Optional SearchConfig override (for ego-graph settings, etc.)
 
         Returns:
             Search results (reranked for hybrid mode, direct for single modes)
@@ -567,30 +598,42 @@ class HybridSearcher:
 
         # Check if multi-hop search is enabled
         # Use ServiceLocator helper instead of inline import
-        config = _get_config_via_service_locator()
+        # Allow config override (for ego-graph settings from MCP)
+        effective_config = (
+            config if config is not None else _get_config_via_service_locator()
+        )
 
-        if config.multi_hop.enabled:
+        # Get initial search results (multi-hop or single-hop)
+        if effective_config.multi_hop.enabled:
             # Use multi-hop search for discovering related code
-            return self.multi_hop_searcher.search(
+            results = self.multi_hop_searcher.search(
                 query=query,
                 k=k,
                 search_mode=search_mode,
-                hops=config.multi_hop.hop_count,
-                expansion_factor=config.multi_hop.expansion,
+                hops=effective_config.multi_hop.hop_count,
+                expansion_factor=effective_config.multi_hop.expansion,
+                use_parallel=use_parallel,
+                min_bm25_score=min_bm25_score,
+                filters=filters,
+            )
+        else:
+            # Single-hop search (direct matching only)
+            results = self._single_hop_search(
+                query=query,
+                k=k,
+                search_mode=search_mode,
                 use_parallel=use_parallel,
                 min_bm25_score=min_bm25_score,
                 filters=filters,
             )
 
-        # Single-hop search (direct matching only)
-        return self._single_hop_search(
-            query=query,
-            k=k,
-            search_mode=search_mode,
-            use_parallel=use_parallel,
-            min_bm25_score=min_bm25_score,
-            filters=filters,
-        )
+        # Apply ego-graph expansion if enabled
+        if effective_config.ego_graph.enabled and self.ego_graph_retriever and results:
+            results = self._apply_ego_graph_expansion(
+                results, effective_config.ego_graph, k
+            )
+
+        return results
 
     def _single_hop_search(
         self,
@@ -628,6 +671,84 @@ class HybridSearcher:
             filters=filters,
             query_embedding=query_embedding,
         )
+
+    def _apply_ego_graph_expansion(
+        self, results: List[SearchResult], ego_config, original_k: int
+    ) -> List[SearchResult]:
+        """Apply ego-graph expansion to search results.
+
+        Expands search results by retrieving k-hop graph neighbors,
+        providing richer context like callers, callees, and related code.
+
+        Args:
+            results: Initial search results
+            ego_config: EgoGraphConfig instance
+            original_k: Original k parameter for search
+
+        Returns:
+            Expanded search results (anchors + neighbors)
+        """
+        if not results:
+            return results
+
+        try:
+            # Convert SearchResults to format needed by ego_graph_retriever
+            search_results_dict = [
+                {"chunk_id": r.chunk_id, "score": r.score} for r in results
+            ]
+
+            # Expand via ego-graph
+            expanded_chunk_ids, ego_graphs = (
+                self.ego_graph_retriever.expand_search_results(
+                    search_results_dict, ego_config
+                )
+            )
+
+            if not expanded_chunk_ids:
+                return results
+
+            # Track which chunks are neighbors (not original anchors)
+            original_chunk_ids = {r.chunk_id for r in results}
+            neighbor_chunk_ids = set(expanded_chunk_ids) - original_chunk_ids
+
+            # Retrieve metadata for neighbor chunks
+            neighbor_results = []
+            for chunk_id in neighbor_chunk_ids:
+                try:
+                    metadata = self.dense_index.get_chunk_by_id(chunk_id)
+                    if metadata:
+                        # Create SearchResult for neighbor (score=0 as it's context)
+                        # Uses reranker.py SearchResult with correct fields
+                        neighbor_result = SearchResult(
+                            chunk_id=chunk_id,
+                            score=0.0,  # Neighbors are context, no similarity score
+                            metadata=metadata,  # All metadata stored in dict
+                            source="ego_graph",  # Mark as ego-graph neighbor
+                            rank=0,  # Default rank
+                        )
+                        neighbor_results.append(neighbor_result)
+                except Exception as e:
+                    self._logger.debug(
+                        f"Failed to retrieve metadata for {chunk_id}: {e}"
+                    )
+                    continue
+
+            # Combine original results (with scores) + neighbor results (context)
+            # Original results first (sorted by score), then neighbors
+            combined_results = results + neighbor_results
+
+            self._logger.info(
+                f"Ego-graph expansion: {len(results)} anchors -> "
+                f"{len(combined_results)} total ({len(neighbor_results)} neighbors added)"
+            )
+
+            return combined_results
+
+        except Exception as e:
+            self._logger.warning(
+                f"Ego-graph expansion failed: {e}. Returning original results."
+            )
+            return results
 
     def find_similar_to_chunk(
         self, chunk_id: str, k: int = 5, rerank: bool = False

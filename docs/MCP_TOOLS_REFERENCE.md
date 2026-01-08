@@ -10,7 +10,7 @@ This modular reference can be embedded in any project instructions for Claude Co
 
 | Tool | Priority | Purpose | Parameters |
 |------|----------|---------|------------|
-| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=5, search_mode="hybrid", model_key, use_routing=True, file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5 |
+| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=5, search_mode="hybrid", model_key, use_routing=True, file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10 |
 | **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (~90% accuracy with import resolution) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs |
 | **index_directory** | 🔴 **SETUP** | Index project (multi-model support) | directory_path (required), project_name, incremental=True, multi_model=auto |
 | find_similar_code | Secondary | Find alternative implementations | chunk_id (required), k=5 |
@@ -104,6 +104,48 @@ find_connections(symbol_name="UserService", exclude_dirs=["tests/"])
 
 ---
 
+## Ego-Graph Expansion Parameters (v0.8.4+)
+
+**Feature**: RepoGraph-style k-hop ego-graph retrieval for context expansion (ICLR 2025)
+
+**Purpose**: Automatically retrieve graph neighbors (callers, callees, related code) for search results to provide richer context beyond semantic similarity.
+
+| Parameter | Type | Default | Range | Description |
+|-----------|------|---------|-------|-------------|
+| `ego_graph_enabled` | boolean | false | - | Enable k-hop neighbor expansion from call graph |
+| `ego_graph_k_hops` | integer | 2 | 1-5 | Graph traversal depth (1=direct neighbors, 2=neighbors of neighbors) |
+| `ego_graph_max_neighbors_per_hop` | integer | 10 | 1-50 | Limit neighbors per hop to prevent explosion |
+
+### Usage Examples
+
+```python
+# Basic ego-graph expansion (2-hop, max 10 neighbors per hop)
+search_code("authentication handler", ego_graph_enabled=True)
+
+# Shallow expansion (only direct neighbors)
+search_code("database connection", ego_graph_enabled=True, ego_graph_k_hops=1)
+
+# Deep expansion with more neighbors
+search_code("request processing", ego_graph_enabled=True, ego_graph_k_hops=3, ego_graph_max_neighbors_per_hop=20)
+```
+
+### Performance Characteristics
+
+- **Neighbor retrieval**: 780-1000 neighbors per anchor (complex classes)
+- **Symbol filtering**: 4-33 symbol-only nodes removed per anchor
+- **Expansion factor**: 3.5-4.6× (e.g., 5 anchors → 23 total results)
+- **Overhead**: Minimal (~0-5ms for graph traversal)
+
+### Result Marking
+
+Ego-graph neighbors are marked in results with:
+
+- `score`: 0.0 (neighbors are context, not direct matches)
+- `source`: "ego_graph" (identifies origin)
+- `rank`: 0 (default rank)
+
+---
+
 ## Search Result Fields
 
 The `search_code` tool returns results with the following fields:
@@ -113,6 +155,7 @@ The `search_code` tool returns results with the following fields:
 | `chunk_id` | string | ✅ | Unique identifier (format: `"file:lines:type:name"`) |
 | `kind` | string | ✅ | Chunk type (`function`, `class`, `method`, etc.) |
 | `score` | float | ✅ | Relevance score (0.0-1.0, rounded to 2 decimals) |
+| `source` | string | ⚠️ Optional | Result source (`"ego_graph"` for graph neighbors, omitted for direct matches) |
 | `file` | string | ✅ (verbose only) | Relative file path (omitted in compact/ultra since `chunk_id` contains this) |
 | `lines` | string | ✅ (verbose only) | Line range (e.g., `"10-25"`, omitted in compact/ultra) |
 | `name` | string | ⚠️ Optional | Symbol name (when available) |

@@ -76,5 +76,13 @@
     "enable_large_node_splitting": false,
     "max_chunk_lines": 100,
     "token_estimation": "tiktoken"
+  },
+  "ego_graph": {
+    "enabled": false,
+    "k_hops": 2,
+    "max_neighbors_per_hop": 10,
+    "relation_types": null,
+    "include_anchor": true,
+    "deduplicate": true
   }
 }

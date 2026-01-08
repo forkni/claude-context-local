@@ -17,7 +17,7 @@ from mcp_server.services import get_config, get_state
 from mcp_server.storage_manager import get_project_storage_dir
 from mcp_server.tools.code_relationship_analyzer import CodeRelationshipAnalyzer
 from mcp_server.tools.decorators import error_handler
-from search.config import get_config_manager
+from search.config import EgoGraphConfig, get_config_manager, get_search_config
 from search.exceptions import DimensionMismatchError
 from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
@@ -213,6 +213,7 @@ def _check_auto_reindex(
 
     include_dirs = None
     exclude_dirs = None
+    project_info = None
     if project_info_file.exists():
         try:
             with open(project_info_file) as f:
@@ -229,10 +230,30 @@ def _check_auto_reindex(
         except Exception as e:
             logger.warning(f"[AUTO_REINDEX] Failed to load filters: {e}")
 
+    # CRITICAL: For existing indexes, use the model that created the index
+    # NOT the routing-selected model (prevents dimension mismatch errors)
+    model_key_for_embedder = selected_model_key
+    if project_info and project_info.get("embedding_model"):
+        from mcp_server.model_pool_manager import get_model_key_from_name
+
+        stored_model_name = project_info["embedding_model"]
+        stored_model_key = get_model_key_from_name(stored_model_name)
+        if stored_model_key:
+            model_key_for_embedder = stored_model_key
+            logger.info(
+                f"[AUTO_REINDEX] Using stored model from index: {stored_model_name} "
+                f"(key: {stored_model_key}) instead of routing selection"
+            )
+        else:
+            logger.warning(
+                f"[AUTO_REINDEX] Could not map stored model '{stored_model_name}' to key, "
+                f"falling back to routing selection: {selected_model_key}"
+            )
+
     # Validate dimension compatibility BEFORE creating searcher
     from search.dimension_validator import validate_embedder_index_compatibility
 
-    embedder = get_embedder(selected_model_key)
+    embedder = get_embedder(model_key_for_embedder)
 
     try:
         validate_embedder_index_compatibility(
@@ -480,6 +501,11 @@ async def handle_search_code(arguments: Dict[str, Any]) -> Dict:
     use_routing = arguments.get("use_routing", True)
     model_key = arguments.get("model_key")
 
+    # Ego-graph retrieval parameters (RepoGraph-style k-hop expansion)
+    ego_graph_enabled = arguments.get("ego_graph_enabled", False)
+    ego_graph_k_hops = arguments.get("ego_graph_k_hops", 2)
+    ego_graph_max_neighbors = arguments.get("ego_graph_max_neighbors_per_hop", 10)
+
     logger.info(f"[SEARCH] query='{query}', k={k}, mode='{search_mode}'")
 
     # Route query to optimal embedding model
@@ -566,6 +592,24 @@ async def handle_search_code(arguments: Dict[str, Any]) -> Dict:
     config_manager = get_config_manager()
     actual_search_mode = config_manager.get_search_mode_for_query(query, search_mode)
 
+    # Build SearchConfig with ego-graph settings if enabled
+    search_config = None
+    if isinstance(searcher, HybridSearcher) and ego_graph_enabled:
+        # Get base config and override ego-graph settings
+        base_config = get_search_config()
+        ego_config = EgoGraphConfig(
+            enabled=ego_graph_enabled,
+            k_hops=ego_graph_k_hops,
+            max_neighbors_per_hop=ego_graph_max_neighbors,
+        )
+        # Create modified config with ego-graph enabled
+        search_config = base_config
+        search_config.ego_graph = ego_config
+        logger.info(
+            f"[EGO_GRAPH] Enabled with k_hops={ego_graph_k_hops}, "
+            f"max_neighbors_per_hop={ego_graph_max_neighbors}"
+        )
+
     if isinstance(searcher, HybridSearcher):
         results = searcher.search(
             query=query,
@@ -574,6 +618,7 @@ async def handle_search_code(arguments: Dict[str, Any]) -> Dict:
             min_bm25_score=0.1,
             use_parallel=get_config().performance.use_parallel_search,
             filters=filters if filters else None,
+            config=search_config,  # Pass config with ego-graph settings
         )
     else:
         context_depth = 1 if include_context else 0

@@ -1114,7 +1114,7 @@ echo.
 echo Choose by your GPU VRAM:
 echo.
 echo   [8GB VRAM] ^(RTX 3060, RTX 4060 Laptop, GTX 1080^)
-echo   1. BGE-M3 ^(1024d, 1-1.5GB^) - RECOMMENDED
+echo   1. BGE-M3 ^(1024d, 1-1.5GB^)
 echo      Production-validated, optimal for hybrid search
 echo.
 echo   2. EmbeddingGemma ^(768d, 300M params^)
@@ -1666,25 +1666,29 @@ if exist ".venv\Scripts\python.exe" (
     echo   Multi-Model Routing: Disabled
 )
 echo.
-echo Recommended Models ^(Validated 2025-11^):
+echo Choose by your GPU VRAM:
 echo.
-echo   [OPTIMAL] - Production-validated
-echo   1. BGE-M3 [RECOMMENDED] ^(1024d, 1-1.5GB, MTEB: 61.85^)
+echo   [8GB VRAM] ^(RTX 3060, RTX 4060 Laptop, GTX 1080^)
+echo   1. BGE-M3 ^(1024d, 1-1.5GB^)
+echo      Production-validated, optimal for hybrid search
 echo.
-echo   [HIGH EFFICIENCY] - Best value
-echo   2. Qwen3-0.6B ^(1024d, 2.3GB, MTEB: 75.42^)
+echo   2. EmbeddingGemma ^(768d, 300M params^)
+echo      Lightweight alternative, minimal VRAM
 echo.
-echo   [DEFAULT] - Fast and lightweight
-echo   3. EmbeddingGemma ^(768d, 4-8GB^)
+echo   3. Lightweight Multi-Model ^(1.65GB^)
+echo      BGE-M3 + gte-modernbert, smart routing
 echo.
-echo   [MULTI-MODEL] - Most comprehensive choice
-echo   M. Multi-Model Routing ^(5.3GB, 100%% accuracy^)
+echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+^)
+echo   4. Qwen3-0.6B ^(1024d, 2.3GB^)
+echo      High efficiency, best value/performance
 echo.
-echo   A. View All Models ^(full registry^)
+echo   5. Full Multi-Model Routing ^(5.3GB^)
+echo      BGE-M3 + Qwen3 + CodeRankEmbed, 100%% accuracy
+echo.
 echo   0. Back to Main Menu
 echo.
 set "model_choice="
-set /p model_choice="Select model (0-3, M, A): "
+set /p model_choice="Select model (0-5): "
 
 REM Handle empty input or back
 if not defined model_choice goto menu_restart
@@ -1694,16 +1698,10 @@ if "!model_choice!"=="0" goto menu_restart
 REM Map choices to model names
 set "SELECTED_MODEL="
 if "!model_choice!"=="1" set "SELECTED_MODEL=BAAI/bge-m3"
-if "!model_choice!"=="2" set "SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B"
-if "!model_choice!"=="3" set "SELECTED_MODEL=google/embeddinggemma-300m"
-
-REM Handle multi-model option
-if /i "!model_choice!"=="M" goto enable_multi_model
-if /i "!model_choice!"=="m" goto enable_multi_model
-
-REM Handle "All Models" option
-if /i "!model_choice!"=="A" goto select_embedding_model
-if /i "!model_choice!"=="a" goto select_embedding_model
+if "!model_choice!"=="2" set "SELECTED_MODEL=google/embeddinggemma-300m"
+if "!model_choice!"=="3" goto enable_lightweight_speed
+if "!model_choice!"=="4" set "SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B"
+if "!model_choice!"=="5" goto enable_multi_model
 
 REM Perform model switch
 if defined SELECTED_MODEL (
@@ -1728,7 +1726,7 @@ if defined SELECTED_MODEL (
         echo.
     )
 ) else (
-    echo [ERROR] Invalid choice. Please select 0-5 or A.
+    echo [ERROR] Invalid choice
 )
 echo.
 pause

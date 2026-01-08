@@ -355,6 +355,28 @@ def get_embedder(model_key: Optional[str] = None) -> CodeEmbedder:
     return get_model_pool_manager().get_embedder(model_key)
 
 
+def get_model_key_from_name(model_name: str) -> Optional[str]:
+    """Get model_key from model name by reverse lookup in pool config.
+
+    This is used to ensure incremental indexing uses the same model that
+    was used to create the index (read from project_info.json).
+
+    Args:
+        model_name: Full model name (e.g., "Alibaba-NLP/gte-modernbert-base")
+
+    Returns:
+        Model key (e.g., "gte_modernbert") or None if not found
+    """
+    pool_config = get_model_pool_manager()._get_pool_config()
+
+    # Reverse lookup: model_name -> model_key
+    for key, name in pool_config.items():
+        if name == model_name:
+            return key
+
+    return None
+
+
 def reset_pool_manager() -> None:
     """Reset the module-level ModelPoolManager singleton.
 

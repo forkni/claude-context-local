@@ -833,9 +833,38 @@ class IncrementalIndexer:
 
             # Refresh embedder after cleanup - old one can't reload (model loader cleared)
             # This ensures cleanup happens before model is loaded for reindex
-            from mcp_server.model_pool_manager import get_embedder
+            from mcp_server.model_pool_manager import (
+                get_embedder,
+                get_model_key_from_name,
+            )
+            from search.dimension_validator import read_index_metadata
 
-            self.embedder = get_embedder()
+            # CRITICAL: Read the model from the existing index to ensure we use the SAME model
+            # that was used to create the index (prevents dimension mismatch errors)
+            model_key = None
+            try:
+                # Get storage_dir from indexer (CodeIndexManager or HybridSearcher.dense_index)
+                if hasattr(self.indexer, "storage_dir"):
+                    storage_dir = self.indexer.storage_dir
+                elif hasattr(self.indexer, "dense_index") and hasattr(
+                    self.indexer.dense_index, "storage_dir"
+                ):
+                    storage_dir = self.indexer.dense_index.storage_dir
+                else:
+                    storage_dir = None
+
+                if storage_dir:
+                    metadata = read_index_metadata(storage_dir)
+                    if metadata and metadata.get("embedding_model"):
+                        model_name = metadata["embedding_model"]
+                        model_key = get_model_key_from_name(model_name)
+                        logger.info(
+                            f"Using model from index: {model_name} (key: {model_key})"
+                        )
+            except Exception as e:
+                logger.warning(f"Could not read model from index metadata: {e}")
+
+            self.embedder = get_embedder(model_key)
             logger.info("Embedder refreshed after cleanup - ready for reindex")
 
             return self.incremental_index(project_path, project_name)

@@ -309,6 +309,18 @@ class ChunkingConfig:
     token_estimation: str = "whitespace"  # "whitespace" (fast) or "tiktoken" (accurate)
 
 
+@dataclass
+class EgoGraphConfig:
+    """Ego-graph retrieval settings (RepoGraph ICLR 2025)."""
+
+    enabled: bool = False  # Enable ego-graph expansion
+    k_hops: int = 2  # Number of hops (1-2 recommended)
+    max_neighbors_per_hop: int = 10  # Max neighbors per hop to prevent explosion
+    relation_types: Optional[list] = None  # Filter to specific relations (None = all)
+    include_anchor: bool = True  # Include original anchor nodes in results
+    deduplicate: bool = True  # Remove duplicate chunk_ids
+
+
 class SearchConfig:
     """Root configuration with nested sub-configs.
 
@@ -331,6 +343,7 @@ class SearchConfig:
         reranker: Optional[RerankerConfig] = None,
         output: Optional[OutputConfig] = None,
         chunking: Optional[ChunkingConfig] = None,
+        ego_graph: Optional[EgoGraphConfig] = None,
     ):
         """Initialize SearchConfig with nested sub-configs.
 
@@ -344,6 +357,7 @@ class SearchConfig:
             reranker: RerankerConfig instance (optional, defaults to RerankerConfig())
             output: OutputConfig instance (optional, defaults to OutputConfig())
             chunking: ChunkingConfig instance (optional, defaults to ChunkingConfig())
+            ego_graph: EgoGraphConfig instance (optional, defaults to EgoGraphConfig())
         """
         # Initialize nested configs with defaults
         self.embedding = embedding if embedding is not None else EmbeddingConfig()
@@ -359,6 +373,7 @@ class SearchConfig:
         self.reranker = reranker if reranker is not None else RerankerConfig()
         self.output = output if output is not None else OutputConfig()
         self.chunking = chunking if chunking is not None else ChunkingConfig()
+        self.ego_graph = ego_graph if ego_graph is not None else EgoGraphConfig()
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to nested dictionary for JSON serialization.
@@ -445,6 +460,14 @@ class SearchConfig:
                 "max_chunk_lines": self.chunking.max_chunk_lines,
                 "token_estimation": self.chunking.token_estimation,
             },
+            "ego_graph": {
+                "enabled": self.ego_graph.enabled,
+                "k_hops": self.ego_graph.k_hops,
+                "max_neighbors_per_hop": self.ego_graph.max_neighbors_per_hop,
+                "relation_types": self.ego_graph.relation_types,
+                "include_anchor": self.ego_graph.include_anchor,
+                "deduplicate": self.ego_graph.deduplicate,
+            },
         }
 
     @classmethod
@@ -475,6 +498,7 @@ class SearchConfig:
             reranker_data = data.get("reranker", {})
             output_data = data.get("output", {})
             chunking_data = data.get("chunking", {})
+            ego_graph_data = data.get("ego_graph", {})
 
             # Auto-update dimension from model registry
             if "model_name" in embedding_data:
@@ -593,6 +617,15 @@ class SearchConfig:
                 token_estimation=chunking_data.get("token_estimation", "whitespace"),
             )
 
+            ego_graph = EgoGraphConfig(
+                enabled=ego_graph_data.get("enabled", False),
+                k_hops=ego_graph_data.get("k_hops", 2),
+                max_neighbors_per_hop=ego_graph_data.get("max_neighbors_per_hop", 10),
+                relation_types=ego_graph_data.get("relation_types"),
+                include_anchor=ego_graph_data.get("include_anchor", True),
+                deduplicate=ego_graph_data.get("deduplicate", True),
+            )
+
         else:
             # LEGACY: Flat format (pre-v0.8.0) - backward compatibility
             # Auto-update dimension and batch size if model is in registry
@@ -698,6 +731,15 @@ class SearchConfig:
                 token_estimation=data.get("token_estimation", "whitespace"),
             )
 
+            ego_graph = EgoGraphConfig(
+                enabled=data.get("ego_graph_enabled", False),
+                k_hops=data.get("ego_graph_k_hops", 2),
+                max_neighbors_per_hop=data.get("ego_graph_max_neighbors_per_hop", 10),
+                relation_types=data.get("ego_graph_relation_types"),
+                include_anchor=data.get("ego_graph_include_anchor", True),
+                deduplicate=data.get("ego_graph_deduplicate", True),
+            )
+
         return cls(
             embedding=embedding,
             search_mode=search_mode,
@@ -708,6 +750,7 @@ class SearchConfig:
             reranker=reranker,
             output=output,
             chunking=chunking,
+            ego_graph=ego_graph,
         )
 
 

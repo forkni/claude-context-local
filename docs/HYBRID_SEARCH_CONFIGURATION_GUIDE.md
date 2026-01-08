@@ -95,6 +95,11 @@ All hybrid search features have been **comprehensively tested** and validated fo
     "multi_hop_count": 2,
     "multi_hop_expansion": 0.3,
     "rrf_k_parameter": 100
+  },
+  "ego_graph": {
+    "enabled": false,
+    "k_hops": 2,
+    "max_neighbors_per_hop": 10
   }
 }
 ```
@@ -102,6 +107,89 @@ All hybrid search features have been **comprehensively tested** and validated fo
 ```
 
 **Validation**: Empirically tested with 256+ queries across multiple codebases.
+
+---
+
+## Ego-Graph Configuration (v0.8.4+)
+
+**Feature**: RepoGraph-style k-hop ego-graph retrieval for context expansion
+
+**Status**: Disabled by default (per-query opt-in)
+
+### Configuration
+
+The ego-graph feature is configured via per-query parameters, not global settings:
+
+```python
+# Enable ego-graph expansion for a specific query
+search_code(
+    "authentication handler",
+    ego_graph_enabled=True,     # Opt-in parameter
+    ego_graph_k_hops=2,         # Graph traversal depth
+    ego_graph_max_neighbors_per_hop=10  # Neighbor limit
+)
+```
+
+**Parameters**:
+
+| Parameter | Default | Range | Description |
+|-----------|---------|-------|-------------|
+| `ego_graph_enabled` | `false` | - | Enable k-hop neighbor expansion from call graph |
+| `ego_graph_k_hops` | `2` | 1-5 | Graph traversal depth (1=direct, 2=neighbors of neighbors) |
+| `ego_graph_max_neighbors_per_hop` | `10` | 1-50 | Limit neighbors per hop to prevent explosion |
+
+### Interaction with Multi-Hop Search
+
+**Both features work together** to provide complementary context:
+
+| Feature | Multi-Hop | Ego-Graph |
+|---------|-----------|-----------|
+| **Default State** | Enabled | Disabled (opt-in) |
+| **Discovery Method** | Semantic similarity | Graph structure (calls, imports) |
+| **Context Type** | Related concepts | Code dependencies |
+| **Overhead** | +25-35ms | +0-5ms |
+
+**Workflow when both enabled**:
+
+1. **Multi-hop search** finds semantically related code (enabled by default)
+   - Query → anchors → semantic expansion → re-ranked results
+2. **Ego-graph expansion** adds graph neighbors (when `ego_graph_enabled=True`)
+   - Anchors → graph neighbors → filtered & deduplicated
+
+**Result**: Semantic context (multi-hop) + Structural context (ego-graph) = comprehensive understanding
+
+**Example**:
+
+```python
+# Multi-hop only (default)
+search_code("request handler")
+# Returns: handler + semantically similar handlers
+
+# Multi-hop + Ego-graph
+search_code("request handler", ego_graph_enabled=True)
+# Returns: handler + similar handlers + callers + callees + imports
+```
+
+### When to Enable Ego-Graph
+
+**Enable for**:
+
+- Dependency analysis: "What calls this function?"
+- Impact assessment: "What breaks if I change this?"
+- Call chain understanding: "How does data flow through this?"
+- Refactoring preparation: "What code depends on this class?"
+
+**Leave disabled for**:
+
+- Conceptual queries: "How does authentication work?"
+- Simple searches: "Find all test files"
+- Performance-critical queries: (minimal overhead, but opt-in by design)
+
+### Performance Impact
+
+- **Overhead**: ~0-5ms for graph traversal
+- **Expansion factor**: 3.5-4.6× (e.g., 5 anchors → 23 total results)
+- **Symbol filtering**: Automatic (removes 4-33 invalid nodes per anchor)
 
 ---
 
