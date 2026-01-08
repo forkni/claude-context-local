@@ -443,7 +443,7 @@ class IncrementalIndexer:
             # Two-Pass Flow: Chunk → Build graph → Detect communities → Remerge → Embed
             # Auto-select: Full index → community merge, Incremental → greedy merge
             config = get_search_config()
-            if config.chunking.enable_greedy_merge and all_chunks:
+            if config.chunking.enable_chunk_merging and all_chunks:
                 logger.info("[COMMUNITY_MERGE] Auto-enabled for full index")
                 logger.info(f"[COMMUNITY_MERGE] Starting with {len(all_chunks)} chunks")
 

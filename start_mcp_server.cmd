@@ -337,7 +337,7 @@ echo   2. Search Mode Configuration        - Mode, weights, parallel search
 echo   3. Select Embedding Model           - Choose model by VRAM ^(BGE-M3/Qwen3^)
 echo   4. Configure Neural Reranker        - Cross-encoder reranking ^(+5-15%% quality^)
 echo   5. Entity Tracking Configuration    - Symbol tracking, import/class context
-echo   6. Configure Chunking Settings      - Greedy merge, AST splitting ^(+4.3 Recall@5^)
+echo   6. Configure Chunking Settings      - Chunk merging, AST splitting ^(+4.3 Recall@5^)
 echo   7. Performance Settings             - GPU acceleration, VRAM management, auto-reindex
 echo   9. Reset to Defaults                - Restore optimal default settings
 echo   0. Back to Main Menu
@@ -1009,7 +1009,7 @@ REM Search Configuration Functions
 echo.
 echo [INFO] Current Search Configuration:
 if exist ".venv\Scripts\python.exe" (
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = config.routing.multi_model_enabled; pool = config.routing.multi_model_pool or 'full'; model_display = f'BGE-M3 + gte-modernbert ({pool})' if multi_enabled and pool == 'lightweight-speed' else f'BGE-M3 + Qwen3 + CodeRankEmbed ({pool})' if multi_enabled else f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print('    Multi-Model Routing:', 'Enabled' if multi_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print(); print('  Chunking Settings:'); print('    Greedy Merge:', 'Enabled' if config.chunking.enable_greedy_merge else 'Disabled'); print(f'      Min Chunk Tokens: {config.chunking.min_chunk_tokens}'); print(f'      Max Merged Tokens: {config.chunking.max_merged_tokens}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'      Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    Allow Shared Memory: {\"Enabled\" if config.performance.allow_shared_memory else \"Disabled\"}'); print(); print('  Output Format:', config.output.format)"
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = config.routing.multi_model_enabled; pool = config.routing.multi_model_pool or 'full'; model_display = f'BGE-M3 + gte-modernbert ({pool})' if multi_enabled and pool == 'lightweight-speed' else f'BGE-M3 + Qwen3 + CodeRankEmbed ({pool})' if multi_enabled else f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print('    Multi-Model Routing:', 'Enabled' if multi_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print(); print('  Chunking Settings:'); print('    Chunk Merging:', 'Enabled' if config.chunking.enable_chunk_merging else 'Disabled'); print(f'    Community Resolution: {config.chunking.community_resolution}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'    Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    Allow Shared Memory: {\"Enabled\" if config.performance.allow_shared_memory else \"Disabled\"}'); print(); print('  Output Format:', config.output.format)"
     if "!ERRORLEVEL!" neq "0" (
         echo Error loading configuration
         echo Using defaults: hybrid mode, BM25=0.4, Dense=0.6
@@ -1910,7 +1910,10 @@ echo.
 echo === Configure Chunking Settings ===
 echo.
 echo Chunking settings control how code is split into semantic units.
-echo Greedy Merge (cAST algorithm) combines small chunks for better retrieval.
+echo Chunk Merging (Two-Pass algorithm) combines small chunks for better retrieval.
+echo.
+echo Note: Community-based merge (Pass 2) runs only during full re-indexing.
+echo       Incremental indexing uses greedy merge (Pass 1) only.
 echo.
 echo Benefits:
 echo   - +4.3 Recall@5 improvement (EMNLP 2025 academic validation)
@@ -1918,15 +1921,15 @@ echo   - 20-30%% fewer chunks (merged getters/setters)
 echo   - Denser embeddings with more context per vector
 echo.
 echo Current Settings:
-".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Greedy Merge:', 'Enabled' if cfg.chunking.enable_greedy_merge else 'Disabled'); print('  Community Resolution:', cfg.chunking.community_resolution); print('  Token Estimation:', cfg.chunking.token_estimation); print('  Large Node Splitting:', 'Enabled' if cfg.chunking.enable_large_node_splitting else 'Disabled'); print('  Max Chunk Lines:', cfg.chunking.max_chunk_lines)" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Chunk Merging:', 'Enabled' if cfg.chunking.enable_chunk_merging else 'Disabled'); print('  Community Resolution:', cfg.chunking.community_resolution); print('  Token Estimation:', cfg.chunking.token_estimation); print('  Large Node Splitting:', 'Enabled' if cfg.chunking.enable_large_node_splitting else 'Disabled'); print('  Max Chunk Lines:', cfg.chunking.max_chunk_lines)" 2>nul
 echo.
-echo   1. Enable Greedy Merge        - Merge small chunks (recommended)
-echo   2. Disable Greedy Merge       - Keep all chunks separate
-echo   3. Set Community Resolution   - Louvain algorithm parameter (0.1-2.0, default: 1.0)
-echo   4. Set Token Estimation       - whitespace (fast) or tiktoken (accurate)
-echo   5. Enable Large Node Splitting - Split functions ^> max_chunk_lines at AST boundaries
-echo   6. Disable Large Node Splitting - Keep large functions intact
-echo   7. Set Max Chunk Lines        - Split threshold in lines (default: 100)
+echo   1. Enable Chunk Merging                 - Merge small chunks (recommended)
+echo   2. Disable Chunk Merging                - Keep all chunks separate
+echo   3. Set Community Resolution             - Louvain algorithm parameter (0.1-2.0, default: 1.0)
+echo   4. Set Token Estimation                 - whitespace (fast) or tiktoken (accurate)
+echo   5. Enable Large Node Splitting          - Split functions ^> max_chunk_lines at AST boundaries
+echo   6. Disable Large Node Splitting         - Keep large functions intact
+echo   7. Set Max Chunk Lines                  - Split threshold in lines (default: 100)
 echo   0. Back to Search Configuration
 echo.
 set "chunk_choice="
@@ -1938,8 +1941,8 @@ if "!chunk_choice!"=="0" goto search_config_menu
 
 if "!chunk_choice!"=="1" (
     echo.
-    echo [INFO] Enabling greedy merge...
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_greedy_merge = True; mgr.save_config(cfg); print('[OK] Greedy merge enabled')" 2>nul
+    echo [INFO] Enabling chunk merging...
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_chunk_merging = True; mgr.save_config(cfg); print('[OK] Chunk merging enabled')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
@@ -1949,8 +1952,8 @@ if "!chunk_choice!"=="1" (
 )
 if "!chunk_choice!"=="2" (
     echo.
-    echo [INFO] Disabling greedy merge...
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_greedy_merge = False; mgr.save_config(cfg); print('[OK] Greedy merge disabled')" 2>nul
+    echo [INFO] Disabling chunk merging...
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_chunk_merging = False; mgr.save_config(cfg); print('[OK] Chunk merging disabled')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
@@ -2169,12 +2172,11 @@ echo     - Import Context: Enabled
 echo     - Class Context: Enabled
 echo.
 echo   Chunking Settings:
-echo     - Greedy Merge: Enabled
-echo     - Min Chunk Tokens: 50
-echo     - Max Merged Tokens: 1000
+echo     - Chunk Merging: Enabled
+echo     - Community Resolution: 1.1
+echo     - Token Estimation: whitespace
 echo     - Large Node Splitting: Disabled ^(preserve full functions^)
 echo     - Max Chunk Lines: 100
-echo     - Token Estimation: whitespace
 echo.
 echo   Output Format: ultra ^(45-55%% token reduction^)
 echo.

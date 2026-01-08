@@ -28,7 +28,7 @@ class TestQualifiedChunkIdGeneration:
 
         # Disable greedy merge for these tests to check basic chunking behavior
         mock_config = MagicMock()
-        mock_config.chunking = ChunkingConfig(enable_greedy_merge=False)
+        mock_config.chunking = ChunkingConfig(enable_chunk_merging=False)
 
         locator = ServiceLocator.instance()
         locator.register("config", mock_config)
@@ -195,7 +195,7 @@ class TestTreeSitterChunkParentClass:
 
         # Disable greedy merge for these tests to check basic chunking behavior
         mock_config = MagicMock()
-        mock_config.chunking = ChunkingConfig(enable_greedy_merge=False)
+        mock_config.chunking = ChunkingConfig(enable_chunk_merging=False)
 
         locator = ServiceLocator.instance()
         locator.register("config", mock_config)

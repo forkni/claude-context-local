@@ -70,12 +70,12 @@
     "format": "ultra"
   },
   "chunking": {
-    "enable_greedy_merge": true,
+    "enable_chunk_merging": true,
     "min_chunk_tokens": 50,
     "max_merged_tokens": 1000,
     "enable_large_node_splitting": false,
     "max_chunk_lines": 100,
-    "token_estimation": "whitespace",
+    "token_estimation": "tiktoken",
     "community_resolution": 1.1
   },
   "ego_graph": {

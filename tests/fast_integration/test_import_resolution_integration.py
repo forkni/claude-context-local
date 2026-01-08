@@ -22,7 +22,7 @@ class TestImportResolutionEndToEnd:
         """Set up test fixtures."""
         # Disable greedy merge for these tests to check individual method chunks
         mock_config = MagicMock()
-        mock_config.chunking = ChunkingConfig(enable_greedy_merge=False)
+        mock_config.chunking = ChunkingConfig(enable_chunk_merging=False)
         self.locator = ServiceLocator.instance()
         self.locator.register("config", mock_config)
 

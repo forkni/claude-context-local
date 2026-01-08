@@ -209,7 +209,7 @@ Critical bug fixes for VRAM management during auto-reindex, plus UI improvements
 
 ### Breaking Changes
 
-- `enable_greedy_merge` default changed from `True` to `False`
+- `enable_chunk_merging` default changed from `True` to `False`
 - Users wanting chunk merging must explicitly enable it
 
 ### Files Modified
@@ -288,7 +288,7 @@ Critical bug fixes for VRAM management during auto-reindex, plus UI improvements
 **Configuration System** (`search/config.py`):
 
 - New `ChunkingConfig` dataclass with 6 fields:
-  - `enable_greedy_merge` (bool, default: True)
+  - `enable_chunk_merging` (bool, default: True)
   - `min_chunk_tokens` (int, default: 50)
   - `max_merged_tokens` (int, default: 1,000)
   - `enable_large_node_splitting` (bool, default: False) - placeholder for Task 3.4

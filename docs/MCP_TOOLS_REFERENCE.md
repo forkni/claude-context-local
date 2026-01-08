@@ -17,7 +17,7 @@ This modular reference can be embedded in any project instructions for Claude Co
 | configure_search_mode | Config | Set search mode & weights | search_mode="hybrid", bm25_weight=0.4, dense_weight=0.6, enable_parallel=True |
 | configure_query_routing | Config | Configure multi-model routing (v0.5.4+) | enable_multi_model, default_model, confidence_threshold=0.05 |
 | configure_reranking | Config | Configure neural reranker settings | enabled, model_name, top_k_candidates=50 |
-| configure_chunking | Config | Configure code chunking settings | enable_greedy_merge, min_chunk_tokens, max_merged_tokens, token_estimation, enable_large_node_splitting, max_chunk_lines |
+| configure_chunking | Config | Configure code chunking settings | enable_chunk_merging, min_chunk_tokens, max_merged_tokens, token_estimation, enable_large_node_splitting, max_chunk_lines |
 | get_search_config_status | Config | View current configuration | *(no parameters)* |
 | get_index_status | Status | Check index health & model info | *(no parameters)* |
 | get_memory_status | Monitor | Check RAM/VRAM usage | *(no parameters)* |
@@ -468,7 +468,7 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 
 **Parameters**:
 
-- `enable_greedy_merge` (bool): Enable/disable greedy chunk merging (default: True)
+- `enable_chunk_merging` (bool): Enable/disable greedy chunk merging (default: True)
 - `min_chunk_tokens` (int): Minimum tokens before merge (10-500, default: 50)
 - `max_merged_tokens` (int): Maximum tokens for merged chunks (100-5000, default: 1000)
 - `token_estimation` (str): Token estimation method - "whitespace" (fast) or "tiktoken" (accurate, default: "whitespace")
@@ -482,7 +482,7 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 ### Commands
 
 ```
-/configure_chunking --enable_greedy_merge true --min_chunk_tokens 50
+/configure_chunking --enable_chunk_merging true --min_chunk_tokens 50
 /configure_chunking --enable_large_node_splitting true --max_chunk_lines 100
 /get_search_config_status  # View current chunking settings
 ```

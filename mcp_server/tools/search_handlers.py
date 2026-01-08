@@ -154,6 +154,14 @@ def _route_query_to_model(
             }
 
         # Last resort: Try configured default model first, then scan remaining models
+        # GUARD: Skip model scanning if no project is selected
+        if current_project is None:
+            logger.warning(
+                "No project selected and no fallback model available. "
+                "Cannot determine model for routing."
+            )
+            return None, None
+
         from search.config import get_search_config
 
         config = get_search_config()
@@ -516,6 +524,16 @@ async def handle_search_code(arguments: Dict[str, Any]) -> Dict:
 
     logger.info(f"[SEARCH] query='{query}', k={k}, mode='{search_mode}'")
 
+    # Early validation: Check if a project is indexed before routing
+    current_project = get_state().current_project
+    if not current_project:
+        return {
+            "error": "No indexed project found",
+            "message": "You must index a project before searching. Use index_directory first.",
+            "current_project": None,
+            "system_message": "No project indexed. Use index_directory(directory_path) to index a project first.",
+        }
+
     # Route query to optimal embedding model
     selected_model_key, routing_info = _route_query_to_model(
         query, use_routing, model_key
@@ -681,6 +699,14 @@ async def handle_find_similar_code(arguments: Dict[str, Any]) -> Dict:
     if chunk_id:
         chunk_id = MetadataStore.normalize_chunk_id(chunk_id)
 
+    # Early validation: Check if a project is indexed
+    if not get_state().current_project:
+        return {
+            "error": "No indexed project found",
+            "message": "You must index a project before finding similar code. Use index_directory first.",
+            "current_project": None,
+        }
+
     searcher = get_searcher()
 
     # Simple implementation - delegate to searcher
@@ -734,6 +760,14 @@ async def handle_find_connections(arguments: Dict[str, Any]) -> Dict:
     logger.info(
         f"[FIND_CONNECTIONS] chunk_id={chunk_id}, symbol_name={symbol_name}, depth={max_depth}"
     )
+
+    # Early validation: Check if a project is indexed
+    if not get_state().current_project:
+        return {
+            "error": "No indexed project found",
+            "message": "You must index a project before analyzing connections. Use index_directory first.",
+            "current_project": None,
+        }
 
     # Get searcher
     searcher = get_searcher()

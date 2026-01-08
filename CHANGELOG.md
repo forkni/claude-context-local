@@ -9,7 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-*No unreleased changes yet.*
+### Changed
+
+- **Config Rename**: `enable_greedy_merge` → `enable_chunk_merging`
+  - Old name was misleading (suggested only greedy merge)
+  - New name accurately reflects Two-Pass Chunking (Pass 1: greedy per-file + Pass 2: community cross-file)
+  - Backward compatible: accepts both `enable_chunk_merging` (new) and `enable_greedy_merge` (deprecated)
 
 ---
 
@@ -27,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logging tag standardization: All `[save]` tags now uppercase `[SAVE]` for consistency
 - Batch size logs now show "128 chunks" instead of ambiguous "128"
 - Suppressed INFO logs during Rich progress bars to prevent line mixing
-- **BREAKING**: `enable_greedy_merge` default changed from `True` to `False` (opt-in)
+- **BREAKING**: `enable_chunk_merging` default changed from `True` to `False` (opt-in)
 
 ### Fixed
 
@@ -71,7 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **cAST Greedy Sibling Merging (Task 3.5)** - Implementation of EMNLP 2025 chunking algorithm
-  - Added 6 chunking configuration fields to `search_config.json`: `enable_greedy_merge`, `min_chunk_tokens`, `max_merged_tokens`, `enable_large_node_splitting`, `max_chunk_lines`, `token_estimation`
+  - Added 6 chunking configuration fields to `search_config.json`: `enable_chunk_merging`, `min_chunk_tokens`, `max_merged_tokens`, `enable_large_node_splitting`, `max_chunk_lines`, `token_estimation`
   - New `ChunkingConfig` dataclass in `search/config.py` for centralized chunking settings
   - New `estimate_tokens()` function supporting whitespace (fast) and tiktoken (accurate) methods
   - New `_greedy_merge_small_chunks()` algorithm in `chunking/languages/base.py` (67 lines)
@@ -97,7 +102,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Chunking Pipeline Enhancement** - Greedy merge integration into code chunking flow
   - `LanguageChunker.chunk_code()` now accepts optional `ChunkingConfig` parameter
-  - Automatic merge of adjacent small chunks when `enable_greedy_merge=True`
+  - Automatic merge of adjacent small chunks when `enable_chunk_merging=True`
   - Config fetched via ServiceLocator if not provided
   - `TreeSitterChunker.chunk_file()` passes config to language chunker
   - Files: `chunking/languages/base.py`, `chunking/tree_sitter.py`

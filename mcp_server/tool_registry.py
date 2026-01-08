@@ -587,7 +587,8 @@ Args:
         "description": """Configure code chunking settings.
 
 Args:
-    enable_greedy_merge: Enable/disable greedy chunk merging (default: True)
+    enable_chunk_merging: Enable/disable Two-Pass chunking (greedy + community merge) (default: True)
+    enable_greedy_merge: (Deprecated) Use enable_chunk_merging instead
     community_resolution: Resolution parameter for Louvain community detection (default: 1.0, range: 0.1-2.0, higher = more communities)
     token_estimation: Token estimation method - "whitespace" (fast) or "tiktoken" (accurate) (default: "whitespace")
     enable_large_node_splitting: Enable/disable AST block splitting for large functions (default: False)
@@ -597,9 +598,13 @@ Note: min_chunk_tokens (50) and max_merged_tokens (1000) are optimal defaults an
         "input_schema": {
             "type": "object",
             "properties": {
+                "enable_chunk_merging": {
+                    "type": "boolean",
+                    "description": "Enable/disable Two-Pass chunking (greedy + community merge)",
+                },
                 "enable_greedy_merge": {
                     "type": "boolean",
-                    "description": "Enable/disable greedy chunk merging",
+                    "description": "(Deprecated) Use enable_chunk_merging instead",
                 },
                 "community_resolution": {
                     "type": "number",

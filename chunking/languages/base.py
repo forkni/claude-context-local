@@ -721,7 +721,7 @@ class LanguageChunker(ABC):
         # Apply greedy sibling merging if enabled
         # Pass 1: Always merge by parent_class boundaries (fast, file-local)
         # Pass 2: Community merge happens during full index (graph-aware boundaries)
-        if config and config.enable_greedy_merge and len(chunks) > 1:
+        if config and config.enable_chunk_merging and len(chunks) > 1:
             chunks, _, _ = self._greedy_merge_small_chunks(
                 chunks,
                 min_tokens=config.min_chunk_tokens,
@@ -732,7 +732,7 @@ class LanguageChunker(ABC):
 
         # Store merge stats in first chunk's metadata for ParallelChunker aggregation
         # Format: (original_count, merged_count)
-        if chunks and config and config.enable_greedy_merge:
+        if chunks and config and config.enable_chunk_merging:
             if not hasattr(chunks[0], "_merge_stats"):
                 # Add temporary attribute for stats propagation
                 chunks[0]._merge_stats = (original_count, len(chunks))

@@ -296,8 +296,10 @@ class OutputConfig:
 class ChunkingConfig:
     """Chunking algorithm settings (7 fields)."""
 
-    # Greedy Sibling Merging (cAST algorithm - EMNLP 2025)
-    enable_greedy_merge: bool = False  # Opt-in cAST greedy sibling merging
+    # Two-Pass Chunking: Greedy Merge + Community Merge (cAST algorithm - EMNLP 2025)
+    enable_chunk_merging: bool = (
+        False  # Two-Pass: greedy (per-file) + community (cross-file)
+    )
     min_chunk_tokens: int = 50  # Minimum tokens before considering merge
     max_merged_tokens: int = 1000  # Maximum tokens for merged chunk
 
@@ -477,7 +479,7 @@ class SearchConfig:
                 "format": self.output.format,
             },
             "chunking": {
-                "enable_greedy_merge": self.chunking.enable_greedy_merge,
+                "enable_chunk_merging": self.chunking.enable_chunk_merging,
                 "min_chunk_tokens": self.chunking.min_chunk_tokens,
                 "max_merged_tokens": self.chunking.max_merged_tokens,
                 "enable_large_node_splitting": self.chunking.enable_large_node_splitting,
@@ -632,7 +634,10 @@ class SearchConfig:
             )
 
             chunking = ChunkingConfig(
-                enable_greedy_merge=chunking_data.get("enable_greedy_merge", False),
+                enable_chunk_merging=chunking_data.get(
+                    "enable_chunk_merging",
+                    chunking_data.get("enable_greedy_merge", False),  # Backward compat
+                ),
                 min_chunk_tokens=chunking_data.get("min_chunk_tokens", 50),
                 max_merged_tokens=chunking_data.get("max_merged_tokens", 1000),
                 enable_large_node_splitting=chunking_data.get(
@@ -749,7 +754,10 @@ class SearchConfig:
             )
 
             chunking = ChunkingConfig(
-                enable_greedy_merge=data.get("enable_greedy_merge", False),
+                enable_chunk_merging=data.get(
+                    "enable_chunk_merging",
+                    data.get("enable_greedy_merge", False),  # Backward compat
+                ),
                 min_chunk_tokens=data.get("min_chunk_tokens", 50),
                 max_merged_tokens=data.get("max_merged_tokens", 1000),
                 enable_large_node_splitting=data.get(

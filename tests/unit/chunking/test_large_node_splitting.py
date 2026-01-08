@@ -251,7 +251,7 @@ class TestChunkCodeWithSplitting:
         config = ChunkingConfig(
             enable_large_node_splitting=True,
             max_chunk_lines=10,  # Force splitting
-            enable_greedy_merge=False,  # Disable merge to see raw splits
+            enable_chunk_merging=False,  # Disable merge to see raw splits
         )
 
         chunks = chunker.chunk_code(code, config=config)
@@ -291,7 +291,7 @@ class TestChunkCodeWithSplitting:
         config = ChunkingConfig(
             enable_large_node_splitting=True,
             max_chunk_lines=3,
-            enable_greedy_merge=False,
+            enable_chunk_merging=False,
         )
 
         chunks = chunker.chunk_code(code, config=config)
@@ -356,7 +356,7 @@ class TestEdgeCases:
         config = ChunkingConfig(
             enable_large_node_splitting=True,
             max_chunk_lines=3,
-            enable_greedy_merge=False,
+            enable_chunk_merging=False,
         )
 
         chunks = chunker.chunk_code(code, config=config)

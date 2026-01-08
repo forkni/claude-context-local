@@ -88,6 +88,26 @@ class MetadataStore:
 
         return None
 
+    def get_chunk_metadata(self, chunk_id: str) -> Optional[Dict[str, Any]]:
+        """Get just the metadata dict for a chunk (without index_id wrapper).
+
+        This is a convenience method for cases where only chunk metadata is needed,
+        not the FAISS index position. Used by community remerge operations.
+
+        Args:
+            chunk_id: Chunk identifier
+
+        Returns:
+            Metadata dictionary with fields like relative_path, chunk_type, content, etc.,
+            or None if chunk not found
+
+        Example:
+            >>> store.get_chunk_metadata("file.py:1-10:function:foo")
+            {"relative_path": "file.py", "chunk_type": "function", "content": "...", ...}
+        """
+        entry = self.get(chunk_id)
+        return entry["metadata"] if entry else None
+
     def set(self, chunk_id: str, index_id: int, metadata: Dict[str, Any]):
         """Set metadata for a chunk.
 

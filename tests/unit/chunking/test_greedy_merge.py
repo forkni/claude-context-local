@@ -345,7 +345,7 @@ def a(): pass
 def b(): pass
 def c(): pass
 """
-        config = ChunkingConfig(enable_greedy_merge=False)
+        config = ChunkingConfig(enable_chunk_merging=False)
         chunks = chunker.chunk_code(code, config=config)
         # Should have 3 separate function chunks
         assert len(chunks) >= 3
@@ -359,7 +359,7 @@ def b(): pass
 def c(): pass
 """
         config = ChunkingConfig(
-            enable_greedy_merge=True,
+            enable_chunk_merging=True,
             min_chunk_tokens=50,  # These functions are < 50 tokens
             max_merged_tokens=1000,
         )
@@ -374,7 +374,7 @@ def c(): pass
 
         # Register a config with merge disabled
         mock_config = MagicMock()
-        mock_config.chunking = ChunkingConfig(enable_greedy_merge=False)
+        mock_config.chunking = ChunkingConfig(enable_chunk_merging=False)
 
         locator = ServiceLocator.instance()
         locator.register("config", mock_config)
@@ -395,7 +395,7 @@ class TestChunkingConfig:
         """Default values are sensible."""
         config = ChunkingConfig()
         assert (
-            config.enable_greedy_merge is False
+            config.enable_chunk_merging is False
         )  # Opt-in behavior (changed from True)
         assert config.min_chunk_tokens == 50
         assert config.max_merged_tokens == 1000
@@ -406,12 +406,12 @@ class TestChunkingConfig:
     def test_custom_values(self):
         """Custom values are respected."""
         config = ChunkingConfig(
-            enable_greedy_merge=False,
+            enable_chunk_merging=False,
             min_chunk_tokens=100,
             max_merged_tokens=500,
             token_estimation="tiktoken",
         )
-        assert config.enable_greedy_merge is False
+        assert config.enable_chunk_merging is False
         assert config.min_chunk_tokens == 100
         assert config.max_merged_tokens == 500
         assert config.token_estimation == "tiktoken"
