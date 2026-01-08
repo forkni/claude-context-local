@@ -360,8 +360,8 @@ def _index_with_all_models(
             elapsed = (datetime.now() - start_time).total_seconds()
 
             # Run community detection after indexing (purely algorithmic)
-            # Check if community detection is enabled in config
-            if config.chunking.enable_community_detection:
+            # Auto-enabled for full index when greedy merge enabled
+            if config.chunking.enable_greedy_merge and not incremental:
                 try:
                     from graph.community_detector import CommunityDetector
 
@@ -396,64 +396,59 @@ def _index_with_all_models(
                         # Persist graph with community IDs
                         graph_storage.save()
 
-                        # PHASE 2: Re-merge chunks with community boundaries (if enabled)
-                        if config.chunking.enable_community_merge:
-                            try:
-                                logger.info(
-                                    f"[REMERGE:{model_key}] Phase 2: Re-merging chunks with community boundaries..."
-                                )
+                        # PHASE 2: Re-merge chunks with community boundaries (auto-enabled)
+                        try:
+                            logger.info(
+                                f"[REMERGE:{model_key}] Phase 2: Re-merging chunks with community boundaries..."
+                            )
 
-                                # Get all chunks from indexer (HybridSearcher.dense_index)
-                                index_mgr = getattr(indexer, "dense_index", None)
-                                if index_mgr and hasattr(index_mgr, "metadata_store"):
-                                    # Get chunks from metadata
-                                    all_chunks = []
-                                    for chunk_id in communities.keys():
-                                        chunk_data = (
-                                            index_mgr.metadata_store.get_chunk_metadata(
-                                                chunk_id
-                                            )
+                            # Get all chunks from indexer (HybridSearcher.dense_index)
+                            index_mgr = getattr(indexer, "dense_index", None)
+                            if index_mgr and hasattr(index_mgr, "metadata_store"):
+                                # Get chunks from metadata
+                                all_chunks = []
+                                for chunk_id in communities.keys():
+                                    chunk_data = (
+                                        index_mgr.metadata_store.get_chunk_metadata(
+                                            chunk_id
                                         )
-                                        if chunk_data:
-                                            all_chunks.append(chunk_data)
+                                    )
+                                    if chunk_data:
+                                        all_chunks.append(chunk_data)
 
-                                    if all_chunks:
-                                        # Call remerge with community map
-                                        from chunking.languages.base import BaseChunker
+                                if all_chunks:
+                                    # Call remerge with community map
+                                    from chunking.languages.base import BaseChunker
 
-                                        remerged_chunks = BaseChunker.remerge_chunks_with_communities(
-                                            chunks=all_chunks,
-                                            community_map=communities,
-                                            min_tokens=config.chunking.min_chunk_tokens,
-                                            max_merged_tokens=config.chunking.max_merged_tokens,
-                                            token_method=config.chunking.token_estimation,
-                                        )
-
-                                        logger.info(
-                                            f"[REMERGE:{model_key}] Re-merged {len(all_chunks)} → {len(remerged_chunks)} chunks"
-                                        )
-
-                                        # TODO: Update index with remerged chunks
-                                        logger.warning(
-                                            f"[REMERGE:{model_key}] Re-embedding not yet implemented. "
-                                            "Remerged chunks computed but not indexed."
-                                        )
-                                    else:
-                                        logger.debug(
-                                            f"[REMERGE:{model_key}] No chunks to remerge"
-                                        )
-                                else:
-                                    logger.debug(
-                                        f"[REMERGE:{model_key}] Metadata store not available, skipping remerge"
+                                    remerged_chunks = BaseChunker.remerge_chunks_with_communities(
+                                        chunks=all_chunks,
+                                        community_map=communities,
+                                        min_tokens=config.chunking.min_chunk_tokens,
+                                        max_merged_tokens=config.chunking.max_merged_tokens,
+                                        token_method=config.chunking.token_estimation,
                                     )
 
-                            except Exception as e:
-                                logger.error(
-                                    f"[REMERGE:{model_key}] Phase 2 remerge failed: {e}"
+                                    logger.info(
+                                        f"[REMERGE:{model_key}] Re-merged {len(all_chunks)} → {len(remerged_chunks)} chunks"
+                                    )
+
+                                    # TODO: Update index with remerged chunks
+                                    logger.warning(
+                                        f"[REMERGE:{model_key}] Re-embedding not yet implemented. "
+                                        "Remerged chunks computed but not indexed."
+                                    )
+                                else:
+                                    logger.debug(
+                                        f"[REMERGE:{model_key}] No chunks to remerge"
+                                    )
+                            else:
+                                logger.debug(
+                                    f"[REMERGE:{model_key}] Metadata store not available, skipping remerge"
                                 )
-                        else:
-                            logger.debug(
-                                f"[REMERGE:{model_key}] Community merge disabled in config"
+
+                        except Exception as e:
+                            logger.error(
+                                f"[REMERGE:{model_key}] Phase 2 remerge failed: {e}"
                             )
 
                     else:
@@ -470,10 +465,6 @@ def _index_with_all_models(
                     logger.error(
                         f"[COMMUNITY:{model_key}] Community detection failed: {e}"
                     )
-            else:
-                logger.debug(
-                    f"[COMMUNITY:{model_key}] Community detection disabled in config"
-                )
 
             results.append(
                 {
@@ -923,8 +914,8 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> Dict:
         )
 
         # Run community detection after indexing (purely algorithmic)
-        # Check if community detection is enabled in config
-        if config.chunking.enable_community_detection:
+        # Auto-enabled for full index when greedy merge enabled
+        if config.chunking.enable_greedy_merge and not incremental:
             try:
                 from graph.community_detector import CommunityDetector
 
@@ -957,61 +948,58 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> Dict:
                     # Persist graph with community IDs
                     graph_storage.save()
 
-                    # PHASE 2: Re-merge chunks with community boundaries (if enabled)
-                    if config.chunking.enable_community_merge:
-                        try:
-                            logger.info(
-                                "[REMERGE] Phase 2: Re-merging chunks with community boundaries..."
-                            )
+                    # PHASE 2: Re-merge chunks with community boundaries (auto-enabled)
+                    try:
+                        logger.info(
+                            "[REMERGE] Phase 2: Re-merging chunks with community boundaries..."
+                        )
 
-                            # Get all chunks from indexer (HybridSearcher.dense_index)
-                            index_mgr = getattr(indexer, "dense_index", None)
-                            if index_mgr and hasattr(index_mgr, "metadata_store"):
-                                # Get chunks from metadata
-                                all_chunks = []
-                                for chunk_id in communities.keys():
-                                    chunk_data = (
-                                        index_mgr.metadata_store.get_chunk_metadata(
-                                            chunk_id
-                                        )
+                        # Get all chunks from indexer (HybridSearcher.dense_index)
+                        index_mgr = getattr(indexer, "dense_index", None)
+                        if index_mgr and hasattr(index_mgr, "metadata_store"):
+                            # Get chunks from metadata
+                            all_chunks = []
+                            for chunk_id in communities.keys():
+                                chunk_data = (
+                                    index_mgr.metadata_store.get_chunk_metadata(
+                                        chunk_id
                                     )
-                                    if chunk_data:
-                                        all_chunks.append(chunk_data)
+                                )
+                                if chunk_data:
+                                    all_chunks.append(chunk_data)
 
-                                if all_chunks:
-                                    # Call remerge with community map
-                                    from chunking.languages.base import BaseChunker
+                            if all_chunks:
+                                # Call remerge with community map
+                                from chunking.languages.base import BaseChunker
 
-                                    remerged_chunks = BaseChunker.remerge_chunks_with_communities(
-                                        chunks=all_chunks,
-                                        community_map=communities,
-                                        min_tokens=config.chunking.min_chunk_tokens,
-                                        max_merged_tokens=config.chunking.max_merged_tokens,
-                                        token_method=config.chunking.token_estimation,
-                                    )
-
-                                    logger.info(
-                                        f"[REMERGE] Re-merged {len(all_chunks)} → {len(remerged_chunks)} chunks"
-                                    )
-
-                                    # TODO: Update index with remerged chunks
-                                    # This requires re-embedding and updating FAISS index
-                                    # For now, log that remerge happened (full implementation in next step)
-                                    logger.warning(
-                                        "[REMERGE] Re-embedding not yet implemented. "
-                                        "Remerged chunks computed but not indexed."
-                                    )
-                                else:
-                                    logger.debug("[REMERGE] No chunks to remerge")
-                            else:
-                                logger.debug(
-                                    "[REMERGE] Metadata store not available, skipping remerge"
+                                remerged_chunks = BaseChunker.remerge_chunks_with_communities(
+                                    chunks=all_chunks,
+                                    community_map=communities,
+                                    min_tokens=config.chunking.min_chunk_tokens,
+                                    max_merged_tokens=config.chunking.max_merged_tokens,
+                                    token_method=config.chunking.token_estimation,
                                 )
 
-                        except Exception as e:
-                            logger.error(f"[REMERGE] Phase 2 remerge failed: {e}")
-                    else:
-                        logger.debug("[REMERGE] Community merge disabled in config")
+                                logger.info(
+                                    f"[REMERGE] Re-merged {len(all_chunks)} → {len(remerged_chunks)} chunks"
+                                )
+
+                                # TODO: Update index with remerged chunks
+                                # This requires re-embedding and updating FAISS index
+                                # For now, log that remerge happened (full implementation in next step)
+                                logger.warning(
+                                    "[REMERGE] Re-embedding not yet implemented. "
+                                    "Remerged chunks computed but not indexed."
+                                )
+                            else:
+                                logger.debug("[REMERGE] No chunks to remerge")
+                        else:
+                            logger.debug(
+                                "[REMERGE] Metadata store not available, skipping remerge"
+                            )
+
+                    except Exception as e:
+                        logger.error(f"[REMERGE] Phase 2 remerge failed: {e}")
 
                 else:
                     logger.debug(
@@ -1025,8 +1013,6 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> Dict:
                 )
             except Exception as e:
                 logger.error(f"[COMMUNITY] Community detection failed: {e}")
-        else:
-            logger.debug("[COMMUNITY] Community detection disabled in config")
 
         # Build response (using helper)
         return _build_index_response(

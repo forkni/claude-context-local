@@ -1,6 +1,6 @@
 {
   "embedding": {
-    "model_name": "google/embeddinggemma-300m",
+    "model_name": "Alibaba-NLP/gte-modernbert-base",
     "dimension": 768,
     "batch_size": 128,
     "query_cache_size": 128,
@@ -28,18 +28,18 @@
     "max_parallel_workers": 2,
     "enable_parallel_chunking": true,
     "max_chunking_workers": 4,
-    "enable_entity_tracking": false,
+    "enable_entity_tracking": true,
     "prefer_gpu": true,
-    "gpu_memory_threshold": 0.8,
-    "vram_limit_fraction": 0.8,
-    "allow_shared_memory": false,
+    "gpu_memory_threshold": 0.65,
+    "vram_limit_fraction": 0.9,
+    "allow_shared_memory": true,
     "enable_fp16": true,
     "prefer_bf16": true,
     "enable_dynamic_batch_size": true,
-    "dynamic_batch_min": 32,
-    "dynamic_batch_max": 384,
+    "dynamic_batch_min": 16,
+    "dynamic_batch_max": 128,
     "enable_auto_reindex": true,
-    "max_index_age_minutes": 5.0
+    "max_index_age_minutes": 30.0
   },
   "multi_hop": {
     "enabled": true,
@@ -50,7 +50,7 @@
   "routing": {
     "multi_model_enabled": true,
     "default_model": "bge_m3",
-    "multi_model_pool": null
+    "multi_model_pool": "lightweight-speed"
   },
   "intent": {
     "enabled": true,
@@ -61,13 +61,13 @@
   },
   "reranker": {
     "enabled": true,
-    "model_name": "BAAI/bge-reranker-v2-m3",
+    "model_name": "Alibaba-NLP/gte-reranker-modernbert-base",
     "top_k_candidates": 50,
     "min_vram_gb": 6.0,
     "batch_size": 16
   },
   "output": {
-    "format": "compact"
+    "format": "ultra"
   },
   "chunking": {
     "enable_greedy_merge": true,
@@ -75,8 +75,8 @@
     "max_merged_tokens": 1000,
     "enable_large_node_splitting": false,
     "max_chunk_lines": 100,
-    "token_estimation": "tiktoken",
-    "community_resolution": 1.15
+    "token_estimation": "whitespace",
+    "community_resolution": 1.1
   },
   "ego_graph": {
     "enabled": false,
