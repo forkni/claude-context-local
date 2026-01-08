@@ -359,6 +359,122 @@ def _index_with_all_models(
                 )
             elapsed = (datetime.now() - start_time).total_seconds()
 
+            # Run community detection after indexing (purely algorithmic)
+            # Check if community detection is enabled in config
+            if config.chunking.enable_community_detection:
+                try:
+                    from graph.community_detector import CommunityDetector
+
+                    # Get graph storage from indexer (HybridSearcher has graph_storage)
+                    graph_storage = getattr(indexer, "graph_storage", None)
+
+                    if graph_storage and graph_storage.graph.number_of_nodes() > 0:
+                        logger.info(
+                            f"[COMMUNITY:{model_key}] Running Leiden community detection..."
+                        )
+                        detector = CommunityDetector(graph_storage)
+
+                        # Use configured resolution parameter
+                        resolution = config.chunking.community_resolution
+                        communities = detector.detect_communities(resolution=resolution)
+
+                        # Assign to graph nodes
+                        for chunk_id, community_id in communities.items():
+                            if chunk_id in graph_storage.graph:
+                                graph_storage.graph.nodes[chunk_id][
+                                    "community_id"
+                                ] = community_id
+
+                        # Log stats
+                        stats = detector.get_community_stats(communities)
+                        logger.info(
+                            f"[COMMUNITY:{model_key}] Detected {stats['num_communities']} communities "
+                            f"(resolution={resolution}, largest: {stats['largest']}, "
+                            f"smallest: {stats['smallest']}, avg: {stats['avg_size']:.1f})"
+                        )
+
+                        # Persist graph with community IDs
+                        graph_storage.save()
+
+                        # PHASE 2: Re-merge chunks with community boundaries (if enabled)
+                        if config.chunking.enable_community_merge:
+                            try:
+                                logger.info(
+                                    f"[REMERGE:{model_key}] Phase 2: Re-merging chunks with community boundaries..."
+                                )
+
+                                # Get all chunks from indexer (HybridSearcher.dense_index)
+                                index_mgr = getattr(indexer, "dense_index", None)
+                                if index_mgr and hasattr(index_mgr, "metadata_store"):
+                                    # Get chunks from metadata
+                                    all_chunks = []
+                                    for chunk_id in communities.keys():
+                                        chunk_data = (
+                                            index_mgr.metadata_store.get_chunk_metadata(
+                                                chunk_id
+                                            )
+                                        )
+                                        if chunk_data:
+                                            all_chunks.append(chunk_data)
+
+                                    if all_chunks:
+                                        # Call remerge with community map
+                                        from chunking.languages.base import BaseChunker
+
+                                        remerged_chunks = BaseChunker.remerge_chunks_with_communities(
+                                            chunks=all_chunks,
+                                            community_map=communities,
+                                            min_tokens=config.chunking.min_chunk_tokens,
+                                            max_merged_tokens=config.chunking.max_merged_tokens,
+                                            token_method=config.chunking.token_estimation,
+                                        )
+
+                                        logger.info(
+                                            f"[REMERGE:{model_key}] Re-merged {len(all_chunks)} → {len(remerged_chunks)} chunks"
+                                        )
+
+                                        # TODO: Update index with remerged chunks
+                                        logger.warning(
+                                            f"[REMERGE:{model_key}] Re-embedding not yet implemented. "
+                                            "Remerged chunks computed but not indexed."
+                                        )
+                                    else:
+                                        logger.debug(
+                                            f"[REMERGE:{model_key}] No chunks to remerge"
+                                        )
+                                else:
+                                    logger.debug(
+                                        f"[REMERGE:{model_key}] Metadata store not available, skipping remerge"
+                                    )
+
+                            except Exception as e:
+                                logger.error(
+                                    f"[REMERGE:{model_key}] Phase 2 remerge failed: {e}"
+                                )
+                        else:
+                            logger.debug(
+                                f"[REMERGE:{model_key}] Community merge disabled in config"
+                            )
+
+                    else:
+                        logger.debug(
+                            f"[COMMUNITY:{model_key}] No graph nodes, skipping community detection"
+                        )
+
+                except ImportError:
+                    logger.warning(
+                        f"[COMMUNITY:{model_key}] Community detection dependencies not installed "
+                        "(igraph, leidenalg). Install with: pip install igraph leidenalg"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"[COMMUNITY:{model_key}] Community detection failed: {e}"
+                    )
+            else:
+                logger.debug(
+                    f"[COMMUNITY:{model_key}] Community detection disabled in config"
+                )
+
             results.append(
                 {
                     "model": model_name,
@@ -805,6 +921,112 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> Dict:
             include_dirs,
             exclude_dirs,
         )
+
+        # Run community detection after indexing (purely algorithmic)
+        # Check if community detection is enabled in config
+        if config.chunking.enable_community_detection:
+            try:
+                from graph.community_detector import CommunityDetector
+
+                # Get graph storage from indexer (HybridSearcher has graph_storage)
+                graph_storage = getattr(indexer, "graph_storage", None)
+
+                if graph_storage and graph_storage.graph.number_of_nodes() > 0:
+                    logger.info("[COMMUNITY] Running Leiden community detection...")
+                    detector = CommunityDetector(graph_storage)
+
+                    # Use configured resolution parameter
+                    resolution = config.chunking.community_resolution
+                    communities = detector.detect_communities(resolution=resolution)
+
+                    # Assign to graph nodes
+                    for chunk_id, community_id in communities.items():
+                        if chunk_id in graph_storage.graph:
+                            graph_storage.graph.nodes[chunk_id][
+                                "community_id"
+                            ] = community_id
+
+                    # Log stats
+                    stats = detector.get_community_stats(communities)
+                    logger.info(
+                        f"[COMMUNITY] Detected {stats['num_communities']} communities "
+                        f"(resolution={resolution}, largest: {stats['largest']}, "
+                        f"smallest: {stats['smallest']}, avg: {stats['avg_size']:.1f})"
+                    )
+
+                    # Persist graph with community IDs
+                    graph_storage.save()
+
+                    # PHASE 2: Re-merge chunks with community boundaries (if enabled)
+                    if config.chunking.enable_community_merge:
+                        try:
+                            logger.info(
+                                "[REMERGE] Phase 2: Re-merging chunks with community boundaries..."
+                            )
+
+                            # Get all chunks from indexer (HybridSearcher.dense_index)
+                            index_mgr = getattr(indexer, "dense_index", None)
+                            if index_mgr and hasattr(index_mgr, "metadata_store"):
+                                # Get chunks from metadata
+                                all_chunks = []
+                                for chunk_id in communities.keys():
+                                    chunk_data = (
+                                        index_mgr.metadata_store.get_chunk_metadata(
+                                            chunk_id
+                                        )
+                                    )
+                                    if chunk_data:
+                                        all_chunks.append(chunk_data)
+
+                                if all_chunks:
+                                    # Call remerge with community map
+                                    from chunking.languages.base import BaseChunker
+
+                                    remerged_chunks = BaseChunker.remerge_chunks_with_communities(
+                                        chunks=all_chunks,
+                                        community_map=communities,
+                                        min_tokens=config.chunking.min_chunk_tokens,
+                                        max_merged_tokens=config.chunking.max_merged_tokens,
+                                        token_method=config.chunking.token_estimation,
+                                    )
+
+                                    logger.info(
+                                        f"[REMERGE] Re-merged {len(all_chunks)} → {len(remerged_chunks)} chunks"
+                                    )
+
+                                    # TODO: Update index with remerged chunks
+                                    # This requires re-embedding and updating FAISS index
+                                    # For now, log that remerge happened (full implementation in next step)
+                                    logger.warning(
+                                        "[REMERGE] Re-embedding not yet implemented. "
+                                        "Remerged chunks computed but not indexed."
+                                    )
+                                else:
+                                    logger.debug("[REMERGE] No chunks to remerge")
+                            else:
+                                logger.debug(
+                                    "[REMERGE] Metadata store not available, skipping remerge"
+                                )
+
+                        except Exception as e:
+                            logger.error(f"[REMERGE] Phase 2 remerge failed: {e}")
+                    else:
+                        logger.debug("[REMERGE] Community merge disabled in config")
+
+                else:
+                    logger.debug(
+                        "[COMMUNITY] No graph nodes, skipping community detection"
+                    )
+
+            except ImportError:
+                logger.warning(
+                    "[COMMUNITY] Community detection dependencies not installed "
+                    "(igraph, leidenalg). Install with: pip install igraph leidenalg"
+                )
+            except Exception as e:
+                logger.error(f"[COMMUNITY] Community detection failed: {e}")
+        else:
+            logger.debug("[COMMUNITY] Community detection disabled in config")
 
         # Build response (using helper)
         return _build_index_response(

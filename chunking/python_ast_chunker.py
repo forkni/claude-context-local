@@ -46,6 +46,9 @@ class CodeChunk:
     language: str = "python"  # programming language
     chunk_id: Optional[str] = None  # unique identifier for evaluation
 
+    # Community detection metadata
+    community_id: Optional[int] = None  # Leiden community membership
+
     # Internal metadata (for merge statistics tracking)
     _merge_stats: Optional[tuple] = None  # (original_count, merged_count)
 

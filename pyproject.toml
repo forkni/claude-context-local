@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-context-local"
-version = "0.8.1"
+version = "0.8.5"
 description = "Local semantic code search for Claude Code (MCP) using EmbeddingGemma, FAISS, and AST/tree-sitter chunking. 100% local embeddings and indexing."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -33,6 +33,7 @@ dependencies = [
     "fsspec[http]>=2024.2.0,<=2025.10.0",  # Upper bound: datasets 4.4.2 constraint
     "huggingface-hub>=0.36.0",
     "mcp>=1.25.0",
+    "networkx>=3.0",  # Required for graph storage and community detection
     "nltk>=3.8",
     "pandas>=2.0.0",  # Required by datasets (transitive dependency of sentence-transformers)
     "psutil>=7.2.1",

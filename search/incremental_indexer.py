@@ -17,6 +17,7 @@ from merkle.snapshot_manager import SnapshotManager
 
 from .bm25_sync import BM25SyncManager
 from .config import get_search_config
+from .graph_integration import GraphIntegration
 from .indexer import CodeIndexManager as Indexer
 from .parallel_chunker import ParallelChunker
 
@@ -438,6 +439,62 @@ class IncrementalIndexer:
 
             logger.info(f"Total chunks collected: {len(all_chunks)}")
 
+            # ========== Community-based remerge (Pass 2 - Auto-enabled for full index) ==========
+            # Two-Pass Flow: Chunk → Build graph → Detect communities → Remerge → Embed
+            # Auto-select: Full index → community merge, Incremental → greedy merge
+            config = get_search_config()
+            if config.chunking.enable_greedy_merge and all_chunks:
+                logger.info("[COMMUNITY_MERGE] Auto-enabled for full index")
+                logger.info(f"[COMMUNITY_MERGE] Starting with {len(all_chunks)} chunks")
+
+                try:
+                    # Step A: Build graph from unmerged chunks (NetworkX DiGraph)
+                    # Uses GraphIntegration.build_graph_from_chunks() - no embeddings needed
+                    temp_graph = self._build_temp_graph(all_chunks)
+
+                    # Step B: Detect communities using native Louvain algorithm
+                    # NetworkX native (no external dependencies: igraph/leidenalg)
+                    from graph.community_detector import CommunityDetector
+
+                    detector = CommunityDetector(temp_graph.storage)
+                    community_map = detector.detect_communities(
+                        resolution=config.chunking.community_resolution
+                    )
+                    logger.info(
+                        f"[COMMUNITY_MERGE] Detected {len(set(community_map.values()))} communities from {len(community_map)} nodes"
+                    )
+
+                    # Step C: Remerge with community boundaries
+                    # Uses fixed remerge_chunks_with_communities() from base.py
+                    from chunking.languages.base import LanguageChunker
+
+                    all_chunks = LanguageChunker.remerge_chunks_with_communities(
+                        chunks=all_chunks,
+                        community_map=community_map,
+                        min_tokens=config.chunking.min_chunk_tokens,
+                        max_merged_tokens=config.chunking.max_merged_tokens,
+                    )
+                    logger.info(
+                        f"[COMMUNITY_MERGE] Pass 2 remerge complete: {len(all_chunks)} chunks"
+                    )
+
+                    # Step D: Regenerate proper chunk_ids (line numbers changed after merge)
+                    all_chunks = self._regenerate_chunk_ids(all_chunks, project_path)
+
+                    logger.info(
+                        f"[COMMUNITY_MERGE] Two-Pass complete: {len(all_chunks)} final chunks"
+                    )
+
+                except Exception as e:
+                    logger.error(f"[COMMUNITY_MERGE] Failed: {e}")
+                    import traceback
+
+                    logger.error(traceback.format_exc())
+                    logger.warning(
+                        "[COMMUNITY_MERGE] Continuing with unmerged chunks from Pass 1"
+                    )
+            # ========== END Community-based remerge ==========
+
             # Embed all chunks in one batched call
             all_embedding_results = []
             if all_chunks:
@@ -543,6 +600,107 @@ class IncrementalIndexer:
             List of supported file paths
         """
         return [f for f in all_files if self._is_supported_file(project_path, f)]
+
+    def _build_temp_graph(self, chunks: List[CodeChunk]) -> GraphIntegration:
+        """Build temporary graph from chunks for community detection.
+
+        Creates a GraphIntegration instance and builds the NetworkX graph
+        from unmerged chunks WITHOUT embeddings. Used for pre-embedding
+        community detection in two-pass chunking flow.
+
+        Args:
+            chunks: List of CodeChunk objects with chunk_id, calls, relationships
+
+        Returns:
+            GraphIntegration instance with populated NetworkX graph
+
+        Reference:
+            search/graph_integration.py:build_graph_from_chunks()
+        """
+        # Create temporary GraphIntegration with project ID
+        # Use indexer's storage directory for graph storage
+        storage_dir = (
+            Path(self.indexer.storage_dir)
+            if hasattr(self.indexer, "storage_dir")
+            else Path(tempfile.mkdtemp(prefix="temp_graph_"))
+        )
+
+        # Extract project ID from storage directory name if available
+        project_id = (
+            storage_dir.name if storage_dir.exists() else "temp_community_graph"
+        )
+
+        graph_integration = GraphIntegration(
+            project_id=project_id, storage_dir=storage_dir
+        )
+
+        # Build graph from chunks (NetworkX DiGraph API)
+        graph_integration.build_graph_from_chunks(chunks)
+
+        logger.info(
+            f"[COMMUNITY_MERGE] Built temporary graph: {graph_integration.node_count} nodes"
+        )
+
+        return graph_integration
+
+    def _regenerate_chunk_ids(
+        self, chunks: List[CodeChunk], project_path: str
+    ) -> List[CodeChunk]:
+        """Regenerate proper chunk_ids after community-based remerge.
+
+        After remerging chunks with community boundaries, line numbers change
+        and chunk_ids become invalid. This method regenerates chunk_ids with
+        correct line ranges and proper format.
+
+        Format: {relative_path}:{start_line}-{end_line}:{chunk_type}:{name}
+
+        Args:
+            chunks: List of CodeChunk objects after remerge
+            project_path: Root project directory for computing relative paths
+
+        Returns:
+            List of CodeChunk with regenerated chunk_ids
+
+        Example:
+            src/auth.py:10-50:function:login
+            src/models.py:5-120:class:User
+            src/utils.py:15-45:method:Database.connect
+        """
+        from dataclasses import replace
+
+        result = []
+        project_root = Path(project_path)
+
+        for chunk in chunks:
+            # Compute relative path
+            if chunk.relative_path:
+                rel_path = chunk.relative_path
+            else:
+                chunk_path = Path(chunk.file_path)
+                try:
+                    rel_path = str(chunk_path.relative_to(project_root))
+                except ValueError:
+                    # If relative_to fails, use the filename
+                    rel_path = chunk_path.name
+
+            # Normalize path separators to forward slash
+            normalized_path = str(rel_path).replace("\\", "/")
+
+            # Build chunk_id: path:lines:type:name
+            chunk_id = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
+
+            # Add qualified name if available
+            if chunk.parent_name and chunk.name:
+                chunk_id += f":{chunk.parent_name}.{chunk.name}"
+            elif chunk.name:
+                chunk_id += f":{chunk.name}"
+
+            # Create new chunk with regenerated ID
+            result.append(replace(chunk, chunk_id=chunk_id))
+
+        logger.info(f"[COMMUNITY_MERGE] Regenerated chunk_ids for {len(result)} chunks")
+
+        return result
 
     def _build_snapshot_metadata(
         self,

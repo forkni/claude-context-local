@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 from tree_sitter import Language, Parser
 
 if TYPE_CHECKING:
+    from chunking.python_ast_chunker import CodeChunk
     from search.config import ChunkingConfig
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,7 @@ class TreeSitterChunk:
     chunk_id: Optional[str] = None  # unique identifier for evaluation
     parent_class: Optional[str] = None  # Enclosing class name for methods
     parent_chunk_id: Optional[str] = None  # Enclosing class chunk_id for methods
+    community_id: Optional[int] = None  # Leiden community membership (Phase 0)
 
     def to_dict(self) -> Dict:
         """Convert to dictionary format compatible with existing system."""
@@ -224,6 +226,7 @@ class LanguageChunker(ABC):
         min_tokens: int = 50,
         max_merged_tokens: int = 1000,
         token_method: str = "whitespace",
+        use_community_boundary: bool = False,
     ) -> Tuple[List[TreeSitterChunk], int, int]:
         """Merge adjacent small chunks using cAST greedy algorithm.
 
@@ -231,13 +234,14 @@ class LanguageChunker(ABC):
         1. Iterate through chunks in order
         2. If chunk size < min_tokens, accumulate with next sibling
         3. Stop merging when accumulated size reaches max_merged_tokens
-        4. Only merge chunks with same parent_class (true siblings)
+        4. Only merge chunks with same parent_class (true siblings) or same community_id
 
         Args:
             chunks: List of chunks from AST traversal
             min_tokens: Minimum tokens before considering merge (default: 50)
             max_merged_tokens: Maximum tokens for merged chunk (default: 1000)
             token_method: Token estimation method ("whitespace" or "tiktoken")
+            use_community_boundary: Use community_id instead of parent_class (default: False)
 
         Returns:
             Tuple of (merged_chunks, original_count, merged_count):
@@ -259,17 +263,24 @@ class LanguageChunker(ABC):
         current_group: List[TreeSitterChunk] = []
         current_tokens: int = 0
         current_parent: Optional[str] = None
+        current_community: Optional[int] = None  # Track community ID for Phase 1
         total_tokens_estimated: int = 0  # Track for summary logging
 
         for chunk in chunks:
             chunk_tokens = estimate_tokens(chunk.content, token_method)
             total_tokens_estimated += chunk_tokens
             chunk_parent = chunk.parent_class
+            chunk_community = chunk.community_id
 
             start_new_group = False
 
-            # Case 1: Parent class changed (not true siblings)
-            if current_group and chunk_parent != current_parent:
+            # Case 1: Boundary changed (community or parent class)
+            if use_community_boundary and current_group:
+                # Phase 1: Use community_id as merge boundary
+                if chunk_community != current_community:
+                    start_new_group = True
+            elif current_group and chunk_parent != current_parent:
+                # Original: Use parent_class as merge boundary
                 start_new_group = True
             # Case 2: Adding this chunk would exceed max size
             elif current_group and current_tokens + chunk_tokens > max_merged_tokens:
@@ -297,6 +308,7 @@ class LanguageChunker(ABC):
             current_group.append(chunk)
             current_tokens += chunk_tokens
             current_parent = chunk_parent
+            current_community = chunk_community  # Track for Phase 1
 
         # Flush remaining group
         if current_group:
@@ -310,6 +322,139 @@ class LanguageChunker(ABC):
         )
 
         return result, len(chunks), len(result)
+
+    @staticmethod
+    def remerge_chunks_with_communities(
+        chunks: List["CodeChunk"],
+        community_map: Dict[str, int],
+        min_tokens: int = 50,
+        max_merged_tokens: int = 1000,
+        token_method: str = "whitespace",
+    ) -> List["CodeChunk"]:
+        """Re-merge chunks using community boundaries (Two-Pass Chunking - Phase 2).
+
+        This is called AFTER community detection to re-merge chunks using
+        community_id as boundaries instead of parent_class. Solves the circular
+        dependency: chunking needs communities, but communities need chunks.
+
+        Two-Pass Flow:
+            Pass 1: Chunk with parent_class boundaries → Build graph → Detect communities
+            Pass 2: Re-merge using community_id boundaries ← THIS METHOD
+
+        Args:
+            chunks: List of CodeChunk from Pass 1 (merged by parent_class)
+            community_map: Dict mapping chunk_id to community_id from Leiden detection
+            min_tokens: Minimum tokens before considering merge (default: 50)
+            max_merged_tokens: Maximum tokens for merged chunk (default: 1000)
+            token_method: Token estimation method ("whitespace" or "tiktoken")
+
+        Returns:
+            List of CodeChunk re-merged with community boundaries
+
+        Example:
+            >>> # After community detection assigns IDs
+            >>> community_map = {"file.py:1-10:method:foo": 0, "file.py:11-20:method:bar": 1}
+            >>> remerged = remerge_chunks_with_communities(chunks, community_map)
+            >>> # Methods from different communities won't merge
+        """
+        from dataclasses import replace
+
+        if not chunks or not community_map:
+            return chunks
+
+        logger = logging.getLogger(__name__)
+        logger.info(
+            f"[REMERGE] Pass 2: Re-merging {len(chunks)} chunks with community boundaries"
+        )
+
+        # Step 1: Assign community_id to chunks from map
+        chunks_with_community = []
+        for chunk in chunks:
+            chunk_id = chunk.chunk_id
+            community_id = community_map.get(chunk_id)
+
+            # Create new chunk with community_id assigned
+            updated_chunk = replace(chunk, community_id=community_id)
+            chunks_with_community.append(updated_chunk)
+
+        # Step 2: Convert CodeChunk → TreeSitterChunk for merge algorithm
+        # The merge algorithm works on TreeSitterChunk
+        from chunking.languages.base import TreeSitterChunk
+
+        ts_chunks = []
+        for chunk in chunks_with_community:
+            ts_chunk = TreeSitterChunk(
+                content=chunk.content,
+                start_line=chunk.start_line,
+                end_line=chunk.end_line,
+                node_type=chunk.chunk_type,
+                language=chunk.language,
+                metadata={
+                    "name": chunk.name,
+                    "file_path": chunk.file_path,
+                    "relative_path": chunk.relative_path,
+                },
+                chunk_id=chunk.chunk_id,
+                parent_class=getattr(chunk, "parent_name", None),
+                community_id=chunk.community_id,  # KEY: Now has community_id!
+            )
+            ts_chunks.append(ts_chunk)
+
+        # Step 3: Re-run merge with use_community_boundary=True
+        # Use LanguageChunker instance (language doesn't matter for merge)
+        from chunking.languages.python import PythonChunker
+
+        chunker = PythonChunker()
+        merged_ts_chunks, orig_count, merged_count = chunker._greedy_merge_small_chunks(
+            ts_chunks,
+            min_tokens=min_tokens,
+            max_merged_tokens=max_merged_tokens,
+            token_method=token_method,
+            use_community_boundary=True,  # KEY: Use community boundaries!
+        )
+
+        logger.info(
+            f"[REMERGE] Community-based merge: {orig_count} → {merged_count} chunks "
+            f"({100 * (orig_count - merged_count) / orig_count:.1f}% reduction)"
+        )
+
+        # Step 4: Convert TreeSitterChunk → CodeChunk
+        # Re-use structure from original chunks
+        result_chunks = []
+        for ts_chunk in merged_ts_chunks:
+            # Find original chunk to copy metadata (by file_path and line overlap)
+            original = chunks_with_community[0]  # Fallback
+            for c in chunks_with_community:
+                if (
+                    ts_chunk.metadata.get("file_path") == c.file_path
+                    and ts_chunk.start_line >= c.start_line
+                    and ts_chunk.end_line <= c.end_line
+                ):
+                    original = c
+                    break
+
+            # Create CodeChunk with correct fields
+            from chunking.python_ast_chunker import CodeChunk
+
+            code_chunk = CodeChunk(
+                content=ts_chunk.content,
+                chunk_type=(
+                    ts_chunk.node_type if ts_chunk.node_type != "merged" else "merged"
+                ),
+                start_line=ts_chunk.start_line,
+                end_line=ts_chunk.end_line,
+                file_path=original.file_path,
+                relative_path=original.relative_path,
+                folder_structure=original.folder_structure,
+                name=ts_chunk.metadata.get("name"),
+                parent_name=ts_chunk.parent_class,
+                language=original.language,
+                chunk_id=None,  # Will be regenerated with proper format
+                community_id=ts_chunk.community_id,  # Preserved!
+            )
+            result_chunks.append(code_chunk)
+
+        return result_chunks
 
     def _get_block_boundary_types(self) -> Set[str]:
         """Get node types that are valid split boundaries.
@@ -574,12 +719,15 @@ class LanguageChunker(ABC):
         original_count = len(chunks)
 
         # Apply greedy sibling merging if enabled
+        # Pass 1: Always merge by parent_class boundaries (fast, file-local)
+        # Pass 2: Community merge happens during full index (graph-aware boundaries)
         if config and config.enable_greedy_merge and len(chunks) > 1:
             chunks, _, _ = self._greedy_merge_small_chunks(
                 chunks,
                 min_tokens=config.min_chunk_tokens,
                 max_merged_tokens=config.max_merged_tokens,
                 token_method=config.token_estimation,
+                use_community_boundary=False,  # Pass 1 always uses parent_class
             )
 
         # Store merge stats in first chunk's metadata for ParallelChunker aggregation

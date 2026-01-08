@@ -267,31 +267,36 @@ async def handle_configure_chunking(arguments: Dict[str, Any]) -> Dict:
     Args:
         arguments: Dict with optional keys:
             - enable_greedy_merge: Enable/disable greedy chunk merging
-            - min_chunk_tokens: Minimum token count before considering merge
-            - max_merged_tokens: Maximum token count for merged chunks
+            - community_resolution: Resolution parameter for Louvain community detection (0.1-2.0)
             - token_estimation: Token estimation method ("whitespace" or "tiktoken")
             - enable_large_node_splitting: Enable/disable AST block splitting
             - max_chunk_lines: Maximum lines per chunk before splitting
 
     Returns:
         Dict with success status and updated config
+
+    Note:
+        min_chunk_tokens (50) and max_merged_tokens (1000) are optimal defaults
+        and not exposed for user configuration.
     """
     config_manager = get_config_manager()
     config = config_manager.load_config()
 
     enable_greedy_merge = arguments.get("enable_greedy_merge")
-    min_chunk_tokens = arguments.get("min_chunk_tokens")
-    max_merged_tokens = arguments.get("max_merged_tokens")
+    community_resolution = arguments.get("community_resolution")
     token_estimation = arguments.get("token_estimation")
     enable_large_node_splitting = arguments.get("enable_large_node_splitting")
     max_chunk_lines = arguments.get("max_chunk_lines")
 
     if enable_greedy_merge is not None:
         config.chunking.enable_greedy_merge = enable_greedy_merge
-    if min_chunk_tokens is not None:
-        config.chunking.min_chunk_tokens = min_chunk_tokens
-    if max_merged_tokens is not None:
-        config.chunking.max_merged_tokens = max_merged_tokens
+    if community_resolution is not None:
+        if 0.1 <= community_resolution <= 2.0:
+            config.chunking.community_resolution = community_resolution
+        else:
+            return {
+                "error": f"Invalid community_resolution: {community_resolution}. Must be between 0.1 and 2.0"
+            }
     if token_estimation is not None:
         if token_estimation in ["whitespace", "tiktoken"]:
             config.chunking.token_estimation = token_estimation
@@ -308,8 +313,7 @@ async def handle_configure_chunking(arguments: Dict[str, Any]) -> Dict:
         "success": True,
         "config": {
             "enable_greedy_merge": config.chunking.enable_greedy_merge,
-            "min_chunk_tokens": config.chunking.min_chunk_tokens,
-            "max_merged_tokens": config.chunking.max_merged_tokens,
+            "community_resolution": config.chunking.community_resolution,
             "token_estimation": config.chunking.token_estimation,
             "enable_large_node_splitting": config.chunking.enable_large_node_splitting,
             "max_chunk_lines": config.chunking.max_chunk_lines,

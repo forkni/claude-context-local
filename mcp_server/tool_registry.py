@@ -588,11 +588,12 @@ Args:
 
 Args:
     enable_greedy_merge: Enable/disable greedy chunk merging (default: True)
-    min_chunk_tokens: Minimum token count before considering merge (default: 50)
-    max_merged_tokens: Maximum token count for merged chunks (default: 1000)
+    community_resolution: Resolution parameter for Louvain community detection (default: 1.0, range: 0.1-2.0, higher = more communities)
     token_estimation: Token estimation method - "whitespace" (fast) or "tiktoken" (accurate) (default: "whitespace")
     enable_large_node_splitting: Enable/disable AST block splitting for large functions (default: False)
-    max_chunk_lines: Maximum lines per chunk before splitting at AST boundaries (default: 100)""",
+    max_chunk_lines: Maximum lines per chunk before splitting at AST boundaries (default: 100)
+
+Note: min_chunk_tokens (50) and max_merged_tokens (1000) are optimal defaults and not exposed for configuration.""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -600,17 +601,11 @@ Args:
                     "type": "boolean",
                     "description": "Enable/disable greedy chunk merging",
                 },
-                "min_chunk_tokens": {
-                    "type": "integer",
-                    "description": "Minimum token count before considering merge",
-                    "minimum": 10,
-                    "maximum": 500,
-                },
-                "max_merged_tokens": {
-                    "type": "integer",
-                    "description": "Maximum token count for merged chunks",
-                    "minimum": 100,
-                    "maximum": 5000,
+                "community_resolution": {
+                    "type": "number",
+                    "description": "Resolution parameter for Louvain community detection (higher = more communities)",
+                    "minimum": 0.1,
+                    "maximum": 2.0,
                 },
                 "token_estimation": {
                     "type": "string",

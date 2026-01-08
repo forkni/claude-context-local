@@ -154,6 +154,106 @@ class GraphIntegration:
         except Exception as e:
             self._logger.warning(f"Failed to add {chunk_id} to graph: {e}")
 
+    def build_graph_from_chunks(self, chunks) -> None:
+        """Build graph from chunks WITHOUT embeddings (for pre-embedding community detection).
+
+        This enables the two-pass chunking flow:
+        1. Chunk WITHOUT merging
+        2. Build graph from unmerged chunks
+        3. Detect communities
+        4. Remerge with community boundaries
+        5. Embed and index
+
+        Uses NetworkX DiGraph API:
+        - G.add_node(chunk_id, **attrs)
+        - G.add_edge(caller, callee, **attrs)
+
+        Reference: https://networkx.org/documentation/stable/reference/classes/digraph.html
+
+        Args:
+            chunks: List of CodeChunk with chunk_id, calls, relationships populated from AST
+        """
+        if self.storage is None:
+            self._logger.warning(
+                "Graph storage not initialized, cannot build from chunks"
+            )
+            return
+
+        # Clear existing graph for fresh build
+        self.storage.clear()
+
+        processed_count = 0
+        for chunk in chunks:
+            if not chunk.chunk_id:
+                continue
+
+            try:
+                # Add node (NetworkX: G.add_node)
+                self.storage.add_node(
+                    chunk_id=chunk.chunk_id,
+                    name=chunk.name or "unknown",
+                    chunk_type=chunk.chunk_type,
+                    file_path=chunk.file_path,
+                    language=chunk.language,
+                )
+
+                # Add call edges (NetworkX: G.add_edge)
+                for call in chunk.calls or []:
+                    # Handle both CallEdge objects and dicts
+                    if hasattr(call, "callee_name"):
+                        callee_name = call.callee_name
+                        line_number = call.line_number
+                        is_method_call = call.is_method_call
+                    else:
+                        callee_name = call.get("callee_name", "unknown")
+                        line_number = call.get("line_number", 0)
+                        is_method_call = call.get("is_method_call", False)
+
+                    self.storage.add_call_edge(
+                        caller_id=chunk.chunk_id,
+                        callee_name=callee_name,
+                        line_number=line_number,
+                        is_method_call=is_method_call,
+                    )
+
+                # Add relationship edges
+                for rel in chunk.relationships or []:
+                    try:
+                        # Import RelationshipEdge for type handling
+                        from graph.relationship_types import (
+                            RelationshipEdge,
+                            RelationshipType,
+                        )
+
+                        # Handle both RelationshipEdge objects and dicts
+                        if isinstance(rel, RelationshipEdge):
+                            self.storage.add_relationship_edge(rel)
+                        elif isinstance(rel, dict):
+                            edge = RelationshipEdge(
+                                source_id=rel.get("source_id", chunk.chunk_id),
+                                target_name=rel.get("target_name", "unknown"),
+                                relationship_type=RelationshipType(
+                                    rel.get("relationship_type", "calls")
+                                ),
+                                line_number=rel.get("line_number", 0),
+                                confidence=rel.get("confidence", 1.0),
+                                metadata=rel.get("metadata", {}),
+                            )
+                            self.storage.add_relationship_edge(edge)
+                    except Exception as e:
+                        self._logger.debug(f"Failed to add relationship edge: {e}")
+
+                processed_count += 1
+
+            except Exception as e:
+                self._logger.warning(
+                    f"Failed to add chunk {chunk.chunk_id} to graph: {e}"
+                )
+
+        self._logger.info(
+            f"Built graph from {processed_count} chunks: {len(self.storage)} nodes"
+        )
+
     def save(self) -> None:
         """Save call graph to disk."""
         # Check if graph storage exists and has nodes

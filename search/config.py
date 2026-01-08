@@ -294,7 +294,7 @@ class OutputConfig:
 
 @dataclass
 class ChunkingConfig:
-    """Chunking algorithm settings (6 fields)."""
+    """Chunking algorithm settings (7 fields)."""
 
     # Greedy Sibling Merging (cAST algorithm - EMNLP 2025)
     enable_greedy_merge: bool = False  # Opt-in cAST greedy sibling merging
@@ -307,6 +307,11 @@ class ChunkingConfig:
 
     # Token estimation method
     token_estimation: str = "whitespace"  # "whitespace" (fast) or "tiktoken" (accurate)
+
+    # Community Detection settings (used automatically during full index)
+    community_resolution: float = (
+        1.0  # Resolution parameter (higher = more/smaller communities)
+    )
 
 
 @dataclass
@@ -478,6 +483,9 @@ class SearchConfig:
                 "enable_large_node_splitting": self.chunking.enable_large_node_splitting,
                 "max_chunk_lines": self.chunking.max_chunk_lines,
                 "token_estimation": self.chunking.token_estimation,
+                "enable_community_detection": self.chunking.enable_community_detection,
+                "community_resolution": self.chunking.community_resolution,
+                "enable_community_merge": self.chunking.enable_community_merge,
             },
             "ego_graph": {
                 "enabled": self.ego_graph.enabled,
@@ -634,6 +642,9 @@ class SearchConfig:
                 ),
                 max_chunk_lines=chunking_data.get("max_chunk_lines", 100),
                 token_estimation=chunking_data.get("token_estimation", "whitespace"),
+                community_resolution=chunking_data.get("community_resolution", 1.0),
+                # NOTE: enable_community_detection and enable_community_merge removed
+                # Community merge is now auto-enabled for full index (see incremental_indexer.py)
             )
 
             ego_graph = EgoGraphConfig(
@@ -748,6 +759,9 @@ class SearchConfig:
                 ),
                 max_chunk_lines=data.get("max_chunk_lines", 100),
                 token_estimation=data.get("token_estimation", "whitespace"),
+                enable_community_detection=data.get("enable_community_detection", True),
+                community_resolution=data.get("community_resolution", 1.0),
+                enable_community_merge=data.get("enable_community_merge", False),
             )
 
             ego_graph = EgoGraphConfig(

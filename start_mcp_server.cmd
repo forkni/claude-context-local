@@ -1918,20 +1918,19 @@ echo   - 20-30%% fewer chunks (merged getters/setters)
 echo   - Denser embeddings with more context per vector
 echo.
 echo Current Settings:
-".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Greedy Merge:', 'Enabled' if cfg.chunking.enable_greedy_merge else 'Disabled'); print('  Min Chunk Tokens:', cfg.chunking.min_chunk_tokens); print('  Max Merged Tokens:', cfg.chunking.max_merged_tokens); print('  Token Estimation:', cfg.chunking.token_estimation); print('  Large Node Splitting:', 'Enabled' if cfg.chunking.enable_large_node_splitting else 'Disabled'); print('  Max Chunk Lines:', cfg.chunking.max_chunk_lines)" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Greedy Merge:', 'Enabled' if cfg.chunking.enable_greedy_merge else 'Disabled'); print('  Community Resolution:', cfg.chunking.community_resolution); print('  Token Estimation:', cfg.chunking.token_estimation); print('  Large Node Splitting:', 'Enabled' if cfg.chunking.enable_large_node_splitting else 'Disabled'); print('  Max Chunk Lines:', cfg.chunking.max_chunk_lines)" 2>nul
 echo.
 echo   1. Enable Greedy Merge        - Merge small chunks (recommended)
 echo   2. Disable Greedy Merge       - Keep all chunks separate
-echo   3. Set Min Chunk Tokens       - Minimum size before merging (default: 50)
-echo   4. Set Max Merged Tokens      - Maximum merged chunk size (default: 1000)
-echo   5. Set Token Estimation       - whitespace (fast) or tiktoken (accurate)
-echo   6. Enable Large Node Splitting - Split functions ^> max_chunk_lines at AST boundaries
-echo   7. Disable Large Node Splitting - Keep large functions intact
-echo   8. Set Max Chunk Lines        - Split threshold in lines (default: 100)
+echo   3. Set Community Resolution   - Louvain algorithm parameter (0.1-2.0, default: 1.0)
+echo   4. Set Token Estimation       - whitespace (fast) or tiktoken (accurate)
+echo   5. Enable Large Node Splitting - Split functions ^> max_chunk_lines at AST boundaries
+echo   6. Disable Large Node Splitting - Keep large functions intact
+echo   7. Set Max Chunk Lines        - Split threshold in lines (default: 100)
 echo   0. Back to Search Configuration
 echo.
 set "chunk_choice="
-set /p chunk_choice="Select option (0-8): "
+set /p chunk_choice="Select option (0-7): "
 
 if not defined chunk_choice goto search_config_menu
 if "!chunk_choice!"=="" goto search_config_menu
@@ -1961,13 +1960,13 @@ if "!chunk_choice!"=="2" (
 )
 if "!chunk_choice!"=="3" (
     echo.
-    set "min_tokens="
-    set /p min_tokens="Enter min chunk tokens (10-500, current default: 50): "
-    if defined min_tokens (
-        echo [INFO] Setting min chunk tokens to: !min_tokens!
-        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.min_chunk_tokens = int('!min_tokens!'); mgr.save_config(cfg); print('[OK] Min chunk tokens updated to !min_tokens!')" 2>nul
+    set "community_res="
+    set /p community_res="Enter community resolution (0.1-2.0, current default: 1.0): "
+    if defined community_res (
+        echo [INFO] Setting community resolution to: !community_res!
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); val = float('!community_res!'); assert 0.1 <= val <= 2.0, 'Out of range'; cfg.chunking.community_resolution = val; mgr.save_config(cfg); print('[OK] Community resolution updated to !community_res!')" 2>nul
         if errorlevel 1 (
-            echo [ERROR] Failed to save configuration. Please enter a valid number.
+            echo [ERROR] Failed to save configuration. Please enter a valid number between 0.1 and 2.0.
         ) else (
             echo [INFO] Re-index project to apply changes
             ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
@@ -1975,21 +1974,6 @@ if "!chunk_choice!"=="3" (
     )
 )
 if "!chunk_choice!"=="4" (
-    echo.
-    set "max_tokens="
-    set /p max_tokens="Enter max merged tokens (500-3000, current default: 1000): "
-    if defined max_tokens (
-        echo [INFO] Setting max merged tokens to: !max_tokens!
-        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.max_merged_tokens = int('!max_tokens!'); mgr.save_config(cfg); print('[OK] Max merged tokens updated to !max_tokens!')" 2>nul
-        if errorlevel 1 (
-            echo [ERROR] Failed to save configuration. Please enter a valid number.
-        ) else (
-            echo [INFO] Re-index project to apply changes
-            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
-        )
-    )
-)
-if "!chunk_choice!"=="5" (
     echo.
     echo Select token estimation method:
     echo   1. whitespace - Fast, approximate (recommended)
@@ -2018,7 +2002,7 @@ if "!chunk_choice!"=="5" (
         )
     )
 )
-if "!chunk_choice!"=="6" (
+if "!chunk_choice!"=="5" (
     echo.
     echo [INFO] Enabling large node splitting...
     ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_large_node_splitting = True; mgr.save_config(cfg); print('[OK] Large node splitting enabled')" 2>nul
@@ -2030,7 +2014,7 @@ if "!chunk_choice!"=="6" (
         ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
 )
-if "!chunk_choice!"=="7" (
+if "!chunk_choice!"=="6" (
     echo.
     echo [INFO] Disabling large node splitting...
     ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_large_node_splitting = False; mgr.save_config(cfg); print('[OK] Large node splitting disabled')" 2>nul
@@ -2042,7 +2026,7 @@ if "!chunk_choice!"=="7" (
         ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
 )
-if "!chunk_choice!"=="8" (
+if "!chunk_choice!"=="7" (
     echo.
     set "max_lines="
     set /p max_lines="Enter max chunk lines (10-500, current default: 100): "
@@ -2059,8 +2043,8 @@ if "!chunk_choice!"=="8" (
     )
 )
 
-if not "!chunk_choice!"=="1" if not "!chunk_choice!"=="2" if not "!chunk_choice!"=="3" if not "!chunk_choice!"=="4" if not "!chunk_choice!"=="5" if not "!chunk_choice!"=="6" if not "!chunk_choice!"=="7" if not "!chunk_choice!"=="8" (
-    echo [ERROR] Invalid choice. Please select 0-8.
+if not "!chunk_choice!"=="1" if not "!chunk_choice!"=="2" if not "!chunk_choice!"=="3" if not "!chunk_choice!"=="4" if not "!chunk_choice!"=="5" if not "!chunk_choice!"=="6" if not "!chunk_choice!"=="7" (
+    echo [ERROR] Invalid choice. Please select 0-7.
 )
 pause
 goto search_config_menu
