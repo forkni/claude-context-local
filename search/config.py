@@ -483,9 +483,7 @@ class SearchConfig:
                 "enable_large_node_splitting": self.chunking.enable_large_node_splitting,
                 "max_chunk_lines": self.chunking.max_chunk_lines,
                 "token_estimation": self.chunking.token_estimation,
-                "enable_community_detection": self.chunking.enable_community_detection,
                 "community_resolution": self.chunking.community_resolution,
-                "enable_community_merge": self.chunking.enable_community_merge,
             },
             "ego_graph": {
                 "enabled": self.ego_graph.enabled,
@@ -759,9 +757,7 @@ class SearchConfig:
                 ),
                 max_chunk_lines=data.get("max_chunk_lines", 100),
                 token_estimation=data.get("token_estimation", "whitespace"),
-                enable_community_detection=data.get("enable_community_detection", True),
                 community_resolution=data.get("community_resolution", 1.0),
-                enable_community_merge=data.get("enable_community_merge", False),
             )
 
             ego_graph = EgoGraphConfig(
@@ -929,7 +925,7 @@ class SearchConfigManager:
         return value.lower() in ("true", "1", "yes", "on", "enabled")
 
     def save_config(self, config: SearchConfig) -> None:
-        """Save configuration to file."""
+        """Save configuration to file with atomic write protection."""
         try:
             # Auto-sync dimension from model registry before saving
             model_config = get_model_config(config.embedding.model_name)
@@ -944,15 +940,31 @@ class SearchConfigManager:
             if config_dir:  # Only create if not empty (not current directory)
                 os.makedirs(config_dir, exist_ok=True)
 
-            # Save to file
-            with open(self.config_file, "w") as f:
-                json.dump(config.to_dict(), f, indent=2)
+            # ATOMIC WRITE: Write to temp file first, then rename
+            # This prevents data loss if exception occurs during write
+            temp_file = self.config_file + ".tmp"
+            config_dict = config.to_dict()  # Serialize BEFORE opening file
+
+            with open(temp_file, "w") as f:
+                json.dump(config_dict, f, indent=2)
+
+            # Validate temp file before replacing original
+            with open(temp_file, "r") as f:
+                json.load(f)  # Verify valid JSON was written
+
+            # Atomic rename (safe on same filesystem)
+            os.replace(temp_file, self.config_file)
 
             self.logger.info(f"Saved search config to {self.config_file}")
             self._config = config  # Update cached config
 
         except Exception as e:
             self.logger.error(f"Failed to save config to {self.config_file}: {e}")
+            # Clean up temp file if it exists
+            temp_file = self.config_file + ".tmp"
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+            raise  # Re-raise so caller knows save failed
 
     def get_search_mode_for_query(
         self, query: str, explicit_mode: Optional[str] = None
