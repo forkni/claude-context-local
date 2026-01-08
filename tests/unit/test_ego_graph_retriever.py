@@ -28,26 +28,41 @@ class TestEgoGraphRetriever:
 
     def test_retrieve_ego_graph_basic(self, retriever, mock_graph_storage):
         """Test basic ego-graph retrieval."""
-        # Setup mock
-        mock_graph_storage.get_neighbors = Mock(return_value=["neighbor1", "neighbor2"])
+        # Setup mock - use valid chunk_id format (file:lines:type:name)
+        mock_graph_storage.get_neighbors = Mock(
+            return_value=[
+                "file1.py:10-20:function:neighbor1",
+                "file2.py:30-40:function:neighbor2",
+            ]
+        )
 
         config = EgoGraphConfig(k_hops=2, max_neighbors_per_hop=10)
         result = retriever.retrieve_ego_graph(["anchor1"], config)
 
         assert "anchor1" in result
-        assert result["anchor1"] == ["neighbor1", "neighbor2"]
+        assert result["anchor1"] == [
+            "file1.py:10-20:function:neighbor1",
+            "file2.py:30-40:function:neighbor2",
+        ]
         mock_graph_storage.get_neighbors.assert_called_once_with(
             "anchor1",
             relation_types=None,
             max_depth=2,
+            exclude_import_categories=["stdlib", "builtin", "third_party"],
         )
 
     def test_retrieve_ego_graph_multiple_anchors(self, retriever, mock_graph_storage):
         """Test retrieval for multiple anchors."""
         mock_graph_storage.get_neighbors = Mock(
             side_effect=[
-                ["n1", "n2"],  # For anchor1
-                ["n3", "n4"],  # For anchor2
+                [
+                    "file1.py:10-20:function:n1",
+                    "file2.py:30-40:function:n2",
+                ],  # For anchor1
+                [
+                    "file3.py:50-60:function:n3",
+                    "file4.py:70-80:function:n4",
+                ],  # For anchor2
             ]
         )
 
@@ -55,13 +70,19 @@ class TestEgoGraphRetriever:
         result = retriever.retrieve_ego_graph(["anchor1", "anchor2"], config)
 
         assert len(result) == 2
-        assert result["anchor1"] == ["n1", "n2"]
-        assert result["anchor2"] == ["n3", "n4"]
+        assert result["anchor1"] == [
+            "file1.py:10-20:function:n1",
+            "file2.py:30-40:function:n2",
+        ]
+        assert result["anchor2"] == [
+            "file3.py:50-60:function:n3",
+            "file4.py:70-80:function:n4",
+        ]
 
     def test_retrieve_ego_graph_limits_neighbors(self, retriever, mock_graph_storage):
         """Test that neighbors are limited to prevent explosion."""
         # Return 30 neighbors but limit should cap at max_neighbors_per_hop * k_hops
-        many_neighbors = [f"neighbor{i}" for i in range(30)]
+        many_neighbors = [f"file{i}.py:10-20:function:neighbor{i}" for i in range(30)]
         mock_graph_storage.get_neighbors = Mock(return_value=many_neighbors)
 
         config = EgoGraphConfig(k_hops=2, max_neighbors_per_hop=5)  # 2 * 5 = 10 max
@@ -80,7 +101,9 @@ class TestEgoGraphRetriever:
         self, retriever, mock_graph_storage
     ):
         """Test retrieval with relation type filter."""
-        mock_graph_storage.get_neighbors = Mock(return_value=["n1"])
+        mock_graph_storage.get_neighbors = Mock(
+            return_value=["file1.py:10-20:function:n1"]
+        )
 
         config = EgoGraphConfig(relation_types=["CALLS", "INHERITS"])
         retriever.retrieve_ego_graph(["anchor1"], config)
@@ -138,11 +161,14 @@ class TestEgoGraphRetriever:
             {"chunk_id": "chunk2", "score": 0.8},
         ]
 
-        # Mock neighbors for each chunk
+        # Mock neighbors for each chunk - use valid chunk_id format
         mock_graph_storage.get_neighbors = Mock(
             side_effect=[
-                ["n1", "n2"],  # For chunk1
-                ["n3"],  # For chunk2
+                [
+                    "file1.py:10-20:function:n1",
+                    "file2.py:30-40:function:n2",
+                ],  # For chunk1
+                ["file3.py:50-60:function:n3"],  # For chunk2
             ]
         )
 
@@ -151,10 +177,19 @@ class TestEgoGraphRetriever:
         chunk_ids, ego_graphs = retriever.expand_search_results(search_results, config)
 
         # Should have anchors + neighbors
-        assert set(chunk_ids) == {"chunk1", "chunk2", "n1", "n2", "n3"}
+        assert set(chunk_ids) == {
+            "chunk1",
+            "chunk2",
+            "file1.py:10-20:function:n1",
+            "file2.py:30-40:function:n2",
+            "file3.py:50-60:function:n3",
+        }
         assert ego_graphs == {
-            "chunk1": ["n1", "n2"],
-            "chunk2": ["n3"],
+            "chunk1": [
+                "file1.py:10-20:function:n1",
+                "file2.py:30-40:function:n2",
+            ],
+            "chunk2": ["file3.py:50-60:function:n3"],
         }
 
     def test_expand_search_results_empty(self, retriever):

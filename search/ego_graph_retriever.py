@@ -56,11 +56,21 @@ class EgoGraphRetriever:
         results = {}
         for anchor in anchor_chunk_ids:
             try:
+                # Build exclude_import_categories list from config
+                exclude_categories = []
+                if config.exclude_stdlib_imports:
+                    exclude_categories.extend(["stdlib", "builtin"])
+                if config.exclude_third_party_imports:
+                    exclude_categories.append("third_party")
+
                 # Get neighbors using existing graph traversal
                 neighbors = self.graph.get_neighbors(
                     anchor,
                     relation_types=config.relation_types,
                     max_depth=config.k_hops,
+                    exclude_import_categories=(
+                        exclude_categories if exclude_categories else None
+                    ),
                 )
 
                 # Filter to keep only valid chunk_ids (format: "file:lines:type:name")

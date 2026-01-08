@@ -86,10 +86,17 @@ def _create_indexer_for_model(
     Returns:
         tuple: (indexer, embedder, chunker)
     """
+    from graph.relation_filter import RepositoryRelationFilter
+
     config = get_config()
+
+    # Create relation filter for import classification (RepoGraph filtering)
+    relation_filter = RepositoryRelationFilter(project_root=Path(directory_path))
+
     chunker = MultiLanguageChunker(
         directory_path,
         enable_entity_tracking=config.performance.enable_entity_tracking,
+        relation_filter=relation_filter,
     )
     embedder = get_embedder(model_key)
 

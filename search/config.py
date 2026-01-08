@@ -319,6 +319,18 @@ class EgoGraphConfig:
     relation_types: Optional[list] = None  # Filter to specific relations (None = all)
     include_anchor: bool = True  # Include original anchor nodes in results
     deduplicate: bool = True  # Remove duplicate chunk_ids
+    # RepoGraph relation filtering (Feature #5)
+    exclude_stdlib_imports: bool = True  # Filter stdlib from graph traversal
+    exclude_third_party_imports: bool = True  # Filter third-party from traversal
+
+
+@dataclass
+class ParentRetrievalConfig:
+    """Parent chunk retrieval settings for Match Small, Retrieve Big."""
+
+    enabled: bool = False  # Enable parent chunk expansion
+    include_parent_content: bool = True  # Include parent's full content
+    max_parents_per_result: int = 1  # Usually 1 (direct parent only)
 
 
 class SearchConfig:
@@ -344,6 +356,7 @@ class SearchConfig:
         output: Optional[OutputConfig] = None,
         chunking: Optional[ChunkingConfig] = None,
         ego_graph: Optional[EgoGraphConfig] = None,
+        parent_retrieval: Optional[ParentRetrievalConfig] = None,
     ):
         """Initialize SearchConfig with nested sub-configs.
 
@@ -358,6 +371,7 @@ class SearchConfig:
             output: OutputConfig instance (optional, defaults to OutputConfig())
             chunking: ChunkingConfig instance (optional, defaults to ChunkingConfig())
             ego_graph: EgoGraphConfig instance (optional, defaults to EgoGraphConfig())
+            parent_retrieval: ParentRetrievalConfig instance (optional, defaults to ParentRetrievalConfig())
         """
         # Initialize nested configs with defaults
         self.embedding = embedding if embedding is not None else EmbeddingConfig()
@@ -374,6 +388,11 @@ class SearchConfig:
         self.output = output if output is not None else OutputConfig()
         self.chunking = chunking if chunking is not None else ChunkingConfig()
         self.ego_graph = ego_graph if ego_graph is not None else EgoGraphConfig()
+        self.parent_retrieval = (
+            parent_retrieval
+            if parent_retrieval is not None
+            else ParentRetrievalConfig()
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to nested dictionary for JSON serialization.

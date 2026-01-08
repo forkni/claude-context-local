@@ -83,6 +83,7 @@ What are you trying to do?
 | **Impact assessment** | `find_connections(max_depth=5)` | - | Multi-hop graph |
 | **Find similar patterns** | `search_code()` → `find_similar_code(chunk_id)` | - | Similarity search |
 | **Find code + graph neighbors** | `search_code(ego_graph_enabled=True)` | - | Graph-enhanced search |
+| **Match method, retrieve class** | `search_code(query, include_parent=True)` | - | Parent-child retrieval |
 | **Setup new project** | `index_directory(path)` | `get_index_status()` | One-time indexing |
 | **Switch projects** | `list_projects()` → `switch_project(path)` | - | Project management |
 | **Memory cleanup** | `get_memory_status()` → `cleanup_resources()` | - | Resource management |
@@ -322,7 +323,7 @@ search_code("EmbeddingManager", chunk_type="class", exclude_dirs=["tests/"])
 
 ### 🔴 Essential Tools (Use First)
 
-#### 1. `search_code(query OR chunk_id, k=5, search_mode="hybrid", model_key=None, use_routing=True, file_pattern=None, include_dirs=None, exclude_dirs=None, chunk_type=None, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10)`
+#### 1. `search_code(query OR chunk_id, k=5, search_mode="hybrid", model_key=None, use_routing=True, file_pattern=None, include_dirs=None, exclude_dirs=None, chunk_type=None, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False)`
 
 **Purpose**: Find code with natural language queries OR direct symbol lookup (40-45% token savings vs file reading)
 
@@ -343,7 +344,9 @@ search_code("EmbeddingManager", chunk_type="class", exclude_dirs=["tests/"])
 - `max_age_minutes` (default: 5): Maximum age of index before auto-reindex
 - `ego_graph_enabled` (default: False): Enable RepoGraph-style k-hop ego-graph expansion for graph neighbors
 - `ego_graph_k_hops` (default: 2, range: 1-5): Depth of graph traversal (higher = more neighbors)
+- **Automatic Import Filtering** (v0.8.3+): When ego-graph is enabled, stdlib and third-party imports are automatically filtered from graph traversal for cleaner, more relevant neighbors (RepoGraph Feature #5: Repository-Dependent Relation Filtering)
 - `ego_graph_max_neighbors_per_hop` (default: 10, range: 1-50): Maximum neighbors to retrieve per hop
+- `include_parent` (default: False): Enable parent-child retrieval - when a method is matched, also retrieve its enclosing class for fuller context ("Match Small, Retrieve Big")
 
 **Examples**:
 
@@ -359,6 +362,9 @@ search_code("token merging implementation", k=10)
 
 # Ego-graph expansion for richer context (graph neighbors)
 search_code("authentication handler", ego_graph_enabled=True, ego_graph_k_hops=2)
+
+# Parent-child retrieval for fuller method context
+search_code("validate user data", chunk_type="method", include_parent=True)
 ```
 
 **Performance** (Empirically Validated):

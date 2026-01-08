@@ -130,6 +130,11 @@ WHEN NOT TO USE:
                     "maximum": 50,
                     "description": "Maximum neighbors to retrieve per hop (default: 10). Limits expansion to prevent context explosion while maintaining relevance.",
                 },
+                "include_parent": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Enable parent chunk retrieval (default: False). When a method is matched, also retrieves its enclosing class for fuller context. Implements 'Match Small, Retrieve Big' pattern for improved comprehension.",
+                },
             },
             "required": [],
         },

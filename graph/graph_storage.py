@@ -254,6 +254,7 @@ class CodeGraphStorage:
         chunk_id: str,
         relation_types: Optional[List[str]] = None,
         max_depth: int = 1,
+        exclude_import_categories: Optional[List[str]] = None,
     ) -> Set[str]:
         """
         Get all related chunks within max_depth hops.
@@ -262,6 +263,8 @@ class CodeGraphStorage:
             chunk_id: Starting chunk ID
             relation_types: Types of relations to follow (e.g., ["calls", "called_by"])
             max_depth: Maximum graph traversal depth
+            exclude_import_categories: Categories to exclude for "imports" edges
+                (e.g., ["stdlib", "third_party"] to filter out noise)
 
         Returns:
             Set of related chunk IDs
@@ -292,6 +295,12 @@ class CodeGraphStorage:
             # Get successors (callees) if "calls" in relation_types
             if "calls" in relation_types:
                 for callee in self.graph.successors(current_id):
+                    # Apply import category filtering
+                    if exclude_import_categories and self._should_exclude_edge(
+                        current_id, callee, exclude_import_categories
+                    ):
+                        continue
+
                     if callee not in visited:
                         neighbors.add(callee)
                         visited.add(callee)
@@ -300,12 +309,57 @@ class CodeGraphStorage:
             # Get predecessors (callers) if "called_by" in relation_types
             if "called_by" in relation_types:
                 for caller in self.graph.predecessors(current_id):
+                    # Apply import category filtering
+                    if exclude_import_categories and self._should_exclude_edge(
+                        caller, current_id, exclude_import_categories
+                    ):
+                        continue
+
                     if caller not in visited:
                         neighbors.add(caller)
                         visited.add(caller)
                         queue.append((caller, depth + 1))
 
         return neighbors
+
+    def _should_exclude_edge(
+        self, source_id: str, target_id: str, exclude_categories: List[str]
+    ) -> bool:
+        """
+        Check if edge should be excluded based on import category.
+
+        Args:
+            source_id: Source node ID
+            target_id: Target node ID
+            exclude_categories: Categories to exclude (e.g., ["stdlib", "third_party"])
+
+        Returns:
+            True if edge should be excluded, False otherwise
+        """
+        # Get edge data
+        edge_data = self.get_edge_data(source_id, target_id)
+        if not edge_data:
+            return False
+
+        # Only filter "imports" relationships
+        edge_type = edge_data.get("relationship_type") or edge_data.get("type")
+        if edge_type != "imports":
+            return False
+
+        # Check import category
+        import_category = edge_data.get("metadata", {}).get("import_category")
+        if not import_category:
+            # Fallback: check if import_category is a direct edge attribute
+            import_category = edge_data.get("import_category")
+
+        if import_category in exclude_categories:
+            self.logger.debug(
+                f"Excluding {edge_type} edge {source_id} -> {target_id} "
+                f"(category: {import_category})"
+            )
+            return True
+
+        return False
 
     def get_node_data(self, chunk_id: str) -> Optional[Dict[str, Any]]:
         """

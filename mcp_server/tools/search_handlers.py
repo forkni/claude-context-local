@@ -17,7 +17,12 @@ from mcp_server.services import get_config, get_state
 from mcp_server.storage_manager import get_project_storage_dir
 from mcp_server.tools.code_relationship_analyzer import CodeRelationshipAnalyzer
 from mcp_server.tools.decorators import error_handler
-from search.config import EgoGraphConfig, get_config_manager, get_search_config
+from search.config import (
+    EgoGraphConfig,
+    ParentRetrievalConfig,
+    get_config_manager,
+    get_search_config,
+)
 from search.exceptions import DimensionMismatchError
 from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
@@ -506,6 +511,9 @@ async def handle_search_code(arguments: Dict[str, Any]) -> Dict:
     ego_graph_k_hops = arguments.get("ego_graph_k_hops", 2)
     ego_graph_max_neighbors = arguments.get("ego_graph_max_neighbors_per_hop", 10)
 
+    # Parent chunk retrieval parameter (Match Small, Retrieve Big)
+    include_parent = arguments.get("include_parent", False)
+
     logger.info(f"[SEARCH] query='{query}', k={k}, mode='{search_mode}'")
 
     # Route query to optimal embedding model
@@ -609,6 +617,16 @@ async def handle_search_code(arguments: Dict[str, Any]) -> Dict:
             f"[EGO_GRAPH] Enabled with k_hops={ego_graph_k_hops}, "
             f"max_neighbors_per_hop={ego_graph_max_neighbors}"
         )
+
+    # Build SearchConfig with parent-retrieval settings if enabled
+    if isinstance(searcher, HybridSearcher) and include_parent:
+        # Get base config if not already set
+        if search_config is None:
+            search_config = get_search_config()
+        # Override parent-retrieval settings
+        parent_config = ParentRetrievalConfig(enabled=include_parent)
+        search_config.parent_retrieval = parent_config
+        logger.info("[PARENT_RETRIEVAL] Enabled")
 
     if isinstance(searcher, HybridSearcher):
         results = searcher.search(

@@ -66,6 +66,7 @@ class TreeSitterChunk:
     metadata: Dict[str, Any]
     chunk_id: Optional[str] = None  # unique identifier for evaluation
     parent_class: Optional[str] = None  # Enclosing class name for methods
+    parent_chunk_id: Optional[str] = None  # Enclosing class chunk_id for methods
 
     def to_dict(self) -> Dict:
         """Convert to dictionary format compatible with existing system."""

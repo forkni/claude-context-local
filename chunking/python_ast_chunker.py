@@ -25,6 +25,7 @@ class CodeChunk:
     # Code structure metadata
     name: Optional[str] = None  # function/class name
     parent_name: Optional[str] = None  # parent class name for methods
+    parent_chunk_id: Optional[str] = None  # parent class chunk_id for methods
     docstring: Optional[str] = None
     decorators: List[str] = None
     imports: List[str] = None  # relevant imports for this chunk

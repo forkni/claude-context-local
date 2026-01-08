@@ -633,6 +633,12 @@ class HybridSearcher:
                 results, effective_config.ego_graph, k
             )
 
+        # Apply parent expansion if enabled
+        if effective_config.parent_retrieval.enabled and results:
+            results = self._apply_parent_expansion(
+                results, effective_config.parent_retrieval
+            )
+
         return results
 
     def _single_hop_search(
@@ -747,6 +753,75 @@ class HybridSearcher:
         except Exception as e:
             self._logger.warning(
                 f"Ego-graph expansion failed: {e}. Returning original results."
+            )
+            return results
+
+    def _apply_parent_expansion(
+        self, results: List[SearchResult], config
+    ) -> List[SearchResult]:
+        """Apply parent chunk expansion to search results.
+
+        For each matched method/function, retrieves its enclosing class chunk
+        to provide fuller context ("Match Small, Retrieve Big").
+
+        Args:
+            results: Initial search results
+            config: ParentRetrievalConfig instance
+
+        Returns:
+            Expanded search results (original + parent chunks)
+        """
+        if not results or not config.enabled:
+            return results
+
+        try:
+            # Track parent chunk_ids to retrieve (avoid duplicates)
+            parent_chunk_ids: set = set()
+            original_chunk_ids = {r.chunk_id for r in results}
+
+            # Find parent_chunk_ids from result metadata
+            for result in results:
+                parent_id = result.metadata.get("parent_chunk_id")
+                if parent_id and parent_id not in original_chunk_ids:
+                    parent_chunk_ids.add(parent_id)
+
+            if not parent_chunk_ids:
+                self._logger.debug("No parent chunks to retrieve")
+                return results
+
+            # Retrieve metadata for parent chunks
+            parent_results = []
+            for parent_id in parent_chunk_ids:
+                try:
+                    metadata = self.dense_index.get_chunk_by_id(parent_id)
+                    if metadata:
+                        parent_result = SearchResult(
+                            chunk_id=parent_id,
+                            score=0.0,  # Parents are context, no similarity score
+                            metadata=metadata,
+                            source="parent_expansion",  # Mark source
+                            rank=0,
+                        )
+                        parent_results.append(parent_result)
+                except Exception as e:
+                    self._logger.debug(
+                        f"Failed to retrieve parent chunk {parent_id}: {e}"
+                    )
+                    continue
+
+            # Combine: original results first, then parent context
+            combined_results = results + parent_results
+
+            self._logger.info(
+                f"Parent expansion: {len(results)} results -> "
+                f"{len(combined_results)} total ({len(parent_results)} parents added)"
+            )
+
+            return combined_results
+
+        except Exception as e:
+            self._logger.warning(
+                f"Parent expansion failed: {e}. Returning original results."
             )
             return results
 

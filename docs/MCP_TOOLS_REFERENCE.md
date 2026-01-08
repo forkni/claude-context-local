@@ -10,7 +10,7 @@ This modular reference can be embedded in any project instructions for Claude Co
 
 | Tool | Priority | Purpose | Parameters |
 |------|----------|---------|------------|
-| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=5, search_mode="hybrid", model_key, use_routing=True, file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10 |
+| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=5, search_mode="hybrid", model_key, use_routing=True, file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False |
 | **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (~90% accuracy with import resolution) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs |
 | **index_directory** | 🔴 **SETUP** | Index project (multi-model support) | directory_path (required), project_name, incremental=True, multi_model=auto |
 | find_similar_code | Secondary | Find alternative implementations | chunk_id (required), k=5 |
@@ -116,6 +116,16 @@ find_connections(symbol_name="UserService", exclude_dirs=["tests/"])
 | `ego_graph_k_hops` | integer | 2 | 1-5 | Graph traversal depth (1=direct neighbors, 2=neighbors of neighbors) |
 | `ego_graph_max_neighbors_per_hop` | integer | 10 | 1-50 | Limit neighbors per hop to prevent explosion |
 
+**⭐ NEW (v0.8.3): Automatic Import Filtering**
+
+When ego-graph expansion is enabled, **stdlib and third-party imports are automatically filtered** from graph traversal (RepoGraph Feature #5: Repository-Dependent Relation Filtering). This results in:
+
+- **30-50% fewer edges** traversed (cleaner graphs)
+- **More relevant neighbors** (project-internal code only)
+- **Faster graph traversal** (fewer nodes to process)
+
+Filtering uses Python 3.10+ `sys.stdlib_module_names` for comprehensive stdlib detection and auto-discovers project modules from directory structure.
+
 ### Usage Examples
 
 ```python
@@ -143,6 +153,70 @@ Ego-graph neighbors are marked in results with:
 - `score`: 0.0 (neighbors are context, not direct matches)
 - `source`: "ego_graph" (identifies origin)
 - `rank`: 0 (default rank)
+
+---
+
+## Parent-Child Retrieval Parameters (v0.8.4+)
+
+**Feature**: "Match Small, Retrieve Big" pattern for improved LLM comprehension
+
+**Purpose**: When a method is matched during search, automatically retrieve its enclosing class to provide full context. Solves the "orphan chunk" problem where methods lack class-level context.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `include_parent` | boolean | false | Enable parent chunk retrieval for methods |
+
+### Usage Examples
+
+```python
+# Basic parent retrieval (method + enclosing class)
+search_code("validate user data", chunk_type="method", include_parent=True)
+
+# Search for authentication methods with class context
+search_code("authentication methods", include_parent=True)
+```
+
+### How It Works
+
+1. **Search Phase**: Find methods matching your query
+2. **Expansion Phase**: For each matched method, retrieve its parent class using `parent_chunk_id` metadata
+3. **Results**: Return both the method (scored) and its parent class (score=0.0)
+
+### Performance Characteristics
+
+- **Expansion overhead**: Minimal (~0-5ms for metadata lookup)
+- **Result expansion**: 1-2× (e.g., 5 methods → 5-10 total results)
+- **Re-indexing**: Required once to populate `parent_chunk_id` metadata
+
+### Result Marking
+
+Parent chunks are marked in results with:
+
+- `score`: 0.0 (parents provide context, not direct matches)
+- `source`: "parent_expansion" (identifies origin)
+- `rank`: 0 (default rank)
+
+### Example Output
+
+```json
+{
+  "results": [
+    {
+      "chunk_id": "auth.py:45-52:method:validate",
+      "kind": "method",
+      "score": 0.89,
+      "name": "validate"
+    },
+    {
+      "chunk_id": "auth.py:10-60:class:User",
+      "kind": "class",
+      "score": 0.0,
+      "source": "parent_expansion",
+      "name": "User"
+    }
+  ]
+}
+```
 
 ---
 
