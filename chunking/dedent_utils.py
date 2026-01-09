@@ -14,6 +14,53 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _basic_dedent_only(code: str) -> str:
+    """Dedent code without AST validation.
+
+    Used for split blocks which are syntactically incomplete by design.
+    Just normalizes indentation without trying to parse.
+
+    Args:
+        code: Source code string with potential leading indentation
+
+    Returns:
+        Dedented code without AST validation
+    """
+    # Normalize line endings and tabs
+    code = code.replace("\r\n", "\n").replace("\r", "\n")
+    code = code.expandtabs(4)
+
+    lines = code.split("\n")
+
+    # Strip leading/trailing blank lines
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    if not lines:
+        return code
+
+    # Find baseline indentation from first non-blank line
+    first_line = lines[0]
+    baseline_indent = len(first_line) - len(first_line.lstrip())
+
+    if baseline_indent == 0:
+        return "\n".join(lines)
+
+    # Remove baseline indentation from all lines
+    dedented_lines = []
+    for line in lines:
+        if not line.strip():
+            dedented_lines.append("")
+        elif len(line) >= baseline_indent and line[:baseline_indent].strip() == "":
+            dedented_lines.append(line[baseline_indent:])
+        else:
+            dedented_lines.append(line.lstrip())
+
+    return "\n".join(dedented_lines)
+
+
 def smart_dedent(code: str) -> str:
     """Dedent code by removing the indentation of the first non-blank line.
 
@@ -36,6 +83,11 @@ def smart_dedent(code: str) -> str:
     """
     if not code or not code.strip():
         return code
+
+    # Early exit for split blocks - they're syntactically incomplete by design
+    # Split blocks contain the marker "# ... (split block)" and cannot be parsed
+    if "# ... (split block)" in code:
+        return _basic_dedent_only(code)
 
     # Normalize line endings (CRLF → LF, CR → LF)
     # This handles Windows files and mixed line endings

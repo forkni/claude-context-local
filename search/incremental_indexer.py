@@ -439,20 +439,25 @@ class IncrementalIndexer:
 
             logger.info(f"Total chunks collected: {len(all_chunks)}")
 
-            # ========== Community-based remerge (Pass 2 - Auto-enabled for full index) ==========
-            # Two-Pass Flow: Chunk → Build graph → Detect communities → Remerge → Embed
-            # Auto-select: Full index → community merge, Incremental → greedy merge
+            # ========== Community Detection & Remerge (Pass 2 - Independent Control) ==========
+            # Two-Pass Flow: Chunk → Build graph → Detect communities → (Optional) Remerge → Embed
+            # FIX: Community detection can now run independently of chunk merging
             config = get_search_config()
-            if config.chunking.enable_chunk_merging and all_chunks:
-                logger.info("[COMMUNITY_MERGE] Auto-enabled for full index")
-                logger.info(f"[COMMUNITY_MERGE] Starting with {len(all_chunks)} chunks")
+            community_map = None  # Will be populated if community detection runs
+
+            # Step A: Community Detection (Independent - can run without merging)
+            if config.chunking.enable_community_detection and all_chunks:
+                logger.info("[COMMUNITY_DETECT] Running community detection")
+                logger.info(
+                    f"[COMMUNITY_DETECT] Starting with {len(all_chunks)} chunks"
+                )
 
                 try:
-                    # Step A: Build graph from unmerged chunks (NetworkX DiGraph)
+                    # Build graph from chunks (NetworkX DiGraph)
                     # Uses GraphIntegration.build_graph_from_chunks() - no embeddings needed
                     temp_graph = self._build_temp_graph(all_chunks)
 
-                    # Step B: Detect communities using native Louvain algorithm
+                    # Detect communities using native Louvain algorithm
                     # NetworkX native (no external dependencies: igraph/leidenalg)
                     from graph.community_detector import CommunityDetector
 
@@ -461,10 +466,30 @@ class IncrementalIndexer:
                         resolution=config.chunking.community_resolution
                     )
                     logger.info(
-                        f"[COMMUNITY_MERGE] Detected {len(set(community_map.values()))} communities from {len(community_map)} nodes"
+                        f"[COMMUNITY_DETECT] Detected {len(set(community_map.values()))} communities from {len(community_map)} nodes"
                     )
 
-                    # Step C: Remerge with community boundaries
+                except Exception as e:
+                    logger.error(f"[COMMUNITY_DETECT] Failed: {e}")
+                    import traceback
+
+                    logger.error(traceback.format_exc())
+                    logger.warning(
+                        "[COMMUNITY_DETECT] Continuing without community data"
+                    )
+                    community_map = None
+
+            # Step B: Community-based Remerge (Requires BOTH chunk merging AND community merge enabled)
+            if (
+                config.chunking.enable_chunk_merging
+                and config.chunking.enable_community_merge
+                and community_map
+                and all_chunks
+            ):
+                logger.info("[COMMUNITY_MERGE] Running community-based remerge")
+
+                try:
+                    # Remerge with community boundaries
                     # Uses fixed remerge_chunks_with_communities() from base.py
                     from chunking.languages.base import LanguageChunker
 
@@ -478,7 +503,7 @@ class IncrementalIndexer:
                         f"[COMMUNITY_MERGE] Pass 2 remerge complete: {len(all_chunks)} chunks"
                     )
 
-                    # Step D: Regenerate proper chunk_ids (line numbers changed after merge)
+                    # Regenerate proper chunk_ids (line numbers changed after merge)
                     all_chunks = self._regenerate_chunk_ids(all_chunks, project_path)
 
                     logger.info(
@@ -493,7 +518,7 @@ class IncrementalIndexer:
                     logger.warning(
                         "[COMMUNITY_MERGE] Continuing with unmerged chunks from Pass 1"
                     )
-            # ========== END Community-based remerge ==========
+            # ========== END Community Detection & Remerge ==========
 
             # Embed all chunks in one batched call
             all_embedding_results = []

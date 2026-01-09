@@ -48,13 +48,16 @@ class CommunityDetector:
         Algorithm: Modularity maximization (purely algorithmic, no LLM)
         Reference: https://networkx.org/documentation/stable/reference/algorithms/generated/networkx.algorithms.community.louvain.louvain_communities.html
 
+        Filters out phantom call target nodes (type="symbol_name" or is_target_name=True)
+        before running community detection to prevent artificial fragmentation.
+
         Args:
             resolution: Resolution parameter (default: 1.0)
                        Higher values = more/smaller communities (fine-grained)
                        Lower values = fewer/larger communities (coarse)
 
         Returns:
-            Dict mapping chunk_id -> community_id
+            Dict mapping chunk_id -> community_id (only for actual chunk nodes)
 
         Example:
             >>> detector = CommunityDetector(graph_storage)
@@ -65,8 +68,84 @@ class CommunityDetector:
             self.logger.warning("Empty graph - no communities to detect")
             return {}
 
-        # Convert to undirected graph (community detection requires undirected)
-        undirected = self.nx_graph.to_undirected()
+        # Filter to chunk nodes only (exclude phantom call target nodes)
+        # Phantom nodes have type="symbol_name" or is_target_name=True
+        chunk_nodes = [
+            n
+            for n, attrs in self.nx_graph.nodes(data=True)
+            if attrs.get("type") != "symbol_name"
+            and not attrs.get("is_target_name", False)
+        ]
+
+        if not chunk_nodes:
+            self.logger.warning("No chunk nodes found after filtering phantom nodes")
+            return {}
+
+        # Identify phantom nodes (call targets that aren't real chunks)
+        phantom_nodes = [
+            n
+            for n, attrs in self.nx_graph.nodes(data=True)
+            if attrs.get("type") == "symbol_name" or attrs.get("is_target_name", False)
+        ]
+
+        if phantom_nodes:
+            self.logger.info(
+                f"Collapsing {len(phantom_nodes)} phantom call target nodes "
+                f"to create direct chunk-to-chunk edges"
+            )
+
+        # Build collapsed graph: Preserve chunk-to-chunk edges, collapse phantom nodes
+        import networkx as nx
+
+        collapsed_graph = nx.Graph()  # Undirected from the start
+        chunk_nodes_set = set(chunk_nodes)
+
+        # Add all chunk nodes
+        for node in chunk_nodes:
+            attrs = self.nx_graph.nodes[node]
+            collapsed_graph.add_node(node, **attrs)
+
+        # First: Preserve direct chunk-to-chunk edges (resolved internal calls, relationships)
+        direct_edges = 0
+        for u, v in self.nx_graph.edges():
+            if u in chunk_nodes_set and v in chunk_nodes_set:
+                if collapsed_graph.has_edge(u, v):
+                    collapsed_graph[u][v]["weight"] += 1
+                else:
+                    collapsed_graph.add_edge(u, v, weight=1)
+                    direct_edges += 1
+
+        # Second: Collapse phantom nodes - connect chunks sharing same call targets
+        # This groups chunks that use similar APIs/libraries together
+        collapsed_edges = 0
+        for phantom in phantom_nodes:
+            # Find all chunks that call/reference this phantom
+            callers = [
+                pred
+                for pred in self.nx_graph.predecessors(phantom)
+                if pred in chunk_nodes_set
+            ]
+
+            # Only create co-reference edges if multiple chunks share this target
+            if len(callers) > 1:
+                # Create edges between all pairs of callers (they share a common reference)
+                for i, caller1 in enumerate(callers):
+                    for caller2 in callers[i + 1 :]:
+                        # Add undirected edge (or increment weight if exists)
+                        if collapsed_graph.has_edge(caller1, caller2):
+                            collapsed_graph[caller1][caller2]["weight"] += 1
+                        else:
+                            collapsed_graph.add_edge(caller1, caller2, weight=1)
+                            collapsed_edges += 1
+
+        self.logger.info(
+            f"Collapsed graph: {collapsed_graph.number_of_nodes()} nodes, "
+            f"{collapsed_graph.number_of_edges()} edges "
+            f"({direct_edges} direct chunk-chunk, {collapsed_edges} from phantom collapse)"
+        )
+
+        # Use collapsed graph for community detection (already undirected)
+        undirected = collapsed_graph
 
         # Run Louvain algorithm with modularity optimization
         # louvain_communities(G, resolution=1, seed=42) returns list of sets

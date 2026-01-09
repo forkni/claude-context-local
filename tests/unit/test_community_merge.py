@@ -229,6 +229,9 @@ class TestCommunityMerge:
         config.community_resolution = 1.5
         assert config.community_resolution == 1.5
 
-        # enable_community_merge no longer exists (auto-enabled for full index)
-        assert not hasattr(config, "enable_community_merge")
-        assert not hasattr(config, "enable_community_detection")
+        # enable_community_merge and enable_community_detection fields restored
+        assert hasattr(config, "enable_community_merge")
+        assert hasattr(config, "enable_community_detection")
+        # Default values should be True
+        assert config.enable_community_merge is True
+        assert config.enable_community_detection is True

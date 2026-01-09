@@ -204,9 +204,9 @@ class LanguageChunker(ABC):
             "original_node_types": [c.node_type for c in chunks],
         }
 
-        # Copy parent info from first chunk (all should have same parent)
+        # Copy parent info and file location from first chunk (all should have same parent)
         first_meta = chunks[0].metadata
-        for key in ["parent_name", "parent_type", "name"]:
+        for key in ["parent_name", "parent_type", "name", "file_path", "relative_path"]:
             if key in first_meta:
                 merged_metadata[key] = first_meta[key]
 
@@ -266,16 +266,24 @@ class LanguageChunker(ABC):
         current_community: Optional[int] = None  # Track community ID for Phase 1
         total_tokens_estimated: int = 0  # Track for summary logging
 
+        current_file: Optional[str] = (
+            None  # Track file path to prevent cross-file merging
+        )
+
         for chunk in chunks:
             chunk_tokens = estimate_tokens(chunk.content, token_method)
             total_tokens_estimated += chunk_tokens
             chunk_parent = chunk.parent_class
             chunk_community = chunk.community_id
+            chunk_file = chunk.metadata.get("file_path")  # Get file path from metadata
 
             start_new_group = False
 
+            # Case 0: File boundary changed (NEVER merge across files)
+            if current_group and chunk_file != current_file:
+                start_new_group = True
             # Case 1: Boundary changed (community or parent class)
-            if use_community_boundary and current_group:
+            elif use_community_boundary and current_group:
                 # Phase 1: Use community_id as merge boundary
                 if chunk_community != current_community:
                     start_new_group = True
@@ -309,6 +317,7 @@ class LanguageChunker(ABC):
             current_tokens += chunk_tokens
             current_parent = chunk_parent
             current_community = chunk_community  # Track for Phase 1
+            current_file = chunk_file  # Track file path
 
         # Flush remaining group
         if current_group:
@@ -423,15 +432,44 @@ class LanguageChunker(ABC):
         result_chunks = []
         for ts_chunk in merged_ts_chunks:
             # Find original chunk to copy metadata (by file_path and line overlap)
-            original = chunks_with_community[0]  # Fallback
+            # FIX: Correct line overlap logic and prevent cross-file metadata pollution
+            merged_file = ts_chunk.metadata.get("file_path")
+            original = None
+
+            # First pass: Find original chunk CONTAINED within merged chunk's range
+            # AND matches the file_path (prevent cross-file pollution)
             for c in chunks_with_community:
+                # Must match file first (Bug #3 fix: prevent cross-file merging)
+                if merged_file != c.file_path:
+                    continue
+                # Original chunk should be CONTAINED within merged chunk's range
+                # Bug #2 fix: was inverted (merged >= original), now correct (original >= merged)
                 if (
-                    ts_chunk.metadata.get("file_path") == c.file_path
-                    and ts_chunk.start_line >= c.start_line
-                    and ts_chunk.end_line <= c.end_line
+                    c.start_line >= ts_chunk.start_line
+                    and c.end_line <= ts_chunk.end_line
                 ):
                     original = c
                     break
+
+            # Fallback: find any chunk from same file if exact overlap fails
+            # Bug #1 fix: was dangerous fallback to [0], now same-file only
+            if original is None:
+                for c in chunks_with_community:
+                    if merged_file == c.file_path:
+                        original = c
+                        logger.debug(
+                            f"[REMERGE] Using fallback for {merged_file}:{ts_chunk.start_line}-{ts_chunk.end_line}"
+                        )
+                        break
+
+            # Last resort: skip chunk if no valid original found
+            # Bug #1 fix: was using wrong file, now skip instead
+            if original is None:
+                logger.warning(
+                    f"[REMERGE] No original chunk found for merged chunk at "
+                    f"{merged_file}:{ts_chunk.start_line}-{ts_chunk.end_line}, skipping"
+                )
+                continue  # Skip this malformed chunk instead of using wrong file
 
             # Create CodeChunk with correct fields
             from chunking.python_ast_chunker import CodeChunk

@@ -294,7 +294,7 @@ class OutputConfig:
 
 @dataclass
 class ChunkingConfig:
-    """Chunking algorithm settings (7 fields)."""
+    """Chunking algorithm settings (9 fields)."""
 
     # Two-Pass Chunking: Greedy Merge + Community Merge (cAST algorithm - EMNLP 2025)
     enable_chunk_merging: bool = (
@@ -303,17 +303,23 @@ class ChunkingConfig:
     min_chunk_tokens: int = 50  # Minimum tokens before considering merge
     max_merged_tokens: int = 1000  # Maximum tokens for merged chunk
 
+    # Community Detection settings (independent control restored)
+    enable_community_detection: bool = (
+        True  # Enable community detection via Louvain algorithm
+    )
+    enable_community_merge: bool = (
+        True  # Enable community-based remerge (requires enable_chunk_merging)
+    )
+    community_resolution: float = (
+        1.0  # Resolution parameter (higher = more/smaller communities)
+    )
+
     # Large function splitting (Task 3.4 - placeholder for future implementation)
     enable_large_node_splitting: bool = False  # Split functions > max_chunk_lines
     max_chunk_lines: int = 100  # Maximum lines before AST block splitting
 
     # Token estimation method
     token_estimation: str = "whitespace"  # "whitespace" (fast) or "tiktoken" (accurate)
-
-    # Community Detection settings (used automatically during full index)
-    community_resolution: float = (
-        1.0  # Resolution parameter (higher = more/smaller communities)
-    )
 
 
 @dataclass
@@ -645,9 +651,13 @@ class SearchConfig:
                 ),
                 max_chunk_lines=chunking_data.get("max_chunk_lines", 100),
                 token_estimation=chunking_data.get("token_estimation", "whitespace"),
+                enable_community_detection=chunking_data.get(
+                    "enable_community_detection", True
+                ),
+                enable_community_merge=chunking_data.get(
+                    "enable_community_merge", True
+                ),
                 community_resolution=chunking_data.get("community_resolution", 1.0),
-                # NOTE: enable_community_detection and enable_community_merge removed
-                # Community merge is now auto-enabled for full index (see incremental_indexer.py)
             )
 
             ego_graph = EgoGraphConfig(

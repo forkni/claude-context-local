@@ -1009,7 +1009,7 @@ REM Search Configuration Functions
 echo.
 echo [INFO] Current Search Configuration:
 if exist ".venv\Scripts\python.exe" (
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = config.routing.multi_model_enabled; pool = config.routing.multi_model_pool or 'full'; model_display = f'BGE-M3 + gte-modernbert ({pool})' if multi_enabled and pool == 'lightweight-speed' else f'BGE-M3 + Qwen3 + CodeRankEmbed ({pool})' if multi_enabled else f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print('    Multi-Model Routing:', 'Enabled' if multi_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print(); print('  Chunking Settings:'); print('    Chunk Merging:', 'Enabled' if config.chunking.enable_chunk_merging else 'Disabled'); print(f'    Community Resolution: {config.chunking.community_resolution}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'    Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    Allow Shared Memory: {\"Enabled\" if config.performance.allow_shared_memory else \"Disabled\"}'); print(); print('  Output Format:', config.output.format)"
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = config.routing.multi_model_enabled; pool = config.routing.multi_model_pool or 'full'; model_display = f'BGE-M3 + gte-modernbert ({pool})' if multi_enabled and pool == 'lightweight-speed' else f'BGE-M3 + Qwen3 + CodeRankEmbed ({pool})' if multi_enabled else f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print('    Multi-Model Routing:', 'Enabled' if multi_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print(); print('  Chunking Settings:'); print('    Chunk Merging:', 'Enabled' if config.chunking.enable_chunk_merging else 'Disabled'); print('    Community Detection:', 'Enabled' if config.chunking.enable_community_detection else 'Disabled'); print('    Community Merge:', 'Enabled' if config.chunking.enable_community_merge else 'Disabled'); print(f'    Community Resolution: {config.chunking.community_resolution}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'    Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    Allow Shared Memory: {\"Enabled\" if config.performance.allow_shared_memory else \"Disabled\"}'); print(); print('  Output Format:', config.output.format)"
     if "!ERRORLEVEL!" neq "0" (
         echo Error loading configuration
         echo Using defaults: hybrid mode, BM25=0.4, Dense=0.6
@@ -1191,7 +1191,7 @@ set "confirm_multi="
 set /p confirm_multi="Enable multi-model routing? (y/N): "
 if /i "!confirm_multi!"=="y" (
     REM Persist to config file via Python
-    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.routing.multi_model_enabled = True; mgr.save_config(cfg); print('[OK] Multi-model routing enabled and saved to config')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.routing.multi_model_enabled = True; cfg.routing.multi_model_pool = 'full'; mgr.save_config(cfg); print('[OK] Full multi-model routing enabled and saved to config')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save to config file
         set "CLAUDE_MULTI_MODEL_ENABLED=true"
@@ -1921,7 +1921,7 @@ echo   - 20-30%% fewer chunks (merged getters/setters)
 echo   - Denser embeddings with more context per vector
 echo.
 echo Current Settings:
-".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Chunk Merging:', 'Enabled' if cfg.chunking.enable_chunk_merging else 'Disabled'); print('  Community Resolution:', cfg.chunking.community_resolution); print('  Token Estimation:', cfg.chunking.token_estimation); print('  Large Node Splitting:', 'Enabled' if cfg.chunking.enable_large_node_splitting else 'Disabled'); print('  Max Chunk Lines:', cfg.chunking.max_chunk_lines)" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Chunk Merging:', 'Enabled' if cfg.chunking.enable_chunk_merging else 'Disabled'); print('  Community Detection:', 'Enabled' if cfg.chunking.enable_community_detection else 'Disabled'); print('  Community Merge:', 'Enabled' if cfg.chunking.enable_community_merge else 'Disabled'); print('  Community Resolution:', cfg.chunking.community_resolution); print('  Token Estimation:', cfg.chunking.token_estimation); print('  Large Node Splitting:', 'Enabled' if cfg.chunking.enable_large_node_splitting else 'Disabled'); print('  Max Chunk Lines:', cfg.chunking.max_chunk_lines)" 2>nul
 echo.
 echo   1. Enable Chunk Merging                 - Merge small chunks (recommended)
 echo   2. Disable Chunk Merging                - Keep all chunks separate
@@ -1930,10 +1930,14 @@ echo   4. Set Token Estimation                 - whitespace (fast) or tiktoken (
 echo   5. Enable Large Node Splitting          - Split functions ^> max_chunk_lines at AST boundaries
 echo   6. Disable Large Node Splitting         - Keep large functions intact
 echo   7. Set Max Chunk Lines                  - Split threshold in lines (default: 100)
+echo   8. Enable Community Detection           - Detect code communities for better chunking
+echo   9. Disable Community Detection          - Skip community detection
+echo  10. Enable Community Merge               - Use communities for chunk remerging (requires detection)
+echo  11. Disable Community Merge              - Skip community-based remerging
 echo   0. Back to Search Configuration
 echo.
 set "chunk_choice="
-set /p chunk_choice="Select option (0-7): "
+set /p chunk_choice="Select option (0-11): "
 
 if not defined chunk_choice goto search_config_menu
 if "!chunk_choice!"=="" goto search_config_menu
@@ -1949,6 +1953,7 @@ if "!chunk_choice!"=="1" (
         echo [INFO] Re-index project to apply changes
         ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
+    goto chunking_menu_end
 )
 if "!chunk_choice!"=="2" (
     echo.
@@ -1960,6 +1965,7 @@ if "!chunk_choice!"=="2" (
         echo [INFO] Re-index project to apply changes
         ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
+    goto chunking_menu_end
 )
 if "!chunk_choice!"=="3" (
     echo.
@@ -1975,6 +1981,7 @@ if "!chunk_choice!"=="3" (
             ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
         )
     )
+    goto chunking_menu_end
 )
 if "!chunk_choice!"=="4" (
     echo.
@@ -2004,6 +2011,7 @@ if "!chunk_choice!"=="4" (
             ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
         )
     )
+    goto chunking_menu_end
 )
 if "!chunk_choice!"=="5" (
     echo.
@@ -2016,6 +2024,7 @@ if "!chunk_choice!"=="5" (
         echo [INFO] Re-index project to apply changes
         ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
+    goto chunking_menu_end
 )
 if "!chunk_choice!"=="6" (
     echo.
@@ -2028,6 +2037,7 @@ if "!chunk_choice!"=="6" (
         echo [INFO] Re-index project to apply changes
         ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
+    goto chunking_menu_end
 )
 if "!chunk_choice!"=="7" (
     echo.
@@ -2044,11 +2054,66 @@ if "!chunk_choice!"=="7" (
             ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
         )
     )
+    goto chunking_menu_end
+)
+if "!chunk_choice!"=="8" (
+    echo.
+    echo [INFO] Enabling community detection...
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_community_detection = True; mgr.save_config(cfg); print('[OK] Community detection enabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Code communities will be detected during indexing
+        echo [INFO] Re-index project to apply changes
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+    )
+    goto chunking_menu_end
+)
+if "!chunk_choice!"=="9" (
+    echo.
+    echo [INFO] Disabling community detection...
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_community_detection = False; mgr.save_config(cfg); print('[OK] Community detection disabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Community detection will be skipped
+        echo [INFO] Re-index project to apply changes
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+    )
+    goto chunking_menu_end
+)
+if "!chunk_choice!"=="10" (
+    echo.
+    echo [INFO] Enabling community-based merge...
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_community_merge = True; mgr.save_config(cfg); print('[OK] Community merge enabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Chunks will be remerged using community boundaries
+        echo [INFO] Requires: enable_chunk_merging=True and enable_community_detection=True
+        echo [INFO] Re-index project to apply changes
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+    )
+    goto chunking_menu_end
+)
+if "!chunk_choice!"=="11" (
+    echo.
+    echo [INFO] Disabling community-based merge...
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_community_merge = False; mgr.save_config(cfg); print('[OK] Community merge disabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Community-based remerging will be skipped
+        echo [INFO] Re-index project to apply changes
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+    )
+    goto chunking_menu_end
 )
 
-if not "!chunk_choice!"=="1" if not "!chunk_choice!"=="2" if not "!chunk_choice!"=="3" if not "!chunk_choice!"=="4" if not "!chunk_choice!"=="5" if not "!chunk_choice!"=="6" if not "!chunk_choice!"=="7" (
-    echo [ERROR] Invalid choice. Please select 0-7.
+if not "!chunk_choice!"=="1" if not "!chunk_choice!"=="2" if not "!chunk_choice!"=="3" if not "!chunk_choice!"=="4" if not "!chunk_choice!"=="5" if not "!chunk_choice!"=="6" if not "!chunk_choice!"=="7" if not "!chunk_choice!"=="8" if not "!chunk_choice!"=="9" if not "!chunk_choice!"=="10" if not "!chunk_choice!"=="11" (
+    echo [ERROR] Invalid choice. Please select 0-11.
 )
+:chunking_menu_end
 pause
 goto search_config_menu
 
@@ -2173,6 +2238,8 @@ echo     - Class Context: Enabled
 echo.
 echo   Chunking Settings:
 echo     - Chunk Merging: Enabled
+echo     - Community Detection: Enabled
+echo     - Community Merge: Enabled
 echo     - Community Resolution: 1.1
 echo     - Token Estimation: whitespace
 echo     - Large Node Splitting: Disabled ^(preserve full functions^)

@@ -268,6 +268,8 @@ async def handle_configure_chunking(arguments: Dict[str, Any]) -> Dict:
         arguments: Dict with optional keys:
             - enable_chunk_merging: Enable/disable Two-Pass chunking (greedy + community merge)
             - enable_greedy_merge: (Deprecated) Use enable_chunk_merging instead
+            - enable_community_detection: Enable/disable community detection (independent)
+            - enable_community_merge: Enable/disable community-based remerge (requires enable_chunk_merging)
             - community_resolution: Resolution parameter for Louvain community detection (0.1-2.0)
             - token_estimation: Token estimation method ("whitespace" or "tiktoken")
             - enable_large_node_splitting: Enable/disable AST block splitting
@@ -287,6 +289,8 @@ async def handle_configure_chunking(arguments: Dict[str, Any]) -> Dict:
     enable_chunk_merging = arguments.get("enable_chunk_merging") or arguments.get(
         "enable_greedy_merge"
     )
+    enable_community_detection = arguments.get("enable_community_detection")
+    enable_community_merge = arguments.get("enable_community_merge")
     community_resolution = arguments.get("community_resolution")
     token_estimation = arguments.get("token_estimation")
     enable_large_node_splitting = arguments.get("enable_large_node_splitting")
@@ -294,6 +298,10 @@ async def handle_configure_chunking(arguments: Dict[str, Any]) -> Dict:
 
     if enable_chunk_merging is not None:
         config.chunking.enable_chunk_merging = enable_chunk_merging
+    if enable_community_detection is not None:
+        config.chunking.enable_community_detection = enable_community_detection
+    if enable_community_merge is not None:
+        config.chunking.enable_community_merge = enable_community_merge
     if community_resolution is not None:
         if 0.1 <= community_resolution <= 2.0:
             config.chunking.community_resolution = community_resolution
@@ -317,6 +325,8 @@ async def handle_configure_chunking(arguments: Dict[str, Any]) -> Dict:
         "success": True,
         "config": {
             "enable_chunk_merging": config.chunking.enable_chunk_merging,
+            "enable_community_detection": config.chunking.enable_community_detection,
+            "enable_community_merge": config.chunking.enable_community_merge,
             "community_resolution": config.chunking.community_resolution,
             "token_estimation": config.chunking.token_estimation,
             "enable_large_node_splitting": config.chunking.enable_large_node_splitting,
