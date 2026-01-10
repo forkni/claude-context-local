@@ -60,7 +60,7 @@
     "log_classifications": true
   },
   "reranker": {
-    "enabled": true,
+    "enabled": false,
     "model_name": "BAAI/bge-reranker-v2-m3",
     "top_k_candidates": 50,
     "min_vram_gb": 6.0,

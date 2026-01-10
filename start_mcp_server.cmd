@@ -1382,7 +1382,7 @@ echo Neural Reranker uses a cross-encoder model to re-score search results.
 echo This improves search quality by 15-25%% for complex queries.
 echo.
 echo Requirements:
-echo   - GPU with >= 6GB VRAM ^(auto-disabled on insufficient VRAM^)
+echo   - GPU with ^>= 6GB VRAM ^(auto-disabled on insufficient VRAM^)
 echo   - Additional latency: +150-300ms per search
 echo.
 echo Current Setting:
@@ -2381,6 +2381,9 @@ echo [Runtime Status]
 if exist ".venv\Scripts\python.exe" (
     REM Display model status
     ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = cfg.routing.multi_model_enabled; pool = cfg.routing.multi_model_pool or 'full'; print('Model: [MULTI] BGE-M3 + gte-modernbert (1.65GB total)' if pool == 'lightweight-speed' else 'Model: [MULTI] BGE-M3 + Qwen3 + CodeRankEmbed (5.3GB total)') if multi_enabled else print(f'Model: [SINGLE] {model_short} ({dim}d, {vram})'); print(f'       Active routing - {pool} pool') if multi_enabled else print('Tip: Press M for Quick Model Switch')" 2>nul
+    REM Display reranker status
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); model = cfg.reranker.model_name.split('/')[-1] if cfg.reranker.enabled else None; print(f'       Reranker: {model} (enabled)' if model else '       Reranker: Disabled')" 2>nul
+    echo.
     REM Display RAM fallback status
     ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); val = cfg.performance.allow_ram_fallback; print(f'RAM Fallback: {\"On\" if val else \"Off\"}')" 2>nul
     REM Display output format
