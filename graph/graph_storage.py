@@ -531,3 +531,42 @@ class CodeGraphStorage:
     def __contains__(self, chunk_id: str) -> bool:
         """Check if chunk_id is in graph."""
         return chunk_id in self.graph
+
+    def store_community_map(self, community_map: Dict[str, int]) -> None:
+        """Persist community assignments to JSON file.
+
+        Args:
+            community_map: Dict mapping chunk_id -> community_id
+        """
+        community_path = self.storage_dir / f"{self.project_id}_communities.json"
+        with open(community_path, "w") as f:
+            json.dump(community_map, f, indent=2)
+        self.logger.info(
+            f"Stored {len(community_map)} community assignments to {community_path}"
+        )
+
+    def load_community_map(self) -> Optional[Dict[str, int]]:
+        """Load stored community assignments.
+
+        Returns:
+            Dict mapping chunk_id -> community_id, or None if not found
+        """
+        community_path = self.storage_dir / f"{self.project_id}_communities.json"
+        if community_path.exists():
+            with open(community_path, "r") as f:
+                return json.load(f)
+        return None
+
+    def get_community_for_chunk(self, chunk_id: str) -> Optional[int]:
+        """Get community ID for a specific chunk.
+
+        Args:
+            chunk_id: Chunk identifier
+
+        Returns:
+            Community ID (int) or None if not found
+        """
+        community_map = self.load_community_map()
+        if community_map:
+            return community_map.get(chunk_id)
+        return None

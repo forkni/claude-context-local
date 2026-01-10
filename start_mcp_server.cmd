@@ -53,13 +53,14 @@ if "%~1"=="" (
     echo   6. Help ^& Documentation
     echo   M. Quick Model Switch ^(General / Code-specific / Multi-model^)
     echo   F. Configure Output Format
+    echo   V. Toggle RAM Fallback
     echo   X. Release Resources
     echo   0. Exit
     echo.
 
     REM Ensure we have a valid choice
     set "choice="
-    set /p choice="Select option (0-6, M, F, X): "
+    set /p choice="Select option (0-6, M, F, V, X): "
 
     REM Handle empty input or Ctrl+C gracefully
     if not defined choice (
@@ -81,11 +82,13 @@ if "%~1"=="" (
     if /i "!choice!"=="m" goto quick_model_switch
     if /i "!choice!"=="F" goto configure_output_format
     if /i "!choice!"=="f" goto configure_output_format
+    if /i "!choice!"=="V" goto toggle_shared_memory
+    if /i "!choice!"=="v" goto toggle_shared_memory
     if /i "!choice!"=="X" goto release_resources
     if /i "!choice!"=="x" goto release_resources
     if "!choice!"=="0" goto exit_cleanly
 
-    echo [ERROR] Invalid choice: "%choice%". Please select 0-6, M, F, or X.
+    echo [ERROR] Invalid choice: "%choice%". Please select 0-6, M, F, V, or X.
     echo.
     echo Press any key to try again...
     pause >nul
@@ -1009,7 +1012,7 @@ REM Search Configuration Functions
 echo.
 echo [INFO] Current Search Configuration:
 if exist ".venv\Scripts\python.exe" (
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = config.routing.multi_model_enabled; pool = config.routing.multi_model_pool or 'full'; model_display = f'BGE-M3 + gte-modernbert ({pool})' if multi_enabled and pool == 'lightweight-speed' else f'BGE-M3 + Qwen3 + CodeRankEmbed ({pool})' if multi_enabled else f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print('    Multi-Model Routing:', 'Enabled' if multi_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print(); print('  Chunking Settings:'); print('    Chunk Merging:', 'Enabled' if config.chunking.enable_chunk_merging else 'Disabled'); print('    Community Detection:', 'Enabled' if config.chunking.enable_community_detection else 'Disabled'); print('    Community Merge:', 'Enabled' if config.chunking.enable_community_merge else 'Disabled'); print(f'    Community Resolution: {config.chunking.community_resolution}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'    Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    Allow Shared Memory: {\"Enabled\" if config.performance.allow_shared_memory else \"Disabled\"}'); print(); print('  Output Format:', config.output.format)"
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = config.routing.multi_model_enabled; pool = config.routing.multi_model_pool or 'full'; model_display = f'BGE-M3 + gte-modernbert ({pool})' if multi_enabled and pool == 'lightweight-speed' else f'BGE-M3 + Qwen3 + CodeRankEmbed ({pool})' if multi_enabled else f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print('    Multi-Model Routing:', 'Enabled' if multi_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print(); print('  Chunking Settings:'); print('    Chunk Merging:', 'Enabled' if config.chunking.enable_chunk_merging else 'Disabled'); print('    Community Detection:', 'Enabled' if config.chunking.enable_community_detection else 'Disabled'); print('    Community Merge:', 'Enabled' if config.chunking.enable_community_merge else 'Disabled'); print(f'    Community Resolution: {config.chunking.community_resolution}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'    Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    RAM Fallback: {\"On\" if config.performance.allow_ram_fallback else \"Off\"}'); print(); print('  Output Format:', config.output.format)"
     if "!ERRORLEVEL!" neq "0" (
         echo Error loading configuration
         echo Using defaults: hybrid mode, BM25=0.4, Dense=0.6
@@ -1191,11 +1194,20 @@ set "confirm_multi="
 set /p confirm_multi="Enable multi-model routing? (y/N): "
 if /i "!confirm_multi!"=="y" (
     REM Persist to config file via Python
-    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.routing.multi_model_enabled = True; cfg.routing.multi_model_pool = 'full'; mgr.save_config(cfg); print('[OK] Full multi-model routing enabled and saved to config')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.routing.multi_model_enabled = True; cfg.routing.multi_model_pool = 'full'; cfg.reranker.enabled = True; cfg.reranker.model_name = 'BAAI/bge-reranker-v2-m3'; mgr.save_config(cfg); print('[OK] Full multi-model routing enabled and saved to config')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save to config file
         set "CLAUDE_MULTI_MODEL_ENABLED=true"
         echo [INFO] Set as environment variable for this session only
+    ) else (
+        echo.
+        echo [OK] Full multi-model configuration saved
+        echo [INFO] Pool: BGE-M3 + Qwen3 + CodeRankEmbed
+        echo [INFO] Reranker: bge-reranker-v2-m3
+        echo [INFO] Total VRAM: ~6.8GB
+        echo.
+        echo [WARNING] Existing indexes need to be rebuilt for multi-model pool
+        echo [INFO] Next time you index a project, it will use the full pool
     )
 ) else (
     echo [INFO] Cancelled
@@ -1379,10 +1391,11 @@ echo.
 echo   1. Enable Neural Reranker
 echo   2. Disable Neural Reranker
 echo   3. Set Top-K Candidates ^(rerank limit^)
+echo   4. Select Reranker Model
 echo   0. Back to Search Configuration
 echo.
 set "reranker_choice="
-set /p reranker_choice="Select option (0-3): "
+set /p reranker_choice="Select option (0-4): "
 
 if not defined reranker_choice goto search_config_menu
 if "!reranker_choice!"=="" goto search_config_menu
@@ -1424,9 +1437,47 @@ if "!reranker_choice!"=="3" (
         )
     )
 )
+if "!reranker_choice!"=="4" (
+    echo.
+    echo === Select Reranker Model ===
+    echo.
+    echo   1. BGE Reranker ^(BAAI/bge-reranker-v2-m3^)
+    echo      Full quality, ~1.5GB VRAM - for 10GB+ GPUs
+    echo.
+    echo   2. GTE Reranker ^(Alibaba-NLP/gte-reranker-modernbert-base^)
+    echo      Lightweight, ~0.3GB VRAM - for 8GB GPUs
+    echo.
+    echo   0. Cancel
+    echo.
+    set "model_sel="
+    set /p model_sel="Select model (0-2): "
 
-if not "!reranker_choice!"=="1" if not "!reranker_choice!"=="2" if not "!reranker_choice!"=="3" (
-    echo [ERROR] Invalid choice. Please select 0-3.
+    if "!model_sel!"=="1" (
+        echo.
+        echo [INFO] Setting reranker to BGE...
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.model_name = 'BAAI/bge-reranker-v2-m3'; mgr.save_config(cfg); print('[OK] Reranker set to BGE (bge-reranker-v2-m3)')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Failed to save configuration
+        ) else (
+            REM Notify running MCP server to reload config
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+    if "!model_sel!"=="2" (
+        echo.
+        echo [INFO] Setting reranker to GTE...
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.model_name = 'Alibaba-NLP/gte-reranker-modernbert-base'; mgr.save_config(cfg); print('[OK] Reranker set to GTE (gte-reranker-modernbert-base)')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Failed to save configuration
+        ) else (
+            REM Notify running MCP server to reload config
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+)
+
+if not "!reranker_choice!"=="1" if not "!reranker_choice!"=="2" if not "!reranker_choice!"=="3" if not "!reranker_choice!"=="4" (
+    echo [ERROR] Invalid choice. Please select 0-4.
 )
 pause
 goto search_config_menu
@@ -1436,7 +1487,7 @@ echo.
 echo === Performance Settings ===
 echo.
 echo Current Settings:
-".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Prefer GPU:', 'True' if cfg.performance.prefer_gpu else 'False'); print('  Auto-Reindex:', 'Enabled' if cfg.performance.enable_auto_reindex else 'Disabled'); print('    Max Age:', cfg.performance.max_index_age_minutes, 'minutes'); print(f'  VRAM Limit: {cfg.performance.vram_limit_fraction:.0%%}'); print('  Allow Shared Memory:', 'Enabled' if cfg.performance.allow_shared_memory else 'Disabled')" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Prefer GPU:', 'True' if cfg.performance.prefer_gpu else 'False'); print('  Auto-Reindex:', 'Enabled' if cfg.performance.enable_auto_reindex else 'Disabled'); print('    Max Age:', cfg.performance.max_index_age_minutes, 'minutes'); print(f'  VRAM Limit: {cfg.performance.vram_limit_fraction:.0%%}'); print('  RAM Fallback:', 'On' if cfg.performance.allow_ram_fallback else 'Off')" 2>nul
 echo.
 echo   1. Configure GPU Acceleration   - Prefer GPU for embeddings/search
 echo   2. Configure Auto-Reindex       - Auto-refresh when index is stale
@@ -1536,10 +1587,10 @@ echo.
 echo === GPU Memory Configuration ===
 echo.
 echo Current Settings:
-".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print(f'  VRAM Limit: {cfg.performance.vram_limit_fraction:.0%%}'); print('  Allow Shared Memory:', 'Enabled' if cfg.performance.allow_shared_memory else 'Disabled')" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print(f'  VRAM Limit: {cfg.performance.vram_limit_fraction:.0%%}'); print('  RAM Fallback:', 'On' if cfg.performance.allow_ram_fallback else 'Off')" 2>nul
 echo.
 echo   1. Adjust VRAM Limit          - Set hard ceiling (70-95%%)
-echo   2. Allow Shared Memory        - Enable system RAM spillover (slower)
+echo   2. Configure RAM Fallback     - Enable system RAM spillover (slower)
 echo   0. Back to Performance Settings
 echo.
 set "gpu_mem_choice="
@@ -1607,7 +1658,7 @@ goto configure_gpu_memory
 
 :configure_shared_memory
 echo.
-echo === Allow Shared Memory ===
+echo === RAM Fallback Configuration ===
 echo.
 echo When enabled, PyTorch can spill to system RAM when VRAM is full.
 echo This is SLOWER but prevents OOM errors on 8GB VRAM laptops.
@@ -1626,7 +1677,7 @@ if "!shared_mem_choice!"=="0" goto configure_gpu_memory
 if "!shared_mem_choice!"=="1" (
     echo.
     echo [INFO] Enabling shared memory spillover...
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.allow_shared_memory = True; mgr.save_config(cfg); print('[OK] Shared memory enabled')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.allow_ram_fallback = True; mgr.save_config(cfg); print('[OK] RAM fallback enabled')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
@@ -1638,7 +1689,7 @@ if "!shared_mem_choice!"=="1" (
 if "!shared_mem_choice!"=="2" (
     echo.
     echo [INFO] Disabling shared memory spillover...
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.allow_shared_memory = False; mgr.save_config(cfg); print('[OK] Shared memory disabled')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.performance.allow_ram_fallback = False; mgr.save_config(cfg); print('[OK] RAM fallback disabled')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
@@ -1653,6 +1704,14 @@ if not "!shared_mem_choice!"=="1" if not "!shared_mem_choice!"=="2" (
 )
 pause
 goto configure_gpu_memory
+
+:toggle_shared_memory
+cls
+".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); new_val = not cfg.performance.allow_ram_fallback; cfg.performance.allow_ram_fallback = new_val; mgr.save_config(cfg)" 2>nul
+if errorlevel 1 (
+    echo [ERROR] Failed to toggle shared memory
+)
+goto start
 
 :quick_model_switch
 echo.
@@ -1932,12 +1991,12 @@ echo   6. Disable Large Node Splitting         - Keep large functions intact
 echo   7. Set Max Chunk Lines                  - Split threshold in lines (default: 100)
 echo   8. Enable Community Detection           - Detect code communities for better chunking
 echo   9. Disable Community Detection          - Skip community detection
-echo  10. Enable Community Merge               - Use communities for chunk remerging (requires detection)
-echo  11. Disable Community Merge              - Skip community-based remerging
+echo   A. Enable Community Merge               - Use communities for chunk remerging (requires detection)
+echo   B. Disable Community Merge              - Skip community-based remerging
 echo   0. Back to Search Configuration
 echo.
 set "chunk_choice="
-set /p chunk_choice="Select option (0-11): "
+set /p chunk_choice="Select option (0-9, A-B): "
 
 if not defined chunk_choice goto search_config_menu
 if "!chunk_choice!"=="" goto search_config_menu
@@ -1986,8 +2045,8 @@ if "!chunk_choice!"=="3" (
 if "!chunk_choice!"=="4" (
     echo.
     echo Select token estimation method:
-    echo   1. whitespace - Fast, approximate (recommended)
-    echo   2. tiktoken   - Accurate, slower (requires tiktoken package)
+    echo   1. whitespace - Fast, approximate ^(recommended^)
+    echo   2. tiktoken   - Accurate, slower ^(requires tiktoken package^)
     echo.
     set "token_method="
     set /p token_method="Enter choice (1-2): "
@@ -2082,7 +2141,7 @@ if "!chunk_choice!"=="9" (
     )
     goto chunking_menu_end
 )
-if "!chunk_choice!"=="10" (
+if /i "!chunk_choice!"=="A" (
     echo.
     echo [INFO] Enabling community-based merge...
     ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_community_merge = True; mgr.save_config(cfg); print('[OK] Community merge enabled')" 2>nul
@@ -2096,7 +2155,7 @@ if "!chunk_choice!"=="10" (
     )
     goto chunking_menu_end
 )
-if "!chunk_choice!"=="11" (
+if /i "!chunk_choice!"=="B" (
     echo.
     echo [INFO] Disabling community-based merge...
     ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_community_merge = False; mgr.save_config(cfg); print('[OK] Community merge disabled')" 2>nul
@@ -2110,8 +2169,8 @@ if "!chunk_choice!"=="11" (
     goto chunking_menu_end
 )
 
-if not "!chunk_choice!"=="1" if not "!chunk_choice!"=="2" if not "!chunk_choice!"=="3" if not "!chunk_choice!"=="4" if not "!chunk_choice!"=="5" if not "!chunk_choice!"=="6" if not "!chunk_choice!"=="7" if not "!chunk_choice!"=="8" if not "!chunk_choice!"=="9" if not "!chunk_choice!"=="10" if not "!chunk_choice!"=="11" (
-    echo [ERROR] Invalid choice. Please select 0-11.
+if not "!chunk_choice!"=="1" if not "!chunk_choice!"=="2" if not "!chunk_choice!"=="3" if not "!chunk_choice!"=="4" if not "!chunk_choice!"=="5" if not "!chunk_choice!"=="6" if not "!chunk_choice!"=="7" if not "!chunk_choice!"=="8" if not "!chunk_choice!"=="9" if /i not "!chunk_choice!"=="A" if /i not "!chunk_choice!"=="B" (
+    echo [ERROR] Invalid choice. Please select 0-9, A-B.
 )
 :chunking_menu_end
 pause
@@ -2322,6 +2381,10 @@ echo [Runtime Status]
 if exist ".venv\Scripts\python.exe" (
     REM Display model status
     ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = cfg.routing.multi_model_enabled; pool = cfg.routing.multi_model_pool or 'full'; print('Model: [MULTI] BGE-M3 + gte-modernbert (1.65GB total)' if pool == 'lightweight-speed' else 'Model: [MULTI] BGE-M3 + Qwen3 + CodeRankEmbed (5.3GB total)') if multi_enabled else print(f'Model: [SINGLE] {model_short} ({dim}d, {vram})'); print(f'       Active routing - {pool} pool') if multi_enabled else print('Tip: Press M for Quick Model Switch')" 2>nul
+    REM Display RAM fallback status
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); val = cfg.performance.allow_ram_fallback; print(f'RAM Fallback: {\"On\" if val else \"Off\"}')" 2>nul
+    REM Display output format
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print(f'Output Format: {cfg.output.format}')" 2>nul
     REM Display current project using helper script
     ".\.venv\Scripts\python.exe" scripts\get_current_project.py 2>nul
 ) else (

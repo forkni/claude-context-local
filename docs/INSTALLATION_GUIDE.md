@@ -975,12 +975,12 @@ python -c "import torch; print('GPU memory:', torch.cuda.get_device_properties(0
 
 Two new settings are available to manage GPU memory allocation on systems with limited VRAM (8GB laptops):
 
-**1. Allow Shared Memory** (`allow_shared_memory`):
+**1. RAM Fallback** (`allow_ram_fallback`):
 
 - **Default**: `false` (strict VRAM limit, faster but may OOM)
 - **Enabled**: Allows PyTorch to spill to system RAM when dedicated VRAM is full (slower but reliable)
 - **Use When**: Experiencing OOM errors with neural reranker on 8GB VRAM laptops
-- **Access**: `start_mcp_server.cmd` → 3 (Search Config) → 7 (Performance) → 3 (Allow Shared Memory)
+- **Access**: `start_mcp_server.cmd` → 3 (Search Config) → 7 (Performance) → 3 (Configure RAM Fallback)
 
 **2. VRAM Limit Fraction** (`vram_limit_fraction`):
 
@@ -993,7 +993,7 @@ Two new settings are available to manage GPU memory allocation on systems with l
 
 | GPU VRAM | Configuration | Notes |
 |----------|---------------|-------|
-| **8GB Laptop** | `allow_shared_memory: true` | Reliability over speed |
+| **8GB Laptop** | `allow_ram_fallback: true` | Reliability over speed |
 | **10-12GB** | `vram_limit_fraction: 0.80` (default) | Balanced |
 | **16GB+** | `vram_limit_fraction: 0.85-0.90` | More headroom |
 | **24GB+** | `vram_limit_fraction: 0.90-0.95` | Maximum capacity |
@@ -1002,9 +1002,9 @@ Two new settings are available to manage GPU memory allocation on systems with l
 
 1. **Batch Sizing**: `gpu_memory_threshold` (70%) calculates optimal batch size
 2. **Hard Ceiling**: `vram_limit_fraction` (80%) enforces VRAM limit
-3. **Spillover Control**: `allow_shared_memory` (false) prevents slow shared memory usage
+3. **Spillover Control**: `allow_ram_fallback` (false) prevents slow shared memory usage
 
-**When `allow_shared_memory=true`**:
+**When `allow_ram_fallback=true`**:
 
 - `vram_limit_fraction` is ignored (no hard limit set)
 - PyTorch can use system RAM when VRAM is full (slower but won't OOM)

@@ -31,8 +31,8 @@
     "enable_entity_tracking": true,
     "prefer_gpu": true,
     "gpu_memory_threshold": 0.65,
-    "vram_limit_fraction": 0.85,
-    "allow_shared_memory": false,
+    "vram_limit_fraction": 0.9,
+    "allow_ram_fallback": false,
     "enable_fp16": true,
     "prefer_bf16": true,
     "enable_dynamic_batch_size": true,
@@ -61,7 +61,7 @@
   },
   "reranker": {
     "enabled": true,
-    "model_name": "Alibaba-NLP/gte-reranker-modernbert-base",
+    "model_name": "BAAI/bge-reranker-v2-m3",
     "top_k_candidates": 50,
     "min_vram_gb": 6.0,
     "batch_size": 16
@@ -70,13 +70,15 @@
     "format": "ultra"
   },
   "chunking": {
-    "enable_chunk_merging": false,
+    "enable_chunk_merging": true,
     "min_chunk_tokens": 50,
     "max_merged_tokens": 500,
+    "enable_community_detection": true,
+    "enable_community_merge": false,
+    "community_resolution": 0.5,
     "enable_large_node_splitting": true,
     "max_chunk_lines": 100,
-    "token_estimation": "tiktoken",
-    "community_resolution": 0.5
+    "token_estimation": "tiktoken"
   },
   "ego_graph": {
     "enabled": false,

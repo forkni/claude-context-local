@@ -61,13 +61,10 @@ class RerankingEngine:
                 self._logger.warning("Neural reranking disabled: No GPU available")
                 return False
 
-            # If shared memory is allowed, skip VRAM threshold check
-            if (
-                hasattr(config, "performance")
-                and config.performance.allow_shared_memory
-            ):
+            # If RAM fallback is allowed, skip VRAM threshold check
+            if hasattr(config, "performance") and config.performance.allow_ram_fallback:
                 self._logger.info(
-                    "Neural reranking enabled: allow_shared_memory=True (will use system RAM if needed)"
+                    "Neural reranking enabled: allow_ram_fallback=True (will use system RAM if needed)"
                 )
                 return True
 

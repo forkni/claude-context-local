@@ -97,7 +97,7 @@ def set_vram_limit(fraction: float = 0.90) -> bool:
     VRAM approaches capacity. This hard limit prevents that by raising OOM
     errors instead of spilling (which is much faster than slow spillover).
 
-    If allow_shared_memory is True in config, skip setting the limit to allow
+    If allow_ram_fallback is True in config, skip setting the limit to allow
     slower but more reliable spillover to system RAM.
 
     Args:
@@ -113,12 +113,12 @@ def set_vram_limit(fraction: float = 0.90) -> bool:
     if not torch or not torch.cuda.is_available():
         return False
 
-    # Check if shared memory is allowed
+    # Check if RAM fallback is allowed
     try:
         config = _get_config_via_service_locator()
-        if config and config.performance.allow_shared_memory:
+        if config and config.performance.allow_ram_fallback:
             logging.getLogger(__name__).info(
-                "[VRAM_LIMIT] Shared memory allowed - skipping hard VRAM limit"
+                "[VRAM_LIMIT] RAM fallback allowed - skipping hard VRAM limit"
             )
             return True  # Don't set limit, allow spillover
     except Exception as e:

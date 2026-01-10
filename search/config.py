@@ -220,7 +220,7 @@ class PerformanceConfig:
     prefer_gpu: bool = True
     gpu_memory_threshold: float = 0.65  # Conservative for fragmentation headroom
     vram_limit_fraction: float = 0.80  # Hard VRAM ceiling (80% of dedicated)
-    allow_shared_memory: bool = (
+    allow_ram_fallback: bool = (
         False  # Allow spillover to system RAM (slower but reliable)
     )
 
@@ -447,7 +447,7 @@ class SearchConfig:
                 "prefer_gpu": self.performance.prefer_gpu,
                 "gpu_memory_threshold": self.performance.gpu_memory_threshold,
                 "vram_limit_fraction": self.performance.vram_limit_fraction,
-                "allow_shared_memory": self.performance.allow_shared_memory,
+                "allow_ram_fallback": self.performance.allow_ram_fallback,
                 "enable_fp16": self.performance.enable_fp16,
                 "prefer_bf16": self.performance.prefer_bf16,
                 "enable_dynamic_batch_size": self.performance.enable_dynamic_batch_size,
@@ -488,10 +488,12 @@ class SearchConfig:
                 "enable_chunk_merging": self.chunking.enable_chunk_merging,
                 "min_chunk_tokens": self.chunking.min_chunk_tokens,
                 "max_merged_tokens": self.chunking.max_merged_tokens,
+                "enable_community_detection": self.chunking.enable_community_detection,
+                "enable_community_merge": self.chunking.enable_community_merge,
+                "community_resolution": self.chunking.community_resolution,
                 "enable_large_node_splitting": self.chunking.enable_large_node_splitting,
                 "max_chunk_lines": self.chunking.max_chunk_lines,
                 "token_estimation": self.chunking.token_estimation,
-                "community_resolution": self.chunking.community_resolution,
             },
             "ego_graph": {
                 "enabled": self.ego_graph.enabled,
@@ -590,7 +592,12 @@ class SearchConfig:
                 prefer_gpu=performance_data.get("prefer_gpu", True),
                 gpu_memory_threshold=performance_data.get("gpu_memory_threshold", 0.8),
                 vram_limit_fraction=performance_data.get("vram_limit_fraction", 0.80),
-                allow_shared_memory=performance_data.get("allow_shared_memory", False),
+                allow_ram_fallback=performance_data.get(
+                    "allow_ram_fallback",
+                    performance_data.get(
+                        "allow_shared_memory", False
+                    ),  # backward compat
+                ),
                 enable_fp16=performance_data.get("enable_fp16", True),
                 prefer_bf16=performance_data.get("prefer_bf16", True),
                 enable_dynamic_batch_size=performance_data.get(

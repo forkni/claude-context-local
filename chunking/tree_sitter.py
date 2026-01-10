@@ -164,6 +164,25 @@ def _read_file_with_timeout(file_path: Path, timeout: float = FILE_READ_TIMEOUT)
             ) from None
 
 
+def _is_binary_file(file_path: Path, sample_size: int = 8192) -> bool:
+    """Check if a file is binary by looking for null bytes.
+
+    Args:
+        file_path: Path to the file
+        sample_size: Number of bytes to sample (default 8KB)
+
+    Returns:
+        True if file appears to be binary
+    """
+    try:
+        with open(file_path, "rb") as f:
+            chunk = f.read(sample_size)
+            # Null bytes are strong indicator of binary content
+            return b"\x00" in chunk
+    except Exception:
+        return False  # If we can't read it, let the main logic handle it
+
+
 class TreeSitterChunker:
     """Main tree-sitter chunker that delegates to language-specific implementations."""
 
@@ -254,8 +273,23 @@ class TreeSitterChunker:
             return []
 
         if content is None:
+            # Check for binary files before attempting text read
+            if _is_binary_file(Path(file_path)):
+                logger.debug(f"[BINARY] Skipping binary file: {file_path}")
+                return []
+
             try:
                 content = _read_file_with_timeout(Path(file_path))
+
+                # Skip HTML/XML files that shouldn't be parsed as code
+                content_start = content.lstrip()[:100].lower()
+                if any(
+                    marker in content_start
+                    for marker in ["<!doctype html", "<html", "<?xml"]
+                ):
+                    logger.debug(f"[HTML/XML] Skipping markup file: {file_path}")
+                    return []
+
             except TimeoutError as e:
                 logger.warning(f"[TIMEOUT] {e}")
                 return []

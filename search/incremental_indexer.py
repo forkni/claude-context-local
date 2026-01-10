@@ -469,6 +469,13 @@ class IncrementalIndexer:
                         f"[COMMUNITY_DETECT] Detected {len(set(community_map.values()))} communities from {len(community_map)} nodes"
                     )
 
+                    # NEW: Persist community_map to graph storage for future use
+                    if community_map and temp_graph:
+                        temp_graph.storage.store_community_map(community_map)
+                        logger.info(
+                            "[COMMUNITY_DETECT] Community map persisted to graph storage"
+                        )
+
                 except Exception as e:
                     logger.error(f"[COMMUNITY_DETECT] Failed: {e}")
                     import traceback
