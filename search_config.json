@@ -1,7 +1,7 @@
 {
   "embedding": {
-    "model_name": "nomic-ai/CodeRankEmbed",
-    "dimension": 768,
+    "model_name": "Qwen/Qwen3-Embedding-0.6B",
+    "dimension": 1024,
     "batch_size": 128,
     "query_cache_size": 128,
     "enable_import_context": true,
@@ -60,7 +60,7 @@
     "log_classifications": true
   },
   "reranker": {
-    "enabled": false,
+    "enabled": true,
     "model_name": "BAAI/bge-reranker-v2-m3",
     "top_k_candidates": 50,
     "min_vram_gb": 6.0,
@@ -70,14 +70,14 @@
     "format": "ultra"
   },
   "chunking": {
-    "enable_chunk_merging": true,
+    "enable_chunk_merging": false,
     "min_chunk_tokens": 50,
     "max_merged_tokens": 500,
     "enable_community_detection": true,
     "enable_community_merge": false,
-    "community_resolution": 0.5,
+    "community_resolution": 0.1,
     "enable_large_node_splitting": true,
-    "max_chunk_lines": 100,
+    "max_chunk_lines": 250,
     "token_estimation": "tiktoken"
   },
   "ego_graph": {

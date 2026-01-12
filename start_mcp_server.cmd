@@ -11,10 +11,6 @@ pushd "%PROJECT_DIR%" || (
     exit /b 1
 )
 
-echo === Claude Context MCP Server Launcher ===
-echo [Hybrid Search Enabled - All Modes Operational]
-echo.
-
 REM Check prerequisites first
 if not exist ".venv" (
     echo [ERROR] Virtual environment not found. Run install-windows.bat first.
@@ -40,6 +36,9 @@ if not exist "mcp_server\server.py" (
 :start
 REM If no arguments, show interactive menu
 if "%~1"=="" (
+    echo.
+    echo === Claude Context MCP Server Launcher ===
+    echo.
     REM Display system status
     call :show_system_status
 
