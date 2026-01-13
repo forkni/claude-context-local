@@ -294,12 +294,9 @@ class OutputConfig:
 
 @dataclass
 class ChunkingConfig:
-    """Chunking algorithm settings (9 fields)."""
+    """Chunking algorithm settings (8 fields)."""
 
-    # Two-Pass Chunking: Greedy Merge + Community Merge (cAST algorithm - EMNLP 2025)
-    enable_chunk_merging: bool = (
-        False  # Two-Pass: greedy (per-file) + community (cross-file)
-    )
+    # Token size constraints for chunks
     min_chunk_tokens: int = 50  # Minimum tokens before considering merge
     max_merged_tokens: int = 1000  # Maximum tokens for merged chunk
 
@@ -308,7 +305,7 @@ class ChunkingConfig:
         True  # Enable community detection via Louvain algorithm
     )
     enable_community_merge: bool = (
-        True  # Enable community-based remerge (requires enable_chunk_merging)
+        True  # Enable community-based remerge (full index only)
     )
     community_resolution: float = (
         1.0  # Resolution parameter (higher = more/smaller communities)
@@ -485,7 +482,6 @@ class SearchConfig:
                 "format": self.output.format,
             },
             "chunking": {
-                "enable_chunk_merging": self.chunking.enable_chunk_merging,
                 "min_chunk_tokens": self.chunking.min_chunk_tokens,
                 "max_merged_tokens": self.chunking.max_merged_tokens,
                 "enable_community_detection": self.chunking.enable_community_detection,
@@ -647,10 +643,6 @@ class SearchConfig:
             )
 
             chunking = ChunkingConfig(
-                enable_chunk_merging=chunking_data.get(
-                    "enable_chunk_merging",
-                    chunking_data.get("enable_greedy_merge", False),  # Backward compat
-                ),
                 min_chunk_tokens=chunking_data.get("min_chunk_tokens", 50),
                 max_merged_tokens=chunking_data.get("max_merged_tokens", 1000),
                 enable_large_node_splitting=chunking_data.get(
@@ -771,10 +763,6 @@ class SearchConfig:
             )
 
             chunking = ChunkingConfig(
-                enable_chunk_merging=data.get(
-                    "enable_chunk_merging",
-                    data.get("enable_greedy_merge", False),  # Backward compat
-                ),
                 min_chunk_tokens=data.get("min_chunk_tokens", 50),
                 max_merged_tokens=data.get("max_merged_tokens", 1000),
                 enable_large_node_splitting=data.get(

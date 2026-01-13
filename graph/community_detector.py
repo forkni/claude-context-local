@@ -106,9 +106,10 @@ class CommunityDetector:
             collapsed_graph.add_node(node, **attrs)
 
         # First: Preserve direct chunk-to-chunk edges (resolved internal calls, relationships)
+        # Filter out self-loops per NetworkX warning: "self-loops are treated as previously reduced communities"
         direct_edges = 0
         for u, v in self.nx_graph.edges():
-            if u in chunk_nodes_set and v in chunk_nodes_set:
+            if u in chunk_nodes_set and v in chunk_nodes_set and u != v:
                 if collapsed_graph.has_edge(u, v):
                     collapsed_graph[u][v]["weight"] += 1
                 else:

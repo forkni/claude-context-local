@@ -340,19 +340,19 @@ class LanguageChunker(ABC):
         max_merged_tokens: int = 1000,
         token_method: str = "whitespace",
     ) -> List["CodeChunk"]:
-        """Re-merge chunks using community boundaries (Two-Pass Chunking - Phase 2).
+        """Re-merge chunks using community boundaries (Community-based remerging).
 
         This is called AFTER community detection to re-merge chunks using
         community_id as boundaries instead of parent_class. Solves the circular
         dependency: chunking needs communities, but communities need chunks.
 
-        Two-Pass Flow:
-            Pass 1: Chunk with parent_class boundaries → Build graph → Detect communities
-            Pass 2: Re-merge using community_id boundaries ← THIS METHOD
+        Community merge flow:
+            1. Chunk with AST boundaries → Build graph → Detect communities
+            2. Re-merge using community_id boundaries ← THIS METHOD
 
         Args:
-            chunks: List of CodeChunk from Pass 1 (merged by parent_class)
-            community_map: Dict mapping chunk_id to community_id from Leiden detection
+            chunks: List of CodeChunk (raw AST chunks)
+            community_map: Dict mapping chunk_id to community_id from Louvain detection
             min_tokens: Minimum tokens before considering merge (default: 50)
             max_merged_tokens: Maximum tokens for merged chunk (default: 1000)
             token_method: Token estimation method ("whitespace" or "tiktoken")
@@ -373,7 +373,7 @@ class LanguageChunker(ABC):
 
         logger = logging.getLogger(__name__)
         logger.info(
-            f"[REMERGE] Pass 2: Re-merging {len(chunks)} chunks with community boundaries"
+            f"[REMERGE] Re-merging {len(chunks)} chunks with community boundaries"
         )
 
         # Step 1: Assign community_id to chunks from map
@@ -753,27 +753,8 @@ class LanguageChunker(ABC):
                 )
             )
 
-        # Track original chunk count before merging
-        original_count = len(chunks)
-
-        # Apply greedy sibling merging if enabled
-        # Pass 1: Always merge by parent_class boundaries (fast, file-local)
-        # Pass 2: Community merge happens during full index (graph-aware boundaries)
-        if config and config.enable_chunk_merging and len(chunks) > 1:
-            chunks, _, _ = self._greedy_merge_small_chunks(
-                chunks,
-                min_tokens=config.min_chunk_tokens,
-                max_merged_tokens=config.max_merged_tokens,
-                token_method=config.token_estimation,
-                use_community_boundary=False,  # Pass 1 always uses parent_class
-            )
-
-        # Store merge stats in first chunk's metadata for ParallelChunker aggregation
-        # Format: (original_count, merged_count)
-        if chunks and config and config.enable_chunk_merging:
-            if not hasattr(chunks[0], "_merge_stats"):
-                # Add temporary attribute for stats propagation
-                chunks[0]._merge_stats = (original_count, len(chunks))
+        # Community merge happens during full index (graph-aware boundaries)
+        # No greedy merge - raw AST chunks returned
 
         return chunks
 

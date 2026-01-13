@@ -439,8 +439,8 @@ class IncrementalIndexer:
 
             logger.info(f"Total chunks collected: {len(all_chunks)}")
 
-            # ========== Community Detection & Remerge (Pass 2 - Independent Control) ==========
-            # Two-Pass Flow: Chunk → Build graph → Detect communities → (Optional) Remerge → Embed
+            # ========== Community Detection & Remerge ==========
+            # Community merge flow: Chunk → Build graph → Detect communities → (Optional) Remerge → Embed
             # FIX: Community detection can now run independently of chunk merging
             config = get_search_config()
             community_map = None  # Will be populated if community detection runs
@@ -486,13 +486,8 @@ class IncrementalIndexer:
                     )
                     community_map = None
 
-            # Step B: Community-based Remerge (Requires BOTH chunk merging AND community merge enabled)
-            if (
-                config.chunking.enable_chunk_merging
-                and config.chunking.enable_community_merge
-                and community_map
-                and all_chunks
-            ):
+            # Step B: Community-based Remerge (Full index only)
+            if config.chunking.enable_community_merge and community_map and all_chunks:
                 logger.info("[COMMUNITY_MERGE] Running community-based remerge")
 
                 try:
@@ -505,16 +500,17 @@ class IncrementalIndexer:
                         community_map=community_map,
                         min_tokens=config.chunking.min_chunk_tokens,
                         max_merged_tokens=config.chunking.max_merged_tokens,
+                        token_method=config.chunking.token_estimation,
                     )
                     logger.info(
-                        f"[COMMUNITY_MERGE] Pass 2 remerge complete: {len(all_chunks)} chunks"
+                        f"[COMMUNITY_MERGE] Community remerge complete: {len(all_chunks)} chunks"
                     )
 
                     # Regenerate proper chunk_ids (line numbers changed after merge)
                     all_chunks = self._regenerate_chunk_ids(all_chunks, project_path)
 
                     logger.info(
-                        f"[COMMUNITY_MERGE] Two-Pass complete: {len(all_chunks)} final chunks"
+                        f"[COMMUNITY_MERGE] Community merge complete: {len(all_chunks)} final chunks"
                     )
 
                 except Exception as e:

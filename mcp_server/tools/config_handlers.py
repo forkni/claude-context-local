@@ -266,10 +266,8 @@ async def handle_configure_chunking(arguments: Dict[str, Any]) -> Dict:
 
     Args:
         arguments: Dict with optional keys:
-            - enable_chunk_merging: Enable/disable Two-Pass chunking (greedy + community merge)
-            - enable_greedy_merge: (Deprecated) Use enable_chunk_merging instead
             - enable_community_detection: Enable/disable community detection (independent)
-            - enable_community_merge: Enable/disable community-based remerge (requires enable_chunk_merging)
+            - enable_community_merge: Enable/disable community-based remerge (full index only)
             - community_resolution: Resolution parameter for Louvain community detection (0.1-2.0)
             - token_estimation: Token estimation method ("whitespace" or "tiktoken")
             - enable_large_node_splitting: Enable/disable AST block splitting
@@ -285,10 +283,6 @@ async def handle_configure_chunking(arguments: Dict[str, Any]) -> Dict:
     config_manager = get_config_manager()
     config = config_manager.load_config()
 
-    # Accept both new and old parameter names for backward compatibility
-    enable_chunk_merging = arguments.get("enable_chunk_merging") or arguments.get(
-        "enable_greedy_merge"
-    )
     enable_community_detection = arguments.get("enable_community_detection")
     enable_community_merge = arguments.get("enable_community_merge")
     community_resolution = arguments.get("community_resolution")
@@ -296,8 +290,6 @@ async def handle_configure_chunking(arguments: Dict[str, Any]) -> Dict:
     enable_large_node_splitting = arguments.get("enable_large_node_splitting")
     max_chunk_lines = arguments.get("max_chunk_lines")
 
-    if enable_chunk_merging is not None:
-        config.chunking.enable_chunk_merging = enable_chunk_merging
     if enable_community_detection is not None:
         config.chunking.enable_community_detection = enable_community_detection
     if enable_community_merge is not None:
@@ -324,7 +316,6 @@ async def handle_configure_chunking(arguments: Dict[str, Any]) -> Dict:
     return {
         "success": True,
         "config": {
-            "enable_chunk_merging": config.chunking.enable_chunk_merging,
             "enable_community_detection": config.chunking.enable_community_detection,
             "enable_community_merge": config.chunking.enable_community_merge,
             "community_resolution": config.chunking.community_resolution,

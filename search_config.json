@@ -50,7 +50,7 @@
   "routing": {
     "multi_model_enabled": true,
     "default_model": "bge_m3",
-    "multi_model_pool": "full"
+    "multi_model_pool": "lightweight-speed"
   },
   "intent": {
     "enabled": true,
@@ -61,7 +61,7 @@
   },
   "reranker": {
     "enabled": true,
-    "model_name": "BAAI/bge-reranker-v2-m3",
+    "model_name": "Alibaba-NLP/gte-reranker-modernbert-base",
     "top_k_candidates": 50,
     "min_vram_gb": 6.0,
     "batch_size": 16
@@ -70,12 +70,11 @@
     "format": "ultra"
   },
   "chunking": {
-    "enable_chunk_merging": false,
     "min_chunk_tokens": 50,
     "max_merged_tokens": 500,
     "enable_community_detection": true,
-    "enable_community_merge": false,
-    "community_resolution": 0.1,
+    "enable_community_merge": true,
+    "community_resolution": 1.5,
     "enable_large_node_splitting": true,
     "max_chunk_lines": 250,
     "token_estimation": "tiktoken"
