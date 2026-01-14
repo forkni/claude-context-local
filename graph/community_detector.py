@@ -9,7 +9,6 @@ NetworkX Reference: https://networkx.org/documentation/stable/reference/algorith
 
 import logging
 from collections import Counter
-from typing import Dict
 
 from networkx.algorithms.community import louvain_communities, modularity
 
@@ -32,7 +31,7 @@ class CommunityDetector:
     Reference: https://networkx.org/documentation/stable/reference/algorithms/community.html
     """
 
-    def __init__(self, graph_storage: CodeGraphStorage):
+    def __init__(self, graph_storage: CodeGraphStorage) -> None:
         """Initialize community detector.
 
         Args:
@@ -42,7 +41,7 @@ class CommunityDetector:
         self.storage = graph_storage
         self.logger = logging.getLogger(__name__)
 
-    def detect_communities(self, resolution: float = 1.0) -> Dict[str, int]:
+    def detect_communities(self, resolution: float = 1.0) -> dict[str, int]:
         """Detect communities using NetworkX native Louvain algorithm.
 
         Algorithm: Modularity maximization (purely algorithmic, no LLM)
@@ -180,7 +179,7 @@ class CommunityDetector:
 
         return community_map
 
-    def get_community_stats(self, communities: Dict[str, int]) -> Dict:
+    def get_community_stats(self, communities: dict[str, int]) -> dict:
         """Get statistics about detected communities.
 
         Args:
@@ -216,7 +215,7 @@ class CommunityDetector:
 
     def get_hierarchical_communities(
         self, max_levels: int = 3
-    ) -> Dict[int, Dict[str, int]]:
+    ) -> dict[int, dict[str, int]]:
         """Get multi-level community hierarchy.
 
         Args:

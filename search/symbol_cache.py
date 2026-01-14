@@ -18,7 +18,7 @@ import json
 import logging
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -41,14 +41,14 @@ class SymbolHashCache:
     FNV_PRIME = 0x100000001B3
     BUCKET_COUNT = 256  # Power of 2 for fast modulo via bitwise AND
 
-    def __init__(self, cache_path: Path):
+    def __init__(self, cache_path: Path) -> None:
         """Initialize symbol hash cache.
 
         Args:
             cache_path: Path to cache file for persistence
         """
         self._cache_path = Path(cache_path)
-        self._buckets: Dict[int, Dict[int, str]] = defaultdict(dict)
+        self._buckets: dict[int, dict[int, str]] = defaultdict(dict)
         self._dirty = False
         self._total_symbols = 0
 
@@ -187,7 +187,7 @@ class SymbolHashCache:
             return  # No changes to save
 
         # Prepare data structure
-        cache_data: Dict[str, Any] = {
+        cache_data: dict[str, Any] = {
             "version": 1,
             "bucket_count": self.BUCKET_COUNT,
             "total_symbols": self._total_symbols,
@@ -259,7 +259,7 @@ class SymbolHashCache:
             f"{len(self._buckets)} buckets from {self._cache_path}"
         )
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get cache statistics.
 
         Returns:

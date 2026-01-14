@@ -105,7 +105,7 @@ include = ["chunking*", "embeddings*", "mcp_server*", "search*", "merkle*"]
 # Transitive dependency security updates:
 # authlib>=1.6.5     # Fixes CVE-2025-59420, CVE-2025-61920, CVE-2025-62706
 # pip>=25.3          # Fixes CVE-2025-8869 (tarfile path traversal)
-# starlette>=0.49.1  # Fixes CVE (version: 0.47.3 → 0.49.1)
+# starlette>=0.51.0  # Fixes CVE (version: 0.47.3 → 0.51.0)
 # uv>=0.9.6          # Fixes 2 CVEs (version: 0.8.21 → 0.9.6)
 # werkzeug>=3.1.4    # Fixes CVE-2025-66221 (Windows device name handling)
 #
@@ -130,6 +130,11 @@ include = ["chunking*", "embeddings*", "mcp_server*", "search*", "merkle*"]
 # Safe patch updates (tested 2026-01-06):
 # ipython (9.8.0→9.9.0), uv (0.9.21→0.9.22)
 # Tested: ipython import successful, uv --version confirmed, no dependency conflicts
+#
+# Safe patch updates (tested 2026-01-13):
+# protobuf (6.33.2→6.33.4), starlette (0.50.0→0.51.0), tomli (2.3.0→2.4.0), uv (0.9.23→0.9.24)
+# Tested: 1387/1414 unit tests passed, 7/8 integration tests passed
+# Known pre-existing failures: 16 unit test failures + 11 errors (unrelated to updates)
 
 [tool.uv]
 index-url = "https://pypi.org/simple"

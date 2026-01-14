@@ -5,7 +5,7 @@ Provides high-level query operations on code graphs.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Optional
 
 try:
     import networkx as nx
@@ -22,7 +22,7 @@ class GraphQueryEngine:
     Provides convenient methods for common graph queries and analysis.
     """
 
-    def __init__(self, graph_storage: CodeGraphStorage):
+    def __init__(self, graph_storage: CodeGraphStorage) -> None:
         """
         Initialize query engine.
 
@@ -40,7 +40,7 @@ class GraphQueryEngine:
 
     def find_call_chain(
         self, start_chunk_id: str, end_chunk_id: str, max_depth: int = 10
-    ) -> Optional[List[str]]:
+    ) -> Optional[list[str]]:
         """
         Find shortest call chain from start to end function.
 
@@ -80,7 +80,7 @@ class GraphQueryEngine:
 
     def find_all_callers(
         self, chunk_id: str, max_depth: int = 3
-    ) -> Dict[int, Set[str]]:
+    ) -> dict[int, set[str]]:
         """
         Find all callers up to max_depth levels.
 
@@ -118,7 +118,7 @@ class GraphQueryEngine:
 
     def find_all_callees(
         self, chunk_id: str, max_depth: int = 3
-    ) -> Dict[int, Set[str]]:
+    ) -> dict[int, set[str]]:
         """
         Find all callees up to max_depth levels.
 
@@ -155,8 +155,8 @@ class GraphQueryEngine:
         return callees_by_depth
 
     def find_related_functions(
-        self, chunk_id: str, relation_types: List[str] = None, max_depth: int = 2
-    ) -> List[Dict[str, Any]]:
+        self, chunk_id: str, relation_types: list[str] = None, max_depth: int = 2
+    ) -> list[dict[str, Any]]:
         """
         Find all related functions with metadata.
 
@@ -195,7 +195,7 @@ class GraphQueryEngine:
 
         return related_functions
 
-    def get_function_call_count(self, chunk_id: str) -> Dict[str, int]:
+    def get_function_call_count(self, chunk_id: str) -> dict[str, int]:
         """
         Get call statistics for a function.
 
@@ -213,7 +213,7 @@ class GraphQueryEngine:
             "called_by_count": self.storage.graph.in_degree(chunk_id),
         }
 
-    def find_entry_points(self) -> List[str]:
+    def find_entry_points(self) -> list[str]:
         """
         Find potential entry point functions (not called by anyone).
 
@@ -228,7 +228,7 @@ class GraphQueryEngine:
 
         return entry_points
 
-    def find_leaf_functions(self) -> List[str]:
+    def find_leaf_functions(self) -> list[str]:
         """
         Find leaf functions (don't call anything).
 
@@ -243,7 +243,7 @@ class GraphQueryEngine:
 
         return leaf_functions
 
-    def compute_centrality(self, method: str = "degree") -> Dict[str, float]:
+    def compute_centrality(self, method: str = "degree") -> dict[str, float]:
         """
         Compute centrality scores for functions.
 

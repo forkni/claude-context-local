@@ -1,7 +1,7 @@
 """Neural cross-encoder reranker for semantic scoring."""
 
 import logging
-from typing import List, Optional
+from typing import Optional
 
 import torch
 
@@ -77,9 +77,9 @@ class NeuralReranker:
     def rerank(
         self,
         query: str,
-        candidates: List,  # List[SearchResult]
+        candidates: list,  # List[SearchResult]
         top_k: int = 10,
-    ) -> List:
+    ) -> list:
         """Rerank candidates using cross-encoder semantic scoring.
 
         Args:

@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from graph.call_graph_extractor import CallEdge
@@ -20,25 +20,25 @@ class CodeChunk:
     # Rich metadata
     file_path: str
     relative_path: str  # path relative to project root
-    folder_structure: List[str]  # ['src', 'utils', 'auth'] for nested folders
+    folder_structure: list[str]  # ['src', 'utils', 'auth'] for nested folders
 
     # Code structure metadata
     name: Optional[str] = None  # function/class name
     parent_name: Optional[str] = None  # parent class name for methods
     parent_chunk_id: Optional[str] = None  # parent class chunk_id for methods
     docstring: Optional[str] = None
-    decorators: List[str] = None
-    imports: List[str] = None  # relevant imports for this chunk
+    decorators: list[str] = None
+    imports: list[str] = None  # relevant imports for this chunk
 
     # Context metadata
     complexity_score: int = 0  # estimated complexity
-    tags: List[str] = None  # semantic tags like 'database', 'auth', 'error_handling'
+    tags: list[str] = None  # semantic tags like 'database', 'auth', 'error_handling'
 
     # Call graph metadata
-    calls: Optional[List["CallEdge"]] = None  # function calls made by this chunk
+    calls: Optional[list["CallEdge"]] = None  # function calls made by this chunk
 
     # Relationship tracking
-    relationships: Optional[List] = (
+    relationships: Optional[list] = (
         None  # All relationship types (RelationshipEdge objects)
     )
 

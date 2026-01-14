@@ -481,30 +481,36 @@ async def test_handle_switch_embedding_model():
 async def test_handle_find_similar_code():
     """Test find_similar_code returns similar chunks."""
     with patch("mcp_server.tools.search_handlers.get_searcher") as mock_searcher:
-        # Mock search results
-        mock_result = Mock()
-        mock_result.chunk_id = "file.py:10-20:function:test_func"
-        mock_result.relative_path = "file.py"
-        mock_result.start_line = 10
-        mock_result.end_line = 20
-        mock_result.chunk_type = "function"
-        mock_result.similarity_score = 0.95
-        mock_result.name = "test_func"
+        with patch("mcp_server.tools.search_handlers.get_state") as mock_get_state:
+            # Mock state with current_project set
+            mock_state = Mock()
+            mock_state.current_project = "/test/project"
+            mock_get_state.return_value = mock_state
 
-        # Create mock searcher instance
-        mock_searcher_instance = Mock()
-        mock_searcher_instance.find_similar_to_chunk.return_value = [mock_result]
-        mock_searcher.return_value = mock_searcher_instance
+            # Mock search results
+            mock_result = Mock()
+            mock_result.chunk_id = "file.py:10-20:function:test_func"
+            mock_result.relative_path = "file.py"
+            mock_result.start_line = 10
+            mock_result.end_line = 20
+            mock_result.chunk_type = "function"
+            mock_result.similarity_score = 0.95
+            mock_result.name = "test_func"
 
-        result = await tool_handlers.handle_find_similar_code(
-            {"chunk_id": "ref_chunk_id", "k": 5}
-        )
+            # Create mock searcher instance
+            mock_searcher_instance = Mock()
+            mock_searcher_instance.find_similar_to_chunk.return_value = [mock_result]
+            mock_searcher.return_value = mock_searcher_instance
 
-        assert result["reference_chunk"] == "ref_chunk_id"
-        assert result["count"] == 1
-        assert len(result["similar_chunks"]) == 1
-        assert result["similar_chunks"][0]["file"] == "file.py"
-        assert result["similar_chunks"][0]["score"] == 0.95
+            result = await tool_handlers.handle_find_similar_code(
+                {"chunk_id": "ref_chunk_id", "k": 5}
+            )
+
+            assert result["reference_chunk"] == "ref_chunk_id"
+            assert result["count"] == 1
+            assert len(result["similar_chunks"]) == 1
+            assert result["similar_chunks"][0]["file"] == "file.py"
+            assert result["similar_chunks"][0]["score"] == 0.95
 
 
 # ============================================================================

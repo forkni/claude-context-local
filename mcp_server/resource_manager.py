@@ -27,7 +27,7 @@ class ResourceManager:
     of concerns and easier testability.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize ResourceManager.
 
         The manager operates on global state via ServiceLocator pattern.
@@ -61,8 +61,14 @@ class ResourceManager:
 
             if state.searcher is not None:
                 # Close dense_index metadata store FIRST
-                if hasattr(state.searcher, "dense_index") and state.searcher.dense_index is not None:
-                    if hasattr(state.searcher.dense_index, "_metadata_store") and state.searcher.dense_index._metadata_store is not None:
+                if (
+                    hasattr(state.searcher, "dense_index")
+                    and state.searcher.dense_index is not None
+                ):
+                    if (
+                        hasattr(state.searcher.dense_index, "_metadata_store")
+                        and state.searcher.dense_index._metadata_store is not None
+                    ):
                         state.searcher.dense_index._metadata_store.close()
                         logger.debug("Closed HybridSearcher dense_index metadata store")
                 # Then call shutdown

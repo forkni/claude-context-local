@@ -7,7 +7,6 @@ for aliased imports (e.g., from x import Y as Z; Z.method() -> Y.method).
 
 import ast
 import logging
-from typing import Dict
 
 logger = logging.getLogger(__name__)
 
@@ -28,15 +27,15 @@ class ImportResolver:
     Includes caching for file-level imports to avoid repeated file reads.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the import resolver with an empty cache."""
-        self._file_imports_cache: Dict[str, Dict[str, str]] = {}
+        self._file_imports_cache: dict[str, dict[str, str]] = {}
 
     def clear_cache(self) -> None:
         """Clear the file imports cache."""
         self._file_imports_cache.clear()
 
-    def extract_imports(self, tree: ast.AST) -> Dict[str, str]:
+    def extract_imports(self, tree: ast.AST) -> dict[str, str]:
         """
         Extract import mappings from an AST.
 
@@ -46,7 +45,7 @@ class ImportResolver:
         Returns:
             Dictionary mapping imported names/aliases to qualified names
         """
-        imports: Dict[str, str] = {}
+        imports: dict[str, str] = {}
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -88,7 +87,7 @@ class ImportResolver:
 
         return imports
 
-    def read_file_imports(self, file_path: str) -> Dict[str, str]:
+    def read_file_imports(self, file_path: str) -> dict[str, str]:
         """
         Read and extract imports from a full file.
 
@@ -108,7 +107,7 @@ class ImportResolver:
         if file_path in self._file_imports_cache:
             return self._file_imports_cache[file_path]
 
-        imports: Dict[str, str] = {}
+        imports: dict[str, str] = {}
 
         if not file_path:
             return imports

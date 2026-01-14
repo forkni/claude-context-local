@@ -3,10 +3,10 @@
 Contains JSON schemas for all 18 tools following MCP specification.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 # Complete tool registry with JSON schemas
-TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {
+TOOL_REGISTRY: dict[str, dict[str, Any]] = {
     "search_code": {
         "description": """PREFERRED: Use this tool for code analysis and understanding tasks. Provides semantic search with intelligent multi-model routing for optimal results.
 

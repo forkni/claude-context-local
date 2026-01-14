@@ -8,7 +8,7 @@ Supports Python with planned support for C++/GLSL.
 import ast
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from .resolvers import AssignmentTracker, ImportResolver, TypeResolver
 
@@ -32,7 +32,7 @@ class CallEdge:
     is_method_call: bool = False
     confidence: float = 1.0  # Static analysis has high confidence
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             "caller_id": self.caller_id,
@@ -43,7 +43,7 @@ class CallEdge:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "CallEdge":
+    def from_dict(cls, data: dict[str, Any]) -> "CallEdge":
         """Create from dictionary."""
         return cls(
             caller_id=data["caller_id"],
@@ -61,7 +61,7 @@ class CallGraphExtractor:
     Subclasses implement extract_calls() for specific languages.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the base call graph extractor.
 
         Attributes:
@@ -70,8 +70,8 @@ class CallGraphExtractor:
         self.logger = logging.getLogger(self.__class__.__name__)
 
     def extract_calls(
-        self, code: str, chunk_metadata: Dict[str, Any]
-    ) -> List[CallEdge]:
+        self, code: str, chunk_metadata: dict[str, Any]
+    ) -> list[CallEdge]:
         """
         Extract function calls from code.
 
@@ -99,7 +99,7 @@ class PythonCallGraphExtractor(CallGraphExtractor):
     - Decorator detection (not counted as calls)
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the Python call graph extractor.
 
         Sets up class context tracking and initializes resolvers for type,
@@ -117,7 +117,7 @@ class PythonCallGraphExtractor(CallGraphExtractor):
         super().__init__()
         # Class context tracking for self/super resolution
         self._current_class: Optional[str] = None
-        self._class_bases: Dict[str, List[str]] = (
+        self._class_bases: dict[str, list[str]] = (
             {}
         )  # class_name -> list of base classes
 
@@ -127,13 +127,13 @@ class PythonCallGraphExtractor(CallGraphExtractor):
         self._assignment_tracker = AssignmentTracker()
 
         # Type annotation tracking - populated by resolvers
-        self._type_annotations: Dict[str, str] = {}  # param_name -> type_name
+        self._type_annotations: dict[str, str] = {}  # param_name -> type_name
         # Import tracking - populated by import resolver
-        self._imports: Dict[str, str] = {}  # imported_name/alias -> qualified_name
+        self._imports: dict[str, str] = {}  # imported_name/alias -> qualified_name
 
     def extract_calls(
-        self, code: str, chunk_metadata: Dict[str, Any]
-    ) -> List[CallEdge]:
+        self, code: str, chunk_metadata: dict[str, Any]
+    ) -> list[CallEdge]:
         """
         Extract function calls from Python code.
 
@@ -370,7 +370,7 @@ class PythonCallGraphExtractor(CallGraphExtractor):
 
     def extract_calls_from_ast_node(
         self, ast_node: ast.AST, chunk_id: str
-    ) -> List[CallEdge]:
+    ) -> list[CallEdge]:
         """
         Extract calls from a specific AST node (for integration with chunking).
 
@@ -440,6 +440,6 @@ class CallGraphExtractorFactory:
         return language.lower() in cls._extractors
 
     @classmethod
-    def supported_languages(cls) -> List[str]:
+    def supported_languages(cls) -> list[str]:
         """Get list of supported languages."""
         return list(cls._extractors.keys())

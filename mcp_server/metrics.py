@@ -2,7 +2,6 @@
 
 import logging
 import time
-from typing import Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -10,14 +9,18 @@ logger = logging.getLogger(__name__)
 class SessionMetrics:
     """Track MCP session lifecycle metrics."""
 
-    def __init__(self):
-        self.active_sessions: Dict[str, float] = {}
-        self.total_sessions = 0
-        self.session_durations: List[float] = []
-        self._session_tool_calls: Dict[str, int] = {}
+    def __init__(self) -> None:
+        self.active_sessions: dict[str, float] = {}
+        self.total_sessions: int = 0
+        self.session_durations: list[float] = []
+        self._session_tool_calls: dict[str, int] = {}
 
-    def start_session(self, session_id: str):
-        """Record session start."""
+    def start_session(self, session_id: str) -> None:
+        """Record session start.
+
+        Args:
+            session_id: Unique session identifier.
+        """
         self.active_sessions[session_id] = time.time()
         self.total_sessions += 1
         self._session_tool_calls[session_id] = 0
@@ -27,8 +30,12 @@ class SessionMetrics:
             f"(active: {len(self.active_sessions)}, total: {self.total_sessions})"
         )
 
-    def end_session(self, session_id: str):
-        """Record session end."""
+    def end_session(self, session_id: str) -> None:
+        """Record session end.
+
+        Args:
+            session_id: Unique session identifier.
+        """
         if session_id in self.active_sessions:
             duration = time.time() - self.active_sessions[session_id]
             self.session_durations.append(duration)
@@ -47,13 +54,26 @@ class SessionMetrics:
             if self.total_sessions % 10 == 0:
                 self.log_summary()
 
-    def record_tool_call(self, session_id: str, tool_name: str):
-        """Record a tool call for a session."""
+    def record_tool_call(self, session_id: str, tool_name: str) -> None:
+        """Record a tool call for a session.
+
+        Args:
+            session_id: Unique session identifier.
+            tool_name: Name of the tool being called.
+        """
         if session_id in self._session_tool_calls:
             self._session_tool_calls[session_id] += 1
 
-    def get_stats(self) -> Dict:
-        """Get current metrics statistics."""
+    def get_stats(self) -> dict:
+        """Get current metrics statistics.
+
+        Returns:
+            Dictionary containing:
+                - active_sessions: Number of currently active sessions
+                - total_sessions: Total number of sessions started
+                - avg_duration_seconds: Average session duration in seconds
+                - completed_sessions: Number of completed sessions
+        """
         avg_duration = (
             sum(self.session_durations) / len(self.session_durations)
             if self.session_durations
@@ -67,8 +87,8 @@ class SessionMetrics:
             "completed_sessions": len(self.session_durations),
         }
 
-    def log_summary(self):
-        """Log metrics summary."""
+    def log_summary(self) -> None:
+        """Log metrics summary to the logger."""
         stats = self.get_stats()
         logger.info(
             f"[METRICS SUMMARY] "

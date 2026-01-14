@@ -43,7 +43,7 @@ Example:
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 
 class RelationshipType(Enum):
@@ -106,7 +106,7 @@ class RelationshipType(Enum):
             return None
 
     @classmethod
-    def get_priority_groups(cls) -> Dict[int, list]:
+    def get_priority_groups(cls) -> dict[int, list]:
         """
         Get relationship types grouped by implementation priority.
 
@@ -195,7 +195,7 @@ class RelationshipEdge:
     relationship_type: RelationshipType
     line_number: int = 0
     confidence: float = 1.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         """Validate edge after initialization."""
@@ -210,7 +210,7 @@ class RelationshipEdge:
                 f"got {type(self.relationship_type)}"
             )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """
         Convert edge to dictionary for serialization.
 
@@ -238,7 +238,7 @@ class RelationshipEdge:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "RelationshipEdge":
+    def from_dict(cls, data: dict[str, Any]) -> "RelationshipEdge":
         """
         Create RelationshipEdge from dictionary.
 
@@ -384,7 +384,7 @@ class CallEdge:
 # ===== Helper Functions =====
 
 
-def get_relationship_field_mapping() -> Dict[str, tuple]:
+def get_relationship_field_mapping() -> dict[str, tuple]:
     """
     Map relationship types to ImpactReport field names.
 

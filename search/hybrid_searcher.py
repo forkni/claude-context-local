@@ -5,7 +5,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
@@ -97,7 +97,7 @@ class HybridSearcher:
 
         # In-memory metadata cache for multi-hop operations (find_connections)
         # Avoids repeated SQLite lookups during graph traversal
-        self._metadata_cache: Dict[str, Optional[SearchResult]] = {}
+        self._metadata_cache: dict[str, Optional[SearchResult]] = {}
         self._cache_max_size = 1000  # Limit cache size to prevent memory bloat
         self._cache_hits = 0
         self._cache_misses = 0
@@ -280,10 +280,10 @@ class HybridSearcher:
         self._logger.info("[INIT] Parallel index loading complete")
         return bm25_loaded, dense_count
 
-    def __enter__(self):
+    def __enter__(self) -> "HybridSearcher":
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.shutdown()
 
     def close_metadata_connections(self) -> None:
@@ -295,7 +295,7 @@ class HybridSearcher:
                 self.dense_index._metadata_store.close()
                 self._logger.debug("Closed dense_index metadata store")
 
-    def shutdown(self):
+    def shutdown(self) -> None:
         """Shutdown the thread pool and cleanup resources."""
         with self._shutdown_lock:
             if not self._is_shutdown:
@@ -308,8 +308,12 @@ class HybridSearcher:
                 self._is_shutdown = True
                 self._logger.info("HybridSearcher shut down")
 
-    def _validate_dimensions(self):
-        """Validate that index and embedder dimensions match."""
+    def _validate_dimensions(self) -> None:
+        """Validate that index and embedder dimensions match.
+
+        Raises:
+            ValueError: If dimension mismatch is detected.
+        """
         if self.dense_index.index is not None and self.embedder is not None:
             try:
                 index_dim = self.dense_index.index.d
@@ -347,7 +351,7 @@ class HybridSearcher:
         return is_ready
 
     @property
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         """Get search performance statistics."""
         # Delegate to SearchExecutor for core stats
         stats = self.search_executor.stats
@@ -399,7 +403,7 @@ class HybridSearcher:
         """
         return self.reranking_engine.neural_reranker
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get index statistics in the format expected by MCP server."""
         bm25_count = self.bm25_index.size
         dense_count = self.dense_index.index.ntotal if self.dense_index.index else 0
@@ -474,7 +478,7 @@ class HybridSearcher:
                 f"(size: {len(self._metadata_cache)}/{self._cache_max_size})"
             )
 
-    def get_cache_stats(self) -> Dict[str, int]:
+    def get_cache_stats(self) -> dict[str, int]:
         """Get metadata cache statistics.
 
         Returns:
@@ -495,10 +499,10 @@ class HybridSearcher:
 
     def index_documents(
         self,
-        documents: List[str],
-        doc_ids: List[str],
-        embeddings: List[List[float]],
-        metadata: Optional[Dict[str, Dict]] = None,
+        documents: list[str],
+        doc_ids: list[str],
+        embeddings: list[list[float]],
+        metadata: Optional[dict[str, dict]] = None,
     ) -> None:
         """Index documents in both BM25 and dense indices."""
         if len(documents) != len(doc_ids) or len(documents) != len(embeddings):
@@ -566,9 +570,9 @@ class HybridSearcher:
         search_mode: str = "hybrid",
         use_parallel: bool = True,
         min_bm25_score: float = 0.0,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[dict[str, Any]] = None,
         config: Optional["SearchConfig"] = None,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """
         Search using configurable approach (hybrid, semantic-only, or BM25-only).
 
@@ -659,9 +663,9 @@ class HybridSearcher:
         search_mode: str = "hybrid",
         use_parallel: bool = True,
         min_bm25_score: float = 0.0,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[dict[str, Any]] = None,
         query_embedding: Optional[np.ndarray] = None,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """
         Internal single-hop search implementation (direct query matching).
 
@@ -690,8 +694,8 @@ class HybridSearcher:
         )
 
     def _apply_ego_graph_expansion(
-        self, results: List[SearchResult], ego_config, original_k: int
-    ) -> List[SearchResult]:
+        self, results: list[SearchResult], ego_config, original_k: int
+    ) -> list[SearchResult]:
         """Apply ego-graph expansion to search results.
 
         Expands search results by retrieving k-hop graph neighbors,
@@ -768,8 +772,8 @@ class HybridSearcher:
             return results
 
     def _apply_parent_expansion(
-        self, results: List[SearchResult], config
-    ) -> List[SearchResult]:
+        self, results: list[SearchResult], config
+    ) -> list[SearchResult]:
         """Apply parent chunk expansion to search results.
 
         For each matched method/function, retrieves its enclosing class chunk
@@ -838,7 +842,7 @@ class HybridSearcher:
 
     def find_similar_to_chunk(
         self, chunk_id: str, k: int = 5, rerank: bool = False
-    ) -> List:
+    ) -> list:
         """
         Find chunks similar to a given chunk using dense semantic search.
 
@@ -904,7 +908,7 @@ class HybridSearcher:
 
         return results[:k]
 
-    def get_search_mode_stats(self) -> Dict[str, Any]:
+    def get_search_mode_stats(self) -> dict[str, Any]:
         """Get statistics about search mode performance."""
         stats = self.search_executor.stats
         total_searches = stats["total_searches"]
@@ -932,8 +936,8 @@ class HybridSearcher:
         }
 
     def optimize_weights(
-        self, test_queries: List[str], ground_truth: Optional[List[List[str]]] = None
-    ) -> Dict[str, float]:
+        self, test_queries: list[str], ground_truth: Optional[list[list[str]]] = None
+    ) -> dict[str, float]:
         """
         Optimize BM25/dense weights based on test queries.
 
@@ -1077,7 +1081,9 @@ class HybridSearcher:
                 and self.reranking_engine.metadata_store is not None
             ):
                 self.reranking_engine.metadata_store.close()
-                self._logger.debug("Closed reranking_engine metadata store before clear")
+                self._logger.debug(
+                    "Closed reranking_engine metadata store before clear"
+                )
 
         # Now safe to clear
         self.index_sync.clear_index()

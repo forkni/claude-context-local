@@ -6,7 +6,7 @@ to enable accurate method call resolution (e.g., param.method() -> Type.method).
 """
 
 import ast
-from typing import Dict, Optional
+from typing import Optional
 
 
 class TypeResolver:
@@ -20,7 +20,7 @@ class TypeResolver:
     - Forward references: "MyClass"
     """
 
-    def extract_type_annotations(self, func_node: ast.FunctionDef) -> Dict[str, str]:
+    def extract_type_annotations(self, func_node: ast.FunctionDef) -> dict[str, str]:
         """
         Extract parameter type annotations from a function definition.
 

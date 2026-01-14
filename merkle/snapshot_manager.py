@@ -3,7 +3,7 @@
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Optional
 
 from search.filters import compute_drive_agnostic_hash, compute_legacy_hash
 
@@ -13,7 +13,7 @@ from .merkle_dag import MerkleDAG
 class SnapshotManager:
     """Manages loading and saving of Merkle DAG snapshots."""
 
-    def __init__(self, storage_dir: Optional[Path] = None):
+    def __init__(self, storage_dir: Optional[Path] = None) -> None:
         """Initialize snapshot manager.
 
         Args:
@@ -48,7 +48,7 @@ class SnapshotManager:
 
     def _get_model_slug_and_dimension(
         self, dimension: Optional[int] = None
-    ) -> Tuple[str, int]:
+    ) -> tuple[str, int]:
         """Get model slug and dimension, auto-detecting from config if needed.
 
         Args:
@@ -152,7 +152,7 @@ class SnapshotManager:
         # Return new path for creation
         return new_path
 
-    def save_snapshot(self, dag: MerkleDAG, metadata: Optional[Dict] = None) -> None:
+    def save_snapshot(self, dag: MerkleDAG, metadata: Optional[dict] = None) -> None:
         """Save a Merkle DAG snapshot to disk.
 
         Args:
@@ -218,7 +218,7 @@ class SnapshotManager:
             print(f"Error loading snapshot: {e}")
             return None
 
-    def load_metadata(self, project_path: str) -> Optional[Dict]:
+    def load_metadata(self, project_path: str) -> Optional[dict]:
         """Load metadata for a project.
 
         Args:
@@ -363,7 +363,7 @@ class SnapshotManager:
 
         return deleted_count
 
-    def list_snapshots(self) -> List[Dict]:
+    def list_snapshots(self) -> list[dict]:
         """List all available snapshots.
 
         Returns:
@@ -388,7 +388,7 @@ class SnapshotManager:
             keep_count: Number of snapshots to keep per project
         """
         # Group snapshots by project
-        project_snapshots: Dict[str, List[Path]] = {}
+        project_snapshots: dict[str, list[Path]] = {}
 
         for snapshot_file in self.storage_dir.glob("*_snapshot.json"):
             project_id = snapshot_file.stem.replace("_snapshot", "")

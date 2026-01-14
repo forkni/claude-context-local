@@ -10,7 +10,8 @@ This module handles loading SentenceTransformer models with:
 import logging
 import os
 import shutil
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any, Optional
 
 try:
     import torch
@@ -57,8 +58,8 @@ class ModelLoader:
         cache_dir: str,
         device: str,
         cache_manager: ModelCacheManager,
-        model_config_getter: Callable[[], Dict[str, Any]],
-    ):
+        model_config_getter: Callable[[], dict[str, Any]],
+    ) -> None:
         """Initialize model loader.
 
         Args:
@@ -74,7 +75,7 @@ class ModelLoader:
         self._cache_manager = cache_manager
         self._get_model_config = model_config_getter
         self._logger = logging.getLogger(__name__)
-        self._model_vram_usage: Dict[str, float] = {}
+        self._model_vram_usage: dict[str, float] = {}
 
     def log_gpu_memory(self, stage: str):
         """Log GPU memory usage at specific loading stages.
@@ -488,7 +489,7 @@ class ModelLoader:
                 ) from e
 
     @property
-    def model_vram_usage(self) -> Dict[str, float]:
+    def model_vram_usage(self) -> dict[str, float]:
         """Get VRAM usage tracking dictionary.
 
         Returns:

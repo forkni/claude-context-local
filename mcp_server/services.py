@@ -4,7 +4,10 @@ This module provides a centralized service registry for managing application-wid
 dependencies with lazy instantiation and flexible resolution patterns.
 """
 
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from mcp_server.state import ApplicationState
@@ -36,15 +39,15 @@ class ServiceLocator:
         >>> ServiceLocator.reset()  # Clean slate for tests
     """
 
-    _instance: Optional["ServiceLocator"] = None
+    _instance: "ServiceLocator" | None = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize empty service registry.
 
         Note: Use ServiceLocator.instance() instead of direct construction.
         """
-        self._services: Dict[str, Any] = {}
-        self._factories: Dict[str, Callable[[], Any]] = {}
+        self._services: dict[str, Any] = {}
+        self._factories: dict[str, Callable[[], Any]] = {}
 
     @classmethod
     def instance(cls) -> "ServiceLocator":
@@ -58,14 +61,14 @@ class ServiceLocator:
         return cls._instance
 
     @classmethod
-    def reset(cls):
+    def reset(cls) -> None:
         """Reset the singleton instance for testing.
 
         This should be called in test fixtures to ensure clean state between tests.
         """
         cls._instance = None
 
-    def register(self, name: str, service: Any):
+    def register(self, name: str, service: Any) -> None:
         """Register a service instance.
 
         Args:
@@ -74,7 +77,7 @@ class ServiceLocator:
         """
         self._services[name] = service
 
-    def register_factory(self, name: str, factory: Callable[[], Any]):
+    def register_factory(self, name: str, factory: Callable[[], Any]) -> None:
         """Register a factory for lazy service instantiation.
 
         The factory will be called on first access to create the service instance.

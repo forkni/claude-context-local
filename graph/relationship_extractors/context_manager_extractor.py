@@ -21,7 +21,7 @@ Examples:
 """
 
 import ast
-from typing import Any, Dict, List
+from typing import Any
 
 from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
 from graph.relationship_types import RelationshipEdge, RelationshipType
@@ -48,14 +48,14 @@ class ContextManagerExtractor(BaseRelationshipExtractor):
     - Tracks both direct usage (Progress()) and attribute access (db.transaction())
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize context manager extractor."""
         super().__init__()
         self.relationship_type = RelationshipType.USES_CONTEXT_MANAGER
 
     def extract(
-        self, code: str, chunk_metadata: Dict[str, Any]
-    ) -> List[RelationshipEdge]:
+        self, code: str, chunk_metadata: dict[str, Any]
+    ) -> list[RelationshipEdge]:
         """
         Extract context manager relationships from code.
 
@@ -87,7 +87,7 @@ class ContextManagerExtractor(BaseRelationshipExtractor):
         self._log_extraction_result(chunk_metadata)
         return self.edges
 
-    def _extract_context_expr(self, node: ast.AST, chunk_metadata: Dict[str, Any]):
+    def _extract_context_expr(self, node: ast.AST, chunk_metadata: dict[str, Any]):
         """
         Extract the context manager being used.
 

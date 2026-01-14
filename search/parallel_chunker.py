@@ -4,7 +4,7 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from pathlib import Path
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING
 
 from rich.console import Console
 from rich.progress import (
@@ -47,8 +47,8 @@ class ParallelChunker:
         self.max_workers = max_workers
 
     def chunk_files(
-        self, project_path: str, file_paths: List[str]
-    ) -> List["CodeChunk"]:
+        self, project_path: str, file_paths: list[str]
+    ) -> list["CodeChunk"]:
         """Chunk files in parallel or sequentially based on configuration.
 
         Args:

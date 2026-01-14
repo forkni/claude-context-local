@@ -6,7 +6,7 @@ affected by changes to a given symbol.
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Set
+from typing import Any
 
 from search.exceptions import SearchError
 from search.filters import (
@@ -79,95 +79,95 @@ BUILTIN_TYPES = frozenset(
 class ImpactReport:
     """Structured impact analysis report."""
 
-    symbol: Dict[str, Any]  # The symbol being analyzed
+    symbol: dict[str, Any]  # The symbol being analyzed
     chunk_id: str
-    direct_callers: List[Dict[str, Any]]  # Functions that directly call this
-    indirect_callers: List[
-        Dict[str, Any]
+    direct_callers: list[dict[str, Any]]  # Functions that directly call this
+    indirect_callers: list[
+        dict[str, Any]
     ]  # Functions that call the callers (multi-hop)
-    similar_code: List[Dict[str, Any]]  # Semantically similar implementations
+    similar_code: list[dict[str, Any]]  # Semantically similar implementations
     total_impacted: int  # Total number of impacted symbols
-    unique_files: Set[str]  # Set of unique files affected
-    dependency_graph: Dict[str, List[str]]  # Graph representation
+    unique_files: set[str]  # Set of unique files affected
+    dependency_graph: dict[str, list[str]]  # Graph representation
 
     # Relationship fields
-    parent_classes: List[Dict[str, Any]] = field(
+    parent_classes: list[dict[str, Any]] = field(
         default_factory=list
     )  # Classes this inherits from
-    child_classes: List[Dict[str, Any]] = field(
+    child_classes: list[dict[str, Any]] = field(
         default_factory=list
     )  # Classes that inherit from this
-    uses_types: List[Dict[str, Any]] = field(
+    uses_types: list[dict[str, Any]] = field(
         default_factory=list
     )  # Types used in annotations
-    used_as_type_in: List[Dict[str, Any]] = field(
+    used_as_type_in: list[dict[str, Any]] = field(
         default_factory=list
     )  # Where this is used as a type
-    imports: List[Dict[str, Any]] = field(
+    imports: list[dict[str, Any]] = field(
         default_factory=list
     )  # Modules/symbols imported
-    imported_by: List[Dict[str, Any]] = field(
+    imported_by: list[dict[str, Any]] = field(
         default_factory=list
     )  # Files that import this
 
     # Priority 2 relationship fields (decorators, exceptions, instantiation)
-    decorates: List[Dict[str, Any]] = field(
+    decorates: list[dict[str, Any]] = field(
         default_factory=list
     )  # Decorators applied by this code
-    decorated_by: List[Dict[str, Any]] = field(
+    decorated_by: list[dict[str, Any]] = field(
         default_factory=list
     )  # Code decorated by this
-    exceptions_raised: List[Dict[str, Any]] = field(
+    exceptions_raised: list[dict[str, Any]] = field(
         default_factory=list
     )  # Exceptions raised by this code
-    exception_handlers: List[Dict[str, Any]] = field(
+    exception_handlers: list[dict[str, Any]] = field(
         default_factory=list
     )  # Where exceptions from this are caught
-    exceptions_caught: List[Dict[str, Any]] = field(
+    exceptions_caught: list[dict[str, Any]] = field(
         default_factory=list
     )  # Exceptions caught by this code
-    instantiates: List[Dict[str, Any]] = field(
+    instantiates: list[dict[str, Any]] = field(
         default_factory=list
     )  # Classes instantiated by this code
-    instantiated_by: List[Dict[str, Any]] = field(
+    instantiated_by: list[dict[str, Any]] = field(
         default_factory=list
     )  # Where this class is instantiated
 
     # Priority 4-5 relationship fields (entity tracking)
-    defines_constants: List[Dict[str, Any]] = field(
+    defines_constants: list[dict[str, Any]] = field(
         default_factory=list
     )  # Constants defined by this code
-    uses_constants: List[Dict[str, Any]] = field(
+    uses_constants: list[dict[str, Any]] = field(
         default_factory=list
     )  # Constants used by this code
-    defines_enum_members: List[Dict[str, Any]] = field(
+    defines_enum_members: list[dict[str, Any]] = field(
         default_factory=list
     )  # Enum members defined by this code
-    uses_defaults: List[Dict[str, Any]] = field(
+    uses_defaults: list[dict[str, Any]] = field(
         default_factory=list
     )  # Default parameter values used
-    defines_class_attrs: List[Dict[str, Any]] = field(
+    defines_class_attrs: list[dict[str, Any]] = field(
         default_factory=list
     )  # Class attributes defined by this code
-    class_attr_definitions: List[Dict[str, Any]] = field(
+    class_attr_definitions: list[dict[str, Any]] = field(
         default_factory=list
     )  # Where this class attribute is defined
-    defines_fields: List[Dict[str, Any]] = field(
+    defines_fields: list[dict[str, Any]] = field(
         default_factory=list
     )  # Dataclass fields defined by this code
-    field_definitions: List[Dict[str, Any]] = field(
+    field_definitions: list[dict[str, Any]] = field(
         default_factory=list
     )  # Where this dataclass field is defined
-    uses_context_managers: List[Dict[str, Any]] = field(
+    uses_context_managers: list[dict[str, Any]] = field(
         default_factory=list
     )  # Context managers used by this code
-    context_manager_usages: List[Dict[str, Any]] = field(
+    context_manager_usages: list[dict[str, Any]] = field(
         default_factory=list
     )  # Where this is used as a context manager
 
     stale_chunk_count: int = 0  # Count of chunk_ids not found in current index
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization.
 
         Omits empty fields to reduce token overhead.
@@ -632,7 +632,7 @@ class CodeRelationshipAnalyzer:
             stale_chunk_count=stale_caller_count + stale_indirect_count,
         )
 
-    def _result_to_dict(self, result, chunk_id: str) -> Dict[str, Any]:
+    def _result_to_dict(self, result, chunk_id: str) -> dict[str, Any]:
         """Convert search result to dict format."""
         if isinstance(result, dict):
             result["chunk_id"] = chunk_id
@@ -662,7 +662,7 @@ class CodeRelationshipAnalyzer:
                 "score": getattr(result, "similarity_score", 0.0),
             }
 
-    def _is_caller_of(self, potential_caller: Dict, callee_id: str) -> bool:
+    def _is_caller_of(self, potential_caller: dict, callee_id: str) -> bool:
         """Check if potential_caller calls callee_id."""
         if not self.graph:
             return False
@@ -678,7 +678,7 @@ class CodeRelationshipAnalyzer:
         except (KeyError, AttributeError):
             return False
 
-    def _extract_result_info(self, result, chunk_id: str) -> Dict[str, Any]:
+    def _extract_result_info(self, result, chunk_id: str) -> dict[str, Any]:
         """
         Extract file/line/kind info from search result.
 
@@ -706,8 +706,8 @@ class CodeRelationshipAnalyzer:
             }
 
     def _extract_relationships(
-        self, chunk_id: str, exclude_dirs: List[str] | None = None
-    ) -> Dict[str, List[Dict[str, Any]]]:
+        self, chunk_id: str, exclude_dirs: list[str] | None = None
+    ) -> dict[str, list[dict[str, Any]]]:
         """
         Extract graph-based relationships (inheritance, type usage, imports) for a chunk.
 

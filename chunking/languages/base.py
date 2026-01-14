@@ -7,7 +7,7 @@ for all language-specific chunkers.
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Optional
 
 from tree_sitter import Language, Parser
 
@@ -83,13 +83,13 @@ class TreeSitterChunk:
     end_line: int
     node_type: str
     language: str
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
     chunk_id: Optional[str] = None  # unique identifier for evaluation
     parent_class: Optional[str] = None  # Enclosing class name for methods
     parent_chunk_id: Optional[str] = None  # Enclosing class chunk_id for methods
     community_id: Optional[int] = None  # Leiden community membership (Phase 0)
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         """Convert to dictionary format compatible with existing system."""
         return {
             "content": self.content,
@@ -104,7 +104,7 @@ class TreeSitterChunk:
 class LanguageChunker(ABC):
     """Abstract base class for language-specific chunkers."""
 
-    def __init__(self, language_name: str, language: Optional[Language] = None):
+    def __init__(self, language_name: str, language: Optional[Language] = None) -> None:
         """Initialize language chunker.
 
         Args:
@@ -135,7 +135,7 @@ class LanguageChunker(ABC):
         )
 
     @abstractmethod
-    def _get_splittable_node_types(self) -> Set[str]:
+    def _get_splittable_node_types(self) -> set[str]:
         """Get node types that should be split into chunks.
 
         Returns:
@@ -144,7 +144,7 @@ class LanguageChunker(ABC):
         pass
 
     @abstractmethod
-    def extract_metadata(self, node: Any, source: bytes) -> Dict[str, Any]:
+    def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:
         """Extract metadata from a node.
 
         Args:
@@ -179,7 +179,7 @@ class LanguageChunker(ABC):
         """
         return source[node.start_byte : node.end_byte].decode("utf-8")
 
-    def get_line_numbers(self, node: Any) -> Tuple[int, int]:
+    def get_line_numbers(self, node: Any) -> tuple[int, int]:
         """Get start and end line numbers for a node.
 
         Args:
@@ -191,7 +191,7 @@ class LanguageChunker(ABC):
         # Tree-sitter uses 0-based indexing, convert to 1-based
         return node.start_point[0] + 1, node.end_point[0] + 1
 
-    def _create_merged_chunk(self, chunks: List[TreeSitterChunk]) -> TreeSitterChunk:
+    def _create_merged_chunk(self, chunks: list[TreeSitterChunk]) -> TreeSitterChunk:
         """Combine multiple chunks into a single merged chunk.
 
         Args:
@@ -241,13 +241,13 @@ class LanguageChunker(ABC):
 
     def _greedy_merge_small_chunks(
         self,
-        chunks: List[TreeSitterChunk],
+        chunks: list[TreeSitterChunk],
         min_tokens: int = 50,
         max_merged_tokens: int = 1000,
         token_method: str = "whitespace",
         use_community_boundary: bool = False,
         size_method: str = "tokens",
-    ) -> Tuple[List[TreeSitterChunk], int, int]:
+    ) -> tuple[list[TreeSitterChunk], int, int]:
         """Merge adjacent small chunks using cAST greedy algorithm.
 
         Implements the greedy sibling merging from the cAST paper (EMNLP 2025):
@@ -302,8 +302,8 @@ class LanguageChunker(ABC):
             def get_size(content: str) -> int:
                 return estimate_tokens(content, token_method)
 
-        result: List[TreeSitterChunk] = []
-        current_group: List[TreeSitterChunk] = []
+        result: list[TreeSitterChunk] = []
+        current_group: list[TreeSitterChunk] = []
         current_size: int = 0
         current_parent: Optional[str] = None
         current_community: Optional[int] = None  # Track community ID for Phase 1
@@ -378,13 +378,13 @@ class LanguageChunker(ABC):
 
     @staticmethod
     def remerge_chunks_with_communities(
-        chunks: List["CodeChunk"],
-        community_map: Dict[str, int],
+        chunks: list["CodeChunk"],
+        community_map: dict[str, int],
         min_tokens: int = 50,
         max_merged_tokens: int = 1000,
         token_method: str = "whitespace",
         size_method: str = "tokens",
-    ) -> List["CodeChunk"]:
+    ) -> list["CodeChunk"]:
         """Re-merge chunks using community boundaries (Community-based remerging).
 
         This is called AFTER community detection to re-merge chunks using
@@ -541,7 +541,7 @@ class LanguageChunker(ABC):
 
         return result_chunks
 
-    def _get_block_boundary_types(self) -> Set[str]:
+    def _get_block_boundary_types(self) -> set[str]:
         """Get node types that are valid split boundaries.
 
         Override in language-specific chunkers for language-appropriate boundaries.
@@ -594,10 +594,10 @@ class LanguageChunker(ABC):
     def _create_split_chunk(
         self,
         signature: str,
-        nodes: List[Any],
+        nodes: list[Any],
         source_bytes: bytes,
         original_node: Any,
-        parent_info: Optional[Dict[str, Any]],
+        parent_info: Optional[dict[str, Any]],
     ) -> TreeSitterChunk:
         """Create a single split chunk with signature prefix.
 
@@ -645,13 +645,11 @@ class LanguageChunker(ABC):
         self,
         node: Any,
         source_bytes: bytes,
-        parent_info: Optional[Dict[str, Any]],
+        parent_info: Optional[dict[str, Any]],
         max_lines: int = 100,
-        split_size_method: str = "lines",
-        max_tokens: int = 500,
-        max_chars: int = 4000,
-        token_method: str = "whitespace",
-    ) -> List[TreeSitterChunk]:
+        split_size_method: str = "characters",
+        max_chars: int = 3000,
+    ) -> list[TreeSitterChunk]:
         """Split a large function node at logical AST boundaries with size-based accumulation.
 
         Algorithm:
@@ -666,10 +664,8 @@ class LanguageChunker(ABC):
             source_bytes: Source code bytes
             parent_info: Parent class information for methods
             max_lines: Maximum lines before split (for "lines" method)
-            split_size_method: "lines", "tokens", or "characters"
-            max_tokens: Maximum tokens before split (for "tokens" method)
+            split_size_method: "lines" or "characters"
             max_chars: Maximum characters before split (for "characters" method)
-            token_method: Token estimation method ("whitespace" or "tiktoken")
 
         Returns:
             List of TreeSitterChunk objects with split content,
@@ -691,9 +687,7 @@ class LanguageChunker(ABC):
         current_nodes = []
 
         # Determine threshold based on method
-        threshold = self._get_split_threshold(
-            split_size_method, max_lines, max_tokens, max_chars
-        )
+        threshold = self._get_split_threshold(split_size_method, max_lines, max_chars)
 
         for child in body_node.children:
             # Check if adding this child would exceed threshold at a split boundary
@@ -701,7 +695,7 @@ class LanguageChunker(ABC):
                 # Calculate size with current child added
                 test_nodes = current_nodes + [child]
                 test_size = self._calculate_accumulated_size(
-                    test_nodes, source_bytes, split_size_method, token_method
+                    test_nodes, source_bytes, split_size_method
                 )
 
                 # If threshold exceeded, split BEFORE adding current child
@@ -730,15 +724,13 @@ class LanguageChunker(ABC):
         self,
         method: str,
         max_lines: int,
-        max_tokens: int,
         max_chars: int,
     ) -> int:
         """Determine the size threshold based on the split method.
 
         Args:
-            method: Split size method ("lines", "tokens", or "characters")
+            method: Split size method ("lines" or "characters")
             max_lines: Maximum lines threshold
-            max_tokens: Maximum tokens threshold
             max_chars: Maximum characters threshold
 
         Returns:
@@ -746,26 +738,22 @@ class LanguageChunker(ABC):
         """
         if method == "lines":
             return max_lines
-        elif method == "tokens":
-            return max_tokens
         elif method == "characters":
             return max_chars
         return max_lines  # default fallback
 
     def _calculate_accumulated_size(
         self,
-        nodes: List[Any],
+        nodes: list[Any],
         source_bytes: bytes,
         method: str,
-        token_method: str,
     ) -> int:
         """Calculate the accumulated size of a list of AST nodes.
 
         Args:
             nodes: List of tree-sitter nodes
             source_bytes: Source code bytes
-            method: Size calculation method ("lines", "tokens", or "characters")
-            token_method: Token estimation method ("whitespace" or "tiktoken")
+            method: Size calculation method ("lines" or "characters")
 
         Returns:
             The calculated size according to the specified method
@@ -780,8 +768,6 @@ class LanguageChunker(ABC):
 
         if method == "lines":
             return text.count("\n") + 1
-        elif method == "tokens":
-            return estimate_tokens(text, method=token_method)
         elif method == "characters":
             return estimate_characters(text)
         return text.count("\n") + 1  # default fallback
@@ -790,7 +776,7 @@ class LanguageChunker(ABC):
         self,
         source_code: str,
         config: Optional["ChunkingConfig"] = None,
-    ) -> List[TreeSitterChunk]:
+    ) -> list[TreeSitterChunk]:
         """Chunk source code into semantic units.
 
         Args:
@@ -828,9 +814,7 @@ class LanguageChunker(ABC):
                         parent_info,
                         max_lines=config.max_chunk_lines,
                         split_size_method=config.split_size_method,
-                        max_tokens=config.max_split_tokens,
                         max_chars=config.max_split_chars,
-                        token_method=config.token_estimation,
                     )
                     if split_chunks:
                         chunks.extend(split_chunks)

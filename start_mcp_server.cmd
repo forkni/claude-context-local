@@ -1011,7 +1011,7 @@ REM Search Configuration Functions
 echo.
 echo [INFO] Current Search Configuration:
 if exist ".venv\Scripts\python.exe" (
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = config.routing.multi_model_enabled; pool = config.routing.multi_model_pool or 'full'; model_display = f'BGE-M3 + gte-modernbert ({pool})' if multi_enabled and pool == 'lightweight-speed' else f'BGE-M3 + Qwen3 + CodeRankEmbed ({pool})' if multi_enabled else f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print('    Multi-Model Routing:', 'Enabled' if multi_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print(); print('  Chunking Settings:'); print('    Community Detection:', 'Enabled' if config.chunking.enable_community_detection else 'Disabled'); print('    Community Merge (full re-index only):', 'Enabled' if config.chunking.enable_community_merge else 'Disabled'); print(f'    Community Resolution: {config.chunking.community_resolution}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'    Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    RAM Fallback: {\"On\" if config.performance.allow_ram_fallback else \"Off\"}'); print(); print('  Output Format:', config.output.format)"
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = config.routing.multi_model_enabled; pool = config.routing.multi_model_pool or 'full'; model_display = f'BGE-M3 + gte-modernbert ({pool})' if multi_enabled and pool == 'lightweight-speed' else f'BGE-M3 + Qwen3 + CodeRankEmbed ({pool})' if multi_enabled else f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print('    Multi-Model Routing:', 'Enabled' if multi_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print(); print('  Chunking Settings:'); print('    Community Detection:', 'Enabled' if config.chunking.enable_community_detection else 'Disabled'); print('    Community Merge (full re-index only):', 'Enabled' if config.chunking.enable_community_merge else 'Disabled'); print(f'    Community Resolution: {config.chunking.community_resolution}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'    Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(f'    Split Size Method: {config.chunking.split_size_method}'); print(f'    Max Split Chars: {config.chunking.max_split_chars}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    RAM Fallback: {\"On\" if config.performance.allow_ram_fallback else \"Off\"}'); print(); print('  Output Format:', config.output.format)"
     if "!ERRORLEVEL!" neq "0" (
         echo Error loading configuration
         echo Using defaults: hybrid mode, BM25=0.4, Dense=0.6
@@ -1979,32 +1979,92 @@ echo   - 20-30%% fewer chunks (merged getters/setters)
 echo   - Denser embeddings with more context per vector
 echo.
 echo Current Settings:
-".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Community Detection:', 'Enabled' if cfg.chunking.enable_community_detection else 'Disabled'); print('  Community Merge (full re-index only):', 'Enabled' if cfg.chunking.enable_community_merge else 'Disabled'); print('  Community Resolution:', cfg.chunking.community_resolution); print('  Token Estimation:', cfg.chunking.token_estimation); print('  Large Node Splitting:', 'Enabled' if cfg.chunking.enable_large_node_splitting else 'Disabled'); print('  Max Chunk Lines:', cfg.chunking.max_chunk_lines)" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Community Detection:', 'Enabled' if cfg.chunking.enable_community_detection else 'Disabled'); print('  Community Merge (full re-index only):', 'Enabled' if cfg.chunking.enable_community_merge else 'Disabled'); print('  Community Resolution:', cfg.chunking.community_resolution); print('  Token Estimation:', cfg.chunking.token_estimation); print('  Large Node Splitting:', 'Enabled' if cfg.chunking.enable_large_node_splitting else 'Disabled'); print('  Max Chunk Lines:', cfg.chunking.max_chunk_lines); print('  Split Size Method:', cfg.chunking.split_size_method); print('  Max Split Chars:', cfg.chunking.max_split_chars)" 2>nul
 echo.
-echo   1. Set Community Resolution             - Louvain algorithm parameter (0.1-2.0, default: 1.0)
-echo   2. Set Token Estimation                 - whitespace (fast) or tiktoken (accurate)
-echo   3. Enable Large Node Splitting          - Split functions ^> max_chunk_lines at AST boundaries
-echo   4. Disable Large Node Splitting         - Keep large functions intact
-echo   5. Set Max Chunk Lines                  - Split threshold in lines (default: 100)
-echo   6. Enable Community Detection           - Detect code communities for better chunking
-echo   7. Disable Community Detection          - Skip community detection
-echo   A. Enable Community Merge               - Use communities for chunk remerging (full re-index only)
-echo   B. Disable Community Merge              - Skip community-based remerging
+echo   --- Community Detection ^& Merging ---
+echo   1. Enable Community Detection           - Detect code communities for better chunking
+echo   2. Disable Community Detection          - Skip community detection
+echo   3. Enable Community Merge               - Use communities for chunk remerging (full re-index only)
+echo   4. Disable Community Merge              - Skip community-based remerging
+echo   5. Set Community Resolution             - Louvain algorithm parameter (0.1-2.0, default: 1.5)
+echo.
+echo   --- Large Node Splitting ---
+echo   6. Enable Large Node Splitting          - Split functions ^> threshold at AST boundaries
+echo   7. Disable Large Node Splitting         - Keep large functions intact
+echo   8. Set Split Size Method                - lines or characters (default: characters)
+echo   9. Set Max Chunk Lines                  - Line threshold (default: 100)
+echo   A. Set Max Split Characters             - Character threshold (1000-10000, default: 3000)
+echo.
+echo   --- Token Estimation ---
+echo   B. Set Token Estimation                 - whitespace (fast) or tiktoken (accurate)
+echo.
 echo   0. Back to Search Configuration
 echo.
 set "chunk_choice="
-set /p chunk_choice="Select option (0-7, A-B): "
+set /p chunk_choice="Select option (0-9, A-B): "
 
 if not defined chunk_choice goto search_config_menu
 if "!chunk_choice!"=="" goto search_config_menu
 if "!chunk_choice!"=="0" goto search_config_menu
 
-)
-)
+REM --- Community Detection & Merging Handlers ---
 if "!chunk_choice!"=="1" (
     echo.
+    echo [INFO] Enabling community detection...
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_community_detection = True; mgr.save_config(cfg); print('[OK] Community detection enabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Code communities will be detected during indexing
+        echo [INFO] Re-index project to apply changes
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+    )
+    goto chunking_menu_end
+)
+if "!chunk_choice!"=="2" (
+    echo.
+    echo [INFO] Disabling community detection...
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_community_detection = False; mgr.save_config(cfg); print('[OK] Community detection disabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Community detection will be skipped
+        echo [INFO] Re-index project to apply changes
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+    )
+    goto chunking_menu_end
+)
+if "!chunk_choice!"=="3" (
+    echo.
+    echo [INFO] Enabling community-based merge...
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_community_merge = True; mgr.save_config(cfg); print('[OK] Community merge enabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Chunks will be remerged using community boundaries (full re-index only^)
+        echo [INFO] Requires: enable_community_detection=True
+        echo [INFO] Re-index project to apply changes
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+    )
+    goto chunking_menu_end
+)
+if "!chunk_choice!"=="4" (
+    echo.
+    echo [INFO] Disabling community-based merge...
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_community_merge = False; mgr.save_config(cfg); print('[OK] Community merge disabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Community-based remerging will be skipped
+        echo [INFO] Re-index project to apply changes
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+    )
+    goto chunking_menu_end
+)
+if "!chunk_choice!"=="5" (
+    echo.
     set "community_res="
-    set /p community_res="Enter community resolution (0.1-2.0, current default: 1.0): "
+    set /p community_res="Enter community resolution (0.1-2.0, default: 1.5): "
     if defined community_res (
         echo [INFO] Setting community resolution to: !community_res!
         ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); val = float('!community_res!'); assert 0.1 <= val <= 2.0, 'Out of range'; cfg.chunking.community_resolution = val; mgr.save_config(cfg); print('[OK] Community resolution updated to !community_res!')" 2>nul
@@ -2017,7 +2077,103 @@ if "!chunk_choice!"=="1" (
     )
     goto chunking_menu_end
 )
-if "!chunk_choice!"=="2" (
+
+REM --- Large Node Splitting Handlers ---
+if "!chunk_choice!"=="6" (
+    echo.
+    echo [INFO] Enabling large node splitting...
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_large_node_splitting = True; mgr.save_config(cfg); print('[OK] Large node splitting enabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Functions exceeding threshold will be split at AST boundaries
+        echo [INFO] Re-index project to apply changes
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+    )
+    goto chunking_menu_end
+)
+if "!chunk_choice!"=="7" (
+    echo.
+    echo [INFO] Disabling large node splitting...
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_large_node_splitting = False; mgr.save_config(cfg); print('[OK] Large node splitting disabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Large functions will remain intact
+        echo [INFO] Re-index project to apply changes
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+    )
+    goto chunking_menu_end
+)
+if "!chunk_choice!"=="8" (
+    echo.
+    echo Select split size method:
+    echo   1. characters - Character-based splitting ^(recommended, +54%% Recall^)
+    echo   2. lines      - Line-based splitting
+    echo.
+    set "split_method_choice="
+    set /p split_method_choice="Enter choice (1-2): "
+    if "!split_method_choice!"=="1" (
+        echo [INFO] Setting split size method to characters...
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.split_size_method = 'characters'; mgr.save_config(cfg); print('[OK] Split size method set to characters')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Failed to save configuration
+        ) else (
+            echo [INFO] Functions will be split at character boundaries
+            echo [INFO] Re-index project to apply changes
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+    if "!split_method_choice!"=="2" (
+        echo [INFO] Setting split size method to lines...
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.split_size_method = 'lines'; mgr.save_config(cfg); print('[OK] Split size method set to lines')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Failed to save configuration
+        ) else (
+            echo [INFO] Functions will be split at line boundaries
+            echo [INFO] Re-index project to apply changes
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+    goto chunking_menu_end
+)
+if "!chunk_choice!"=="9" (
+    echo.
+    set "max_lines="
+    set /p max_lines="Enter max chunk lines (10-500, default: 100): "
+    if defined max_lines (
+        echo [INFO] Setting max chunk lines to: !max_lines!
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.max_chunk_lines = int('!max_lines!'); mgr.save_config(cfg); print('[OK] Max chunk lines updated to !max_lines!')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Failed to save configuration. Please enter a valid number.
+        ) else (
+            echo [INFO] Functions exceeding !max_lines! lines will be split (if enabled and method=lines^)
+            echo [INFO] Re-index project to apply changes
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+    goto chunking_menu_end
+)
+if /i "!chunk_choice!"=="A" (
+    echo.
+    set "max_chars="
+    set /p max_chars="Enter max split characters (1000-10000, default: 3000): "
+    if defined max_chars (
+        echo [INFO] Setting max split characters to: !max_chars!
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); val = int('!max_chars!'); assert 1000 <= val <= 10000, 'Out of range'; cfg.chunking.max_split_chars = val; mgr.save_config(cfg); print('[OK] Max split characters updated to !max_chars!')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Failed to save configuration. Please enter a valid number between 1000 and 10000.
+        ) else (
+            echo [INFO] Functions exceeding !max_chars! characters will be split (if enabled and method=characters^)
+            echo [INFO] Re-index project to apply changes
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+    goto chunking_menu_end
+)
+
+REM --- Token Estimation Handler ---
+if /i "!chunk_choice!"=="B" (
     echo.
     echo Select token estimation method:
     echo   1. whitespace - Fast, approximate ^(recommended^)
@@ -2044,102 +2200,6 @@ if "!chunk_choice!"=="2" (
             echo [INFO] Re-index project to apply changes
             ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
         )
-    )
-    goto chunking_menu_end
-)
-if "!chunk_choice!"=="1" (
-    echo.
-    echo [INFO] Enabling large node splitting...
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_large_node_splitting = True; mgr.save_config(cfg); print('[OK] Large node splitting enabled')" 2>nul
-    if errorlevel 1 (
-        echo [ERROR] Failed to save configuration
-    ) else (
-        echo [INFO] Functions exceeding max_chunk_lines will be split at AST boundaries
-        echo [INFO] Re-index project to apply changes
-        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
-    )
-    goto chunking_menu_end
-)
-if "!chunk_choice!"=="2" (
-    echo.
-    echo [INFO] Disabling large node splitting...
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_large_node_splitting = False; mgr.save_config(cfg); print('[OK] Large node splitting disabled')" 2>nul
-    if errorlevel 1 (
-        echo [ERROR] Failed to save configuration
-    ) else (
-        echo [INFO] Large functions will remain intact
-        echo [INFO] Re-index project to apply changes
-        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
-    )
-    goto chunking_menu_end
-)
-if "!chunk_choice!"=="1" (
-    echo.
-    set "max_lines="
-    set /p max_lines="Enter max chunk lines (10-500, current default: 100): "
-    if defined max_lines (
-        echo [INFO] Setting max chunk lines to: !max_lines!
-        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.max_chunk_lines = int('!max_lines!'); mgr.save_config(cfg); print('[OK] Max chunk lines updated to !max_lines!')" 2>nul
-        if errorlevel 1 (
-            echo [ERROR] Failed to save configuration. Please enter a valid number.
-        ) else (
-            echo [INFO] Functions exceeding !max_lines! lines will be split (if enabled^)
-            echo [INFO] Re-index project to apply changes
-            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
-        )
-    )
-    goto chunking_menu_end
-)
-if "!chunk_choice!"=="2" (
-    echo.
-    echo [INFO] Enabling community detection...
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_community_detection = True; mgr.save_config(cfg); print('[OK] Community detection enabled')" 2>nul
-    if errorlevel 1 (
-        echo [ERROR] Failed to save configuration
-    ) else (
-        echo [INFO] Code communities will be detected during indexing
-        echo [INFO] Re-index project to apply changes
-        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
-    )
-    goto chunking_menu_end
-)
-if "!chunk_choice!"=="1" (
-    echo.
-    echo [INFO] Disabling community detection...
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_community_detection = False; mgr.save_config(cfg); print('[OK] Community detection disabled')" 2>nul
-    if errorlevel 1 (
-        echo [ERROR] Failed to save configuration
-    ) else (
-        echo [INFO] Community detection will be skipped
-        echo [INFO] Re-index project to apply changes
-        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
-    )
-    goto chunking_menu_end
-)
-if /i "!chunk_choice!"=="A" (
-    echo.
-    echo [INFO] Enabling community-based merge...
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_community_merge = True; mgr.save_config(cfg); print('[OK] Community merge enabled')" 2>nul
-    if errorlevel 1 (
-        echo [ERROR] Failed to save configuration
-    ) else (
-        echo [INFO] Chunks will be remerged using community boundaries (full re-index only)
-        echo [INFO] Requires: enable_community_detection=True
-        echo [INFO] Re-index project to apply changes
-        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
-    )
-    goto chunking_menu_end
-)
-if /i "!chunk_choice!"=="B" (
-    echo.
-    echo [INFO] Disabling community-based merge...
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_community_merge = False; mgr.save_config(cfg); print('[OK] Community merge disabled')" 2>nul
-    if errorlevel 1 (
-        echo [ERROR] Failed to save configuration
-    ) else (
-        echo [INFO] Community-based remerging will be skipped
-        echo [INFO] Re-index project to apply changes
-        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
     )
     goto chunking_menu_end
 )

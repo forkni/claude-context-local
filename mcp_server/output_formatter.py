@@ -11,12 +11,12 @@ Supported formats:
 Key principle: NO data is filtered or limited, only formatting is optimized.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 
 def format_response(
-    data: Dict[str, Any], output_format: str = "compact"
-) -> Dict[str, Any]:
+    data: dict[str, Any], output_format: str = "compact"
+) -> dict[str, Any]:
     """Format response based on output_format parameter.
 
     Args:
@@ -34,7 +34,7 @@ def format_response(
         return _to_compact_format(data)
 
 
-def _to_compact_format(data: Dict[str, Any]) -> Dict[str, Any]:
+def _to_compact_format(data: dict[str, Any]) -> dict[str, Any]:
     """Compact format: omit empty fields, remove redundant fields, keep full key names.
 
     Optimizations:
@@ -77,7 +77,7 @@ def _to_compact_format(data: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def _compact_dict(d: Dict[str, Any]) -> Dict[str, Any]:
+def _compact_dict(d: dict[str, Any]) -> dict[str, Any]:
     """Compact a single dict: omit redundant fields, keep full key names.
 
     Args:
@@ -106,7 +106,7 @@ def _compact_dict(d: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def _to_toon_format(data: Dict[str, Any]) -> Dict[str, Any]:
+def _to_toon_format(data: dict[str, Any]) -> dict[str, Any]:
     """TOON-inspired tabular format for arrays.
 
     TOON format reference: https://github.com/toon-format/toon

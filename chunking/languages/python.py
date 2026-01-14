@@ -5,7 +5,7 @@ other languages. The main Python chunker used by the system is the AST-based
 one in chunking/python_chunker.py which provides better Python-specific analysis.
 """
 
-from typing import Any, Dict, Optional, Set
+from typing import Any, Optional
 
 from tree_sitter import Language
 
@@ -15,7 +15,7 @@ from .base import LanguageChunker
 class PythonChunker(LanguageChunker):
     """Python-specific chunker using tree-sitter."""
 
-    def __init__(self, language: Optional[Language] = None):
+    def __init__(self, language: Optional[Language] = None) -> None:
         super().__init__("python", language)
 
     def _load_language(self) -> Language:
@@ -30,7 +30,7 @@ class PythonChunker(LanguageChunker):
                 "Install with: pip install tree-sitter-python"
             ) from err
 
-    def _get_splittable_node_types(self) -> Set[str]:
+    def _get_splittable_node_types(self) -> set[str]:
         """Python-specific splittable node types."""
         return {
             "function_definition",
@@ -38,7 +38,7 @@ class PythonChunker(LanguageChunker):
             "decorated_definition",
         }
 
-    def _get_block_boundary_types(self) -> Set[str]:
+    def _get_block_boundary_types(self) -> set[str]:
         """Python-specific block boundary types for splitting large functions.
 
         These node types represent logical split points in Python code.
@@ -89,7 +89,7 @@ class PythonChunker(LanguageChunker):
 
         return "\n".join(sig_lines)
 
-    def extract_metadata(self, node: Any, source: bytes) -> Dict[str, Any]:
+    def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:
         """Extract Python-specific metadata."""
         metadata = {"node_type": node.type}
 

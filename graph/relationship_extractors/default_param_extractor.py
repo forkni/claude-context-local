@@ -19,7 +19,7 @@ Examples:
 """
 
 import ast
-from typing import Any, Dict, List
+from typing import Any
 
 from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
 from graph.relationship_types import RelationshipEdge, RelationshipType
@@ -39,14 +39,14 @@ class DefaultParameterExtractor(BaseRelationshipExtractor):
     - Metadata includes parameter name for context
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize default parameter extractor."""
         super().__init__()
         self.relationship_type = RelationshipType.USES_DEFAULT
 
     def extract(
-        self, code: str, chunk_metadata: Dict[str, Any]
-    ) -> List[RelationshipEdge]:
+        self, code: str, chunk_metadata: dict[str, Any]
+    ) -> list[RelationshipEdge]:
         """
         Extract default parameter relationships from code.
 
@@ -87,7 +87,7 @@ class DefaultParameterExtractor(BaseRelationshipExtractor):
         self._log_extraction_result(chunk_metadata)
         return self.edges
 
-    def _extract_defaults(self, node: ast.FunctionDef, chunk_metadata: Dict[str, Any]):
+    def _extract_defaults(self, node: ast.FunctionDef, chunk_metadata: dict[str, Any]):
         """
         Extract default values that are names (not literals).
 
@@ -120,7 +120,7 @@ class DefaultParameterExtractor(BaseRelationshipExtractor):
         self,
         default: ast.AST,
         param_name: str,
-        chunk_metadata: Dict[str, Any],
+        chunk_metadata: dict[str, Any],
         func_lineno: int,
     ):
         """

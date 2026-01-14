@@ -6,7 +6,7 @@ import pickle
 import re
 import string
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Optional
 
 from search.filters import normalize_path
 
@@ -49,7 +49,7 @@ class TextPreprocessor:
     - Code-specific preprocessing (camelCase/snake_case splitting)
     """
 
-    def __init__(self, use_stopwords: bool = True, use_stemming: bool = True):
+    def __init__(self, use_stopwords: bool = True, use_stemming: bool = True) -> None:
         """Initialize text preprocessor.
 
         Args:
@@ -79,7 +79,7 @@ class TextPreprocessor:
                 self._logger.warning(f"Could not initialize stemmer: {e}")
                 self.use_stemming = False
 
-    def tokenize(self, text: str) -> List[str]:
+    def tokenize(self, text: str) -> list[str]:
         """Tokenize text into words with optional stemming.
 
         Process:
@@ -201,8 +201,12 @@ class BM25Index:
         # Check dependencies
         self._check_dependencies()
 
-    def _check_dependencies(self):
-        """Check if required dependencies are available."""
+    def _check_dependencies(self) -> None:
+        """Check if required dependencies are available.
+
+        Raises:
+            ImportError: If rank-bm25 is not installed.
+        """
         if BM25Okapi is None:
             raise ImportError(
                 "rank-bm25 not found. Install with: pip install rank-bm25"
@@ -226,9 +230,9 @@ class BM25Index:
 
     def index_documents(
         self,
-        documents: List[str],
-        doc_ids: List[str],
-        metadata: Optional[Dict[str, Dict]] = None,
+        documents: list[str],
+        doc_ids: list[str],
+        metadata: Optional[dict[str, dict]] = None,
     ) -> None:
         """Index a list of documents with their IDs."""
         if len(documents) != len(doc_ids):
@@ -316,7 +320,7 @@ class BM25Index:
 
     def search(
         self, query: str, k: int = 5, min_score: float = 0.0
-    ) -> List[Tuple[str, float, Dict]]:
+    ) -> list[tuple[str, float, dict]]:
         """Search for similar documents using BM25."""
         if self._bm25 is None or self.is_empty:
             self._logger.warning("BM25 index is empty")
@@ -369,7 +373,7 @@ class BM25Index:
         except ValueError:
             return None
 
-    def remove_documents(self, doc_ids: List[str]) -> int:
+    def remove_documents(self, doc_ids: list[str]) -> int:
         """Remove documents from index by their IDs."""
         removed_count = 0
         indices_to_remove = []
@@ -404,7 +408,7 @@ class BM25Index:
 
         return removed_count
 
-    def validate_index_consistency(self) -> Tuple[bool, List[str]]:
+    def validate_index_consistency(self) -> tuple[bool, list[str]]:
         """Validate consistency between BM25 index components.
 
         This method checks for:
@@ -623,7 +627,7 @@ class BM25Index:
             self._metadata = {}
             return False
 
-    def get_stats(self) -> Dict:
+    def get_stats(self) -> dict:
         """Get index statistics."""
         return {
             "total_documents": self.size,

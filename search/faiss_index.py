@@ -7,7 +7,7 @@ with support for saving, loading, searching, and dimension tracking.
 import logging
 import pickle
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Optional
 
 import numpy as np
 import psutil
@@ -25,7 +25,7 @@ except ImportError:
     torch = None
 
 
-def get_available_memory() -> Dict[str, int]:
+def get_available_memory() -> dict[str, int]:
     """Get available system and GPU memory in bytes.
 
     Returns:
@@ -58,7 +58,7 @@ def get_available_memory() -> Dict[str, int]:
 
 def estimate_index_memory_usage(
     num_vectors: int, dimension: int, index_type: str = "flat"
-) -> Dict[str, int]:
+) -> dict[str, int]:
     """Estimate memory usage for FAISS index in bytes.
 
     Args:
@@ -386,7 +386,7 @@ class FaissVectorIndex:
 
         self._logger.debug(f"Added {len(embeddings)} vectors to index")
 
-    def search(self, query: np.ndarray, k: int = 5) -> Tuple[np.ndarray, np.ndarray]:
+    def search(self, query: np.ndarray, k: int = 5) -> tuple[np.ndarray, np.ndarray]:
         """Search for k nearest neighbors.
 
         Args:
@@ -549,7 +549,7 @@ class FaissVectorIndex:
 
     def check_memory_requirements(
         self, num_new_vectors: int, dimension: int
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Check if there's enough memory for adding new vectors.
 
         Args:
@@ -612,7 +612,7 @@ class FaissVectorIndex:
 
         return memory_check
 
-    def get_memory_status(self) -> Dict[str, Any]:
+    def get_memory_status(self) -> dict[str, Any]:
         """Get current memory usage status.
 
         Returns:

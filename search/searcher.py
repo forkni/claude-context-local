@@ -3,7 +3,7 @@
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from embeddings.embedder import CodeEmbedder
 
@@ -19,16 +19,16 @@ class SearchResult:
     content_preview: str
     file_path: str
     relative_path: str
-    folder_structure: List[str]
+    folder_structure: list[str]
     chunk_type: str
     name: Optional[str]
     parent_name: Optional[str]
     start_line: int
     end_line: int
     docstring: Optional[str]
-    tags: List[str]
-    context_info: Dict[str, Any]
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    tags: list[str]
+    context_info: dict[str, Any]
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class IntelligentSearcher:
@@ -43,7 +43,7 @@ class IntelligentSearcher:
 
         # In-memory metadata cache for multi-hop operations (find_connections)
         # Avoids repeated SQLite lookups during graph traversal
-        self._metadata_cache: Dict[str, Optional[SearchResult]] = {}
+        self._metadata_cache: dict[str, Optional[SearchResult]] = {}
         self._cache_max_size = 1000  # Limit cache size to prevent memory bloat
         self._cache_hits = 0
         self._cache_misses = 0
@@ -80,8 +80,8 @@ class IntelligentSearcher:
         k: int = 5,
         search_mode: str = "semantic",
         context_depth: int = 1,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> List[SearchResult]:
+        filters: Optional[dict[str, Any]] = None,
+    ) -> list[SearchResult]:
         """Semantic search for code understanding.
 
         This provides semantic search capabilities. For complete search coverage:
@@ -105,8 +105,8 @@ class IntelligentSearcher:
         query: str,
         k: int = 5,
         context_depth: int = 1,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> List[SearchResult]:
+        filters: Optional[dict[str, Any]] = None,
+    ) -> list[SearchResult]:
         """Pure semantic search implementation."""
 
         # Optimize query
@@ -151,7 +151,7 @@ class IntelligentSearcher:
         self,
         chunk_id: str,
         similarity: float,
-        metadata: Dict[str, Any],
+        metadata: dict[str, Any],
         context_depth: int,
     ) -> SearchResult:
         """Create a rich search result with context information."""
@@ -210,8 +210,8 @@ class IntelligentSearcher:
         return stats.get("files_indexed", 0)
 
     def _rank_results(
-        self, results: List[SearchResult], original_query: str
-    ) -> List[SearchResult]:
+        self, results: list[SearchResult], original_query: str
+    ) -> list[SearchResult]:
         """Advanced ranking based on multiple factors.
 
         Args:
@@ -284,7 +284,7 @@ class IntelligentSearcher:
         ranked_results = sorted(results, key=calculate_rank_score, reverse=True)
         return ranked_results
 
-    def _normalize_to_tokens(self, text: str) -> List[str]:
+    def _normalize_to_tokens(self, text: str) -> list[str]:
         """Convert text to normalized tokens, handling CamelCase."""
 
         # Split CamelCase and snake_case
@@ -295,7 +295,7 @@ class IntelligentSearcher:
         tokens = re.findall(r"\w+", text.lower())
         return tokens
 
-    def _is_entity_like_query(self, query: str, query_tokens: List[str]) -> bool:
+    def _is_entity_like_query(self, query: str, query_tokens: list[str]) -> bool:
         """Detect if query looks like an entity/type name."""
         # Short queries with 1-3 tokens that don't contain action words
         if len(query_tokens) > 3:
@@ -332,7 +332,7 @@ class IntelligentSearcher:
         return len(query_tokens) <= 2  # Short noun phrases
 
     def _calculate_name_boost(
-        self, name: Optional[str], original_query: str, query_tokens: List[str]
+        self, name: Optional[str], original_query: str, query_tokens: list[str]
     ) -> float:
         """Calculate boost based on name matching with robust token comparison."""
         if not name:
@@ -369,7 +369,7 @@ class IntelligentSearcher:
             return 1.05
 
     def _calculate_path_boost(
-        self, relative_path: str, query_tokens: List[str]
+        self, relative_path: str, query_tokens: list[str]
     ) -> float:
         """Calculate boost based on path/filename relevance."""
         if not relative_path or not query_tokens:
@@ -391,20 +391,20 @@ class IntelligentSearcher:
         return 1.0
 
     def search_by_file_pattern(
-        self, query: str, file_patterns: List[str], k: int = 5
-    ) -> List[SearchResult]:
+        self, query: str, file_patterns: list[str], k: int = 5
+    ) -> list[SearchResult]:
         """Search within specific file patterns."""
         filters = {"file_pattern": file_patterns}
         return self.search(query, k=k, filters=filters)
 
     def search_by_chunk_type(
         self, query: str, chunk_type: str, k: int = 5
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """Search for specific types of code chunks."""
         filters = {"chunk_type": chunk_type}
         return self.search(query, k=k, filters=filters)
 
-    def find_similar_to_chunk(self, chunk_id: str, k: int = 5) -> List[SearchResult]:
+    def find_similar_to_chunk(self, chunk_id: str, k: int = 5) -> list[SearchResult]:
         """Find chunks similar to a given chunk."""
         similar_chunks = self.index_manager.get_similar_chunks(chunk_id, k)
 
@@ -475,7 +475,7 @@ class IntelligentSearcher:
                 f"(size: {len(self._metadata_cache)}/{self._cache_max_size})"
             )
 
-    def get_cache_stats(self) -> Dict[str, int]:
+    def get_cache_stats(self) -> dict[str, int]:
         """Get metadata cache statistics.
 
         Returns:
@@ -494,7 +494,7 @@ class IntelligentSearcher:
             "cache_max_size": self._cache_max_size,
         }
 
-    def get_search_suggestions(self, partial_query: str) -> List[str]:
+    def get_search_suggestions(self, partial_query: str) -> list[str]:
         """Generate search suggestions based on indexed content."""
         # This is a simplified implementation
         # In a full system, you might maintain a separate suggestions index

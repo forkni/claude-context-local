@@ -8,7 +8,7 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 import numpy as np
 
@@ -85,9 +85,9 @@ class SearchExecutor:
         search_mode: str = "hybrid",
         use_parallel: bool = True,
         min_bm25_score: float = 0.0,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[dict[str, Any]] = None,
         query_embedding: Optional[np.ndarray] = None,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """
         Execute single-hop search (direct query matching).
 
@@ -181,9 +181,9 @@ class SearchExecutor:
         query: str,
         k: int,
         min_bm25_score: float,
-        filters: Optional[Dict[str, Any]],
+        filters: Optional[dict[str, Any]],
         query_embedding: Optional[np.ndarray] = None,
-    ) -> Tuple[List[Tuple], List[Tuple]]:
+    ) -> tuple[list[tuple], list[tuple]]:
         """Execute BM25 and dense search in parallel using shared thread pool."""
         try:
             # Reuse existing thread pool instead of creating new one per search
@@ -214,17 +214,17 @@ class SearchExecutor:
         query: str,
         k: int,
         min_bm25_score: float,
-        filters: Optional[Dict[str, Any]],
+        filters: Optional[dict[str, Any]],
         query_embedding: Optional[np.ndarray] = None,
-    ) -> Tuple[List[Tuple], List[Tuple]]:
+    ) -> tuple[list[tuple], list[tuple]]:
         """Execute BM25 and dense search sequentially."""
         bm25_results = self.search_bm25(query, k, min_bm25_score, filters)
         dense_results = self.search_dense(query, k, filters, query_embedding)
         return bm25_results, dense_results
 
     def search_bm25(
-        self, query: str, k: int, min_score: float, filters: Optional[Dict] = None
-    ) -> List[Tuple]:
+        self, query: str, k: int, min_score: float, filters: Optional[dict] = None
+    ) -> list[tuple]:
         """Search using BM25 index with optional filtering."""
         start_time = time.time()
         try:
@@ -275,9 +275,9 @@ class SearchExecutor:
         self,
         query: str,
         k: int,
-        filters: Optional[Dict],
+        filters: Optional[dict],
         query_embedding: Optional[np.ndarray] = None,
-    ) -> List[Tuple]:
+    ) -> list[tuple]:
         """Search using dense vector index."""
         start_time = time.time()
         try:
@@ -380,7 +380,7 @@ class SearchExecutor:
             )
 
     @property
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         """Get search performance statistics."""
         return self._search_stats.copy()
 

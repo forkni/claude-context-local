@@ -10,7 +10,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import numpy as np
 from rich.console import Console
@@ -300,7 +300,7 @@ class EmbeddingResult:
 
     embedding: np.ndarray
     chunk_id: str
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
 
 
 class CodeEmbedder:
@@ -315,7 +315,7 @@ class CodeEmbedder:
         model_name: str = "google/embeddinggemma-300m",
         cache_dir: Optional[str] = None,
         device: str = "auto",
-    ):
+    ) -> None:
         self.model_name = model_name
         self.cache_dir = cache_dir or str(
             Path.home() / ".cache" / "huggingface" / "hub"
@@ -358,19 +358,19 @@ class CodeEmbedder:
         )
 
         # Track per-model VRAM usage
-        self._model_vram_usage: Dict[str, float] = {}  # model_key -> VRAM MB
+        self._model_vram_usage: dict[str, float] = {}  # model_key -> VRAM MB
 
         # Setup logging
         logging.basicConfig(level=logging.INFO)
 
     @classmethod
-    def get_supported_models(cls) -> Dict[str, Dict[str, Any]]:
+    def get_supported_models(cls) -> dict[str, dict[str, Any]]:
         """Get dictionary of supported models and their configurations."""
         from search.config import get_model_registry
 
         return get_model_registry()
 
-    def _get_model_config(self) -> Dict[str, Any]:
+    def _get_model_config(self) -> dict[str, Any]:
         """Get configuration for the current model.
 
         Returns model-specific config including dimension, prompt_name, etc.
@@ -766,8 +766,8 @@ class CodeEmbedder:
         )
 
     def embed_chunks(
-        self, chunks: List[CodeChunk], batch_size: Optional[int] = None
-    ) -> List[EmbeddingResult]:
+        self, chunks: list[CodeChunk], batch_size: Optional[int] = None
+    ) -> list[EmbeddingResult]:
         """Generate embeddings for multiple chunks with batching."""
         results = []
 
@@ -1023,7 +1023,7 @@ class CodeEmbedder:
         self._logger.info("Embedding generation completed")
         return results
 
-    def get_cache_stats(self) -> Dict:
+    def get_cache_stats(self) -> dict:
         """Get cache hit/miss statistics."""
         return self._query_cache.get_stats()
 
@@ -1120,7 +1120,7 @@ class CodeEmbedder:
 
         return embedding
 
-    def get_model_info(self) -> Dict[str, Any]:
+    def get_model_info(self) -> dict[str, Any]:
         """Get information about the loaded model."""
         if self._model is None:
             return {"status": "not_loaded"}
@@ -1133,7 +1133,7 @@ class CodeEmbedder:
             "status": "loaded",
         }
 
-    def get_vram_usage(self) -> Dict[str, float]:
+    def get_vram_usage(self) -> dict[str, float]:
         """Return per-model VRAM usage in MB.
 
         Returns:

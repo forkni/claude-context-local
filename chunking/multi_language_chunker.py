@@ -3,7 +3,7 @@
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Optional
 
 from search.filters import normalize_path
 
@@ -152,7 +152,7 @@ class MultiLanguageChunker:
         suffix = Path(file_path).suffix.lower()
         return suffix in self.SUPPORTED_EXTENSIONS
 
-    def chunk_file(self, file_path: str) -> List[CodeChunk]:
+    def chunk_file(self, file_path: str) -> list[CodeChunk]:
         """Chunk a file into semantic units.
 
         Args:
@@ -195,7 +195,7 @@ class MultiLanguageChunker:
 
         return chunk_type
 
-    def _build_folder_structure(self, file_path: str) -> List[str]:
+    def _build_folder_structure(self, file_path: str) -> list[str]:
         """Build folder parts from file path.
 
         Args:
@@ -218,7 +218,7 @@ class MultiLanguageChunker:
 
         return folder_parts
 
-    def _extract_semantic_tags(self, metadata: dict, language: str) -> List[str]:
+    def _extract_semantic_tags(self, metadata: dict, language: str) -> list[str]:
         """Extract semantic tags from chunk metadata.
 
         Args:
@@ -364,8 +364,8 @@ class MultiLanguageChunker:
                 logger.warning(f"Failed to extract relationships for {chunk.name}: {e}")
 
     def _convert_tree_chunks(
-        self, tree_chunks: List[TreeSitterChunk], file_path: str
-    ) -> List[CodeChunk]:
+        self, tree_chunks: list[TreeSitterChunk], file_path: str
+    ) -> list[CodeChunk]:
         """Convert tree-sitter chunks to CodeChunk format.
 
         Orchestrates the conversion process by delegating to helper methods
@@ -390,7 +390,7 @@ class MultiLanguageChunker:
         # Build class chunk_id lookup map for parent-child linking
         # Maps (relative_path, class_name) -> class_chunk_id
         # Classes are processed before their methods in tree traversal order
-        class_chunk_map: Dict[Tuple[str, str], str] = {}
+        class_chunk_map: dict[tuple[str, str], str] = {}
 
         for tchunk in tree_chunks:
             # Extract metadata
@@ -475,10 +475,10 @@ class MultiLanguageChunker:
     def chunk_directory(
         self,
         directory_path: str,
-        extensions: Optional[List[str]] = None,
+        extensions: Optional[list[str]] = None,
         enable_parallel: bool = True,
         max_workers: int = 4,
-    ) -> List[CodeChunk]:
+    ) -> list[CodeChunk]:
         """Chunk all supported files in a directory.
 
         Args:
@@ -540,7 +540,7 @@ class MultiLanguageChunker:
         logger.info(f"Total chunks from directory: {len(all_chunks)}")
         return all_chunks
 
-    def _chunk_files_sequential(self, file_paths: List[Path]) -> List[CodeChunk]:
+    def _chunk_files_sequential(self, file_paths: list[Path]) -> list[CodeChunk]:
         """Chunk files sequentially without parallelization.
 
         Args:
@@ -560,8 +560,8 @@ class MultiLanguageChunker:
         return all_chunks
 
     def _chunk_files_parallel(
-        self, file_paths: List[Path], max_workers: int
-    ) -> List[CodeChunk]:
+        self, file_paths: list[Path], max_workers: int
+    ) -> list[CodeChunk]:
         """Chunk files in parallel using ThreadPoolExecutor.
 
         Args:

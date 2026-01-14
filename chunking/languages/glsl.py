@@ -1,7 +1,7 @@
 """GLSL-specific chunker using tree-sitter."""
 
 import warnings
-from typing import Any, Dict, Optional, Set
+from typing import Any, Optional
 
 from tree_sitter import Language
 
@@ -11,7 +11,7 @@ from .base import LanguageChunker
 class GLSLChunker(LanguageChunker):
     """GLSL-specific chunker using tree-sitter."""
 
-    def __init__(self, language: Optional[Language] = None):
+    def __init__(self, language: Optional[Language] = None) -> None:
         super().__init__("glsl", language)
 
     def _load_language(self) -> Language:
@@ -30,7 +30,7 @@ class GLSLChunker(LanguageChunker):
                 "Install with: pip install tree-sitter-glsl"
             ) from err
 
-    def _get_splittable_node_types(self) -> Set[str]:
+    def _get_splittable_node_types(self) -> set[str]:
         """GLSL-specific splittable node types."""
         return {
             "function_definition",  # Function definitions (main, custom functions)
@@ -50,7 +50,7 @@ class GLSLChunker(LanguageChunker):
             "precision_statement",  # Precision qualifiers
         }
 
-    def extract_metadata(self, node: Any, source: bytes) -> Dict[str, Any]:
+    def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:
         """Extract GLSL-specific metadata."""
         metadata = {"node_type": node.type}
 

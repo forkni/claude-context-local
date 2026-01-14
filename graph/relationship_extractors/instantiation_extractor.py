@@ -15,7 +15,7 @@ CamelCase names.
 """
 
 import ast
-from typing import Any, Dict, List
+from typing import Any
 
 from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
 from graph.relationship_types import RelationshipEdge, RelationshipType
@@ -68,14 +68,14 @@ class InstantiationExtractor(BaseRelationshipExtractor):
     - Does not analyze import statements to verify class types
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the instantiation extractor."""
         super().__init__()
         self.relationship_type = RelationshipType.INSTANTIATES
 
     def extract(
-        self, code: str, chunk_metadata: Dict[str, Any]
-    ) -> List[RelationshipEdge]:
+        self, code: str, chunk_metadata: dict[str, Any]
+    ) -> list[RelationshipEdge]:
         """
         Extract instantiation relationships from code.
 
@@ -119,7 +119,7 @@ class InstantiationExtractor(BaseRelationshipExtractor):
 
         return self.edges
 
-    def _extract_from_tree(self, tree, chunk_metadata: Dict[str, Any]):
+    def _extract_from_tree(self, tree, chunk_metadata: dict[str, Any]):
         """
         Extract instantiations from AST tree.
 

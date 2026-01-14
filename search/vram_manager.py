@@ -2,7 +2,7 @@
 
 import logging
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class VRAMTier:
 # RTX 3060/4060 (8GB) → laptop tier → BGE-M3 with lightweight multi-model option
 # RTX 3090 (24GB) → desktop tier    → Qwen3-0.6B (full multi-model pool)
 # RTX 4090 (24GB) → workstation tier → Qwen3-0.6B (full multi-model pool)
-VRAM_TIERS: List[VRAMTier] = [
+VRAM_TIERS: list[VRAMTier] = [
     VRAMTier(
         name="minimal",
         min_vram_gb=0,
@@ -93,7 +93,7 @@ class VRAMTierManager:
         Tier: desktop, Model: Qwen/Qwen3-Embedding-0.6B
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize VRAMTierManager."""
         self._detected_tier: Optional[VRAMTier] = None
 

@@ -5,7 +5,8 @@ BM25/dense weight combinations through grid search.
 """
 
 import logging
-from typing import Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
+from typing import Optional
 
 
 class WeightOptimizer:
@@ -40,10 +41,10 @@ class WeightOptimizer:
 
     def __init__(
         self,
-        search_callback: Callable[[str, int], List],
-        analyze_callback: Callable[[List], Dict],
+        search_callback: Callable[[str, int], list],
+        analyze_callback: Callable[[list], dict],
         set_weights_callback: Callable[[float, float], None],
-        get_weights_callback: Callable[[], Tuple[float, float]],
+        get_weights_callback: Callable[[], tuple[float, float]],
         logger: Optional[logging.Logger] = None,
     ):
         """
@@ -72,10 +73,10 @@ class WeightOptimizer:
 
     def optimize(
         self,
-        test_queries: List[str],
-        weight_combinations: Optional[List[Tuple[float, float]]] = None,
-        ground_truth: Optional[List[List[str]]] = None,
-    ) -> Dict[str, float]:
+        test_queries: list[str],
+        weight_combinations: Optional[list[tuple[float, float]]] = None,
+        ground_truth: Optional[list[list[str]]] = None,
+    ) -> dict[str, float]:
         """
         Find optimal weights using grid search.
 

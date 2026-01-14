@@ -8,7 +8,6 @@ and related code (ICLR 2025 RepoGraph paper shows 32.8% improvement).
 """
 
 import logging
-from typing import Dict, List, Set, Tuple
 
 from search.config import EgoGraphConfig
 
@@ -27,7 +26,7 @@ class EgoGraphRetriever:
     - Import dependencies
     """
 
-    def __init__(self, graph_storage):
+    def __init__(self, graph_storage) -> None:
         """Initialize ego-graph retriever.
 
         Args:
@@ -38,9 +37,9 @@ class EgoGraphRetriever:
 
     def retrieve_ego_graph(
         self,
-        anchor_chunk_ids: List[str],
+        anchor_chunk_ids: list[str],
         config: EgoGraphConfig,
-    ) -> Dict[str, List[str]]:
+    ) -> dict[str, list[str]]:
         """Retrieve k-hop ego-graph for each anchor.
 
         Args:
@@ -103,9 +102,9 @@ class EgoGraphRetriever:
 
     def flatten_for_context(
         self,
-        ego_graphs: Dict[str, List[str]],
+        ego_graphs: dict[str, list[str]],
         config: EgoGraphConfig,
-    ) -> List[str]:
+    ) -> list[str]:
         """Flatten ego-graphs to deduplicated chunk list for retrieval.
 
         Args:
@@ -115,7 +114,7 @@ class EgoGraphRetriever:
         Returns:
             List of unique chunk_ids combining all ego-graphs
         """
-        all_chunks: Set[str] = set()
+        all_chunks: set[str] = set()
 
         for anchor, neighbors in ego_graphs.items():
             if config.include_anchor:
@@ -130,9 +129,9 @@ class EgoGraphRetriever:
 
     def expand_search_results(
         self,
-        search_results: List[Dict],
+        search_results: list[dict],
         config: EgoGraphConfig,
-    ) -> Tuple[List[str], Dict[str, List[str]]]:
+    ) -> tuple[list[str], dict[str, list[str]]]:
         """Expand search results using ego-graph retrieval.
 
         This is the main entry point for integrating ego-graph expansion

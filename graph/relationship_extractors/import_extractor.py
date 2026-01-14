@@ -11,7 +11,7 @@ Complexity: Medium (handling relative imports, aliases, star imports)
 """
 
 import ast
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
 from graph.relationship_types import RelationshipEdge, RelationshipType
@@ -52,7 +52,9 @@ class ImportExtractor(BaseRelationshipExtractor):
     - file.py -> .local.helper (import_category: local)
     """
 
-    def __init__(self, relation_filter: Optional["RepositoryRelationFilter"] = None):
+    def __init__(
+        self, relation_filter: Optional["RepositoryRelationFilter"] = None
+    ) -> None:
         """Initialize the import extractor.
 
         Args:
@@ -63,8 +65,8 @@ class ImportExtractor(BaseRelationshipExtractor):
         self.relation_filter = relation_filter
 
     def extract(
-        self, code: str, chunk_metadata: Dict[str, Any]
-    ) -> List[RelationshipEdge]:
+        self, code: str, chunk_metadata: dict[str, Any]
+    ) -> list[RelationshipEdge]:
         """
         Extract import relationships from code.
 
@@ -95,7 +97,7 @@ class ImportExtractor(BaseRelationshipExtractor):
 
         return self.edges
 
-    def _extract_from_tree(self, tree: ast.AST, chunk_metadata: Dict[str, Any]) -> None:
+    def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         """
         Walk AST and extract import statements.
 
@@ -113,7 +115,7 @@ class ImportExtractor(BaseRelationshipExtractor):
                 self._extract_from_import_from(node, chunk_metadata)
 
     def _extract_from_import(
-        self, import_node: ast.Import, chunk_metadata: Dict[str, Any]
+        self, import_node: ast.Import, chunk_metadata: dict[str, Any]
     ) -> None:
         """
         Extract from import statement.
@@ -155,7 +157,7 @@ class ImportExtractor(BaseRelationshipExtractor):
             )
 
     def _extract_from_import_from(
-        self, import_node: ast.ImportFrom, chunk_metadata: Dict[str, Any]
+        self, import_node: ast.ImportFrom, chunk_metadata: dict[str, Any]
     ) -> None:
         """
         Extract from "from module import symbol" statement.
@@ -262,7 +264,7 @@ class ImportExtractor(BaseRelationshipExtractor):
 
 def extract_import_relationships(
     code: str, file_path: str = "unknown.py"
-) -> List[RelationshipEdge]:
+) -> list[RelationshipEdge]:
     """
     Convenience function to extract import relationships.
 

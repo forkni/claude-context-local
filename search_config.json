@@ -1,6 +1,6 @@
 {
   "embedding": {
-    "model_name": "Qwen/Qwen3-Embedding-0.6B",
+    "model_name": "BAAI/bge-m3",
     "dimension": 1024,
     "batch_size": 128,
     "query_cache_size": 128,
@@ -71,13 +71,16 @@
   },
   "chunking": {
     "min_chunk_tokens": 50,
-    "max_merged_tokens": 500,
+    "max_merged_tokens": 1000,
     "enable_community_detection": true,
     "enable_community_merge": true,
     "community_resolution": 1.5,
     "enable_large_node_splitting": true,
-    "max_chunk_lines": 250,
-    "token_estimation": "tiktoken"
+    "max_chunk_lines": 100,
+    "token_estimation": "tiktoken",
+    "size_method": "tokens",
+    "split_size_method": "characters",
+    "max_split_chars": 3000
   },
   "ego_graph": {
     "enabled": false,

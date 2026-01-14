@@ -5,7 +5,7 @@ Handlers that modify system configuration or project state.
 
 import logging
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from mcp_server.project_persistence import save_project_selection
 from mcp_server.server import _cleanup_previous_resources
@@ -45,7 +45,7 @@ def _detect_indexed_model(project_path: str) -> str | None:
 
 
 @error_handler("Project switch")
-async def handle_switch_project(arguments: Dict[str, Any]) -> Dict:
+async def handle_switch_project(arguments: dict[str, Any]) -> dict:
     """Switch to a different indexed project."""
     project_path = arguments["project_path"]
 
@@ -96,7 +96,7 @@ async def handle_switch_project(arguments: Dict[str, Any]) -> Dict:
 
 
 @error_handler("Configure routing")
-async def handle_configure_query_routing(arguments: Dict[str, Any]) -> Dict:
+async def handle_configure_query_routing(arguments: dict[str, Any]) -> dict:
     """Configure query routing behavior."""
     enable_multi_model = arguments.get("enable_multi_model")
     default_model = arguments.get("default_model")
@@ -147,7 +147,7 @@ async def handle_configure_query_routing(arguments: Dict[str, Any]) -> Dict:
 
 
 @error_handler("Configure search mode")
-async def handle_configure_search_mode(arguments: Dict[str, Any]) -> Dict:
+async def handle_configure_search_mode(arguments: dict[str, Any]) -> dict:
     """Configure search mode and parameters."""
     search_mode = arguments.get("search_mode", "hybrid")
     bm25_weight = arguments.get("bm25_weight", 0.4)
@@ -188,7 +188,7 @@ async def handle_configure_search_mode(arguments: Dict[str, Any]) -> Dict:
     "Switch model",
     error_context=lambda args: {"available_models": list(MODEL_REGISTRY.keys())},
 )
-async def handle_switch_embedding_model(arguments: Dict[str, Any]) -> Dict:
+async def handle_switch_embedding_model(arguments: dict[str, Any]) -> dict:
     """Switch to a different embedding model."""
     model_name = arguments["model_name"]
 
@@ -219,7 +219,7 @@ async def handle_switch_embedding_model(arguments: Dict[str, Any]) -> Dict:
 
 
 @error_handler("Configure reranking")
-async def handle_configure_reranking(arguments: Dict[str, Any]) -> Dict:
+async def handle_configure_reranking(arguments: dict[str, Any]) -> dict:
     """Configure neural reranker settings.
 
     Args:
@@ -261,7 +261,7 @@ async def handle_configure_reranking(arguments: Dict[str, Any]) -> Dict:
 
 
 @error_handler("Configure chunking")
-async def handle_configure_chunking(arguments: Dict[str, Any]) -> Dict:
+async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
     """Configure code chunking settings.
 
     Args:
@@ -272,6 +272,8 @@ async def handle_configure_chunking(arguments: Dict[str, Any]) -> Dict:
             - token_estimation: Token estimation method ("whitespace" or "tiktoken")
             - enable_large_node_splitting: Enable/disable AST block splitting
             - max_chunk_lines: Maximum lines per chunk before splitting
+            - split_size_method: Size method for splitting ("lines" or "characters")
+            - max_split_chars: Maximum characters per split chunk (1000-10000)
 
     Returns:
         Dict with success status and updated config
@@ -289,6 +291,8 @@ async def handle_configure_chunking(arguments: Dict[str, Any]) -> Dict:
     token_estimation = arguments.get("token_estimation")
     enable_large_node_splitting = arguments.get("enable_large_node_splitting")
     max_chunk_lines = arguments.get("max_chunk_lines")
+    split_size_method = arguments.get("split_size_method")
+    max_split_chars = arguments.get("max_split_chars")
 
     if enable_community_detection is not None:
         config.chunking.enable_community_detection = enable_community_detection
@@ -310,6 +314,20 @@ async def handle_configure_chunking(arguments: Dict[str, Any]) -> Dict:
         config.chunking.enable_large_node_splitting = enable_large_node_splitting
     if max_chunk_lines is not None:
         config.chunking.max_chunk_lines = max_chunk_lines
+    if split_size_method is not None:
+        if split_size_method in ["lines", "characters"]:
+            config.chunking.split_size_method = split_size_method
+        else:
+            return {
+                "error": f"Invalid split_size_method: {split_size_method}. Must be 'lines' or 'characters'"
+            }
+    if max_split_chars is not None:
+        if 1000 <= max_split_chars <= 10000:
+            config.chunking.max_split_chars = max_split_chars
+        else:
+            return {
+                "error": f"Invalid max_split_chars: {max_split_chars}. Must be between 1000 and 10000"
+            }
 
     config_manager.save_config(config)
 
@@ -322,6 +340,8 @@ async def handle_configure_chunking(arguments: Dict[str, Any]) -> Dict:
             "token_estimation": config.chunking.token_estimation,
             "enable_large_node_splitting": config.chunking.enable_large_node_splitting,
             "max_chunk_lines": config.chunking.max_chunk_lines,
+            "split_size_method": config.chunking.split_size_method,
+            "max_split_chars": config.chunking.max_split_chars,
         },
         "system_message": "Chunking configuration updated. Re-index project to apply changes.",
     }

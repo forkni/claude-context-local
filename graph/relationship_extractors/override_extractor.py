@@ -18,7 +18,7 @@ Complexity: Medium (requires parent class resolution)
 """
 
 import ast
-from typing import Any, Dict, List
+from typing import Any
 
 from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
 from graph.relationship_types import RelationshipEdge, RelationshipType
@@ -76,14 +76,14 @@ class OverrideExtractor(BaseRelationshipExtractor):
     ```
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the override extractor."""
         super().__init__()
         self.relationship_type = RelationshipType.OVERRIDES
 
     def extract(
-        self, code: str, chunk_metadata: Dict[str, Any]
-    ) -> List[RelationshipEdge]:
+        self, code: str, chunk_metadata: dict[str, Any]
+    ) -> list[RelationshipEdge]:
         """
         Extract override relationships from code.
 
@@ -131,7 +131,7 @@ class OverrideExtractor(BaseRelationshipExtractor):
 
         return self.edges
 
-    def _extract_from_tree(self, tree: ast.AST, chunk_metadata: Dict[str, Any]) -> None:
+    def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         """
         Walk AST and extract override relationships.
 
@@ -144,7 +144,7 @@ class OverrideExtractor(BaseRelationshipExtractor):
                 self._extract_from_class(node, chunk_metadata)
 
     def _extract_from_class(
-        self, class_node: ast.ClassDef, chunk_metadata: Dict[str, Any]
+        self, class_node: ast.ClassDef, chunk_metadata: dict[str, Any]
     ) -> None:
         """
         Extract override relationships from a class definition.
@@ -176,7 +176,7 @@ class OverrideExtractor(BaseRelationshipExtractor):
         self,
         method_node: ast.FunctionDef,
         class_name: str,
-        chunk_metadata: Dict[str, Any],
+        chunk_metadata: dict[str, Any],
     ) -> None:
         """
         Extract override relationships from a method definition.
@@ -248,7 +248,7 @@ class OverrideExtractor(BaseRelationshipExtractor):
 
         return False
 
-    def _find_super_calls(self, method_node: ast.FunctionDef) -> List[tuple[str, int]]:
+    def _find_super_calls(self, method_node: ast.FunctionDef) -> list[tuple[str, int]]:
         """
         Find all super().method_name() calls in method body.
 
@@ -284,7 +284,7 @@ class OverrideExtractor(BaseRelationshipExtractor):
 
     def _build_method_chunk_id(
         self,
-        chunk_metadata: Dict[str, Any],
+        chunk_metadata: dict[str, Any],
         class_name: str,
         method_name: str,
         line_number: int,
@@ -323,7 +323,7 @@ class OverrideExtractor(BaseRelationshipExtractor):
 
 def extract_override_relationships(
     code: str, file_path: str = "unknown.py"
-) -> List[RelationshipEdge]:
+) -> list[RelationshipEdge]:
     """
     Convenience function to extract override relationships.
 

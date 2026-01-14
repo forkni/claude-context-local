@@ -7,7 +7,7 @@ on project-internal code.
 
 import sys
 from pathlib import Path
-from typing import Optional, Set
+from typing import Optional
 
 
 class RepositoryRelationFilter:
@@ -18,7 +18,7 @@ class RepositoryRelationFilter:
     and third-party packages, making ego-graph neighbors more relevant.
     """
 
-    def __init__(self, project_root: Optional[Path] = None):
+    def __init__(self, project_root: Optional[Path] = None) -> None:
         """Initialize filter with project context.
 
         Args:
@@ -26,8 +26,8 @@ class RepositoryRelationFilter:
                           Used to detect local modules.
         """
         self.project_root = Path(project_root) if project_root else None
-        self.project_modules: Set[str] = set()
-        self._stdlib_modules: Optional[Set[str]] = None
+        self.project_modules: set[str] = set()
+        self._stdlib_modules: Optional[set[str]] = None
 
         if self.project_root:
             self._discover_project_modules()
@@ -54,7 +54,7 @@ class RepositoryRelationFilter:
                     self.project_modules.add(module_name)
 
     @property
-    def stdlib_modules(self) -> Set[str]:
+    def stdlib_modules(self) -> set[str]:
         """Get stdlib modules using sys.stdlib_module_names (Python 3.10+)."""
         if self._stdlib_modules is None:
             # Requires Python 3.10+ (project requirement)

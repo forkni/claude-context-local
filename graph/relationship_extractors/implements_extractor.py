@@ -18,7 +18,7 @@ Complexity: Low (similar to inheritance extraction with filtering)
 """
 
 import ast
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Optional
 
 from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
 from graph.relationship_types import RelationshipEdge, RelationshipType
@@ -76,7 +76,7 @@ class ImplementsExtractor(BaseRelationshipExtractor):
     """
 
     # Known protocol/ABC markers (base class names)
-    PROTOCOL_MARKERS: Set[str] = {
+    PROTOCOL_MARKERS: set[str] = {
         "Protocol",  # typing.Protocol
         "ABC",  # abc.ABC
         "ABCMeta",  # abc.ABCMeta
@@ -104,14 +104,14 @@ class ImplementsExtractor(BaseRelationshipExtractor):
         "SupportsRound",
     }
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the implements extractor."""
         super().__init__()
         self.relationship_type = RelationshipType.IMPLEMENTS
 
     def extract(
-        self, code: str, chunk_metadata: Dict[str, Any]
-    ) -> List[RelationshipEdge]:
+        self, code: str, chunk_metadata: dict[str, Any]
+    ) -> list[RelationshipEdge]:
         """
         Extract implementation relationships from code.
 
@@ -160,7 +160,7 @@ class ImplementsExtractor(BaseRelationshipExtractor):
 
         return self.edges
 
-    def _extract_from_tree(self, tree: ast.AST, chunk_metadata: Dict[str, Any]) -> None:
+    def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         """
         Walk AST and extract implementation relationships.
 
@@ -173,7 +173,7 @@ class ImplementsExtractor(BaseRelationshipExtractor):
                 self._extract_from_class(node, chunk_metadata)
 
     def _extract_from_class(
-        self, class_node: ast.ClassDef, chunk_metadata: Dict[str, Any]
+        self, class_node: ast.ClassDef, chunk_metadata: dict[str, Any]
     ) -> None:
         """
         Extract implementation relationships from a class definition.
@@ -316,7 +316,7 @@ class ImplementsExtractor(BaseRelationshipExtractor):
         return base_name in {"ABC", "ABCMeta"}
 
     def _build_class_chunk_id(
-        self, chunk_metadata: Dict[str, Any], class_name: str, line_number: int
+        self, chunk_metadata: dict[str, Any], class_name: str, line_number: int
     ) -> str:
         """
         Build chunk ID for a class.
@@ -341,7 +341,7 @@ class ImplementsExtractor(BaseRelationshipExtractor):
 
 def extract_implementation_relationships(
     code: str, file_path: str = "unknown.py"
-) -> List[RelationshipEdge]:
+) -> list[RelationshipEdge]:
     """
     Convenience function to extract implementation relationships.
 

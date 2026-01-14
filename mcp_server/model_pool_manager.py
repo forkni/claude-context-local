@@ -5,7 +5,7 @@ Manages embedding model lifecycle, lazy loading, and memory optimization.
 
 import logging
 import os
-from typing import Dict, Optional
+from typing import Optional
 
 from embeddings.embedder import CodeEmbedder
 from mcp_server.services import get_config, get_state
@@ -22,7 +22,7 @@ class ModelPoolManager:
         """Initialize ModelPoolManager."""
         pass
 
-    def _get_pool_config(self) -> Dict[str, str]:
+    def _get_pool_config(self) -> dict[str, str]:
         """Get appropriate model pool configuration based on VRAM tier or environment.
 
         Returns:

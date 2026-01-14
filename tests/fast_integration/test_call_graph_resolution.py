@@ -30,7 +30,7 @@ class TestCallGraphResolutionIntegration:
 
         # Disable greedy merge for these tests to check individual method chunks
         mock_config = MagicMock()
-        mock_config.chunking = ChunkingConfig(enable_chunk_merging=False)
+        mock_config.chunking = ChunkingConfig()
         self.locator = ServiceLocator.instance()
         self.locator.register("config", mock_config)
 

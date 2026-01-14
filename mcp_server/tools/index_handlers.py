@@ -7,7 +7,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from mcp_server.model_pool_manager import get_embedder
@@ -133,7 +133,7 @@ def _run_indexing(
     incremental: bool,
     include_dirs=None,
     exclude_dirs=None,
-) -> Dict:
+) -> dict:
     """Run the indexing process and return results.
 
     Args:
@@ -176,7 +176,7 @@ def _run_indexing(
 
 def _build_index_response(
     results: list[dict], directory_path: str, multi_model: bool, incremental: bool
-) -> Dict:
+) -> dict:
     """Build the final index response.
 
     Args:
@@ -218,6 +218,61 @@ def _build_index_response(
             "time_taken": r["time_taken"],
             "mode": "incremental" if incremental else "full",
         }
+
+
+def _clear_index_files_before_create(index_dir: Path) -> None:
+    """Clear index files before creating a new HybridSearcher.
+
+    This is needed for force_full reindex to avoid file locks on Windows.
+    When MCP server is running and holds references to metadata.db, deleting
+    files before creating the new HybridSearcher prevents WinError 32.
+
+    Args:
+        index_dir: Directory containing index files to clear
+    """
+    import shutil
+
+    logger.info(
+        f"[PRE-CLEAR] Deleting index files before HybridSearcher creation: {index_dir}"
+    )
+
+    # Delete metadata.db (SQLite database)
+    metadata_path = index_dir / "metadata.db"
+    if metadata_path.exists():
+        try:
+            metadata_path.unlink()
+            logger.info("[PRE-CLEAR] Deleted metadata.db")
+        except OSError as e:
+            logger.warning(f"[PRE-CLEAR] Could not delete metadata.db: {e}")
+
+    # Delete BM25 directory
+    bm25_dir = index_dir / "bm25"
+    if bm25_dir.exists():
+        try:
+            shutil.rmtree(bm25_dir)
+            logger.info("[PRE-CLEAR] Deleted BM25 directory")
+        except OSError as e:
+            logger.warning(f"[PRE-CLEAR] Could not delete BM25 directory: {e}")
+
+    # Delete FAISS index
+    faiss_path = index_dir / "code.index"
+    if faiss_path.exists():
+        try:
+            faiss_path.unlink()
+            logger.info("[PRE-CLEAR] Deleted FAISS index")
+        except OSError as e:
+            logger.warning(f"[PRE-CLEAR] Could not delete FAISS index: {e}")
+
+    # Delete call graph
+    call_graph_pattern = str(index_dir.parent / "*_call_graph.json")
+    import glob
+
+    for graph_file in glob.glob(call_graph_pattern):
+        try:
+            Path(graph_file).unlink()
+            logger.info(f"[PRE-CLEAR] Deleted call graph: {graph_file}")
+        except OSError as e:
+            logger.warning(f"[PRE-CLEAR] Could not delete call graph: {e}")
 
 
 def _index_with_all_models(
@@ -318,6 +373,11 @@ def _index_with_all_models(
             )
             embedder = get_embedder(model_key)
 
+            # For force_full reindex, delete index files BEFORE creating HybridSearcher
+            # to avoid WinError 32 (file lock) when MCP server holds references
+            if not incremental:
+                _clear_index_files_before_create(index_dir)
+
             # Create fresh indexer instance directly (bypass global cache)
             if config.search_mode.enable_hybrid:
                 project_id = project_dir.name.rsplit("_", 1)[0]
@@ -401,7 +461,7 @@ def _index_with_all_models(
 
 
 @error_handler("Clear index")
-async def handle_clear_index(arguments: Dict[str, Any]) -> Dict:
+async def handle_clear_index(arguments: dict[str, Any]) -> dict:
     """Clear the entire search index for ALL models."""
     import shutil
 
@@ -477,7 +537,7 @@ async def handle_clear_index(arguments: Dict[str, Any]) -> Dict:
 
 
 @error_handler("Delete project")
-async def handle_delete_project(arguments: Dict[str, Any]) -> Dict:
+async def handle_delete_project(arguments: dict[str, Any]) -> dict:
     """Delete an indexed project completely (indices + Merkle snapshots).
 
     This tool properly closes database connections before deletion to prevent
@@ -619,7 +679,7 @@ async def handle_delete_project(arguments: Dict[str, Any]) -> Dict:
 
 
 @error_handler("Index")
-async def handle_index_directory(arguments: Dict[str, Any]) -> Dict:
+async def handle_index_directory(arguments: dict[str, Any]) -> dict:
     """Index a directory for code search with multi-model support.
 
     Uses extracted helper functions for clarity:

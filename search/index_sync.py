@@ -7,7 +7,7 @@ of both BM25 and dense FAISS indices.
 import logging
 import shutil
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from .bm25_index import BM25Index
 from .indexer import CodeIndexManager
@@ -50,7 +50,7 @@ class IndexSynchronizer:
         self.embedder = embedder
         self._logger = logging.getLogger(__name__)
 
-    def save_indices(self) -> Dict[str, Any]:
+    def save_indices(self) -> dict[str, Any]:
         """
         Save both BM25 and dense indices.
 

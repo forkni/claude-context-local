@@ -3,7 +3,7 @@
 import logging
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 # Import graph storage for call graph
 try:
@@ -39,7 +39,7 @@ class GraphIntegration:
     providing a clean interface for graph operations.
     """
 
-    def __init__(self, project_id: Optional[str], storage_dir: Path):
+    def __init__(self, project_id: Optional[str], storage_dir: Path) -> None:
         """Initialize graph storage if available.
 
         Args:
@@ -62,7 +62,7 @@ class GraphIntegration:
             except Exception as e:
                 self._logger.warning(f"Failed to initialize graph storage: {e}")
 
-    def add_chunk(self, chunk_id: str, metadata: Dict[str, Any]) -> None:
+    def add_chunk(self, chunk_id: str, metadata: dict[str, Any]) -> None:
         """Add chunk to call graph storage.
 
         Args:
@@ -188,7 +188,7 @@ class GraphIntegration:
         self.storage.clear()
 
         # === PASS 1: Add all chunk nodes + build symbol resolution map ===
-        name_to_chunk_ids: Dict[str, List[str]] = defaultdict(list)
+        name_to_chunk_ids: dict[str, list[str]] = defaultdict(list)
         processed_count = 0
 
         for chunk in chunks:
@@ -312,7 +312,7 @@ class GraphIntegration:
     def _resolve_call_target(
         self,
         callee_name: str,
-        name_to_chunk_ids: Dict[str, List[str]],
+        name_to_chunk_ids: dict[str, list[str]],
     ) -> Optional[str]:
         """Resolve a call target name to its chunk_id.
 

@@ -3,7 +3,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 from search.exceptions import DimensionMismatchError
 
@@ -44,7 +44,7 @@ def validate_embedder_index_compatibility(
     embedder,
     storage_dir: Path,
     raise_on_mismatch: bool = True,
-) -> Tuple[bool, Optional[str]]:
+) -> tuple[bool, Optional[str]]:
     """Validate that embedder dimension matches stored index dimension.
 
     Call BEFORE creating HybridSearcher or loading indices.

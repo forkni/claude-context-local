@@ -3,7 +3,7 @@
 import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Optional
 
 
 @dataclass
@@ -14,9 +14,9 @@ class MerkleNode:
     hash: str
     is_file: bool
     size: int = 0
-    children: List["MerkleNode"] = field(default_factory=list)
+    children: list["MerkleNode"] = field(default_factory=list)
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         """Convert node to dictionary for serialization."""
         return {
             "path": self.path,
@@ -27,7 +27,7 @@ class MerkleNode:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict) -> "MerkleNode":
+    def from_dict(cls, data: dict) -> "MerkleNode":
         """Create node from dictionary."""
         node = cls(
             path=data["path"],
@@ -42,7 +42,7 @@ class MerkleNode:
 class MerkleDAG:
     """Merkle DAG for tracking file system changes."""
 
-    def __init__(self, root_path: str, include_dirs=None, exclude_dirs=None):
+    def __init__(self, root_path: str, include_dirs=None, exclude_dirs=None) -> None:
         """Initialize Merkle DAG for a directory tree.
 
         Args:
@@ -51,7 +51,7 @@ class MerkleDAG:
             exclude_dirs: Optional list of directories to exclude
         """
         self.root_path = Path(root_path).resolve()
-        self.nodes: Dict[str, MerkleNode] = {}
+        self.nodes: dict[str, MerkleNode] = {}
         self.root_node: Optional[MerkleNode] = None
 
         # Initialize directory filter for custom include/exclude dirs
@@ -63,7 +63,7 @@ class MerkleDAG:
         from chunking.multi_language_chunker import MultiLanguageChunker
 
         # Combine default ignored directories with file-specific patterns
-        self.ignore_patterns: Set[str] = set(
+        self.ignore_patterns: set[str] = set(
             MultiLanguageChunker.DEFAULT_IGNORED_DIRS
         ) | {
             "*.pyc",
@@ -106,7 +106,7 @@ class MerkleDAG:
 
         return False
 
-    def hash_file(self, file_path: Path) -> Tuple[str, int]:
+    def hash_file(self, file_path: Path) -> tuple[str, int]:
         """Calculate SHA-256 hash of a file.
 
         Args:
@@ -129,7 +129,7 @@ class MerkleDAG:
 
         return sha256.hexdigest(), size
 
-    def hash_directory(self, dir_path: Path, child_hashes: List[str]) -> str:
+    def hash_directory(self, dir_path: Path, child_hashes: list[str]) -> str:
         """Calculate hash for a directory based on its children.
 
         Args:
@@ -213,7 +213,7 @@ class MerkleDAG:
             self.root_node.path = "."
             self.nodes["."] = self.root_node
 
-    def get_file_hashes(self) -> Dict[str, str]:
+    def get_file_hashes(self) -> dict[str, str]:
         """Get a dictionary of file paths to their hashes.
 
         Returns:
@@ -221,7 +221,7 @@ class MerkleDAG:
         """
         return {path: node.hash for path, node in self.nodes.items() if node.is_file}
 
-    def get_all_files(self) -> List[str]:
+    def get_all_files(self) -> list[str]:
         """Get list of all tracked file paths.
 
         Returns:
@@ -229,7 +229,7 @@ class MerkleDAG:
         """
         return [path for path, node in self.nodes.items() if node.is_file]
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         """Convert DAG to dictionary for serialization.
 
         Returns:
@@ -250,7 +250,7 @@ class MerkleDAG:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict) -> "MerkleDAG":
+    def from_dict(cls, data: dict) -> "MerkleDAG":
         """Create DAG from dictionary.
 
         Args:
@@ -297,7 +297,7 @@ class MerkleDAG:
         """
         return self.nodes.get(path)
 
-    def get_stats(self) -> Dict:
+    def get_stats(self) -> dict:
         """Get statistics about the DAG.
 
         Returns:

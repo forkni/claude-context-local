@@ -14,7 +14,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +35,8 @@ class IntentDecision:
     intent: QueryIntent
     confidence: float
     reason: str
-    scores: Dict[str, float]
-    suggested_params: Dict[str, Any] = field(default_factory=dict)
+    scores: dict[str, float]
+    suggested_params: dict[str, Any] = field(default_factory=dict)
 
 
 class IntentClassifier:
@@ -52,7 +52,7 @@ class IntentClassifier:
     """
 
     # Intent classification rules (keyword + pattern matching)
-    INTENT_RULES: Dict[str, Dict[str, Any]] = {
+    INTENT_RULES: dict[str, dict[str, Any]] = {
         "local": {
             "keywords": [
                 # Definition/implementation queries
@@ -170,7 +170,7 @@ class IntentClassifier:
 
     def __init__(
         self, confidence_threshold: Optional[float] = None, enable_logging: bool = True
-    ):
+    ) -> None:
         """Initialize intent classifier.
 
         Args:
@@ -274,7 +274,7 @@ class IntentClassifier:
 
         return decision
 
-    def _calculate_scores(self, query: str) -> Dict[str, float]:
+    def _calculate_scores(self, query: str) -> dict[str, float]:
         """Calculate intent scores based on keyword and pattern matching.
 
         Args:
@@ -312,7 +312,7 @@ class IntentClassifier:
 
         return scores
 
-    def _resolve_tie(self, scores: Dict[str, float]) -> str:
+    def _resolve_tie(self, scores: dict[str, float]) -> str:
         """Resolve ties using explicit precedence order.
 
         When multiple intents have scores within 0.05 margin, select based on
@@ -341,7 +341,7 @@ class IntentClassifier:
 
     def _extract_suggested_params(
         self, query: str, intent: QueryIntent
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Extract suggested parameters based on classified intent.
 
         Args:
@@ -351,7 +351,7 @@ class IntentClassifier:
         Returns:
             Dictionary with suggested parameters for downstream tools.
         """
-        params: Dict[str, Any] = {}
+        params: dict[str, Any] = {}
 
         if intent == QueryIntent.GLOBAL:
             # Suggest larger k for architectural queries
@@ -421,7 +421,7 @@ class IntentClassifier:
 
         return None
 
-    def get_intent_patterns(self, intent: QueryIntent) -> Optional[Dict]:
+    def get_intent_patterns(self, intent: QueryIntent) -> Optional[dict]:
         """Get pattern details for a specific intent type.
 
         Args:

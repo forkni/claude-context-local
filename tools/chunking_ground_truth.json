@@ -1,0 +1,269 @@
+{
+  "queries": [
+    {
+      "query": "estimate_tokens function",
+      "expected_chunk_ids": ["chunking/languages/base.py:21-55:function:estimate_tokens"],
+      "category": "exact_function"
+    },
+    {
+      "query": "token estimation with tiktoken or whitespace",
+      "expected_chunk_ids": ["chunking/languages/base.py:21-55:function:estimate_tokens"],
+      "category": "exact_function"
+    },
+    {
+      "query": "greedy merge small chunks algorithm",
+      "expected_chunk_ids": ["chunking/languages/base.py:251-314:split_block:LanguageChunker._greedy_merge_small_chunks"],
+      "category": "algorithm"
+    },
+    {
+      "query": "_greedy_merge_small_chunks method",
+      "expected_chunk_ids": ["chunking/languages/base.py:251-314:split_block:LanguageChunker._greedy_merge_small_chunks"],
+      "category": "exact_function"
+    },
+    {
+      "query": "split large node at AST boundaries",
+      "expected_chunk_ids": ["chunking/languages/base.py:644-727:method:LanguageChunker._split_large_node"],
+      "category": "algorithm"
+    },
+    {
+      "query": "_split_large_node method",
+      "expected_chunk_ids": ["chunking/languages/base.py:644-727:method:LanguageChunker._split_large_node"],
+      "category": "exact_function"
+    },
+    {
+      "query": "create merged chunk from multiple chunks",
+      "expected_chunk_ids": ["chunking/languages/base.py:194-240:method:LanguageChunker._create_merged_chunk"],
+      "category": "algorithm"
+    },
+    {
+      "query": "_create_merged_chunk method",
+      "expected_chunk_ids": ["chunking/languages/base.py:316-377:split_block:LanguageChunker._greedy_merge_small_chunks"],
+      "category": "exact_function"
+    },
+    {
+      "query": "community-based chunk remerging",
+      "expected_chunk_ids": ["chunking/languages/base.py:388-439:split_block:LanguageChunker.remerge_chunks_with_communities"],
+      "category": "algorithm"
+    },
+    {
+      "query": "remerge_chunks_with_communities static method",
+      "expected_chunk_ids": ["chunking/languages/base.py:388-439:split_block:LanguageChunker.remerge_chunks_with_communities"],
+      "category": "exact_function"
+    },
+    {
+      "query": "get block boundary types for splitting",
+      "expected_chunk_ids": ["chunking/languages/base.py:544-553:method:LanguageChunker._get_block_boundary_types"],
+      "category": "exact_function"
+    },
+    {
+      "query": "CodeEmbedder class for embedding generation",
+      "expected_chunk_ids": ["search/search_executor.py:26-79:method:SearchExecutor.__init__"],
+      "category": "exact_class"
+    },
+    {
+      "query": "embedding model with SentenceTransformer",
+      "expected_chunk_ids": ["scripts/verify_hf_auth.py:11-72:merged:check_huggingface_auth"],
+      "category": "conceptual"
+    },
+    {
+      "query": "IncrementalIndexer class for indexing",
+      "expected_chunk_ids": ["search/incremental_indexer.py:177-191:split_block:IncrementalIndexer.incremental_index"],
+      "category": "exact_class"
+    },
+    {
+      "query": "incremental indexing with snapshots",
+      "expected_chunk_ids": ["search/incremental_indexer.py:177-191:split_block:IncrementalIndexer.incremental_index"],
+      "category": "conceptual"
+    },
+    {
+      "query": "CommunityDetector class Louvain algorithm",
+      "expected_chunk_ids": ["graph/community_detector.py:20-242:class:CommunityDetector"],
+      "category": "exact_class"
+    },
+    {
+      "query": "community detection with Louvain modularity",
+      "expected_chunk_ids": ["graph/community_detector.py:21-243:class:CommunityDetector"],
+      "category": "algorithm"
+    },
+    {
+      "query": "calculate MRR metric for evaluation",
+      "expected_chunk_ids": ["tools/run_benchmark_mcp.py:47-159:function:run_benchmark"],
+      "category": "algorithm"
+    },
+    {
+      "query": "calculate_mrr function",
+      "expected_chunk_ids": ["tools/benchmark_models.py:66-93:function:calculate_mrr"],
+      "category": "exact_function"
+    },
+    {
+      "query": "Mean Reciprocal Rank calculation",
+      "expected_chunk_ids": ["tools/run_benchmark_mcp.py:39-44:function:calculate_mrr"],
+      "category": "conceptual"
+    },
+    {
+      "query": "SearchExecutor class for search",
+      "expected_chunk_ids": ["search/hybrid_searcher.py:349-369:decorated_definition:HybridSearcher.stats"],
+      "category": "exact_class"
+    },
+    {
+      "query": "parallel BM25 and dense search execution",
+      "expected_chunk_ids": ["search/search_executor.py:20-398:class:SearchExecutor"],
+      "category": "conceptual"
+    },
+    {
+      "query": "NeuralReranker class with CrossEncoder",
+      "expected_chunk_ids": ["search/neural_reranker.py:16-158:class:NeuralReranker"],
+      "category": "exact_class"
+    },
+    {
+      "query": "neural reranking with cross-encoder",
+      "expected_chunk_ids": ["search/neural_reranker.py:16-158:class:NeuralReranker"],
+      "category": "algorithm"
+    },
+    {
+      "query": "RerankingEngine class",
+      "expected_chunk_ids": ["search/multi_hop_searcher.py:31-53:method:MultiHopSearcher.__init__"],
+      "category": "exact_class"
+    },
+    {
+      "query": "reranking search results for quality",
+      "expected_chunk_ids": ["search/reranking_engine.py:145-192:split_block:RerankingEngine.rerank_by_query"],
+      "category": "conceptual"
+    },
+    {
+      "query": "BM25SyncManager class for index sync",
+      "expected_chunk_ids": ["search/bm25_sync.py:15-69:class:BM25SyncManager"],
+      "category": "exact_class"
+    },
+    {
+      "query": "BM25 index synchronization",
+      "expected_chunk_ids": ["search/hybrid_searcher.py:971-973:method:HybridSearcher.validate_index_sync"],
+      "category": "conceptual"
+    },
+    {
+      "query": "IndexSynchronizer class",
+      "expected_chunk_ids": ["search/hybrid_searcher.py:371-387:decorated_definition:HybridSearcher.index_synchronizer"],
+      "category": "exact_class"
+    },
+    {
+      "query": "synchronize BM25 and vector indices",
+      "expected_chunk_ids": ["search/hybrid_searcher.py:971-973:method:HybridSearcher.validate_index_sync"],
+      "category": "conceptual"
+    },
+    {
+      "query": "GraphIntegration class for code graph",
+      "expected_chunk_ids": ["search/incremental_indexer.py:633-673:method:IncrementalIndexer._build_temp_graph"],
+      "category": "exact_class"
+    },
+    {
+      "query": "integrate call graph with search",
+      "expected_chunk_ids": ["search/indexer.py:559-569:method:CodeIndexManager._add_to_graph"],
+      "category": "conceptual"
+    },
+    {
+      "query": "ResultFactory class create search results",
+      "expected_chunk_ids": ["search/result_factory.py:11-162:class:ResultFactory"],
+      "category": "exact_class"
+    },
+    {
+      "query": "create SearchResult from similarity scores",
+      "expected_chunk_ids": ["search/result_factory.py:128-162:decorated_definition:ResultFactory.from_similarity_results"],
+      "category": "conceptual"
+    },
+    {
+      "query": "ModelPoolManager class for models",
+      "expected_chunk_ids": ["mcp_server/model_pool_manager.py:329-338:function:get_model_pool_manager"],
+      "category": "exact_class"
+    },
+    {
+      "query": "manage multiple embedding models",
+      "expected_chunk_ids": ["mcp_server/tools/status_handlers.py:295-331:decorated_definition:handle_list_embedding_models"],
+      "category": "conceptual"
+    },
+    {
+      "query": "calculate optimal batch size for embedding",
+      "expected_chunk_ids": ["embeddings/embedder.py:146-184:split_block:calculate_optimal_batch_size"],
+      "category": "algorithm"
+    },
+    {
+      "query": "batch size optimization based on VRAM",
+      "expected_chunk_ids": ["embeddings/embedder.py:146-184:split_block:calculate_optimal_batch_size"],
+      "category": "conceptual"
+    },
+    {
+      "query": "LanguageChunker base class",
+      "expected_chunk_ids": ["chunking/languages/__init__.py:1-46:module"],
+      "category": "exact_class"
+    },
+    {
+      "query": "abstract base class for language chunkers",
+      "expected_chunk_ids": ["chunking/languages/csharp.py:10-82:class:CSharpChunker"],
+      "category": "conceptual"
+    },
+    {
+      "query": "IntelligentSearcher class",
+      "expected_chunk_ids": ["mcp_server/tools/code_relationship_analyzer.py:235-263:method:CodeRelationshipAnalyzer.__init__"],
+      "category": "exact_class"
+    },
+    {
+      "query": "intelligent search with embedder",
+      "expected_chunk_ids": ["mcp_server/tools/search_handlers.py:462-528:split_block:handle_search_code"],
+      "category": "conceptual"
+    },
+    {
+      "query": "how chunks are merged based on size constraints",
+      "expected_chunk_ids": ["chunking/languages/base.py:251-314:split_block:LanguageChunker._greedy_merge_small_chunks"],
+      "category": "conceptual"
+    },
+    {
+      "query": "AST boundary detection for function splitting",
+      "expected_chunk_ids": ["chunking/languages/base.py:594-642:method:LanguageChunker._create_split_chunk"],
+      "category": "conceptual"
+    },
+    {
+      "query": "prevent cross-file chunk merging",
+      "expected_chunk_ids": ["chunking/languages/base.py:440-479:split_block:LanguageChunker.remerge_chunks_with_communities"],
+      "category": "conceptual"
+    },
+    {
+      "query": "token vs character size estimation",
+      "expected_chunk_ids": ["chunking/languages/base.py:729-787:merged:LanguageChunker._get_split_threshold"],
+      "category": "conceptual"
+    },
+    {
+      "query": "merge chunks with same parent_class or community_id",
+      "expected_chunk_ids": ["chunking/languages/base.py:440-479:split_block:LanguageChunker.remerge_chunks_with_communities"],
+      "category": "conceptual"
+    },
+    {
+      "query": "split large functions at for/if/while boundaries",
+      "expected_chunk_ids": ["chunking/languages/python.py:41-56:method:PythonChunker._get_block_boundary_types"],
+      "category": "conceptual"
+    },
+    {
+      "query": "community-based boundaries for merging",
+      "expected_chunk_ids": ["chunking/languages/base.py:388-479:split_block:LanguageChunker.remerge_chunks_with_communities"],
+      "category": "conceptual"
+    },
+    {
+      "query": "Louvain community detection on code graph",
+      "expected_chunk_ids": ["graph/community_detector.py:20-242:class:CommunityDetector"],
+      "category": "conceptual"
+    },
+    {
+      "query": "reciprocal rank fusion for search",
+      "expected_chunk_ids": ["search/reranker.py:20-315:class:RRFReranker"],
+      "category": "conceptual"
+    }
+  ],
+  "categories": ["exact_function", "exact_class", "algorithm", "conceptual"],
+  "metadata": {
+    "total_queries": 50,
+    "created": "2026-01-13",
+    "updated": "2026-01-13",
+    "codebase": "claude-context-local",
+    "language": "Python",
+    "purpose": "Benchmark chunking strategies (character-based vs token-based)",
+    "notes": "Updated with current MCP search results to fix ground truth drift"
+  }
+}

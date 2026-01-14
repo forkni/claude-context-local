@@ -15,7 +15,7 @@ Complexity: Medium (handles two relationship types)
 """
 
 import ast
-from typing import Any, Dict, List
+from typing import Any
 
 from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
 from graph.relationship_types import RelationshipEdge, RelationshipType
@@ -82,7 +82,7 @@ class ExceptionExtractor(BaseRelationshipExtractor):
     ```
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the exception extractor."""
         super().__init__()
         # This extractor handles both RAISES and CATCHES
@@ -90,8 +90,8 @@ class ExceptionExtractor(BaseRelationshipExtractor):
         self.relationship_type = None
 
     def extract(
-        self, code: str, chunk_metadata: Dict[str, Any]
-    ) -> List[RelationshipEdge]:
+        self, code: str, chunk_metadata: dict[str, Any]
+    ) -> list[RelationshipEdge]:
         """
         Extract exception relationships from code.
 
@@ -147,7 +147,7 @@ class ExceptionExtractor(BaseRelationshipExtractor):
 
         return self.edges
 
-    def _extract_from_tree(self, tree, chunk_metadata: Dict[str, Any]):
+    def _extract_from_tree(self, tree, chunk_metadata: dict[str, Any]):
         """
         Extract exceptions from AST tree.
 
@@ -232,7 +232,7 @@ class ExceptionExtractor(BaseRelationshipExtractor):
             return self._get_full_attribute_name(exc_node)
         return ""
 
-    def _get_handler_exception_names(self, type_node) -> List[str]:
+    def _get_handler_exception_names(self, type_node) -> list[str]:
         """
         Get exception names from an except handler.
 

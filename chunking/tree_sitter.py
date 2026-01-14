@@ -20,7 +20,7 @@ import warnings
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Optional
 
 from tree_sitter import Language
 
@@ -42,7 +42,7 @@ from .languages import (
 logger = logging.getLogger(__name__)
 
 # Try to import language bindings
-AVAILABLE_LANGUAGES: Dict[str, Language] = {}
+AVAILABLE_LANGUAGES: dict[str, Language] = {}
 
 try:
     import tree_sitter_python as tspython
@@ -210,14 +210,14 @@ class TreeSitterChunker:
         ".tese": ("glsl", lambda lang: GLSLChunker(lang)),
     }
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the tree-sitter chunker.
 
         Attributes:
             chunkers: Dictionary mapping file suffixes to initialized LanguageChunker
                 instances. Lazily populated as files are processed.
         """
-        self.chunkers: Dict[str, LanguageChunker] = {}
+        self.chunkers: dict[str, LanguageChunker] = {}
 
     def get_chunker(self, file_path: str) -> Optional[LanguageChunker]:
         """Get the appropriate chunker for a file.
@@ -256,7 +256,7 @@ class TreeSitterChunker:
 
     def chunk_file(
         self, file_path: str, content: Optional[str] = None
-    ) -> List[TreeSitterChunk]:
+    ) -> list[TreeSitterChunk]:
         """Chunk a file into semantic units.
 
         Args:
@@ -362,7 +362,7 @@ class TreeSitterChunker:
         return language_name in AVAILABLE_LANGUAGES
 
     @classmethod
-    def get_supported_extensions(cls) -> List[str]:
+    def get_supported_extensions(cls) -> list[str]:
         """Get list of supported file extensions.
 
         Returns:
@@ -375,7 +375,7 @@ class TreeSitterChunker:
         return supported
 
     @classmethod
-    def get_available_languages(cls) -> List[str]:
+    def get_available_languages(cls) -> list[str]:
         """Get list of available languages.
 
         Returns:

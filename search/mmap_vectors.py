@@ -41,7 +41,7 @@ import logging
 import mmap
 import struct
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 import numpy as np
 
@@ -100,8 +100,8 @@ class MmapVectorStorage:
     def save(
         self,
         embeddings: np.ndarray,
-        chunk_ids: List[str],
-        indices: Optional[List[int]] = None,
+        chunk_ids: list[str],
+        indices: Optional[list[int]] = None,
     ) -> None:
         """Save embeddings in mmap-compatible binary format.
 

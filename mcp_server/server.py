@@ -15,7 +15,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import anyio
 
@@ -97,7 +97,7 @@ from mcp_server.tool_registry import build_tool_list  # noqa: E402
 
 
 @server.list_tools()
-async def handle_list_tools() -> List[Tool]:
+async def handle_list_tools() -> list[Tool]:
     """List all available tools."""
     tools = build_tool_list()
     logger.debug(f"Listing {len(tools)} tools")
@@ -105,7 +105,7 @@ async def handle_list_tools() -> List[Tool]:
 
 
 @server.call_tool()
-async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
+async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     """Dispatch tool calls to appropriate handlers."""
     logger.info(f"[TOOL_CALL] {name}")
 
@@ -173,7 +173,7 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[TextCon
 
 
 @server.list_resources()
-async def handle_list_resources() -> List[Resource]:
+async def handle_list_resources() -> list[Resource]:
     """List all available resources."""
     return [
         Resource(
@@ -209,7 +209,7 @@ async def handle_read_resource(uri: str) -> str:
 
 
 @server.list_prompts()
-async def handle_list_prompts() -> List[Prompt]:
+async def handle_list_prompts() -> list[Prompt]:
     """List all available prompts."""
     return [
         Prompt(
@@ -221,7 +221,7 @@ async def handle_list_prompts() -> List[Prompt]:
 
 
 @server.get_prompt()
-async def handle_get_prompt(name: str, arguments: Dict[str, str]) -> GetPromptResult:
+async def handle_get_prompt(name: str, arguments: dict[str, str]) -> GetPromptResult:
     """Get a prompt by name."""
     logger.info(f"[PROMPT_GET] {name}")
 

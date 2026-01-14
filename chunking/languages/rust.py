@@ -1,6 +1,6 @@
 """Rust-specific chunker using tree-sitter."""
 
-from typing import Any, Dict, Optional, Set
+from typing import Any, Optional
 
 from tree_sitter import Language
 
@@ -10,7 +10,7 @@ from .base import LanguageChunker
 class RustChunker(LanguageChunker):
     """Rust-specific chunker using tree-sitter."""
 
-    def __init__(self, language: Optional[Language] = None):
+    def __init__(self, language: Optional[Language] = None) -> None:
         super().__init__("rust", language)
 
     def _load_language(self) -> Language:
@@ -25,7 +25,7 @@ class RustChunker(LanguageChunker):
                 "Install with: pip install tree-sitter-rust"
             ) from err
 
-    def _get_splittable_node_types(self) -> Set[str]:
+    def _get_splittable_node_types(self) -> set[str]:
         """Rust-specific splittable node types."""
         return {
             "function_item",
@@ -37,7 +37,7 @@ class RustChunker(LanguageChunker):
             "macro_definition",
         }
 
-    def extract_metadata(self, node: Any, source: bytes) -> Dict[str, Any]:
+    def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:
         """Extract Rust-specific metadata."""
         metadata = {"node_type": node.type}
 

@@ -345,36 +345,35 @@ def a(): pass
 def b(): pass
 def c(): pass
 """
-        config = ChunkingConfig(enable_chunk_merging=False)
+        config = ChunkingConfig()
         chunks = chunker.chunk_code(code, config=config)
         # Should have 3 separate function chunks
         assert len(chunks) >= 3
 
     def test_merge_enabled_by_config(self, chunker):
-        """Merge is applied when enabled in config."""
-        # Three tiny functions that should merge
+        """chunk_code returns raw AST chunks without merging."""
+        # Three tiny functions - returned as separate chunks
         code = """
 def a(): pass
 def b(): pass
 def c(): pass
 """
         config = ChunkingConfig(
-            enable_chunk_merging=True,
             min_chunk_tokens=50,  # These functions are < 50 tokens
             max_merged_tokens=1000,
         )
         chunks = chunker.chunk_code(code, config=config)
-        # All 3 tiny functions should merge into 1
-        assert len(chunks) == 1
-        assert chunks[0].node_type == "merged"
+        # chunk_code returns raw AST chunks (merging happens later during indexing)
+        assert len(chunks) == 3
+        assert all(c.node_type == "function_definition" for c in chunks)
 
     def test_config_from_service_locator(self, chunker):
         """Config is fetched from ServiceLocator when not provided."""
         from mcp_server.services import ServiceLocator
 
-        # Register a config with merge disabled
+        # Register a config
         mock_config = MagicMock()
-        mock_config.chunking = ChunkingConfig(enable_chunk_merging=False)
+        mock_config.chunking = ChunkingConfig()
 
         locator = ServiceLocator.instance()
         locator.register("config", mock_config)
@@ -382,7 +381,7 @@ def c(): pass
         try:
             code = "def a(): pass\ndef b(): pass"
             chunks = chunker.chunk_code(code)  # No config passed
-            # Merge should be disabled from ServiceLocator config
+            # Should work with ServiceLocator config
             assert len(chunks) >= 2
         finally:
             ServiceLocator.reset()
@@ -394,27 +393,25 @@ class TestChunkingConfig:
     def test_default_values(self):
         """Default values are sensible."""
         config = ChunkingConfig()
-        assert (
-            config.enable_chunk_merging is False
-        )  # Opt-in behavior (changed from True)
         assert config.min_chunk_tokens == 50
         assert config.max_merged_tokens == 1000
         assert config.token_estimation == "whitespace"
         assert config.enable_large_node_splitting is False
         assert config.max_chunk_lines == 100
+        assert config.size_method == "tokens"
 
     def test_custom_values(self):
         """Custom values are respected."""
         config = ChunkingConfig(
-            enable_chunk_merging=False,
             min_chunk_tokens=100,
             max_merged_tokens=500,
             token_estimation="tiktoken",
+            size_method="characters",
         )
-        assert config.enable_chunk_merging is False
         assert config.min_chunk_tokens == 100
         assert config.max_merged_tokens == 500
         assert config.token_estimation == "tiktoken"
+        assert config.size_method == "characters"
 
 
 if __name__ == "__main__":

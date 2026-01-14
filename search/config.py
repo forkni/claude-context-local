@@ -4,7 +4,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 # Model registry with specifications
 # Multi-model pool configuration for query routing
@@ -294,7 +294,7 @@ class OutputConfig:
 
 @dataclass
 class ChunkingConfig:
-    """Chunking algorithm settings (8 fields)."""
+    """Chunking algorithm settings (12 fields)."""
 
     # Token size constraints for chunks
     min_chunk_tokens: int = 50  # Minimum tokens before considering merge
@@ -317,6 +317,13 @@ class ChunkingConfig:
 
     # Token estimation method
     token_estimation: str = "whitespace"  # "whitespace" (fast) or "tiktoken" (accurate)
+
+    # Size method for chunking (Option A: character-based vs Option B: token-based)
+    size_method: str = "tokens"  # "tokens" (default) or "characters" (cAST paper)
+
+    # Splitting-specific configs (separate from merging)
+    split_size_method: str = "characters"  # "lines" or "characters"
+    max_split_chars: int = 3000  # Character-based splitting (benchmark winner)
 
 
 @dataclass
@@ -404,7 +411,7 @@ class SearchConfig:
             else ParentRetrievalConfig()
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to nested dictionary for JSON serialization.
 
         Returns nested structure matching the config class hierarchy.
@@ -490,6 +497,9 @@ class SearchConfig:
                 "enable_large_node_splitting": self.chunking.enable_large_node_splitting,
                 "max_chunk_lines": self.chunking.max_chunk_lines,
                 "token_estimation": self.chunking.token_estimation,
+                "size_method": self.chunking.size_method,
+                "split_size_method": self.chunking.split_size_method,
+                "max_split_chars": self.chunking.max_split_chars,
             },
             "ego_graph": {
                 "enabled": self.ego_graph.enabled,
@@ -502,7 +512,7 @@ class SearchConfig:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SearchConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "SearchConfig":
         """Create from dictionary (supports both flat and nested formats).
 
         Detects format automatically:
@@ -657,6 +667,9 @@ class SearchConfig:
                     "enable_community_merge", True
                 ),
                 community_resolution=chunking_data.get("community_resolution", 1.0),
+                size_method=chunking_data.get("size_method", "tokens"),
+                split_size_method=chunking_data.get("split_size_method", "characters"),
+                max_split_chars=chunking_data.get("max_split_chars", 3000),
             )
 
             ego_graph = EgoGraphConfig(
@@ -771,6 +784,11 @@ class SearchConfig:
                 max_chunk_lines=data.get("max_chunk_lines", 100),
                 token_estimation=data.get("token_estimation", "whitespace"),
                 community_resolution=data.get("community_resolution", 1.0),
+                size_method=data.get("size_method", "tokens"),
+                enable_community_detection=data.get("enable_community_detection", True),
+                enable_community_merge=data.get("enable_community_merge", True),
+                split_size_method=data.get("split_size_method", "characters"),
+                max_split_chars=data.get("max_split_chars", 3000),
             )
 
             ego_graph = EgoGraphConfig(
@@ -863,7 +881,7 @@ class SearchConfigManager:
 
         return self._config
 
-    def _load_from_environment(self) -> Dict[str, Any]:
+    def _load_from_environment(self) -> dict[str, Any]:
         """Load configuration from environment variables."""
         env_mapping = {
             "CLAUDE_EMBEDDING_MODEL": ("embedding_model_name", str),
@@ -1043,12 +1061,12 @@ def get_default_search_mode() -> str:
     return config.search_mode.default_mode
 
 
-def get_model_registry() -> Dict[str, Dict[str, Any]]:
+def get_model_registry() -> dict[str, dict[str, Any]]:
     """Get the model registry with all supported models."""
     return MODEL_REGISTRY
 
 
-def get_model_config(model_name: str) -> Optional[Dict[str, Any]]:
+def get_model_config(model_name: str) -> Optional[dict[str, Any]]:
     """Get configuration for a specific model."""
     return MODEL_REGISTRY.get(model_name)
 

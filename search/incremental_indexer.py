@@ -6,7 +6,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from chunking.python_ast_chunker import CodeChunk
@@ -39,7 +39,7 @@ class IncrementalIndexResult:
     bm25_resynced: bool = False
     bm25_resync_count: int = 0
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         """Convert to dictionary."""
         return {
             "files_added": self.files_added,
@@ -118,8 +118,8 @@ class IncrementalIndexer:
         self._bm25_sync = BM25SyncManager(indexer=self.indexer)
 
     def _chunk_files_parallel(
-        self, project_path: str, file_paths: List[str]
-    ) -> List[CodeChunk]:
+        self, project_path: str, file_paths: list[str]
+    ) -> list[CodeChunk]:
         """Chunk files in parallel or sequentially based on configuration.
 
         Args:
@@ -131,7 +131,7 @@ class IncrementalIndexer:
         """
         return self._parallel_chunker.chunk_files(project_path, file_paths)
 
-    def detect_changes(self, project_path: str) -> Tuple[FileChanges, MerkleDAG]:
+    def detect_changes(self, project_path: str) -> tuple[FileChanges, MerkleDAG]:
         """Detect changes in project since last snapshot.
 
         Args:
@@ -501,6 +501,7 @@ class IncrementalIndexer:
                         min_tokens=config.chunking.min_chunk_tokens,
                         max_merged_tokens=config.chunking.max_merged_tokens,
                         token_method=config.chunking.token_estimation,
+                        size_method=config.chunking.size_method,
                     )
                     logger.info(
                         f"[COMMUNITY_MERGE] Community remerge complete: {len(all_chunks)} chunks"
@@ -616,8 +617,8 @@ class IncrementalIndexer:
         return 0
 
     def _get_supported_files(
-        self, project_path: str, all_files: List[str]
-    ) -> List[str]:
+        self, project_path: str, all_files: list[str]
+    ) -> list[str]:
         """Filter files to only those supported for indexing.
 
         Args:
@@ -629,7 +630,7 @@ class IncrementalIndexer:
         """
         return [f for f in all_files if self._is_supported_file(project_path, f)]
 
-    def _build_temp_graph(self, chunks: List[CodeChunk]) -> GraphIntegration:
+    def _build_temp_graph(self, chunks: list[CodeChunk]) -> GraphIntegration:
         """Build temporary graph from chunks for community detection.
 
         Creates a GraphIntegration instance and builds the NetworkX graph
@@ -672,8 +673,8 @@ class IncrementalIndexer:
         return graph_integration
 
     def _regenerate_chunk_ids(
-        self, chunks: List[CodeChunk], project_path: str
-    ) -> List[CodeChunk]:
+        self, chunks: list[CodeChunk], project_path: str
+    ) -> list[CodeChunk]:
         """Regenerate proper chunk_ids after community-based remerge.
 
         After remerging chunks with community boundaries, line numbers change
@@ -733,12 +734,12 @@ class IncrementalIndexer:
     def _build_snapshot_metadata(
         self,
         project_name: str,
-        all_files: List,
-        supported_files: List,
+        all_files: list,
+        supported_files: list,
         total_chunks: int,
         is_full: bool = False,
         **changes,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Build metadata dictionary for snapshot storage.
 
         Args:
@@ -873,7 +874,7 @@ class IncrementalIndexer:
 
         return len(all_embedding_results)
 
-    def _sync_bm25_if_needed(self, log_prefix: str = "INCREMENTAL") -> Tuple[bool, int]:
+    def _sync_bm25_if_needed(self, log_prefix: str = "INCREMENTAL") -> tuple[bool, int]:
         """Auto-sync BM25 if significant desync detected (>10% difference).
 
         Args:
@@ -902,7 +903,7 @@ class IncrementalIndexer:
         except ImportError:
             pass
 
-    def get_indexing_stats(self, project_path: str) -> Optional[Dict]:
+    def get_indexing_stats(self, project_path: str) -> Optional[dict]:
         """Get indexing statistics for a project.
 
         Args:

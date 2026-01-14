@@ -28,8 +28,12 @@ logger = logging.getLogger(__name__)
 class StorageManager:
     """Manages storage paths and project directories."""
 
-    def __init__(self):
-        """Initialize StorageManager."""
+    def __init__(self) -> None:
+        """Initialize StorageManager.
+
+        The manager operates on global state via ServiceLocator pattern,
+        providing centralized storage path management for project directories.
+        """
         pass
 
     def get_storage_dir(self) -> Path:

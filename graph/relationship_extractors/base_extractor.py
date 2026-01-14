@@ -16,7 +16,7 @@ Example:
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List
+from typing import Any
 
 from graph.relationship_types import RelationshipEdge, RelationshipType
 from search.filters import normalize_path
@@ -35,16 +35,16 @@ class BaseRelationshipExtractor(ABC):
         edges: Accumulated edges during extraction (reset for each extract() call)
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the base extractor."""
         self.logger = logging.getLogger(self.__class__.__name__)
         self.relationship_type: RelationshipType = None  # Set by subclass
-        self.edges: List[RelationshipEdge] = []
+        self.edges: list[RelationshipEdge] = []
 
     @abstractmethod
     def extract(
-        self, code: str, chunk_metadata: Dict[str, Any]
-    ) -> List[RelationshipEdge]:
+        self, code: str, chunk_metadata: dict[str, Any]
+    ) -> list[RelationshipEdge]:
         """
         Extract relationships from code.
 
@@ -86,7 +86,7 @@ class BaseRelationshipExtractor(ABC):
         """
         self.edges = []
 
-    def _log_extraction_result(self, chunk_metadata: Dict[str, Any]):
+    def _log_extraction_result(self, chunk_metadata: dict[str, Any]):
         """
         Log extraction results for debugging.
 
@@ -337,17 +337,17 @@ class MultiPassExtractor(BaseRelationshipExtractor):
                 return self.edges
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize multi-pass extractor."""
         super().__init__()
-        self.context: Dict[str, Any] = {}  # Context built in first pass
+        self.context: dict[str, Any] = {}  # Context built in first pass
 
     def _reset_state(self):
         """Reset state including context."""
         super()._reset_state()
         self.context = {}
 
-    def _extract_pass_1(self, tree, chunk_metadata: Dict[str, Any]):
+    def _extract_pass_1(self, tree, chunk_metadata: dict[str, Any]):
         """
         First pass: Build context.
 
@@ -359,7 +359,7 @@ class MultiPassExtractor(BaseRelationshipExtractor):
         """
         pass
 
-    def _extract_pass_2(self, tree, chunk_metadata: Dict[str, Any]):
+    def _extract_pass_2(self, tree, chunk_metadata: dict[str, Any]):
         """
         Second pass: Extract relationships using context.
 

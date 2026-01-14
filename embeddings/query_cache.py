@@ -6,7 +6,7 @@ improving performance for repeated queries.
 
 import hashlib
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import numpy as np
 
@@ -30,14 +30,14 @@ class QueryEmbeddingCache:
         >>> print(stats["hit_rate"])
     """
 
-    def __init__(self, max_size: int = 128):
+    def __init__(self, max_size: int = 128) -> None:
         """Initialize the query embedding cache.
 
         Args:
             max_size: Maximum number of entries to cache. Defaults to 128.
         """
         self._max_size = max_size
-        self._cache: Dict[str, np.ndarray] = {}
+        self._cache: dict[str, np.ndarray] = {}
         self._cache_order: list = []  # Track insertion order for LRU
         self._hits = 0
         self._misses = 0
@@ -134,7 +134,7 @@ class QueryEmbeddingCache:
         self._cache[cache_key] = embedding.copy()
         self._cache_order.append(cache_key)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get cache hit/miss statistics.
 
         Returns:

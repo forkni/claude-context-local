@@ -6,7 +6,7 @@ for search result quality improvement.
 
 import logging
 import time
-from typing import List, Optional
+from typing import Optional
 
 import numpy as np
 
@@ -21,9 +21,8 @@ from .neural_reranker import NeuralReranker
 class RerankingEngine:
     """Coordinates embedding-based and neural reranking for search results."""
 
-    def __init__(self, embedder, metadata_store):
-        """
-        Initialize the reranking engine.
+    def __init__(self, embedder, metadata_store) -> None:
+        """Initialize the reranking engine.
 
         Args:
             embedder: CodeEmbedder instance for query embeddings
@@ -89,11 +88,11 @@ class RerankingEngine:
     def rerank_by_query(
         self,
         query: str,
-        results: List,
+        results: list,
         k: int,
         search_mode: str = "hybrid",
         query_embedding: Optional[np.ndarray] = None,
-    ) -> List:
+    ) -> list:
         """
         Re-rank results by computing fresh relevance scores against the original query.
 
@@ -194,10 +193,10 @@ class RerankingEngine:
     def apply_neural_reranking(
         self,
         query_or_content: str,
-        results: List,
+        results: list,
         k: int,
         context: str = "search",
-    ) -> List:
+    ) -> list:
         """
         Apply neural reranking with automatic lifecycle management.
 

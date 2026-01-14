@@ -7,7 +7,7 @@ Provides NetworkX-based storage for code call graphs with JSON persistence.
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Optional
 
 from search.filters import normalize_path
 
@@ -32,7 +32,7 @@ class CodeGraphStorage:
         - Persistence: JSON via nx.node_link_data/graph
     """
 
-    def __init__(self, project_id: str, storage_dir: Optional[Path] = None):
+    def __init__(self, project_id: str, storage_dir: Optional[Path] = None) -> None:
         """
         Initialize graph storage.
 
@@ -196,7 +196,7 @@ class CodeGraphStorage:
             **edge.metadata,  # Include all additional metadata
         )
 
-    def get_callers(self, chunk_id: str) -> List[str]:
+    def get_callers(self, chunk_id: str) -> list[str]:
         """
         Get all functions that call this function.
 
@@ -229,7 +229,7 @@ class CodeGraphStorage:
         )
         return predecessors
 
-    def get_callees(self, chunk_id: str) -> List[str]:
+    def get_callees(self, chunk_id: str) -> list[str]:
         """
         Get all functions called by this function.
 
@@ -252,10 +252,10 @@ class CodeGraphStorage:
     def get_neighbors(
         self,
         chunk_id: str,
-        relation_types: Optional[List[str]] = None,
+        relation_types: Optional[list[str]] = None,
         max_depth: int = 1,
-        exclude_import_categories: Optional[List[str]] = None,
-    ) -> Set[str]:
+        exclude_import_categories: Optional[list[str]] = None,
+    ) -> set[str]:
         """
         Get all related chunks within max_depth hops.
 
@@ -323,7 +323,7 @@ class CodeGraphStorage:
         return neighbors
 
     def _should_exclude_edge(
-        self, source_id: str, target_id: str, exclude_categories: List[str]
+        self, source_id: str, target_id: str, exclude_categories: list[str]
     ) -> bool:
         """
         Check if edge should be excluded based on import category.
@@ -361,7 +361,7 @@ class CodeGraphStorage:
 
         return False
 
-    def get_node_data(self, chunk_id: str) -> Optional[Dict[str, Any]]:
+    def get_node_data(self, chunk_id: str) -> Optional[dict[str, Any]]:
         """
         Get node metadata.
 
@@ -380,7 +380,7 @@ class CodeGraphStorage:
 
         return dict(self.graph.nodes[normalized_chunk_id])
 
-    def get_edge_data(self, caller_id: str, callee_id: str) -> Optional[Dict[str, Any]]:
+    def get_edge_data(self, caller_id: str, callee_id: str) -> Optional[dict[str, Any]]:
         """
         Get edge metadata with validation and normalization.
 
@@ -509,7 +509,7 @@ class CodeGraphStorage:
         self.graph.clear()
         self.logger.info("Cleared call graph")
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """
         Get graph statistics.
 
@@ -532,7 +532,7 @@ class CodeGraphStorage:
         """Check if chunk_id is in graph."""
         return chunk_id in self.graph
 
-    def store_community_map(self, community_map: Dict[str, int]) -> None:
+    def store_community_map(self, community_map: dict[str, int]) -> None:
         """Persist community assignments to JSON file.
 
         Args:
@@ -545,7 +545,7 @@ class CodeGraphStorage:
             f"Stored {len(community_map)} community assignments to {community_path}"
         )
 
-    def load_community_map(self) -> Optional[Dict[str, int]]:
+    def load_community_map(self) -> Optional[dict[str, int]]:
         """Load stored community assignments.
 
         Returns:

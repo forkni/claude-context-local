@@ -6,7 +6,6 @@ optimal batch sizes and checking GPU availability.
 """
 
 import logging
-from typing import Dict
 
 try:
     import torch
@@ -17,10 +16,11 @@ except ImportError:
 class GPUMemoryMonitor:
     """Monitor GPU memory usage for optimal batch sizing."""
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialize GPU monitor."""
         self._logger = logging.getLogger(__name__)
 
-    def get_available_memory(self) -> Dict[str, int]:
+    def get_available_memory(self) -> dict[str, int]:
         """Get available memory in bytes."""
         memory_info = {"gpu_available": 0, "gpu_total": 0, "gpu_utilization": 0.0}
 

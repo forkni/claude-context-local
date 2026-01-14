@@ -8,7 +8,7 @@ Note: Qwen3 adaptively selects Qwen3-4B (12GB+ GPUs) or Qwen3-0.6B (8GB GPUs).
 
 import logging
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ class RoutingDecision:
     model_key: str
     confidence: float
     reason: str
-    scores: Dict[str, float]
+    scores: dict[str, float]
 
 
 class QueryRouter:
@@ -437,7 +437,7 @@ class QueryRouter:
     # Default for lightweight pools
     DEFAULT_MODEL_LIGHTWEIGHT = "bge_m3"
 
-    def __init__(self, enable_logging: bool = True):
+    def __init__(self, enable_logging: bool = True) -> None:
         """Initialize query router.
 
         Args:
@@ -568,7 +568,7 @@ class QueryRouter:
 
         return decision
 
-    def _calculate_scores(self, query: str) -> Dict[str, float]:
+    def _calculate_scores(self, query: str) -> dict[str, float]:
         """Calculate routing scores for each model based on keyword matching.
 
         Args:
@@ -607,7 +607,7 @@ class QueryRouter:
 
         return scores
 
-    def _resolve_tie(self, scores: Dict[str, float], precedence: list = None) -> str:
+    def _resolve_tie(self, scores: dict[str, float], precedence: list = None) -> str:
         """Resolve ties using explicit precedence order.
 
         When multiple models have scores within 0.01 margin, select based on
@@ -642,7 +642,7 @@ class QueryRouter:
         # Fallback (should not reach here)
         return default_model
 
-    def get_model_strengths(self, model_key: str) -> Optional[Dict]:
+    def get_model_strengths(self, model_key: str) -> Optional[dict]:
         """Get routing rule details for a specific model.
 
         Args:

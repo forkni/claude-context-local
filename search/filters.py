@@ -12,7 +12,7 @@ import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Optional
 
 
 def normalize_path(path: str) -> str:
@@ -171,8 +171,8 @@ def unescape_mcp_path(path: str) -> str:
 
 def matches_directory_filter(
     relative_path: str,
-    include_dirs: Optional[List[str]] = None,
-    exclude_dirs: Optional[List[str]] = None,
+    include_dirs: Optional[list[str]] = None,
+    exclude_dirs: Optional[list[str]] = None,
 ) -> bool:
     """Check if a file path matches directory filters.
 
@@ -239,8 +239,8 @@ class DirectoryFilter:
 
     def __init__(
         self,
-        include_dirs: Optional[List[str]] = None,
-        exclude_dirs: Optional[List[str]] = None,
+        include_dirs: Optional[list[str]] = None,
+        exclude_dirs: Optional[list[str]] = None,
     ):
         """Initialize the directory filter.
 
@@ -262,7 +262,7 @@ class DirectoryFilter:
         """
         return matches_directory_filter(file_path, self.include_dirs, self.exclude_dirs)
 
-    def filter_paths(self, paths: List[str]) -> List[str]:
+    def filter_paths(self, paths: list[str]) -> list[str]:
         """Filter a list of paths, returning only those that match.
 
         Args:
@@ -305,16 +305,16 @@ class FilterCriteria:
         extra_filters: Generic key-value filters for metadata comparison
     """
 
-    include_dirs: Optional[List[str]] = None
-    exclude_dirs: Optional[List[str]] = None
-    file_pattern: Optional[List[str]] = None  # Normalized to list
+    include_dirs: Optional[list[str]] = None
+    exclude_dirs: Optional[list[str]] = None
+    file_pattern: Optional[list[str]] = None  # Normalized to list
     chunk_type: Optional[str] = None
-    tags: Optional[Set[str]] = None
-    folder_structure: Optional[Set[str]] = None
-    extra_filters: Optional[Dict[str, Any]] = None
+    tags: Optional[set[str]] = None
+    folder_structure: Optional[set[str]] = None
+    extra_filters: Optional[dict[str, Any]] = None
 
     @classmethod
-    def from_dict(cls, filters: Dict[str, Any]) -> "FilterCriteria":
+    def from_dict(cls, filters: dict[str, Any]) -> "FilterCriteria":
         """Create FilterCriteria from a filter dictionary.
 
         Args:
@@ -394,7 +394,7 @@ class FilterEngine:
         self.criteria = criteria
 
     @classmethod
-    def from_dict(cls, filters: Dict[str, Any]) -> "FilterEngine":
+    def from_dict(cls, filters: dict[str, Any]) -> "FilterEngine":
         """Factory method to create FilterEngine from a filter dictionary.
 
         Args:
@@ -405,7 +405,7 @@ class FilterEngine:
         """
         return cls(FilterCriteria.from_dict(filters))
 
-    def matches(self, metadata: Dict[str, Any]) -> bool:
+    def matches(self, metadata: dict[str, Any]) -> bool:
         """Check if metadata matches all filter criteria.
 
         Applies filters in order of computational cost (fast reject first):
@@ -465,8 +465,8 @@ class FilterEngine:
         return True
 
     def filter_results(
-        self, results: List[Dict], metadata_key: str = "metadata"
-    ) -> List[Dict]:
+        self, results: list[dict], metadata_key: str = "metadata"
+    ) -> list[dict]:
         """Filter a list of search results.
 
         Args:
