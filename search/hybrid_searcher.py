@@ -288,7 +288,9 @@ class HybridSearcher:
 
     def close_metadata_connections(self) -> None:
         """Close all metadata store connections to release file locks."""
-        if self.dense_index is not None and hasattr(self.dense_index, "_metadata_store"):
+        if self.dense_index is not None and hasattr(
+            self.dense_index, "_metadata_store"
+        ):
             if self.dense_index._metadata_store is not None:
                 self.dense_index._metadata_store.close()
                 self._logger.debug("Closed dense_index metadata store")
@@ -1065,11 +1067,25 @@ class HybridSearcher:
 
     def clear_index(self) -> None:
         """Clear both BM25 and dense indices. Delegates to IndexSynchronizer."""
+        # CRITICAL: Close all metadata references BEFORE clearing to prevent reopening
+        # The reranking_engine holds a reference to the same MetadataStore object.
+        # If we don't close it, any access to reranking_engine.metadata_store.get()
+        # will trigger _ensure_open() and REOPEN the database, preventing file deletion.
+        if hasattr(self, "reranking_engine") and self.reranking_engine is not None:
+            if (
+                hasattr(self.reranking_engine, "metadata_store")
+                and self.reranking_engine.metadata_store is not None
+            ):
+                self.reranking_engine.metadata_store.close()
+                self._logger.debug("Closed reranking_engine metadata store before clear")
+
+        # Now safe to clear
         self.index_sync.clear_index()
+
         # Sync modified index references back
         self.bm25_index = self.index_sync.bm25_index
         self.dense_index = self.index_sync.dense_index
-        # Update reranking_engine's metadata_store reference
+        # Update reranking_engine's metadata_store reference to NEW store
         self.reranking_engine.metadata_store = self.dense_index.metadata_store
 
         # Update SearchExecutor references to new indices

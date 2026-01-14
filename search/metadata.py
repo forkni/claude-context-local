@@ -268,6 +268,12 @@ class MetadataStore:
         Should be called when done with the store to release resources.
         """
         if self._db is not None:
+            try:
+                # Ensure WAL is checkpointed before close (prevents file handle leaks on Windows)
+                self._db.commit()
+            except Exception:
+                # Ignore errors during commit (db might already be closed or corrupted)
+                pass
             self._db.close()
             self._db = None
 
