@@ -260,11 +260,31 @@ class IndexSynchronizer:
                 use_stemming=self.bm25_use_stemming,
             )
 
-            # Clear dense index - MUST delete files before recreating
+            # Clear dense index - MUST close metadata before recreating
             if self.dense_index is not None:
                 self.dense_index.clear_index()
 
+                # CRITICAL: Close metadata store AGAIN (clear_index reopens it at the end)
+                # This prevents file lock [WinError 32] on Windows when creating new CodeIndexManager
+                if (
+                    hasattr(self.dense_index, "_metadata_store")
+                    and self.dense_index._metadata_store is not None
+                ):
+                    self.dense_index._metadata_store.close()
+                    self._logger.debug(
+                        "Closed old dense_index metadata store before recreation"
+                    )
+
+                # Release reference to allow garbage collection
+                self.dense_index = None
+
+            # Force garbage collection to release file handles (Windows)
+            import gc
+
+            gc.collect()
+
             # Recreate with clean state (preserve project_id, config, and embedder for dimension validation)
+            # NOW safe - old metadata store is closed and garbage collected
             self.dense_index = CodeIndexManager(
                 str(self.storage_dir),
                 embedder=self.embedder,

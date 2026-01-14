@@ -55,6 +55,25 @@ def estimate_tokens(content: str, method: str = "whitespace") -> int:
     return token_count
 
 
+def estimate_characters(content: str, count_whitespace: bool = False) -> int:
+    """Count characters in content (cAST paper approach).
+
+    Args:
+        content: Text content to measure
+        count_whitespace: If False, count non-whitespace only (cAST default)
+
+    Returns:
+        Character count
+
+    Reference:
+        cAST (EMNLP 2025): Uses non-whitespace characters for language-agnostic sizing
+    """
+    if count_whitespace:
+        return len(content)
+    # Remove all whitespace characters for non-whitespace count
+    return sum(1 for c in content if not c.isspace())
+
+
 @dataclass
 class TreeSitterChunk:
     """Represents a code chunk extracted using tree-sitter."""
@@ -227,6 +246,7 @@ class LanguageChunker(ABC):
         max_merged_tokens: int = 1000,
         token_method: str = "whitespace",
         use_community_boundary: bool = False,
+        size_method: str = "tokens",
     ) -> Tuple[List[TreeSitterChunk], int, int]:
         """Merge adjacent small chunks using cAST greedy algorithm.
 
@@ -242,6 +262,7 @@ class LanguageChunker(ABC):
             max_merged_tokens: Maximum tokens for merged chunk (default: 1000)
             token_method: Token estimation method ("whitespace" or "tiktoken")
             use_community_boundary: Use community_id instead of parent_class (default: False)
+            size_method: Size calculation method - "tokens" (default) or "characters" (cAST paper)
 
         Returns:
             Tuple of (merged_chunks, original_count, merged_count):
@@ -259,20 +280,42 @@ class LanguageChunker(ABC):
         if not chunks or len(chunks) == 1:
             return chunks, len(chunks), len(chunks)
 
+        # Define size calculation based on method
+        if size_method == "characters":
+            # cAST paper: ~4 chars per token ratio
+            min_size = min_tokens * 4  # 50 tokens ≈ 200 chars
+            max_size = max_merged_tokens * 4  # 1000 tokens ≈ 4000 chars
+            logger.info(
+                f"[SIZE_METHOD] Using character-based sizing: min={min_size} chars, max={max_size} chars"
+            )
+
+            def get_size(content: str) -> int:
+                return estimate_characters(content, count_whitespace=False)
+
+        else:
+            min_size = min_tokens
+            max_size = max_merged_tokens
+            logger.info(
+                f"[SIZE_METHOD] Using token-based sizing: min={min_size} tokens, max={max_size} tokens"
+            )
+
+            def get_size(content: str) -> int:
+                return estimate_tokens(content, token_method)
+
         result: List[TreeSitterChunk] = []
         current_group: List[TreeSitterChunk] = []
-        current_tokens: int = 0
+        current_size: int = 0
         current_parent: Optional[str] = None
         current_community: Optional[int] = None  # Track community ID for Phase 1
-        total_tokens_estimated: int = 0  # Track for summary logging
+        total_size_estimated: int = 0  # Track for summary logging
 
         current_file: Optional[str] = (
             None  # Track file path to prevent cross-file merging
         )
 
         for chunk in chunks:
-            chunk_tokens = estimate_tokens(chunk.content, token_method)
-            total_tokens_estimated += chunk_tokens
+            chunk_size = get_size(chunk.content)
+            total_size_estimated += chunk_size
             chunk_parent = chunk.parent_class
             chunk_community = chunk.community_id
             chunk_file = chunk.metadata.get("file_path")  # Get file path from metadata
@@ -291,15 +334,15 @@ class LanguageChunker(ABC):
                 # Original: Use parent_class as merge boundary
                 start_new_group = True
             # Case 2: Adding this chunk would exceed max size
-            elif current_group and current_tokens + chunk_tokens > max_merged_tokens:
+            elif current_group and current_size + chunk_size > max_size:
                 start_new_group = True
             # Case 3: Current chunk is large enough on its own
-            elif chunk_tokens >= min_tokens:
+            elif chunk_size >= min_size:
                 # Flush current group first
                 if current_group:
                     result.append(self._create_merged_chunk(current_group))
                     current_group = []
-                    current_tokens = 0
+                    current_size = 0
                 # Add large chunk directly
                 result.append(chunk)
                 current_parent = None
@@ -310,11 +353,11 @@ class LanguageChunker(ABC):
                 if current_group:
                     result.append(self._create_merged_chunk(current_group))
                 current_group = []
-                current_tokens = 0
+                current_size = 0
 
             # Add chunk to current group
             current_group.append(chunk)
-            current_tokens += chunk_tokens
+            current_size += chunk_size
             current_parent = chunk_parent
             current_community = chunk_community  # Track for Phase 1
             current_file = chunk_file  # Track file path
@@ -325,9 +368,10 @@ class LanguageChunker(ABC):
 
         # Log at DEBUG level (per-file details suppressed during progress bar)
         # Summary will be aggregated and logged by parallel_chunker
+        size_unit = "chars" if size_method == "characters" else "tokens"
         logger.debug(
             f"Greedy merge: {len(chunks)} → {len(result)} chunks, "
-            f"{total_tokens_estimated} tokens ({token_method})"
+            f"{total_size_estimated} {size_unit} ({size_method})"
         )
 
         return result, len(chunks), len(result)
@@ -339,6 +383,7 @@ class LanguageChunker(ABC):
         min_tokens: int = 50,
         max_merged_tokens: int = 1000,
         token_method: str = "whitespace",
+        size_method: str = "tokens",
     ) -> List["CodeChunk"]:
         """Re-merge chunks using community boundaries (Community-based remerging).
 
@@ -356,6 +401,7 @@ class LanguageChunker(ABC):
             min_tokens: Minimum tokens before considering merge (default: 50)
             max_merged_tokens: Maximum tokens for merged chunk (default: 1000)
             token_method: Token estimation method ("whitespace" or "tiktoken")
+            size_method: Size calculation method - "tokens" (default) or "characters" (cAST paper)
 
         Returns:
             List of CodeChunk re-merged with community boundaries
@@ -420,6 +466,7 @@ class LanguageChunker(ABC):
             max_merged_tokens=max_merged_tokens,
             token_method=token_method,
             use_community_boundary=True,  # KEY: Use community boundaries!
+            size_method=size_method,  # Pass size method
         )
 
         logger.info(
@@ -599,21 +646,30 @@ class LanguageChunker(ABC):
         node: Any,
         source_bytes: bytes,
         parent_info: Optional[Dict[str, Any]],
-        max_lines: int,
+        max_lines: int = 100,
+        split_size_method: str = "lines",
+        max_tokens: int = 500,
+        max_chars: int = 4000,
+        token_method: str = "whitespace",
     ) -> List[TreeSitterChunk]:
-        """Split a large function node at logical AST boundaries.
+        """Split a large function node at logical AST boundaries with size-based accumulation.
 
         Algorithm:
         1. Extract function signature for context prefix
         2. Find the function body block
-        3. Iterate body children, accumulating until split boundary reached
-        4. Create chunks with signature prefix + accumulated statements
+        3. Accumulate nodes until size threshold reached
+        4. Then split at nearest AST boundary
+        5. Create chunks with signature prefix + accumulated statements
 
         Args:
-            node: Tree-sitter node exceeding max_lines
+            node: Tree-sitter node exceeding size threshold
             source_bytes: Source code bytes
             parent_info: Parent class information for methods
-            max_lines: Maximum lines threshold from config
+            max_lines: Maximum lines before split (for "lines" method)
+            split_size_method: "lines", "tokens", or "characters"
+            max_tokens: Maximum tokens before split (for "tokens" method)
+            max_chars: Maximum characters before split (for "characters" method)
+            token_method: Token estimation method ("whitespace" or "tiktoken")
 
         Returns:
             List of TreeSitterChunk objects with split content,
@@ -634,16 +690,30 @@ class LanguageChunker(ABC):
         chunks = []
         current_nodes = []
 
-        for child in body_node.children:
-            # Check if this is a split boundary and we have accumulated content
-            if child.type in split_types and current_nodes:
-                # Create chunk from accumulated nodes
-                chunk = self._create_split_chunk(
-                    signature, current_nodes, source_bytes, node, parent_info
-                )
-                chunks.append(chunk)
-                current_nodes = []
+        # Determine threshold based on method
+        threshold = self._get_split_threshold(
+            split_size_method, max_lines, max_tokens, max_chars
+        )
 
+        for child in body_node.children:
+            # Check if adding this child would exceed threshold at a split boundary
+            if current_nodes and child.type in split_types:
+                # Calculate size with current child added
+                test_nodes = current_nodes + [child]
+                test_size = self._calculate_accumulated_size(
+                    test_nodes, source_bytes, split_size_method, token_method
+                )
+
+                # If threshold exceeded, split BEFORE adding current child
+                if test_size >= threshold:
+                    chunk = self._create_split_chunk(
+                        signature, current_nodes, source_bytes, node, parent_info
+                    )
+                    chunks.append(chunk)
+                    current_nodes = [child]  # Start new chunk with current child
+                    continue
+
+            # Normal accumulation
             current_nodes.append(child)
 
         # Flush remaining nodes
@@ -655,6 +725,66 @@ class LanguageChunker(ABC):
 
         # Only split if actually multiple chunks
         return chunks if len(chunks) > 1 else []
+
+    def _get_split_threshold(
+        self,
+        method: str,
+        max_lines: int,
+        max_tokens: int,
+        max_chars: int,
+    ) -> int:
+        """Determine the size threshold based on the split method.
+
+        Args:
+            method: Split size method ("lines", "tokens", or "characters")
+            max_lines: Maximum lines threshold
+            max_tokens: Maximum tokens threshold
+            max_chars: Maximum characters threshold
+
+        Returns:
+            The threshold value for the specified method
+        """
+        if method == "lines":
+            return max_lines
+        elif method == "tokens":
+            return max_tokens
+        elif method == "characters":
+            return max_chars
+        return max_lines  # default fallback
+
+    def _calculate_accumulated_size(
+        self,
+        nodes: List[Any],
+        source_bytes: bytes,
+        method: str,
+        token_method: str,
+    ) -> int:
+        """Calculate the accumulated size of a list of AST nodes.
+
+        Args:
+            nodes: List of tree-sitter nodes
+            source_bytes: Source code bytes
+            method: Size calculation method ("lines", "tokens", or "characters")
+            token_method: Token estimation method ("whitespace" or "tiktoken")
+
+        Returns:
+            The calculated size according to the specified method
+        """
+        if not nodes:
+            return 0
+
+        # Get text span from first to last node
+        start = nodes[0].start_byte
+        end = nodes[-1].end_byte
+        text = source_bytes[start:end].decode("utf-8", errors="ignore")
+
+        if method == "lines":
+            return text.count("\n") + 1
+        elif method == "tokens":
+            return estimate_tokens(text, method=token_method)
+        elif method == "characters":
+            return estimate_characters(text)
+        return text.count("\n") + 1  # default fallback
 
     def chunk_code(
         self,
@@ -693,7 +823,14 @@ class LanguageChunker(ABC):
                     and node.type in ("function_definition", "decorated_definition")
                 ):
                     split_chunks = self._split_large_node(
-                        node, source_bytes, parent_info, config.max_chunk_lines
+                        node,
+                        source_bytes,
+                        parent_info,
+                        max_lines=config.max_chunk_lines,
+                        split_size_method=config.split_size_method,
+                        max_tokens=config.max_split_tokens,
+                        max_chars=config.max_split_chars,
+                        token_method=config.token_estimation,
                     )
                     if split_chunks:
                         chunks.extend(split_chunks)
