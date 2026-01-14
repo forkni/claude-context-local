@@ -286,10 +286,19 @@ class HybridSearcher:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.shutdown()
 
+    def close_metadata_connections(self) -> None:
+        """Close all metadata store connections to release file locks."""
+        if self.dense_index is not None and hasattr(self.dense_index, "_metadata_store"):
+            if self.dense_index._metadata_store is not None:
+                self.dense_index._metadata_store.close()
+                self._logger.debug("Closed dense_index metadata store")
+
     def shutdown(self):
         """Shutdown the thread pool and cleanup resources."""
         with self._shutdown_lock:
             if not self._is_shutdown:
+                # Close metadata connections first to release file locks
+                self.close_metadata_connections()
                 # Delegate thread pool shutdown to SearchExecutor
                 self.search_executor.shutdown()
                 # Cleanup reranking engine (which handles neural reranker cleanup)

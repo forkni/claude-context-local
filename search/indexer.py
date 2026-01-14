@@ -728,22 +728,28 @@ class CodeIndexManager:
 
     def clear_index(self) -> None:
         """Clear the entire index and metadata."""
-        # Close metadata store
+        # Close metadata store - do NOT reopen yet
         if self._metadata_store is not None:
             self._metadata_store.close()
-            # Reinitialize metadata store for future operations
-            self._metadata_store = MetadataStore(self.metadata_path)
+            self._metadata_store = None
 
         # Clear FAISS index (includes GPU cleanup if needed)
         self._faiss_index.clear()
 
-        # Remove additional files
+        # Force garbage collection to release file handles (Windows)
+        import gc
+        gc.collect()
+
+        # Remove additional files - NOW safe because store is closed
         for file_path in [self.metadata_path, self.stats_path]:
             if file_path.exists():
                 file_path.unlink()
 
         # Clear call graph via integration layer
         self._graph.clear()
+
+        # Reinitialize metadata store AFTER deletion
+        self._metadata_store = MetadataStore(self.metadata_path)
 
         self._logger.info("Index cleared")
 
