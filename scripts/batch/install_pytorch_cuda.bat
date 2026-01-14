@@ -93,7 +93,7 @@ echo   - MCP server operational with semantic search
 echo =================================================
 echo Next Steps:
 echo   1. Test semantic search: start_mcp_server.bat
-echo   2. Index a project: tools/index_project.py
+echo   2. Index a project: tools/batch_index.py
 echo   3. Enjoy 40-45%% token reduction with semantic search!
 echo =================================================
 pause

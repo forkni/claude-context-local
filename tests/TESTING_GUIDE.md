@@ -1224,6 +1224,99 @@ tests\regression\test_mcp_configuration.ps1 -ConfigPath "C:\path\to\.claude.json
 - [ ] **Network**: Internet access for model downloads (if needed)
 - [ ] **MCP Config**: Valid `.claude.json` with required fields (run regression tests)
 
+## Flaky Test Detection
+
+**Flaky tests** are tests that pass or fail inconsistently without any code changes. They can be caused by timing issues, random data, external dependencies, or test ordering problems.
+
+### Detecting Flaky Tests
+
+Use the flaky test detection script to run tests multiple times:
+
+```bash
+# Run all unit tests 5 times
+./scripts/test/detect_flaky_tests.sh 5 tests/unit/
+
+# Run specific test module 10 times
+./scripts/test/detect_flaky_tests.sh 10 tests/unit/chunking/
+
+# Run fast integration tests 3 times
+./scripts/test/detect_flaky_tests.sh 3 tests/fast_integration/
+```
+
+**Output**:
+- ✅ All tests passed across N runs - no flaky tests detected
+- ❌ Tests failed - potential flaky tests or genuine failures
+
+### Identifying Flaky Tests
+
+Signs of flaky tests:
+- Test passes sometimes, fails other times (no code changes)
+- Different results on different machines
+- Failures appear random or timing-dependent
+- Test fails in CI but passes locally (or vice versa)
+
+### Common Causes and Fixes
+
+| Cause | Example | Fix |
+|-------|---------|-----|
+| **Random Data** | `random.randint()`, `uuid.uuid4()` | Use fixed seeds or deterministic data |
+| **Timing Issues** | `time.sleep()`, async operations | Use explicit waits with timeouts |
+| **External Dependencies** | Network calls, file system | Mock external dependencies |
+| **Test Ordering** | Tests depend on previous tests | Use isolated fixtures with `tmp_path` |
+| **Global State** | Shared class variables | Reset state in fixtures or use `autouse=True` |
+| **Resource Cleanup** | File handles, GPU memory | Use context managers and cleanup fixtures |
+
+### Marking Flaky Tests
+
+If a test is legitimately flaky and cannot be easily fixed, mark it with the `@pytest.mark.flaky` decorator:
+
+```python
+import pytest
+
+@pytest.mark.flaky(reruns=3, reruns_delay=1)
+def test_potentially_unstable():
+    """Test that may fail intermittently due to external factors."""
+    result = external_api_call()
+    assert result is not None
+```
+
+**Note**: This requires `pytest-rerunfailures` plugin:
+```bash
+pip install pytest-rerunfailures
+```
+
+### Best Practices
+
+1. **Fix, Don't Mark**: Always try to fix flaky tests before marking them
+2. **Document Why**: Add comments explaining why a test is flaky
+3. **Use Deterministic Data**: Avoid random values in tests
+4. **Mock External Calls**: Don't rely on network, filesystem, or time
+5. **Isolate Tests**: Each test should be completely independent
+6. **Clean Up Resources**: Always close handles, clear GPU memory
+
+### Example: Fixing a Flaky Test
+
+**Before (Flaky)**:
+```python
+import random
+
+def test_random_selection():
+    data = [1, 2, 3, 4, 5]
+    result = random.choice(data)
+    assert result == 3  # Flaky: only passes 20% of the time
+```
+
+**After (Fixed)**:
+```python
+import random
+
+def test_random_selection():
+    random.seed(42)  # Fixed seed for determinism
+    data = [1, 2, 3, 4, 5]
+    result = random.choice(data)
+    assert result == 4  # Always passes with seed 42
+```
+
 ## Continuous Integration
 
 ### CI-Friendly Test Commands

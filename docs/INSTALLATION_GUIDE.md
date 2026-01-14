@@ -509,6 +509,53 @@ scripts\batch\start_mcp_debug.bat    # Debug mode with enhanced logging
 scripts\batch\start_mcp_simple.bat   # Simple mode with minimal output
 ```
 
+### Dependency Version Validation
+
+After installation, validate that all critical dependencies meet minimum version requirements:
+
+```powershell
+# Run version validation
+.venv\Scripts\python.exe -m utils.version_check
+
+# Expected output:
+# [OK] torch==2.8.0+cu118
+# [OK] transformers==4.47.1
+# [OK] sentence-transformers==3.4.1
+# [OK] numpy==2.2.4
+# [OK] faiss-cpu==1.9.0.post1
+# All 5 critical dependencies validated successfully
+```
+
+**What Gets Validated:**
+
+| Package | Minimum Version | Purpose |
+|---------|----------------|---------|
+| torch | >=2.8.0 | Core deep learning framework |
+| transformers | >=4.30.0 | Hugging Face model support |
+| sentence-transformers | >=2.2.0 | Semantic embedding models |
+| numpy | >=1.24.0 | Numerical operations |
+| faiss-cpu | >=1.7.0 | Vector search engine |
+
+**Features:**
+
+- Handles CUDA build metadata (e.g., `2.8.0+cu118` correctly compared)
+- ASCII-safe output compatible with Windows console
+- Clear error messages with upgrade instructions
+- Validates at startup to catch environment issues early
+
+**Common Issues:**
+
+```powershell
+# If versions are too old
+[FAIL] torch==2.0.0 is too old. Required: >=2.8.0
+
+# If package is missing
+[FAIL] transformers is not installed. Install with: pip install transformers
+
+# Upgrade dependencies
+.venv\Scripts\pip.exe install --upgrade torch transformers sentence-transformers
+```
+
 ### Advanced Testing Tools
 
 #### Comprehensive Test Suite
@@ -692,7 +739,7 @@ start_mcp_server.bat
 # Select: Option 2 - Force Reindex Project
 
 # Option 2: Via command line
-.venv\Scripts\python.exe tools\index_project.py --force
+.venv\Scripts\python.exe tools\batch_index.py --mode force
 
 # Option 3: Via repair tool
 scripts\batch\repair_installation.bat

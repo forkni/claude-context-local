@@ -112,8 +112,8 @@ def _all_files_check():
     # Files to test
     test_files = [
         # Python files
-        "tools/search_helper.py",
-        "tools/index_project.py",
+        "tools/batch_index.py",
+        "tools/notify_server.py",
         "mcp_server/server.py",
         "tests/integration/test_complete_workflow.py",
         "tests/integration/test_system.py",

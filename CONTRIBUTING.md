@@ -53,14 +53,41 @@ This project uses automated code quality tools:
 - **black**: Code formatting
 - **isort**: Import sorting
 - **markdownlint**: Documentation formatting
+- **shellcheck**: Bash script validation
 
 ```bash
-# Check code style
+# Check code style (includes Python, Markdown, and Shell scripts)
 ./scripts/git/check_lint.sh
 
-# Auto-fix issues
+# Auto-fix issues (Python and Markdown only)
 ./scripts/git/fix_lint.sh
+
+# Check shell scripts separately
+./scripts/lint/check_shell.sh
 ```
+
+### Pre-commit Hooks (Optional)
+
+The project includes pre-commit framework support for automatic validation:
+
+```bash
+# Install pre-commit hooks
+pip install pre-commit
+pre-commit install
+
+# Run manually on all files
+pre-commit run --all-files
+
+# Hooks run automatically on git commit
+git commit -m "feat: Your changes"  # Runs ruff, markdownlint, checks automatically
+```
+
+**Pre-commit features:**
+- Automatic ruff formatting and fixes
+- Markdown linting with auto-fix
+- Trailing whitespace removal
+- Merge conflict detection
+- Private key detection
 
 All linting must pass before submitting a PR.
 

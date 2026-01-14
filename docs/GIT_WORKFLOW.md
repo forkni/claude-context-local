@@ -143,6 +143,7 @@ scripts\git\batch\check_lint.bat
 - Black formatting (code consistency)
 - isort import sorting
 - markdownlint (documentation quality)
+- ShellCheck (bash script validation) - via `scripts/lint/check_shell.sh`
 
 **Configuration**: Uses pyproject.toml settings (automatically excludes .venv, _archive, all gitignored directories)
 
@@ -2048,6 +2049,53 @@ scripts\git\fix_lint.bat      # Includes markdownlint --fix
 **Excluded directories**: `.venv`, `_archive`, `benchmark_results`, `logs`, `node_modules`
 
 **Match CI/CD**: Local markdown validation matches GitHub Actions `docs-validation.yml` rules
+
+### Shell Script Linting (ShellCheck)
+
+**Installation** (project-local):
+
+- ShellCheck v0.10.0 bundled in `tools/bin/shellcheck.exe`
+- Auto-detected by `scripts/lint/check_shell.sh`
+- Cross-platform: Windows (Git Bash), Linux, macOS
+
+**Local validation** (before commit):
+
+```bash
+# Check all shell scripts
+./scripts/lint/check_shell.sh
+
+# Output shows pass/fail for each .sh file
+# Validates scripts in scripts/git/, scripts/lint/, scripts/test/, scripts/docs/
+```
+
+**What ShellCheck detects**:
+
+- Unquoted variables (SC2086) - prevents word-splitting bugs
+- Unsafe `cd` commands (SC2164) - missing `|| exit` error handling
+- Command substitution style (SC2006) - enforces `$(...)` over backticks
+- POSIX compliance issues
+- Unused variables (SC2034)
+- Syntax errors
+
+**Common fixes**:
+
+```bash
+# Bad: Unquoted variable
+cd $PROJECT_ROOT
+
+# Good: Quoted variable
+cd "$PROJECT_ROOT" || exit
+
+# Bad: Backticks
+result=`command`
+
+# Good: Modern syntax
+result=$(command)
+```
+
+**Configuration**: Excludes SC2154 (sourced variables from `_common.sh`)
+
+**Reference**: See `BASH_STYLE_GUIDE.md` Section 5.4 for complete ShellCheck error codes and fixes
 
 ---
 
