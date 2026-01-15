@@ -573,12 +573,14 @@ REM Prompt for directory filters (optional)
 echo.
 echo === Directory Filters (Optional) ===
 echo.
-echo You can include or exclude specific directories from indexing.
-echo This reduces indexing time by skipping unwanted folders.
+echo Specify directories to include or exclude from indexing.
+echo Paths must be RELATIVE to the project root (not absolute).
 echo.
 echo Examples:
-echo   Include: src,lib
+echo   Include: src/core,lib/utils
 echo   Exclude: tests,vendor,docs
+echo.
+echo   For nested paths: Scripts/StreamDiffusionTD (not D:\full\path)
 echo.
 set "include_filter="
 set "exclude_filter="

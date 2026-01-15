@@ -200,7 +200,7 @@ def wrap_with_if_true(code: str) -> str:
     except SyntaxError as e:
         # If even wrapping fails, return original code
         # Log for debugging - helps identify edge cases not handled
-        logger.warning(
+        logger.debug(
             f"_smart_dedent: Both dedent and wrap failed. "
             f"Error: {e}. First 100 chars: {repr(code[:100])}"
         )

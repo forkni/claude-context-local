@@ -519,7 +519,8 @@ class MultiLanguageChunker:
             for file_path in file_paths:
                 try:
                     relative_path = str(file_path.relative_to(root))
-                    if self.directory_filter.matches(relative_path):
+                    # Use strict mode for file filtering (no ancestor passthrough)
+                    if self.directory_filter.matches_for_file(relative_path):
                         filtered_paths.append(file_path)
                 except ValueError:
                     # File not under root, skip it

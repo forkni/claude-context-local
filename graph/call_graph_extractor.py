@@ -151,7 +151,7 @@ class PythonCallGraphExtractor(CallGraphExtractor):
         try:
             tree = ast.parse(code)
         except SyntaxError as e:
-            self.logger.warning(
+            self.logger.debug(
                 f"Syntax error parsing code for {chunk_id}: {e}. "
                 f"Returning empty call list."
             )

@@ -32,7 +32,7 @@
     "prefer_gpu": true,
     "gpu_memory_threshold": 0.65,
     "vram_limit_fraction": 0.9,
-    "allow_ram_fallback": false,
+    "allow_ram_fallback": true,
     "enable_fp16": true,
     "prefer_bf16": true,
     "enable_dynamic_batch_size": true,
