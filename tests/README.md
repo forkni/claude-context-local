@@ -6,17 +6,18 @@ This directory contains comprehensive tests for the Claude Context MCP semantic 
 
 ## Test Status
 
-**Current Status**: ✅ All tests passing (as of 2025-11-28)
+**Current Status**: ✅ All tests passing (as of 2026-01-14)
 
-- **Unit Tests**: 1,052 tests passing across 6 modules
+- **Unit Tests**: 1,063 tests passing across 6 modules
   - Chunking: 63 tests
   - Embeddings: 113 tests
   - Graph: 313 tests
   - Merkle: 21 tests
-  - Search: 402 tests
+  - Search: 402 tests (includes 4 Phase 2 call edge resolution tests)
   - MCP Server: 140 tests
+  - Testing Utilities: 11 tests
 - **Integration Tests**: 2 tests passing
-- **Total**: 1,054 tests
+- **Total**: 1,065 tests
 - **Execution Time**: Unit ~5s, Fast Integration ~2 min, Slow Integration ~10 min
 
 ### Recent Updates (2025-11-20)
@@ -36,6 +37,8 @@ tests/
 ├── conftest.py               # Global pytest configuration
 ├── README.md                 # This documentation
 ├── TESTING_GUIDE.md          # Comprehensive testing guide (moved from docs/)
+├── README_TESTING_UTILS.md   # Testing utilities documentation
+├── testing_utils.py          # Reusable testing utilities (decorators, context managers)
 ├── fixtures/                 # Test fixtures and mocks
 │   ├── __init__.py
 │   ├── installation_mocks.py # Installation testing mocks
@@ -44,10 +47,11 @@ tests/
 │   ├── glsl_project/         # GLSL shader samples
 │   ├── multi_language/       # Multi-language test files
 │   └── python_project/       # Python project samples
-├── unit/                     # Unit tests (41 files, 557 tests, < 1s each)
+├── unit/                     # Unit tests (42 files, 568 tests, < 1s each)
 │   ├── test_assignment_tracking.py # Phase 3: Assignment tracking (call graph)
 │   ├── test_bm25_index.py    # BM25 index functionality
 │   ├── test_bm25_population.py # BM25 document population
+│   ├── test_testing_utils.py # Testing utilities validation (11 tests)
 │   ├── test_call_graph_extraction.py # Call graph extraction from AST
 │   ├── test_call_resolution.py # Call graph resolution logic
 │   ├── test_cleanup_queue.py # Project deletion cleanup queue
@@ -305,6 +309,24 @@ Add new regression tests when:
 
 ## Test Fixtures and Data
 
+### testing_utils.py
+
+Professional testing utilities for the test suite (based on HuggingFace Transformers patterns):
+
+- **Hardware requirement decorators**:
+  - `@require_torch` - Skip test if PyTorch not installed
+  - `@require_torch_gpu` - Skip test if no CUDA GPU available
+- **Output capture utilities**:
+  - `CaptureStdout` - Capture stdout
+  - `CaptureStderr` - Capture stderr
+  - `CaptureStd` - Capture both stdout and stderr
+  - `CaptureLogger(logger_name)` - Capture logging output
+- **Environment mocking**:
+  - `@mockenv(**kwargs)` - Decorator to temporarily set environment variables
+  - `mockenv_context(**kwargs)` - Context manager for environment variables
+
+**Documentation**: See `README_TESTING_UTILS.md` for complete usage guide with examples.
+
 ### fixtures/
 
 - **installation_mocks.py**: Mocks for installation testing
@@ -499,6 +521,8 @@ class TestNewComponent:
 6. **Document test purpose**: Clear docstrings explaining what's being tested
 7. **Keep tests isolated**: No shared state between tests
 8. **Mock at the right level**: Mock external dependencies, not internal logic
+9. **Use testing utilities**: Leverage `tests/testing_utils.py` for hardware requirements, output capture, and environment mocking
+10. **Skip GPU tests gracefully**: Use `@require_torch_gpu` decorator for GPU-dependent tests
 
 ## Test Environment
 

@@ -968,9 +968,20 @@ class HybridSearcher:
         return optimizer.optimize(test_queries, ground_truth=ground_truth)
 
     def save_indices(self) -> None:
-        """Save both BM25 and dense indices. Delegates to IndexSynchronizer."""
+        """Save BM25, dense indices, and call graph. Delegates to IndexSynchronizer."""
         self.index_sync.save_indices()
-        # Return value ignored for backward compatibility (was None)
+
+        # Save call graph if populated
+        if self.graph_storage is not None and len(self.graph_storage) > 0:
+            try:
+                self._logger.info(
+                    f"[SAVE_INDICES] Saving call graph with {len(self.graph_storage)} nodes, "
+                    f"{self.graph_storage.graph.number_of_edges()} edges"
+                )
+                self.graph_storage.save()
+                self._logger.info("[SAVE_INDICES] Call graph saved successfully")
+            except Exception as e:
+                self._logger.warning(f"[SAVE_INDICES] Failed to save call graph: {e}")
 
     def validate_index_sync(self) -> bool:
         """Validate BM25 and Dense indices are synchronized. Delegates to IndexSynchronizer."""
@@ -1052,6 +1063,82 @@ class HybridSearcher:
             )
 
             self.index_documents(documents, doc_ids, embeddings, metadata)
+
+            # Populate call graph with nodes and edges
+            if self.graph_storage is not None:
+                graph_nodes_added = 0
+                graph_edges_added = 0
+                resolved_count = 0
+                semantic_types = {
+                    "function",
+                    "method",
+                    "class",
+                    "decorated_definition",
+                    "interface",
+                    "enum",
+                    "struct",
+                    "type",
+                }
+
+                # Build name resolution map for call target resolution
+                # Maps symbol names to their chunk_ids for resolving call targets
+                name_to_chunk_ids: dict[str, list[str]] = {}
+                for result in embedding_results:
+                    chunk_id = result.chunk_id
+                    name = result.metadata.get("name")
+                    if name:
+                        if name not in name_to_chunk_ids:
+                            name_to_chunk_ids[name] = []
+                        name_to_chunk_ids[name].append(chunk_id)
+
+                for result in embedding_results:
+                    chunk_id = result.chunk_id
+                    chunk_type = result.metadata.get("chunk_type")
+
+                    # Only add semantic types
+                    if chunk_type not in semantic_types:
+                        continue
+
+                    # Add node
+                    self.graph_storage.add_node(
+                        chunk_id=chunk_id,
+                        name=result.metadata.get("name", "unknown"),
+                        chunk_type=chunk_type,
+                        file_path=result.metadata.get("file_path", ""),
+                        language=result.metadata.get("language", "python"),
+                    )
+                    graph_nodes_added += 1
+
+                    # Add call edges with resolution
+                    calls = result.metadata.get("calls", [])
+                    for call_dict in calls:
+                        callee_name = call_dict.get("callee_name", "unknown")
+
+                        # Try to resolve call target to full chunk_id
+                        # Only resolve if exactly ONE match exists (conservative approach)
+                        resolved_target = None
+                        candidates = name_to_chunk_ids.get(callee_name, [])
+                        if len(candidates) == 1:
+                            resolved_target = candidates[0]
+                            resolved_count += 1
+
+                        # Use resolved chunk_id if available, otherwise use bare name
+                        self.graph_storage.add_call_edge(
+                            caller_id=chunk_id,
+                            callee_name=(
+                                resolved_target if resolved_target else callee_name
+                            ),
+                            line_number=call_dict.get("line_number", 0),
+                            is_method_call=call_dict.get("is_method_call", False),
+                            is_resolved=resolved_target is not None,
+                        )
+                        graph_edges_added += 1
+
+                self._logger.info(
+                    f"[ADD_EMBEDDINGS] Populated graph: {graph_nodes_added} nodes, "
+                    f"{graph_edges_added} call edges ({resolved_count} resolved, "
+                    f"{graph_edges_added - resolved_count} phantom)"
+                )
 
             self._logger.info(
                 f"[ADD_EMBEDDINGS] Successfully added {len(embedding_results)} embeddings to hybrid index"

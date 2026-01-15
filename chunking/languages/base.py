@@ -448,6 +448,14 @@ class LanguageChunker(ABC):
                     "name": chunk.name,
                     "file_path": chunk.file_path,
                     "relative_path": chunk.relative_path,
+                    # Preserve call graph and relationship data
+                    "calls": chunk.calls,
+                    "relationships": chunk.relationships,
+                    "docstring": chunk.docstring,
+                    "decorators": chunk.decorators,
+                    "imports": chunk.imports,
+                    "complexity_score": chunk.complexity_score,
+                    "tags": chunk.tags,
                 },
                 chunk_id=chunk.chunk_id,
                 parent_class=getattr(chunk, "parent_name", None),
@@ -536,6 +544,17 @@ class LanguageChunker(ABC):
                 language=original.language,
                 chunk_id=None,  # Will be regenerated with proper format
                 community_id=ts_chunk.community_id,  # Preserved!
+                # Preserve call graph and relationship data
+                # For non-merged chunks, copy from original; for merged chunks, use empty lists
+                calls=original.calls if ts_chunk.node_type != "merged" else [],
+                relationships=(
+                    original.relationships if ts_chunk.node_type != "merged" else []
+                ),
+                docstring=original.docstring,
+                decorators=original.decorators,
+                imports=original.imports,
+                complexity_score=original.complexity_score,
+                tags=original.tags,
             )
             result_chunks.append(code_chunk)
 

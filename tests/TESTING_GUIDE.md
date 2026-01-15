@@ -6,17 +6,18 @@ This comprehensive guide covers the testing infrastructure for the Claude Contex
 
 ### Current Test Status
 
-✅ **All tests passing** (as of 2025-12-19):
+✅ **All tests passing** (as of 2026-01-14):
 
-- **Unit Tests**: 1,052 tests passing across 6 modules
+- **Unit Tests**: 1,063 tests passing across 7 modules
   - Chunking: 63 tests (8.92s)
   - Embeddings: 113 tests (1.36s)
   - Graph: 313 tests (1.52s)
   - Merkle: 21 tests (0.91s)
-  - Search: 402 tests (25.91s)
+  - Search: 402 tests (25.91s) - includes 4 Phase 2 call edge resolution tests
   - MCP Server: 140 tests (1.79s)
+  - Testing Utilities: 11 tests (0.58s)
 - **Integration Tests**: 2 tests passing (19.00s)
-- **Total**: 1,054 tests, ~60s total execution time
+- **Total**: 1,065 tests, ~60s total execution time
 
 **⚠️ IMPORTANT**: Run tests by module for best results (see "Recommended Testing Approach" below)
 
@@ -167,6 +168,9 @@ tests/
 ├── __init__.py               # Package initialization
 ├── conftest.py               # Global pytest configuration
 ├── README.md                 # Detailed test documentation (407 lines)
+├── TESTING_GUIDE.md          # This comprehensive guide
+├── README_TESTING_UTILS.md   # Testing utilities documentation
+├── testing_utils.py          # Reusable testing utilities (decorators, context managers)
 ├── fixtures/                 # Test fixtures and mocks
 │   ├── __init__.py
 │   ├── installation_mocks.py # Installation testing mocks
@@ -175,10 +179,11 @@ tests/
 │   ├── glsl_project/         # GLSL shader samples
 │   ├── multi_language/       # Multi-language test files
 │   └── python_project/       # Python project samples
-├── unit/                     # Unit tests (16 files, 82 tests)
+├── unit/                     # Unit tests (17 files, 93 tests)
 │   ├── test_bm25_index.py    # BM25 index functionality
 │   ├── test_bm25_population.py # BM25 document population
 │   ├── test_embedder.py      # Embedding generation
+│   ├── test_testing_utils.py # Testing utilities validation (11 tests)
 │   ├── test_evaluation.py    # Evaluation framework components
 │   ├── test_hybrid_search.py # Hybrid search logic
 │   ├── test_import_resolution.py # Import-based call graph resolution (26 tests)
@@ -516,7 +521,49 @@ pytest tests/ -v
 - Comprehensive relationship extraction
 - Execution time > 10 seconds (mark with `@pytest.mark.slow`)
 
-### Test Fixtures (tests/fixtures/)
+### Test Fixtures and Utilities
+
+#### testing_utils.py
+
+**Professional testing utilities** (based on HuggingFace Transformers patterns):
+
+- **Hardware requirement decorators**:
+  - `@require_torch` - Skip test if PyTorch not installed
+  - `@require_torch_gpu` - Skip test if no CUDA GPU available
+- **Output capture utilities**:
+  - `CaptureStdout()` - Capture stdout in context manager
+  - `CaptureStderr()` - Capture stderr in context manager
+  - `CaptureStd()` - Capture both stdout and stderr
+  - `CaptureLogger(logger_name, level)` - Capture logging output
+- **Environment mocking**:
+  - `@mockenv(**kwargs)` - Decorator to temporarily set environment variables
+  - `mockenv_context(**kwargs)` - Context manager for environment variables
+
+**Example usage**:
+
+```python
+from tests.testing_utils import require_torch_gpu, CaptureLogger, mockenv
+
+@require_torch_gpu
+def test_gpu_inference():
+    """Test runs only if CUDA GPU is available."""
+    # Test GPU-specific code
+
+def test_logging_output():
+    """Verify logging output."""
+    with CaptureLogger("search.hybrid_searcher") as cl:
+        searcher.add_embeddings(results)
+    assert "resolved" in cl.out
+
+@mockenv(CUDA_VISIBLE_DEVICES="0", MODEL_NAME="test")
+def test_env_dependent():
+    """Test with specific environment variables."""
+    # Environment automatically restored after test
+```
+
+**Documentation**: See `README_TESTING_UTILS.md` for complete guide.
+
+#### fixtures/ directory
 
 **Purpose**: Provide reusable test data and mocks.
 
@@ -1477,6 +1524,9 @@ timeout 900 pytest tests/
 8. **Use subset validation for metadata** (don't assume exact matches)
 9. **Import Mock explicitly** from unittest.mock
 10. **Create regression tests for critical bugs**
+11. **Use testing utilities**: Leverage `tests/testing_utils.py` for hardware requirements, output capture, and environment mocking
+12. **Skip GPU tests gracefully**: Use `@require_torch_gpu` decorator for GPU-dependent tests
+13. **Capture and verify logs**: Use `CaptureLogger` to test logging output
 
 ### For Test Maintenance
 
@@ -1499,9 +1549,33 @@ timeout 900 pytest tests/
 6. **Include regression tests** in CI pipeline
 7. **Validate configuration** before deployment
 
-### Recent Test Improvements (2025-11-19)
+### Recent Test Improvements
 
-**All 389 tests now passing:**
+#### 2026-01-14: Testing Utilities and Phase 2 Call Graph
+
+**All 1,065 tests now passing:**
+
+- ✅ **Professional Testing Utilities** (based on HuggingFace Transformers):
+  - `tests/testing_utils.py` - Reusable decorators and context managers
+  - Hardware requirement decorators (`@require_torch`, `@require_torch_gpu`)
+  - Output capture utilities (`CaptureStdout`, `CaptureLogger`, etc.)
+  - Environment mocking (`@mockenv`, `mockenv_context`)
+  - 11 comprehensive tests validating all utilities
+  - Complete documentation in `README_TESTING_UTILS.md`
+- ✅ **Mock Embedding Result Factory Fixture**:
+  - New `mock_embedding_result_factory` fixture in `tests/conftest.py`
+  - Factory pattern for creating mock `EmbeddingResult` objects without full chunking pipeline
+  - Deterministic embeddings based on chunk_id hash
+  - Supports call graph testing with `calls` and `relationships` parameters
+  - Reduces test boilerplate and ensures consistent mock structure
+- ✅ **Phase 2 Call Graph Edge Resolution**:
+  - 4 new tests for call target resolution in `test_hybrid_search.py`
+  - Tests verify unique function name resolution, ambiguous names, external calls
+  - 100% pass rate with no regressions
+
+#### 2025-11-19: Core Test Suite Stabilization
+
+**All 389 tests passing:**
 
 - ✅ Fixed BM25 metadata handling with subset validation
 - ✅ Fixed CUDA detection disk space assertions
