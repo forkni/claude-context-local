@@ -1291,12 +1291,14 @@ Use the flaky test detection script to run tests multiple times:
 ```
 
 **Output**:
+
 - ✅ All tests passed across N runs - no flaky tests detected
 - ❌ Tests failed - potential flaky tests or genuine failures
 
 ### Identifying Flaky Tests
 
 Signs of flaky tests:
+
 - Test passes sometimes, fails other times (no code changes)
 - Different results on different machines
 - Failures appear random or timing-dependent
@@ -1328,6 +1330,7 @@ def test_potentially_unstable():
 ```
 
 **Note**: This requires `pytest-rerunfailures` plugin:
+
 ```bash
 pip install pytest-rerunfailures
 ```
@@ -1344,6 +1347,7 @@ pip install pytest-rerunfailures
 ### Example: Fixing a Flaky Test
 
 **Before (Flaky)**:
+
 ```python
 import random
 
@@ -1354,6 +1358,7 @@ def test_random_selection():
 ```
 
 **After (Fixed)**:
+
 ```python
 import random
 

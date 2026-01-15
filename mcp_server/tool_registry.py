@@ -71,8 +71,10 @@ WHEN NOT TO USE:
                         "enum",
                         "struct",
                         "type",
+                        "merged",
+                        "split_block",
                     ],
-                    "description": "Filter by code structure type (function, class, method, module, decorated_definition, interface, enum, struct, type), or None for all",
+                    "description": "Filter by code structure type (function, class, method, module, decorated_definition, interface, enum, struct, type, merged, split_block), or None for all",
                 },
                 "include_context": {
                     "type": "boolean",
@@ -549,6 +551,62 @@ RETURNS:
                     "enum": ["verbose", "compact", "ultra"],
                     "default": "compact",
                     "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                },
+            },
+            "required": [],
+        },
+    },
+    "find_path": {
+        "description": """Find shortest path between two code entities in the relationship graph.
+
+Traces how two symbols connect through calls, inheritance, imports, or other relationships.
+
+WHEN TO USE:
+- Tracing how code element A connects to code element B
+- Understanding dependency chains between modules
+- Finding call paths from entry points to specific functions
+- Analyzing inheritance or import chains
+
+RETURNS:
+- Path as sequence of nodes with metadata
+- Edge types traversed (calls, inherits, imports, etc.)
+- Path length (number of hops)""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source": {
+                    "type": "string",
+                    "description": "Source symbol name (will search, may be ambiguous). Use source_chunk_id for precision.",
+                },
+                "target": {
+                    "type": "string",
+                    "description": "Target symbol name (will search, may be ambiguous). Use target_chunk_id for precision.",
+                },
+                "source_chunk_id": {
+                    "type": "string",
+                    "description": 'Source chunk_id (preferred). Format: "file.py:10-20:function:name"',
+                },
+                "target_chunk_id": {
+                    "type": "string",
+                    "description": 'Target chunk_id (preferred). Format: "file.py:10-20:function:name"',
+                },
+                "max_hops": {
+                    "type": "integer",
+                    "default": 10,
+                    "minimum": 1,
+                    "maximum": 20,
+                    "description": "Maximum path length in edges (default: 10)",
+                },
+                "edge_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": 'Filter path to only use specific relationship types (e.g., ["calls", "inherits"]). Valid types: calls, inherits, uses_type, imports, decorates, raises, catches, instantiates, implements, overrides, assigns_to, reads_from. If not provided, all relationship types are considered.',
+                },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["verbose", "compact", "ultra"],
+                    "default": "compact",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular).",
                 },
             },
             "required": [],

@@ -316,6 +316,8 @@ search_code(
 - Looking for method inside class → `chunk_type="method"`
 - Looking for decorated handler → `chunk_type="decorated_definition"`
 - Looking for module-level code → `chunk_type="module"`
+- Looking for community-merged code blocks → `chunk_type="merged"` (better context for related code)
+- Looking for large function segments → `chunk_type="split_block"` (when functions are split for granularity)
 
 **When to use `include_dirs`:**
 
@@ -461,7 +463,9 @@ search_code("EmbeddingManager", chunk_type="class", exclude_dirs=["tests/"])
 - `file_pattern` (optional): Filter by filename/path pattern (e.g., "auth", "models")
 - `include_dirs` (optional): Only search in these directories (e.g., ["src/", "lib/"])
 - `exclude_dirs` (optional): Exclude from search (e.g., ["tests/", "vendor/"])
-- `chunk_type` (optional): Filter by code structure - "function", "class", "method", or None for all
+- `chunk_type` (optional): Filter by code structure - "function", "class", "method", "module", "decorated_definition", "interface", "enum", "struct", "type", "merged", "split_block", or None for all
+  - `"merged"`: Community-merged chunks (multiple related code blocks merged together for better context)
+  - `"split_block"`: Large function blocks split at AST boundaries for better granularity
 - `include_context` (default: True): Include similar chunks and relationships
 - `auto_reindex` (default: True): Automatically reindex if index is stale
 - `max_age_minutes` (default: 5): Maximum age of index before auto-reindex
@@ -488,6 +492,12 @@ search_code("authentication handler", ego_graph_enabled=True, ego_graph_k_hops=2
 
 # Parent-child retrieval for fuller method context
 search_code("validate user data", chunk_type="method", include_parent=True)
+
+# Search for community-merged code blocks (better context)
+search_code("GraphQueryEngine class", chunk_type="merged")
+
+# Search for large function segments split at AST boundaries
+search_code("ParallelChunker chunk_files", chunk_type="split_block")
 ```
 
 **Performance** (Empirically Validated):

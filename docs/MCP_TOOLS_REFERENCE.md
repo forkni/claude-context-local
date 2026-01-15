@@ -38,7 +38,12 @@ This modular reference can be embedded in any project instructions for Claude Co
 | **file_pattern** | string | Substring match on file path | Any string (e.g., "auth", "test_", "utils/") |
 | **include_dirs** | array | Only search in these directories (prefix match) | `["src/", "lib/"]` |
 | **exclude_dirs** | array | Exclude from search (prefix match) | `["tests/", "vendor/", "node_modules/"]` |
-| **chunk_type** | string | Filter by code structure type | `"function"`, `"class"`, `"method"`, `"module"`, `"decorated_definition"`, `"interface"`, `"enum"`, `"struct"`, `"type"` |
+| **chunk_type** | string | Filter by code structure type | `"function"`, `"class"`, `"method"`, `"module"`, `"decorated_definition"`, `"interface"`, `"enum"`, `"struct"`, `"type"`, `"merged"`, `"split_block"` |
+
+**New Chunk Types (v0.8.4+)**:
+
+- `"merged"`: Community-merged chunks created by Phase 6 community detection. Multiple related code blocks merged together for better semantic context (e.g., related helper functions merged with main class).
+- `"split_block"`: Large function blocks split at AST boundaries when exceeding `max_chunk_lines` (default: 100 lines). Enables better granularity for very large functions.
 
 ### Directory Filtering (v0.5.9+)
 

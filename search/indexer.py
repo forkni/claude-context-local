@@ -522,6 +522,21 @@ class CodeIndexManager:
         # Delegate FAISS index and chunk ID saving to FaissVectorIndex
         self._faiss_index.save()
 
+        # Defensive: Check if graph storage is available
+        if hasattr(self._graph, "storage") and self._graph.storage:
+            # Storage exists, no need to re-init
+            pass
+        else:
+            # Storage is None - try to find project_id
+            # Note: project_id is not stored in CodeIndexManager, only passed to GraphIntegration
+            # This defensive code path may not have access to project_id
+            # Log warning but don't crash
+            if self._graph.storage is None:
+                self._logger.warning(
+                    "[SAVE] Graph storage is None. Graph will not be saved. "
+                    "This may occur if project was indexed without project_id."
+                )
+
         # Save call graph via integration layer
         self._graph.save()
 

@@ -29,6 +29,8 @@ SEMANTIC_TYPES = (
     "impl",
     "constant",
     "variable",
+    "merged",  # Community-merged chunks (Phase 6 community detection)
+    "split_block",  # Large node split blocks (AST block splitting)
 )
 
 

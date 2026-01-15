@@ -797,3 +797,166 @@ async def handle_find_connections(arguments: dict[str, Any]) -> dict:
     )
 
     return response
+
+
+@error_handler(
+    "Find path",
+    error_context=lambda args: {
+        "source": args.get("source") or args.get("source_chunk_id"),
+        "target": args.get("target") or args.get("target_chunk_id"),
+    },
+)
+async def handle_find_path(arguments: dict[str, Any]) -> dict:
+    """Find shortest path between two code entities."""
+    # Extract parameters
+    source = arguments.get("source")
+    target = arguments.get("target")
+    source_chunk_id = arguments.get("source_chunk_id")
+    target_chunk_id = arguments.get("target_chunk_id")
+    max_hops = arguments.get("max_hops", 10)
+    edge_types = arguments.get("edge_types")
+
+    # Validate: need at least one source and one target identifier
+    if not source and not source_chunk_id:
+        return {
+            "error": "Missing source",
+            "message": "Provide either source (symbol name) or source_chunk_id",
+        }
+    if not target and not target_chunk_id:
+        return {
+            "error": "Missing target",
+            "message": "Provide either target (symbol name) or target_chunk_id",
+        }
+
+    # Check project indexed
+    if not get_state().current_project:
+        return {
+            "error": "No indexed project found",
+            "message": "You must index a project before finding paths. Use index_directory first.",
+        }
+
+    # Normalize chunk_ids
+    if source_chunk_id:
+        source_chunk_id = MetadataStore.normalize_chunk_id(source_chunk_id)
+    if target_chunk_id:
+        target_chunk_id = MetadataStore.normalize_chunk_id(target_chunk_id)
+
+    # Get searcher and graph
+    searcher = get_searcher()
+
+    # Resolve symbol names to chunk_ids if needed
+    resolved_source = source_chunk_id
+    resolved_target = target_chunk_id
+    source_info = None
+    target_info = None
+
+    if not resolved_source and source:
+        # Search for source symbol
+        results = searcher.search(source, k=1)
+        if results:
+            resolved_source = results[0].chunk_id
+            source_info = {"resolved_from": source, "chunk_id": resolved_source}
+        else:
+            return {
+                "path_found": False,
+                "error": f"Could not resolve source symbol: {source}",
+            }
+
+    if not resolved_target and target:
+        # Search for target symbol
+        results = searcher.search(target, k=1)
+        if results:
+            resolved_target = results[0].chunk_id
+            target_info = {"resolved_from": target, "chunk_id": resolved_target}
+        else:
+            return {
+                "path_found": False,
+                "error": f"Could not resolve target symbol: {target}",
+            }
+
+    # Get graph query engine
+    graph_storage = None
+    if hasattr(searcher, "dense_index") and hasattr(
+        searcher.dense_index, "graph_storage"
+    ):
+        graph_storage = searcher.dense_index.graph_storage
+    elif hasattr(searcher, "graph_storage"):
+        graph_storage = searcher.graph_storage
+
+    if not graph_storage:
+        return {
+            "error": "Graph not available",
+            "message": "Call graph not initialized. Re-index the project.",
+        }
+
+    # Create query engine and find path
+    from graph.graph_queries import GraphQueryEngine
+
+    query_engine = GraphQueryEngine(graph_storage)
+
+    result = query_engine.find_path(
+        source_id=resolved_source,
+        target_id=resolved_target,
+        max_hops=max_hops,
+        edge_types=edge_types,
+    )
+
+    if result is None:
+        # Get node info for error message
+        source_node = graph_storage.get_node_data(resolved_source)
+        target_node = graph_storage.get_node_data(resolved_target)
+
+        response = {
+            "path_found": False,
+            "path_length": 0,
+            "source": {
+                "chunk_id": resolved_source,
+                "name": (
+                    source_node.get("name")
+                    if source_node
+                    else resolved_source.split(":")[-1]
+                ),
+                "exists_in_graph": resolved_source in graph_storage.graph,
+            },
+            "target": {
+                "chunk_id": resolved_target,
+                "name": (
+                    target_node.get("name")
+                    if target_node
+                    else resolved_target.split(":")[-1]
+                ),
+                "exists_in_graph": resolved_target in graph_storage.graph,
+            },
+            "path": [],
+            "reason": "No path exists"
+            + (f" with edge_types={edge_types}" if edge_types else ""),
+        }
+    else:
+        # Add source/target metadata
+        response = result
+        response["source"] = result["path"][0]["node"] if result["path"] else {}
+        response["target"] = result["path"][-1]["node"] if result["path"] else {}
+
+    # Add resolution info if symbols were searched
+    if source_info:
+        response["source_resolved"] = source_info
+    if target_info:
+        response["target_resolved"] = target_info
+
+    # Add system message
+    if response.get("path_found"):
+        path_len = response["path_length"]
+        src_name = response["source"].get("name", "source")
+        tgt_name = response["target"].get("name", "target")
+        edge_summary = ", ".join(response.get("edge_types_traversed", [])) or "various"
+        response["system_message"] = (
+            f"Found path of length {path_len} from {src_name} to {tgt_name} "
+            f"via {edge_summary} relationships."
+        )
+    else:
+        response["system_message"] = (
+            "No path found. Try: (1) removing edge_types filter, "
+            "(2) increasing max_hops, (3) verifying both symbols exist in graph."
+        )
+
+    return response

@@ -2,14 +2,75 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-01-06)
+## Current Status: All Features Operational (2026-01-15)
 
-- **Version**: 0.8.4
+- **Version**: 0.8.5
 - **Status**: Production-ready
 - **Test Coverage**: 1,191+ unit tests + 14 slow integration tests (100% pass rate)
 - **Index Quality**: 109 active files, 789 chunks (34% reduction via greedy merge, BGE-M3 1024d, ~16 MB)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent Feature**: Ultra format bug fix - complexity scores now preserved in all output formats
+- **Recent Feature**: Added "merged" and "split_block" to chunk_type enum for better filtering
+
+---
+
+## v0.8.5 - Chunk Type Enum Expansion (2026-01-15)
+
+### Status: FEATURE ENHANCEMENT ✅
+
+Added support for "merged" and "split_block" chunk types to the `search_code` tool's `chunk_type` parameter enum, fixing validation errors when filtering for these internally-used chunk types.
+
+### Highlights
+
+- **Schema Fix**: `chunk_type` enum now includes "merged" and "split_block" values
+- **Documentation Updated**: SKILL.md, MCP_TOOLS_REFERENCE.md, and CLAUDE.md all updated
+- **Validation Fixed**: Users can now filter for community-merged chunks and large function segments without validation errors
+
+### Changes
+
+#### Tool Registry Schema Update
+
+- **File**: `mcp_server/tool_registry.py:64-76`
+- **Change**: Added "merged" and "split_block" to chunk_type enum
+- **Impact**: Eliminates `Input validation error: 'merged' is not one of [...]` errors
+
+**Before**:
+
+```python
+"enum": [
+    "function", "class", "method", "module",
+    "decorated_definition", "interface", "enum", "struct", "type"
+]
+```
+
+**After**:
+
+```python
+"enum": [
+    "function", "class", "method", "module",
+    "decorated_definition", "interface", "enum", "struct", "type",
+    "merged", "split_block"
+]
+```
+
+#### Documentation Updates
+
+- **SKILL.md**: Updated chunk_type parameter docs with descriptions and examples
+- **MCP_TOOLS_REFERENCE.md**: Added chunk_type table entry and explanation note
+- **CLAUDE.md**: Updated version to 0.8.5 with changelog note
+
+### Usage Examples
+
+```python
+# Search for community-merged code blocks
+search_code("GraphQueryEngine class", chunk_type="merged")
+
+# Search for large function segments split at AST boundaries
+search_code("ParallelChunker chunk_files", chunk_type="split_block")
+```
+
+### Background
+
+These chunk types have existed internally since Phase 6 (community detection) and large node splitting features were implemented, but were not exposed in the MCP tool schema. This caused validation errors when users attempted to filter by these types.
 
 ---
 
