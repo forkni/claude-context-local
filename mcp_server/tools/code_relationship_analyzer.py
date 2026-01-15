@@ -268,6 +268,7 @@ class CodeRelationshipAnalyzer:
         symbol_name: str = None,
         max_depth: int = 3,
         exclude_dirs: list = None,
+        relationship_types: list[str] = None,
     ) -> ImpactReport:
         """
         Analyze the impact radius of changes to a symbol.
@@ -277,6 +278,8 @@ class CodeRelationshipAnalyzer:
             symbol_name: Symbol name (requires search, may be ambiguous)
             max_depth: Maximum depth for dependency traversal (default: 3)
             exclude_dirs: Directories to exclude from symbol resolution and caller lookup
+            relationship_types: Optional list of relationship types to include (e.g., ["inherits", "imports"])
+                              If None, all relationship types are included.
 
         Returns:
             ImpactReport with structured impact data
@@ -567,6 +570,30 @@ class CodeRelationshipAnalyzer:
 
         # Step 5: Extract graph relationships (inheritance, type usage, imports)
         graph_relationships = self._extract_relationships(target_id, exclude_dirs)
+
+        # Step 5.5: Filter relationships if specific types requested
+        if relationship_types:
+            from graph.relationship_types import get_relationship_field_mapping
+
+            field_mapping = get_relationship_field_mapping()
+            allowed_fields = set()
+
+            # Gather all field names for requested relationship types
+            for rel_type in relationship_types:
+                if rel_type in field_mapping:
+                    forward_field, reverse_field = field_mapping[rel_type]
+                    if forward_field:
+                        allowed_fields.add(forward_field)
+                    if reverse_field:
+                        allowed_fields.add(reverse_field)
+
+            # Filter graph_relationships to only include allowed fields
+            filtered_relationships = {
+                field: value
+                for field, value in graph_relationships.items()
+                if field in allowed_fields
+            }
+            graph_relationships = filtered_relationships
 
         # Step 6: Build dependency graph
         dependency_graph = {target_id: [c["chunk_id"] for c in direct_callers]}

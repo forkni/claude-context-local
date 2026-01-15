@@ -745,6 +745,7 @@ async def handle_find_connections(arguments: dict[str, Any]) -> dict:
     symbol_name = arguments.get("symbol_name")
     max_depth = arguments.get("max_depth", 3)
     exclude_dirs = arguments.get("exclude_dirs")
+    relationship_types = arguments.get("relationship_types")
 
     # Validate inputs
     if not chunk_id and not symbol_name:
@@ -781,6 +782,7 @@ async def handle_find_connections(arguments: dict[str, Any]) -> dict:
         symbol_name=symbol_name,
         max_depth=max_depth,
         exclude_dirs=exclude_dirs,
+        relationship_types=relationship_types,
     )
 
     # Convert to dict

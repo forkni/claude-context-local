@@ -19,6 +19,7 @@ What are you trying to do?
 ├─ "Find callers of X" ──────────────► find_connections(chunk_id)
 ├─ "What depends on X" ──────────────► find_connections(chunk_id)
 ├─ "Trace flow from X to Y" ─────────► find_connections(chunk_id, max_depth=5)
+├─ "Find only imports/inheritance" ──► find_connections(chunk_id, relationship_types=["imports"])
 ├─ "Find similar code to X" ─────────► find_similar_code(chunk_id)
 │
 ├─ "Find class/function definition" ─► search_code(query, chunk_type)
@@ -565,7 +566,7 @@ index_directory("C:\Projects\MyApp", exclude_dirs=["tests/", "node_modules/", "v
 index_directory("C:\Projects\MyApp", multi_model=True)
 ```
 
-#### 3. `find_connections(chunk_id=None, symbol_name=None, max_depth=3, exclude_dirs=None)`
+#### 3. `find_connections(chunk_id=None, symbol_name=None, max_depth=3, exclude_dirs=None, relationship_types=None)`
 
 **Purpose**: Find all code connections to a given symbol for dependency and impact analysis
 
@@ -577,6 +578,7 @@ index_directory("C:\Projects\MyApp", multi_model=True)
 - `symbol_name` (optional): Symbol name to find (may be ambiguous, use chunk_id when possible)
 - `max_depth` (default: 3): Maximum depth for dependency traversal (1-5, affects indirect callers)
 - `exclude_dirs` (optional): Directories to exclude from symbol resolution and caller lookup (e.g., ["tests/"])
+- `relationship_types` (optional, v0.8.4+): Filter to only include specific relationship types (e.g., `["inherits", "imports", "decorates"]`). If not provided, all relationship types are included. Valid types: `calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`, `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`, `uses_context_manager`
 
 **Returns**: Structured report with direct callers, indirect callers, similar code, and dependency graph
 
@@ -591,7 +593,7 @@ index_directory("C:\Projects\MyApp", multi_model=True)
 - **Finding function callers** (replaces Grep patterns)
 - **Tracing request flows** (replaces manual tracing)
 
-**Example**:
+**Examples**:
 
 ```bash
 # Using chunk_id (preferred)
@@ -602,6 +604,18 @@ find_connections(symbol_name="User", exclude_dirs=["tests/"])
 
 # With custom depth for deep tracing
 find_connections(chunk_id="auth.py:10-50:function:login", max_depth=5)
+
+# Filter for only inheritance relationships (v0.8.4+)
+find_connections(symbol_name="BaseClass", relationship_types=["inherits"])
+# Returns: Only parent_classes/child_classes populated, all other relationship fields empty
+
+# Filter for only import relationships (v0.8.4+)
+find_connections(chunk_id="database.py:10-50:class:Database", relationship_types=["imports"])
+# Returns: Only imports/imported_by populated, all other relationship fields empty
+
+# Multiple relationship types (v0.8.4+)
+find_connections(symbol_name="User", relationship_types=["inherits", "calls", "imports"])
+# Returns: Only inheritance, call, and import relationships populated
 ```
 
 **2-Step Workflow for Relationship Queries**:

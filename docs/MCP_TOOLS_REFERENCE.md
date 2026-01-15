@@ -11,7 +11,7 @@ This modular reference can be embedded in any project instructions for Claude Co
 | Tool | Priority | Purpose | Parameters |
 |------|----------|---------|------------|
 | **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=5, search_mode="hybrid", model_key, use_routing=True, file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False |
-| **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (~90% accuracy with import resolution) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs |
+| **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (~90% accuracy with import resolution) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs, relationship_types |
 | **index_directory** | 🔴 **SETUP** | Index project (multi-model support) | directory_path (required), project_name, incremental=True, multi_model=auto |
 | find_similar_code | Secondary | Find alternative implementations | chunk_id (required), k=5 |
 | configure_search_mode | Config | Set search mode & weights | search_mode="hybrid", bm25_weight=0.4, dense_weight=0.6, enable_parallel=True |
@@ -63,6 +63,23 @@ find_connections(symbol_name="UserService", exclude_dirs=["tests/"])
 ```
 
 **Note**: In `find_connections`, `exclude_dirs` applies to symbol resolution only. Callers are not filtered (to preserve test coverage visibility).
+
+**Filter by relationship types** (v0.8.4+): Use `relationship_types` to get only specific relationship data:
+
+```python
+# Get only inheritance relationships
+find_connections(symbol_name="BaseClass", relationship_types=["inherits"])
+# Returns: Only parent_classes/child_classes populated, all others empty
+
+# Get only import relationships
+find_connections(chunk_id="...", relationship_types=["imports"])
+# Returns: Only imports/imported_by populated
+
+# Get multiple specific types
+find_connections(symbol_name="MyClass", relationship_types=["inherits", "imports", "decorates"])
+```
+
+**Valid relationship types**: `calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`, `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`, `uses_context_manager`
 
 ### Filter Examples
 

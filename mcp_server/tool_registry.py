@@ -539,6 +539,11 @@ RETURNS:
                     "items": {"type": "string"},
                     "description": 'Exclude these directories from symbol resolution and caller lookup (e.g., ["tests/"]). Default: None (searches all).',
                 },
+                "relationship_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": 'Filter to only include specific relationship types (e.g., ["inherits", "imports", "decorates"]). If not provided, all relationship types are included. Valid types: calls, inherits, uses_type, imports, decorates, raises, catches, instantiates, implements, overrides, assigns_to, reads_from, defines_constant, defines_enum_member, defines_class_attr, defines_field, uses_constant, uses_default, uses_global, asserts_type, uses_context_manager.',
+                },
                 "output_format": {
                     "type": "string",
                     "enum": ["verbose", "compact", "ultra"],
