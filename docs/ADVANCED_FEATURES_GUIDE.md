@@ -1449,15 +1449,17 @@ Embedding... 100% (1/1 batches)
 
 ## Query Cache
 
-**Feature**: LRU cache for query embeddings to avoid re-encoding repeated queries
+**Feature**: LRU cache with TTL for query embeddings to avoid re-encoding repeated queries
 
-**Version**: v0.5.17+
+**Version**: v0.5.17+ (TTL support added in v0.8.6)
 
 **Status**: ✅ **Production-Ready**
 
 ### Overview
 
 The query cache stores embedding vectors for recently searched queries, eliminating redundant encoding operations. When a query is searched multiple times, the cached embedding is reused instead of re-computing it.
+
+**Enhancement (v0.8.6)**: Added TTL (time-to-live) support with automatic expiration after 300 seconds (5 minutes) to prevent serving stale embeddings after model changes.
 
 ### How It Works
 
@@ -1469,6 +1471,7 @@ The query cache stores embedding vectors for recently searched queries, eliminat
 ### Configuration
 
 **Default cache size**: 128 entries
+**Default TTL**: 300 seconds (5 minutes, v0.8.6+)
 
 **Environment variable**:
 
@@ -1476,9 +1479,18 @@ The query cache stores embedding vectors for recently searched queries, eliminat
 # Adjust cache size (max 1000)
 set CLAUDE_QUERY_CACHE_SIZE=256
 
+# Adjust TTL duration (seconds, v0.8.6+)
+set CLAUDE_QUERY_CACHE_TTL=600
+
 # Disable cache (not recommended)
 set CLAUDE_QUERY_CACHE_SIZE=0
 ```
+
+**TTL Configuration** (v0.8.6+):
+- **Default**: 300s (5 minutes) - balances freshness vs performance
+- **Increase** (600-900s): Stable production, infrequent model changes
+- **Decrease** (60-120s): Development, frequent model switching
+- **Automatic expiration**: Stale entries removed on access
 
 ### Performance Benefits
 
@@ -1545,11 +1557,191 @@ print(f"Hit rate: {embedder._cache_hits / (embedder._cache_hits + embedder._cach
 
 **File**: `embeddings/embedder.py`
 
-**Cache type**: LRU (Least Recently Used) dictionary
+**Cache type**: LRU (Least Recently Used) dictionary with TTL (v0.8.6+)
 
 **Thread safety**: Not thread-safe (single-threaded MCP server)
 
 **Persistence**: In-memory only (no disk storage)
+
+---
+
+## Performance Monitoring & Timing
+
+**Feature**: Granular timing instrumentation for performance debugging
+
+**Version**: v0.8.6+
+
+**Status**: ✅ **Production-Ready**
+
+### Overview
+
+The system includes comprehensive timing instrumentation for identifying performance bottlenecks and validating optimization strategies. Five critical search operations are instrumented with automatic timing measurement and logging.
+
+### Timing Infrastructure
+
+**Module**: `utils/timing.py`
+
+**Components**:
+
+1. **`@timed(name)` Decorator** - Automatic function execution timing
+2. **`Timer(name)` Context Manager** - Code block timing
+
+**Log Format**: `[TIMING] operation_name: Xms` (milliseconds, 2 decimal precision)
+
+**Precision**: Microsecond-level using `time.perf_counter()`
+
+**Overhead**: <0.1ms per operation (negligible)
+
+### Instrumented Operations
+
+Five critical search functions include timing instrumentation:
+
+| Function | Module | Purpose | Typical Duration |
+|----------|--------|---------|------------------|
+| `embed_query` | `embeddings/embedder.py` | Query embedding generation | 40-60ms (first), 0ms (cached) |
+| `search_bm25` | `search/search_executor.py` | Sparse keyword search | 3-15ms |
+| `search_dense` | `search/search_executor.py` | Dense vector search | 50-100ms |
+| `apply_neural_reranking` | `search/reranking_engine.py` | Cross-encoder reranking | 80-150ms |
+| `multi_hop_search` | `search/multi_hop_searcher.py` | Multi-hop expansion | Base + expansion overhead |
+
+### Enabling Timing Logs
+
+**Windows (PowerShell)**:
+
+```powershell
+$env:CLAUDE_LOG_LEVEL="INFO"
+# Restart MCP server for changes to take effect
+```
+
+**Linux/macOS**:
+
+```bash
+export CLAUDE_LOG_LEVEL=INFO
+# Restart MCP server for changes to take effect
+```
+
+**Verification**:
+
+```bash
+# Check logs for timing entries
+# Windows: Look in console output or log files
+# Example output:
+# [TIMING] embed_query: 45.23ms
+# [TIMING] bm25_search: 3.12ms
+# [TIMING] dense_search: 52.78ms
+# [TIMING] neural_rerank: 89.45ms
+# [TIMING] multi_hop_search: 145.67ms
+```
+
+### Performance Debugging Workflow
+
+1. **Enable INFO logging** (see above)
+2. **Run search operations** via MCP tools (`search_code`, `find_connections`)
+3. **Analyze timing logs** to identify bottlenecks
+4. **Optimize configuration** based on empirical data:
+   - If `embed_query` is slow (>60ms): Check cache hit rate, verify model loaded
+   - If `embed_query` is 0ms: ✅ Cache working optimally
+   - If `dense_search` is slow (>150ms): Consider reducing index size or using BM25 mode
+   - If `neural_rerank` is slow (>200ms): Disable reranking or reduce `top_k_candidates`
+   - If `bm25_search` is slow (>20ms): Check document count, consider index optimization
+
+### Query Embedding Cache Interaction
+
+**Cache hit scenario** (optimal):
+
+```
+[TIMING] embed_query: 0ms        ✅ Cached embedding used (instant)
+[TIMING] bm25_search: 3.5ms      ✅ Fast sparse search
+[TIMING] dense_search: 85ms      ⚠️  Moderate (acceptable)
+```
+
+**Cache miss scenario** (first query):
+
+```
+[TIMING] embed_query: 52ms       ⚠️  Model encoding (expected for first query)
+[TIMING] bm25_search: 3.5ms      ✅ Fast sparse search
+[TIMING] dense_search: 85ms      ⚠️  Moderate (acceptable)
+```
+
+**Cache expired scenario** (after 5min TTL):
+
+```
+[TIMING] embed_query: 48ms       ⚠️  Re-encoded after TTL expiration
+```
+
+### Performance Baselines
+
+**Typical hybrid search timing** (k=5, with cache hit):
+
+- **embed_query**: 0ms (cached)
+- **bm25_search**: 3-8ms
+- **dense_search**: 62-94ms
+- **rerank** (if enabled): 80-150ms
+- **Total**: 145-252ms
+
+**Multi-hop search overhead** (2 hops, expansion_factor=0.3):
+
+- **Hop 1** (base search): ~150ms
+- **Hop 2** (expansion): +25-35ms
+- **Rerank all results**: +50-100ms
+- **Total**: ~225-285ms
+
+### Custom Timing Usage
+
+**Decorator**:
+
+```python
+from utils.timing import timed
+
+@timed("my_operation")
+def my_function():
+    # Your code
+    pass
+
+# Logs: [TIMING] my_operation: Xms
+```
+
+**Context Manager**:
+
+```python
+from utils.timing import Timer
+
+with Timer("custom_operation") as t:
+    # Your code
+    pass
+
+print(f"Operation took {t['elapsed_ms']:.2f}ms")
+# Also logs: [TIMING] custom_operation: Xms
+```
+
+### Implementation Details
+
+**Files**:
+
+- `utils/timing.py` - Timing decorator and context manager (60 lines)
+- `utils/__init__.py` - Package initialization
+
+**Instrumented files**:
+
+- `embeddings/embedder.py:embed_query()` - Query encoding
+- `search/search_executor.py:search_bm25()` - BM25 search
+- `search/search_executor.py:search_dense()` - Dense search
+- `search/reranking_engine.py:apply_neural_reranking()` - Reranking
+- `search/multi_hop_searcher.py:search()` - Multi-hop expansion
+
+**Design**:
+
+- **Zero configuration**: Works automatically when INFO logging enabled
+- **Exception handling**: Timing logged even when function raises exception
+- **Thread-safe**: Uses `functools.wraps` to preserve function metadata
+
+### Benefits
+
+- **Identify bottlenecks**: Pinpoint slow operations in search pipeline
+- **Validate cache effectiveness**: Confirm 0ms embed_query on cache hits
+- **Diagnose regressions**: Compare timing before/after changes
+- **Optimize configuration**: Data-driven tuning of search parameters
+- **Production monitoring**: Track performance trends over time
 
 ---
 

@@ -1104,7 +1104,7 @@ Startup (server starts):              0 MB VRAM (lazy loading)
 **Completed Optimizations (v0.5.17+)**:
 
 1. **ThreadPool Reuse** - 71.8% faster parallel search (5.7ms per 50 tasks)
-2. **Query Embedding Cache** - 2-3x faster multi-hop search (eliminates redundant GPU computation)
+2. **Query Embedding Cache** (v0.8.6+) - 2-3x faster multi-hop search with 300s TTL (eliminates redundant GPU computation)
 3. **Lazy Model Loading** - 100% startup VRAM reduction, 5-10x faster startup
 
 **Performance Tips**:
@@ -1164,6 +1164,14 @@ uv sync
 ```
 
 ### Cache Management
+
+**Query Embedding Cache (v0.8.6+)**:
+
+- **Automatic TTL expiration**: Entries expire after 300 seconds (5 minutes)
+- **Configuration**: Set `CLAUDE_QUERY_CACHE_TTL=600` for custom TTL (seconds)
+- **Manual cleanup**: Use `/cleanup_resources` MCP tool to clear cache immediately
+
+**Storage Cache**:
 
 ```bash
 # Clear embedding cache

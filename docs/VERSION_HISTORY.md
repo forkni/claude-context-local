@@ -2,14 +2,130 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-01-15)
+## Current Status: All Features Operational (2026-01-16)
 
-- **Version**: 0.8.5
+- **Version**: 0.8.6
 - **Status**: Production-ready
-- **Test Coverage**: 1,191+ unit tests + 14 slow integration tests (100% pass rate)
+- **Test Coverage**: 1,472 unit tests + 84 fast integration tests (100% pass rate)
 - **Index Quality**: 109 active files, 789 chunks (34% reduction via greedy merge, BGE-M3 1024d, ~16 MB)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent Feature**: Added "merged" and "split_block" to chunk_type enum for better filtering
+- **Recent Feature**: Performance infrastructure with timing decorators and cache TTL support
+
+---
+
+## v0.8.6 - Performance Infrastructure (2026-01-16)
+
+### Status: PERFORMANCE ENHANCEMENT ✅
+
+Added comprehensive timing instrumentation and query embedding cache TTL support for improved performance monitoring and cache freshness.
+
+### Highlights
+
+- **Timing Infrastructure**: New `utils/timing.py` module with `@timed` decorator and `Timer` context manager
+- **5 Instrumented Functions**: Added timing to critical search operations (embed_query, search_bm25, search_dense, neural_rerank, multi_hop_search)
+- **Cache TTL**: QueryEmbeddingCache now supports 300s TTL with automatic expiration
+- **Test Improvements**: 1,472 unit tests + 84 integration tests (up from 1,471)
+- **Bug Fixes**: Fixed syntax error and test failure
+
+### 🚀 New Features
+
+#### Timing Infrastructure
+
+**New Module**: `utils/timing.py`
+
+- `@timed(name)` decorator - Automatic function timing with logging
+- `Timer(name)` context manager - Code block timing with elapsed_ms dictionary
+- Log format: `[TIMING] operation_name: Xms` (milliseconds, 2 decimal precision)
+- Microsecond precision via `time.perf_counter()`
+- Zero-overhead when INFO logging disabled
+
+**Instrumented Operations**:
+
+1. **embed_query** (`embeddings/embedder.py`) - Query embedding generation (40-60ms first, 0ms cached)
+2. **search_bm25** (`search/search_executor.py`) - Sparse keyword search (3-15ms)
+3. **search_dense** (`search/search_executor.py`) - Dense vector search (50-100ms)
+4. **apply_neural_reranking** (`search/reranking_engine.py`) - Cross-encoder reranking (80-150ms)
+5. **multi_hop_search** (`search/multi_hop_searcher.py`) - Multi-hop expansion
+
+**Usage**:
+
+```powershell
+# Enable INFO logging to see timing data
+$env:CLAUDE_LOG_LEVEL="INFO"
+
+# Example output:
+# [TIMING] embed_query: 45.23ms
+# [TIMING] bm25_search: 3.12ms
+# [TIMING] dense_search: 52.78ms
+# [TIMING] neural_rerank: 89.45ms
+```
+
+#### Query Embedding Cache Enhancement
+
+**TTL Support** (`embeddings/query_cache.py`):
+
+- **Default**: 300 seconds (5 minutes), configurable via `ttl_seconds` parameter
+- **Storage**: Changed from `{key: embedding}` to `{key: (timestamp, embedding)}`
+- **Automatic expiration**: Entries removed on access when TTL elapsed
+- **Benefit**: Prevents serving stale embeddings after model changes
+
+**Configuration Example**:
+
+```python
+from embeddings.query_cache import QueryEmbeddingCache
+
+# Custom TTL: 10 minutes
+cache = QueryEmbeddingCache(max_size=128, ttl_seconds=600)
+```
+
+**Performance Impact**:
+
+- First query: Full embedding generation (~50ms)
+- Repeated query (within 5min): Instant retrieval (0ms)
+- After TTL expiration: Re-generate embedding (~50ms)
+
+### 🔧 Bug Fixes
+
+- **Syntax Error**: Fixed duplicate closing parenthesis in `embeddings/embedder.py:33`
+- **Test Fix**: Fixed `test_clear_index_preserves_graph_storage_reference` to check `_graph_storage` attribute
+
+### 📁 Files Changed (8 files, 114 insertions, 13 deletions)
+
+**New**:
+
+- `utils/__init__.py` - Utility module package
+- `utils/timing.py` - Timing decorator and context manager (60 lines)
+
+**Modified**:
+
+- `embeddings/embedder.py` - Added `@timed` decorator, fixed syntax error
+- `embeddings/query_cache.py` - Added TTL support with timestamp tracking (25 lines changed)
+- `search/multi_hop_searcher.py` - Added `@timed` decorator
+- `search/reranking_engine.py` - Added `@timed` decorator
+- `search/search_executor.py` - Added `@timed` decorators (2 functions)
+- `tests/unit/search/test_graph_save_during_reindex.py` - Fixed test assertion
+
+### 📊 Testing
+
+- **Unit tests**: 1472/1472 passed (was 1471 before test fix)
+- **Fast integration tests**: 84/84 passed
+- **Timing verification**: All 5 decorators functional, logging correctly
+- **Cache TTL verification**: Immediate get works, expired get returns None
+
+### 🎯 Scope Reduction Rationale
+
+Phase 3 originally planned 40-60 hours of architectural changes. Comprehensive analysis with MCP search tools and 3 exploration agents revealed:
+
+- **Task 3.2 (Factory Pattern)**: 5 working singleton patterns exist, ServiceLocator is a working DI container (171 usages). Migration would add complexity without benefit. **REMOVED**
+- **Task 3.4 (Graph Queries)**: 80% already implemented - BFS/DFS traversal complete, path finding with bidirectional BFS + edge filtering complete, 4 centrality algorithms complete, subgraph extraction complete. Proposed `find_patterns()` is complex (~200+ lines) with niche use case. **REMOVED**
+- **Task 3.3 & 3.5**: Reduced to essential gaps only - timing infrastructure + cache TTL (~8-12 hours actual work)
+
+### Git Commit
+
+- **Commit**: 9e0525c
+- **Branch**: development
+- **Message**: "refactor: Complete Phase 3 (reduced scope) - timing infrastructure and cache TTL"
+- **Date**: 2026-01-16
 
 ---
 

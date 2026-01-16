@@ -230,6 +230,20 @@ search_code("MerkleDAG.build", search_mode="bm25", chunk_type="method")
 | [HYBRID_SEARCH_CONFIGURATION_GUIDE.md](docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md) | Search modes, weights, multi-model routing | Tuning search quality, mode selection |
 | [ADVANCED_FEATURES_GUIDE.md](docs/ADVANCED_FEATURES_GUIDE.md) | Multi-hop, graph search, call graph resolution | Understanding advanced features |
 
+### Core Module Structure (v0.8.6+)
+
+**Performance Infrastructure**:
+
+- `utils/timing.py` - Timing decorators and context managers
+- `embeddings/query_cache.py` - LRU cache with TTL for query embeddings
+
+**Instrumented Modules**:
+
+- `embeddings/embedder.py` - Query encoding operations
+- `search/search_executor.py` - BM25 and dense search execution
+- `search/reranking_engine.py` - Neural reranking
+- `search/multi_hop_searcher.py` - Multi-hop expansion
+
 ---
 
 ## Critical Workflow: Project Context Validation
@@ -454,6 +468,21 @@ search_code("EmbeddingManager")
 # Good: Filtered search, gets implementation
 search_code("EmbeddingManager", chunk_type="class", exclude_dirs=["tests/"])
 ```
+
+## Architecture Updates (v0.8.6+)
+
+### New Modules
+
+**utils/timing.py**:
+
+- `@timed(name)` decorator - Function execution timing with automatic logging
+- `Timer(name)` context manager - Code block timing with elapsed_ms dictionary
+
+**Key Features**:
+
+- Consistent timing format: `[TIMING] operation_name: Xms`
+- Microsecond precision via `time.perf_counter()`
+- Zero-overhead when INFO logging disabled
 
 ## Complete MCP Tool Reference (19 Tools)
 
@@ -1092,6 +1121,14 @@ set CLAUDE_VRAM_TIER=laptop
 
 **Purpose**: Manually cleanup all resources to free memory
 
+**Clears** (v0.8.6+):
+
+- Embedding models from GPU/VRAM
+- FAISS indices from RAM
+- **Query embedding cache** (with TTL-expired entries)
+- BM25 indices
+- Call graph data structures
+
 **Use When**:
 
 - Switching between large projects
@@ -1328,11 +1365,15 @@ clear_index()          # Full reset (requires re-indexing)
 - **VRAM after first search**: ~5.3 GB (multi-model routing with 3 models loaded)
 - **Cleanup**: Returns to 0 MB VRAM with `cleanup_resources()`
 
-### Query Cache (v0.5.17+)
+### Query Cache (v0.8.6+, TTL Support Added)
 
 - **LRU cache** for query embeddings (128 entries default)
-- **Performance**: Repeated queries = 0ms encoding (instant)
-- **Configuration**: `set CLAUDE_QUERY_CACHE_SIZE=256`
+- **TTL Support** (v0.8.6+): Automatic expiration of stale entries (300s/5min default)
+- **Performance**: Repeated queries = 0ms encoding (instant, cached hits)
+- **Configuration**:
+  - Cache size: `set CLAUDE_QUERY_CACHE_SIZE=256`
+  - TTL duration: `set CLAUDE_QUERY_CACHE_TTL=600` (seconds)
+- **Automatic cleanup**: Expired entries removed on access + full cleanup via `cleanup_resources()`
 
 ### Quality Metrics (Validated)
 
@@ -1347,6 +1388,40 @@ clear_index()          # Full reset (requires re-indexing)
 - **Precision**: 44.4%
 - **F1-score**: 46.7%
 - **Success rate**: 100% (256/256 test queries)
+
+### Timing Instrumentation (v0.8.6+)
+
+**Purpose**: Granular visibility into operation costs for performance debugging
+
+**Instrumented Operations** (logged as `[TIMING] operation_name: Xms`):
+
+1. **embed_query** (`embeddings/embedder.py`) - Query embedding generation
+2. **bm25_search** (`search/search_executor.py`) - Sparse keyword search
+3. **dense_search** (`search/search_executor.py`) - Dense vector search
+4. **neural_rerank** (`search/reranking_engine.py`) - Cross-encoder reranking
+5. **multi_hop_search** (`search/multi_hop_searcher.py`) - Multi-hop expansion
+
+**Usage**: Enable INFO-level logging to see timing breakdowns:
+
+```bash
+# Windows (PowerShell)
+$env:CLAUDE_LOG_LEVEL="INFO"
+
+# Example output:
+# [TIMING] embed_query: 45.23ms
+# [TIMING] bm25_search: 3.12ms
+# [TIMING] dense_search: 52.78ms
+# [TIMING] neural_rerank: 89.45ms
+```
+
+**Benefits**:
+
+- Identify slow operations in search pipeline
+- Validate cache effectiveness (embed_query = 0ms on cache hits)
+- Diagnose performance regressions
+- Optimize configuration based on empirical timing data
+
+**Module**: `utils/timing.py` provides `@timed()` decorator and `Timer()` context manager
 
 ## Troubleshooting
 

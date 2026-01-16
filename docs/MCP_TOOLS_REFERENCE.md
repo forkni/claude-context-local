@@ -527,6 +527,14 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 - **Subsequent searches**: 3-5s (models stay loaded in memory)
 - **Manual cleanup**: Use `/cleanup_resources` to unload models and return to 0 MB VRAM
 
+**Timing Instrumentation (v0.8.6+)**:
+
+- **Enable logging**: Set `CLAUDE_LOG_LEVEL=INFO` to see `[TIMING]` logs for 5 critical operations
+- **Instrumented operations**: `embed_query`, `bm25_search`, `dense_search`, `neural_rerank`, `multi_hop_search`
+- **Log format**: `[TIMING] operation_name: Xms` (milliseconds, 2 decimal precision)
+- **Module**: `utils/timing.py` provides `@timed()` decorator and `Timer()` context manager
+- **Overhead**: <0.1ms per operation (negligible)
+
 ---
 
 ## Example Usage

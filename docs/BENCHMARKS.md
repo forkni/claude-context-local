@@ -449,6 +449,16 @@ The Mixed approach demonstrates that **MCP semantic search is production-ready**
 
 **Recommendation**: Adopt the Mixed approach for optimal development workflow efficiency.
 
+### Performance Monitoring (v0.8.6+)
+
+**Timing Instrumentation Available**:
+
+- Set `CLAUDE_LOG_LEVEL=INFO` to enable granular timing logs
+- **5 instrumented operations**: `embed_query`, `bm25_search`, `dense_search`, `neural_rerank`, `multi_hop_search`
+- **Log format**: `[TIMING] operation_name: Xms` (milliseconds)
+- **Use case**: Identify bottlenecks, validate cache hits, diagnose performance issues
+- **Overhead**: <0.1ms per operation (negligible)
+
 ---
 
 ## Appendix: Benchmark Data

@@ -763,6 +763,65 @@ Configure automatic reindexing behavior:
 }
 ```
 
+### Query Embedding Cache Configuration
+
+**Version**: v0.8.6+
+
+**Feature**: TTL (Time-to-Live) support for query embedding cache
+
+**Purpose**: Automatic expiration of stale embeddings prevents serving outdated embeddings after model changes.
+
+**Configuration**:
+
+```python
+from embeddings.query_cache import QueryEmbeddingCache
+
+# Default TTL: 5 minutes
+cache = QueryEmbeddingCache(max_size=128, ttl_seconds=300)
+
+# Custom TTL: 10 minutes (stable production)
+cache = QueryEmbeddingCache(max_size=128, ttl_seconds=600)
+
+# Short TTL: 2 minutes (active development)
+cache = QueryEmbeddingCache(max_size=128, ttl_seconds=120)
+```
+
+**Cache Statistics**:
+
+```python
+stats = cache.get_stats()
+# Returns: {
+#   "hits": N,
+#   "misses": M,
+#   "hit_rate": "X%",
+#   "cache_size": Y,
+#   "max_size": 128
+# }
+```
+
+**When to Adjust TTL**:
+
+| Scenario | Recommended TTL | Reason |
+|----------|----------------|--------|
+| Stable production | 600-900s (10-15min) | Infrequent model changes, maximize cache hits |
+| Active development | 60-120s (1-2min) | Frequent model switching, ensure freshness |
+| Testing/benchmarking | 999999s (disabled) | Deterministic behavior, consistent timing |
+| Default (recommended) | 300s (5min) | Balance between freshness and performance |
+
+**Benefits**:
+
+- **Prevents stale embeddings**: Auto-expires after model changes
+- **Zero manual intervention**: Cleanup happens automatically on access
+- **Performance maintained**: Cache hits still return instantly (0ms)
+- **Configurable**: Tune TTL based on your workflow
+
+**Performance Impact**:
+
+- **First query**: Full embedding generation (~50ms)
+- **Repeated query (within TTL)**: Instant retrieval (0ms)
+- **After TTL expiration**: Re-generate embedding (~50ms)
+- **Cache overhead**: <0.1ms per access (negligible)
+
 ## Monitoring and Diagnostics
 
 ### Check System Status
@@ -782,6 +841,90 @@ The system tracks:
 - Memory usage patterns
 - Search success rates
 - Hardware utilization
+
+### Performance Monitoring (v0.8.6+)
+
+**Feature**: Granular timing instrumentation for performance debugging
+
+**Instrumented Operations**:
+
+The system logs timing data for 5 critical operations:
+
+1. **embed_query**: Query embedding generation
+2. **bm25_search**: Sparse keyword search
+3. **dense_search**: Dense vector search
+4. **apply_neural_reranking**: Cross-encoder reranking
+5. **multi_hop_search**: Multi-hop expansion
+
+**Enable Timing Logs**:
+
+```powershell
+# Windows (PowerShell)
+$env:CLAUDE_LOG_LEVEL="INFO"
+# Restart MCP server
+
+# Linux/macOS
+export CLAUDE_LOG_LEVEL=INFO
+# Restart MCP server
+```
+
+**Check Logs for `[TIMING]` Entries**:
+
+```
+[TIMING] embed_query: 45.23ms
+[TIMING] bm25_search: 3.12ms
+[TIMING] dense_search: 52.78ms
+[TIMING] neural_rerank: 89.45ms
+[TIMING] multi_hop_search: 145.67ms
+```
+
+**Interpreting Timing Data**:
+
+| Timing Pattern | Status | Action |
+|---------------|--------|--------|
+| `embed_query: 0ms` | ✅ Optimal | Cache hit, no action needed |
+| `embed_query: 40-60ms` | ⚠️ Normal | First query or cache miss |
+| `bm25_search: <15ms` | ✅ Fast | No action needed |
+| `dense_search: 50-100ms` | ⚠️ Moderate | Acceptable, monitor trends |
+| `dense_search: >150ms` | ❌ Slow | Consider BM25 mode or reduce index size |
+| `neural_rerank: 80-150ms` | ⚠️ Expensive | Expected with reranking |
+| `neural_rerank: >200ms` | ❌ Too slow | Disable or reduce `top_k_candidates` |
+
+**Optimization Strategies**:
+
+1. **Cache optimization**: Monitor `embed_query` timing
+   - 0ms = Cache hit (optimal)
+   - >60ms consistently = Check cache size/TTL settings
+
+2. **Reranker tuning**: If `neural_rerank` > 200ms
+   - Reduce `top_k_candidates` in reranker config
+   - Or disable neural reranking entirely
+
+3. **Search mode selection**: If `dense_search` > 150ms
+   - Switch to `bm25` mode for keyword-heavy queries
+   - Or reduce index size by filtering directories
+
+4. **Multi-hop tuning**: If `multi_hop_search` > 500ms
+   - Reduce `hops` parameter (default: 2)
+   - Reduce `expansion_factor` (default: 0.3)
+
+**Custom Timing Usage**:
+
+```python
+from utils.timing import timed, Timer
+
+# Decorator for functions
+@timed("my_operation")
+def my_function():
+    # Your code
+    pass
+
+# Context manager for code blocks
+with Timer("custom_operation") as t:
+    # Your code
+    pass
+print(f"Took {t['elapsed_ms']:.2f}ms")
+```
 
 ### Troubleshooting
 
