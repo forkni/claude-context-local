@@ -144,6 +144,56 @@ class HybridSearcher(BaseSearcher):
                     f"Consider re-indexing to synchronize indices."
                 )
 
+        # Initialize search components (reranker, search executor, multi-hop)
+        self._init_search_components(
+            embedder=embedder,
+            rrf_k=rrf_k,
+            bm25_weight=bm25_weight,
+            dense_weight=dense_weight,
+            max_workers=max_workers,
+            bm25_use_stopwords=bm25_use_stopwords,
+            bm25_use_stemming=bm25_use_stemming,
+            project_id=project_id,
+        )
+
+        # Initialize graph components (ego-graph retrieval)
+        self._init_graph_components(project_id=project_id)
+
+        # Backward compatibility
+        self.max_workers = max_workers
+        self._shutdown_lock = threading.Lock()
+        self._is_shutdown = False
+
+        # Dimension validation (safety check)
+        self._validate_dimensions(self.dense_index.index, self.embedder)
+
+    def _init_search_components(
+        self,
+        embedder: Optional["CodeEmbedder"],
+        rrf_k: int,
+        bm25_weight: float,
+        dense_weight: float,
+        max_workers: int,
+        bm25_use_stopwords: bool,
+        bm25_use_stemming: bool,
+        project_id: Optional[str],
+    ) -> None:
+        """Initialize search execution components.
+
+        Creates reranker, GPU monitor, reranking engine, index synchronizer,
+        search executor, and multi-hop searcher with proper configuration.
+
+        Args:
+            embedder: CodeEmbedder instance
+            rrf_k: RRF parameter for reranking
+            bm25_weight: Weight for BM25 results
+            dense_weight: Weight for dense vector results
+            max_workers: Maximum thread pool workers
+            bm25_use_stopwords: Whether BM25 uses stopwords
+            bm25_use_stemming: Whether BM25 uses stemming
+            project_id: Project identifier
+        """
+        # Reranker and GPU monitor
         self.reranker = RRFReranker(k=rrf_k)
         self.gpu_monitor = GPUMemoryMonitor()
 
@@ -187,10 +237,19 @@ class HybridSearcher(BaseSearcher):
             logger=self._logger,
         )
 
-        # Ego-graph retrieval (RepoGraph-style k-hop expansion)
-        # Initialize graph storage if project_id is provided
+    def _init_graph_components(self, project_id: Optional[str]) -> None:
+        """Initialize graph storage and ego-graph retrieval components.
+
+        Creates CodeGraphStorage and EgoGraphRetriever if project_id is provided.
+        Logs warnings if initialization fails but continues (non-critical).
+
+        Args:
+            project_id: Project identifier for graph storage
+        """
+        # Initialize to None
         self._graph_storage = None
         self.ego_graph_retriever = None
+
         if project_id:
             try:
                 # Graph storage in parent of storage_dir (same as graph_integration.py)
@@ -209,14 +268,6 @@ class HybridSearcher(BaseSearcher):
                 )
                 self._graph_storage = None
                 self.ego_graph_retriever = None
-
-        # Backward compatibility
-        self.max_workers = max_workers
-        self._shutdown_lock = threading.Lock()
-        self._is_shutdown = False
-
-        # Dimension validation (safety check)
-        self._validate_dimensions(self.dense_index.index, self.embedder)
 
     def _load_bm25_index(self) -> bool:
         """Load BM25 index and return success status.
@@ -332,6 +383,15 @@ class HybridSearcher(BaseSearcher):
             CodeGraphStorage instance or None if not available
         """
         return self._graph_storage
+
+    @graph_storage.setter
+    def graph_storage(self, value):
+        """Set graph storage (primarily for testing).
+
+        Args:
+            value: CodeGraphStorage instance or None
+        """
+        self._graph_storage = value
 
     @property
     def stats(self) -> dict[str, Any]:
