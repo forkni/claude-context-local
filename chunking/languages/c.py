@@ -21,8 +21,7 @@ class CChunker(LanguageChunker):
             return Language(tsc.language())
         except ImportError as err:
             raise ValueError(
-                "tree-sitter-c not installed. "
-                "Install with: pip install tree-sitter-c"
+                "tree-sitter-c not installed. Install with: pip install tree-sitter-c"
             ) from err
 
     def _get_splittable_node_types(self) -> set[str]:

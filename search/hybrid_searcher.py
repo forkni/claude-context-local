@@ -9,8 +9,11 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
+
 if TYPE_CHECKING:
-    from .config import SearchConfig
+    from embeddings.embedder import CodeEmbedder, EmbeddingResult
+
+    from .config import EgoGraphConfig, SearchConfig
 
 try:
     import torch
@@ -19,6 +22,9 @@ except ImportError:
 
 from graph.graph_storage import CodeGraphStorage
 from graph.relationship_types import RelationshipEdge, RelationshipType
+from mcp_server.utils.config_helpers import (
+    get_config_via_service_locator as _get_config_via_service_locator,
+)
 
 from .bm25_index import BM25Index
 from .ego_graph_retriever import EgoGraphRetriever
@@ -34,29 +40,21 @@ from .search_executor import SearchExecutor
 from .weight_optimizer import WeightOptimizer
 
 
-# Helper function to access config via ServiceLocator (avoids circular imports)
-def _get_config_via_service_locator():
-    """Get SearchConfig via ServiceLocator to avoid circular dependencies."""
-    from mcp_server.services import ServiceLocator
-
-    return ServiceLocator.instance().get_config()
-
-
 class HybridSearcher:
     """Orchestrates BM25 + dense search with GPU awareness and parallel execution."""
 
     def __init__(
         self,
         storage_dir: str,
-        embedder=None,
+        embedder: Optional["CodeEmbedder"] = None,
         bm25_weight: float = 0.4,
         dense_weight: float = 0.6,
         rrf_k: int = 60,
         max_workers: int = 2,
         bm25_use_stopwords: bool = True,
         bm25_use_stemming: bool = True,
-        project_id: str = None,
-        config=None,
+        project_id: Optional[str] = None,
+        config: Optional["SearchConfig"] = None,
     ):
         """
         Initialize hybrid searcher.
@@ -284,7 +282,7 @@ class HybridSearcher:
     def __enter__(self) -> "HybridSearcher":
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         self.shutdown()
 
     def close_metadata_connections(self) -> None:
@@ -462,7 +460,7 @@ class HybridSearcher:
 
         return result
 
-    def _evict_cache_if_needed(self):
+    def _evict_cache_if_needed(self) -> None:
         """Evict oldest cache entries if cache exceeds max size.
 
         Uses simple FIFO eviction strategy. More sophisticated LRU could
@@ -695,7 +693,7 @@ class HybridSearcher:
         )
 
     def _apply_ego_graph_expansion(
-        self, results: list[SearchResult], ego_config, original_k: int
+        self, results: list[SearchResult], ego_config: "EgoGraphConfig", original_k: int
     ) -> list[SearchResult]:
         """Apply ego-graph expansion to search results.
 
@@ -773,7 +771,7 @@ class HybridSearcher:
             return results
 
     def _apply_parent_expansion(
-        self, results: list[SearchResult], config
+        self, results: list[SearchResult], config: "SearchConfig"
     ) -> list[SearchResult]:
         """Apply parent chunk expansion to search results.
 
@@ -999,7 +997,7 @@ class HybridSearcher:
         """Load both BM25 and dense indices. Delegates to IndexSynchronizer."""
         return self.index_sync.load_indices()
 
-    def add_embeddings(self, embedding_results) -> None:
+    def add_embeddings(self, embedding_results: list["EmbeddingResult"]) -> None:
         """
         Add embeddings to both BM25 and dense indices.
         Compatible with incremental indexer interface.
@@ -1232,6 +1230,6 @@ class HybridSearcher:
         """Remove chunks for multiple files from both indices. Delegates to IndexSynchronizer."""
         return self.index_sync.remove_multiple_files(file_paths, project_name)
 
-    def _verify_bm25_files(self):
+    def _verify_bm25_files(self) -> None:
         """Verify BM25 files exist and are non-empty. Delegates to IndexSynchronizer."""
         self.index_sync._verify_bm25_files()

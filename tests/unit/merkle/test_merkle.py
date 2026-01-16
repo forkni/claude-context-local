@@ -510,14 +510,14 @@ class TestChangeDetector(TestCase):
 
         # Verify filters were inherited - test file should still be excluded
         test_file_in_current = any("test_module.py" in f for f in current_files)
-        assert (
-            not test_file_in_current
-        ), "Test file should be excluded in current DAG (filters inherited)"
+        assert not test_file_in_current, (
+            "Test file should be excluded in current DAG (filters inherited)"
+        )
 
         # Verify file counts match (no false "added" files)
-        assert len(current_files) == len(
-            files_with_filters
-        ), f"File count mismatch: {len(current_files)} vs {len(files_with_filters)}"
+        assert len(current_files) == len(files_with_filters), (
+            f"File count mismatch: {len(current_files)} vs {len(files_with_filters)}"
+        )
 
         # Verify no changes detected (both DAGs should have same filtered files)
         assert not changes.has_changes(), (
@@ -527,12 +527,12 @@ class TestChangeDetector(TestCase):
         )
 
         # Verify filter inheritance was applied
-        assert (
-            current_dag.directory_filter is not None
-        ), "Current DAG should have directory filter"
-        assert current_dag.directory_filter.exclude_dirs == [
-            "tests"
-        ], "Exclude dirs should be inherited from snapshot"
+        assert current_dag.directory_filter is not None, (
+            "Current DAG should have directory filter"
+        )
+        assert current_dag.directory_filter.exclude_dirs == ["tests"], (
+            "Exclude dirs should be inherited from snapshot"
+        )
 
 
 if __name__ == "__main__":

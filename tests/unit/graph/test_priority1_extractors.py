@@ -14,6 +14,7 @@ from graph.relationship_extractors.inheritance_extractor import InheritanceExtra
 from graph.relationship_extractors.type_extractor import TypeAnnotationExtractor
 from graph.relationship_types import RelationshipType
 
+
 # ===== Test Fixtures =====
 
 
@@ -464,9 +465,9 @@ def broken(
 
     for extractor in extractors:
         edges = extractor.extract(code, chunk_metadata)
-        assert (
-            edges == []
-        ), f"{extractor.__class__.__name__} should return empty list on syntax error"
+        assert edges == [], (
+            f"{extractor.__class__.__name__} should return empty list on syntax error"
+        )
 
 
 def test_extractors_handle_empty_code(chunk_metadata):
@@ -477,9 +478,9 @@ def test_extractors_handle_empty_code(chunk_metadata):
 
     for extractor in extractors:
         edges = extractor.extract(code, chunk_metadata)
-        assert (
-            edges == []
-        ), f"{extractor.__class__.__name__} should return empty list for empty code"
+        assert edges == [], (
+            f"{extractor.__class__.__name__} should return empty list for empty code"
+        )
 
 
 def test_extractors_set_correct_relationship_type(chunk_metadata):
@@ -537,6 +538,6 @@ def test_extractors_all_have_confidence_1_0(chunk_metadata):
     for code, extractor in zip(codes, extractors, strict=False):
         edges = extractor.extract(code, chunk_metadata)
         if edges:
-            assert all(
-                e.confidence == 1.0 for e in edges
-            ), f"{extractor.__class__.__name__} should use confidence 1.0"
+            assert all(e.confidence == 1.0 for e in edges), (
+                f"{extractor.__class__.__name__} should use confidence 1.0"
+            )

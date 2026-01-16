@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -170,8 +171,7 @@ class VRAMTierManager:
                 return tier.recommended_model
 
         raise ValueError(
-            f"Unknown tier: {tier_name}. "
-            f"Valid tiers: {[t.name for t in VRAM_TIERS]}"
+            f"Unknown tier: {tier_name}. Valid tiers: {[t.name for t in VRAM_TIERS]}"
         )
 
     def should_enable_multi_model(self) -> bool:

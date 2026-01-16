@@ -14,6 +14,7 @@ from graph.relationship_extractors.exception_extractor import ExceptionExtractor
 from graph.relationship_extractors.instantiation_extractor import InstantiationExtractor
 from graph.relationship_types import RelationshipType
 
+
 # ===== Test Fixtures =====
 
 
@@ -515,9 +516,9 @@ def test_extractors_handle_syntax_errors(chunk_metadata):
 
     for extractor in extractors:
         edges = extractor.extract(bad_code, chunk_metadata)
-        assert (
-            edges == []
-        ), f"{extractor.__class__.__name__} should return empty list on syntax error"
+        assert edges == [], (
+            f"{extractor.__class__.__name__} should return empty list on syntax error"
+        )
 
 
 def test_extractors_handle_empty_code(chunk_metadata):
@@ -526,9 +527,9 @@ def test_extractors_handle_empty_code(chunk_metadata):
 
     for extractor in extractors:
         edges = extractor.extract("", chunk_metadata)
-        assert (
-            edges == []
-        ), f"{extractor.__class__.__name__} should return empty list on empty code"
+        assert edges == [], (
+            f"{extractor.__class__.__name__} should return empty list on empty code"
+        )
 
 
 def test_decorator_extractor_relationship_type(chunk_metadata):

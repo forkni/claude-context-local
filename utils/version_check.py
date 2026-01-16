@@ -8,6 +8,7 @@ import logging
 from importlib.metadata import PackageNotFoundError, version
 from typing import Dict, List, Tuple
 
+
 logger = logging.getLogger(__name__)
 
 # Critical dependencies with minimum versions

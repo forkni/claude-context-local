@@ -10,6 +10,7 @@ from typing import Optional
 
 import numpy as np
 
+
 try:
     import torch
 except ImportError:

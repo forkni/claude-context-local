@@ -23,6 +23,7 @@ from mcp_server.storage_manager import (
     update_project_filters,
 )
 from mcp_server.tools.decorators import error_handler
+from mcp_server.utils.config_helpers import temporary_ram_fallback_off
 from search.config import (
     MODEL_REGISTRY,
     SearchConfigManager,
@@ -31,6 +32,7 @@ from search.filters import compute_drive_agnostic_hash, compute_legacy_hash
 from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
+
 
 logger = logging.getLogger(__name__)
 
@@ -808,68 +810,75 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
     # Set as current project (using setter for proper cross-module sync)
     set_current_project(str(directory_path))
 
-    # Multi-model batch indexing
-    if multi_model and get_state().multi_model_enabled:
-        logger.info(f"Multi-model batch indexing for: {directory_path}")
-        # Run in thread pool to avoid blocking asyncio event loop
-        import asyncio
+    # Temporarily disable allow_ram_fallback during indexing for performance
+    with temporary_ram_fallback_off() as original_value:
+        if original_value:
+            logger.info(
+                "[INDEX] RAM fallback auto-disabled for this indexing operation"
+            )
 
-        results = await asyncio.to_thread(
-            _index_with_all_models,
-            directory_path,
-            incremental,
-            include_dirs,
-            exclude_dirs,
-        )
-        return _build_index_response(
-            results, str(directory_path), multi_model=True, incremental=incremental
-        )
+        # Multi-model batch indexing
+        if multi_model and get_state().multi_model_enabled:
+            logger.info(f"Multi-model batch indexing for: {directory_path}")
+            # Run in thread pool to avoid blocking asyncio event loop
+            import asyncio
 
-    # Single model indexing (original behavior)
-    else:
-        logger.info(f"Single-model indexing for: {directory_path}")
+            results = await asyncio.to_thread(
+                _index_with_all_models,
+                directory_path,
+                incremental,
+                include_dirs,
+                exclude_dirs,
+            )
+            return _build_index_response(
+                results, str(directory_path), multi_model=True, incremental=incremental
+            )
 
-        # Get or create project storage
-        project_dir = get_project_storage_dir(str(directory_path))
-        index_dir = project_dir / "index"
-        index_dir.mkdir(exist_ok=True)
+        # Single model indexing (original behavior)
+        else:
+            logger.info(f"Single-model indexing for: {directory_path}")
 
-        # Load config for chunker initialization
-        config = get_config()
+            # Get or create project storage
+            project_dir = get_project_storage_dir(str(directory_path))
+            index_dir = project_dir / "index"
+            index_dir.mkdir(exist_ok=True)
 
-        # Initialize components using cached getter functions
-        chunker = MultiLanguageChunker(
-            str(directory_path),
-            include_dirs,
-            exclude_dirs,
-            enable_entity_tracking=config.performance.enable_entity_tracking,
-        )
-        embedder = get_embedder()
-        searcher_instance = get_searcher(str(directory_path))
-        indexer = (
-            searcher_instance
-            if config.search_mode.enable_hybrid
-            else get_index_manager(str(directory_path))
-        )
+            # Load config for chunker initialization
+            config = get_config()
 
-        # Run indexing (using helper) - in thread pool to avoid blocking event loop
-        import asyncio
+            # Initialize components using cached getter functions
+            chunker = MultiLanguageChunker(
+                str(directory_path),
+                include_dirs,
+                exclude_dirs,
+                enable_entity_tracking=config.performance.enable_entity_tracking,
+            )
+            embedder = get_embedder()
+            searcher_instance = get_searcher(str(directory_path))
+            indexer = (
+                searcher_instance
+                if config.search_mode.enable_hybrid
+                else get_index_manager(str(directory_path))
+            )
 
-        result = await asyncio.to_thread(
-            _run_indexing,
-            indexer,
-            embedder,
-            chunker,
-            str(directory_path),
-            incremental,
-            include_dirs,
-            exclude_dirs,
-        )
+            # Run indexing (using helper) - in thread pool to avoid blocking event loop
+            import asyncio
 
-        # Build response (using helper)
-        return _build_index_response(
-            [result],
-            str(directory_path),
-            multi_model=False,
-            incremental=incremental,
-        )
+            result = await asyncio.to_thread(
+                _run_indexing,
+                indexer,
+                embedder,
+                chunker,
+                str(directory_path),
+                incremental,
+                include_dirs,
+                exclude_dirs,
+            )
+
+            # Build response (using helper)
+            return _build_index_response(
+                [result],
+                str(directory_path),
+                multi_model=False,
+                incremental=incremental,
+            )

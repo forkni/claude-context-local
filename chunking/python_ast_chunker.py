@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+
 if TYPE_CHECKING:
     from graph.call_graph_extractor import CallEdge
 

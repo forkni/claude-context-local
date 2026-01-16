@@ -14,6 +14,7 @@ from networkx.algorithms.community import louvain_communities, modularity
 
 from graph.graph_storage import CodeGraphStorage
 
+
 logger = logging.getLogger(__name__)
 
 

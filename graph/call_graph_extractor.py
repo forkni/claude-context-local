@@ -117,9 +117,9 @@ class PythonCallGraphExtractor(CallGraphExtractor):
         super().__init__()
         # Class context tracking for self/super resolution
         self._current_class: Optional[str] = None
-        self._class_bases: dict[str, list[str]] = (
-            {}
-        )  # class_name -> list of base classes
+        self._class_bases: dict[
+            str, list[str]
+        ] = {}  # class_name -> list of base classes
 
         # Initialize resolvers
         self._type_resolver = TypeResolver()

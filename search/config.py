@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Optional
 
+
 # Model registry with specifications
 # Multi-model pool configuration for query routing
 # Maps model keys to full model names in MODEL_REGISTRY

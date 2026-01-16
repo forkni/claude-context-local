@@ -71,9 +71,9 @@ class TestQueryRouterBenchmarkQueries:
     ):
         """Test that benchmark queries route to expected models."""
         decision = router.route(query)
-        assert (
-            decision.model_key == expected_model
-        ), f"{description}: Expected {expected_model}, got {decision.model_key} (confidence: {decision.confidence:.2f}, scores: {decision.scores})"
+        assert decision.model_key == expected_model, (
+            f"{description}: Expected {expected_model}, got {decision.model_key} (confidence: {decision.confidence:.2f}, scores: {decision.scores})"
+        )
 
     def test_routing_confidence_scores(self, router):
         """Test that routing provides reasonable confidence scores."""
@@ -158,16 +158,16 @@ class TestQueryRouterKeywordMatching:
     def test_caller_keyword_routes_to_coderankembed(self, router):
         """Test that 'caller' keyword routes to coderankembed."""
         decision = router.route("find function callers")
-        assert (
-            decision.model_key == "coderankembed"
-        ), "Caller should route to coderankembed"
+        assert decision.model_key == "coderankembed", (
+            "Caller should route to coderankembed"
+        )
 
     def test_dependency_keyword_routes_to_coderankembed(self, router):
         """Test that 'dependency' keyword routes to coderankembed."""
         decision = router.route("dependency graph analysis")
-        assert (
-            decision.model_key == "coderankembed"
-        ), "Dependency should route to coderankembed"
+        assert decision.model_key == "coderankembed", (
+            "Dependency should route to coderankembed"
+        )
 
     def test_switch_keyword_routes_to_bge_m3(self, router):
         """Test that 'switch' keyword routes to bge_m3."""
@@ -211,9 +211,9 @@ class TestQueryRouterEdgeCases:
         qwen3_strengths = router.get_model_strengths("qwen3")
         assert qwen3_strengths is not None, "Should return qwen3 strengths"
         assert "keywords" in qwen3_strengths, "Should include keywords"
-        assert (
-            "validate" in qwen3_strengths["keywords"]
-        ), "Should include new validate keyword"
+        assert "validate" in qwen3_strengths["keywords"], (
+            "Should include new validate keyword"
+        )
 
         invalid = router.get_model_strengths("invalid_model")
         assert invalid is None, "Should return None for invalid model"
@@ -250,9 +250,9 @@ class TestQueryRouterConfidenceThreshold:
         decision_high = router.route(query, confidence_threshold=0.5)
 
         # High threshold should be more likely to use default
-        assert (
-            decision_low.confidence == decision_high.confidence
-        ), "Confidence should be same regardless of threshold"
+        assert decision_low.confidence == decision_high.confidence, (
+            "Confidence should be same regardless of threshold"
+        )
 
 
 if __name__ == "__main__":

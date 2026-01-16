@@ -6,6 +6,7 @@ and understand next steps based on search results.
 
 from typing import Any
 
+
 # System message templates for different scenarios
 GUIDANCE_TEMPLATES = {
     "search_code": {

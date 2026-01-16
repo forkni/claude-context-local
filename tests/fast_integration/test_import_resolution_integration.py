@@ -86,9 +86,9 @@ class Processor:
             if "process_types" in name:
                 assert "TypeExtractor.analyze" in calls
                 found_types = True
-        assert (
-            found_exceptions
-        ), f"Did not find process_exceptions in {resolved_calls.keys()}"
+        assert found_exceptions, (
+            f"Did not find process_exceptions in {resolved_calls.keys()}"
+        )
         assert found_types, f"Did not find process_types in {resolved_calls.keys()}"
 
     def test_aliased_import_in_chunked_file(self):

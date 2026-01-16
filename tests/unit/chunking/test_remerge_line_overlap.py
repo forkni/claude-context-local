@@ -178,9 +178,9 @@ class TestRemergeLineOverlapFix:
         )
 
         # Should NOT merge (different files)
-        assert (
-            len(result) == 2
-        ), f"Expected 2 chunks (no cross-file merge), got {len(result)}"
+        assert len(result) == 2, (
+            f"Expected 2 chunks (no cross-file merge), got {len(result)}"
+        )
 
         # Each chunk should keep its original file_path
         file_paths = {c.file_path for c in result}
@@ -211,13 +211,13 @@ class TestRemergeLineOverlapFix:
         # Verify no cross-file pollution
         for chunk in result:
             if "first" in chunk.content or chunk.name == "first":
-                assert (
-                    chunk.file_path == "fileA.py"
-                ), "First chunk should be in fileA.py"
+                assert chunk.file_path == "fileA.py", (
+                    "First chunk should be in fileA.py"
+                )
             elif "second" in chunk.content or chunk.name == "second":
-                assert (
-                    chunk.file_path == "fileB.py"
-                ), "Second chunk should be in fileB.py"
+                assert chunk.file_path == "fileB.py", (
+                    "Second chunk should be in fileB.py"
+                )
 
     def test_empty_community_map(self):
         """Empty community map returns chunks unchanged."""

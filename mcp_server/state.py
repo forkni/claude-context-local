@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
+
 if TYPE_CHECKING:
     from search.config import SearchConfig
 

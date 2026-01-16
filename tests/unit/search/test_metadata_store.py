@@ -77,7 +77,7 @@ class TestMetadataStoreBasicOperations:
                 "file3.py:1-10:function:baz",
             ]
             for i, chunk_id in enumerate(chunk_ids):
-                store.set(chunk_id, i, {"relative_path": f"file{i+1}.py"})
+                store.set(chunk_id, i, {"relative_path": f"file{i + 1}.py"})
 
             # Delete batch (including one nonexistent)
             to_delete = chunk_ids + ["nonexistent.py:1-10:function:qux"]
@@ -132,7 +132,7 @@ class TestMetadataStoreIndexIdUpdates:
                 "file3.py:1-10:function:baz",
             ]
             for i, chunk_id in enumerate(chunk_ids):
-                store.set(chunk_id, i, {"relative_path": f"file{i+1}.py"})
+                store.set(chunk_id, i, {"relative_path": f"file{i + 1}.py"})
 
             # Batch update (including one nonexistent)
             updates = {
@@ -208,7 +208,7 @@ class TestMetadataStoreQueryOperations:
                 "file3.py:1-10:function:baz",
             ]
             for i, chunk_id in enumerate(chunk_ids):
-                store.set(chunk_id, i, {"relative_path": f"file{i+1}.py"})
+                store.set(chunk_id, i, {"relative_path": f"file{i + 1}.py"})
 
             # Iterate over keys
             retrieved_keys = list(store.keys())
@@ -228,7 +228,7 @@ class TestMetadataStoreQueryOperations:
                 "file2.py:1-10:function:bar",
             ]
             for i, chunk_id in enumerate(chunk_ids):
-                store.set(chunk_id, i, {"relative_path": f"file{i+1}.py"})
+                store.set(chunk_id, i, {"relative_path": f"file{i + 1}.py"})
 
             # Iterate over items
             items = dict(store.items())
@@ -236,7 +236,7 @@ class TestMetadataStoreQueryOperations:
             for i, chunk_id in enumerate(chunk_ids):
                 assert chunk_id in items
                 assert items[chunk_id]["index_id"] == i
-                assert items[chunk_id]["metadata"]["relative_path"] == f"file{i+1}.py"
+                assert items[chunk_id]["metadata"]["relative_path"] == f"file{i + 1}.py"
 
             store.close()
 

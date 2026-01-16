@@ -2,6 +2,7 @@
 
 import pytest
 
+
 try:
     import networkx as nx
 except ImportError:

@@ -8,15 +8,11 @@ import logging
 import time
 from typing import Any, Optional
 
+from mcp_server.utils.config_helpers import (
+    get_config_via_service_locator as _get_config_via_service_locator,
+)
+
 from .reranker import SearchResult as RerankerSearchResult
-
-
-# Helper function to access config via ServiceLocator (avoids circular imports)
-def _get_config_via_service_locator():
-    """Get SearchConfig via ServiceLocator to avoid circular dependencies."""
-    from mcp_server.services import ServiceLocator
-
-    return ServiceLocator.instance().get_config()
 
 
 class MultiHopSearcher:

@@ -262,7 +262,9 @@ class DatabaseConnection:
         # This should not fail
         assert hasattr(
             indexed_hybrid_environment["hybrid_searcher"], "add_embeddings"
-        ), "HybridSearcher missing add_embeddings method required by incremental indexer"
+        ), (
+            "HybridSearcher missing add_embeddings method required by incremental indexer"
+        )
 
     def test_incremental_indexing_with_hybrid_search(self, indexed_hybrid_environment):
         """Test that incremental indexing works with hybrid search."""
@@ -298,19 +300,19 @@ class DatabaseConnection:
             force_full=True,
         )
 
-        assert (
-            result.success
-        ), f"Indexing must succeed for this test: {result.error if not result.success else ''}"
+        assert result.success, (
+            f"Indexing must succeed for this test: {result.error if not result.success else ''}"
+        )
 
         # Check that HybridSearcher is ready (both indices populated)
-        assert indexed_hybrid_environment[
-            "hybrid_searcher"
-        ].is_ready, "HybridSearcher should be ready after indexing (both BM25 and dense indices populated)"
+        assert indexed_hybrid_environment["hybrid_searcher"].is_ready, (
+            "HybridSearcher should be ready after indexing (both BM25 and dense indices populated)"
+        )
 
         # Check BM25 index specifically
-        assert not indexed_hybrid_environment[
-            "hybrid_searcher"
-        ].bm25_index.is_empty, "BM25 index should not be empty after indexing"
+        assert not indexed_hybrid_environment["hybrid_searcher"].bm25_index.is_empty, (
+            "BM25 index should not be empty after indexing"
+        )
 
         # Check dense index specifically
         assert (
@@ -330,9 +332,9 @@ class DatabaseConnection:
             project_name="test_project",
             force_full=True,
         )
-        assert (
-            result.success
-        ), f"Indexing must succeed: {result.error if not result.success else ''}"
+        assert result.success, (
+            f"Indexing must succeed: {result.error if not result.success else ''}"
+        )
 
         # Test search queries that should favor different indices
         queries_to_test = [
@@ -357,9 +359,9 @@ class DatabaseConnection:
                 assert hasattr(result, "chunk_id"), "Result missing chunk_id"
                 assert hasattr(result, "score"), "Result missing score"
                 assert hasattr(result, "metadata"), "Result missing metadata"
-                assert (
-                    result.score > 0
-                ), f"Result score should be positive: {result.score}"
+                assert result.score > 0, (
+                    f"Result score should be positive: {result.score}"
+                )
 
     def test_bm25_vs_dense_results_differ(self, indexed_hybrid_environment):
         """Test that BM25-only and dense-only searches return different results."""
@@ -371,9 +373,9 @@ class DatabaseConnection:
             project_name="test_project",
             force_full=True,
         )
-        assert (
-            result.success
-        ), f"Indexing must succeed: {result.error if not result.success else ''}"
+        assert result.success, (
+            f"Indexing must succeed: {result.error if not result.success else ''}"
+        )
 
         # Test a query that should show different results for BM25 vs dense
         query = "user authentication"
@@ -398,9 +400,9 @@ class DatabaseConnection:
 
         # The results should be different (different ranking/selection)
         # This tests that both indices are contributing to the search
-        assert (
-            bm25_doc_ids != dense_doc_ids
-        ), "BM25 and dense search should return different results for semantic queries"
+        assert bm25_doc_ids != dense_doc_ids, (
+            "BM25 and dense search should return different results for semantic queries"
+        )
 
     def test_hybrid_reranking_combines_results(self, indexed_hybrid_environment):
         """Test that hybrid reranking properly combines BM25 and dense results."""
@@ -412,9 +414,9 @@ class DatabaseConnection:
             project_name="test_project",
             force_full=True,
         )
-        assert (
-            result.success
-        ), f"Indexing must succeed: {result.error if not result.success else ''}"
+        assert result.success, (
+            f"Indexing must succeed: {result.error if not result.success else ''}"
+        )
 
         query = "calculate sum"
 
@@ -455,9 +457,9 @@ class DatabaseConnection:
             project_name="test_project",
             force_full=True,
         )
-        assert (
-            result.success
-        ), f"Indexing must succeed: {result.error if not result.success else ''}"
+        assert result.success, (
+            f"Indexing must succeed: {result.error if not result.success else ''}"
+        )
 
         query = "database connection"
 
@@ -479,9 +481,9 @@ class DatabaseConnection:
 
         # Allow for some differences due to threading, but expect significant overlap
         overlap = len(set(parallel_chunk_ids) & set(sequential_chunk_ids))
-        assert (
-            overlap >= len(parallel_results) // 2
-        ), "Parallel and sequential search should have significant overlap in results"
+        assert overlap >= len(parallel_results) // 2, (
+            "Parallel and sequential search should have significant overlap in results"
+        )
 
     def test_index_persistence(self, indexed_hybrid_environment):
         """Test that hybrid indices persist across searcher instances."""
@@ -510,9 +512,9 @@ class DatabaseConnection:
         assert load_success, "Loading indices should succeed"
 
         # Verify the new searcher is ready
-        assert (
-            new_searcher.is_ready
-        ), "New searcher should be ready after loading indices"
+        assert new_searcher.is_ready, (
+            "New searcher should be ready after loading indices"
+        )
 
         # Test that search works with loaded indices
         query = "calculate sum"
@@ -538,9 +540,9 @@ class DatabaseConnection:
             project_name="test_project",
             force_full=True,
         )
-        assert (
-            result.success
-        ), f"Initial indexing must succeed: {result.error if not result.success else ''}"
+        assert result.success, (
+            f"Initial indexing must succeed: {result.error if not result.success else ''}"
+        )
 
         # Add a new file
         new_file = indexed_hybrid_environment["project_dir"] / "new_module.py"
@@ -613,9 +615,9 @@ def validate_item(item):
 
         # Restore weights
         indexed_hybrid_environment["hybrid_searcher"].bm25_weight = original_bm25_weight
-        indexed_hybrid_environment["hybrid_searcher"].dense_weight = (
-            original_dense_weight
-        )
+        indexed_hybrid_environment[
+            "hybrid_searcher"
+        ].dense_weight = original_dense_weight
 
     def test_error_handling(self, indexed_hybrid_environment):
         """Test error handling in hybrid search system."""
@@ -631,9 +633,9 @@ def validate_item(item):
             project_name="test_project",
             force_full=True,
         )
-        assert (
-            result.success
-        ), f"Indexing must succeed: {result.error if not result.success else ''}"
+        assert result.success, (
+            f"Indexing must succeed: {result.error if not result.success else ''}"
+        )
 
         results = indexed_hybrid_environment["hybrid_searcher"].search("test", k=0)
         assert len(results) == 0, "k=0 should return no results"
@@ -648,9 +650,9 @@ def validate_item(item):
             project_name="test_project",
             force_full=True,
         )
-        assert (
-            result.success
-        ), f"Indexing must succeed: {result.error if not result.success else ''}"
+        assert result.success, (
+            f"Indexing must succeed: {result.error if not result.success else ''}"
+        )
 
         # Get initial stats
         stats = indexed_hybrid_environment["hybrid_searcher"].stats
@@ -668,9 +670,9 @@ def validate_item(item):
             "hybrid_searcher"
         ].get_search_mode_stats()
         # Class-scoped fixture means search count accumulates across tests
-        assert search_stats["total_searches"] >= len(
-            queries
-        ), "Should track at least the searches from this test"
+        assert search_stats["total_searches"] >= len(queries), (
+            "Should track at least the searches from this test"
+        )
         assert "average_times" in search_stats, "Should include timing information"
 
 

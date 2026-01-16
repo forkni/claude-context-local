@@ -2,6 +2,7 @@
 
 import warnings
 
+
 # Suppress FAISS SWIG warnings at import time (before pytest/FAISS imports)
 warnings.filterwarnings(
     "ignore", message=".*builtin type SwigPy.*", category=DeprecationWarning
@@ -22,6 +23,7 @@ import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 
 from search.filters import normalize_path  # noqa: E402
+
 
 # Add the package to Python path for testing
 project_root = Path(__file__).parent

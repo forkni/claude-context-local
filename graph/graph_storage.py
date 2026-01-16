@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from search.filters import normalize_path
 
+
 if TYPE_CHECKING:
     from graph.relationship_types import RelationshipEdge
 

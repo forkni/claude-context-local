@@ -19,6 +19,7 @@ import pytest
 
 from mcp_server import tool_handlers
 
+
 # REMOVED (2025-11-13): test_lifespan_hook_initializes_project
 # Reason: server_lifespan no longer exists - initialization now happens at application
 # startup via Starlette's app_lifespan, guaranteeing state before any connections.

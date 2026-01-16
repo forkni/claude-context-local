@@ -5,6 +5,7 @@ from typing import Optional
 
 import torch
 
+
 # Reranker model registry
 # Maps reranker type to model name for environment/menu configuration
 RERANKER_MODELS = {

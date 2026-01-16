@@ -17,6 +17,7 @@ from mcp_server.services import get_config, get_state
 from mcp_server.storage_manager import get_project_storage_dir
 from mcp_server.tools.code_relationship_analyzer import CodeRelationshipAnalyzer
 from mcp_server.tools.decorators import error_handler
+from mcp_server.utils.config_helpers import temporary_ram_fallback_off
 from search.config import (
     EgoGraphConfig,
     ParentRetrievalConfig,
@@ -30,6 +31,7 @@ from search.indexer import CodeIndexManager
 from search.intent_classifier import IntentClassifier, QueryIntent
 from search.metadata import MetadataStore
 from search.query_router import QueryRouter
+
 
 logger = logging.getLogger(__name__)
 
@@ -298,9 +300,11 @@ def _check_auto_reindex(
         exclude_dirs=exclude_dirs,
     )
 
-    reindex_result = incremental_indexer.auto_reindex_if_needed(
-        project_path, max_age_minutes=max_age_minutes
-    )
+    # Temporarily disable allow_ram_fallback during auto-reindex for performance
+    with temporary_ram_fallback_off():
+        reindex_result = incremental_indexer.auto_reindex_if_needed(
+            project_path, max_age_minutes=max_age_minutes
+        )
 
     return reindex_result.files_modified > 0 or reindex_result.files_added > 0
 

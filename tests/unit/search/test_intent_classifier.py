@@ -460,6 +460,6 @@ class TestIntentClassifierRealWorldQueries:
     ):
         """Test classification of real-world queries."""
         decision = classifier.classify(query)
-        assert (
-            decision.intent == expected_intent
-        ), f"Failed for '{query}' ({description}): expected {expected_intent.value}, got {decision.intent.value}"
+        assert decision.intent == expected_intent, (
+            f"Failed for '{query}' ({description}): expected {expected_intent.value}, got {decision.intent.value}"
+        )

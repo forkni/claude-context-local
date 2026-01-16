@@ -18,6 +18,7 @@ from mcp_server.services import get_state
 from search.config import get_search_config
 from search.incremental_indexer import IncrementalIndexer
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -197,7 +198,6 @@ class TestMultiModelCleanupBeforeReindex:
             patch("mcp_server.services.get_state") as mock_get_state,
             patch.object(indexer, "incremental_index") as mock_index,
         ):
-
             # Make get_state raise exception during cleanup
             mock_get_state.side_effect = RuntimeError("Simulated cleanup failure")
 

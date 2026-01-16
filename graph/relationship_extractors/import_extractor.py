@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
 from graph.relationship_types import RelationshipEdge, RelationshipType
 
+
 if TYPE_CHECKING:
     from graph.relation_filter import RepositoryRelationFilter
 

@@ -1,6 +1,6 @@
 ---
 name: mcp-search-tool
-description: MCP semantic code search. CRITICAL 2-STEP: (1) search_code()→get chunk_id, (2) find_connections(chunk_id) for callers/deps/flow. USE CASES: codebase exploration, code patterns, relationships, impact analysis. ⚠️ NEVER Grep for caller/dependency discovery (50-60% token waste). 63% savings (validated).
+description: MCP semantic code search. CRITICAL 2-STEP: (1) search_code()→get chunk_id, (2) find_connections(chunk_id) for callers/deps/flow OR find_path(source, target) for path tracing. 19 MCP tools for codebase exploration, code patterns, relationships, impact analysis. ⚠️ NEVER Grep for caller/dependency discovery (50-60% token waste). 63% savings (validated).
 ---
 
 # MCP Search Tool Skill
@@ -8,6 +8,13 @@ description: MCP semantic code search. CRITICAL 2-STEP: (1) search_code()→get 
 ## Purpose
 
 This skill ensures that all MCP semantic search operations follow the correct workflow for accurate, relevant results with maximum token efficiency (40-45% savings). It enforces project context validation before searches and applies optimal search configuration.
+
+**Latest Updates (v0.8.5, 2026-01-15)**:
+
+- ✅ **Bug Fix**: Call graph now persists all 21 relationship types (was missing 20 types)
+- ✅ **Verified**: 4,599 relationship edges with 13 active types in production
+- ✅ **New Tool**: `find_path()` for tracing shortest paths between code entities
+- ✅ **Enhanced**: `find_connections()` now supports `relationship_types` filter for targeted analysis
 
 ## 🎯 QUICK START: Which Tool to Use?
 
@@ -18,8 +25,9 @@ What are you trying to do?
 │
 ├─ "Find callers of X" ──────────────► find_connections(chunk_id)
 ├─ "What depends on X" ──────────────► find_connections(chunk_id)
-├─ "Trace flow from X to Y" ─────────► find_connections(chunk_id, max_depth=5)
-├─ "Find only imports/inheritance" ──► find_connections(chunk_id, relationship_types=["imports"])
+├─ "Trace flow from X to Y" ─────────► find_path(source_chunk_id, target_chunk_id)
+├─ "How does X connect to Y?" ───────► find_path(source_chunk_id, target_chunk_id)
+├─ "Find only imports/inheritance" ──► find_connections(chunk_id, relationship_types=["imports", "inherits"])
 ├─ "Find similar code to X" ─────────► find_similar_code(chunk_id)
 │
 ├─ "Find class/function definition" ─► search_code(query, chunk_type)
@@ -173,28 +181,29 @@ search_code("MerkleDAG.build", search_mode="bm25", chunk_type="method")
 
 ## 📚 Quick Function Index
 
-### All 18 MCP Tools at a Glance
+### All 19 MCP Tools at a Glance
 
 | Tool | Category | Purpose | Key Parameters | Jump To |
 |------|----------|---------|----------------|---------|
 | **search_code** | 🔴 Essential | Find code with NL query or chunk_id lookup | `query`, `chunk_id`, `chunk_type`, `include_dirs`, `exclude_dirs` | [Details](#1-search_codequery-or-chunk_id-k5-search_modehybrid-model_keynone-use_routingtrue-file_patternnone-include_dirsnone-exclude_dirsnone-chunk_typenone-include_contexttrue-auto_reindextrue-max_age_minutes5) |
-| **find_connections** | 🔴 Essential | Find callers, dependencies, flow (graph analysis) | `chunk_id`, `symbol_name`, `max_depth`, `exclude_dirs` | [Details](#3-find_connectionschunk_idnone-symbol_namenone-max_depth3-exclude_dirsnone) |
+| **find_connections** | 🔴 Essential | Find callers, dependencies, flow (graph analysis) | `chunk_id`, `symbol_name`, `max_depth`, `exclude_dirs`, `relationship_types` | [Details](#3-find_connectionschunk_idnone-symbol_namenone-max_depth3-exclude_dirsnone-relationship_typesnone) |
+| **find_path** | 🔴 Essential | Trace shortest path between code entities | `source`, `target`, `source_chunk_id`, `target_chunk_id`, `edge_types`, `max_hops` | [Details](#4-find_pathsourcenone-targetnone-source_chunk_idnone-target_chunk_idnone-edge_typesnone-max_hops10) |
 | **index_directory** | 🔴 Setup | Index project for search (one-time) | `directory_path`, `incremental`, `multi_model`, `include_dirs`, `exclude_dirs` | [Details](#2-index_directorydirectory_path-project_namenone-incrementaltrue-multi_modelnone-include_dirsnone-exclude_dirsnone) |
-| list_projects | Management | Show all indexed projects | *(none)* | [Details](#4-list_projects) |
-| switch_project | Management | Change active project | `project_path` | [Details](#5-switch_projectproject_path) |
-| get_index_status | Status | Check index health | *(none)* | [Details](#6-get_index_status) |
-| clear_index | Reset | Delete current index | *(none)* | [Details](#7-clear_index) |
-| delete_project | Reset | Safely delete indexed project | `project_path`, `force` | [Details](#8-delete_projectproject_path-forcefalse) |
-| configure_search_mode | Config | Set search mode & weights | `search_mode`, `bm25_weight`, `dense_weight` | [Details](#9-configure_search_modesearch_modehybrid-bm25_weight04-dense_weight06-enable_paralleltrue) |
-| get_search_config_status | Config | View current config | *(none)* | [Details](#10-get_search_config_status) |
-| configure_query_routing | Config | Multi-model routing settings | `enable_multi_model`, `default_model`, `confidence_threshold` | [Details](#11-configure_query_routingenable_multi_modelnone-default_modelnone-confidence_thresholdnone) |
-| find_similar_code | Secondary | Find functionally similar code | `chunk_id`, `k` | [Details](#12-find_similar_codechunk_id-k5) |
-| configure_reranking | Config | Neural reranking settings | `enabled`, `model_name`, `top_k_candidates` | [Details](#13-configure_rerankingenablednone-model_namenone-top_k_candidatesnone) |
-| configure_chunking | Config | Configure code chunking settings | `enable_chunk_merging`, `min_chunk_tokens`, `max_merged_tokens`, `token_estimation`, `enable_large_node_splitting`, `max_chunk_lines` | [Details](#18-configure_chunkingenable_chunk_mergingnone-min_chunk_tokensnone-max_merged_tokensnone-token_estimationnone-enable_large_node_splittingnone-max_chunk_linesnone) |
-| list_embedding_models | Model | Show available models | *(none)* | [Details](#14-list_embedding_models) |
-| switch_embedding_model | Model | Change embedding model | `model_name` | [Details](#15-switch_embedding_modelmodel_name) |
-| get_memory_status | Monitor | Check RAM/VRAM usage | *(none)* | [Details](#16-get_memory_status) |
-| cleanup_resources | Cleanup | Free memory/caches | *(none)* | [Details](#17-cleanup_resources) |
+| list_projects | Management | Show all indexed projects | *(none)* | [Details](#5-list_projects) |
+| switch_project | Management | Change active project | `project_path` | [Details](#6-switch_projectproject_path) |
+| get_index_status | Status | Check index health | *(none)* | [Details](#7-get_index_status) |
+| clear_index | Reset | Delete current index | *(none)* | [Details](#8-clear_index) |
+| delete_project | Reset | Safely delete indexed project | `project_path`, `force` | [Details](#9-delete_projectproject_path-forcefalse) |
+| configure_search_mode | Config | Set search mode & weights | `search_mode`, `bm25_weight`, `dense_weight` | [Details](#10-configure_search_modesearch_modehybrid-bm25_weight04-dense_weight06-enable_paralleltrue) |
+| get_search_config_status | Config | View current config | *(none)* | [Details](#11-get_search_config_status) |
+| configure_query_routing | Config | Multi-model routing settings | `enable_multi_model`, `default_model`, `confidence_threshold` | [Details](#12-configure_query_routingenable_multi_modelnone-default_modelnone-confidence_thresholdnone) |
+| find_similar_code | Secondary | Find functionally similar code | `chunk_id`, `k` | [Details](#13-find_similar_codechunk_id-k5) |
+| configure_reranking | Config | Neural reranking settings | `enabled`, `model_name`, `top_k_candidates` | [Details](#14-configure_rerankingenablednone-model_namenone-top_k_candidatesnone) |
+| configure_chunking | Config | Configure code chunking settings | `enable_chunk_merging`, `min_chunk_tokens`, `max_merged_tokens`, `token_estimation`, `enable_large_node_splitting`, `max_chunk_lines` | [Details](#19-configure_chunkingenable_chunk_mergingnone-min_chunk_tokensnone-max_merged_tokensnone-token_estimationnone-enable_large_node_splittingnone-max_chunk_linesnone) |
+| list_embedding_models | Model | Show available models | *(none)* | [Details](#15-list_embedding_models) |
+| switch_embedding_model | Model | Change embedding model | `model_name` | [Details](#16-switch_embedding_modelmodel_name) |
+| get_memory_status | Monitor | Check RAM/VRAM usage | *(none)* | [Details](#17-get_memory_status) |
+| cleanup_resources | Cleanup | Free memory/caches | *(none)* | [Details](#18-cleanup_resources) |
 
 ### Usage Patterns by Task
 
@@ -202,6 +211,8 @@ search_code("MerkleDAG.build", search_mode="bm25", chunk_type="method")
 |-----------|--------------|----------------|---------|
 | **Find code by concept** | `search_code(query)` | - | Semantic search |
 | **Find callers/dependencies** | `search_code()` → `find_connections(chunk_id)` | - | 2-step workflow |
+| **Trace path between entities** | `search_code()` → `find_path(source_chunk_id, target_chunk_id)` | - | Path discovery |
+| **Filter by relationship type** | `find_connections(chunk_id, relationship_types=["inherits"])` | - | Targeted relationship analysis |
 | **Direct symbol lookup** | `search_code(chunk_id="...")` | - | O(1) lookup |
 | **Impact assessment** | `find_connections(max_depth=5)` | - | Multi-hop graph |
 | **Find similar patterns** | `search_code()` → `find_similar_code(chunk_id)` | - | Similarity search |
@@ -444,7 +455,7 @@ search_code("EmbeddingManager")
 search_code("EmbeddingManager", chunk_type="class", exclude_dirs=["tests/"])
 ```
 
-## Complete MCP Tool Reference (15 Tools)
+## Complete MCP Tool Reference (19 Tools)
 
 ### 🔴 Essential Tools (Use First)
 
@@ -588,11 +599,15 @@ index_directory("C:\Projects\MyApp", multi_model=True)
 - `symbol_name` (optional): Symbol name to find (may be ambiguous, use chunk_id when possible)
 - `max_depth` (default: 3): Maximum depth for dependency traversal (1-5, affects indirect callers)
 - `exclude_dirs` (optional): Directories to exclude from symbol resolution and caller lookup (e.g., ["tests/"])
-- `relationship_types` (optional, v0.8.4+): Filter to only include specific relationship types (e.g., `["inherits", "imports", "decorates"]`). If not provided, all relationship types are included. Valid types: `calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`, `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`, `uses_context_manager`
+- `relationship_types` (optional, v0.8.4+): Filter to only include specific relationship types (e.g., `["inherits", "imports", "decorates"]`). If not provided, all relationship types are included.
+
+  **Valid types (21 total)**: `calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`, `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`, `uses_context_manager`
 
 **Returns**: Structured report with direct callers, indirect callers, similar code, and dependency graph
 
 **Call Graph Accuracy** (v0.5.15+): ~90% accuracy for Python projects with import resolution, self/super resolution, type annotation tracking, and assignment tracking
+
+**Relationship Edge Count** (v0.8.5+): 4,599 edges with 13 active relationship types in production (verified 2026-01-15)
 
 **Use When**:
 
@@ -602,6 +617,8 @@ index_directory("C:\Projects\MyApp", multi_model=True)
 - Impact assessment for breaking changes
 - **Finding function callers** (replaces Grep patterns)
 - **Tracing request flows** (replaces manual tracing)
+- **Analyzing inheritance hierarchies** (filter by `inherits`)
+- **Finding type usage** (filter by `uses_type`, `instantiates`)
 
 **Examples**:
 
@@ -616,7 +633,8 @@ find_connections(symbol_name="User", exclude_dirs=["tests/"])
 find_connections(chunk_id="auth.py:10-50:function:login", max_depth=5)
 
 # Filter for only inheritance relationships (v0.8.4+)
-find_connections(symbol_name="BaseClass", relationship_types=["inherits"])
+find_connections(symbol_name="PythonChunker", relationship_types=["inherits"])
+# ✅ VERIFIED: Returns parent_classes[1]: LanguageChunker
 # Returns: Only parent_classes/child_classes populated, all other relationship fields empty
 
 # Filter for only import relationships (v0.8.4+)
@@ -624,9 +642,33 @@ find_connections(chunk_id="database.py:10-50:class:Database", relationship_types
 # Returns: Only imports/imported_by populated, all other relationship fields empty
 
 # Multiple relationship types (v0.8.4+)
-find_connections(symbol_name="User", relationship_types=["inherits", "calls", "imports"])
-# Returns: Only inheritance, call, and import relationships populated
+find_connections(symbol_name="InheritanceExtractor", relationship_types=["instantiates", "uses_type"])
+# ✅ VERIFIED: Returns uses_types[9]: RelationshipEdge, ast.AST, str, dict, list...
+# ✅ VERIFIED: Returns instantiated_by[1]: MultiLanguageChunker
+# Returns: Only type usage and instantiation relationships populated
+
+# All calls relationships (default behavior)
+find_connections(chunk_id="chunk_file:...", relationship_types=["calls"])
+# Returns: Only direct_callers/indirect_callers populated
 ```
+
+**Verified Relationship Types in Production** (v0.8.5, 2026-01-15):
+
+The following 13 relationship types are active with 4,599 total edges:
+
+- `calls` (2,011 edges) - Function/method calls
+- `uses_type` (1,576 edges) - Type annotations and usage
+- `instantiates` (299 edges) - Class instantiation
+- `catches` (242 edges) - Exception handling
+- `imports` (166 edges) - Module imports
+- `defines_field` (141 edges) - Field definitions
+- `uses_constant` (50 edges) - Constant usage
+- `inherits` (30 edges) - Class inheritance
+- `decorates` (27 edges) - Decorator usage
+- `defines_enum_member` (25 edges) - Enum member definitions
+- `defines_class_attr` (22 edges) - Class attribute definitions
+- `uses_context_manager` (9 edges) - Context manager usage
+- `uses_default` (1 edge) - Default parameter values
 
 **2-Step Workflow for Relationship Queries**:
 
@@ -641,15 +683,129 @@ find_connections(chunk_id=chunk_id, exclude_dirs=["tests/"])
 # ALL IN ONE CALL vs 4 Grep + 3 Read calls
 ```
 
+#### 4. `find_path(source=None, target=None, source_chunk_id=None, target_chunk_id=None, edge_types=None, max_hops=10)`
+
+**Purpose**: Find shortest path between two code entities in the relationship graph (v0.8.4+)
+
+**⚠️ USE THIS FOR**: Tracing how code element A connects to code element B, understanding dependency chains, finding call paths
+
+**Parameters**:
+
+- `source` (optional): Source symbol name (may be ambiguous, use source_chunk_id when possible)
+- `target` (optional): Target symbol name (may be ambiguous, use target_chunk_id when possible)
+- `source_chunk_id` (optional): Source chunk_id from search results (preferred for precision)
+- `target_chunk_id` (optional): Target chunk_id from search results (preferred for precision)
+- `edge_types` (optional): Filter path to only use specific relationship types (e.g., `["calls", "inherits"]`). If not provided, all relationship types are considered.
+
+  **Valid types (21 total)**: `calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`, `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`, `uses_context_manager`
+
+- `max_hops` (default: 10, range: 1-20): Maximum path length in edges
+
+**Returns**: Path as sequence of nodes with metadata, edge types traversed, path length (number of hops)
+
+**Algorithm**: Bidirectional Breadth-First Search (BFS) for optimal performance
+
+**Use When**:
+
+- Tracing how code element A connects to code element B
+- Understanding dependency chains between modules
+- Finding call paths from entry points to specific functions
+- Analyzing inheritance or import chains
+
+**Examples**:
+
+```bash
+# Using chunk_ids (preferred)
+find_path(
+    source_chunk_id="auth.py:10-50:function:login",
+    target_chunk_id="database.py:100-150:function:query"
+)
+# Returns: Path showing how login() connects to query() through calls
+
+# Using symbol names
+find_path(source="UserModel", target="DatabaseConnection")
+# Returns: Path between classes (may be ambiguous if multiple symbols exist)
+
+# Filter by edge types (only follow calls and imports)
+find_path(
+    source_chunk_id="main.py:1-50:function:main",
+    target_chunk_id="utils.py:10-50:function:helper",
+    edge_types=["calls", "imports"]
+)
+# Returns: Path using only call and import relationships
+
+# Trace inheritance chain
+find_path(
+    source="ChildClass",
+    target="BaseClass",
+    edge_types=["inherits"]
+)
+# Returns: Inheritance path from child to base class
+
+# Custom max hops for deeper tracing
+find_path(
+    source_chunk_id="api.py:10-50:function:handler",
+    target_chunk_id="core.py:100-150:function:process",
+    max_hops=15
+)
+# Returns: Path up to 15 hops deep
+```
+
+**Return Format**:
+
+```json
+{
+  "path": [
+    {
+      "chunk_id": "auth.py:10-50:function:login",
+      "name": "login",
+      "file": "auth.py",
+      "lines": "10-50",
+      "kind": "function"
+    },
+    {
+      "chunk_id": "session.py:20-60:function:create_session",
+      "name": "create_session",
+      "file": "session.py",
+      "lines": "20-60",
+      "kind": "function"
+    },
+    {
+      "chunk_id": "database.py:100-150:function:query",
+      "name": "query",
+      "file": "database.py",
+      "lines": "100-150",
+      "kind": "function"
+    }
+  ],
+  "edge_types": ["calls", "calls"],
+  "path_length": 2
+}
+```
+
+**Performance**: 10/10 tests passed (verified 2026-01-15)
+
+**Verification Tests** (all passing):
+
+- Basic path finding between connected nodes
+- No path detection between disconnected nodes
+- Edge type filtering (calls, inherits, imports)
+- Max hops enforcement
+- Self-path detection
+- Nonexistent source/target handling
+- Direct connection optimization
+- Legacy edge type compatibility
+- Multiple edge types traversed in single path
+
 ### 🟡 Project Management Tools
 
-#### 4. `list_projects()`
+#### 5. `list_projects()`
 
 **Purpose**: Show all indexed projects with metadata
 
 **Returns**: JSON with list of projects, paths, and index information
 
-#### 5. `switch_project(project_path)`
+#### 6. `switch_project(project_path)`
 
 **Purpose**: Switch to a different indexed project for searching
 
@@ -663,19 +819,19 @@ find_connections(chunk_id=chunk_id, exclude_dirs=["tests/"])
 switch_project("D:\Users\alexk\FORKNI\STREAM_DIFFUSION\STREAM_DIFFUSION_CUDA_0.2.99_CUDA_13")
 ```
 
-#### 6. `get_index_status()`
+#### 7. `get_index_status()`
 
 **Purpose**: Check index health and statistics
 
 **Returns**: JSON with index statistics, chunk count, model info, memory usage
 
-#### 7. `clear_index()`
+#### 8. `clear_index()`
 
 **Purpose**: Delete the entire search index for the current project
 
 **Warning**: Deletes ALL dimension indices (768d, 1024d) and Merkle snapshots. Requires full re-indexing afterward.
 
-#### 8. `delete_project(project_path, force=False)`
+#### 9. `delete_project(project_path, force=False)`
 
 **Purpose**: Safely delete an indexed project and all associated data
 
@@ -690,7 +846,7 @@ switch_project("D:\Users\alexk\FORKNI\STREAM_DIFFUSION\STREAM_DIFFUSION_CUDA_0.2
 
 ### 🟢 Search Configuration Tools
 
-#### 9. `configure_search_mode(search_mode="hybrid", bm25_weight=0.4, dense_weight=0.6, enable_parallel=True)`
+#### 10. `configure_search_mode(search_mode="hybrid", bm25_weight=0.4, dense_weight=0.6, enable_parallel=True)`
 
 **Purpose**: Configure search mode and hybrid search parameters
 
@@ -714,13 +870,13 @@ switch_project("D:\Users\alexk\FORKNI\STREAM_DIFFUSION\STREAM_DIFFUSION_CUDA_0.2
 configure_search_mode("hybrid", 0.4, 0.6, true)
 ```
 
-#### 10. `get_search_config_status()`
+#### 11. `get_search_config_status()`
 
 **Purpose**: View current search configuration and available settings
 
 **Returns**: JSON with current mode, weights, features enabled
 
-#### 11. `configure_query_routing(enable_multi_model=None, default_model=None, confidence_threshold=None)`
+#### 12. `configure_query_routing(enable_multi_model=None, default_model=None, confidence_threshold=None)`
 
 **Purpose**: Configure multi-model query routing behavior
 
@@ -738,7 +894,7 @@ configure_query_routing(enable_multi_model=True, default_model="qwen3", confiden
 
 ### 🔵 Advanced Tools
 
-#### 12. `find_similar_code(chunk_id, k=5)`
+#### 13. `find_similar_code(chunk_id, k=5)`
 
 **Purpose**: Find code chunks functionally similar to a reference chunk
 
@@ -762,7 +918,7 @@ search_code("authentication handler")
 find_similar_code("src/auth.py:10-50:function:authenticate", k=5)
 ```
 
-#### 13. `configure_reranking(enabled=None, model_name=None, top_k_candidates=None)`
+#### 14. `configure_reranking(enabled=None, model_name=None, top_k_candidates=None)`
 
 **Purpose**: Configure neural reranking for improved search quality
 
@@ -791,7 +947,7 @@ configure_reranking(enabled=True, top_k_candidates=100)
 
 **See**: `docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration` for all parameters
 
-#### 14. `list_embedding_models()`
+#### 15. `list_embedding_models()`
 
 **Purpose**: List all available embedding models with specifications
 
@@ -805,7 +961,7 @@ configure_reranking(enabled=True, top_k_candidates=100)
 - **CodeRankEmbed**: 768d, 2GB VRAM, code-specific retrieval
 - **EmbeddingGemma-300m**: 768d, 4-8GB VRAM, default model (fast)
 
-#### 15. `switch_embedding_model(model_name)`
+#### 16. `switch_embedding_model(model_name)`
 
 **Purpose**: Switch to a different embedding model without deleting indices
 
@@ -926,13 +1082,13 @@ set CLAUDE_VRAM_TIER=laptop
 
 ### 🟣 Memory Management Tools
 
-#### 16. `get_memory_status()`
+#### 17. `get_memory_status()`
 
 **Purpose**: Get current memory usage for index and system
 
 **Returns**: JSON with RAM/VRAM usage, GPU status, available memory
 
-#### 17. `cleanup_resources()`
+#### 18. `cleanup_resources()`
 
 **Purpose**: Manually cleanup all resources to free memory
 
@@ -942,7 +1098,7 @@ set CLAUDE_VRAM_TIER=laptop
 - Memory running low
 - GPU memory needs to be freed
 
-#### 18. `configure_chunking(enable_chunk_merging=None, min_chunk_tokens=None, max_merged_tokens=None, token_estimation=None, enable_large_node_splitting=None, max_chunk_lines=None)`
+#### 19. `configure_chunking(enable_chunk_merging=None, min_chunk_tokens=None, max_merged_tokens=None, token_estimation=None, enable_large_node_splitting=None, max_chunk_lines=None)`
 
 **Purpose**: Configure code chunking settings at runtime
 
@@ -1181,11 +1337,13 @@ clear_index()          # Full reset (requires re-indexing)
 ### Quality Metrics (Validated)
 
 **Benchmark Results (12-query subset)**:
+
 - **Baseline**: 75% success (9/12 with default settings)
 - **With Inductive Protocol**: 100% success (12/12 with optimized workflow)
 - **Overall**: 100% MRR when using correct tool selection
 
 **Historical Performance**:
+
 - **Precision**: 44.4%
 - **F1-score**: 46.7%
 - **Success rate**: 100% (256/256 test queries)

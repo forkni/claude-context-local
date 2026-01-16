@@ -67,14 +67,14 @@ async def test_switch_project_shows_correct_index(sample_codebase, tmp_path):
     # Step 5: Verify get_index_status now shows correct data
     status_after = await handle_get_index_status({})
     assert "error" not in status_after
-    assert (
-        status_after["index_statistics"]["total_chunks"] > 0
-    ), "Should show indexed chunks after switch"
+    assert status_after["index_statistics"]["total_chunks"] > 0, (
+        "Should show indexed chunks after switch"
+    )
     assert status_after["current_project"] == project_path
 
     # Verify the chunk count is reasonable for the sample codebase
     # sample_codebase has 4 modules (auth, database, api, utils) + __init__ files
     # Should have at least a few chunks
-    assert (
-        status_after["index_statistics"]["total_chunks"] >= 4
-    ), "Should have at least 4 chunks from 4 modules"
+    assert status_after["index_statistics"]["total_chunks"] >= 4, (
+        "Should have at least 4 chunks from 4 modules"
+    )

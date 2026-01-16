@@ -18,6 +18,7 @@ from graph.relationship_types import (
     get_relationship_field_mapping,
 )
 
+
 # ===== RelationshipType Enum Tests =====
 
 
@@ -54,9 +55,9 @@ def test_relationship_type_enum_values():
 
     actual_types = {rt.value for rt in RelationshipType}
 
-    assert (
-        actual_types == expected_types
-    ), f"Missing or extra types. Expected {expected_types}, got {actual_types}"
+    assert actual_types == expected_types, (
+        f"Missing or extra types. Expected {expected_types}, got {actual_types}"
+    )
 
 
 def test_relationship_type_from_string():

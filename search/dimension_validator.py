@@ -7,6 +7,7 @@ from typing import Optional
 
 from search.exceptions import DimensionMismatchError
 
+
 logger = logging.getLogger(__name__)
 
 

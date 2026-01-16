@@ -16,6 +16,7 @@ from search.filters import (
     unescape_mcp_path,
 )
 
+
 logger = logging.getLogger(__name__)
 
 # Builtin types that should not be searched for in uses_type resolution

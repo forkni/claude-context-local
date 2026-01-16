@@ -15,9 +15,10 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncGenerator
 
 import anyio
+
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -41,6 +42,7 @@ from mcp_server.model_pool_manager import (  # noqa: E402
 
 # Output formatting
 from mcp_server.output_formatter import format_response  # noqa: E402
+
 
 # Configure logging
 debug_mode = os.getenv("MCP_DEBUG", "").lower() in ("1", "true", "yes")
@@ -79,6 +81,7 @@ from mcp_server.search_factory import (  # noqa: E402, F401 - Re-exported for ba
     get_searcher,
 )
 
+
 # ============================================================================
 # Explicit lifecycle management
 # ============================================================================
@@ -90,6 +93,7 @@ server = Server("Code Search")
 
 # Import tool registry
 from mcp_server.tool_registry import build_tool_list  # noqa: E402
+
 
 # ============================================================================
 # SERVER HANDLERS
@@ -359,7 +363,7 @@ if __name__ == "__main__":
             sse = SseServerTransport("/messages/")
 
             # SSE handler - establishes bidirectional streams
-            async def handle_sse(request) -> Response:
+            async def handle_sse(request: Any) -> Response:
                 async with sse.connect_sse(
                     request.scope, request.receive, request._send
                 ) as streams:
@@ -371,7 +375,7 @@ if __name__ == "__main__":
                 return Response()  # Prevent TypeError on disconnect
 
             # Cleanup endpoint - trigger resource cleanup via HTTP
-            async def handle_cleanup(request) -> JSONResponse:
+            async def handle_cleanup(request: Any) -> JSONResponse:
                 """HTTP endpoint to trigger resource cleanup.
 
                 Releases GPU memory and cached resources in the running server process.
@@ -396,7 +400,7 @@ if __name__ == "__main__":
                     )
 
             # Config reload endpoint - reload search_config.json
-            async def handle_reload_config(request):
+            async def handle_reload_config(request: Any) -> JSONResponse:
                 """HTTP endpoint to reload config from search_config.json.
 
                 Allows UI config changes to sync with running server.
@@ -435,7 +439,7 @@ if __name__ == "__main__":
                     return JSONResponse({"error": str(e)}, status_code=500)
 
             # Project switch endpoint - switch active project
-            async def handle_switch_project_http(request):
+            async def handle_switch_project_http(request: Any) -> JSONResponse:
                 """HTTP endpoint for UI project switching.
 
                 Allows UI project switch to sync with running server.
@@ -467,7 +471,7 @@ if __name__ == "__main__":
                     return JSONResponse({"error": str(e)}, status_code=500)
 
             # Starlette app with lifespan integration
-            async def app_lifespan(app):
+            async def app_lifespan(app: Any) -> AsyncGenerator[None, None]:
                 """Application lifecycle - initialize global state ONCE before accepting connections."""
                 logger.info("=" * 60)
                 logger.info("APPLICATION STARTUP: Initializing global state")
@@ -569,7 +573,7 @@ if __name__ == "__main__":
                 asyncio.set_event_loop(loop)
 
                 # Set exception handler for residual socket errors
-                def handle_win_socket_error(loop, context):
+                def handle_win_socket_error(loop: Any, context: dict[str, Any]) -> None:
                     exc = context.get("exception")
                     # Handle Windows socket errors
                     if (

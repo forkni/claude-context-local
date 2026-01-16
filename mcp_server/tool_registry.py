@@ -5,6 +5,9 @@ Contains JSON schemas for all 18 tools following MCP specification.
 
 from typing import Any
 
+from mcp.types import Tool
+
+
 # Complete tool registry with JSON schemas
 TOOL_REGISTRY: dict[str, dict[str, Any]] = {
     "search_code": {
@@ -703,9 +706,8 @@ Note: min_chunk_tokens (50) and max_merged_tokens (1000) are optimal defaults an
 }
 
 
-def build_tool_list():
+def build_tool_list() -> list[Tool]:
     """Build MCP Tool list from registry."""
-    from mcp.types import Tool
 
     tools = []
     for name, meta in TOOL_REGISTRY.items():

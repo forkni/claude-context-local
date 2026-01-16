@@ -7,6 +7,7 @@ optimal batch sizes and checking GPU availability.
 
 import logging
 
+
 try:
     import torch
 except ImportError:

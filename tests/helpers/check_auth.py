@@ -5,6 +5,7 @@ import sys
 
 from huggingface_hub import get_token, whoami
 
+
 # Get existing token or skip test
 token = get_token()
 

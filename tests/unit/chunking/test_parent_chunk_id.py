@@ -37,9 +37,9 @@ class MyClass:
         assert method_chunk is not None, "Method chunk should exist"
 
         # Verify parent_chunk_id
-        assert (
-            method_chunk.parent_chunk_id is not None
-        ), "Method should have parent_chunk_id"
+        assert method_chunk.parent_chunk_id is not None, (
+            "Method should have parent_chunk_id"
+        )
         assert method_chunk.parent_chunk_id == class_chunk.chunk_id, (
             f"Method's parent_chunk_id should match class chunk_id. "
             f"Got {method_chunk.parent_chunk_id}, expected {class_chunk.chunk_id}"
@@ -61,12 +61,12 @@ def standalone_function():
 
         func_chunk = next((c for c in chunks if c.chunk_type == "function"), None)
         assert func_chunk is not None, "Function chunk should exist"
-        assert (
-            func_chunk.parent_chunk_id is None
-        ), "Standalone function should have no parent_chunk_id"
-        assert (
-            func_chunk.parent_name is None
-        ), "Standalone function should have no parent_name"
+        assert func_chunk.parent_chunk_id is None, (
+            "Standalone function should have no parent_chunk_id"
+        )
+        assert func_chunk.parent_name is None, (
+            "Standalone function should have no parent_name"
+        )
 
     def test_multiple_methods_same_parent(self, chunker, tmp_path):
         """Test that multiple methods in the same class share the same parent_chunk_id.
@@ -108,12 +108,12 @@ class MyClass:
         # If method chunks exist (not merged), verify they have correct parent_chunk_id
         if method_chunks:
             for method in method_chunks:
-                assert (
-                    method.parent_chunk_id == class_chunk.chunk_id
-                ), f"Method {method.name} should point to class chunk_id"
-                assert (
-                    method.parent_name == "MyClass"
-                ), f"Method {method.name} should have parent_name=MyClass"
+                assert method.parent_chunk_id == class_chunk.chunk_id, (
+                    f"Method {method.name} should point to class chunk_id"
+                )
+                assert method.parent_name == "MyClass", (
+                    f"Method {method.name} should have parent_name=MyClass"
+                )
         # If no method chunks (all merged into class), that's also fine -
         # this test is about parent_chunk_id generation, not chunking strategy
 
@@ -154,17 +154,17 @@ class Outer:
         assert outer_method is not None, "Outer method should exist"
 
         # Outer method should point to outer class
-        assert (
-            outer_method.parent_chunk_id == outer_class.chunk_id
-        ), "Outer method should point to outer class"
+        assert outer_method.parent_chunk_id == outer_class.chunk_id, (
+            "Outer method should point to outer class"
+        )
 
         # Note: Nested classes might not be fully supported yet,
         # but outer_method should definitely work
         if inner_class and inner_method:
             # If nested classes are supported, check inner method
-            assert (
-                inner_method.parent_chunk_id == inner_class.chunk_id
-            ), "Inner method should point to inner class"
+            assert inner_method.parent_chunk_id == inner_class.chunk_id, (
+                "Inner method should point to inner class"
+            )
 
     def test_class_with_no_methods(self, chunker, tmp_path):
         """Test that empty classes work correctly."""
@@ -181,9 +181,9 @@ class EmptyClass:
 
         class_chunk = next((c for c in chunks if c.chunk_type == "class"), None)
         assert class_chunk is not None, "Class chunk should exist"
-        assert (
-            class_chunk.parent_chunk_id is None
-        ), "Class should have no parent_chunk_id"
+        assert class_chunk.parent_chunk_id is None, (
+            "Class should have no parent_chunk_id"
+        )
 
     def test_parent_chunk_id_format(self, chunker, tmp_path):
         """Test that parent_chunk_id follows the expected format."""

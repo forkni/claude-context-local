@@ -26,6 +26,7 @@ from typing import Any
 from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
 from graph.relationship_types import RelationshipEdge, RelationshipType
 
+
 # Builtin context managers to exclude
 BUILTIN_CONTEXT_MANAGERS = {
     "open",

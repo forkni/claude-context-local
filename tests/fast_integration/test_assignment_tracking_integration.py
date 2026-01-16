@@ -370,9 +370,9 @@ class Processor(BaseProcessor):
                     process_chunk = chunk
                     break
 
-        assert (
-            process_chunk is not None
-        ), f"process method chunk not found. Available chunks: {[c.name for c in chunks]}"
+        assert process_chunk is not None, (
+            f"process method chunk not found. Available chunks: {[c.name for c in chunks]}"
+        )
 
         # Extract calls
         chunk_metadata = {
@@ -384,26 +384,26 @@ class Processor(BaseProcessor):
         callee_names = {c.callee_name for c in calls}
 
         # Phase 1 checks
-        assert (
-            "Processor.helper" in callee_names
-        ), f"self.helper() not resolved. Got: {callee_names}"
+        assert "Processor.helper" in callee_names, (
+            f"self.helper() not resolved. Got: {callee_names}"
+        )
         # Note: super() without class hierarchy in chunk resolves to "super.base_process"
-        assert (
-            "super.base_process" in callee_names
-        ), f"super().base_process() not resolved. Got: {callee_names}"
+        assert "super.base_process" in callee_names, (
+            f"super().base_process() not resolved. Got: {callee_names}"
+        )
 
         # Phase 2 check
-        assert (
-            "Validator.validate" in callee_names
-        ), f"validator.validate() not resolved. Got: {callee_names}"
+        assert "Validator.validate" in callee_names, (
+            f"validator.validate() not resolved. Got: {callee_names}"
+        )
 
         # Phase 3 checks
-        assert (
-            "DataFormatter.format" in callee_names
-        ), f"formatter.format() not resolved. Got: {callee_names}"
+        assert "DataFormatter.format" in callee_names, (
+            f"formatter.format() not resolved. Got: {callee_names}"
+        )
         # Note: self.handler.handle() needs __init__ to be in same chunk
         # When extracting just the method chunk, self.handler assignment isn't visible
         # So it falls back to bare "handle"
-        assert (
-            "handle" in callee_names
-        ), f"self.handler.handle() not resolved. Got: {callee_names}"
+        assert "handle" in callee_names, (
+            f"self.handler.handle() not resolved. Got: {callee_names}"
+        )

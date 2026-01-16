@@ -21,6 +21,7 @@ from .graph_integration import GraphIntegration
 from .indexer import CodeIndexManager as Indexer
 from .parallel_chunker import ParallelChunker
 
+
 logger = logging.getLogger(__name__)
 
 

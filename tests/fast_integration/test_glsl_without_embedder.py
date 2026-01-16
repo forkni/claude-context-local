@@ -6,6 +6,7 @@ Test GLSL indexing without embedder to verify chunking works.
 import sys
 from pathlib import Path
 
+
 # Add the project root to the path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -121,9 +122,9 @@ def test_glsl_indexing_without_embedder():
 
         # Convert to assertion for pytest compatibility
         assert total_chunks > 0, f"Expected GLSL chunks but got {total_chunks}"
-        assert (
-            len(supported_files) > 0
-        ), f"Expected supported GLSL files but got {len(supported_files)}"
+        assert len(supported_files) > 0, (
+            f"Expected supported GLSL files but got {len(supported_files)}"
+        )
         print(
             f"\n[OK] SUCCESS: Found {len(supported_files)} supported files and {total_chunks} chunks"
         )

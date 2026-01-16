@@ -190,7 +190,7 @@ class TestResultFactory:
 
         for i, result in enumerate(converted):
             assert result.rank == i
-            assert result.chunk_id == f"chunk{i+1}"
+            assert result.chunk_id == f"chunk{i + 1}"
 
     def test_from_similarity_results_basic(self):
         """Test basic similarity result conversion."""

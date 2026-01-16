@@ -20,6 +20,7 @@ from search.config import (
     get_config_manager,
 )
 
+
 logger = logging.getLogger(__name__)
 
 

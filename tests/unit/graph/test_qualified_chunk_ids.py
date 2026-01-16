@@ -53,9 +53,9 @@ class MyClass:
         method_chunks = [
             c for c in chunks if c.node_type == "function_definition" and c.parent_class
         ]
-        assert (
-            len(method_chunks) == 1
-        ), f"Expected 1 method chunk, got {len(method_chunks)}"
+        assert len(method_chunks) == 1, (
+            f"Expected 1 method chunk, got {len(method_chunks)}"
+        )
 
         method_chunk = method_chunks[0]
         assert method_chunk.parent_class == "MyClass"

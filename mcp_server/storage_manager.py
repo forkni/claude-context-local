@@ -22,6 +22,7 @@ from search.filters import (
     extract_drive_agnostic_path,
 )
 
+
 logger = logging.getLogger(__name__)
 
 

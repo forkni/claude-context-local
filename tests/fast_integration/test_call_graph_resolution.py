@@ -177,9 +177,9 @@ class DataExtractor:
             qualified_calls = [
                 c for c in extract_calls if "DataExtractor.extract" == c.callee_name
             ]
-            assert (
-                len(qualified_calls) >= 1
-            ), f"Expected DataExtractor.extract, got {[c.callee_name for c in extract_calls]}"
+            assert len(qualified_calls) >= 1, (
+                f"Expected DataExtractor.extract, got {[c.callee_name for c in extract_calls]}"
+            )
 
     def test_different_classes_same_method_name_distinct(self):
         """Test that extract methods in different classes have distinct chunk_ids."""
@@ -310,9 +310,9 @@ class Calculator:
         resolved_calls = [
             c for c in validate_calls if c.callee_name == "Calculator.validate"
         ]
-        assert (
-            len(resolved_calls) >= 1
-        ), f"Expected Calculator.validate, got {[c.callee_name for c in validate_calls]}"
+        assert len(resolved_calls) >= 1, (
+            f"Expected Calculator.validate, got {[c.callee_name for c in validate_calls]}"
+        )
 
 
 class TestCallGraphBackwardCompatibility:

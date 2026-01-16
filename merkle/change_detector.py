@@ -7,6 +7,7 @@ from pathlib import Path
 from .merkle_dag import MerkleDAG
 from .snapshot_manager import SnapshotManager
 
+
 logger = logging.getLogger(__name__)
 
 

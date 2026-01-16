@@ -7,6 +7,7 @@ Provides high-level query operations on code graphs.
 import logging
 from typing import Any, Optional
 
+
 try:
     import networkx as nx
 except ImportError:

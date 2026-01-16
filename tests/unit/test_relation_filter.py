@@ -80,9 +80,9 @@ class TestRelationFilter:
 
     def test_python_310_required(self):
         """Verify sys.stdlib_module_names is available."""
-        assert hasattr(
-            sys, "stdlib_module_names"
-        ), "Python 3.10+ required for sys.stdlib_module_names"
+        assert hasattr(sys, "stdlib_module_names"), (
+            "Python 3.10+ required for sys.stdlib_module_names"
+        )
 
     def test_is_project_internal(self, tmp_path):
         """Test is_project_internal helper method."""

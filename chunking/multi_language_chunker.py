@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Optional
 
 from search.filters import normalize_path
 
+
 if TYPE_CHECKING:
     from graph.relation_filter import RepositoryRelationFilter
 
@@ -19,6 +20,7 @@ from .language_registry import (
 )
 from .python_ast_chunker import CodeChunk
 from .tree_sitter import TreeSitterChunk, TreeSitterChunker
+
 
 # Import call graph extractor for Python
 try:

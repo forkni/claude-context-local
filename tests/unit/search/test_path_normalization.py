@@ -274,7 +274,7 @@ class TestRegressionIssue1:
         # This should NOT fail
         result = simulated_mcp_scenario.get_chunk_by_id(double_escaped)
 
-        assert (
-            result is not None
-        ), "Issue 1 regression: Chunk not found with double-escaped path!"
+        assert result is not None, (
+            "Issue 1 regression: Chunk not found with double-escaped path!"
+        )
         assert result["name"] == "rerank"

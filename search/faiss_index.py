@@ -14,6 +14,7 @@ import psutil
 
 from search.exceptions import IndexError as SearchIndexError
 
+
 try:
     import faiss
 except ImportError:

@@ -40,6 +40,7 @@ from mcp_server.tools.status_handlers import (
     handle_list_projects,
 )
 
+
 __all__ = [
     # Status handlers (6)
     "handle_get_index_status",

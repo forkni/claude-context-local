@@ -225,7 +225,7 @@ class TestBucketDistribution(unittest.TestCase):
 
         # Add 1000 diverse chunk_ids
         for i in range(1000):
-            chunk_id = f"file_{i}.py:{i*10}-{i*10+10}:function:func_{i}"
+            chunk_id = f"file_{i}.py:{i * 10}-{i * 10 + 10}:function:func_{i}"
             cache.add(chunk_id)
 
         stats = cache.get_stats()
@@ -252,7 +252,9 @@ class TestPerformance(unittest.TestCase):
         # Populate with realistic data
         self.chunk_ids = []
         for i in range(1000):
-            chunk_id = f"search/module_{i % 10}.py:{i*10}-{i*10+10}:function:func_{i}"
+            chunk_id = (
+                f"search/module_{i % 10}.py:{i * 10}-{i * 10 + 10}:function:func_{i}"
+            )
             self.chunk_ids.append(chunk_id)
             self.cache.add(chunk_id)
 

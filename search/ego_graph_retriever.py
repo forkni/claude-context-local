@@ -11,6 +11,7 @@ import logging
 
 from search.config import EgoGraphConfig
 
+
 logger = logging.getLogger(__name__)
 
 

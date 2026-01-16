@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from tree_sitter import Language, Parser
 
+
 if TYPE_CHECKING:
     from chunking.python_ast_chunker import CodeChunk
     from search.config import ChunkingConfig

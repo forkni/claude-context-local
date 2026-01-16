@@ -59,16 +59,16 @@ class TestGetterFunctions:
 
         # Verify it returns the manager instance, not None
         assert result is not None, "get_index_manager() must return a value, not None"
-        assert (
-            result is mock_manager_instance
-        ), "get_index_manager() must return the CodeIndexManager instance"
+        assert result is mock_manager_instance, (
+            "get_index_manager() must return the CodeIndexManager instance"
+        )
 
         # Verify the manager was created with correct parameters
         mock_index_manager_class.assert_called_once()
         call_args = mock_index_manager_class.call_args
-        assert (
-            "project_id" in call_args.kwargs
-        ), "CodeIndexManager must be initialized with project_id"
+        assert "project_id" in call_args.kwargs, (
+            "CodeIndexManager must be initialized with project_id"
+        )
 
     @patch("search.searcher.IntelligentSearcher")
     @patch("mcp_server.model_pool_manager.get_embedder")
@@ -125,9 +125,9 @@ class TestGetterFunctions:
         searcher2 = server.get_searcher()
 
         # Verify model was preserved
-        assert (
-            state.current_model_key == "qwen3"
-        ), "Model should be preserved when model_key=None, not reset"
+        assert state.current_model_key == "qwen3", (
+            "Model should be preserved when model_key=None, not reset"
+        )
 
         # Verify searcher was reused (not recreated since model didn't change)
         assert searcher2 is searcher1, "Searcher should be reused when model unchanged"

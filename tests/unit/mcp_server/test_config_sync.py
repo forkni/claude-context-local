@@ -71,9 +71,9 @@ class TestMultiModelEnabledPersistence:
             with patch.dict(os.environ, {"CLAUDE_MULTI_MODEL_ENABLED": env_value}):
                 manager = SearchConfigManager(self.config_file)
                 config = manager.load_config()
-                assert (
-                    config.routing.multi_model_enabled == expected
-                ), f"Failed for env_value={env_value}"
+                assert config.routing.multi_model_enabled == expected, (
+                    f"Failed for env_value={env_value}"
+                )
 
 
 class TestApplicationStateSyncFromConfig:
@@ -135,9 +135,9 @@ class TestApplicationStateSyncFromConfig:
             with patch.dict(os.environ, {"CLAUDE_MULTI_MODEL_ENABLED": env_value}):
                 state = get_state()
                 state.sync_from_config(config)
-                assert (
-                    state.multi_model_enabled == expected
-                ), f"Failed for env_value={env_value}"
+                assert state.multi_model_enabled == expected, (
+                    f"Failed for env_value={env_value}"
+                )
 
 
 class TestSearchModeConfigPersistence:

@@ -21,6 +21,7 @@ from search.config import (
 )
 from search.hybrid_searcher import HybridSearcher
 
+
 logger = logging.getLogger(__name__)
 
 

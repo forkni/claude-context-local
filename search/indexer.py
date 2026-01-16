@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 import numpy as np
 
+
 try:
     import faiss
 except ImportError:

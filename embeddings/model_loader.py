@@ -13,6 +13,7 @@ import shutil
 from collections.abc import Callable
 from typing import Any, Optional
 
+
 try:
     import torch
 except ImportError:
@@ -24,14 +25,9 @@ except ImportError:
     SentenceTransformer = None
 
 from embeddings.model_cache import ModelCacheManager
-
-
-# Helper function to access config via ServiceLocator (avoids circular imports)
-def _get_config_via_service_locator():
-    """Get SearchConfig via ServiceLocator to avoid circular dependencies."""
-    from mcp_server.services import ServiceLocator
-
-    return ServiceLocator.instance().get_config()
+from mcp_server.utils.config_helpers import (
+    get_config_via_service_locator as _get_config_via_service_locator,
+)
 
 
 class ModelLoader:

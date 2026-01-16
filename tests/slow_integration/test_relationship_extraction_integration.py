@@ -23,6 +23,7 @@ from embeddings.embedder import CodeEmbedder
 from graph.relationship_types import RelationshipType
 from search.indexer import CodeIndexManager
 
+
 # Sample Python code with all 4 relationship types
 SAMPLE_CODE_WITH_ALL_RELATIONSHIPS = """
 import os
@@ -124,9 +125,9 @@ class TestPhase3RelationshipExtraction:
 
         # Check that at least some chunks have relationships
         chunks_with_relationships = [c for c in chunks if c.relationships]
-        assert (
-            len(chunks_with_relationships) > 0
-        ), "Expected at least some chunks to have relationships"
+        assert len(chunks_with_relationships) > 0, (
+            "Expected at least some chunks to have relationships"
+        )
 
         # Log what we found
         total_relationships = sum(
@@ -166,9 +167,9 @@ class TestPhase3RelationshipExtraction:
 
         # Verify working types are present
         missing_working = working_types - relationship_types
-        assert (
-            not missing_working
-        ), f"Missing working relationship types: {missing_working}. Found: {relationship_types}"
+        assert not missing_working, (
+            f"Missing working relationship types: {missing_working}. Found: {relationship_types}"
+        )
 
         # Log future types status
         missing_future = future_types - relationship_types
@@ -191,15 +192,15 @@ class TestPhase3RelationshipExtraction:
                     if rel.relationship_type == RelationshipType.INHERITS:
                         inheritance_relationships.append(rel)
 
-        assert (
-            len(inheritance_relationships) > 0
-        ), "Expected UserService to have inheritance relationship"
+        assert len(inheritance_relationships) > 0, (
+            "Expected UserService to have inheritance relationship"
+        )
 
         # Verify inherits from BaseService
         parent_names = {rel.target_name for rel in inheritance_relationships}
-        assert (
-            "BaseService" in parent_names
-        ), f"Expected UserService to inherit from BaseService, found: {parent_names}"
+        assert "BaseService" in parent_names, (
+            f"Expected UserService to inherit from BaseService, found: {parent_names}"
+        )
 
         print(f"\nFound inheritance: UserService -> {parent_names}")
 
@@ -215,17 +216,17 @@ class TestPhase3RelationshipExtraction:
                     if rel.relationship_type == RelationshipType.USES_TYPE:
                         type_relationships.append((chunk.name, rel.target_name))
 
-        assert (
-            len(type_relationships) > 0
-        ), "Expected to find type annotation relationships"
+        assert len(type_relationships) > 0, (
+            "Expected to find type annotation relationships"
+        )
 
         # Check for expected types
         type_targets = {rel[1] for rel in type_relationships}
 
         # Should have User, str, Optional, List, Dict, etc.
-        assert (
-            "User" in type_targets or "str" in type_targets
-        ), f"Expected User or str types, found: {type_targets}"
+        assert "User" in type_targets or "str" in type_targets, (
+            f"Expected User or str types, found: {type_targets}"
+        )
 
         print(f"\nFound {len(type_relationships)} type annotations: {type_targets}")
 
@@ -257,9 +258,9 @@ class TestPhase3RelationshipExtraction:
             )
 
             # Either legacy or Phase 3 should have calls
-            assert (
-                len(legacy_calls) > 0 or len(call_relationships) > 0
-            ), "Expected process_users to have call relationships"
+            assert len(legacy_calls) > 0 or len(call_relationships) > 0, (
+                "Expected process_users to have call relationships"
+            )
 
     def test_graph_storage_contains_relationships(self, indexed_project):
         """Verify relationships are stored in graph storage."""
@@ -350,9 +351,9 @@ class TestPhase3RelationshipExtraction:
         )
 
         # At least some should have line numbers
-        assert (
-            len(relationships_with_lines) > 0
-        ), "Expected at least some relationships to have line numbers"
+        assert len(relationships_with_lines) > 0, (
+            "Expected at least some relationships to have line numbers"
+        )
 
     def test_find_connections_shows_phase3_relationships(
         self, indexed_project, session_embedder
@@ -413,9 +414,9 @@ class TestPhase3RelationshipExtraction:
             + len(result["imported_by"])
         )
 
-        assert (
-            total_phase3 > 0
-        ), "Expected at least one Phase 3 relationship in find_connections output"
+        assert total_phase3 > 0, (
+            "Expected at least one Phase 3 relationship in find_connections output"
+        )
 
     def test_impact_report_relationship_structure(
         self, indexed_project, session_embedder
@@ -587,9 +588,9 @@ class TestPriority2RelationshipExtraction:
         print(f"\nFound Priority 2 relationship types: {found_types}")
 
         # At least some Priority 2 types should be present
-        assert (
-            len(found_types) > 0
-        ), f"Expected at least one Priority 2 type. Found: {relationship_types}"
+        assert len(found_types) > 0, (
+            f"Expected at least one Priority 2 type. Found: {relationship_types}"
+        )
 
     def test_decorators_extracted(self, indexed_project_priority2):
         """Verify DECORATES relationships are extracted."""
@@ -613,9 +614,9 @@ class TestPriority2RelationshipExtraction:
         decorator_targets = {rel[1] for rel in decorator_relationships}
         # dataclass is a common decorator, but it might be filtered
         # custom_decorator should be captured
-        assert any(
-            "decorator" in target.lower() for target in decorator_targets
-        ), f"Expected decorator targets, found: {decorator_targets}"
+        assert any("decorator" in target.lower() for target in decorator_targets), (
+            f"Expected decorator targets, found: {decorator_targets}"
+        )
 
     def test_raises_extracted(self, indexed_project_priority2):
         """Verify RAISES relationships are extracted."""
@@ -637,9 +638,9 @@ class TestPriority2RelationshipExtraction:
 
         # Should have ValidationError and CustomError
         exception_targets = {rel[1] for rel in raises_relationships}
-        assert any(
-            "Error" in target for target in exception_targets
-        ), f"Expected Error exceptions, found: {exception_targets}"
+        assert any("Error" in target for target in exception_targets), (
+            f"Expected Error exceptions, found: {exception_targets}"
+        )
 
     def test_catches_extracted(self, indexed_project_priority2):
         """Verify CATCHES relationships are extracted."""
@@ -661,9 +662,9 @@ class TestPriority2RelationshipExtraction:
 
         # Should catch ValueError
         catch_targets = {rel[1] for rel in catches_relationships}
-        assert (
-            "ValueError" in catch_targets
-        ), f"Expected ValueError, found: {catch_targets}"
+        assert "ValueError" in catch_targets, (
+            f"Expected ValueError, found: {catch_targets}"
+        )
 
     def test_instantiations_extracted(self, indexed_project_priority2):
         """Verify INSTANTIATES relationships are extracted."""
@@ -685,15 +686,15 @@ class TestPriority2RelationshipExtraction:
         for name, target in instantiation_relationships:
             print(f"  {name} instantiates {target}")
 
-        assert (
-            len(instantiation_relationships) > 0
-        ), "Expected instantiation relationships"
+        assert len(instantiation_relationships) > 0, (
+            "Expected instantiation relationships"
+        )
 
         # Should have DataModel instantiations
         instantiation_targets = {rel[1] for rel in instantiation_relationships}
-        assert (
-            "DataModel" in instantiation_targets
-        ), f"Expected DataModel instantiation, found: {instantiation_targets}"
+        assert "DataModel" in instantiation_targets, (
+            f"Expected DataModel instantiation, found: {instantiation_targets}"
+        )
 
     def test_find_connections_has_priority2_fields(
         self, indexed_project_priority2, session_embedder
@@ -737,19 +738,19 @@ class TestPriority2RelationshipExtraction:
         # Verify Priority 2 fields are present
         assert "decorates" in result, "decorates field missing from ImpactReport"
         assert "decorated_by" in result, "decorated_by field missing from ImpactReport"
-        assert (
-            "exceptions_raised" in result
-        ), "exceptions_raised field missing from ImpactReport"
-        assert (
-            "exception_handlers" in result
-        ), "exception_handlers field missing from ImpactReport"
-        assert (
-            "exceptions_caught" in result
-        ), "exceptions_caught field missing from ImpactReport"
+        assert "exceptions_raised" in result, (
+            "exceptions_raised field missing from ImpactReport"
+        )
+        assert "exception_handlers" in result, (
+            "exception_handlers field missing from ImpactReport"
+        )
+        assert "exceptions_caught" in result, (
+            "exceptions_caught field missing from ImpactReport"
+        )
         assert "instantiates" in result, "instantiates field missing from ImpactReport"
-        assert (
-            "instantiated_by" in result
-        ), "instantiated_by field missing from ImpactReport"
+        assert "instantiated_by" in result, (
+            "instantiated_by field missing from ImpactReport"
+        )
 
         print(f"\nfind_connections Priority 2 fields for {chunk_id}:")
         print(f"  decorates: {len(result['decorates'])}")

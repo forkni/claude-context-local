@@ -43,9 +43,9 @@ class MyClass:
 
         # Should be qualified with class name
         callee_call = callee_calls[0]
-        assert (
-            callee_call.callee_name == "MyClass.callee"
-        ), f"Expected MyClass.callee, got {callee_call.callee_name}"
+        assert callee_call.callee_name == "MyClass.callee", (
+            f"Expected MyClass.callee, got {callee_call.callee_name}"
+        )
 
     def test_cls_method_call_resolved(self):
         """Test cls.method() resolves to ClassName.method."""
@@ -142,9 +142,9 @@ class Child(Parent):
 
         # Should have Parent.method
         parent_calls = [c for c in calls if c.callee_name == "Parent.method"]
-        assert (
-            len(parent_calls) >= 1
-        ), f"Expected Parent.method, got {[c.callee_name for c in calls]}"
+        assert len(parent_calls) >= 1, (
+            f"Expected Parent.method, got {[c.callee_name for c in calls]}"
+        )
 
     def test_super_init_call_resolved(self):
         """Test super().__init__() resolves to ParentClass.__init__."""
@@ -169,9 +169,9 @@ class Derived(Base):
         assert len(init_calls) >= 1
 
         base_init = [c for c in init_calls if c.callee_name == "Base.__init__"]
-        assert (
-            len(base_init) >= 1
-        ), f"Expected Base.__init__, got {[c.callee_name for c in init_calls]}"
+        assert len(base_init) >= 1, (
+            f"Expected Base.__init__, got {[c.callee_name for c in init_calls]}"
+        )
 
     def test_super_call_no_parent_class(self):
         """Test super() call when no parent class is detected."""
@@ -223,9 +223,9 @@ class C(A, B):
 
         # MRO means it should be A.method
         a_calls = [c for c in calls if c.callee_name == "A.method"]
-        assert (
-            len(a_calls) >= 1
-        ), f"Expected A.method, got {[c.callee_name for c in calls]}"
+        assert len(a_calls) >= 1, (
+            f"Expected A.method, got {[c.callee_name for c in calls]}"
+        )
 
 
 class TestRegularCallsUnaffected:

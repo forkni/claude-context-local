@@ -10,6 +10,7 @@ from typing import Optional
 
 from search.filters import normalize_path
 
+
 try:
     from rank_bm25 import BM25Okapi
 except ImportError:

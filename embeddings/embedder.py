@@ -26,8 +26,12 @@ from chunking.python_ast_chunker import CodeChunk
 from embeddings.model_cache import ModelCacheManager
 from embeddings.model_loader import ModelLoader
 from embeddings.query_cache import QueryEmbeddingCache
+from mcp_server.utils.config_helpers import (
+    get_config_via_service_locator as _get_config_via_service_locator,
+)
 from search.exceptions import VRAMExhaustedError
 from search.filters import normalize_path
+
 
 # ===== BATCH SIZE MEMORY ESTIMATION CONSTANTS =====
 # Empirically derived from OOM analysis: 2.67GB fragmentation / 14.74GB allocated = 18% overhead
@@ -80,14 +84,6 @@ try:
     import torch
 except ImportError:
     torch = None
-
-
-# Helper function to access config via ServiceLocator (avoids circular imports)
-def _get_config_via_service_locator():
-    """Get SearchConfig via ServiceLocator to avoid circular dependencies."""
-    from mcp_server.services import ServiceLocator
-
-    return ServiceLocator.instance().get_config()
 
 
 def set_vram_limit(fraction: float = 0.90) -> bool:

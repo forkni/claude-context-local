@@ -74,9 +74,9 @@ class RRFReranker:
         # Calculate RRF scores for each document
         rrf_scores: dict[str, float] = {}
         doc_results: dict[str, SearchResult] = {}
-        list_appearances: dict[str, list[int]] = (
-            {}
-        )  # Track which lists contain each doc
+        list_appearances: dict[
+            str, list[int]
+        ] = {}  # Track which lists contain each doc
 
         for list_idx, (results, weight) in enumerate(
             zip(results_lists, weights, strict=False)

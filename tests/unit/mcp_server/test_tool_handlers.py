@@ -13,6 +13,7 @@ import pytest
 # Import handlers
 from mcp_server import tool_handlers
 
+
 # ============================================================================
 # FIXTURES - Mock CodeGraphStorage to prevent production pollution
 # ============================================================================
@@ -662,14 +663,14 @@ async def test_all_handlers_have_error_handling():
             all_handlers_checked.append(f"{module.__name__}.{name}")
             # Check if wrapped by error_handler decorator
             # functools.wraps preserves __wrapped__ attribute
-            assert hasattr(handler, "__wrapped__") or callable(
-                handler
-            ), f"{module.__name__}.{name} should use @error_handler decorator or be callable"
+            assert hasattr(handler, "__wrapped__") or callable(handler), (
+                f"{module.__name__}.{name} should use @error_handler decorator or be callable"
+            )
 
     # Verify we checked at least 15 handlers (all our handlers)
-    assert (
-        len(all_handlers_checked) >= 15
-    ), f"Expected at least 15 handlers, found {len(all_handlers_checked)}"
+    assert len(all_handlers_checked) >= 15, (
+        f"Expected at least 15 handlers, found {len(all_handlers_checked)}"
+    )
 
 
 # ============================================================================

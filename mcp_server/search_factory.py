@@ -8,6 +8,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+
 if TYPE_CHECKING:
     from search.hybrid_searcher import HybridSearcher
     from search.indexer import CodeIndexManager

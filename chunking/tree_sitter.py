@@ -39,6 +39,7 @@ from .languages import (
     TypeScriptChunker,
 )
 
+
 logger = logging.getLogger(__name__)
 
 # Try to import language bindings

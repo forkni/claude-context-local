@@ -5,6 +5,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Optional
 
+
 # Import graph storage for call graph
 try:
     from graph.graph_storage import CodeGraphStorage

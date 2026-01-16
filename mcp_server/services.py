@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+
 if TYPE_CHECKING:
     from mcp_server.state import ApplicationState
     from search.config import SearchConfig
@@ -141,7 +142,6 @@ class ServiceLocator:
         """
         state = self.get("state")
         if state is None:
-
             # Auto-create if not registered
             from mcp_server.state import get_state as _get_legacy_state
 

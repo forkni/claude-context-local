@@ -47,6 +47,7 @@ import numpy as np
 
 from search.symbol_cache import SymbolHashCache
 
+
 logger = logging.getLogger(__name__)
 
 

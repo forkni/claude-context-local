@@ -15,6 +15,7 @@ from rich.progress import (
     TextColumn,
 )
 
+
 if TYPE_CHECKING:
     from chunking.multi_language_chunker import MultiLanguageChunker
     from chunking.python_ast_chunker import CodeChunk

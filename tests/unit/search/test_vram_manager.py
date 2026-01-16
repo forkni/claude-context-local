@@ -31,9 +31,9 @@ class TestVRAMTiers:
         for i in range(len(sorted_tiers) - 1):
             current_max = sorted_tiers[i].max_vram_gb
             next_min = sorted_tiers[i + 1].min_vram_gb
-            assert (
-                current_max == next_min
-            ), f"Gap between {sorted_tiers[i].name} and {sorted_tiers[i+1].name}"
+            assert current_max == next_min, (
+                f"Gap between {sorted_tiers[i].name} and {sorted_tiers[i + 1].name}"
+            )
 
     def test_recommended_models(self):
         """Test that each tier has a recommended model."""
