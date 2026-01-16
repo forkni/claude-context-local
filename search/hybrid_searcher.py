@@ -26,6 +26,7 @@ from mcp_server.utils.config_helpers import (
     get_config_via_service_locator as _get_config_via_service_locator,
 )
 
+from .base_searcher import BaseSearcher
 from .bm25_index import BM25Index
 from .ego_graph_retriever import EgoGraphRetriever
 from .gpu_monitor import GPUMemoryMonitor
@@ -40,7 +41,7 @@ from .search_executor import SearchExecutor
 from .weight_optimizer import WeightOptimizer
 
 
-class HybridSearcher:
+class HybridSearcher(BaseSearcher):
     """Orchestrates BM25 + dense search with GPU awareness and parallel execution."""
 
     def __init__(
@@ -71,6 +72,9 @@ class HybridSearcher:
             project_id: Project identifier for graph storage
             config: SearchConfig instance for mmap storage and other settings
         """
+        # Initialize base searcher (cache management, dimension validation)
+        super().__init__()
+
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
@@ -91,15 +95,8 @@ class HybridSearcher:
         self.bm25_use_stopwords = bm25_use_stopwords
         self.bm25_use_stemming = bm25_use_stemming
 
-        # Components - use existing storage structure
+        # Override logger with module-specific logger (set by BaseSearcher)
         self._logger = logging.getLogger(__name__)
-
-        # In-memory metadata cache for multi-hop operations (find_connections)
-        # Avoids repeated SQLite lookups during graph traversal
-        self._metadata_cache: dict[str, Optional[SearchResult]] = {}
-        self._cache_max_size = 1000  # Limit cache size to prevent memory bloat
-        self._cache_hits = 0
-        self._cache_misses = 0
 
         # BM25 index gets its own subdirectory
         self._logger.info(
@@ -192,16 +189,16 @@ class HybridSearcher:
 
         # Ego-graph retrieval (RepoGraph-style k-hop expansion)
         # Initialize graph storage if project_id is provided
-        self.graph_storage = None
+        self._graph_storage = None
         self.ego_graph_retriever = None
         if project_id:
             try:
                 # Graph storage in parent of storage_dir (same as graph_integration.py)
                 graph_dir = self.storage_dir.parent
-                self.graph_storage = CodeGraphStorage(
+                self._graph_storage = CodeGraphStorage(
                     project_id=project_id, storage_dir=graph_dir
                 )
-                self.ego_graph_retriever = EgoGraphRetriever(self.graph_storage)
+                self.ego_graph_retriever = EgoGraphRetriever(self._graph_storage)
                 self._logger.info(
                     f"[INIT] Ego-graph retrieval initialized for project: {project_id}"
                 )
@@ -210,7 +207,7 @@ class HybridSearcher:
                     f"[INIT] Failed to initialize ego-graph retrieval: {e}. "
                     "Ego-graph expansion will be disabled."
                 )
-                self.graph_storage = None
+                self._graph_storage = None
                 self.ego_graph_retriever = None
 
         # Backward compatibility
@@ -219,7 +216,7 @@ class HybridSearcher:
         self._is_shutdown = False
 
         # Dimension validation (safety check)
-        self._validate_dimensions()
+        self._validate_dimensions(self.dense_index.index, self.embedder)
 
     def _load_bm25_index(self) -> bool:
         """Load BM25 index and return success status.
@@ -307,28 +304,6 @@ class HybridSearcher:
                 self._is_shutdown = True
                 self._logger.info("HybridSearcher shut down")
 
-    def _validate_dimensions(self) -> None:
-        """Validate that index and embedder dimensions match.
-
-        Raises:
-            ValueError: If dimension mismatch is detected.
-        """
-        if self.dense_index.index is not None and self.embedder is not None:
-            try:
-                index_dim = self.dense_index.index.d
-                model_info = self.embedder.get_model_info()
-                embedder_dim = model_info.get("embedding_dimension")
-
-                if embedder_dim and index_dim != embedder_dim:
-                    raise ValueError(
-                        f"FATAL: Dimension mismatch between index ({index_dim}d) "
-                        f"and embedder ({embedder_dim}d for {self.embedder.model_name}). "
-                        f"This indicates a bug in model routing. "
-                        f"The index was likely loaded for a different model."
-                    )
-            except (AttributeError, KeyError) as e:
-                self._logger.debug(f"Could not validate dimensions: {e}")
-
     @property
     def is_ready(self) -> bool:
         """Check if both indices are ready."""
@@ -348,6 +323,15 @@ class HybridSearcher:
         self._logger.debug(f"[IS_READY] Overall ready: {is_ready}")
 
         return is_ready
+
+    @property
+    def graph_storage(self):
+        """Access graph storage for relationship queries.
+
+        Returns:
+            CodeGraphStorage instance or None if not available
+        """
+        return self._graph_storage
 
     @property
     def stats(self) -> dict[str, Any]:
@@ -459,42 +443,6 @@ class HybridSearcher:
         self._evict_cache_if_needed()
 
         return result
-
-    def _evict_cache_if_needed(self) -> None:
-        """Evict oldest cache entries if cache exceeds max size.
-
-        Uses simple FIFO eviction strategy. More sophisticated LRU could
-        be implemented if needed, but FIFO is sufficient for most use cases.
-        """
-        if len(self._metadata_cache) > self._cache_max_size:
-            # Evict oldest 20% of entries
-            num_to_evict = self._cache_max_size // 5
-            keys_to_remove = list(self._metadata_cache.keys())[:num_to_evict]
-            for key in keys_to_remove:
-                del self._metadata_cache[key]
-            self._logger.debug(
-                f"Evicted {num_to_evict} entries from metadata cache "
-                f"(size: {len(self._metadata_cache)}/{self._cache_max_size})"
-            )
-
-    def get_cache_stats(self) -> dict[str, int]:
-        """Get metadata cache statistics.
-
-        Returns:
-            Dict with cache_hits, cache_misses, hit_rate_pct, cache_size
-        """
-        total_requests = self._cache_hits + self._cache_misses
-        hit_rate = (
-            (self._cache_hits / total_requests * 100) if total_requests > 0 else 0.0
-        )
-
-        return {
-            "cache_hits": self._cache_hits,
-            "cache_misses": self._cache_misses,
-            "hit_rate_pct": round(hit_rate, 2),
-            "cache_size": len(self._metadata_cache),
-            "cache_max_size": self._cache_max_size,
-        }
 
     def index_documents(
         self,
@@ -971,13 +919,13 @@ class HybridSearcher:
         self.index_sync.save_indices()
 
         # Save call graph if populated
-        if self.graph_storage is not None and len(self.graph_storage) > 0:
+        if self._graph_storage is not None and len(self._graph_storage) > 0:
             try:
                 self._logger.info(
-                    f"[SAVE_INDICES] Saving call graph with {len(self.graph_storage)} nodes, "
-                    f"{self.graph_storage.graph.number_of_edges()} edges"
+                    f"[SAVE_INDICES] Saving call graph with {len(self._graph_storage)} nodes, "
+                    f"{self._graph_storage.graph.number_of_edges()} edges"
                 )
-                self.graph_storage.save()
+                self._graph_storage.save()
                 self._logger.info("[SAVE_INDICES] Call graph saved successfully")
             except Exception as e:
                 self._logger.warning(f"[SAVE_INDICES] Failed to save call graph: {e}")
@@ -1064,7 +1012,7 @@ class HybridSearcher:
             self.index_documents(documents, doc_ids, embeddings, metadata)
 
             # Populate call graph with nodes and edges
-            if self.graph_storage is not None:
+            if self._graph_storage is not None:
                 graph_nodes_added = 0
                 graph_edges_added = 0
                 relationship_edges_added = 0
@@ -1100,7 +1048,7 @@ class HybridSearcher:
                         continue
 
                     # Add node
-                    self.graph_storage.add_node(
+                    self._graph_storage.add_node(
                         chunk_id=chunk_id,
                         name=result.metadata.get("name", "unknown"),
                         chunk_type=chunk_type,
@@ -1123,7 +1071,7 @@ class HybridSearcher:
                             resolved_count += 1
 
                         # Use resolved chunk_id if available, otherwise use bare name
-                        self.graph_storage.add_call_edge(
+                        self._graph_storage.add_call_edge(
                             caller_id=chunk_id,
                             callee_name=(
                                 resolved_target if resolved_target else callee_name
@@ -1151,7 +1099,7 @@ class HybridSearcher:
                             )
 
                             # Add to graph storage
-                            self.graph_storage.add_relationship_edge(edge)
+                            self._graph_storage.add_relationship_edge(edge)
                             relationship_edges_added += 1
 
                         except Exception as e:
@@ -1217,7 +1165,7 @@ class HybridSearcher:
 
         # Update graph_storage reference to match new dense_index (prevents stale references)
         if hasattr(self.dense_index, "_graph") and self.dense_index._graph:
-            self.graph_storage = self.dense_index._graph.storage
+            self._graph_storage = self.dense_index._graph.storage
             self._logger.debug(
                 "[CLEAR] Updated graph_storage reference after clear_index()"
             )

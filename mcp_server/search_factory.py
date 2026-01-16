@@ -10,9 +10,8 @@ from typing import TYPE_CHECKING
 
 
 if TYPE_CHECKING:
-    from search.hybrid_searcher import HybridSearcher
+    from search.base_searcher import BaseSearcher
     from search.indexer import CodeIndexManager
-    from search.searcher import IntelligentSearcher
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +105,7 @@ class SearchFactory:
 
     def get_searcher(
         self, project_path: str = None, model_key: str = None
-    ) -> "HybridSearcher | IntelligentSearcher":
+    ) -> "BaseSearcher":
         """Get searcher for specific project or current project.
 
         Args:
@@ -243,7 +242,7 @@ def get_index_manager(project_path: str = None, model_key: str = None):
     return get_search_factory().get_index_manager(project_path, model_key)
 
 
-def get_searcher(project_path: str = None, model_key: str = None):
+def get_searcher(project_path: str = None, model_key: str = None) -> "BaseSearcher":
     """Get searcher for specific project or current project.
 
     Args:
@@ -251,7 +250,7 @@ def get_searcher(project_path: str = None, model_key: str = None):
         model_key: Model key for routing (None = preserve current)
 
     Returns:
-        HybridSearcher or IntelligentSearcher instance
+        BaseSearcher instance (either HybridSearcher or IntelligentSearcher)
 
     .. note::
         This is a backward-compatible wrapper around SearchFactory.

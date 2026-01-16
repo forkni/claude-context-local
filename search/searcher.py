@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 from embeddings.embedder import CodeEmbedder
 
+from .base_searcher import BaseSearcher
 from .indexer import CodeIndexManager
 
 
@@ -31,48 +32,39 @@ class SearchResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-class IntelligentSearcher:
+class IntelligentSearcher(BaseSearcher):
     """Intelligent code search with query optimization and context awareness."""
 
     def __init__(
         self, index_manager: CodeIndexManager, embedder: CodeEmbedder, config=None
     ):
+        # Initialize base searcher (cache management, dimension validation)
+        super().__init__()
+
         self.index_manager = index_manager
         self.embedder = embedder
+
+        # Override logger with module-specific logger (set by BaseSearcher)
         self._logger = logging.getLogger(__name__)
 
-        # In-memory metadata cache for multi-hop operations (find_connections)
-        # Avoids repeated SQLite lookups during graph traversal
-        self._metadata_cache: dict[str, Optional[SearchResult]] = {}
-        self._cache_max_size = 1000  # Limit cache size to prevent memory bloat
-        self._cache_hits = 0
-        self._cache_misses = 0
-
         # Dimension validation (safety check)
-        self._validate_dimensions()
-
-    def _validate_dimensions(self):
-        """Validate that index and embedder dimensions match."""
-        if self.index_manager.index is not None and self.embedder is not None:
-            try:
-                index_dim = self.index_manager.index.d
-                model_info = self.embedder.get_model_info()
-                embedder_dim = model_info.get("embedding_dimension")
-
-                if embedder_dim and index_dim != embedder_dim:
-                    raise ValueError(
-                        f"FATAL: Dimension mismatch between index ({index_dim}d) "
-                        f"and embedder ({embedder_dim}d for {self.embedder.model_name}). "
-                        f"This indicates a bug in model routing. "
-                        f"The index was likely loaded for a different model."
-                    )
-            except (AttributeError, KeyError) as e:
-                self._logger.debug(f"Could not validate dimensions: {e}")
+        self._validate_dimensions(self.index_manager.index, self.embedder)
 
     @property
     def graph_storage(self):
         """Access graph storage from index manager."""
         return getattr(self.index_manager, "graph_storage", None)
+
+    @property
+    def is_ready(self) -> bool:
+        """Check if searcher is ready for queries.
+
+        Returns:
+            bool: True if index is loaded and searcher is operational
+        """
+        return (
+            self.index_manager.index is not None and self.index_manager.index.ntotal > 0
+        )
 
     def search(
         self,
@@ -457,42 +449,6 @@ class IntelligentSearcher:
         self._evict_cache_if_needed()
 
         return result
-
-    def _evict_cache_if_needed(self):
-        """Evict oldest cache entries if cache exceeds max size.
-
-        Uses simple FIFO eviction strategy. More sophisticated LRU could
-        be implemented if needed, but FIFO is sufficient for most use cases.
-        """
-        if len(self._metadata_cache) > self._cache_max_size:
-            # Evict oldest 20% of entries
-            num_to_evict = self._cache_max_size // 5
-            keys_to_remove = list(self._metadata_cache.keys())[:num_to_evict]
-            for key in keys_to_remove:
-                del self._metadata_cache[key]
-            self._logger.debug(
-                f"Evicted {num_to_evict} entries from metadata cache "
-                f"(size: {len(self._metadata_cache)}/{self._cache_max_size})"
-            )
-
-    def get_cache_stats(self) -> dict[str, int]:
-        """Get metadata cache statistics.
-
-        Returns:
-            Dict with cache_hits, cache_misses, hit_rate_pct, cache_size
-        """
-        total_requests = self._cache_hits + self._cache_misses
-        hit_rate = (
-            (self._cache_hits / total_requests * 100) if total_requests > 0 else 0.0
-        )
-
-        return {
-            "cache_hits": self._cache_hits,
-            "cache_misses": self._cache_misses,
-            "hit_rate_pct": round(hit_rate, 2),
-            "cache_size": len(self._metadata_cache),
-            "cache_max_size": self._cache_max_size,
-        }
 
     def get_search_suggestions(self, partial_query: str) -> list[str]:
         """Generate search suggestions based on indexed content."""
