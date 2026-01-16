@@ -56,14 +56,15 @@ class TestGraphSaveDuringReindex(TestCase):
         mock_searcher.reranking_engine = None
         mock_searcher.search_executor = Mock()
         mock_searcher.multi_hop_searcher = Mock()
-        mock_searcher.graph_storage = Mock()  # Old reference
+        mock_searcher._graph_storage = Mock()  # Old reference
 
         # Call the REAL clear_index method
         HybridSearcher.clear_index(mock_searcher)
 
-        # Verify graph_storage was updated to match new dense_index._graph.storage
-        self.assertEqual(mock_searcher.graph_storage, mock_graph_storage)
-        self.assertIsNotNone(mock_searcher.graph_storage)
+        # Verify _graph_storage was updated to match new dense_index._graph.storage
+        # Note: clear_index() sets self._graph_storage directly, not via property setter
+        self.assertEqual(mock_searcher._graph_storage, mock_graph_storage)
+        self.assertIsNotNone(mock_searcher._graph_storage)
 
     @patch("search.graph_integration.CodeGraphStorage")
     @patch("search.graph_integration.GRAPH_STORAGE_AVAILABLE", True)

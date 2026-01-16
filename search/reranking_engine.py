@@ -10,6 +10,8 @@ from typing import Optional
 
 import numpy as np
 
+from utils.timing import timed
+
 
 try:
     import torch
@@ -191,6 +193,7 @@ class RerankingEngine:
 
         return sorted_results[:k]
 
+    @timed("neural_rerank")
     def apply_neural_reranking(
         self,
         query_or_content: str,

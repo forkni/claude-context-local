@@ -12,6 +12,8 @@ from typing import Any, Optional
 
 import numpy as np
 
+from utils.timing import timed
+
 from .filters import FilterEngine
 from .reranker import SearchResult
 from .result_factory import ResultFactory
@@ -222,6 +224,7 @@ class SearchExecutor:
         dense_results = self.search_dense(query, k, filters, query_embedding)
         return bm25_results, dense_results
 
+    @timed("bm25_search")
     def search_bm25(
         self, query: str, k: int, min_score: float, filters: Optional[dict] = None
     ) -> list[tuple]:
@@ -271,6 +274,7 @@ class SearchExecutor:
             self._logger.error(f"BM25 search failed: {e}")
             return []
 
+    @timed("dense_search")
     def search_dense(
         self,
         query: str,

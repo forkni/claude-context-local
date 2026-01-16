@@ -11,6 +11,7 @@ from typing import Any, Optional
 from mcp_server.utils.config_helpers import (
     get_config_via_service_locator as _get_config_via_service_locator,
 )
+from utils.timing import timed
 
 from .reranker import SearchResult as RerankerSearchResult
 
@@ -192,6 +193,7 @@ class MultiHopSearcher:
 
         return filtered_results
 
+    @timed("multi_hop_search")
     def search(
         self,
         query: str,

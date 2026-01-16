@@ -31,6 +31,7 @@ from mcp_server.utils.config_helpers import (
 )
 from search.exceptions import VRAMExhaustedError
 from search.filters import normalize_path
+from utils.timing import timed
 
 
 # ===== BATCH SIZE MEMORY ESTIMATION CONSTANTS =====
@@ -1027,6 +1028,7 @@ class CodeEmbedder:
         """Clear the query embedding cache."""
         self._query_cache.clear()
 
+    @timed("embed_query")
     def embed_query(self, query: str) -> np.ndarray:
         """Generate embedding for a search query with LRU caching.
 
