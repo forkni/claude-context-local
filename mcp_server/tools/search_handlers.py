@@ -851,28 +851,68 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
     target_info = None
 
     if not resolved_source and source:
-        # Search for source symbol
-        results = searcher.search(source, k=1)
-        if results:
-            resolved_source = results[0].chunk_id
-            source_info = {"resolved_from": source, "chunk_id": resolved_source}
-        else:
-            return {
-                "path_found": False,
-                "error": f"Could not resolve source symbol: {source}",
-            }
+        # Try direct symbol lookup first (O(1) from secondary symbol index)
+        index_manager = _get_index_manager_from_searcher(searcher)
+        if (
+            index_manager
+            and hasattr(index_manager, "symbol_cache")
+            and index_manager.symbol_cache
+        ):
+            resolved_source = index_manager.symbol_cache.get_by_symbol_name(source)
+            if resolved_source:
+                source_info = {
+                    "resolved_from": source,
+                    "chunk_id": resolved_source,
+                    "resolution_method": "direct_lookup",
+                }
+
+        # Fall back to semantic search if direct lookup failed
+        if not resolved_source:
+            results = searcher.search(source, k=1)
+            if results:
+                resolved_source = results[0].chunk_id
+                source_info = {
+                    "resolved_from": source,
+                    "chunk_id": resolved_source,
+                    "resolution_method": "semantic_search",
+                }
+            else:
+                return {
+                    "path_found": False,
+                    "error": f"Could not resolve source symbol: {source}",
+                }
 
     if not resolved_target and target:
-        # Search for target symbol
-        results = searcher.search(target, k=1)
-        if results:
-            resolved_target = results[0].chunk_id
-            target_info = {"resolved_from": target, "chunk_id": resolved_target}
-        else:
-            return {
-                "path_found": False,
-                "error": f"Could not resolve target symbol: {target}",
-            }
+        # Try direct symbol lookup first (O(1) from secondary symbol index)
+        index_manager = _get_index_manager_from_searcher(searcher)
+        if (
+            index_manager
+            and hasattr(index_manager, "symbol_cache")
+            and index_manager.symbol_cache
+        ):
+            resolved_target = index_manager.symbol_cache.get_by_symbol_name(target)
+            if resolved_target:
+                target_info = {
+                    "resolved_from": target,
+                    "chunk_id": resolved_target,
+                    "resolution_method": "direct_lookup",
+                }
+
+        # Fall back to semantic search if direct lookup failed
+        if not resolved_target:
+            results = searcher.search(target, k=1)
+            if results:
+                resolved_target = results[0].chunk_id
+                target_info = {
+                    "resolved_from": target,
+                    "chunk_id": resolved_target,
+                    "resolution_method": "semantic_search",
+                }
+            else:
+                return {
+                    "path_found": False,
+                    "error": f"Could not resolve target symbol: {target}",
+                }
 
     # Get graph query engine
     graph_storage = None

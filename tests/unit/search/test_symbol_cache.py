@@ -168,12 +168,14 @@ class TestSymbolHashCachePersistence(unittest.TestCase):
             data = json.load(f)
 
         self.assertIn("version", data)
-        self.assertEqual(data["version"], 1)
+        self.assertEqual(data["version"], 2)  # Version 2 includes symbol_buckets
         self.assertIn("bucket_count", data)
         self.assertEqual(data["bucket_count"], 256)
         self.assertIn("total_symbols", data)
         self.assertEqual(data["total_symbols"], 1)
         self.assertIn("buckets", data)
+        self.assertIn("symbol_buckets", data)  # New in version 2
+        self.assertIn("total_symbol_mappings", data)  # New in version 2
 
     def test_load_nonexistent_file(self):
         """Test loading from non-existent file."""

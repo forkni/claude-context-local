@@ -117,6 +117,24 @@ class IncrementalIndexer:
         )
         self._bm25_sync = BM25SyncManager(indexer=self.indexer)
 
+    def _get_symbol_cache(self):
+        """Get symbol cache, handling both CodeIndexManager and HybridSearcher.
+
+        Returns:
+            SymbolHashCache instance or None if not available
+        """
+        # Try direct access (CodeIndexManager)
+        if hasattr(self.indexer, "metadata_store"):
+            return self.indexer.metadata_store._symbol_cache
+
+        # Try via dense_index (HybridSearcher)
+        if hasattr(self.indexer, "dense_index"):
+            dense_index = self.indexer.dense_index
+            if hasattr(dense_index, "metadata_store"):
+                return dense_index.metadata_store._symbol_cache
+
+        return None
+
     def _chunk_files_parallel(
         self, project_path: str, file_paths: list[str]
     ) -> list[CodeChunk]:
@@ -725,7 +743,22 @@ class IncrementalIndexer:
                 chunk_id += f":{chunk.name}"
 
             # Create new chunk with regenerated ID
-            result.append(replace(chunk, chunk_id=chunk_id))
+            new_chunk = replace(chunk, chunk_id=chunk_id)
+            result.append(new_chunk)
+
+            # Register symbol mappings for all symbols in this chunk
+            symbol_cache = self._get_symbol_cache()
+            if symbol_cache is not None:
+                # Register primary symbol name
+                if chunk.name:
+                    symbol_cache.add_symbol_mapping(chunk.name, chunk_id)
+
+                # Register all merged symbol names (for merged chunks)
+                # Phase A6: Use merged_from attribute instead of metadata
+                if chunk.merged_from:
+                    for symbol_name in chunk.merged_from:
+                        if symbol_name:  # Skip empty names
+                            symbol_cache.add_symbol_mapping(symbol_name, chunk_id)
 
         logger.info(f"[COMMUNITY_MERGE] Regenerated chunk_ids for {len(result)} chunks")
 

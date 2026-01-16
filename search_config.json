@@ -32,7 +32,7 @@
     "prefer_gpu": true,
     "gpu_memory_threshold": 0.65,
     "vram_limit_fraction": 0.9,
-    "allow_ram_fallback": true,
+    "allow_ram_fallback": false,
     "enable_fp16": true,
     "prefer_bf16": true,
     "enable_dynamic_batch_size": true,
@@ -83,7 +83,7 @@
     "max_split_chars": 3000
   },
   "ego_graph": {
-    "enabled": false,
+    "enabled": true,
     "k_hops": 2,
     "max_neighbors_per_hop": 10,
     "relation_types": null,

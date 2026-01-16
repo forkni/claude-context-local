@@ -261,7 +261,9 @@ class CodeGraphStorage:
 
         Args:
             chunk_id: Starting chunk ID
-            relation_types: Types of relations to follow (e.g., ["calls", "called_by"])
+            relation_types: Types of relations to follow (e.g., ["calls", "called_by", "inherits", "imports"])
+                Supports all 21 relationship types. Use "_by" suffix for reverse direction
+                (e.g., "called_by", "imported_by", "inherited_by")
             max_depth: Maximum graph traversal depth
             exclude_import_categories: Categories to exclude for "imports" edges
                 (e.g., ["stdlib", "third_party"] to filter out noise)
@@ -276,7 +278,7 @@ class CodeGraphStorage:
         if normalized_chunk_id not in self.graph:
             return set()
 
-        # Default to both directions
+        # Default to both directions of call relationships for backward compatibility
         if relation_types is None:
             relation_types = ["calls", "called_by"]
 
@@ -292,35 +294,93 @@ class CodeGraphStorage:
             if depth >= max_depth:
                 continue
 
-            # Get successors (callees) if "calls" in relation_types
-            if "calls" in relation_types:
-                for callee in self.graph.successors(current_id):
-                    # Apply import category filtering
-                    if exclude_import_categories and self._should_exclude_edge(
-                        current_id, callee, exclude_import_categories
-                    ):
-                        continue
+            # Process outgoing edges (forward relationships)
+            for _, target, edge_data in self.graph.out_edges(current_id, data=True):
+                edge_type = edge_data.get("relationship_type") or edge_data.get("type")
 
-                    if callee not in visited:
-                        neighbors.add(callee)
-                        visited.add(callee)
-                        queue.append((callee, depth + 1))
+                # Check if this edge type is requested
+                if edge_type and edge_type in relation_types:
+                    # Apply import category filtering if needed
+                    if edge_type == "imports" and exclude_import_categories:
+                        if self._should_exclude_edge(
+                            current_id, target, exclude_import_categories
+                        ):
+                            continue
 
-            # Get predecessors (callers) if "called_by" in relation_types
-            if "called_by" in relation_types:
-                for caller in self.graph.predecessors(current_id):
-                    # Apply import category filtering
-                    if exclude_import_categories and self._should_exclude_edge(
-                        caller, current_id, exclude_import_categories
-                    ):
-                        continue
+                    if target not in visited:
+                        neighbors.add(target)
+                        visited.add(target)
+                        queue.append((target, depth + 1))
 
-                    if caller not in visited:
-                        neighbors.add(caller)
-                        visited.add(caller)
-                        queue.append((caller, depth + 1))
+            # Process incoming edges (reverse relationships)
+            for source, _, edge_data in self.graph.in_edges(current_id, data=True):
+                edge_type = edge_data.get("relationship_type") or edge_data.get("type")
+
+                # Convert to reverse type name (e.g., "calls" -> "called_by")
+                reverse_type = (
+                    self._get_reverse_relation_type(edge_type) if edge_type else None
+                )
+
+                # Check if this reverse type is requested
+                if reverse_type and reverse_type in relation_types:
+                    # Apply import category filtering if needed
+                    if edge_type == "imports" and exclude_import_categories:
+                        if self._should_exclude_edge(
+                            source, current_id, exclude_import_categories
+                        ):
+                            continue
+
+                    if source not in visited:
+                        neighbors.add(source)
+                        visited.add(source)
+                        queue.append((source, depth + 1))
 
         return neighbors
+
+    def _get_reverse_relation_type(self, relation_type: str) -> str:
+        """
+        Get the reverse name for a relationship type.
+
+        Args:
+            relation_type: Forward relationship type (e.g., "calls", "imports", "inherits")
+
+        Returns:
+            Reverse relationship type (e.g., "called_by", "imported_by", "inherited_by")
+
+        Note:
+            Most verb-based types need past participle form + "_by".
+            Special irregular forms are handled explicitly.
+        """
+        # Comprehensive mapping for all relationship types
+        reverse_mapping = {
+            "calls": "called_by",
+            "inherits": "inherited_by",
+            "uses_type": "used_as_type_by",
+            "imports": "imported_by",
+            "decorates": "decorated_by",
+            "raises": "raised_by",
+            "catches": "caught_by",
+            "instantiates": "instantiated_by",
+            "implements": "implemented_by",
+            "overrides": "overridden_by",
+            "assigns_to": "assigned_by",
+            "reads_from": "read_by",
+            "defines_constant": "constant_defined_by",
+            "defines_enum_member": "enum_member_defined_by",
+            "defines_class_attr": "class_attr_defined_by",
+            "defines_field": "field_defined_by",
+            "uses_constant": "constant_used_by",
+            "uses_default": "default_used_by",
+            "uses_global": "global_used_by",
+            "asserts_type": "type_asserted_by",
+            "uses_context_manager": "context_manager_used_by",
+        }
+
+        if relation_type in reverse_mapping:
+            return reverse_mapping[relation_type]
+
+        # Fallback: append "_by" (should not be reached if mapping is complete)
+        return f"{relation_type}_by"
 
     def _should_exclude_edge(
         self, source_id: str, target_id: str, exclude_categories: list[str]

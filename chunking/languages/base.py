@@ -425,8 +425,29 @@ class LanguageChunker(ABC):
         # Step 1: Assign community_id to chunks from map
         chunks_with_community = []
         for chunk in chunks:
+            # BUG FIX: chunk.chunk_id is None at this point, so generate lookup key
+            # from chunk attributes instead of using None as dictionary key
             chunk_id = chunk.chunk_id
-            community_id = community_map.get(chunk_id)
+
+            # Generate lookup key from chunk attributes
+            if chunk_id is None:
+                # Normalize path separators to forward slashes for cross-platform consistency
+                normalized_path = chunk.relative_path.replace("\\", "/")
+
+                if chunk.parent_name and chunk.name:
+                    lookup_key = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}:{chunk.parent_name}.{chunk.name}"
+                elif chunk.name:
+                    lookup_key = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}:{chunk.name}"
+                else:
+                    lookup_key = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
+            else:
+                lookup_key = chunk_id
+
+            community_id = community_map.get(lookup_key)
+
+            # Debug: Log if community lookup failed
+            if community_id is None:
+                logger.debug(f"[REMERGE] No community found for {lookup_key}")
 
             # Create new chunk with community_id assigned
             updated_chunk = replace(chunk, community_id=community_id)
@@ -544,6 +565,9 @@ class LanguageChunker(ABC):
                 language=original.language,
                 chunk_id=None,  # Will be regenerated with proper format
                 community_id=ts_chunk.community_id,  # Preserved!
+                merged_from=ts_chunk.metadata.get(
+                    "merged_from"
+                ),  # Phase A6: Copy merged symbols
                 # Preserve call graph and relationship data
                 # For non-merged chunks, copy from original; for merged chunks, use empty lists
                 calls=original.calls if ts_chunk.node_type != "merged" else [],

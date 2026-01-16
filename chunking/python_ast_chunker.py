@@ -49,6 +49,9 @@ class CodeChunk:
     # Community detection metadata
     community_id: Optional[int] = None  # Leiden community membership
 
+    # Merged symbols for secondary symbol index (Phase A6)
+    merged_from: Optional[list[str]] = None  # All symbol names in merged chunk
+
     # Internal metadata (for merge statistics tracking)
     _merge_stats: Optional[tuple] = None  # (original_count, merged_count)
 
