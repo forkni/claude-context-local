@@ -18,6 +18,7 @@ except ImportError:
     torch = None
 
 from graph.graph_storage import CodeGraphStorage
+from graph.relationship_types import RelationshipEdge, RelationshipType
 
 from .bm25_index import BM25Index
 from .ego_graph_retriever import EgoGraphRetriever
@@ -1068,6 +1069,7 @@ class HybridSearcher:
             if self.graph_storage is not None:
                 graph_nodes_added = 0
                 graph_edges_added = 0
+                relationship_edges_added = 0
                 resolved_count = 0
                 semantic_types = {
                     "function",
@@ -1134,10 +1136,36 @@ class HybridSearcher:
                         )
                         graph_edges_added += 1
 
+                    # Add relationship edges (inherits, imports, decorates, etc.)
+                    relationships = result.metadata.get("relationships", [])
+                    for rel_dict in relationships:
+                        try:
+                            # Reconstruct RelationshipEdge from dict
+                            edge = RelationshipEdge(
+                                source_id=rel_dict.get("source_id", chunk_id),
+                                target_name=rel_dict.get("target_name", "unknown"),
+                                relationship_type=RelationshipType(
+                                    rel_dict.get("relationship_type", "calls")
+                                ),
+                                line_number=rel_dict.get("line_number", 0),
+                                confidence=rel_dict.get("confidence", 1.0),
+                                metadata=rel_dict.get("metadata", {}),
+                            )
+
+                            # Add to graph storage
+                            self.graph_storage.add_relationship_edge(edge)
+                            relationship_edges_added += 1
+
+                        except Exception as e:
+                            self._logger.debug(
+                                f"Failed to add relationship edge from {chunk_id}: {e}"
+                            )
+
                 self._logger.info(
                     f"[ADD_EMBEDDINGS] Populated graph: {graph_nodes_added} nodes, "
                     f"{graph_edges_added} call edges ({resolved_count} resolved, "
-                    f"{graph_edges_added - resolved_count} phantom)"
+                    f"{graph_edges_added - resolved_count} phantom), "
+                    f"{relationship_edges_added} relationship edges"
                 )
 
             self._logger.info(
