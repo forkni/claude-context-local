@@ -8,10 +8,37 @@ Note: Qwen3 adaptively selects Qwen3-4B (12GB+ GPUs) or Qwen3-0.6B (8GB GPUs).
 
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
+
+import yaml
 
 
 logger = logging.getLogger(__name__)
+
+
+def _load_routing_config() -> dict | None:
+    """Load routing configuration from YAML with fallback to None.
+
+    Returns:
+        Loaded config dict if successful, None to trigger hardcoded fallback
+    """
+    config_path = Path(__file__).parent.parent / "config" / "routing_keywords.yaml"
+    try:
+        if config_path.exists():
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f)
+                logger.info(f"Loaded routing config from {config_path}")
+                return config
+    except Exception as e:
+        logger.warning(
+            f"Failed to load routing config from {config_path}: {e}. Using hardcoded defaults."
+        )
+    return None
+
+
+# Cache loaded config at module level (loaded once on import)
+_ROUTING_CONFIG = _load_routing_config()
 
 
 @dataclass
@@ -464,11 +491,31 @@ class QueryRouter:
     def _get_routing_rules(self) -> tuple[dict, list, str]:
         """Get appropriate routing rules based on configured pool.
 
+        Loads from YAML config if available, falls back to hardcoded defaults.
+
         Returns:
             Tuple of (rules_dict, precedence_list, default_model)
         """
         pool_type = self._get_active_pool_type()
 
+        # Try YAML config first
+        if _ROUTING_CONFIG is not None:
+            pool_key = (
+                "lightweight_pool" if pool_type == "lightweight-speed" else "full_pool"
+            )
+            try:
+                pool_config = _ROUTING_CONFIG[pool_key]
+                return (
+                    pool_config["models"],
+                    pool_config["precedence"],
+                    pool_config["default_model"],
+                )
+            except (KeyError, TypeError) as e:
+                logger.warning(
+                    f"Invalid YAML config structure: {e}. Using hardcoded defaults."
+                )
+
+        # Fallback to hardcoded constants
         if pool_type == "lightweight-speed":
             return (
                 self.ROUTING_RULES_LIGHTWEIGHT,
@@ -510,13 +557,29 @@ class QueryRouter:
         Args:
             query: Natural language search query
             confidence_threshold: Minimum confidence to use non-default model.
-                                  If None, uses CONFIDENCE_THRESHOLD (0.05).
+                                  If None, uses value from YAML config or CONFIDENCE_THRESHOLD (0.05).
 
         Returns:
             RoutingDecision with model_key, confidence, and reasoning
         """
         if confidence_threshold is None:
-            confidence_threshold = self.CONFIDENCE_THRESHOLD
+            # Try YAML config first (only full_pool has explicit threshold)
+            if _ROUTING_CONFIG is not None:
+                pool_type = self._get_active_pool_type()
+                pool_key = (
+                    "lightweight_pool"
+                    if pool_type == "lightweight-speed"
+                    else "full_pool"
+                )
+                try:
+                    confidence_threshold = _ROUTING_CONFIG[pool_key].get(
+                        "confidence_threshold"
+                    )
+                except (KeyError, TypeError, AttributeError):
+                    pass
+            # Fallback to hardcoded constant
+            if confidence_threshold is None:
+                confidence_threshold = self.CONFIDENCE_THRESHOLD
 
         # Get pool-specific routing rules
         routing_rules, precedence, default_model = self._get_routing_rules()

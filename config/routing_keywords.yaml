@@ -1,0 +1,418 @@
+# Query Routing Configuration for Multi-Model Semantic Search
+#
+# This file defines routing rules for the QueryRouter system that selects
+# the optimal embedding model based on query characteristics.
+#
+# Last updated: 2026-01-16
+# Source: search/query_router.py (Task 2.2 - Phase 2 refactoring)
+
+# ============================================================================
+# Full Model Pool Configuration (12GB+ VRAM GPUs)
+# ============================================================================
+# Used when multi_model_pool="full" (default)
+# Models: BGE-M3, Qwen3, CodeRankEmbed
+
+full_pool:
+  # Confidence threshold for routing (below this, use default model)
+  # Lowered from 0.3 → 0.15 → 0.10 → 0.05 based on empirical testing
+  # Enhanced routing with single-word keywords enables lower threshold
+  # Natural queries now trigger routing with 2-3 keyword matches
+  confidence_threshold: 0.05
+
+  # Default fallback model (most balanced)
+  default_model: bge_m3
+
+  # Explicit precedence for tie-breaking
+  # When scores are within 0.01 margin, use this order:
+  # 1. CodeRankEmbed (specialized algorithms)
+  # 2. Qwen3 (implementation logic)
+  # 3. BGE-M3 (workflow/config)
+  precedence:
+    - coderankembed
+    - qwen3
+    - bge_m3
+
+  # Model-specific routing rules
+  models:
+    coderankembed:
+      weight: 1.5  # Higher weight for specialized matches
+      description: "Specialized algorithms (Merkle trees, RRF reranking, data structures)"
+      keywords:
+        # Specialized algorithms (2/8 wins, but high precision)
+        - merkle
+        - merkle tree
+        - merkle dag
+        - tree
+        - change detection
+        - rrf
+        - reranking
+        - reciprocal rank
+        - rank fusion
+        - rerank
+        - tree structure
+        - directed acyclic
+        - dag
+        # Data structures
+        - binary tree
+        - graph structure
+        - binary
+        - graph
+        # Hybrid search components
+        - hybrid
+        - fusion
+        - fuse
+        - combine
+        # Compound data structure phrases (SAFE)
+        - data structure
+        - data structures
+        - data model
+        - data modeling
+        - dataclass
+        - dataclasses
+        - pydantic
+        # Type system compounds (SAFE)
+        - type definition
+        - type definitions
+        - type schema
+        - schema definition
+        - schema definitions
+        - type system
+        - type annotation
+        - type annotations
+        # Specific OOP compounds (SAFE)
+        - class definition
+        - class schema
+        - class hierarchy
+        - interface definition
+        - protocol definition
+        - enum definition
+        - struct definition
+        # Safe single words (unambiguous)
+        - schema
+        - struct
+        - enum
+        - interface
+        - protocol
+        - inheritance
+        - polymorphism
+        - generic
+        - template
+        # Call graph and dependency analysis (moved from bge_m3 2025-12-15)
+        - call graph
+        - callgraph
+        - caller
+        - callers
+        - callee
+        - callees
+        - dependency
+        - dependencies
+        - dependency graph
+
+    qwen3:
+      weight: 1.0
+      description: "Implementation queries and algorithms"
+      keywords:
+        # Implementation-heavy queries (3/8 wins)
+        - implementation
+        - implement
+        - implementing
+        - implements
+        - how to implement
+        - algorithm
+        - algorithmic
+        - algorithms
+        - pattern
+        - patterns
+        - design pattern
+        - how does
+        - how do
+        - how is
+        - how to
+        - how can
+        - class structure
+        - method flow
+        - function flow
+        - function
+        - method
+        - class
+        - complete system
+        - full implementation
+        # Error handling (verified win) - expanded
+        - error
+        - error handling
+        - exception
+        - try except
+        - error pattern
+        - exception handling
+        - catch
+        - raise
+        - throw
+        # BM25 implementation (verified win) - expanded
+        - bm25
+        - sparse index
+        - keyword search
+        - index implementation
+        - search implementation
+        - search
+        - searching
+        - query
+        # Multi-hop search (verified win) - expanded
+        - multi-hop
+        - multi hop
+        - iterative search
+        - search algorithm
+        - hop
+        - iterative
+        - recursive
+        # Common programming terms
+        - code
+        - coding
+        - write
+        - create
+        - build
+        # Async programming
+        - async
+        - await
+        - coroutine
+        - asyncio
+        - async def
+        - concurrent
+        - concurrency
+        # Validation and code logic (2025-12-15)
+        - validate
+        - validation
+        - validator
+        - validators
+        - handler
+        - handlers
+        - registry
+        - registries
+        - extract
+        - extraction
+        - extractor
+        - parser
+        - parsing
+        - parse
+
+    bge_m3:
+      weight: 1.0
+      description: "Workflow and configuration queries"
+      keywords:
+        # Workflow & configuration (3/8 wins, most consistent)
+        - workflow
+        - process
+        - pipeline
+        - flow
+        - loading
+        - initialization
+        - init
+        - setup
+        - initialize
+        - configuration
+        - config
+        - settings
+        - manager
+        - configure
+        # Configuration loading (verified win) - expanded
+        - load config
+        - config file
+        - environment variable
+        - loading system
+        - load
+        # Incremental indexing (verified win) - expanded
+        - incremental
+        - indexing logic
+        - reindex
+        - indexing
+        - logic
+        - index
+        # Embedding workflow (verified win) - expanded
+        - embedding
+        - embed
+        - generation
+        - batch
+        - generation workflow
+        - generate
+        # Vector search components
+        - faiss
+        - vector
+        - vectors
+        - similarity
+        - dense
+        - nearest neighbor
+        - knn
+        - ann
+        # General system queries
+        - system
+        - integration
+        - connection
+        - connect
+        - integrate
+        # Relationship queries (graph/dependency moved to coderankembed)
+        - relationship
+        - relationships
+        - impact
+        - inheritance
+        - inherits
+        - extends
+        - uses
+        - type usage
+        - imports
+        # Project and workflow terms (2025-12-15)
+        - switch
+        - switching
+        - verify
+        - verification
+        - project
+        - projects
+
+# ============================================================================
+# Lightweight Model Pool Configuration (8GB VRAM GPUs)
+# ============================================================================
+# Used when multi_model_pool="lightweight-speed"
+# Models: BGE-M3 + GTE-ModernBERT (proven combination)
+
+lightweight_pool:
+  # Default for lightweight pools
+  default_model: bge_m3
+
+  # Lightweight precedence (2-model tier breaking)
+  precedence:
+    - code_model
+    - bge_m3
+
+  # Model-specific routing rules
+  models:
+    code_model:  # Maps to gte_modernbert
+      weight: 1.5  # Prioritize code model for code queries
+      description: "Code-specific queries (routes to gte-modernbert)"
+      keywords:
+        # Code implementation and algorithms (VALIDATED: 5/11 wins)
+        - implementation
+        - implement
+        - implementing
+        - algorithm
+        - algorithmic
+        - function
+        - method
+        - class
+        - code
+        - how does  # Benchmark winner: implementation details
+        - how do
+        - how is
+        # Parsing and chunking (VALIDATED: parse/chunk queries won)
+        - parse
+        - parsing
+        - parser
+        - chunk
+        - chunking
+        # Validation logic (VALIDATED: validate chunk id query won)
+        - validate
+        - validation
+        - validator
+        - normalize
+        # Error handling
+        - error
+        - error handling
+        - exception
+        - try except
+        - catch
+        - raise
+        # Data structures and types (VALIDATED: found dataclass in results)
+        - data structure
+        - dataclass
+        - dataclasses
+        - type definition
+        - type schema
+        - merkle
+        - tree
+        - tree structure
+        - graph
+        - binary
+        - dag
+        - schema
+        # OOP concepts (VALIDATED: base class queries won)
+        - base class
+        - inheritance
+        - extends
+        - inherits
+        # Search and algorithms
+        - search
+        - searching
+        - bm25
+        - multi-hop
+        - recursive
+        - iterative
+        # Async programming
+        - async
+        - await
+        - coroutine
+        - concurrent
+        # Code analysis and extraction (VALIDATED: extraction queries won)
+        - extract
+        - extraction
+        - extractor
+        - handler
+        - handlers
+        # Call graph (VALIDATED: call graph extraction won)
+        - call graph
+        - caller
+        - callers
+        - callee
+        - callees
+        - dependency
+        - dependencies
+        - relationship
+        - relationships
+        # Snapshot and change detection (from merkle queries)
+        - snapshot
+        - change detection
+
+    bge_m3:
+      weight: 1.0  # Default fallback
+      description: "Workflow, configuration, and system queries"
+      keywords:
+        # Workflow and configuration (VALIDATED: BGE strength)
+        - workflow
+        - process
+        - pipeline
+        - flow
+        - loading
+        - initialization
+        - init
+        - setup
+        - initialize
+        - configuration
+        - config
+        - configure
+        - settings
+        - manager
+        # Config serialization (VALIDATED: BGE won serialize/deserialize)
+        - serialize
+        - serialization
+        - deserialize
+        - to_dict
+        - from_dict
+        - json
+        # Embedding and indexing
+        - embedding
+        - embed
+        - indexing
+        - index
+        - incremental
+        - reindex
+        # Vector search
+        - faiss
+        - vector
+        - vectors
+        - similarity
+        - dense
+        # System integration
+        - system
+        - integration
+        - connection
+        - connect
+        - project
+        - projects
+        - verification
+        - verify
