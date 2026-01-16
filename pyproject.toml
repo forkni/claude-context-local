@@ -8,11 +8,12 @@ version = "0.8.5"
 description = "Local semantic code search for Claude Code (MCP) using EmbeddingGemma, FAISS, and AST/tree-sitter chunking. 100% local embeddings and indexing."
 readme = "README.md"
 requires-python = ">=3.11"
+license = "Apache-2.0"
 authors = [
-    { name = "forkni" }
+    { name = "forkni", email = "forkni@gmail.com" }
 ]
 maintainers = [
-    { name = "forkni" }
+    { name = "forkni", email = "forkni@gmail.com" }
 ]
 keywords = [
     "semantic-search",
@@ -60,6 +61,7 @@ dependencies = [
 ]
 
 classifiers = [
+    "Development Status :: 4 - Beta",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -92,6 +94,7 @@ Homepage = "https://github.com/forkni/claude-context-local"
 Repository = "https://github.com/forkni/claude-context-local"
 Documentation = "https://github.com/forkni/claude-context-local#readme"
 Issues = "https://github.com/forkni/claude-context-local/issues"
+Changelog = "https://github.com/forkni/claude-context-local/blob/main/docs/VERSION_HISTORY.md"
 
 [tool.setuptools.packages.find]
 include = ["chunking*", "embeddings*", "mcp_server*", "search*", "merkle*"]
@@ -205,15 +208,27 @@ select = [
     "E",  # pycodestyle errors
     "W",  # pycodestyle warnings
     "F",  # pyflakes
-    "I",  # isort
+    "I",  # isort (replaces standalone isort)
     "B",  # flake8-bugbear
     "C4", # flake8-comprehensions
 ]
 ignore = [
-    "E501",  # line too long (handled by black)
+    "C901",  # McCabe complexity - skip for faster checks (diffusers pattern)
+    "E501",  # line too long (handled by formatter)
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["E402", "F401", "F403", "F811"]
 # Imports inside try-except blocks cause conflicts between ruff and isort
 "tests/integration/test_mcp_functionality.py" = ["I001"]
 "tests/integration/test_token_efficiency_workflow.py" = ["I001"]
+
+[tool.ruff.lint.isort]
+lines-after-imports = 2
+known-first-party = ["chunking", "embeddings", "mcp_server", "search", "merkle", "evaluation"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

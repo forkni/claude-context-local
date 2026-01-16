@@ -130,16 +130,12 @@ jobs:
 
       - name: Install linting tools
         run: |
-          pip install ruff black isort
+          pip install ruff
 
-      - name: Run ruff
+      - name: Run ruff check (linting + import sorting)
         run: ruff check .
         continue-on-error: true
 
-      - name: Check formatting
-        run: black --check .
-        continue-on-error: true
-
-      - name: Check imports
-        run: isort --check-only .
+      - name: Check formatting (ruff format)
+        run: ruff format --check .
         continue-on-error: true
