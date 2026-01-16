@@ -217,6 +217,12 @@ class GraphIntegration:
                         bare_name = chunk.name.split(".")[-1]
                         name_to_chunk_ids[bare_name].append(chunk.chunk_id)
 
+                    # Phase 1.7.1: Also index by qualified name for self.method() resolution
+                    # Fixes intra-class method calls by indexing "ClassName.method"
+                    if chunk.parent_name and chunk.name:
+                        qualified_name = f"{chunk.parent_name}.{chunk.name}"
+                        name_to_chunk_ids[qualified_name].append(chunk.chunk_id)
+
                 processed_count += 1
 
             except Exception as e:
@@ -251,7 +257,7 @@ class GraphIntegration:
 
                     # Try to resolve callee_name to a chunk_id
                     resolved_chunk_id = self._resolve_call_target(
-                        callee_name, name_to_chunk_ids
+                        callee_name, name_to_chunk_ids, caller_file=chunk.file_path
                     )
 
                     if resolved_chunk_id:
@@ -316,6 +322,7 @@ class GraphIntegration:
         self,
         callee_name: str,
         name_to_chunk_ids: dict[str, list[str]],
+        caller_file: Optional[str] = None,
     ) -> Optional[str]:
         """Resolve a call target name to its chunk_id.
 
@@ -325,16 +332,49 @@ class GraphIntegration:
         Args:
             callee_name: Symbol name from the call (e.g., "foo", "ClassName.method")
             name_to_chunk_ids: Mapping from symbol names to chunk_ids
+            caller_file: Optional file path of caller for disambiguation
 
         Returns:
             chunk_id if exactly one match, None otherwise (creates phantom node)
         """
+        # Phase 1.7.2: Skip builtins - they never resolve to project code
+        import builtins
+
+        if hasattr(builtins, callee_name):
+            return None  # Create phantom node (will be filtered in traversals)
+
+        # Check if base name (after last dot) is a common method builtin
+        base_name = callee_name.split(".")[-1] if "." in callee_name else callee_name
+        if base_name in {
+            "append",
+            "extend",
+            "get",
+            "items",
+            "keys",
+            "values",
+            "split",
+            "join",
+            "strip",
+            "replace",
+            "format",
+            "lower",
+            "upper",
+        }:
+            return None
+
         candidates = name_to_chunk_ids.get(callee_name, [])
 
         if len(candidates) == 1:
             return candidates[0]
 
-        # No match or ambiguous - create phantom node
+        # Phase 1.7.3: Context-aware disambiguation for ambiguous matches
+        if len(candidates) > 1 and caller_file:
+            # Try same-file preference - overwhelmingly the intended target
+            same_file = [c for c in candidates if caller_file in c]
+            if len(same_file) == 1:
+                return same_file[0]
+
+        # No match or still ambiguous - create phantom node
         return None
 
     def save(self) -> None:
