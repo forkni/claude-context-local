@@ -1,0 +1,9 @@
+checkCommands:
+  fix: pip install ruff black isort && ruff check --fix . && black . && isort .
+  lint: pip install ruff && ruff check .
+  types: pip install mypy && mypy mcp_server/
+  test: pip install pytest && pytest tests/ -x -q
+beta:
+  canApprovePullRequests: false
+  # proactive:  # Uncomment to enable daily automated playbooks
+  #   - playbook: ".charlie/playbooks/dependency-check.md"
