@@ -5,7 +5,7 @@ Handlers that modify system configuration or project state.
 
 import logging
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from mcp_server.project_persistence import save_project_selection
 from mcp_server.server import _cleanup_previous_resources
@@ -16,10 +16,10 @@ from mcp_server.storage_manager import (
 )
 from mcp_server.tools.decorators import error_handler
 from search.config import (
-    MODEL_POOL_CONFIG,
     MODEL_REGISTRY,
     get_config_manager,
 )
+
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,10 @@ def _detect_indexed_model(project_path: str) -> str | None:
     Returns:
         Model key if found, None otherwise
     """
-    for model_key in MODEL_POOL_CONFIG.keys():
+    from mcp_server.model_pool_manager import get_model_pool_manager
+
+    pool_config = get_model_pool_manager()._get_pool_config()
+    for model_key in pool_config.keys():
         project_dir = get_project_storage_dir(project_path, model_key=model_key)
         code_index_file = project_dir / "index" / "code.index"
         if code_index_file.exists():
@@ -43,7 +46,7 @@ def _detect_indexed_model(project_path: str) -> str | None:
 
 
 @error_handler("Project switch")
-async def handle_switch_project(arguments: Dict[str, Any]) -> dict:
+async def handle_switch_project(arguments: dict[str, Any]) -> dict:
     """Switch to a different indexed project."""
     project_path = arguments["project_path"]
 
@@ -94,7 +97,7 @@ async def handle_switch_project(arguments: Dict[str, Any]) -> dict:
 
 
 @error_handler("Configure routing")
-async def handle_configure_query_routing(arguments: Dict[str, Any]) -> dict:
+async def handle_configure_query_routing(arguments: dict[str, Any]) -> dict:
     """Configure query routing behavior."""
     enable_multi_model = arguments.get("enable_multi_model")
     default_model = arguments.get("default_model")
@@ -117,7 +120,10 @@ async def handle_configure_query_routing(arguments: Dict[str, Any]) -> dict:
         config_manager.save_config(config)
 
     if default_model is not None:
-        if default_model in MODEL_POOL_CONFIG:
+        from mcp_server.model_pool_manager import get_model_pool_manager
+
+        pool_config = get_model_pool_manager()._get_pool_config()
+        if default_model in pool_config:
             # Persist to config file
             config.routing.default_model = default_model
             changes["default_model"] = default_model
@@ -142,7 +148,7 @@ async def handle_configure_query_routing(arguments: Dict[str, Any]) -> dict:
 
 
 @error_handler("Configure search mode")
-async def handle_configure_search_mode(arguments: Dict[str, Any]) -> dict:
+async def handle_configure_search_mode(arguments: dict[str, Any]) -> dict:
     """Configure search mode and parameters."""
     search_mode = arguments.get("search_mode", "hybrid")
     bm25_weight = arguments.get("bm25_weight", 0.4)
@@ -183,7 +189,7 @@ async def handle_configure_search_mode(arguments: Dict[str, Any]) -> dict:
     "Switch model",
     error_context=lambda args: {"available_models": list(MODEL_REGISTRY.keys())},
 )
-async def handle_switch_embedding_model(arguments: Dict[str, Any]) -> dict:
+async def handle_switch_embedding_model(arguments: dict[str, Any]) -> dict:
     """Switch to a different embedding model."""
     model_name = arguments["model_name"]
 
@@ -214,7 +220,7 @@ async def handle_switch_embedding_model(arguments: Dict[str, Any]) -> dict:
 
 
 @error_handler("Configure reranking")
-async def handle_configure_reranking(arguments: Dict[str, Any]) -> dict:
+async def handle_configure_reranking(arguments: dict[str, Any]) -> dict:
     """Configure neural reranker settings.
 
     Args:
@@ -256,37 +262,50 @@ async def handle_configure_reranking(arguments: Dict[str, Any]) -> dict:
 
 
 @error_handler("Configure chunking")
-async def handle_configure_chunking(arguments: Dict[str, Any]) -> dict:
+async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
     """Configure code chunking settings.
 
     Args:
         arguments: Dict with optional keys:
-            - enable_greedy_merge: Enable/disable greedy chunk merging
-            - min_chunk_tokens: Minimum token count before considering merge
-            - max_merged_tokens: Maximum token count for merged chunks
+            - enable_community_detection: Enable/disable community detection (independent)
+            - enable_community_merge: Enable/disable community-based remerge (full index only)
+            - community_resolution: Resolution parameter for Louvain community detection (0.1-2.0)
             - token_estimation: Token estimation method ("whitespace" or "tiktoken")
             - enable_large_node_splitting: Enable/disable AST block splitting
             - max_chunk_lines: Maximum lines per chunk before splitting
+            - split_size_method: Size method for splitting ("lines" or "characters")
+            - max_split_chars: Maximum characters per split chunk (1000-10000)
 
     Returns:
         Dict with success status and updated config
+
+    Note:
+        min_chunk_tokens (50) and max_merged_tokens (1000) are optimal defaults
+        and not exposed for user configuration.
     """
     config_manager = get_config_manager()
     config = config_manager.load_config()
 
-    enable_greedy_merge = arguments.get("enable_greedy_merge")
-    min_chunk_tokens = arguments.get("min_chunk_tokens")
-    max_merged_tokens = arguments.get("max_merged_tokens")
+    enable_community_detection = arguments.get("enable_community_detection")
+    enable_community_merge = arguments.get("enable_community_merge")
+    community_resolution = arguments.get("community_resolution")
     token_estimation = arguments.get("token_estimation")
     enable_large_node_splitting = arguments.get("enable_large_node_splitting")
     max_chunk_lines = arguments.get("max_chunk_lines")
+    split_size_method = arguments.get("split_size_method")
+    max_split_chars = arguments.get("max_split_chars")
 
-    if enable_greedy_merge is not None:
-        config.chunking.enable_greedy_merge = enable_greedy_merge
-    if min_chunk_tokens is not None:
-        config.chunking.min_chunk_tokens = min_chunk_tokens
-    if max_merged_tokens is not None:
-        config.chunking.max_merged_tokens = max_merged_tokens
+    if enable_community_detection is not None:
+        config.chunking.enable_community_detection = enable_community_detection
+    if enable_community_merge is not None:
+        config.chunking.enable_community_merge = enable_community_merge
+    if community_resolution is not None:
+        if 0.1 <= community_resolution <= 2.0:
+            config.chunking.community_resolution = community_resolution
+        else:
+            return {
+                "error": f"Invalid community_resolution: {community_resolution}. Must be between 0.1 and 2.0"
+            }
     if token_estimation is not None:
         if token_estimation in ["whitespace", "tiktoken"]:
             config.chunking.token_estimation = token_estimation
@@ -296,18 +315,34 @@ async def handle_configure_chunking(arguments: Dict[str, Any]) -> dict:
         config.chunking.enable_large_node_splitting = enable_large_node_splitting
     if max_chunk_lines is not None:
         config.chunking.max_chunk_lines = max_chunk_lines
+    if split_size_method is not None:
+        if split_size_method in ["lines", "characters"]:
+            config.chunking.split_size_method = split_size_method
+        else:
+            return {
+                "error": f"Invalid split_size_method: {split_size_method}. Must be 'lines' or 'characters'"
+            }
+    if max_split_chars is not None:
+        if 1000 <= max_split_chars <= 10000:
+            config.chunking.max_split_chars = max_split_chars
+        else:
+            return {
+                "error": f"Invalid max_split_chars: {max_split_chars}. Must be between 1000 and 10000"
+            }
 
     config_manager.save_config(config)
 
     return {
         "success": True,
         "config": {
-            "enable_greedy_merge": config.chunking.enable_greedy_merge,
-            "min_chunk_tokens": config.chunking.min_chunk_tokens,
-            "max_merged_tokens": config.chunking.max_merged_tokens,
+            "enable_community_detection": config.chunking.enable_community_detection,
+            "enable_community_merge": config.chunking.enable_community_merge,
+            "community_resolution": config.chunking.community_resolution,
             "token_estimation": config.chunking.token_estimation,
             "enable_large_node_splitting": config.chunking.enable_large_node_splitting,
             "max_chunk_lines": config.chunking.max_chunk_lines,
+            "split_size_method": config.chunking.split_size_method,
+            "max_split_chars": config.chunking.max_split_chars,
         },
         "system_message": "Chunking configuration updated. Re-index project to apply changes.",
     }

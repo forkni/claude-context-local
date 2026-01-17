@@ -33,9 +33,9 @@
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
 - **Multi-Model Routing**: Intelligent query routing (Qwen3, BGE-M3, CodeRankEmbed) with 100% accuracy - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md)
 - **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
-- **17 MCP Tools**: Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
+- **18 MCP Tools**: Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
 
-**Status**: ✅ Production-ready | 1000+ passing tests | All 18 MCP tools operational | Windows 10/11
+**Status**: ✅ Production-ready | 1,068+ passing tests | All 19 MCP tools operational | Windows 10/11
 
 ## Quick Start
 
@@ -74,6 +74,7 @@ Enter your project path when prompted (e.g., `C:\Projects\MyApp`).
 **Option B: Via Claude Code** (after loading `/mcp-search` skill)
 
 Simply ask Claude naturally:
+
 ```
 "Index my project at C:\Projects\MyApp"
 ```
@@ -326,7 +327,7 @@ Weights should sum to 1.0.
 
 | Model | VRAM | Best For |
 |-------|------|----------|
-| **BGE-M3** | 3-4GB | Production, hybrid search (recommended) |
+| **BGE-M3** | 1-1.5GB | Production, hybrid search (recommended) |
 | **Qwen3-0.6B** | 2.3GB | High efficiency, excellent value |
 | **EmbeddingGemma-300m** | 4-8GB | Fast, lightweight (default) |
 | **Multi-Model Routing** | 5.3GB | Auto-routes to optimal model |
@@ -398,7 +399,7 @@ claude-context-local/
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 1,054+ tests (unit + integration)
+└── tests/             # 1,068+ tests (unit + integration)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -476,7 +477,7 @@ The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic s
 
 ### Development
 
-- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (700+ passing)
+- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (1,068+ passing)
 - [Git Workflow](docs/GIT_WORKFLOW.md) - Contributing guidelines
 - [Version History](docs/VERSION_HISTORY.md) - Changelog
 

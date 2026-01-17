@@ -229,9 +229,7 @@ class TestIncrementalIndexer:
         mock_changes = Mock()
         mock_changes.has_changes.return_value = False
         mock_dag = Mock()
-        mock_dag.get_all_files.return_value = (
-            []
-        )  # Mock get_all_files to return empty list
+        mock_dag.get_all_files.return_value = []  # Mock get_all_files to return empty list
         indexer.change_detector.detect_changes_from_snapshot = Mock(
             return_value=(mock_changes, mock_dag)
         )

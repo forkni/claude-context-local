@@ -3,7 +3,7 @@
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Optional
 
 from search.filters import compute_drive_agnostic_hash, compute_legacy_hash
 
@@ -13,7 +13,7 @@ from .merkle_dag import MerkleDAG
 class SnapshotManager:
     """Manages loading and saving of Merkle DAG snapshots."""
 
-    def __init__(self, storage_dir: Optional[Path] = None):
+    def __init__(self, storage_dir: Optional[Path] = None) -> None:
         """Initialize snapshot manager.
 
         Args:
@@ -48,7 +48,7 @@ class SnapshotManager:
 
     def _get_model_slug_and_dimension(
         self, dimension: Optional[int] = None
-    ) -> Tuple[str, int]:
+    ) -> tuple[str, int]:
         """Get model slug and dimension, auto-detecting from config if needed.
 
         Args:
@@ -66,7 +66,7 @@ class SnapshotManager:
                 config = ServiceLocator.instance().get_config()
                 dimension = config.embedding.dimension
                 model_slug = get_model_slug(config.embedding.model_name)
-            except Exception:
+            except (AttributeError, KeyError, RuntimeError):
                 # Fallback to default if config unavailable
                 dimension = 768
                 model_slug = "unknown"
@@ -79,7 +79,7 @@ class SnapshotManager:
 
                 config = ServiceLocator.instance().get_config()
                 model_slug = get_model_slug(config.embedding.model_name)
-            except Exception:
+            except (AttributeError, KeyError, RuntimeError):
                 model_slug = "unknown"
 
         return model_slug, dimension
@@ -152,7 +152,7 @@ class SnapshotManager:
         # Return new path for creation
         return new_path
 
-    def save_snapshot(self, dag: MerkleDAG, metadata: Optional[Dict] = None) -> None:
+    def save_snapshot(self, dag: MerkleDAG, metadata: Optional[dict] = None) -> None:
         """Save a Merkle DAG snapshot to disk.
 
         Args:
@@ -218,7 +218,7 @@ class SnapshotManager:
             print(f"Error loading snapshot: {e}")
             return None
 
-    def load_metadata(self, project_path: str) -> Optional[Dict]:
+    def load_metadata(self, project_path: str) -> Optional[dict]:
         """Load metadata for a project.
 
         Args:
@@ -321,7 +321,7 @@ class SnapshotManager:
             try:
                 snapshot_file.unlink()
                 deleted_count += 1
-            except Exception:
+            except OSError:
                 pass  # Continue even if one file fails
 
         # Delete all metadata files for this project (all dimensions)
@@ -329,7 +329,7 @@ class SnapshotManager:
             try:
                 metadata_file.unlink()
                 deleted_count += 1
-            except Exception:
+            except OSError:
                 pass  # Continue even if one file fails
 
         return deleted_count
@@ -350,7 +350,7 @@ class SnapshotManager:
             try:
                 snapshot_file.unlink()
                 deleted_count += 1
-            except Exception:
+            except OSError:
                 pass  # Continue even if one file fails
 
         # Delete all metadata files
@@ -358,12 +358,12 @@ class SnapshotManager:
             try:
                 metadata_file.unlink()
                 deleted_count += 1
-            except Exception:
+            except OSError:
                 pass  # Continue even if one file fails
 
         return deleted_count
 
-    def list_snapshots(self) -> List[Dict]:
+    def list_snapshots(self) -> list[dict]:
         """List all available snapshots.
 
         Returns:
@@ -376,7 +376,7 @@ class SnapshotManager:
                 with open(metadata_file, "r") as f:
                     metadata = json.load(f)
                     snapshots.append(metadata)
-            except Exception:
+            except (OSError, json.JSONDecodeError):
                 continue
 
         return sorted(snapshots, key=lambda x: x.get("last_snapshot", ""), reverse=True)
@@ -388,7 +388,7 @@ class SnapshotManager:
             keep_count: Number of snapshots to keep per project
         """
         # Group snapshots by project
-        project_snapshots: Dict[str, List[Path]] = {}
+        project_snapshots: dict[str, list[Path]] = {}
 
         for snapshot_file in self.storage_dir.glob("*_snapshot.json"):
             project_id = snapshot_file.stem.replace("_snapshot", "")

@@ -1,5 +1,6 @@
 """Unit tests for MCP tool handler decorators."""
 
+from typing import Dict
 from unittest.mock import patch
 
 import pytest
@@ -22,7 +23,7 @@ class TestErrorHandlerDecorator:
         """Test that decorator passes through successful handler results."""
 
         @error_handler("Test Action")
-        async def successful_handler(arguments: dict) -> dict:
+        async def successful_handler(arguments: dict) -> Dict:
             return {"status": "success", "data": arguments.get("value")}
 
         result = await successful_handler({"value": 42})
@@ -36,7 +37,7 @@ class TestErrorHandlerDecorator:
         """Test decorator with complex return values."""
 
         @error_handler("Complex Action")
-        async def complex_handler(arguments: dict) -> dict:
+        async def complex_handler(arguments: dict) -> Dict:
             return {
                 "results": [1, 2, 3],
                 "metadata": {"count": 3, "total_time": 1.5},
@@ -54,7 +55,7 @@ class TestErrorHandlerDecorator:
         """Test that exceptions are converted to error response dicts."""
 
         @error_handler("Failing Action")
-        async def failing_handler(arguments: dict) -> dict:
+        async def failing_handler(arguments: dict) -> Dict:
             raise ValueError("Something went wrong")
 
         result = await failing_handler({})
@@ -67,7 +68,7 @@ class TestErrorHandlerDecorator:
         """Test that exceptions are logged with exc_info=True."""
 
         @error_handler("Failing Action")
-        async def failing_handler(arguments: dict) -> dict:
+        async def failing_handler(arguments: dict) -> Dict:
             raise RuntimeError("Critical failure")
 
         await failing_handler({"param": "value"})
@@ -82,14 +83,14 @@ class TestErrorHandlerDecorator:
     async def test_error_context_enrichment(self):
         """Test that error responses can be enriched with context."""
 
-        def get_context(arguments: dict) -> dict:
+        def get_context(arguments: dict) -> Dict:
             return {
                 "available_options": ["opt1", "opt2", "opt3"],
                 "provided_value": arguments.get("value"),
             }
 
         @error_handler("Action With Context", error_context=get_context)
-        async def handler_with_context(arguments: dict) -> dict:
+        async def handler_with_context(arguments: dict) -> Dict:
             raise ValueError("Invalid option")
 
         result = await handler_with_context({"value": "invalid"})
@@ -103,11 +104,11 @@ class TestErrorHandlerDecorator:
     async def test_error_context_enrichment_with_no_context(self):
         """Test that None/empty context is handled gracefully."""
 
-        def empty_context(arguments: dict) -> dict:
+        def empty_context(arguments: dict) -> Dict:
             return {}
 
         @error_handler("Action With Empty Context", error_context=empty_context)
-        async def handler_with_empty_context(arguments: dict) -> dict:
+        async def handler_with_empty_context(arguments: dict) -> Dict:
             raise ValueError("Test error")
 
         result = await handler_with_empty_context({})
@@ -119,11 +120,11 @@ class TestErrorHandlerDecorator:
     async def test_error_context_callback_failure_is_failsafe(self):
         """Test that error context callback failure doesn't break error handling."""
 
-        def failing_context(arguments: dict) -> dict:
+        def failing_context(arguments: dict) -> Dict:
             raise RuntimeError("Context enrichment failed")
 
         @error_handler("Action With Failing Context", error_context=failing_context)
-        async def handler_with_failing_context(arguments: dict) -> dict:
+        async def handler_with_failing_context(arguments: dict) -> Dict:
             raise ValueError("Original error")
 
         result = await handler_with_failing_context({})
@@ -153,7 +154,7 @@ class TestErrorHandlerDecorator:
         for exc_class, message, expected_error in test_cases:
             # Bind loop variables to avoid closure issues (B023)
             @error_handler("Test Action")
-            async def handler(arguments: dict, _exc=exc_class, _msg=message) -> dict:
+            async def handler(arguments: dict, _exc=exc_class, _msg=message) -> Dict:
                 raise _exc(_msg)
 
             result = await handler({})
@@ -164,7 +165,7 @@ class TestErrorHandlerDecorator:
         """Test that action_name appears in log messages."""
 
         @error_handler("Custom Action Name")
-        async def handler(arguments: dict) -> dict:
+        async def handler(arguments: dict) -> Dict:
             raise ValueError("Test error")
 
         await handler({})
@@ -178,7 +179,7 @@ class TestErrorHandlerDecorator:
         """Test that @functools.wraps preserves function metadata."""
 
         @error_handler("Test")
-        async def documented_handler(arguments: dict) -> dict:
+        async def documented_handler(arguments: dict) -> Dict:
             """This is a documented handler."""
             return {"result": "success"}
 
@@ -191,11 +192,11 @@ class TestErrorHandlerDecorator:
         """Test that multiple decorated handlers are independent."""
 
         @error_handler("Handler 1")
-        async def handler1(arguments: dict) -> dict:
+        async def handler1(arguments: dict) -> Dict:
             return {"handler": 1}
 
         @error_handler("Handler 2")
-        async def handler2(arguments: dict) -> dict:
+        async def handler2(arguments: dict) -> Dict:
             return {"handler": 2}
 
         result1 = await handler1({})
@@ -209,12 +210,12 @@ class TestErrorHandlerDecorator:
         """Test that handler arguments are passed to context callback."""
         captured_args = {}
 
-        def capture_args_context(arguments: dict) -> dict:
+        def capture_args_context(arguments: dict) -> Dict:
             captured_args.update(arguments)
             return {"captured": True}
 
         @error_handler("Test", error_context=capture_args_context)
-        async def handler(arguments: dict) -> dict:
+        async def handler(arguments: dict) -> Dict:
             raise ValueError("Test")
 
         await handler({"key1": "value1", "key2": 42})
@@ -228,11 +229,11 @@ class TestErrorHandlerDecorator:
         """Test that error responses have consistent format across scenarios."""
 
         @error_handler("Action 1")
-        async def handler1(arguments: dict) -> dict:
+        async def handler1(arguments: dict) -> Dict:
             raise ValueError("Error 1")
 
         @error_handler("Action 2", error_context=lambda args: {"extra": "field"})
-        async def handler2(arguments: dict) -> dict:
+        async def handler2(arguments: dict) -> Dict:
             raise ValueError("Error 2")
 
         result1 = await handler1({})
@@ -253,7 +254,7 @@ class TestErrorHandlerIntegration:
         """Test decorator with search handler pattern."""
 
         @error_handler("Search")
-        async def search_handler(arguments: dict) -> dict:
+        async def search_handler(arguments: dict) -> Dict:
             query = arguments.get("query")
             if not query:
                 raise ValueError("Query is required")
@@ -276,7 +277,7 @@ class TestErrorHandlerIntegration:
             "Switch model",
             error_context=lambda args: {"available_models": available_models},
         )
-        async def switch_model_handler(arguments: dict) -> dict:
+        async def switch_model_handler(arguments: dict) -> Dict:
             model = arguments.get("model_name")
             if model not in available_models:
                 raise ValueError(f"Model '{model}' not found")

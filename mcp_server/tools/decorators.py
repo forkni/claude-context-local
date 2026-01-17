@@ -6,16 +6,18 @@ Provides consistent error handling and other cross-cutting concerns.
 import asyncio
 import functools
 import logging
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any, Optional
 
 import anyio
+
 
 logger = logging.getLogger(__name__)
 
 
 def error_handler(
     action_name: str,
-    error_context: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
+    error_context: Optional[Callable[[dict[str, Any]], dict[str, Any]]] = None,
 ):
     """Decorator for consistent error handling in MCP tool handlers.
 
@@ -35,7 +37,7 @@ def error_handler(
 
     Example:
         >>> @error_handler("Search")
-        >>> async def handle_search_code(arguments: Dict[str, Any]) -> dict:
+        >>> async def handle_search_code(arguments: Dict[str, Any]) -> Dict:
         >>>     # ... business logic ...
         >>>     return {"results": [...]}
 
@@ -43,14 +45,14 @@ def error_handler(
         >>>     "Switch model",
         >>>     error_context=lambda args: {"available_models": ["qwen3", "bge_m3"]}
         >>> )
-        >>> async def handle_switch_embedding_model(arguments: Dict[str, Any]) -> dict:
+        >>> async def handle_switch_embedding_model(arguments: Dict[str, Any]) -> Dict:
         >>>     # ... business logic ...
         >>>     return {"success": True}
     """
 
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
-        async def wrapper(arguments: Dict[str, Any]) -> dict:
+        async def wrapper(arguments: dict[str, Any]) -> dict:
             try:
                 return await func(arguments)
             except asyncio.CancelledError:

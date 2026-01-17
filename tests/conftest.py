@@ -2,6 +2,7 @@
 
 import warnings
 
+
 # Suppress FAISS SWIG warnings at import time (before pytest/FAISS imports)
 warnings.filterwarnings(
     "ignore", message=".*builtin type SwigPy.*", category=DeprecationWarning
@@ -22,6 +23,7 @@ import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 
 from search.filters import normalize_path  # noqa: E402
+
 
 # Add the package to Python path for testing
 project_root = Path(__file__).parent
@@ -396,8 +398,11 @@ def embedder_with_cleanup(mock_storage_dir: Path) -> Generator[Any, None, None]:
     # Cleanup after test
     try:
         embedder.cleanup()
-    except Exception:
-        pass
+    except Exception as e:
+        # Test cleanup - log but don't fail test
+        import warnings
+
+        warnings.warn(f"Embedder cleanup failed: {e}", stacklevel=2)
 
 
 @pytest.fixture
@@ -595,3 +600,66 @@ def create_test_embeddings(
         embeddings.append(result)
 
     return embeddings
+
+
+@pytest.fixture
+def mock_embedding_result_factory():
+    """Factory for creating mock EmbeddingResult objects.
+
+    Usage:
+        def test_something(mock_embedding_result_factory):
+            result = mock_embedding_result_factory(
+                chunk_id="file.py:1-10:function:my_func",
+                name="my_func",
+                calls=[{"callee_name": "other_func", "line_number": 5}]
+            )
+
+    Args:
+        chunk_id: Chunk identifier (default: "test.py:1-10:function:test_func")
+        name: Function/class name (default: "test_func")
+        chunk_type: Type of code chunk (default: "function")
+        content: Code content (default: "def test_func(): pass")
+        file_path: File path (extracted from chunk_id if not provided)
+        calls: List of call dictionaries (default: [])
+        relationships: List of relationship dictionaries (default: [])
+        embedding_dim: Embedding dimension (default: 768)
+
+    Returns:
+        Callable that creates EmbeddingResult objects
+    """
+
+    def create(
+        chunk_id: str = "test.py:1-10:function:test_func",
+        name: str = "test_func",
+        chunk_type: str = "function",
+        content: str = "def test_func(): pass",
+        file_path: Optional[str] = None,
+        calls: Optional[List[Dict]] = None,
+        relationships: Optional[List[Dict]] = None,
+        embedding_dim: int = 768,
+    ):
+        if not EmbeddingResult:
+            pytest.skip("EmbeddingResult not available")
+
+        # Deterministic embedding from chunk_id
+        seed = hash(chunk_id) & 0xFFFFFFFF
+        embedding = np.random.RandomState(seed).random(embedding_dim).astype(np.float32)
+
+        # Extract file_path from chunk_id if not provided
+        if file_path is None:
+            file_path = chunk_id.split(":")[0]
+
+        return EmbeddingResult(
+            embedding=embedding,
+            chunk_id=chunk_id,
+            metadata={
+                "name": name,
+                "chunk_type": chunk_type,
+                "content": content,
+                "file_path": file_path,
+                "calls": calls or [],
+                "relationships": relationships or [],
+            },
+        )
+
+    return create

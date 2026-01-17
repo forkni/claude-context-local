@@ -9,24 +9,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-*No unreleased changes yet.*
+### Changed
+
+- **Config Rename**: `enable_greedy_merge` → `enable_chunk_merging`
+  - Old name was misleading (suggested only greedy merge)
+  - New name accurately reflects Two-Pass Chunking (Pass 1: greedy per-file + Pass 2: community cross-file)
+  - Backward compatible: accepts both `enable_chunk_merging` (new) and `enable_greedy_merge` (deprecated)
+
+---
+
+## [0.8.2] - 2026-01-04
+
+### Added
+
+- **Performance Settings Submenu** - Groups GPU acceleration and Auto-Reindex configuration under one menu
+- **Current Settings Display** - Shows active settings when entering each of 12 configuration menus
+- **Multi-Model Routing Status** - Visible in both model selection menus with improved labeling
+- **Model-Aware Batch Calculation** - Empirical activation memory estimation for optimal batch sizing
+
+### Changed
+
+- Logging tag standardization: All `[save]` tags now uppercase `[SAVE]` for consistency
+- Batch size logs now show "128 chunks" instead of ambiguous "128"
+- Suppressed INFO logs during Rich progress bars to prevent line mixing
+- **BREAKING**: `enable_chunk_merging` default changed from `True` to `False` (opt-in)
+
+### Fixed
+
+- **Auto-Reindex Timeout** - Now respects configured `max_index_age_minutes` (was hardcoded to 5 minutes)
+- **Multi-Model VRAM Cleanup** - Properly frees all ~15 GB before reindex (was only ~7.5 GB, caused OOM)
+- **Model Loader Preservation** - Fixed AttributeError on lazy reload after cleanup
+- **Windows VRAM Spillover** - Hard limit prevents silent overflow to system RAM (97% bandwidth loss)
+- **CI Test Failures** - 5 integration tests fixed by changing greedy merge default
+
+### Performance
+
+- VRAM safety: All 3 models (~15 GB) properly released during auto-reindex
+- Fail-fast OOM instead of silent spillover to shared memory
+- 18% CUDA memory fragmentation overhead now accounted for
 
 ---
 
 ## [0.8.1] - 2026-01-03
 
 ### Added
+
 - `configure_chunking` MCP tool (18th tool) for runtime chunking configuration
 - Nested JSON configuration structure (8 sections: embedding, search_mode, etc.)
 - Context enhancement parameters in EmbeddingConfig (v0.8.0+)
 - UI menu reorganization with hierarchical submenus
 
 ### Changed
+
 - `search_config.json` format: flat → nested structure (backward compatible)
 - Menu structure: "Search Mode Configuration" and "Entity Tracking Configuration" are now submenus
 - Updated documentation to reflect 18 MCP tools
 
 ### Fixed
+
 - 4 unit tests updated for nested config structure
 
 ---
@@ -36,7 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **cAST Greedy Sibling Merging (Task 3.5)** - Implementation of EMNLP 2025 chunking algorithm
-  - Added 6 chunking configuration fields to `search_config.json`: `enable_greedy_merge`, `min_chunk_tokens`, `max_merged_tokens`, `enable_large_node_splitting`, `max_chunk_lines`, `token_estimation`
+  - Added 6 chunking configuration fields to `search_config.json`: `enable_chunk_merging`, `min_chunk_tokens`, `max_merged_tokens`, `enable_large_node_splitting`, `max_chunk_lines`, `token_estimation`
   - New `ChunkingConfig` dataclass in `search/config.py` for centralized chunking settings
   - New `estimate_tokens()` function supporting whitespace (fast) and tiktoken (accurate) methods
   - New `_greedy_merge_small_chunks()` algorithm in `chunking/languages/base.py` (67 lines)
@@ -62,7 +102,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Chunking Pipeline Enhancement** - Greedy merge integration into code chunking flow
   - `LanguageChunker.chunk_code()` now accepts optional `ChunkingConfig` parameter
-  - Automatic merge of adjacent small chunks when `enable_greedy_merge=True`
+  - Automatic merge of adjacent small chunks when `enable_chunk_merging=True`
   - Config fetched via ServiceLocator if not provided
   - `TreeSitterChunker.chunk_file()` passes config to language chunker
   - Files: `chunking/languages/base.py`, `chunking/tree_sitter.py`
@@ -985,7 +1025,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CRITICAL: Double-Encoded JSON in MCP Tool Responses** - All 13 MCP tools now return human-readable dict objects
   - **Root cause**: Tools returned `-> str` with `json.dumps()` calls, causing FastMCP to double-encode JSON strings
   - **Impact**: All MCP tool output was escaped and unreadable (e.g., `"{\"query\":\"...\"}"`instead of proper JSON)
-  - **Solution**: AST-based transformation to change all return types `-> str` → `-> dict` and remove `json.dumps()` calls
+  - **Solution**: AST-based transformation to change all return types `-> str` → `-> Dict` and remove `json.dumps()` calls
   - **Changes**: Modified `mcp_server/server.py` (13 function signatures, 37 return statements)
   - **Implementation**: Used `astor` library for safe AST transformation preserving all code logic
   - **Testing**: All 13 tools validated (100% pass rate) - output now properly formatted and human-readable

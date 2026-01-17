@@ -3,10 +3,13 @@
 Contains JSON schemas for all 18 tools following MCP specification.
 """
 
-from typing import Any, Dict
+from typing import Any
+
+from mcp.types import Tool
+
 
 # Complete tool registry with JSON schemas
-TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {
+TOOL_REGISTRY: dict[str, dict[str, Any]] = {
     "search_code": {
         "description": """PREFERRED: Use this tool for code analysis and understanding tasks. Provides semantic search with intelligent multi-model routing for optimal results.
 
@@ -71,8 +74,10 @@ WHEN NOT TO USE:
                         "enum",
                         "struct",
                         "type",
+                        "merged",
+                        "split_block",
                     ],
-                    "description": "Filter by code structure type (function, class, method, module, decorated_definition, interface, enum, struct, type), or None for all",
+                    "description": "Filter by code structure type (function, class, method, module, decorated_definition, interface, enum, struct, type, merged, split_block), or None for all",
                 },
                 "include_context": {
                     "type": "boolean",
@@ -96,14 +101,44 @@ WHEN NOT TO USE:
                 },
                 "model_key": {
                     "type": "string",
-                    "enum": ["qwen3", "bge_m3", "coderankembed"],
-                    "description": 'Override model selection ("qwen3", "bge_m3", "coderankembed"). If None, uses routing or config default.',
+                    "enum": [
+                        "qwen3",
+                        "bge_m3",
+                        "coderankembed",
+                        "gte_modernbert",
+                        "c2llm",
+                    ],
+                    "description": 'Override model selection. Full pool: "qwen3", "bge_m3", "coderankembed". Lightweight: "gte_modernbert", "c2llm". If None, uses routing or config default.',
                 },
                 "output_format": {
                     "type": "string",
                     "enum": ["verbose", "compact", "ultra"],
                     "default": "compact",
                     "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                },
+                "ego_graph_enabled": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Enable RepoGraph-style k-hop ego-graph expansion (default: False). When enabled, expands search results by retrieving graph neighbors (callers, callees, related code) for richer context. Based on ICLR 2025 RepoGraph paper showing 32.8% improvement.",
+                },
+                "ego_graph_k_hops": {
+                    "type": "integer",
+                    "default": 2,
+                    "minimum": 1,
+                    "maximum": 5,
+                    "description": "Depth of ego-graph traversal (default: 2). Controls how many relationship hops to follow. Higher values provide more context but may include less relevant code.",
+                },
+                "ego_graph_max_neighbors_per_hop": {
+                    "type": "integer",
+                    "default": 10,
+                    "minimum": 1,
+                    "maximum": 50,
+                    "description": "Maximum neighbors to retrieve per hop (default: 10). Limits expansion to prevent context explosion while maintaining relevance.",
+                },
+                "include_parent": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Enable parent chunk retrieval (default: False). When a method is matched, also retrieves its enclosing class for fuller context. Implements 'Match Small, Retrieve Big' pattern for improved comprehension.",
                 },
             },
             "required": [],
@@ -328,8 +363,14 @@ Args:
                 },
                 "default_model": {
                     "type": "string",
-                    "enum": ["qwen3", "bge_m3", "coderankembed"],
-                    "description": 'Set default model key ("qwen3", "bge_m3", "coderankembed")',
+                    "enum": [
+                        "qwen3",
+                        "bge_m3",
+                        "coderankembed",
+                        "gte_modernbert",
+                        "c2llm",
+                    ],
+                    "description": 'Set default model key. Full pool: "qwen3", "bge_m3", "coderankembed". Lightweight: "gte_modernbert", "c2llm".',
                 },
                 "confidence_threshold": {
                     "type": "number",
@@ -503,11 +544,72 @@ RETURNS:
                     "items": {"type": "string"},
                     "description": 'Exclude these directories from symbol resolution and caller lookup (e.g., ["tests/"]). Default: None (searches all).',
                 },
+                "relationship_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": 'Filter to only include specific relationship types (e.g., ["inherits", "imports", "decorates"]). If not provided, all relationship types are included. Valid types: calls, inherits, uses_type, imports, decorates, raises, catches, instantiates, implements, overrides, assigns_to, reads_from, defines_constant, defines_enum_member, defines_class_attr, defines_field, uses_constant, uses_default, uses_global, asserts_type, uses_context_manager.',
+                },
                 "output_format": {
                     "type": "string",
                     "enum": ["verbose", "compact", "ultra"],
                     "default": "compact",
                     "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                },
+            },
+            "required": [],
+        },
+    },
+    "find_path": {
+        "description": """Find shortest path between two code entities in the relationship graph.
+
+Traces how two symbols connect through calls, inheritance, imports, or other relationships.
+
+WHEN TO USE:
+- Tracing how code element A connects to code element B
+- Understanding dependency chains between modules
+- Finding call paths from entry points to specific functions
+- Analyzing inheritance or import chains
+
+RETURNS:
+- Path as sequence of nodes with metadata
+- Edge types traversed (calls, inherits, imports, etc.)
+- Path length (number of hops)""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source": {
+                    "type": "string",
+                    "description": "Source symbol name (will search, may be ambiguous). Use source_chunk_id for precision.",
+                },
+                "target": {
+                    "type": "string",
+                    "description": "Target symbol name (will search, may be ambiguous). Use target_chunk_id for precision.",
+                },
+                "source_chunk_id": {
+                    "type": "string",
+                    "description": 'Source chunk_id (preferred). Format: "file.py:10-20:function:name"',
+                },
+                "target_chunk_id": {
+                    "type": "string",
+                    "description": 'Target chunk_id (preferred). Format: "file.py:10-20:function:name"',
+                },
+                "max_hops": {
+                    "type": "integer",
+                    "default": 10,
+                    "minimum": 1,
+                    "maximum": 20,
+                    "description": "Maximum path length in edges (default: 10)",
+                },
+                "edge_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": 'Filter path to only use specific relationship types (e.g., ["calls", "inherits"]). Valid types: calls, inherits, uses_type, imports, decorates, raises, catches, instantiates, implements, overrides, assigns_to, reads_from. If not provided, all relationship types are considered.',
+                },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["verbose", "compact", "ultra"],
+                    "default": "compact",
+                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular).",
                 },
             },
             "required": [],
@@ -551,30 +653,30 @@ Args:
         "description": """Configure code chunking settings.
 
 Args:
-    enable_greedy_merge: Enable/disable greedy chunk merging (default: True)
-    min_chunk_tokens: Minimum token count before considering merge (default: 50)
-    max_merged_tokens: Maximum token count for merged chunks (default: 1000)
+    enable_community_detection: Enable/disable community detection (default: True)
+    enable_community_merge: Enable/disable community-based remerge (full index only) (default: True)
+    community_resolution: Resolution parameter for Louvain community detection (default: 1.0, range: 0.1-2.0, higher = more communities)
     token_estimation: Token estimation method - "whitespace" (fast) or "tiktoken" (accurate) (default: "whitespace")
     enable_large_node_splitting: Enable/disable AST block splitting for large functions (default: False)
-    max_chunk_lines: Maximum lines per chunk before splitting at AST boundaries (default: 100)""",
+    max_chunk_lines: Maximum lines per chunk before splitting at AST boundaries (default: 100)
+
+Note: min_chunk_tokens (50) and max_merged_tokens (1000) are optimal defaults and not exposed for configuration.""",
         "input_schema": {
             "type": "object",
             "properties": {
-                "enable_greedy_merge": {
+                "enable_community_detection": {
                     "type": "boolean",
-                    "description": "Enable/disable greedy chunk merging",
+                    "description": "Enable/disable community detection",
                 },
-                "min_chunk_tokens": {
-                    "type": "integer",
-                    "description": "Minimum token count before considering merge",
-                    "minimum": 10,
-                    "maximum": 500,
+                "enable_community_merge": {
+                    "type": "boolean",
+                    "description": "Enable/disable community-based remerge (full index only)",
                 },
-                "max_merged_tokens": {
-                    "type": "integer",
-                    "description": "Maximum token count for merged chunks",
-                    "minimum": 100,
-                    "maximum": 5000,
+                "community_resolution": {
+                    "type": "number",
+                    "description": "Resolution parameter for Louvain community detection (higher = more communities)",
+                    "minimum": 0.1,
+                    "maximum": 2.0,
                 },
                 "token_estimation": {
                     "type": "string",
@@ -604,9 +706,8 @@ Args:
 }
 
 
-def build_tool_list():
+def build_tool_list() -> list[Tool]:
     """Build MCP Tool list from registry."""
-    from mcp.types import Tool
 
     tools = []
     for name, meta in TOOL_REGISTRY.items():

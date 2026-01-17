@@ -109,9 +109,9 @@ class TestFullSearchFlow:
             "validate_email",
         }
         found_names = chunk_names.intersection(expected_names)
-        assert (
-            len(found_names) >= 3
-        ), f"Should find expected classes/functions, found {found_names}"
+        assert len(found_names) >= 3, (
+            f"Should find expected classes/functions, found {found_names}"
+        )
 
     def test_real_project_indexing_and_search(self, indexed_project_data):
         """Test indexing and searching the real Python project."""
@@ -190,9 +190,9 @@ class TestFullSearchFlow:
                 found_auth_related = True
                 break
 
-        assert (
-            found_auth_related
-        ), f"Should find auth-related code, found names: {auth_chunk_names}"
+        assert found_auth_related, (
+            f"Should find auth-related code, found names: {auth_chunk_names}"
+        )
 
         # Search for database-related code
         db_results = index_manager.search(
@@ -221,9 +221,9 @@ class TestFullSearchFlow:
                 found_db_related = True
                 break
 
-        assert (
-            found_db_related
-        ), f"Should find database-related code, found names: {db_chunk_names}"
+        assert found_db_related, (
+            f"Should find database-related code, found names: {db_chunk_names}"
+        )
 
         # Search for API-related code
         api_results = index_manager.search(
@@ -253,9 +253,9 @@ class TestFullSearchFlow:
                 found_api_related = True
                 break
 
-        assert (
-            found_api_related
-        ), f"Should find API-related code, found names: {api_chunk_names}"
+        assert found_api_related, (
+            f"Should find API-related code, found names: {api_chunk_names}"
+        )
 
     @pytest.mark.skip(
         reason="Flaky test: fake embeddings have no semantic meaning. "
@@ -309,9 +309,9 @@ class TestFullSearchFlow:
         }
         found_exceptions = set(exception_names).intersection(expected_exceptions)
         # With deterministic embeddings, we should consistently find at least 2 exception classes
-        assert (
-            len(found_exceptions) >= 2
-        ), f"Should find multiple exception classes, found: {found_exceptions}"
+        assert len(found_exceptions) >= 2, (
+            f"Should find multiple exception classes, found: {found_exceptions}"
+        )
 
         # Create deterministic query vector for "validation check function"
         validation_query_seed = abs(hash("validation check function")) % 10000
@@ -341,9 +341,9 @@ class TestFullSearchFlow:
         }
         found_validators = set(validation_functions).intersection(expected_validators)
         # With deterministic embeddings, we should consistently find at least 1 validator
-        assert (
-            len(found_validators) >= 1
-        ), f"Should find at least one validation function, found: {found_validators}"
+        assert len(found_validators) >= 1, (
+            f"Should find at least one validation function, found: {found_validators}"
+        )
 
     def test_project_statistics_and_insights(self, indexed_project_data):
         """Test getting insights about the indexed project."""
@@ -626,15 +626,15 @@ class TestFullSearchFlow:
                 all_chunks.extend(chunks)
 
         # Should find chunks from multiple languages
-        assert (
-            len(all_chunks) > 5
-        ), f"Should chunk multiple files, got {len(all_chunks)}"
+        assert len(all_chunks) > 5, (
+            f"Should chunk multiple files, got {len(all_chunks)}"
+        )
 
         # Verify we have chunks from different file types
         file_extensions = {Path(chunk.file_path).suffix for chunk in all_chunks}
-        assert (
-            len(file_extensions) >= 3
-        ), f"Should support multiple languages, got {file_extensions}"
+        assert len(file_extensions) >= 3, (
+            f"Should support multiple languages, got {file_extensions}"
+        )
 
         # Step 2: Create embeddings and index
         embeddings = create_test_embeddings(all_chunks)
@@ -653,6 +653,6 @@ class TestFullSearchFlow:
         result_extensions = {
             Path(metadata["file_path"]).suffix for _, _, metadata in results
         }
-        assert (
-            len(result_extensions) >= 2
-        ), f"Should find results from multiple languages, got {result_extensions}"
+        assert len(result_extensions) >= 2, (
+            f"Should find results from multiple languages, got {result_extensions}"
+        )

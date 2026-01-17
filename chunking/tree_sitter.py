@@ -20,7 +20,7 @@ import warnings
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Optional
 
 from tree_sitter import Language
 
@@ -39,10 +39,11 @@ from .languages import (
     TypeScriptChunker,
 )
 
+
 logger = logging.getLogger(__name__)
 
 # Try to import language bindings
-AVAILABLE_LANGUAGES: Dict[str, Language] = {}
+AVAILABLE_LANGUAGES: dict[str, Language] = {}
 
 try:
     import tree_sitter_python as tspython
@@ -164,6 +165,25 @@ def _read_file_with_timeout(file_path: Path, timeout: float = FILE_READ_TIMEOUT)
             ) from None
 
 
+def _is_binary_file(file_path: Path, sample_size: int = 8192) -> bool:
+    """Check if a file is binary by looking for null bytes.
+
+    Args:
+        file_path: Path to the file
+        sample_size: Number of bytes to sample (default 8KB)
+
+    Returns:
+        True if file appears to be binary
+    """
+    try:
+        with open(file_path, "rb") as f:
+            chunk = f.read(sample_size)
+            # Null bytes are strong indicator of binary content
+            return b"\x00" in chunk
+    except Exception:
+        return False  # If we can't read it, let the main logic handle it
+
+
 class TreeSitterChunker:
     """Main tree-sitter chunker that delegates to language-specific implementations."""
 
@@ -191,9 +211,14 @@ class TreeSitterChunker:
         ".tese": ("glsl", lambda lang: GLSLChunker(lang)),
     }
 
-    def __init__(self):
-        """Initialize the tree-sitter chunker."""
-        self.chunkers: Dict[str, LanguageChunker] = {}
+    def __init__(self) -> None:
+        """Initialize the tree-sitter chunker.
+
+        Attributes:
+            chunkers: Dictionary mapping file suffixes to initialized LanguageChunker
+                instances. Lazily populated as files are processed.
+        """
+        self.chunkers: dict[str, LanguageChunker] = {}
 
     def get_chunker(self, file_path: str) -> Optional[LanguageChunker]:
         """Get the appropriate chunker for a file.
@@ -232,7 +257,7 @@ class TreeSitterChunker:
 
     def chunk_file(
         self, file_path: str, content: Optional[str] = None
-    ) -> List[TreeSitterChunk]:
+    ) -> list[TreeSitterChunk]:
         """Chunk a file into semantic units.
 
         Args:
@@ -249,8 +274,23 @@ class TreeSitterChunker:
             return []
 
         if content is None:
+            # Check for binary files before attempting text read
+            if _is_binary_file(Path(file_path)):
+                logger.debug(f"[BINARY] Skipping binary file: {file_path}")
+                return []
+
             try:
                 content = _read_file_with_timeout(Path(file_path))
+
+                # Skip HTML/XML files that shouldn't be parsed as code
+                content_start = content.lstrip()[:100].lower()
+                if any(
+                    marker in content_start
+                    for marker in ["<!doctype html", "<html", "<?xml"]
+                ):
+                    logger.debug(f"[HTML/XML] Skipping markup file: {file_path}")
+                    return []
+
             except TimeoutError as e:
                 logger.warning(f"[TIMEOUT] {e}")
                 return []
@@ -282,15 +322,26 @@ class TreeSitterChunker:
             return []
 
     def _get_chunking_config(self):
-        """Get ChunkingConfig from ServiceLocator.
+        """Get ChunkingConfig from ServiceLocator or direct config load.
 
         Returns:
             ChunkingConfig if available, None otherwise
         """
+        # Try ServiceLocator first (MCP server context)
         try:
             from mcp_server.services import ServiceLocator
 
             config = ServiceLocator.instance().get_config()
+            if config and config.chunking:
+                return config.chunking
+        except (ImportError, AttributeError):
+            pass  # ServiceLocator not available, fall through to direct config
+
+        # Fallback: Load config directly (batch indexing context)
+        try:
+            from search.config import get_search_config
+
+            config = get_search_config()
             return config.chunking if config else None
         except (ImportError, AttributeError):
             return None
@@ -312,7 +363,7 @@ class TreeSitterChunker:
         return language_name in AVAILABLE_LANGUAGES
 
     @classmethod
-    def get_supported_extensions(cls) -> List[str]:
+    def get_supported_extensions(cls) -> list[str]:
         """Get list of supported file extensions.
 
         Returns:
@@ -325,7 +376,7 @@ class TreeSitterChunker:
         return supported
 
     @classmethod
-    def get_available_languages(cls) -> List[str]:
+    def get_available_languages(cls) -> list[str]:
         """Get list of available languages.
 
         Returns:

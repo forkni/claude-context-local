@@ -42,9 +42,9 @@ class TestMultiLanguageChunker:
         """Test chunking Python file."""
         from mcp_server.services import ServiceLocator
 
-        # Disable greedy merge for this test to check basic chunking behavior
+        # Use default config for basic chunking behavior
         mock_config = MagicMock()
-        mock_config.chunking = ChunkingConfig(enable_greedy_merge=False)
+        mock_config.chunking = ChunkingConfig()
 
         locator = ServiceLocator.instance()
         locator.register("config", mock_config)
@@ -65,9 +65,9 @@ class TestMultiLanguageChunker:
         """Test chunking JavaScript file."""
         from mcp_server.services import ServiceLocator
 
-        # Disable greedy merge for this test to check basic chunking behavior
+        # Use default config for basic chunking behavior
         mock_config = MagicMock()
-        mock_config.chunking = ChunkingConfig(enable_greedy_merge=False)
+        mock_config.chunking = ChunkingConfig()
 
         locator = ServiceLocator.instance()
         locator.register("config", mock_config)
@@ -88,9 +88,9 @@ class TestMultiLanguageChunker:
         """Test chunking TypeScript file."""
         from mcp_server.services import ServiceLocator
 
-        # Disable greedy merge for this test to check basic chunking behavior
+        # Use default config for basic chunking behavior
         mock_config = MagicMock()
-        mock_config.chunking = ChunkingConfig(enable_greedy_merge=False)
+        mock_config.chunking = ChunkingConfig()
 
         locator = ServiceLocator.instance()
         locator.register("config", mock_config)
@@ -110,9 +110,9 @@ class TestMultiLanguageChunker:
         """Test chunking TSX file."""
         from mcp_server.services import ServiceLocator
 
-        # Disable greedy merge for this test to check basic chunking behavior
+        # Use default config for basic chunking behavior
         mock_config = MagicMock()
-        mock_config.chunking = ChunkingConfig(enable_greedy_merge=False)
+        mock_config.chunking = ChunkingConfig()
 
         locator = ServiceLocator.instance()
         locator.register("config", mock_config)
@@ -132,9 +132,9 @@ class TestMultiLanguageChunker:
         """Test chunking Go file."""
         from mcp_server.services import ServiceLocator
 
-        # Disable greedy merge for this test to check basic chunking behavior
+        # Use default config for basic chunking behavior
         mock_config = MagicMock()
-        mock_config.chunking = ChunkingConfig(enable_greedy_merge=False)
+        mock_config.chunking = ChunkingConfig()
 
         locator = ServiceLocator.instance()
         locator.register("config", mock_config)
@@ -206,9 +206,9 @@ class TestMultiLanguageChunker:
         """Test chunking Rust file."""
         from mcp_server.services import ServiceLocator
 
-        # Disable greedy merge for this test to check basic chunking behavior
+        # Use default config for basic chunking behavior
         mock_config = MagicMock()
-        mock_config.chunking = ChunkingConfig(enable_greedy_merge=False)
+        mock_config.chunking = ChunkingConfig()
 
         locator = ServiceLocator.instance()
         locator.register("config", mock_config)

@@ -11,6 +11,7 @@ import sys
 import time
 from pathlib import Path
 
+
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -18,6 +19,14 @@ from mcp_server.tool_handlers import handle_index_directory
 
 
 def main():
+    """Entry point for batch indexing CLI.
+
+    Parses command-line arguments for project indexing configuration
+    including path, mode, multi-model, and directory filters.
+
+    Returns:
+        Exit code: 0 for success, 1 for failure.
+    """
     parser = argparse.ArgumentParser(
         description="Index project for semantic code search"
     )
@@ -95,7 +104,20 @@ def main():
     print(f"Mode: {mode_desc}")
     print(f"Incremental: {incremental}")
     if multi_model:
-        print("Multi-Model: Enabled (Qwen3, BGE-M3, CodeRankEmbed)")
+        # Show correct pool based on config
+        from search.config import get_search_config
+
+        try:
+            config = get_search_config()
+            pool_type = config.routing.multi_model_pool or "full"
+        except Exception as e:
+            print(f"Config unavailable, using full pool: {e}")
+            pool_type = "full"
+
+        if pool_type == "lightweight-speed":
+            print("Multi-Model: Enabled (BGE-M3 + gte-modernbert, 1.65GB)")
+        else:
+            print("Multi-Model: Enabled (Qwen3, BGE-M3, CodeRankEmbed)")
     else:
         print("Multi-Model: Disabled (single model only)")
     if include_dirs:

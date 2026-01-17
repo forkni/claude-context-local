@@ -11,6 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+
 # Set up debug logging
 logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"

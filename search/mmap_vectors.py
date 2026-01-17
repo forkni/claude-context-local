@@ -41,11 +41,12 @@ import logging
 import mmap
 import struct
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 import numpy as np
 
 from search.symbol_cache import SymbolHashCache
+
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,8 @@ class MmapVectorStorage:
     MAGIC = b"CVEC"
     VERSION = 1
     HEADER_SIZE = 24  # magic(4) + version(4) + dim(4) + count(4) + reserved(8)
+
+    __slots__ = ("_path", "_dimension", "_mmap", "_file", "_count", "_entry_size")
 
     def __init__(self, path: Path, dimension: int):
         """Initialize MmapVectorStorage.
@@ -98,8 +101,8 @@ class MmapVectorStorage:
     def save(
         self,
         embeddings: np.ndarray,
-        chunk_ids: List[str],
-        indices: Optional[List[int]] = None,
+        chunk_ids: list[str],
+        indices: Optional[list[int]] = None,
     ) -> None:
         """Save embeddings in mmap-compatible binary format.
 

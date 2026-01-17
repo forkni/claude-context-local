@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
+
 # Add project root to path to allow imports
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
@@ -14,6 +15,7 @@ sys.path.insert(0, str(project_root))
 from chunking.python_ast_chunker import CodeChunk  # noqa: E402
 from embeddings.embedder import CodeEmbedder, EmbeddingResult  # noqa: E402
 from search.config import MODEL_REGISTRY  # noqa: E402
+
 
 # Get all configured models to test (exclude 8B model - not actively used)
 supported_models = [m for m in MODEL_REGISTRY.keys() if "8B" not in m]
@@ -68,12 +70,12 @@ def test_model_loading_and_embedding(
         query = "test query for embedding"
         query_embedding = embedder.embed_query(query)
 
-        assert isinstance(
-            query_embedding, np.ndarray
-        ), f"Query embedding for {model_name} is not a numpy array."
-        assert query_embedding.shape == (
-            expected_dimension,
-        ), f"Query embedding for {model_name} has incorrect shape. Expected ({expected_dimension},), got {query_embedding.shape}."
+        assert isinstance(query_embedding, np.ndarray), (
+            f"Query embedding for {model_name} is not a numpy array."
+        )
+        assert query_embedding.shape == (expected_dimension,), (
+            f"Query embedding for {model_name} has incorrect shape. Expected ({expected_dimension},), got {query_embedding.shape}."
+        )
 
         # Test chunk embedding
         sample_chunk = CodeChunk(
@@ -88,12 +90,12 @@ def test_model_loading_and_embedding(
         chunk_embedding_result = embedder.embed_chunk(sample_chunk)
 
         assert isinstance(chunk_embedding_result, EmbeddingResult)
-        assert isinstance(
-            chunk_embedding_result.embedding, np.ndarray
-        ), f"Chunk embedding for {model_name} is not a numpy array."
-        assert chunk_embedding_result.embedding.shape == (
-            expected_dimension,
-        ), f"Chunk embedding for {model_name} has incorrect shape. Expected ({expected_dimension},), got {chunk_embedding_result.embedding.shape}."
+        assert isinstance(chunk_embedding_result.embedding, np.ndarray), (
+            f"Chunk embedding for {model_name} is not a numpy array."
+        )
+        assert chunk_embedding_result.embedding.shape == (expected_dimension,), (
+            f"Chunk embedding for {model_name} has incorrect shape. Expected ({expected_dimension},), got {chunk_embedding_result.embedding.shape}."
+        )
 
         print(f"Successfully tested model: {model_name}")
 
@@ -513,9 +515,9 @@ def test_query_cache_different_models(mock_sentence_transformer, mock_model_load
         model_config2.get("query_prefix", ""),
     )
 
-    assert (
-        key1 != key2
-    ), "Different models should produce different cache keys for same query"
+    assert key1 != key2, (
+        "Different models should produce different cache keys for same query"
+    )
 
     # Each embedder should have independent cache
     embedder1.embed_query(query)

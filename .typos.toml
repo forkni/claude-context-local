@@ -1,6 +1,9 @@
 # Typos spell-checker configuration
 # See: https://github.com/crate-ci/typos
 
+[files]
+extend-exclude = [".typos.toml"]
+
 [default]
 extend-ignore-re = [
     # GLSL shader file extensions (OpenGL Shading Language)

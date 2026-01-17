@@ -12,7 +12,7 @@ import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Optional
 
 
 def normalize_path(path: str) -> str:
@@ -171,8 +171,9 @@ def unescape_mcp_path(path: str) -> str:
 
 def matches_directory_filter(
     relative_path: str,
-    include_dirs: Optional[List[str]] = None,
-    exclude_dirs: Optional[List[str]] = None,
+    include_dirs: Optional[list[str]] = None,
+    exclude_dirs: Optional[list[str]] = None,
+    is_traversal: bool = False,
 ) -> bool:
     """Check if a file path matches directory filters.
 
@@ -181,8 +182,10 @@ def matches_directory_filter(
 
     Args:
         relative_path: File path relative to project root
-        include_dirs: If provided, path must start with one of these directories
+        include_dirs: If provided, path must be in or be an ancestor of these directories
         exclude_dirs: If provided, path must NOT start with any of these directories
+        is_traversal: If True, allows ancestor directories of include_dirs to pass through.
+                     This enables tree traversal to reach nested include targets.
 
     Returns:
         True if path passes both filters (not excluded AND matches include if specified)
@@ -194,9 +197,16 @@ def matches_directory_filter(
         False
         >>> matches_directory_filter("src/utils.py", include_dirs=["src/"], exclude_dirs=["src/vendor/"])
         True
+        >>> # Traversal mode: ancestor directories pass through
+        >>> matches_directory_filter("Scripts/", include_dirs=["Scripts/StreamDiffusionTD/"], is_traversal=True)
+        True
     """
     # Normalize path separators
     normalized_path = normalize_path(relative_path)
+
+    # Ensure path ends with / for directory matching
+    if not normalized_path.endswith("/"):
+        normalized_path = normalized_path + "/"
 
     # Check exclusions first (fast reject)
     if exclude_dirs:
@@ -210,8 +220,16 @@ def matches_directory_filter(
     if include_dirs:
         for dir_pattern in include_dirs:
             pattern = normalize_path(dir_pattern).rstrip("/") + "/"
+
+            # Case 1: Path is inside the include pattern (file/subdir match)
             if normalized_path.startswith(pattern):
                 return True
+
+            # Case 2: Path is an ANCESTOR of include pattern (traversal mode only)
+            # This allows parent directories to pass through so traversal can reach nested targets
+            if is_traversal and pattern.startswith(normalized_path):
+                return True
+
         return False  # No include pattern matched
 
     return True  # No include filter, not excluded
@@ -239,8 +257,8 @@ class DirectoryFilter:
 
     def __init__(
         self,
-        include_dirs: Optional[List[str]] = None,
-        exclude_dirs: Optional[List[str]] = None,
+        include_dirs: Optional[list[str]] = None,
+        exclude_dirs: Optional[list[str]] = None,
     ):
         """Initialize the directory filter.
 
@@ -251,18 +269,48 @@ class DirectoryFilter:
         self.include_dirs = include_dirs
         self.exclude_dirs = exclude_dirs
 
-    def matches(self, file_path: str) -> bool:
+    def matches(self, file_path: str, is_traversal: bool = False) -> bool:
         """Check if a file path matches the filter criteria.
 
         Args:
             file_path: Path to check (relative or with normalized separators)
+            is_traversal: If True, allow ancestor directories to pass through
 
         Returns:
             True if the path should be included
         """
-        return matches_directory_filter(file_path, self.include_dirs, self.exclude_dirs)
+        return matches_directory_filter(
+            file_path, self.include_dirs, self.exclude_dirs, is_traversal
+        )
 
-    def filter_paths(self, paths: List[str]) -> List[str]:
+    def matches_for_traversal(self, dir_path: str) -> bool:
+        """Check if a DIRECTORY path should be traversed (allows ancestors).
+
+        Use this during tree traversal to allow parent directories of include_dirs
+        to pass through so the traversal can reach nested target directories.
+
+        Args:
+            dir_path: Directory path to check
+
+        Returns:
+            True if the directory should be traversed
+        """
+        return self.matches(dir_path, is_traversal=True)
+
+    def matches_for_file(self, file_path: str) -> bool:
+        """Check if a FILE path matches (strict mode, no ancestor passthrough).
+
+        Use this for filtering actual files after traversal is complete.
+
+        Args:
+            file_path: File path to check
+
+        Returns:
+            True if the file should be included
+        """
+        return self.matches(file_path, is_traversal=False)
+
+    def filter_paths(self, paths: list[str]) -> list[str]:
         """Filter a list of paths, returning only those that match.
 
         Args:
@@ -305,16 +353,16 @@ class FilterCriteria:
         extra_filters: Generic key-value filters for metadata comparison
     """
 
-    include_dirs: Optional[List[str]] = None
-    exclude_dirs: Optional[List[str]] = None
-    file_pattern: Optional[List[str]] = None  # Normalized to list
+    include_dirs: Optional[list[str]] = None
+    exclude_dirs: Optional[list[str]] = None
+    file_pattern: Optional[list[str]] = None  # Normalized to list
     chunk_type: Optional[str] = None
-    tags: Optional[Set[str]] = None
-    folder_structure: Optional[Set[str]] = None
-    extra_filters: Optional[Dict[str, Any]] = None
+    tags: Optional[set[str]] = None
+    folder_structure: Optional[set[str]] = None
+    extra_filters: Optional[dict[str, Any]] = None
 
     @classmethod
-    def from_dict(cls, filters: Dict[str, Any]) -> "FilterCriteria":
+    def from_dict(cls, filters: dict[str, Any]) -> "FilterCriteria":
         """Create FilterCriteria from a filter dictionary.
 
         Args:
@@ -394,7 +442,7 @@ class FilterEngine:
         self.criteria = criteria
 
     @classmethod
-    def from_dict(cls, filters: Dict[str, Any]) -> "FilterEngine":
+    def from_dict(cls, filters: dict[str, Any]) -> "FilterEngine":
         """Factory method to create FilterEngine from a filter dictionary.
 
         Args:
@@ -405,7 +453,7 @@ class FilterEngine:
         """
         return cls(FilterCriteria.from_dict(filters))
 
-    def matches(self, metadata: Dict[str, Any]) -> bool:
+    def matches(self, metadata: dict[str, Any]) -> bool:
         """Check if metadata matches all filter criteria.
 
         Applies filters in order of computational cost (fast reject first):
@@ -465,8 +513,8 @@ class FilterEngine:
         return True
 
     def filter_results(
-        self, results: List[Dict], metadata_key: str = "metadata"
-    ) -> List[Dict]:
+        self, results: list[dict], metadata_key: str = "metadata"
+    ) -> list[dict]:
         """Filter a list of search results.
 
         Args:

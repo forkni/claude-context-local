@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Set
 
+
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -50,7 +51,7 @@ def _get_full_project_id(project_dir: Path, short_hash: str) -> str | None:
                 # Validate that short hash matches first 8 chars
                 if full_hash[:8] == short_hash:
                     return full_hash
-        except Exception:
+        except json.JSONDecodeError:
             # If we can't read/parse project_info, skip this project
             pass
 

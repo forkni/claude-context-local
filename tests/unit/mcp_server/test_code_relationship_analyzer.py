@@ -12,6 +12,7 @@ import pytest
 
 from mcp_server.tools.code_relationship_analyzer import CodeRelationshipAnalyzer
 
+
 # ============================================================================
 # FIXTURES
 # ============================================================================

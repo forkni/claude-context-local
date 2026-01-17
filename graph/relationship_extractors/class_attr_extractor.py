@@ -17,7 +17,7 @@ Examples:
 """
 
 import ast
-from typing import Any, Dict, List
+from typing import Any
 
 from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
 from graph.relationship_types import RelationshipEdge, RelationshipType
@@ -37,14 +37,14 @@ class ClassAttributeExtractor(BaseRelationshipExtractor):
     - Nested classes
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize class attribute extractor."""
         super().__init__()
         self.relationship_type = RelationshipType.DEFINES_CLASS_ATTR
 
     def extract(
-        self, code: str, chunk_metadata: Dict[str, Any]
-    ) -> List[RelationshipEdge]:
+        self, code: str, chunk_metadata: dict[str, Any]
+    ) -> list[RelationshipEdge]:
         """
         Extract class attribute relationships from code.
 
@@ -76,7 +76,7 @@ class ClassAttributeExtractor(BaseRelationshipExtractor):
         return self.edges
 
     def _extract_class_attributes(
-        self, node: ast.ClassDef, chunk_metadata: Dict[str, Any]
+        self, node: ast.ClassDef, chunk_metadata: dict[str, Any]
     ):
         """
         Extract class body assignments (not in methods).

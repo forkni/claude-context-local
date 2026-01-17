@@ -10,11 +10,13 @@ This module handles loading SentenceTransformer models with:
 import logging
 import os
 import shutil
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any, Optional
+
 
 try:
     import torch
-except Exception:
+except ImportError:
     torch = None
 
 try:
@@ -23,14 +25,9 @@ except ImportError:
     SentenceTransformer = None
 
 from embeddings.model_cache import ModelCacheManager
-
-
-# Helper function to access config via ServiceLocator (avoids circular imports)
-def _get_config_via_service_locator():
-    """Get SearchConfig via ServiceLocator to avoid circular dependencies."""
-    from mcp_server.services import ServiceLocator
-
-    return ServiceLocator.instance().get_config()
+from mcp_server.utils.config_helpers import (
+    get_config_via_service_locator as _get_config_via_service_locator,
+)
 
 
 class ModelLoader:
@@ -57,8 +54,8 @@ class ModelLoader:
         cache_dir: str,
         device: str,
         cache_manager: ModelCacheManager,
-        model_config_getter: Callable[[], Dict[str, Any]],
-    ):
+        model_config_getter: Callable[[], dict[str, Any]],
+    ) -> None:
         """Initialize model loader.
 
         Args:
@@ -74,7 +71,7 @@ class ModelLoader:
         self._cache_manager = cache_manager
         self._get_model_config = model_config_getter
         self._logger = logging.getLogger(__name__)
-        self._model_vram_usage: Dict[str, float] = {}
+        self._model_vram_usage: dict[str, float] = {}
 
     def log_gpu_memory(self, stage: str):
         """Log GPU memory usage at specific loading stages.
@@ -161,7 +158,7 @@ class ModelLoader:
             try:
                 if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
                     return "mps"
-            except Exception:
+            except (AttributeError, RuntimeError):
                 pass
             return "cpu"
         # Validate explicit devices
@@ -175,7 +172,7 @@ class ModelLoader:
                     and torch.backends.mps.is_available()
                     else "cpu"
                 )
-            except Exception:
+            except RuntimeError:
                 return "cpu"
         # Default fallback
         return "cpu"
@@ -488,7 +485,7 @@ class ModelLoader:
                 ) from e
 
     @property
-    def model_vram_usage(self) -> Dict[str, float]:
+    def model_vram_usage(self) -> dict[str, float]:
         """Get VRAM usage tracking dictionary.
 
         Returns:

@@ -25,6 +25,7 @@ from mcp_server.tools.index_handlers import (
 )
 from mcp_server.tools.search_handlers import (
     handle_find_connections,
+    handle_find_path,
     handle_find_similar_code,
     handle_search_code,
 )
@@ -36,6 +37,7 @@ from mcp_server.tools.status_handlers import (
     handle_list_embedding_models,
     handle_list_projects,
 )
+
 
 __all__ = [
     # Specialized tools
@@ -56,10 +58,11 @@ __all__ = [
     "handle_configure_reranking",
     "handle_configure_search_mode",
     "handle_switch_embedding_model",
-    # Search handlers (3)
+    # Search handlers (4)
     "handle_search_code",
     "handle_find_similar_code",
     "handle_find_connections",
+    "handle_find_path",
     # Index handlers (3)
     "handle_index_directory",
     "handle_clear_index",

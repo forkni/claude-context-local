@@ -1,9 +1,17 @@
 """Neural cross-encoder reranker for semantic scoring."""
 
 import logging
-from typing import List, Optional
+from typing import Optional
 
 import torch
+
+
+# Reranker model registry
+# Maps reranker type to model name for environment/menu configuration
+RERANKER_MODELS = {
+    "full": "BAAI/bge-reranker-v2-m3",  # ~1.5GB VRAM, production quality
+    "lightweight": "Alibaba-NLP/gte-reranker-modernbert-base",  # ~0.3GB VRAM, efficient
+}
 
 
 class NeuralReranker:
@@ -70,9 +78,9 @@ class NeuralReranker:
     def rerank(
         self,
         query: str,
-        candidates: List,  # List[SearchResult]
+        candidates: list,  # List[SearchResult]
         top_k: int = 10,
-    ) -> List:
+    ) -> list:
         """Rerank candidates using cross-encoder semantic scoring.
 
         Args:

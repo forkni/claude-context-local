@@ -6,7 +6,7 @@ and annotated assignments, enabling resolution of method calls on local variable
 """
 
 import ast
-from typing import Dict, Optional
+from typing import Optional
 
 from .type_resolver import TypeResolver
 
@@ -23,7 +23,7 @@ class AssignmentTracker:
     - With statement assignments: with Context() as ctx:
     """
 
-    def __init__(self, imports: Optional[Dict[str, str]] = None):
+    def __init__(self, imports: Optional[dict[str, str]] = None) -> None:
         """
         Initialize the assignment tracker.
 
@@ -34,11 +34,11 @@ class AssignmentTracker:
         self._imports = imports or {}
         self._type_resolver = TypeResolver()
 
-    def set_imports(self, imports: Dict[str, str]) -> None:
+    def set_imports(self, imports: dict[str, str]) -> None:
         """Update the imports dictionary for alias resolution."""
         self._imports = imports
 
-    def extract_local_assignments(self, tree: ast.AST) -> Dict[str, str]:
+    def extract_local_assignments(self, tree: ast.AST) -> dict[str, str]:
         """
         Extract type information from local variable assignments.
 
@@ -48,7 +48,7 @@ class AssignmentTracker:
         Returns:
             Dictionary mapping variable names to inferred type names
         """
-        assignments: Dict[str, str] = {}
+        assignments: dict[str, str] = {}
 
         for node in ast.walk(tree):
             # Handle simple assignments: x = MyClass()

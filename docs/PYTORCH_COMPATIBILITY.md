@@ -14,8 +14,7 @@ This document explains PyTorch version requirements and compatibility for claude
 
 ### Recommended Versions
 
-- **PyTorch 2.6.0 - 2.7.x** - Fully tested and supported
-- **PyTorch 2.7.1** - Latest version, fully compatible ✅
+- **PyTorch 2.6.0 - 2.8.x** - Fully tested and supported ✅
 
 ## CUDA Compatibility
 

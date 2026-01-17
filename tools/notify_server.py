@@ -10,6 +10,7 @@ Usage:
 
 import sys
 
+
 try:
     import requests
 except ImportError:

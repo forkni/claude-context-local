@@ -13,6 +13,7 @@ from .assignment_tracker import AssignmentTracker
 from .import_resolver import ImportResolver
 from .type_resolver import TypeResolver
 
+
 __all__ = [
     "TypeResolver",
     "AssignmentTracker",

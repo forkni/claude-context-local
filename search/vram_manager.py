@@ -2,7 +2,8 @@
 
 import logging
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Optional
+
 
 logger = logging.getLogger(__name__)
 
@@ -12,12 +13,14 @@ class VRAMTier:
     """VRAM tier configuration for automatic feature adaptation.
 
     Attributes:
-        name: Tier name (minimal, laptop, desktop, workstation)
+        name: Tier name (minimal, laptop, desktop, workstation, laptop_multimodel)
         min_vram_gb: Minimum VRAM in GB for this tier (inclusive)
         max_vram_gb: Maximum VRAM in GB for this tier (exclusive)
         recommended_model: Full model name from MODEL_REGISTRY
         multi_model_enabled: Whether multi-model routing should be enabled
         neural_reranking_enabled: Whether neural reranking should be enabled
+        multi_model_pool: Pool type for multi-model ("full", "lightweight-speed")
+        reranker_model: Reranker type ("full", "lightweight")
     """
 
     name: str
@@ -26,44 +29,54 @@ class VRAMTier:
     recommended_model: str
     multi_model_enabled: bool
     neural_reranking_enabled: bool
+    multi_model_pool: Optional[str] = None  # "full" or "lightweight-speed"
+    reranker_model: Optional[str] = None  # "full" or "lightweight"
 
 
 # VRAM tier definitions based on GPU capabilities
-# RTX 4060 (8GB)  → laptop tier     → Qwen3-0.6B
-# RTX 3090 (24GB) → desktop tier    → Qwen3-4B
-# RTX 4090 (24GB) → workstation tier → Qwen3-4B (best quality)
-VRAM_TIERS: List[VRAMTier] = [
+# RTX 3060/4060 (8GB) → laptop tier → BGE-M3 with lightweight multi-model option
+# RTX 3090 (24GB) → desktop tier    → Qwen3-0.6B (full multi-model pool)
+# RTX 4090 (24GB) → workstation tier → Qwen3-0.6B (full multi-model pool)
+VRAM_TIERS: list[VRAMTier] = [
     VRAMTier(
         name="minimal",
         min_vram_gb=0,
         max_vram_gb=6,
-        recommended_model="Qwen/Qwen3-Embedding-0.6B",
+        recommended_model="BAAI/bge-m3",  # Smallest viable model (1.07GB)
         multi_model_enabled=False,  # Too little VRAM for multi-model
         neural_reranking_enabled=False,  # Disable to conserve VRAM
+        multi_model_pool=None,  # Single-model only
+        reranker_model=None,  # Reranking disabled
     ),
     VRAMTier(
         name="laptop",
         min_vram_gb=6,
         max_vram_gb=10,
-        recommended_model="Qwen/Qwen3-Embedding-0.6B",
-        multi_model_enabled=True,  # Can support multi-model (tight)
-        neural_reranking_enabled=True,  # Reranker fits (~1.5GB)
+        recommended_model="BAAI/bge-m3",  # Base model for 8GB GPUs
+        multi_model_enabled=True,  # Enable with lightweight pool
+        neural_reranking_enabled=True,  # Lightweight reranker (0.3GB)
+        multi_model_pool="lightweight-speed",  # Default to speed preset (1.65GB total)
+        reranker_model="lightweight",  # Use gte-reranker-modernbert-base
     ),
     VRAMTier(
         name="desktop",
         min_vram_gb=10,
         max_vram_gb=18,
-        recommended_model="Qwen/Qwen3-Embedding-4B",  # Upgrade to 4B
+        recommended_model="Qwen/Qwen3-Embedding-0.6B",  # Keep 0.6B for OOM prevention
         multi_model_enabled=True,
         neural_reranking_enabled=True,
+        multi_model_pool="full",  # Full 3-model pool (5.3GB)
+        reranker_model="full",  # Full bge-reranker-v2-m3 (1.5GB)
     ),
     VRAMTier(
         name="workstation",
         min_vram_gb=18,
         max_vram_gb=999,  # No upper limit
-        recommended_model="Qwen/Qwen3-Embedding-4B",  # Max model (8B removed for safety)
+        recommended_model="Qwen/Qwen3-Embedding-0.6B",  # Keep 0.6B for OOM prevention
         multi_model_enabled=True,
         neural_reranking_enabled=True,
+        multi_model_pool="full",  # Full 3-model pool (5.3GB)
+        reranker_model="full",  # Full bge-reranker-v2-m3 (1.5GB)
     ),
 ]
 
@@ -78,10 +91,10 @@ class VRAMTierManager:
         >>> manager = VRAMTierManager()
         >>> tier = manager.detect_tier()
         >>> print(f"Tier: {tier.name}, Model: {tier.recommended_model}")
-        Tier: desktop, Model: Qwen/Qwen3-Embedding-4B
+        Tier: desktop, Model: Qwen/Qwen3-Embedding-0.6B
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize VRAMTierManager."""
         self._detected_tier: Optional[VRAMTier] = None
 
@@ -158,8 +171,7 @@ class VRAMTierManager:
                 return tier.recommended_model
 
         raise ValueError(
-            f"Unknown tier: {tier_name}. "
-            f"Valid tiers: {[t.name for t in VRAM_TIERS]}"
+            f"Unknown tier: {tier_name}. Valid tiers: {[t.name for t in VRAM_TIERS]}"
         )
 
     def should_enable_multi_model(self) -> bool:

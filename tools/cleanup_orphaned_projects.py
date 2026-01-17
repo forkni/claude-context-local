@@ -15,7 +15,11 @@ from pathlib import Path
 
 
 def find_orphaned_projects():
-    """Find project directories without project_info.json or with non-existent project_path."""
+    """Find project directories without project_info.json or with non-existent project_path.
+
+    Returns:
+        List of Path objects for orphaned project directories.
+    """
     storage_dir = Path.home() / ".claude_code_search" / "projects"
 
     if not storage_dir.exists():
@@ -40,7 +44,7 @@ def find_orphaned_projects():
 
                     if project_path and not Path(project_path).exists():
                         orphaned.append(project_dir)
-            except Exception:
+            except json.JSONDecodeError:
                 # If we can't read project_info.json, treat as orphaned
                 orphaned.append(project_dir)
 
@@ -48,13 +52,20 @@ def find_orphaned_projects():
 
 
 def get_project_size(project_dir):
-    """Calculate total size of project directory in MB."""
+    """Calculate total size of project directory in MB.
+
+    Args:
+        project_dir: Path to the project directory to measure.
+
+    Returns:
+        Total size in megabytes as a float.
+    """
     total_size = 0
     try:
         for file in project_dir.rglob("*"):
             if file.is_file():
                 total_size += file.stat().st_size
-    except Exception:
+    except OSError:
         pass
     return total_size / (1024 * 1024)  # Convert to MB
 
@@ -82,14 +93,21 @@ def _get_full_project_id(project_dir: Path) -> str | None:
                 # Compute full 32-char project_id from normalized path
                 normalized = str(Path(project_path).resolve())
                 return hashlib.md5(normalized.encode()).hexdigest()
-    except Exception:
+    except json.JSONDecodeError:
         pass
 
     return None
 
 
 def cleanup_project(project_dir):
-    """Remove a project directory and its merkle snapshots safely."""
+    """Remove a project directory and its merkle snapshots safely.
+
+    Args:
+        project_dir: Path to the project directory to remove.
+
+    Returns:
+        Tuple of (success: bool, message: str) indicating cleanup result.
+    """
     try:
         # Get full 32-char project_id from project_info.json BEFORE deleting
         full_project_id = _get_full_project_id(project_dir)
@@ -106,7 +124,7 @@ def cleanup_project(project_dir):
                 for merkle_file in merkle_dir.glob(f"{full_project_id}_*"):
                     try:
                         merkle_file.unlink()
-                    except Exception:
+                    except OSError:
                         pass  # Ignore errors removing merkle files
 
         # Remove directory
@@ -124,6 +142,7 @@ def cleanup_project(project_dir):
 
 
 def main():
+    """Entry point for orphaned projects cleanup utility."""
     import argparse
 
     parser = argparse.ArgumentParser(description="Cleanup orphaned test projects")

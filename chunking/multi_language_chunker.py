@@ -3,9 +3,13 @@
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Optional
+from typing import TYPE_CHECKING, Optional
 
 from search.filters import normalize_path
+
+
+if TYPE_CHECKING:
+    from graph.relation_filter import RepositoryRelationFilter
 
 # Import utilities from new modules
 from .dedent_utils import smart_dedent as _smart_dedent
@@ -16,6 +20,7 @@ from .language_registry import (
 )
 from .python_ast_chunker import CodeChunk
 from .tree_sitter import TreeSitterChunk, TreeSitterChunker
+
 
 # Import call graph extractor for Python
 try:
@@ -64,6 +69,7 @@ class MultiLanguageChunker:
         include_dirs: Optional[list] = None,
         exclude_dirs: Optional[list] = None,
         enable_entity_tracking: bool = False,
+        relation_filter: Optional["RepositoryRelationFilter"] = None,
     ):
         """Initialize multi-language chunker.
 
@@ -72,9 +78,11 @@ class MultiLanguageChunker:
             include_dirs: Optional list of directories to include
             exclude_dirs: Optional list of directories to exclude
             enable_entity_tracking: Enable P4-5 entity extractors (enums, defaults, context managers). Default False.
+            relation_filter: Optional RepositoryRelationFilter for import classification
         """
         self.root_path = root_path
         self.enable_entity_tracking = enable_entity_tracking
+        self.relation_filter = relation_filter
         # Use AST chunker for Python (more mature implementation)
         # Use tree-sitter for other languages
         self.tree_sitter_chunker = TreeSitterChunker()
@@ -100,7 +108,9 @@ class MultiLanguageChunker:
                 # Priority 1 (Foundation) - always enabled
                 InheritanceExtractor(),
                 TypeAnnotationExtractor(),
-                ImportExtractor(),
+                ImportExtractor(
+                    relation_filter=self.relation_filter
+                ),  # Pass filter for import classification
                 # Priority 2 (Core) - always enabled
                 DecoratorExtractor(),
                 ExceptionExtractor(),
@@ -144,7 +154,7 @@ class MultiLanguageChunker:
         suffix = Path(file_path).suffix.lower()
         return suffix in self.SUPPORTED_EXTENSIONS
 
-    def chunk_file(self, file_path: str) -> List[CodeChunk]:
+    def chunk_file(self, file_path: str) -> list[CodeChunk]:
         """Chunk a file into semantic units.
 
         Args:
@@ -187,7 +197,7 @@ class MultiLanguageChunker:
 
         return chunk_type
 
-    def _build_folder_structure(self, file_path: str) -> List[str]:
+    def _build_folder_structure(self, file_path: str) -> list[str]:
         """Build folder parts from file path.
 
         Args:
@@ -210,7 +220,7 @@ class MultiLanguageChunker:
 
         return folder_parts
 
-    def _extract_semantic_tags(self, metadata: dict, language: str) -> List[str]:
+    def _extract_semantic_tags(self, metadata: dict, language: str) -> list[str]:
         """Extract semantic tags from chunk metadata.
 
         Args:
@@ -356,13 +366,15 @@ class MultiLanguageChunker:
                 logger.warning(f"Failed to extract relationships for {chunk.name}: {e}")
 
     def _convert_tree_chunks(
-        self, tree_chunks: List[TreeSitterChunk], file_path: str
-    ) -> List[CodeChunk]:
+        self, tree_chunks: list[TreeSitterChunk], file_path: str
+    ) -> list[CodeChunk]:
         """Convert tree-sitter chunks to CodeChunk format.
 
         Orchestrates the conversion process by delegating to helper methods
         for node type mapping, folder structure building, semantic tag extraction,
         chunk ID generation, and relationship extraction.
+
+        Now includes parent_chunk_id generation for method-class linking.
 
         Args:
             tree_chunks: List of TreeSitterChunk objects
@@ -376,6 +388,11 @@ class MultiLanguageChunker:
         # Build folder structure once for all chunks
         folder_parts = self._build_folder_structure(file_path)
         path = Path(file_path)
+
+        # Build class chunk_id lookup map for parent-child linking
+        # Maps (relative_path, class_name) -> class_chunk_id
+        # Classes are processed before their methods in tree traversal order
+        class_chunk_map: dict[tuple[str, str], str] = {}
 
         for tchunk in tree_chunks:
             # Extract metadata
@@ -395,14 +412,34 @@ class MultiLanguageChunker:
             # Extract semantic tags from metadata
             tags = self._extract_semantic_tags(tchunk.metadata, tchunk.language)
 
-            # Create CodeChunk
+            # Compute relative_path for use in chunk_id and parent lookup
+            relative_path = (
+                str(path.relative_to(self.root_path)) if self.root_path else str(path)
+            )
+
+            # Generate chunk_id BEFORE creating CodeChunk (needed for parent lookup)
+            chunk_id = self._create_chunk_id(
+                relative_path,
+                tchunk.start_line,
+                tchunk.end_line,
+                chunk_type,
+                qualified_name,
+            )
+
+            # Track class chunks for parent-child linking
+            if chunk_type == "class" and name:
+                class_chunk_map[(relative_path, name)] = chunk_id
+
+            # Determine parent_chunk_id for methods
+            parent_chunk_id = None
+            if parent_name and chunk_type in ("method", "function"):
+                # Look up the enclosing class's chunk_id
+                parent_chunk_id = class_chunk_map.get((relative_path, parent_name))
+
+            # Create CodeChunk with parent_chunk_id
             chunk = CodeChunk(
                 file_path=str(path),
-                relative_path=(
-                    str(path.relative_to(self.root_path))
-                    if self.root_path
-                    else str(path)
-                ),
+                relative_path=relative_path,
                 folder_structure=folder_parts,
                 chunk_type=chunk_type,
                 content=tchunk.content,
@@ -410,22 +447,17 @@ class MultiLanguageChunker:
                 end_line=tchunk.end_line,
                 name=name,
                 parent_name=parent_name,
+                parent_chunk_id=parent_chunk_id,
                 docstring=docstring,
                 decorators=decorators,
                 imports=[],  # Tree-sitter doesn't extract imports yet
-                complexity_score=0,  # Not calculated for tree-sitter chunks
+                complexity_score=tchunk.metadata.get("complexity_score", 0),
                 tags=tags,
                 language=tchunk.language,
             )
 
-            # Generate chunk_id for relationship extraction
-            chunk_id = self._create_chunk_id(
-                chunk.relative_path,
-                chunk.start_line,
-                chunk.end_line,
-                chunk_type,
-                qualified_name,
-            )
+            # Assign chunk_id to the chunk
+            chunk.chunk_id = chunk_id
 
             # Extract call graph relationships
             self._extract_call_relationships(chunk, tchunk, chunk_id)
@@ -435,15 +467,20 @@ class MultiLanguageChunker:
 
             code_chunks.append(chunk)
 
+        # Propagate merge stats from TreeSitterChunk to CodeChunk
+        # (ParallelChunker checks chunks[0]._merge_stats for logging)
+        if tree_chunks and code_chunks and hasattr(tree_chunks[0], "_merge_stats"):
+            code_chunks[0]._merge_stats = tree_chunks[0]._merge_stats
+
         return code_chunks
 
     def chunk_directory(
         self,
         directory_path: str,
-        extensions: Optional[List[str]] = None,
+        extensions: Optional[list[str]] = None,
         enable_parallel: bool = True,
         max_workers: int = 4,
-    ) -> List[CodeChunk]:
+    ) -> list[CodeChunk]:
         """Chunk all supported files in a directory.
 
         Args:
@@ -484,7 +521,8 @@ class MultiLanguageChunker:
             for file_path in file_paths:
                 try:
                     relative_path = str(file_path.relative_to(root))
-                    if self.directory_filter.matches(relative_path):
+                    # Use strict mode for file filtering (no ancestor passthrough)
+                    if self.directory_filter.matches_for_file(relative_path):
                         filtered_paths.append(file_path)
                 except ValueError:
                     # File not under root, skip it
@@ -505,7 +543,7 @@ class MultiLanguageChunker:
         logger.info(f"Total chunks from directory: {len(all_chunks)}")
         return all_chunks
 
-    def _chunk_files_sequential(self, file_paths: List[Path]) -> List[CodeChunk]:
+    def _chunk_files_sequential(self, file_paths: list[Path]) -> list[CodeChunk]:
         """Chunk files sequentially without parallelization.
 
         Args:
@@ -525,8 +563,8 @@ class MultiLanguageChunker:
         return all_chunks
 
     def _chunk_files_parallel(
-        self, file_paths: List[Path], max_workers: int
-    ) -> List[CodeChunk]:
+        self, file_paths: list[Path], max_workers: int
+    ) -> list[CodeChunk]:
         """Chunk files in parallel using ThreadPoolExecutor.
 
         Args:

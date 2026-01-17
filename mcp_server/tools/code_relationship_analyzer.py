@@ -6,14 +6,16 @@ affected by changes to a given symbol.
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Set
+from typing import Any
 
+from search.exceptions import SearchError
 from search.filters import (
     matches_directory_filter,
     normalize_path,
     normalize_path_lower,
     unescape_mcp_path,
 )
+
 
 logger = logging.getLogger(__name__)
 
@@ -78,95 +80,95 @@ BUILTIN_TYPES = frozenset(
 class ImpactReport:
     """Structured impact analysis report."""
 
-    symbol: Dict[str, Any]  # The symbol being analyzed
+    symbol: dict[str, Any]  # The symbol being analyzed
     chunk_id: str
-    direct_callers: List[Dict[str, Any]]  # Functions that directly call this
-    indirect_callers: List[
-        Dict[str, Any]
+    direct_callers: list[dict[str, Any]]  # Functions that directly call this
+    indirect_callers: list[
+        dict[str, Any]
     ]  # Functions that call the callers (multi-hop)
-    similar_code: List[Dict[str, Any]]  # Semantically similar implementations
+    similar_code: list[dict[str, Any]]  # Semantically similar implementations
     total_impacted: int  # Total number of impacted symbols
-    unique_files: Set[str]  # Set of unique files affected
-    dependency_graph: Dict[str, List[str]]  # Graph representation
+    unique_files: set[str]  # Set of unique files affected
+    dependency_graph: dict[str, list[str]]  # Graph representation
 
     # Relationship fields
-    parent_classes: List[Dict[str, Any]] = field(
+    parent_classes: list[dict[str, Any]] = field(
         default_factory=list
     )  # Classes this inherits from
-    child_classes: List[Dict[str, Any]] = field(
+    child_classes: list[dict[str, Any]] = field(
         default_factory=list
     )  # Classes that inherit from this
-    uses_types: List[Dict[str, Any]] = field(
+    uses_types: list[dict[str, Any]] = field(
         default_factory=list
     )  # Types used in annotations
-    used_as_type_in: List[Dict[str, Any]] = field(
+    used_as_type_in: list[dict[str, Any]] = field(
         default_factory=list
     )  # Where this is used as a type
-    imports: List[Dict[str, Any]] = field(
+    imports: list[dict[str, Any]] = field(
         default_factory=list
     )  # Modules/symbols imported
-    imported_by: List[Dict[str, Any]] = field(
+    imported_by: list[dict[str, Any]] = field(
         default_factory=list
     )  # Files that import this
 
     # Priority 2 relationship fields (decorators, exceptions, instantiation)
-    decorates: List[Dict[str, Any]] = field(
+    decorates: list[dict[str, Any]] = field(
         default_factory=list
     )  # Decorators applied by this code
-    decorated_by: List[Dict[str, Any]] = field(
+    decorated_by: list[dict[str, Any]] = field(
         default_factory=list
     )  # Code decorated by this
-    exceptions_raised: List[Dict[str, Any]] = field(
+    exceptions_raised: list[dict[str, Any]] = field(
         default_factory=list
     )  # Exceptions raised by this code
-    exception_handlers: List[Dict[str, Any]] = field(
+    exception_handlers: list[dict[str, Any]] = field(
         default_factory=list
     )  # Where exceptions from this are caught
-    exceptions_caught: List[Dict[str, Any]] = field(
+    exceptions_caught: list[dict[str, Any]] = field(
         default_factory=list
     )  # Exceptions caught by this code
-    instantiates: List[Dict[str, Any]] = field(
+    instantiates: list[dict[str, Any]] = field(
         default_factory=list
     )  # Classes instantiated by this code
-    instantiated_by: List[Dict[str, Any]] = field(
+    instantiated_by: list[dict[str, Any]] = field(
         default_factory=list
     )  # Where this class is instantiated
 
     # Priority 4-5 relationship fields (entity tracking)
-    defines_constants: List[Dict[str, Any]] = field(
+    defines_constants: list[dict[str, Any]] = field(
         default_factory=list
     )  # Constants defined by this code
-    uses_constants: List[Dict[str, Any]] = field(
+    uses_constants: list[dict[str, Any]] = field(
         default_factory=list
     )  # Constants used by this code
-    defines_enum_members: List[Dict[str, Any]] = field(
+    defines_enum_members: list[dict[str, Any]] = field(
         default_factory=list
     )  # Enum members defined by this code
-    uses_defaults: List[Dict[str, Any]] = field(
+    uses_defaults: list[dict[str, Any]] = field(
         default_factory=list
     )  # Default parameter values used
-    defines_class_attrs: List[Dict[str, Any]] = field(
+    defines_class_attrs: list[dict[str, Any]] = field(
         default_factory=list
     )  # Class attributes defined by this code
-    class_attr_definitions: List[Dict[str, Any]] = field(
+    class_attr_definitions: list[dict[str, Any]] = field(
         default_factory=list
     )  # Where this class attribute is defined
-    defines_fields: List[Dict[str, Any]] = field(
+    defines_fields: list[dict[str, Any]] = field(
         default_factory=list
     )  # Dataclass fields defined by this code
-    field_definitions: List[Dict[str, Any]] = field(
+    field_definitions: list[dict[str, Any]] = field(
         default_factory=list
     )  # Where this dataclass field is defined
-    uses_context_managers: List[Dict[str, Any]] = field(
+    uses_context_managers: list[dict[str, Any]] = field(
         default_factory=list
     )  # Context managers used by this code
-    context_manager_usages: List[Dict[str, Any]] = field(
+    context_manager_usages: list[dict[str, Any]] = field(
         default_factory=list
     )  # Where this is used as a context manager
 
     stale_chunk_count: int = 0  # Count of chunk_ids not found in current index
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization.
 
         Omits empty fields to reduce token overhead.
@@ -267,6 +269,7 @@ class CodeRelationshipAnalyzer:
         symbol_name: str = None,
         max_depth: int = 3,
         exclude_dirs: list = None,
+        relationship_types: list[str] = None,
     ) -> ImpactReport:
         """
         Analyze the impact radius of changes to a symbol.
@@ -276,22 +279,24 @@ class CodeRelationshipAnalyzer:
             symbol_name: Symbol name (requires search, may be ambiguous)
             max_depth: Maximum depth for dependency traversal (default: 3)
             exclude_dirs: Directories to exclude from symbol resolution and caller lookup
+            relationship_types: Optional list of relationship types to include (e.g., ["inherits", "imports"])
+                              If None, all relationship types are included.
 
         Returns:
             ImpactReport with structured impact data
 
         Raises:
-            ValueError: If neither chunk_id nor symbol_name provided
+            SearchError: If neither chunk_id nor symbol_name provided
         """
         if not chunk_id and not symbol_name:
-            raise ValueError("Must provide either chunk_id or symbol_name")
+            raise SearchError("Must provide either chunk_id or symbol_name")
 
         # Step 1: Get the target symbol
         if chunk_id:
             # Direct lookup - returns reranker.SearchResult
             target_result = self.searcher.get_by_chunk_id(chunk_id)
             if not target_result:
-                raise ValueError(f"Chunk not found: {chunk_id}")
+                raise SearchError(f"Chunk not found: {chunk_id}")
             target_id = chunk_id
         else:
             # Search by name - returns reranker.SearchResult
@@ -304,7 +309,7 @@ class CodeRelationshipAnalyzer:
                 symbol_name, k=30, filters=filters if filters else None
             )
             if not results:
-                raise ValueError(f"Symbol not found: {symbol_name}")
+                raise SearchError(f"Symbol not found: {symbol_name}")
 
             # Preference ranking: class > type_definition > interface > function > method
             # This ensures "HybridSearcher" finds the class, not a method with same name
@@ -567,6 +572,30 @@ class CodeRelationshipAnalyzer:
         # Step 5: Extract graph relationships (inheritance, type usage, imports)
         graph_relationships = self._extract_relationships(target_id, exclude_dirs)
 
+        # Step 5.5: Filter relationships if specific types requested
+        if relationship_types:
+            from graph.relationship_types import get_relationship_field_mapping
+
+            field_mapping = get_relationship_field_mapping()
+            allowed_fields = set()
+
+            # Gather all field names for requested relationship types
+            for rel_type in relationship_types:
+                if rel_type in field_mapping:
+                    forward_field, reverse_field = field_mapping[rel_type]
+                    if forward_field:
+                        allowed_fields.add(forward_field)
+                    if reverse_field:
+                        allowed_fields.add(reverse_field)
+
+            # Filter graph_relationships to only include allowed fields
+            filtered_relationships = {
+                field: value
+                for field, value in graph_relationships.items()
+                if field in allowed_fields
+            }
+            graph_relationships = filtered_relationships
+
         # Step 6: Build dependency graph
         dependency_graph = {target_id: [c["chunk_id"] for c in direct_callers]}
         for caller in direct_callers:
@@ -631,7 +660,7 @@ class CodeRelationshipAnalyzer:
             stale_chunk_count=stale_caller_count + stale_indirect_count,
         )
 
-    def _result_to_dict(self, result, chunk_id: str) -> Dict[str, Any]:
+    def _result_to_dict(self, result, chunk_id: str) -> dict[str, Any]:
         """Convert search result to dict format."""
         if isinstance(result, dict):
             result["chunk_id"] = chunk_id
@@ -661,7 +690,7 @@ class CodeRelationshipAnalyzer:
                 "score": getattr(result, "similarity_score", 0.0),
             }
 
-    def _is_caller_of(self, potential_caller: Dict, callee_id: str) -> bool:
+    def _is_caller_of(self, potential_caller: dict, callee_id: str) -> bool:
         """Check if potential_caller calls callee_id."""
         if not self.graph:
             return False
@@ -674,10 +703,10 @@ class CodeRelationshipAnalyzer:
             callee_symbol = callee_id.split(":")[-1] if ":" in callee_id else callee_id
             # Check both full chunk_id and symbol name
             return callee_id in callees or callee_symbol in callees
-        except Exception:
+        except (KeyError, AttributeError):
             return False
 
-    def _extract_result_info(self, result, chunk_id: str) -> Dict[str, Any]:
+    def _extract_result_info(self, result, chunk_id: str) -> dict[str, Any]:
         """
         Extract file/line/kind info from search result.
 
@@ -705,8 +734,8 @@ class CodeRelationshipAnalyzer:
             }
 
     def _extract_relationships(
-        self, chunk_id: str, exclude_dirs: List[str] | None = None
-    ) -> Dict[str, List[Dict[str, Any]]]:
+        self, chunk_id: str, exclude_dirs: list[str] | None = None
+    ) -> dict[str, list[dict[str, Any]]]:
         """
         Extract graph-based relationships (inheritance, type usage, imports) for a chunk.
 

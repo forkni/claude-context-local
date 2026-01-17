@@ -243,6 +243,9 @@ GEMINI.md
 BASH_STYLE_GUIDE.md
 BATCH_STYLE_GUIDE.md
 SHELL_STYLE_GUIDE.md
+PYTHON_DEBUGGING_PROTOCOL.md
+PYTHON_STYLE_GUIDE.md
+PYTHON_STYLE_GUIDE_QUICK.md
 SLASH_COMMAND_TESTING_PROTOCOL.md
 clean_pycache.bat
 
@@ -287,6 +290,13 @@ audit_reports/
 test-audit*.json
 tools/summarize_audit.py
 tools/benchmark_models.py
+
+# Benchmark and ground truth testing tools (local-only)
+tools/update_ground_truth_merge.py
+tools/update_gt_mcp.py
+tools/run_benchmark_mcp.py
+tools/chunking_ground_truth.json
+tools/benchmark_chunking.py
 
 # Development-only tests (require local evaluation module, invalid imports, or gated models)
 tests/unit/test_evaluation.py

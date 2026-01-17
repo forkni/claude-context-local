@@ -102,17 +102,17 @@ class TestSemanticSearch:
             first_result = results[0]
             assert hasattr(first_result, "file_path"), "Result should have file_path"
             assert hasattr(first_result, "name"), "Result should have name"
-            assert hasattr(
-                first_result, "content_preview"
-            ), "Result should have content_preview"
-            assert hasattr(
-                first_result, "similarity_score"
-            ), "Result should have similarity_score"
+            assert hasattr(first_result, "content_preview"), (
+                "Result should have content_preview"
+            )
+            assert hasattr(first_result, "similarity_score"), (
+                "Result should have similarity_score"
+            )
 
             # Verify score is reasonable
-            assert (
-                0 <= first_result.similarity_score <= 1.0
-            ), "Score should be normalized [0,1]"
+            assert 0 <= first_result.similarity_score <= 1.0, (
+                "Score should be normalized [0,1]"
+            )
 
     def test_semantic_search_ranking(self, indexed_searcher):
         """Test that search results have reasonable similarity scores."""
@@ -123,12 +123,12 @@ class TestSemanticSearch:
 
         # Verify all results have scores
         for result in results:
-            assert hasattr(
-                result, "similarity_score"
-            ), "All results should have similarity_score"
-            assert (
-                0 <= result.similarity_score <= 1.0
-            ), f"Score {result.similarity_score} should be in [0,1]"
+            assert hasattr(result, "similarity_score"), (
+                "All results should have similarity_score"
+            )
+            assert 0 <= result.similarity_score <= 1.0, (
+                f"Score {result.similarity_score} should be in [0,1]"
+            )
 
         # Verify we get a range of scores (not all identical)
         scores = [r.similarity_score for r in results]

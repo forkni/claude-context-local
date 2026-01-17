@@ -1,6 +1,6 @@
 """C#-specific chunker using tree-sitter."""
 
-from typing import Any, Dict, Optional, Set
+from typing import Any, Optional
 
 from tree_sitter import Language
 
@@ -10,7 +10,7 @@ from .base import LanguageChunker
 class CSharpChunker(LanguageChunker):
     """C#-specific chunker using tree-sitter."""
 
-    def __init__(self, language: Optional[Language] = None):
+    def __init__(self, language: Optional[Language] = None) -> None:
         super().__init__("csharp", language)
 
     def _load_language(self) -> Language:
@@ -25,7 +25,7 @@ class CSharpChunker(LanguageChunker):
                 "Install with: pip install tree-sitter-c-sharp"
             ) from err
 
-    def _get_splittable_node_types(self) -> Set[str]:
+    def _get_splittable_node_types(self) -> set[str]:
         """C#-specific splittable node types."""
         return {
             "method_declaration",
@@ -40,7 +40,7 @@ class CSharpChunker(LanguageChunker):
             "event_declaration",
         }
 
-    def extract_metadata(self, node: Any, source: bytes) -> Dict[str, Any]:
+    def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:
         """Extract C#-specific metadata."""
         metadata = {"node_type": node.type}
 

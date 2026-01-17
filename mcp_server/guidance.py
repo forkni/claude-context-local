@@ -4,7 +4,8 @@ Provides context-aware system messages that help AI assistants chain tool calls
 and understand next steps based on search results.
 """
 
-from typing import Any, Dict, List
+from typing import Any
+
 
 # System message templates for different scenarios
 GUIDANCE_TEMPLATES = {
@@ -70,7 +71,7 @@ GUIDANCE_TEMPLATES = {
 
 
 def generate_search_message(
-    results: List[Dict[str, Any]], query: str = None, chunk_id: str = None
+    results: list[dict[str, Any]], query: str | None = None, chunk_id: str | None = None
 ) -> str:
     """Generate system message for search_code results."""
     count = len(results)
@@ -91,7 +92,7 @@ def generate_search_message(
 
         msg = f"Found 1 result. Use chunk_id='{example_id}' for direct access."
         if has_graph:
-            msg += " " + GUIDANCE_TEMPLATES["search_code"]["with_graph"]
+            msg = f"{msg} {GUIDANCE_TEMPLATES['search_code']['with_graph']}"
         return msg
     elif count <= 5:
         example_id = results[0].get("chunk_id", "")
@@ -110,7 +111,7 @@ def generate_search_message(
         )
 
 
-def generate_index_message(result: Dict[str, Any]) -> str:
+def generate_index_message(result: dict[str, Any]) -> str:
     """Generate system message for index_directory results."""
     if "error" in result:
         return GUIDANCE_TEMPLATES["index_directory"]["error"]
@@ -132,7 +133,7 @@ def generate_index_message(result: Dict[str, Any]) -> str:
     )
 
 
-def generate_impact_message(total_impacted: int, file_count: int = None) -> str:
+def generate_impact_message(total_impacted: int, file_count: int | None = None) -> str:
     """Generate system message for find_connections results."""
     if total_impacted == 0:
         return GUIDANCE_TEMPLATES["find_connections"]["no_impact"]
@@ -151,7 +152,7 @@ def generate_impact_message(total_impacted: int, file_count: int = None) -> str:
 
 
 def generate_similar_code_message(
-    results: List[Dict[str, Any]], query_chunk_id: str
+    results: list[dict[str, Any]], query_chunk_id: str
 ) -> str:
     """Generate system message for find_similar_code results."""
     count = len(results)
@@ -165,8 +166,8 @@ def generate_similar_code_message(
 
 
 def add_system_message(
-    response: Dict[str, Any], tool_name: str, **kwargs
-) -> Dict[str, Any]:
+    response: dict[str, Any], tool_name: str, **kwargs
+) -> dict[str, Any]:
     """
     Add system_message field to MCP tool response.
 

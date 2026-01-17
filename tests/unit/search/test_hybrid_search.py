@@ -670,3 +670,227 @@ class TestHybridSearcher:
         import shutil
 
         shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+
+class TestCallEdgeResolution:
+    """Test call edge resolution in HybridSearcher.add_embeddings() (Phase 2)."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
+    def test_unique_function_name_resolved(self, mock_bm25, mock_dense):
+        """Test that unique function names are resolved to full chunk_ids."""
+        # Setup mocks
+        mock_dense.return_value.index = None
+        searcher = HybridSearcher(self.temp_dir)
+
+        # Mock graph storage
+        mock_graph = Mock()
+        searcher.graph_storage = mock_graph
+
+        # Create embedding results with unique function name
+        embedding_results = [
+            Mock(
+                chunk_id="file_a.py:1-10:function:unique_func",
+                metadata={
+                    "name": "unique_func",
+                    "chunk_type": "function",
+                    "file_path": "file_a.py",
+                    "language": "python",
+                    "calls": [],
+                },
+                embedding=np.random.rand(768),
+                document="def unique_func(): pass",
+            ),
+            Mock(
+                chunk_id="file_b.py:5-15:function:caller",
+                metadata={
+                    "name": "caller",
+                    "chunk_type": "function",
+                    "file_path": "file_b.py",
+                    "language": "python",
+                    "calls": [
+                        {
+                            "callee_name": "unique_func",  # Should be resolved
+                            "line_number": 7,
+                            "is_method_call": False,
+                        }
+                    ],
+                },
+                embedding=np.random.rand(768),
+                document="def caller(): unique_func()",
+            ),
+        ]
+
+        # Call add_embeddings
+        searcher.add_embeddings(embedding_results)
+
+        # Verify add_call_edge was called with resolved chunk_id
+        calls = mock_graph.add_call_edge.call_args_list
+        assert len(calls) == 1
+
+        # Check that the edge was added with resolved target
+        call_kwargs = calls[0][1]  # keyword args
+        assert call_kwargs["caller_id"] == "file_b.py:5-15:function:caller"
+        assert (
+            call_kwargs["callee_name"] == "file_a.py:1-10:function:unique_func"
+        )  # Resolved!
+        assert call_kwargs["is_resolved"] is True
+
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
+    def test_ambiguous_function_name_phantom(self, mock_bm25, mock_dense):
+        """Test that ambiguous function names (multiple matches) remain phantom."""
+        # Setup mocks
+        mock_dense.return_value.index = None
+        searcher = HybridSearcher(self.temp_dir)
+
+        # Mock graph storage
+        mock_graph = Mock()
+        searcher.graph_storage = mock_graph
+
+        # Create embedding results with duplicate function name
+        embedding_results = [
+            Mock(
+                chunk_id="file_a.py:1-10:function:extract",
+                metadata={
+                    "name": "extract",
+                    "chunk_type": "function",
+                    "file_path": "file_a.py",
+                    "language": "python",
+                    "calls": [],
+                },
+                embedding=np.random.rand(768),
+                document="def extract(): pass",
+            ),
+            Mock(
+                chunk_id="file_b.py:1-10:function:extract",
+                metadata={
+                    "name": "extract",  # Duplicate name
+                    "chunk_type": "function",
+                    "file_path": "file_b.py",
+                    "language": "python",
+                    "calls": [],
+                },
+                embedding=np.random.rand(768),
+                document="def extract(): pass",
+            ),
+            Mock(
+                chunk_id="file_c.py:5-15:function:caller",
+                metadata={
+                    "name": "caller",
+                    "chunk_type": "function",
+                    "file_path": "file_c.py",
+                    "language": "python",
+                    "calls": [
+                        {
+                            "callee_name": "extract",  # Ambiguous - should NOT be resolved
+                            "line_number": 7,
+                            "is_method_call": False,
+                        }
+                    ],
+                },
+                embedding=np.random.rand(768),
+                document="def caller(): extract()",
+            ),
+        ]
+
+        # Call add_embeddings
+        searcher.add_embeddings(embedding_results)
+
+        # Verify add_call_edge was called with unresolved name (phantom)
+        calls = mock_graph.add_call_edge.call_args_list
+        assert len(calls) == 1
+
+        call_kwargs = calls[0][1]
+        assert call_kwargs["caller_id"] == "file_c.py:5-15:function:caller"
+        assert call_kwargs["callee_name"] == "extract"  # NOT resolved (phantom)
+        assert call_kwargs["is_resolved"] is False
+
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
+    def test_external_call_phantom(self, mock_bm25, mock_dense):
+        """Test that external library calls remain as phantom nodes."""
+        # Setup mocks
+        mock_dense.return_value.index = None
+        searcher = HybridSearcher(self.temp_dir)
+
+        # Mock graph storage
+        mock_graph = Mock()
+        searcher.graph_storage = mock_graph
+
+        # Create embedding result calling external library
+        embedding_results = [
+            Mock(
+                chunk_id="file_a.py:1-10:function:my_func",
+                metadata={
+                    "name": "my_func",
+                    "chunk_type": "function",
+                    "file_path": "file_a.py",
+                    "language": "python",
+                    "calls": [
+                        {
+                            "callee_name": "os.path.join",  # External call
+                            "line_number": 5,
+                            "is_method_call": True,
+                        }
+                    ],
+                },
+                embedding=np.random.rand(768),
+                document="def my_func(): os.path.join('a', 'b')",
+            )
+        ]
+
+        # Call add_embeddings
+        searcher.add_embeddings(embedding_results)
+
+        # Verify add_call_edge was called with unresolved name
+        calls = mock_graph.add_call_edge.call_args_list
+        assert len(calls) == 1
+
+        call_kwargs = calls[0][1]
+        assert call_kwargs["callee_name"] == "os.path.join"  # NOT resolved
+        assert call_kwargs["is_resolved"] is False
+
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
+    def test_no_calls_no_errors(self, mock_bm25, mock_dense):
+        """Test that functions with no calls don't cause errors."""
+        # Setup mocks
+        mock_dense.return_value.index = None
+        searcher = HybridSearcher(self.temp_dir)
+
+        # Mock graph storage
+        mock_graph = Mock()
+        searcher.graph_storage = mock_graph
+
+        # Create embedding result with no calls
+        embedding_results = [
+            Mock(
+                chunk_id="file_a.py:1-10:function:simple_func",
+                metadata={
+                    "name": "simple_func",
+                    "chunk_type": "function",
+                    "file_path": "file_a.py",
+                    "language": "python",
+                    "calls": [],  # No calls
+                },
+                embedding=np.random.rand(768),
+                document="def simple_func(): return 42",
+            )
+        ]
+
+        # Should not raise any errors
+        searcher.add_embeddings(embedding_results)
+
+        # Verify add_call_edge was never called
+        mock_graph.add_call_edge.assert_not_called()
+
+    def teardown_method(self):
+        """Clean up test fixtures."""
+        import shutil
+
+        shutil.rmtree(self.temp_dir, ignore_errors=True)

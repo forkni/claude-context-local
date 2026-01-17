@@ -10,14 +10,14 @@ This modular reference can be embedded in any project instructions for Claude Co
 
 | Tool | Priority | Purpose | Parameters |
 |------|----------|---------|------------|
-| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=5, search_mode="hybrid", model_key, use_routing=True, file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5 |
-| **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (~90% accuracy with import resolution) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs |
+| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=5, search_mode="hybrid", model_key, use_routing=True, file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False |
+| **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (~90% accuracy with import resolution) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs, relationship_types |
 | **index_directory** | 🔴 **SETUP** | Index project (multi-model support) | directory_path (required), project_name, incremental=True, multi_model=auto |
-| find_similar_code | Secondary | Find alternative implementations | chunk_id (required), k=5 |
+| **find_similar_code** | 🟡 **IMPACT** | Find alternative implementations | chunk_id (required), k=5 |
 | configure_search_mode | Config | Set search mode & weights | search_mode="hybrid", bm25_weight=0.4, dense_weight=0.6, enable_parallel=True |
 | configure_query_routing | Config | Configure multi-model routing (v0.5.4+) | enable_multi_model, default_model, confidence_threshold=0.05 |
 | configure_reranking | Config | Configure neural reranker settings | enabled, model_name, top_k_candidates=50 |
-| configure_chunking | Config | Configure code chunking settings | enable_greedy_merge, min_chunk_tokens, max_merged_tokens, token_estimation, enable_large_node_splitting, max_chunk_lines |
+| configure_chunking | Config | Configure code chunking settings | enable_chunk_merging, min_chunk_tokens, max_merged_tokens, token_estimation, enable_large_node_splitting, max_chunk_lines |
 | get_search_config_status | Config | View current configuration | *(no parameters)* |
 | get_index_status | Status | Check index health & model info | *(no parameters)* |
 | get_memory_status | Monitor | Check RAM/VRAM usage | *(no parameters)* |
@@ -38,7 +38,12 @@ This modular reference can be embedded in any project instructions for Claude Co
 | **file_pattern** | string | Substring match on file path | Any string (e.g., "auth", "test_", "utils/") |
 | **include_dirs** | array | Only search in these directories (prefix match) | `["src/", "lib/"]` |
 | **exclude_dirs** | array | Exclude from search (prefix match) | `["tests/", "vendor/", "node_modules/"]` |
-| **chunk_type** | string | Filter by code structure type | `"function"`, `"class"`, `"method"`, `"module"`, `"decorated_definition"`, `"interface"`, `"enum"`, `"struct"`, `"type"` |
+| **chunk_type** | string | Filter by code structure type | `"function"`, `"class"`, `"method"`, `"module"`, `"decorated_definition"`, `"interface"`, `"enum"`, `"struct"`, `"type"`, `"merged"`, `"split_block"` |
+
+**New Chunk Types (v0.8.4+)**:
+
+- `"merged"`: Community-merged chunks created by Phase 6 community detection. Multiple related code blocks merged together for better semantic context (e.g., related helper functions merged with main class).
+- `"split_block"`: Large function blocks split at AST boundaries when exceeding `max_chunk_lines` (default: 100 lines). Enables better granularity for very large functions.
 
 ### Directory Filtering (v0.5.9+)
 
@@ -63,6 +68,23 @@ find_connections(symbol_name="UserService", exclude_dirs=["tests/"])
 ```
 
 **Note**: In `find_connections`, `exclude_dirs` applies to symbol resolution only. Callers are not filtered (to preserve test coverage visibility).
+
+**Filter by relationship types** (v0.8.4+): Use `relationship_types` to get only specific relationship data:
+
+```python
+# Get only inheritance relationships
+find_connections(symbol_name="BaseClass", relationship_types=["inherits"])
+# Returns: Only parent_classes/child_classes populated, all others empty
+
+# Get only import relationships
+find_connections(chunk_id="...", relationship_types=["imports"])
+# Returns: Only imports/imported_by populated
+
+# Get multiple specific types
+find_connections(symbol_name="MyClass", relationship_types=["inherits", "imports", "decorates"])
+```
+
+**Valid relationship types**: `calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`, `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`, `uses_context_manager`
 
 ### Filter Examples
 
@@ -104,9 +126,162 @@ find_connections(symbol_name="UserService", exclude_dirs=["tests/"])
 
 ---
 
+## Ego-Graph Expansion Parameters (v0.8.4+)
+
+**Feature**: RepoGraph-style k-hop ego-graph retrieval for context expansion (ICLR 2025)
+
+**Purpose**: Automatically retrieve graph neighbors (callers, callees, related code) for search results to provide richer context beyond semantic similarity.
+
+| Parameter | Type | Default | Range | Description |
+|-----------|------|---------|-------|-------------|
+| `ego_graph_enabled` | boolean | false | - | Enable k-hop neighbor expansion from call graph |
+| `ego_graph_k_hops` | integer | 2 | 1-5 | Graph traversal depth (1=direct neighbors, 2=neighbors of neighbors) |
+| `ego_graph_max_neighbors_per_hop` | integer | 10 | 1-50 | Limit neighbors per hop to prevent explosion |
+
+**⭐ NEW (v0.8.3): Automatic Import Filtering**
+
+When ego-graph expansion is enabled, **stdlib and third-party imports are automatically filtered** from graph traversal (RepoGraph Feature #5: Repository-Dependent Relation Filtering). This results in:
+
+- **30-50% fewer edges** traversed (cleaner graphs)
+- **More relevant neighbors** (project-internal code only)
+- **Faster graph traversal** (fewer nodes to process)
+
+Filtering uses Python 3.10+ `sys.stdlib_module_names` for comprehensive stdlib detection and auto-discovers project modules from directory structure.
+
+### Usage Examples
+
+```python
+# Basic ego-graph expansion (2-hop, max 10 neighbors per hop)
+search_code("authentication handler", ego_graph_enabled=True)
+
+# Shallow expansion (only direct neighbors)
+search_code("database connection", ego_graph_enabled=True, ego_graph_k_hops=1)
+
+# Deep expansion with more neighbors
+search_code("request processing", ego_graph_enabled=True, ego_graph_k_hops=3, ego_graph_max_neighbors_per_hop=20)
+```
+
+### Performance Characteristics
+
+- **Neighbor retrieval**: 780-1000 neighbors per anchor (complex classes)
+- **Symbol filtering**: 4-33 symbol-only nodes removed per anchor
+- **Expansion factor**: 3.5-4.6× (e.g., 5 anchors → 23 total results)
+- **Overhead**: Minimal (~0-5ms for graph traversal)
+
+### Result Marking
+
+Ego-graph neighbors are marked in results with:
+
+- `score`: 0.0 (neighbors are context, not direct matches)
+- `source`: "ego_graph" (identifies origin)
+- `rank`: 0 (default rank)
+
+---
+
+## Parent-Child Retrieval Parameters (v0.8.4+)
+
+**Feature**: "Match Small, Retrieve Big" pattern for improved LLM comprehension
+
+**Purpose**: When a method is matched during search, automatically retrieve its enclosing class to provide full context. Solves the "orphan chunk" problem where methods lack class-level context.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `include_parent` | boolean | false | Enable parent chunk retrieval for methods |
+
+### Usage Examples
+
+```python
+# Basic parent retrieval (method + enclosing class)
+search_code("validate user data", chunk_type="method", include_parent=True)
+
+# Search for authentication methods with class context
+search_code("authentication methods", include_parent=True)
+```
+
+### How It Works
+
+1. **Search Phase**: Find methods matching your query
+2. **Expansion Phase**: For each matched method, retrieve its parent class using `parent_chunk_id` metadata
+3. **Results**: Return both the method (scored) and its parent class (score=0.0)
+
+### Performance Characteristics
+
+- **Expansion overhead**: Minimal (~0-5ms for metadata lookup)
+- **Result expansion**: 1-2× (e.g., 5 methods → 5-10 total results)
+- **Re-indexing**: Required once to populate `parent_chunk_id` metadata
+
+### Result Marking
+
+Parent chunks are marked in results with:
+
+- `score`: 0.0 (parents provide context, not direct matches)
+- `source`: "parent_expansion" (identifies origin)
+- `rank`: 0 (default rank)
+
+### Example Output
+
+```json
+{
+  "results": [
+    {
+      "chunk_id": "auth.py:45-52:method:validate",
+      "kind": "method",
+      "score": 0.89,
+      "name": "validate"
+    },
+    {
+      "chunk_id": "auth.py:10-60:class:User",
+      "kind": "class",
+      "score": 0.0,
+      "source": "parent_expansion",
+      "name": "User"
+    }
+  ]
+}
+```
+
+---
+
+## Search Result Fields
+
+The `search_code` tool returns results with the following fields:
+
+| Field | Type | Always Present | Description |
+|-------|------|----------------|-------------|
+| `chunk_id` | string | ✅ | Unique identifier (format: `"file:lines:type:name"`) |
+| `kind` | string | ✅ | Chunk type (`function`, `class`, `method`, etc.) |
+| `score` | float | ✅ | Relevance score (0.0-1.0, rounded to 2 decimals) |
+| `source` | string | ⚠️ Optional | Result source (`"ego_graph"` for graph neighbors, omitted for direct matches) |
+| `file` | string | ✅ (verbose only) | Relative file path (omitted in compact/ultra since `chunk_id` contains this) |
+| `lines` | string | ✅ (verbose only) | Line range (e.g., `"10-25"`, omitted in compact/ultra) |
+| `name` | string | ⚠️ Optional | Symbol name (when available) |
+| `complexity_score` | integer | ⚠️ Optional | Cyclomatic complexity (functions/methods only) |
+| `reranker_score` | float | ⚠️ Optional | Neural reranker score (when reranking enabled, rounded to 4 decimals) |
+| `graph` | object | ⚠️ Optional | Call relationships (`calls`, `called_by` arrays) |
+
+### Field Details
+
+**`complexity_score`** (Cyclomatic Complexity):
+
+- **Only present for**: Functions and methods (Python only currently)
+- **Calculation**: CC = 1 + decision_points (if/elif, for, while, except, and/or, ternary, match/case)
+- **Use cases**:
+  - Identify complex code needing refactoring (CC > 10 is high complexity)
+  - Prioritize code review focus areas
+  - Find simple entry points for code understanding (CC = 1-2)
+- **Example**: `"complexity_score": 5` indicates 5 decision paths through the function
+
+**`graph`** (Call Relationships):
+
+- **Structure**: `{"calls": ["chunk_id1", ...], "called_by": ["chunk_id2", ...]}`
+- **Only present when**: Graph storage is available and relationships exist
+- **Use with**: `find_connections` for detailed dependency analysis
+
+---
+
 ## Output Format Options
 
-All 18 MCP tools support configurable output formatting via the `output_format` parameter. This allows you to optimize token usage while preserving 100% of data.
+All 19 MCP tools support configurable output formatting via the `output_format` parameter. This allows you to optimize token usage while preserving 100% of data.
 
 ### Available Formats
 
@@ -314,7 +489,8 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 **Purpose**: Configure code chunking settings at runtime
 
 **Parameters**:
-- `enable_greedy_merge` (bool): Enable/disable greedy chunk merging (default: True)
+
+- `enable_chunk_merging` (bool): Enable/disable greedy chunk merging (default: True)
 - `min_chunk_tokens` (int): Minimum tokens before merge (10-500, default: 50)
 - `max_merged_tokens` (int): Maximum tokens for merged chunks (100-5000, default: 1000)
 - `token_estimation` (str): Token estimation method - "whitespace" (fast) or "tiktoken" (accurate, default: "whitespace")
@@ -328,7 +504,7 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 ### Commands
 
 ```
-/configure_chunking --enable_greedy_merge true --min_chunk_tokens 50
+/configure_chunking --enable_chunk_merging true --min_chunk_tokens 50
 /configure_chunking --enable_large_node_splitting true --max_chunk_lines 100
 /get_search_config_status  # View current chunking settings
 ```
@@ -350,6 +526,14 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 - **First search per session**: 8-15s total (5-10s one-time model loading + 3-5s search)
 - **Subsequent searches**: 3-5s (models stay loaded in memory)
 - **Manual cleanup**: Use `/cleanup_resources` to unload models and return to 0 MB VRAM
+
+**Timing Instrumentation (v0.8.6+)**:
+
+- **Enable logging**: Set `CLAUDE_LOG_LEVEL=INFO` to see `[TIMING]` logs for 5 critical operations
+- **Instrumented operations**: `embed_query`, `bm25_search`, `dense_search`, `neural_rerank`, `multi_hop_search`
+- **Log format**: `[TIMING] operation_name: Xms` (milliseconds, 2 decimal precision)
+- **Module**: `utils/timing.py` provides `@timed()` decorator and `Timer()` context manager
+- **Overhead**: <0.1ms per operation (negligible)
 
 ---
 

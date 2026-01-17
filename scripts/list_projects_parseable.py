@@ -27,7 +27,7 @@ def get_storage_dir():
 def main():
     try:
         storage = get_storage_dir()
-    except Exception:
+    except (AttributeError, KeyError, RuntimeError):
         # Storage dir doesn't exist - silent exit
         return
 
@@ -49,7 +49,7 @@ def main():
         try:
             with open(info_file, encoding="utf-8") as f:
                 info = json.load(f)
-        except Exception:
+        except (json.JSONDecodeError, KeyError):
             # Skip malformed project_info.json
             continue
 
@@ -81,6 +81,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except Exception:
+    except (OSError, KeyError):
         # Silent exit for batch script error handling
         sys.exit(0)

@@ -6,6 +6,7 @@ Tests all files for ASCII compatibility and emoji detection.
 
 import sys
 from pathlib import Path
+from typing import Dict
 
 
 def test_file_encoding() -> None:
@@ -14,7 +15,7 @@ def test_file_encoding() -> None:
     assert success, "Encoding validation failed for some files"
 
 
-def _test_file_encoding_detailed(file_path: Path) -> dict:
+def _test_file_encoding_detailed(file_path: Path) -> Dict:
     """Test a single file for encoding issues."""
     result = {
         "file": str(file_path),
@@ -111,8 +112,8 @@ def _all_files_check():
     # Files to test
     test_files = [
         # Python files
-        "tools/search_helper.py",
-        "tools/index_project.py",
+        "tools/batch_index.py",
+        "tools/notify_server.py",
         "mcp_server/server.py",
         "tests/integration/test_complete_workflow.py",
         "tests/integration/test_system.py",

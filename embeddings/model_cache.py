@@ -7,8 +7,9 @@ for HuggingFace models, including split cache scenarios for trust_remote_code mo
 import json
 import logging
 import shutil
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Optional
 
 
 class ModelCacheManager:
@@ -36,8 +37,8 @@ class ModelCacheManager:
         self,
         model_name: str,
         cache_dir: str,
-        model_config_getter: Callable[[], Dict],
-    ):
+        model_config_getter: Callable[[], dict],
+    ) -> None:
         """Initialize model cache manager.
 
         Args:
@@ -259,7 +260,7 @@ class ModelCacheManager:
             self._logger.debug(f"Error in ensure_split_cache_symlink: {e}")
             return False
 
-    def check_cache_at_location(self, cache_path: Path) -> Tuple[bool, str]:
+    def check_cache_at_location(self, cache_path: Path) -> tuple[bool, str]:
         """Check if valid model cache exists at a specific location.
 
         Args:
@@ -401,7 +402,7 @@ class ModelCacheManager:
             self._logger.debug(f"Error during cache validation: {e}")
             return False, f"Validation error: {str(e)}"
 
-    def validate_cache(self) -> Tuple[bool, str]:
+    def validate_cache(self) -> tuple[bool, str]:
         """Validate cached model integrity with fallback to default HuggingFace cache.
 
         Checks both custom cache location and default HuggingFace cache for models
@@ -465,7 +466,7 @@ class ModelCacheManager:
         # Cache invalid in both locations
         return False, custom_reason
 
-    def check_incomplete_downloads(self) -> Tuple[bool, str]:
+    def check_incomplete_downloads(self) -> tuple[bool, str]:
         """Check if there are incomplete downloads that could cause validation failures.
 
         Scans the blobs directory for .incomplete files from interrupted HuggingFace downloads.
@@ -502,7 +503,7 @@ class ModelCacheManager:
             self._logger.debug(f"Error checking incomplete downloads: {e}")
             return False, f"Error: {str(e)}"
 
-    def cleanup_incomplete_downloads(self) -> Tuple[int, List[str]]:
+    def cleanup_incomplete_downloads(self) -> tuple[int, list[str]]:
         """Detect and clean up incomplete downloads in the blobs directory.
 
         Removes .incomplete files that were created by interrupted HuggingFace downloads.

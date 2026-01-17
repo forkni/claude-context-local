@@ -7,7 +7,7 @@ of both BM25 and dense FAISS indices.
 import logging
 import shutil
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Optional
 
 from .bm25_index import BM25Index
 from .indexer import CodeIndexManager
@@ -25,6 +25,7 @@ class IndexSynchronizer:
         bm25_use_stemming: bool = True,
         project_id: Optional[str] = None,
         config=None,
+        embedder=None,
     ):
         """
         Initialize index synchronizer.
@@ -37,6 +38,7 @@ class IndexSynchronizer:
             bm25_use_stemming: BM25 stemming configuration
             project_id: Project identifier for index recreation
             config: SearchConfig instance for mmap storage and other settings
+            embedder: Code embedder for dimension validation during index recreation
         """
         self.storage_dir = Path(storage_dir)
         self.bm25_index = bm25_index
@@ -45,9 +47,10 @@ class IndexSynchronizer:
         self.bm25_use_stemming = bm25_use_stemming
         self.project_id = project_id
         self.config = config
+        self.embedder = embedder
         self._logger = logging.getLogger(__name__)
 
-    def save_indices(self) -> Dict[str, any]:
+    def save_indices(self) -> dict[str, Any]:
         """
         Save both BM25 and dense indices.
 
@@ -257,13 +260,36 @@ class IndexSynchronizer:
                 use_stemming=self.bm25_use_stemming,
             )
 
-            # Clear dense index - MUST delete files before recreating
+            # Clear dense index - MUST close metadata before recreating
             if self.dense_index is not None:
                 self.dense_index.clear_index()
 
-            # Recreate with clean state (preserve project_id and config for graph storage and mmap)
+                # CRITICAL: Close metadata store AGAIN (clear_index reopens it at the end)
+                # This prevents file lock [WinError 32] on Windows when creating new CodeIndexManager
+                if (
+                    hasattr(self.dense_index, "_metadata_store")
+                    and self.dense_index._metadata_store is not None
+                ):
+                    self.dense_index._metadata_store.close()
+                    self._logger.debug(
+                        "Closed old dense_index metadata store before recreation"
+                    )
+
+                # Release reference to allow garbage collection
+                self.dense_index = None
+
+            # Force garbage collection to release file handles (Windows)
+            import gc
+
+            gc.collect()
+
+            # Recreate with clean state (preserve project_id, config, and embedder for dimension validation)
+            # NOW safe - old metadata store is closed and garbage collected
             self.dense_index = CodeIndexManager(
-                str(self.storage_dir), project_id=self.project_id, config=self.config
+                str(self.storage_dir),
+                embedder=self.embedder,
+                project_id=self.project_id,
+                config=self.config,
             )
 
             self._logger.info("Successfully cleared hybrid indices")

@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+
 if TYPE_CHECKING:
     pass
 
@@ -27,7 +28,7 @@ class ResourceManager:
     of concerns and easier testability.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize ResourceManager.
 
         The manager operates on global state via ServiceLocator pattern.
@@ -52,14 +53,26 @@ class ResourceManager:
         try:
             if state.index_manager is not None:
                 if (
-                    hasattr(state.index_manager, "_metadata_db")
-                    and state.index_manager._metadata_db is not None
+                    hasattr(state.index_manager, "_metadata_store")
+                    and state.index_manager._metadata_store is not None
                 ):
-                    state.index_manager._metadata_db.close()
+                    state.index_manager._metadata_store.close()
                 state.index_manager = None
                 logger.info("Previous index manager cleaned up")
 
             if state.searcher is not None:
+                # Close dense_index metadata store FIRST
+                if (
+                    hasattr(state.searcher, "dense_index")
+                    and state.searcher.dense_index is not None
+                ):
+                    if (
+                        hasattr(state.searcher.dense_index, "_metadata_store")
+                        and state.searcher.dense_index._metadata_store is not None
+                    ):
+                        state.searcher.dense_index._metadata_store.close()
+                        logger.debug("Closed HybridSearcher dense_index metadata store")
+                # Then call shutdown
                 if hasattr(state.searcher, "shutdown"):
                     state.searcher.shutdown()
                     logger.info(
@@ -151,7 +164,7 @@ def initialize_server_state() -> None:
     from mcp_server.project_persistence import load_project_selection
     from mcp_server.services import get_state
     from mcp_server.storage_manager import get_storage_dir, set_current_project
-    from search.config import MODEL_POOL_CONFIG, get_config_manager
+    from search.config import get_config_manager
 
     state = get_state()
 
@@ -181,7 +194,10 @@ def initialize_server_state() -> None:
 
     # 3. Lazy model loading
     logger.info("[INIT] Model loading deferred until first use (lazy mode)")
-    logger.info(f"[INIT] Available models: {list(MODEL_POOL_CONFIG.keys())}")
+    from mcp_server.model_pool_manager import get_model_pool_manager
+
+    pool_config = get_model_pool_manager()._get_pool_config()
+    logger.info(f"[INIT] Available models: {list(pool_config.keys())}")
 
     # 3.5. VRAM tier detection - DEFERRED to first model load
     logger.info("[INIT] VRAM tier detection deferred until first model request")

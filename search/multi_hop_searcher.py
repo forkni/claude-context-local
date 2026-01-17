@@ -6,17 +6,14 @@ to discover related code across multiple hops.
 
 import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
+
+from mcp_server.utils.config_helpers import (
+    get_config_via_service_locator as _get_config_via_service_locator,
+)
+from utils.timing import timed
 
 from .reranker import SearchResult as RerankerSearchResult
-
-
-# Helper function to access config via ServiceLocator (avoids circular imports)
-def _get_config_via_service_locator():
-    """Get SearchConfig via ServiceLocator to avoid circular dependencies."""
-    from mcp_server.services import ServiceLocator
-
-    return ServiceLocator.instance().get_config()
 
 
 class MultiHopSearcher:
@@ -52,7 +49,7 @@ class MultiHopSearcher:
         self.reranking_engine = reranking_engine
         self._logger = logger or logging.getLogger(__name__)
 
-    def validate_params(self, hops: int, expansion_factor: float) -> Tuple[int, float]:
+    def validate_params(self, hops: int, expansion_factor: float) -> tuple[int, float]:
         """
         Validate and sanitize multi-hop search parameters.
 
@@ -80,13 +77,13 @@ class MultiHopSearcher:
 
     def expand_from_initial_results(
         self,
-        initial_results: List,
+        initial_results: list,
         all_chunk_ids: set,
-        all_results: Dict,
+        all_results: dict,
         expansion_k: int,
         hops: int,
         k: int,
-    ) -> Dict[int, float]:
+    ) -> dict[int, float]:
         """
         Expand search results by finding similar chunks for each initial result.
 
@@ -158,10 +155,10 @@ class MultiHopSearcher:
 
     def apply_post_expansion_filters(
         self,
-        all_results: Dict,
+        all_results: dict,
         initial_results_count: int,
-        filters: Optional[Dict[str, Any]],
-    ) -> Dict:
+        filters: Optional[dict[str, Any]],
+    ) -> dict:
         """
         Apply filters to expanded results.
 
@@ -196,6 +193,7 @@ class MultiHopSearcher:
 
         return filtered_results
 
+    @timed("multi_hop_search")
     def search(
         self,
         query: str,
@@ -205,8 +203,8 @@ class MultiHopSearcher:
         expansion_factor: float = 0.3,
         use_parallel: bool = True,
         min_bm25_score: float = 0.0,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> List:
+        filters: Optional[dict[str, Any]] = None,
+    ) -> list:
         """
         Internal multi-hop search implementation.
 
@@ -228,6 +226,10 @@ class MultiHopSearcher:
         Returns:
             List of SearchResult objects with discovered related code
         """
+        # Reset session-level OOM tracking at start of new search
+        if hasattr(self, "reranking_engine") and self.reranking_engine:
+            self.reranking_engine.reset_session_state()
+
         # Validate parameters
         hops, expansion_factor = self.validate_params(hops, expansion_factor)
 

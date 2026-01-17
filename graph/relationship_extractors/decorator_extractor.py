@@ -12,7 +12,7 @@ Complexity: Low (single-pass, straightforward extraction)
 """
 
 import ast
-from typing import Any, Dict, List
+from typing import Any
 
 from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
 from graph.relationship_types import RelationshipEdge, RelationshipType
@@ -56,14 +56,14 @@ class DecoratorExtractor(BaseRelationshipExtractor):
     ```
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the decorator extractor."""
         super().__init__()
         self.relationship_type = RelationshipType.DECORATES
 
     def extract(
-        self, code: str, chunk_metadata: Dict[str, Any]
-    ) -> List[RelationshipEdge]:
+        self, code: str, chunk_metadata: dict[str, Any]
+    ) -> list[RelationshipEdge]:
         """
         Extract decorator relationships from code.
 
@@ -107,7 +107,7 @@ class DecoratorExtractor(BaseRelationshipExtractor):
 
         return self.edges
 
-    def _extract_from_tree(self, tree, chunk_metadata: Dict[str, Any]):
+    def _extract_from_tree(self, tree, chunk_metadata: dict[str, Any]):
         """
         Extract decorators from AST tree.
 

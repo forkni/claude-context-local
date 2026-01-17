@@ -19,7 +19,8 @@ Usage:
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Optional
+
 
 if TYPE_CHECKING:
     from search.config import SearchConfig
@@ -41,7 +42,7 @@ class ApplicationState:
     """
 
     # Model management
-    embedders: Dict[str, Any] = field(default_factory=dict)
+    embedders: dict[str, Any] = field(default_factory=dict)
     current_model_key: Optional[str] = None
     current_index_model_key: Optional[str] = None  # Track index manager's model
     model_preload_task_started: bool = False
@@ -83,7 +84,7 @@ class ApplicationState:
 
             config = get_search_config()
             self.sync_from_config(config)
-        except Exception:
+        except (AttributeError, KeyError, RuntimeError):
             # Fallback to env var if config unavailable
             self.multi_model_enabled = os.getenv(
                 "CLAUDE_MULTI_MODEL_ENABLED", "true"

@@ -12,10 +12,12 @@ import asyncio
 import sys
 from pathlib import Path
 
+
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from mcp_server.tool_handlers import handle_switch_project
+
 
 try:
     import requests
@@ -26,6 +28,7 @@ except ImportError:
 
 
 def main():
+    """Entry point for project switch helper CLI."""
     parser = argparse.ArgumentParser(
         description="Switch to a different indexed project for semantic code search"
     )

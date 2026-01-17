@@ -54,6 +54,7 @@ from graph.relationship_extractors.inheritance_extractor import InheritanceExtra
 from graph.relationship_extractors.instantiation_extractor import InstantiationExtractor
 from graph.relationship_extractors.type_extractor import TypeAnnotationExtractor
 
+
 __all__ = [
     "BaseRelationshipExtractor",
     # Priority 1 (Foundation)

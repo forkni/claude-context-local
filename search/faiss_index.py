@@ -7,10 +7,13 @@ with support for saving, loading, searching, and dimension tracking.
 import logging
 import pickle
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Optional
 
 import numpy as np
 import psutil
+
+from search.exceptions import IndexError as SearchIndexError
+
 
 try:
     import faiss
@@ -23,7 +26,7 @@ except ImportError:
     torch = None
 
 
-def get_available_memory() -> Dict[str, int]:
+def get_available_memory() -> dict[str, int]:
     """Get available system and GPU memory in bytes.
 
     Returns:
@@ -48,7 +51,7 @@ def get_available_memory() -> Dict[str, int]:
             memory_info["gpu_available"] = (
                 gpu_props.total_memory - torch.cuda.memory_allocated(0)
             )
-        except Exception:
+        except RuntimeError:
             pass
 
     return memory_info
@@ -56,7 +59,7 @@ def get_available_memory() -> Dict[str, int]:
 
 def estimate_index_memory_usage(
     num_vectors: int, dimension: int, index_type: str = "flat"
-) -> Dict[str, int]:
+) -> dict[str, int]:
     """Estimate memory usage for FAISS index in bytes.
 
     Args:
@@ -175,7 +178,9 @@ class FaissVectorIndex:
             ValueError: If index_type is not supported
         """
         if faiss is None:
-            raise ImportError("FAISS is not installed")
+            raise SearchIndexError(
+                "FAISS is not installed. Install with: pip install faiss-cpu"
+            )
 
         if index_type == "flat":
             # Simple flat index for exact search
@@ -224,13 +229,14 @@ class FaissVectorIndex:
                     ]
 
                     if stored_dim != current_model_dim:
-                        self._logger.warning(
-                            f"Index dimension mismatch detected!\n"
+                        self._logger.error(
+                            f"CRITICAL: Index dimension mismatch!\n"
                             f"  Stored index: {stored_dim} dimensions\n"
-                            f"  Current model: {current_model_dim} dimensions\n"
-                            f"  Model: {self.embedder.model_name}\n"
-                            f"This index was created with a different embedding model.\n"
-                            f"Creating new index for current model..."
+                            f"  Current embedder: {current_model_dim} dimensions\n"
+                            f"  Embedder model: {self.embedder.model_name}\n"
+                            f"  Index path: {self.index_path}\n"
+                            f"This indicates the wrong index was loaded for this model.\n"
+                            f"Clearing incompatible index to force reindex..."
                         )
                         # Clear the incompatible index
                         self._index = None
@@ -352,12 +358,21 @@ class FaissVectorIndex:
 
         Raises:
             ValueError: If no index exists (call create() first)
+            ValueError: If embedding dimension doesn't match index dimension
         """
         if self._index is None:
             raise ValueError("No index exists. Call create() first.")
 
         if len(embeddings) == 0:
             return
+
+        # Dimension validation before FAISS operations
+        if embeddings.shape[1] != self._index.d:
+            raise ValueError(
+                f"Embedding dimension mismatch: embeddings have {embeddings.shape[1]}d "
+                f"but index expects {self._index.d}d. The index was likely created with "
+                f"a different embedding model. Clear the index and re-index the project."
+            )
 
         # Normalize embeddings for cosine similarity
         faiss.normalize_L2(embeddings)
@@ -372,7 +387,7 @@ class FaissVectorIndex:
 
         self._logger.debug(f"Added {len(embeddings)} vectors to index")
 
-    def search(self, query: np.ndarray, k: int = 5) -> Tuple[np.ndarray, np.ndarray]:
+    def search(self, query: np.ndarray, k: int = 5) -> tuple[np.ndarray, np.ndarray]:
         """Search for k nearest neighbors.
 
         Args:
@@ -384,6 +399,7 @@ class FaissVectorIndex:
 
         Raises:
             ValueError: If no index exists or index is empty
+            ValueError: If query dimension doesn't match index dimension
         """
         if self._index is None:
             raise ValueError("No index exists")
@@ -394,6 +410,16 @@ class FaissVectorIndex:
         # Normalize query for cosine similarity
         if query.ndim == 1:
             query = query.reshape(1, -1)
+
+        # Dimension validation before FAISS search
+        query_dim = query.shape[1]
+        if query_dim != self._index.d:
+            raise ValueError(
+                f"FATAL: Dimension mismatch between query ({query_dim}d) and "
+                f"index ({self._index.d}d). The index was likely created with "
+                f"a different embedding model. Clear the index and re-index the project."
+            )
+
         faiss.normalize_L2(query)
 
         # Search
@@ -436,8 +462,8 @@ class FaissVectorIndex:
 
                     gc.collect()
                     torch.cuda.empty_cache()
-            except Exception:
-                pass
+            except Exception as e:
+                self._logger.debug(f"GPU cache cleanup failed (non-critical): {e}")
             finally:
                 self._on_gpu = False
 
@@ -475,7 +501,7 @@ class FaissVectorIndex:
             if get_num_gpus is None:
                 return False
             return get_num_gpus() > 0
-        except Exception:
+        except (RuntimeError, AttributeError):
             return False
 
     def move_to_gpu(self) -> bool:
@@ -524,7 +550,7 @@ class FaissVectorIndex:
 
     def check_memory_requirements(
         self, num_new_vectors: int, dimension: int
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Check if there's enough memory for adding new vectors.
 
         Args:
@@ -587,7 +613,7 @@ class FaissVectorIndex:
 
         return memory_check
 
-    def get_memory_status(self) -> Dict[str, Any]:
+    def get_memory_status(self) -> dict[str, Any]:
         """Get current memory usage status.
 
         Returns:

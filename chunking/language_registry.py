@@ -4,10 +4,8 @@ Centralizes supported extensions, ignored directories, and node type mappings
 used across the chunking and indexing subsystems.
 """
 
-from typing import Dict, Set
-
 # Supported file extensions for code chunking
-SUPPORTED_EXTENSIONS: Set[str] = {
+SUPPORTED_EXTENSIONS: set[str] = {
     ".py",  # Python
     ".js",  # JavaScript
     ".ts",  # TypeScript
@@ -31,7 +29,7 @@ SUPPORTED_EXTENSIONS: Set[str] = {
 
 
 # Common large/build/tooling directories to skip during traversal
-DEFAULT_IGNORED_DIRS: Set[str] = {
+DEFAULT_IGNORED_DIRS: set[str] = {
     "__pycache__",
     ".git",
     ".hg",
@@ -83,7 +81,7 @@ DEFAULT_IGNORED_DIRS: Set[str] = {
 
 
 # Node type to chunk type mapping (tree-sitter → CodeChunk)
-NODE_TYPE_MAP: Dict[str, str] = {
+NODE_TYPE_MAP: dict[str, str] = {
     "function_declaration": "function",
     "function_definition": "function",
     "arrow_function": "function",

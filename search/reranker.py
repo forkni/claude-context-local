@@ -3,7 +3,7 @@
 import logging
 import math
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 
 @dataclass
@@ -12,7 +12,7 @@ class SearchResult:
 
     chunk_id: str
     score: float
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
     source: str = "unknown"  # "bm25", "dense", "hybrid"
     rank: int = 0  # Original rank in source list
 
@@ -20,9 +20,8 @@ class SearchResult:
 class RRFReranker:
     """Reciprocal Rank Fusion (RRF) reranker for combining multiple result lists."""
 
-    def __init__(self, k: int = 100, alpha: float = 0.5):
-        """
-        Initialize RRF reranker.
+    def __init__(self, k: int = 100, alpha: float = 0.5) -> None:
+        """Initialize RRF reranker.
 
         Args:
             k: RRF parameter for smoothing (higher = less emphasis on rank)
@@ -35,10 +34,10 @@ class RRFReranker:
 
     def rerank(
         self,
-        results_lists: List[List[SearchResult]],
-        weights: Optional[List[float]] = None,
+        results_lists: list[list[SearchResult]],
+        weights: Optional[list[float]] = None,
         max_results: int = 10,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """
         Rerank multiple result lists using RRF.
 
@@ -73,11 +72,11 @@ class RRFReranker:
         )
 
         # Calculate RRF scores for each document
-        rrf_scores: Dict[str, float] = {}
-        doc_results: Dict[str, SearchResult] = {}
-        list_appearances: Dict[str, List[int]] = (
-            {}
-        )  # Track which lists contain each doc
+        rrf_scores: dict[str, float] = {}
+        doc_results: dict[str, SearchResult] = {}
+        list_appearances: dict[
+            str, list[int]
+        ] = {}  # Track which lists contain each doc
 
         for list_idx, (results, weight) in enumerate(
             zip(results_lists, weights, strict=False)
@@ -138,12 +137,12 @@ class RRFReranker:
 
     def rerank_simple(
         self,
-        bm25_results: List[Tuple[str, float, Dict]],
-        dense_results: List[Tuple[str, float, Dict]],
+        bm25_results: list[tuple[str, float, dict]],
+        dense_results: list[tuple[str, float, dict]],
         max_results: int = 10,
         bm25_weight: float = 0.4,
         dense_weight: float = 0.6,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """
         Simple reranking for BM25 + dense vector results.
 
@@ -180,8 +179,8 @@ class RRFReranker:
         )
 
     def analyze_fusion_quality(
-        self, results: List[SearchResult], threshold: float = 0.5
-    ) -> Dict[str, Any]:
+        self, results: list[SearchResult], threshold: float = 0.5
+    ) -> dict[str, Any]:
         """
         Analyze the quality of fusion results.
 
@@ -244,7 +243,7 @@ class RRFReranker:
             ),
         }
 
-    def _calculate_std(self, values: List[float]) -> float:
+    def _calculate_std(self, values: list[float]) -> float:
         """Calculate standard deviation."""
         if not values:
             return 0.0
@@ -255,11 +254,11 @@ class RRFReranker:
 
     def tune_parameters(
         self,
-        results_lists: List[List[SearchResult]],
-        ground_truth: Optional[List[str]] = None,
-        k_values: List[int] = None,
-        weight_combinations: List[List[float]] = None,
-    ) -> Dict[str, Any]:
+        results_lists: list[list[SearchResult]],
+        ground_truth: Optional[list[str]] = None,
+        k_values: list[int] = None,
+        weight_combinations: list[list[float]] = None,
+    ) -> dict[str, Any]:
         """
         Tune RRF parameters for optimal performance.
 

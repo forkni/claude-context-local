@@ -6,9 +6,12 @@ for search result quality improvement.
 
 import logging
 import time
-from typing import List, Optional
+from typing import Optional
 
 import numpy as np
+
+from utils.timing import timed
+
 
 try:
     import torch
@@ -21,9 +24,8 @@ from .neural_reranker import NeuralReranker
 class RerankingEngine:
     """Coordinates embedding-based and neural reranking for search results."""
 
-    def __init__(self, embedder, metadata_store):
-        """
-        Initialize the reranking engine.
+    def __init__(self, embedder, metadata_store) -> None:
+        """Initialize the reranking engine.
 
         Args:
             embedder: CodeEmbedder instance for query embeddings
@@ -33,6 +35,7 @@ class RerankingEngine:
         self.metadata_store = metadata_store
         self.neural_reranker: Optional[NeuralReranker] = None
         self._neural_reranking_enabled: Optional[bool] = None
+        self._session_oom_detected: bool = False
         self._logger = logging.getLogger(__name__)
 
     def should_enable_neural_reranking(self) -> bool:
@@ -41,6 +44,13 @@ class RerankingEngine:
         Returns:
             bool: True if VRAM is sufficient and feature is enabled
         """
+        # Early exit if OOM already detected in this search session
+        if self._session_oom_detected:
+            self._logger.debug(
+                "Neural reranking skipped: OOM detected earlier in session"
+            )
+            return False
+
         try:
             from .config import get_search_config
 
@@ -53,10 +63,16 @@ class RerankingEngine:
                 self._logger.warning("Neural reranking disabled: No GPU available")
                 return False
 
-            available_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-            # Account for already allocated memory
-            allocated_gb = torch.cuda.memory_allocated() / (1024**3)
-            free_gb = available_gb - allocated_gb
+            # If RAM fallback is allowed, skip VRAM threshold check
+            if hasattr(config, "performance") and config.performance.allow_ram_fallback:
+                self._logger.info(
+                    "Neural reranking enabled: allow_ram_fallback=True (will use system RAM if needed)"
+                )
+                return True
+
+            # Get actual free memory from CUDA driver (accounts for all processes)
+            free_memory, total_memory = torch.cuda.mem_get_info(0)
+            free_gb = free_memory / (1024**3)
 
             if free_gb >= min_vram:
                 self._logger.info(
@@ -75,11 +91,11 @@ class RerankingEngine:
     def rerank_by_query(
         self,
         query: str,
-        results: List,
+        results: list,
         k: int,
         search_mode: str = "hybrid",
         query_embedding: Optional[np.ndarray] = None,
-    ) -> List:
+    ) -> list:
         """
         Re-rank results by computing fresh relevance scores against the original query.
 
@@ -159,23 +175,32 @@ class RerankingEngine:
                 rerank_count = min(
                     config.reranker.top_k_candidates, len(sorted_results)
                 )
-                sorted_results = self.neural_reranker.rerank(
-                    query, sorted_results[:rerank_count], k
-                )
-                neural_time = time.time() - neural_start
-                self._logger.debug(
-                    f"[NEURAL_RERANK] Processed {rerank_count} candidates in {neural_time:.3f}s"
-                )
+
+                try:
+                    sorted_results = self.neural_reranker.rerank(
+                        query, sorted_results[:rerank_count], k
+                    )
+                    neural_time = time.time() - neural_start
+                    self._logger.debug(
+                        f"[NEURAL_RERANK] Processed {rerank_count} candidates in {neural_time:.3f}s"
+                    )
+                except Exception as e:
+                    self._logger.warning(
+                        f"[NEURAL_RERANK] Reranking failed: {e}, using embedding-based ranking"
+                    )
+                    # Mark session failure to prevent subsequent attempts
+                    self._session_oom_detected = True
 
         return sorted_results[:k]
 
+    @timed("neural_rerank")
     def apply_neural_reranking(
         self,
         query_or_content: str,
-        results: List,
+        results: list,
         k: int,
         context: str = "search",
-    ) -> List:
+    ) -> list:
         """
         Apply neural reranking with automatic lifecycle management.
 
@@ -242,6 +267,14 @@ class RerankingEngine:
                 )
 
         return results
+
+    def reset_session_state(self) -> None:
+        """Reset session-level OOM tracking.
+
+        Call at the start of each search request to allow reranking
+        to be retried on new searches.
+        """
+        self._session_oom_detected = False
 
     def shutdown(self) -> None:
         """Cleanup neural reranker resources."""

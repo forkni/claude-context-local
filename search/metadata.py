@@ -4,8 +4,9 @@ This module provides a centralized interface for managing chunk metadata
 stored in SQLite, with support for efficient querying and chunk ID normalization.
 """
 
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Optional
 
 from sqlitedict import SqliteDict
 
@@ -54,7 +55,7 @@ class MetadataStore:
 
     # CRUD Operations
 
-    def get(self, chunk_id: str) -> Optional[Dict[str, Any]]:
+    def get(self, chunk_id: str) -> Optional[dict[str, Any]]:
         """Get metadata for a chunk with path variant handling.
 
         Tries multiple chunk_id variants to handle path separator differences
@@ -88,7 +89,27 @@ class MetadataStore:
 
         return None
 
-    def set(self, chunk_id: str, index_id: int, metadata: Dict[str, Any]):
+    def get_chunk_metadata(self, chunk_id: str) -> Optional[dict[str, Any]]:
+        """Get just the metadata dict for a chunk (without index_id wrapper).
+
+        This is a convenience method for cases where only chunk metadata is needed,
+        not the FAISS index position. Used by community remerge operations.
+
+        Args:
+            chunk_id: Chunk identifier
+
+        Returns:
+            Metadata dictionary with fields like relative_path, chunk_type, content, etc.,
+            or None if chunk not found
+
+        Example:
+            >>> store.get_chunk_metadata("file.py:1-10:function:foo")
+            {"relative_path": "file.py", "chunk_type": "function", "content": "...", ...}
+        """
+        entry = self.get(chunk_id)
+        return entry["metadata"] if entry else None
+
+    def set(self, chunk_id: str, index_id: int, metadata: dict[str, Any]):
         """Set metadata for a chunk.
 
         Args:
@@ -126,7 +147,7 @@ class MetadataStore:
             return True
         return False
 
-    def delete_batch(self, chunk_ids: List[str]) -> int:
+    def delete_batch(self, chunk_ids: list[str]) -> int:
         """Delete multiple chunks in batch.
 
         Args:
@@ -160,7 +181,7 @@ class MetadataStore:
             return True
         return False
 
-    def update_index_ids_batch(self, updates: Dict[str, int]) -> int:
+    def update_index_ids_batch(self, updates: dict[str, int]) -> int:
         """Batch update FAISS index IDs.
 
         Args:
@@ -220,7 +241,7 @@ class MetadataStore:
         self._ensure_open()
         return iter(self._db.keys())
 
-    def items(self) -> Iterator[Tuple[str, Dict[str, Any]]]:
+    def items(self) -> Iterator[tuple[str, dict[str, Any]]]:
         """Iterate over (chunk_id, metadata) pairs.
 
         Returns:
@@ -231,7 +252,7 @@ class MetadataStore:
 
     # Transaction Control
 
-    def commit(self):
+    def commit(self) -> None:
         """Commit pending changes to disk.
 
         Should be called after batch operations to persist changes.
@@ -242,12 +263,18 @@ class MetadataStore:
         # Save symbol cache
         self._symbol_cache.save()
 
-    def close(self):
+    def close(self) -> None:
         """Close database connection.
 
         Should be called when done with the store to release resources.
         """
         if self._db is not None:
+            try:
+                # Ensure WAL is checkpointed before close (prevents file handle leaks on Windows)
+                self._db.commit()
+            except Exception:
+                # Ignore errors during commit (db might already be closed or corrupted)
+                pass
             self._db.close()
             self._db = None
 
@@ -281,7 +308,7 @@ class MetadataStore:
         return normalize_path(chunk_id)
 
     @staticmethod
-    def get_chunk_id_variants(chunk_id: str) -> List[str]:
+    def get_chunk_id_variants(chunk_id: str) -> list[str]:
         """Get all possible chunk_id variants for robust lookup.
 
         Returns list of chunk_id variants to try during lookup, handling:

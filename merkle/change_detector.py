@@ -3,10 +3,10 @@
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 from .merkle_dag import MerkleDAG
 from .snapshot_manager import SnapshotManager
+
 
 logger = logging.getLogger(__name__)
 
@@ -15,10 +15,10 @@ logger = logging.getLogger(__name__)
 class FileChanges:
     """Container for file change information."""
 
-    added: List[str]
-    removed: List[str]
-    modified: List[str]
-    unchanged: List[str]
+    added: list[str]
+    removed: list[str]
+    modified: list[str]
+    unchanged: list[str]
 
     def has_changes(self) -> bool:
         """Check if there are any changes."""
@@ -28,7 +28,7 @@ class FileChanges:
         """Get total number of changed files."""
         return len(self.added) + len(self.removed) + len(self.modified)
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         """Convert to dictionary."""
         return {
             "added": self.added,
@@ -51,8 +51,8 @@ class ChangeDetector:
     def __init__(
         self,
         snapshot_manager: SnapshotManager = None,
-        include_dirs: List[str] = None,
-        exclude_dirs: List[str] = None,
+        include_dirs: list[str] = None,
+        exclude_dirs: list[str] = None,
     ):
         """Initialize change detector.
 
@@ -102,7 +102,7 @@ class ChangeDetector:
 
     def detect_changes_from_snapshot(
         self, project_path: str
-    ) -> Tuple[FileChanges, MerkleDAG]:
+    ) -> tuple[FileChanges, MerkleDAG]:
         """Detect changes between saved snapshot and current state.
 
         Args:
@@ -219,7 +219,7 @@ class ChangeDetector:
 
     def get_changed_directories(
         self, old_dag: MerkleDAG, new_dag: MerkleDAG
-    ) -> List[str]:
+    ) -> list[str]:
         """Get list of directories that have changed.
 
         Args:
@@ -239,7 +239,7 @@ class ChangeDetector:
 
         return sorted(changed_dirs)
 
-    def analyze_change_patterns(self, changes: FileChanges) -> Dict:
+    def analyze_change_patterns(self, changes: FileChanges) -> dict:
         """Analyze patterns in file changes.
 
         Args:
@@ -287,7 +287,7 @@ class ChangeDetector:
 
         return analysis
 
-    def get_files_to_reindex(self, changes: FileChanges) -> List[str]:
+    def get_files_to_reindex(self, changes: FileChanges) -> list[str]:
         """Get list of files that need to be reindexed.
 
         Args:
@@ -298,7 +298,7 @@ class ChangeDetector:
         """
         return sorted(changes.added + changes.modified)
 
-    def get_files_to_remove(self, changes: FileChanges) -> List[str]:
+    def get_files_to_remove(self, changes: FileChanges) -> list[str]:
         """Get list of files whose chunks should be removed from index.
 
         Args:

@@ -4,16 +4,24 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Optional
+
 
 # Model registry with specifications
 # Multi-model pool configuration for query routing
 # Maps model keys to full model names in MODEL_REGISTRY
-# Note: "qwen3" uses adaptive selection (4B max on all tiers, 0.6B fallback on minimal/laptop <10GB)
+# Note: "qwen3" now uses 0.6B for all tiers to prevent OOM (5.8% quality vs 4B for 6.8x less VRAM)
 MODEL_POOL_CONFIG = {
-    "qwen3": "Qwen/Qwen3-Embedding-4B",  # Adaptive: 0.6B (minimal/laptop) or 4B (desktop/workstation)
+    "qwen3": "Qwen/Qwen3-Embedding-0.6B",  # Use 0.6B for all tiers to prevent OOM
     "bge_m3": "BAAI/bge-m3",
     "coderankembed": "nomic-ai/CodeRankEmbed",
+}
+
+# Lightweight pool configuration for 8GB VRAM GPUs
+# Speed-focused with proven performance (1.65GB total VRAM)
+MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED = {
+    "gte_modernbert": "Alibaba-NLP/gte-modernbert-base",
+    "bge_m3": "BAAI/bge-m3",
 }
 
 MODEL_REGISTRY = {
@@ -29,7 +37,7 @@ MODEL_REGISTRY = {
         "dimension": 1024,
         "max_context": 8192,
         "description": "Recommended upgrade, hybrid search support",
-        "vram_gb": "3-4GB",
+        "vram_gb": "1-1.5GB",  # Updated from "3-4GB" (actual measured: 1.07GB)
         "fallback_batch_size": 256,  # Used when dynamic sizing disabled
     },
     "Qwen/Qwen3-Embedding-0.6B": {
@@ -51,8 +59,8 @@ MODEL_REGISTRY = {
         "dimension": 2560,
         "max_context": 32768,
         "description": "Best value upgrade - 87.93% CodeSearchNet, +6% vs 0.6B (MTEB-Code 80.06)",
-        "vram_gb": "8-10GB",
-        "fallback_batch_size": 128,
+        "vram_gb": "7.5-8GB",  # Updated from "8-10GB" (actual measured: 7.55GB)
+        "fallback_batch_size": 64,  # Conservative fallback (model-aware calculation handles dynamic sizing)
         "vram_tier": "desktop",  # 12GB+ recommended
         # Matryoshka Representation Learning (MRL) support
         "mrl_dimensions": [
@@ -75,11 +83,19 @@ MODEL_REGISTRY = {
         "dimension": 768,
         "max_context": 8192,
         "description": "Code-specific embedding model (CSN: 77.9 MRR, CoIR: 60.1 NDCG@10)",
-        "vram_gb": "2GB",
+        "vram_gb": "0.5-0.6GB",  # Updated from "2GB" (actual measured: 0.52GB)
         "fallback_batch_size": 128,
         "model_type": "code-specific",
         "task_instruction": "Represent this query for searching relevant code",  # Required query prefix
         "trust_remote_code": True,
+    },
+    "Alibaba-NLP/gte-modernbert-base": {
+        "dimension": 768,
+        "max_context": 8192,
+        "description": "Lightweight code-optimized model (CoIR: 79.31 NDCG@10, 144 docs/s throughput)",
+        "vram_gb": "0.28GB",
+        "fallback_batch_size": 256,
+        "model_type": "code-optimized",
     },
 }
 
@@ -203,7 +219,11 @@ class PerformanceConfig:
 
     # GPU Configuration
     prefer_gpu: bool = True
-    gpu_memory_threshold: float = 0.8
+    gpu_memory_threshold: float = 0.65  # Conservative for fragmentation headroom
+    vram_limit_fraction: float = 0.80  # Hard VRAM ceiling (80% of dedicated)
+    allow_ram_fallback: bool = (
+        False  # Allow spillover to system RAM (slower but reliable)
+    )
 
     # Precision Configuration (fp16/bf16 for faster inference)
     enable_fp16: bool = True  # Enable fp16 for GPU (30-50% faster inference)
@@ -211,7 +231,9 @@ class PerformanceConfig:
 
     # Dynamic Batch Sizing (GPU-based optimization)
     enable_dynamic_batch_size: bool = True  # Enable GPU-based auto-sizing
-    dynamic_batch_min: int = 32  # Minimum batch size for safety
+    dynamic_batch_min: int = (
+        16  # Minimum batch size (lowered for fragmentation headroom)
+    )
     dynamic_batch_max: int = 384  # Maximum batch size (safer for 8-16GB GPUs)
 
     # Auto-reindexing
@@ -231,10 +253,24 @@ class MultiHopConfig:
 
 @dataclass
 class RoutingConfig:
-    """Multi-model routing settings (2 fields)."""
+    """Multi-model routing settings (3 fields)."""
 
     multi_model_enabled: bool = True  # Enable intelligent query routing across models
     default_model: str = "bge_m3"  # Default model key for routing (most balanced)
+    multi_model_pool: Optional[str] = (
+        None  # Pool type: "full", "lightweight-speed", or "lightweight-accuracy"
+    )
+
+
+@dataclass
+class IntentConfig:
+    """Intent classification settings (5 fields)."""
+
+    enabled: bool = True  # Enable intent classification for query routing
+    confidence_threshold: float = 0.3  # Minimum confidence for intent-specific routing
+    default_intent: str = "HYBRID"  # Default intent when confidence is low
+    enable_navigational_redirect: bool = True  # Auto-redirect to find_connections
+    log_classifications: bool = True  # Log intent classification decisions
 
 
 @dataclass
@@ -259,12 +295,22 @@ class OutputConfig:
 
 @dataclass
 class ChunkingConfig:
-    """Chunking algorithm settings (6 fields)."""
+    """Chunking algorithm settings (12 fields)."""
 
-    # Greedy Sibling Merging (cAST algorithm - EMNLP 2025)
-    enable_greedy_merge: bool = True  # Enable cAST greedy sibling merging
+    # Token size constraints for chunks
     min_chunk_tokens: int = 50  # Minimum tokens before considering merge
     max_merged_tokens: int = 1000  # Maximum tokens for merged chunk
+
+    # Community Detection settings (independent control restored)
+    enable_community_detection: bool = (
+        True  # Enable community detection via Louvain algorithm
+    )
+    enable_community_merge: bool = (
+        True  # Enable community-based remerge (full index only)
+    )
+    community_resolution: float = (
+        1.0  # Resolution parameter (higher = more/smaller communities)
+    )
 
     # Large function splitting (Task 3.4 - placeholder for future implementation)
     enable_large_node_splitting: bool = False  # Split functions > max_chunk_lines
@@ -273,13 +319,44 @@ class ChunkingConfig:
     # Token estimation method
     token_estimation: str = "whitespace"  # "whitespace" (fast) or "tiktoken" (accurate)
 
+    # Size method for chunking (Option A: character-based vs Option B: token-based)
+    size_method: str = "tokens"  # "tokens" (default) or "characters" (cAST paper)
+
+    # Splitting-specific configs (separate from merging)
+    split_size_method: str = "characters"  # "lines" or "characters"
+    max_split_chars: int = 3000  # Character-based splitting (benchmark winner)
+
+
+@dataclass
+class EgoGraphConfig:
+    """Ego-graph retrieval settings (RepoGraph ICLR 2025)."""
+
+    enabled: bool = False  # Enable ego-graph expansion
+    k_hops: int = 2  # Number of hops (1-2 recommended)
+    max_neighbors_per_hop: int = 10  # Max neighbors per hop to prevent explosion
+    relation_types: Optional[list] = None  # Filter to specific relations (None = all)
+    include_anchor: bool = True  # Include original anchor nodes in results
+    deduplicate: bool = True  # Remove duplicate chunk_ids
+    # RepoGraph relation filtering (Feature #5)
+    exclude_stdlib_imports: bool = True  # Filter stdlib from graph traversal
+    exclude_third_party_imports: bool = True  # Filter third-party from traversal
+
+
+@dataclass
+class ParentRetrievalConfig:
+    """Parent chunk retrieval settings for Match Small, Retrieve Big."""
+
+    enabled: bool = False  # Enable parent chunk expansion
+    include_parent_content: bool = True  # Include parent's full content
+    max_parents_per_result: int = 1  # Usually 1 (direct parent only)
+
 
 class SearchConfig:
     """Root configuration with nested sub-configs.
 
     Configuration organization:
-    - Split into 7 focused sub-configs for better organization
-    - embedding, search_mode, performance, multi_hop, routing, reranker, output, chunking
+    - Split into 8 focused sub-configs for better organization
+    - embedding, search_mode, performance, multi_hop, routing, intent, reranker, output, chunking
 
     Initialization style (nested configs only):
         config = SearchConfig(embedding=EmbeddingConfig(model_name="..."))
@@ -292,9 +369,12 @@ class SearchConfig:
         performance: Optional[PerformanceConfig] = None,
         multi_hop: Optional[MultiHopConfig] = None,
         routing: Optional[RoutingConfig] = None,
+        intent: Optional[IntentConfig] = None,
         reranker: Optional[RerankerConfig] = None,
         output: Optional[OutputConfig] = None,
         chunking: Optional[ChunkingConfig] = None,
+        ego_graph: Optional[EgoGraphConfig] = None,
+        parent_retrieval: Optional[ParentRetrievalConfig] = None,
     ):
         """Initialize SearchConfig with nested sub-configs.
 
@@ -304,9 +384,12 @@ class SearchConfig:
             performance: PerformanceConfig instance (optional, defaults to PerformanceConfig())
             multi_hop: MultiHopConfig instance (optional, defaults to MultiHopConfig())
             routing: RoutingConfig instance (optional, defaults to RoutingConfig())
+            intent: IntentConfig instance (optional, defaults to IntentConfig())
             reranker: RerankerConfig instance (optional, defaults to RerankerConfig())
             output: OutputConfig instance (optional, defaults to OutputConfig())
             chunking: ChunkingConfig instance (optional, defaults to ChunkingConfig())
+            ego_graph: EgoGraphConfig instance (optional, defaults to EgoGraphConfig())
+            parent_retrieval: ParentRetrievalConfig instance (optional, defaults to ParentRetrievalConfig())
         """
         # Initialize nested configs with defaults
         self.embedding = embedding if embedding is not None else EmbeddingConfig()
@@ -318,11 +401,18 @@ class SearchConfig:
         )
         self.multi_hop = multi_hop if multi_hop is not None else MultiHopConfig()
         self.routing = routing if routing is not None else RoutingConfig()
+        self.intent = intent if intent is not None else IntentConfig()
         self.reranker = reranker if reranker is not None else RerankerConfig()
         self.output = output if output is not None else OutputConfig()
         self.chunking = chunking if chunking is not None else ChunkingConfig()
+        self.ego_graph = ego_graph if ego_graph is not None else EgoGraphConfig()
+        self.parent_retrieval = (
+            parent_retrieval
+            if parent_retrieval is not None
+            else ParentRetrievalConfig()
+        )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to nested dictionary for JSON serialization.
 
         Returns nested structure matching the config class hierarchy.
@@ -361,6 +451,8 @@ class SearchConfig:
                 "enable_entity_tracking": self.performance.enable_entity_tracking,
                 "prefer_gpu": self.performance.prefer_gpu,
                 "gpu_memory_threshold": self.performance.gpu_memory_threshold,
+                "vram_limit_fraction": self.performance.vram_limit_fraction,
+                "allow_ram_fallback": self.performance.allow_ram_fallback,
                 "enable_fp16": self.performance.enable_fp16,
                 "prefer_bf16": self.performance.prefer_bf16,
                 "enable_dynamic_batch_size": self.performance.enable_dynamic_batch_size,
@@ -378,6 +470,14 @@ class SearchConfig:
             "routing": {
                 "multi_model_enabled": self.routing.multi_model_enabled,
                 "default_model": self.routing.default_model,
+                "multi_model_pool": self.routing.multi_model_pool,
+            },
+            "intent": {
+                "enabled": self.intent.enabled,
+                "confidence_threshold": self.intent.confidence_threshold,
+                "default_intent": self.intent.default_intent,
+                "enable_navigational_redirect": self.intent.enable_navigational_redirect,
+                "log_classifications": self.intent.log_classifications,
             },
             "reranker": {
                 "enabled": self.reranker.enabled,
@@ -390,17 +490,30 @@ class SearchConfig:
                 "format": self.output.format,
             },
             "chunking": {
-                "enable_greedy_merge": self.chunking.enable_greedy_merge,
                 "min_chunk_tokens": self.chunking.min_chunk_tokens,
                 "max_merged_tokens": self.chunking.max_merged_tokens,
+                "enable_community_detection": self.chunking.enable_community_detection,
+                "enable_community_merge": self.chunking.enable_community_merge,
+                "community_resolution": self.chunking.community_resolution,
                 "enable_large_node_splitting": self.chunking.enable_large_node_splitting,
                 "max_chunk_lines": self.chunking.max_chunk_lines,
                 "token_estimation": self.chunking.token_estimation,
+                "size_method": self.chunking.size_method,
+                "split_size_method": self.chunking.split_size_method,
+                "max_split_chars": self.chunking.max_split_chars,
+            },
+            "ego_graph": {
+                "enabled": self.ego_graph.enabled,
+                "k_hops": self.ego_graph.k_hops,
+                "max_neighbors_per_hop": self.ego_graph.max_neighbors_per_hop,
+                "relation_types": self.ego_graph.relation_types,
+                "include_anchor": self.ego_graph.include_anchor,
+                "deduplicate": self.ego_graph.deduplicate,
             },
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SearchConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "SearchConfig":
         """Create from dictionary (supports both flat and nested formats).
 
         Detects format automatically:
@@ -423,9 +536,11 @@ class SearchConfig:
             performance_data = data.get("performance", {})
             multi_hop_data = data.get("multi_hop", {})
             routing_data = data.get("routing", {})
+            intent_data = data.get("intent", {})
             reranker_data = data.get("reranker", {})
             output_data = data.get("output", {})
             chunking_data = data.get("chunking", {})
+            ego_graph_data = data.get("ego_graph", {})
 
             # Auto-update dimension from model registry
             if "model_name" in embedding_data:
@@ -483,6 +598,13 @@ class SearchConfig:
                 ),
                 prefer_gpu=performance_data.get("prefer_gpu", True),
                 gpu_memory_threshold=performance_data.get("gpu_memory_threshold", 0.8),
+                vram_limit_fraction=performance_data.get("vram_limit_fraction", 0.80),
+                allow_ram_fallback=performance_data.get(
+                    "allow_ram_fallback",
+                    performance_data.get(
+                        "allow_shared_memory", False
+                    ),  # backward compat
+                ),
                 enable_fp16=performance_data.get("enable_fp16", True),
                 prefer_bf16=performance_data.get("prefer_bf16", True),
                 enable_dynamic_batch_size=performance_data.get(
@@ -506,6 +628,17 @@ class SearchConfig:
             routing = RoutingConfig(
                 multi_model_enabled=routing_data.get("multi_model_enabled", True),
                 default_model=routing_data.get("default_model", "bge_m3"),
+                multi_model_pool=routing_data.get("multi_model_pool", None),
+            )
+
+            intent = IntentConfig(
+                enabled=intent_data.get("enabled", True),
+                confidence_threshold=intent_data.get("confidence_threshold", 0.3),
+                default_intent=intent_data.get("default_intent", "HYBRID"),
+                enable_navigational_redirect=intent_data.get(
+                    "enable_navigational_redirect", True
+                ),
+                log_classifications=intent_data.get("log_classifications", True),
             )
 
             reranker = RerankerConfig(
@@ -521,7 +654,6 @@ class SearchConfig:
             )
 
             chunking = ChunkingConfig(
-                enable_greedy_merge=chunking_data.get("enable_greedy_merge", True),
                 min_chunk_tokens=chunking_data.get("min_chunk_tokens", 50),
                 max_merged_tokens=chunking_data.get("max_merged_tokens", 1000),
                 enable_large_node_splitting=chunking_data.get(
@@ -529,6 +661,25 @@ class SearchConfig:
                 ),
                 max_chunk_lines=chunking_data.get("max_chunk_lines", 100),
                 token_estimation=chunking_data.get("token_estimation", "whitespace"),
+                enable_community_detection=chunking_data.get(
+                    "enable_community_detection", True
+                ),
+                enable_community_merge=chunking_data.get(
+                    "enable_community_merge", True
+                ),
+                community_resolution=chunking_data.get("community_resolution", 1.0),
+                size_method=chunking_data.get("size_method", "tokens"),
+                split_size_method=chunking_data.get("split_size_method", "characters"),
+                max_split_chars=chunking_data.get("max_split_chars", 3000),
+            )
+
+            ego_graph = EgoGraphConfig(
+                enabled=ego_graph_data.get("enabled", False),
+                k_hops=ego_graph_data.get("k_hops", 2),
+                max_neighbors_per_hop=ego_graph_data.get("max_neighbors_per_hop", 10),
+                relation_types=ego_graph_data.get("relation_types"),
+                include_anchor=ego_graph_data.get("include_anchor", True),
+                deduplicate=ego_graph_data.get("deduplicate", True),
             )
 
         else:
@@ -600,6 +751,17 @@ class SearchConfig:
             routing = RoutingConfig(
                 multi_model_enabled=data.get("multi_model_enabled", True),
                 default_model=data.get("routing_default_model", "bge_m3"),
+                multi_model_pool=data.get("routing_multi_model_pool", None),
+            )
+
+            intent = IntentConfig(
+                enabled=data.get("intent_enabled", True),
+                confidence_threshold=data.get("intent_confidence_threshold", 0.3),
+                default_intent=data.get("intent_default_intent", "HYBRID"),
+                enable_navigational_redirect=data.get(
+                    "intent_enable_navigational_redirect", True
+                ),
+                log_classifications=data.get("intent_log_classifications", True),
             )
 
             reranker = RerankerConfig(
@@ -615,7 +777,6 @@ class SearchConfig:
             )
 
             chunking = ChunkingConfig(
-                enable_greedy_merge=data.get("enable_greedy_merge", True),
                 min_chunk_tokens=data.get("min_chunk_tokens", 50),
                 max_merged_tokens=data.get("max_merged_tokens", 1000),
                 enable_large_node_splitting=data.get(
@@ -623,6 +784,21 @@ class SearchConfig:
                 ),
                 max_chunk_lines=data.get("max_chunk_lines", 100),
                 token_estimation=data.get("token_estimation", "whitespace"),
+                community_resolution=data.get("community_resolution", 1.0),
+                size_method=data.get("size_method", "tokens"),
+                enable_community_detection=data.get("enable_community_detection", True),
+                enable_community_merge=data.get("enable_community_merge", True),
+                split_size_method=data.get("split_size_method", "characters"),
+                max_split_chars=data.get("max_split_chars", 3000),
+            )
+
+            ego_graph = EgoGraphConfig(
+                enabled=data.get("ego_graph_enabled", False),
+                k_hops=data.get("ego_graph_k_hops", 2),
+                max_neighbors_per_hop=data.get("ego_graph_max_neighbors_per_hop", 10),
+                relation_types=data.get("ego_graph_relation_types"),
+                include_anchor=data.get("ego_graph_include_anchor", True),
+                deduplicate=data.get("ego_graph_deduplicate", True),
             )
 
         return cls(
@@ -631,9 +807,11 @@ class SearchConfig:
             performance=performance,
             multi_hop=multi_hop,
             routing=routing,
+            intent=intent,
             reranker=reranker,
             output=output,
             chunking=chunking,
+            ego_graph=ego_graph,
         )
 
 
@@ -704,7 +882,7 @@ class SearchConfigManager:
 
         return self._config
 
-    def _load_from_environment(self) -> Dict[str, Any]:
+    def _load_from_environment(self) -> dict[str, Any]:
         """Load configuration from environment variables."""
         env_mapping = {
             "CLAUDE_EMBEDDING_MODEL": ("embedding_model_name", str),
@@ -779,7 +957,7 @@ class SearchConfigManager:
         return value.lower() in ("true", "1", "yes", "on", "enabled")
 
     def save_config(self, config: SearchConfig) -> None:
-        """Save configuration to file."""
+        """Save configuration to file with atomic write protection."""
         try:
             # Auto-sync dimension from model registry before saving
             model_config = get_model_config(config.embedding.model_name)
@@ -794,15 +972,31 @@ class SearchConfigManager:
             if config_dir:  # Only create if not empty (not current directory)
                 os.makedirs(config_dir, exist_ok=True)
 
-            # Save to file
-            with open(self.config_file, "w") as f:
-                json.dump(config.to_dict(), f, indent=2)
+            # ATOMIC WRITE: Write to temp file first, then rename
+            # This prevents data loss if exception occurs during write
+            temp_file = self.config_file + ".tmp"
+            config_dict = config.to_dict()  # Serialize BEFORE opening file
+
+            with open(temp_file, "w") as f:
+                json.dump(config_dict, f, indent=2)
+
+            # Validate temp file before replacing original
+            with open(temp_file, "r") as f:
+                json.load(f)  # Verify valid JSON was written
+
+            # Atomic rename (safe on same filesystem)
+            os.replace(temp_file, self.config_file)
 
             self.logger.info(f"Saved search config to {self.config_file}")
             self._config = config  # Update cached config
 
         except Exception as e:
             self.logger.error(f"Failed to save config to {self.config_file}: {e}")
+            # Clean up temp file if it exists
+            temp_file = self.config_file + ".tmp"
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+            raise  # Re-raise so caller knows save failed
 
     def get_search_mode_for_query(
         self, query: str, explicit_mode: Optional[str] = None
@@ -868,12 +1062,12 @@ def get_default_search_mode() -> str:
     return config.search_mode.default_mode
 
 
-def get_model_registry() -> Dict[str, Dict[str, Any]]:
+def get_model_registry() -> dict[str, dict[str, Any]]:
     """Get the model registry with all supported models."""
     return MODEL_REGISTRY
 
 
-def get_model_config(model_name: str) -> Optional[Dict[str, Any]]:
+def get_model_config(model_name: str) -> Optional[dict[str, Any]]:
     """Get configuration for a specific model."""
     return MODEL_REGISTRY.get(model_name)
 

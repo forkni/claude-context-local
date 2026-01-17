@@ -1,12 +1,14 @@
-"""Query embedding cache with LRU eviction.
+"""Query embedding cache with LRU eviction and TTL support.
 
 This module provides a simple LRU (Least Recently Used) cache for query embeddings,
-improving performance for repeated queries.
+improving performance for repeated queries. Includes time-to-live (TTL) support
+to automatically expire stale entries.
 """
 
 import hashlib
 import logging
-from typing import Any, Dict, Optional
+import time
+from typing import Any, Optional
 
 import numpy as np
 
@@ -30,14 +32,16 @@ class QueryEmbeddingCache:
         >>> print(stats["hit_rate"])
     """
 
-    def __init__(self, max_size: int = 128):
+    def __init__(self, max_size: int = 128, ttl_seconds: int = 300) -> None:
         """Initialize the query embedding cache.
 
         Args:
             max_size: Maximum number of entries to cache. Defaults to 128.
+            ttl_seconds: Time-to-live in seconds for cache entries. Defaults to 300 (5 minutes).
         """
         self._max_size = max_size
-        self._cache: Dict[str, np.ndarray] = {}
+        self._ttl_seconds = ttl_seconds
+        self._cache: dict[str, tuple[float, np.ndarray]] = {}  # (timestamp, embedding)
         self._cache_order: list = []  # Track insertion order for LRU
         self._hits = 0
         self._misses = 0
@@ -80,7 +84,7 @@ class QueryEmbeddingCache:
             query_prefix: Optional query prefix
 
         Returns:
-            Cached embedding if found, None otherwise. Returns a copy to
+            Cached embedding if found and not expired, None otherwise. Returns a copy to
             prevent external modification of cached data.
         """
         cache_key = self._generate_cache_key(
@@ -88,10 +92,21 @@ class QueryEmbeddingCache:
         )
 
         if cache_key in self._cache:
+            timestamp, embedding = self._cache[cache_key]
+
+            # Check TTL expiration
+            if time.time() - timestamp > self._ttl_seconds:
+                del self._cache[cache_key]
+                if cache_key in self._cache_order:
+                    self._cache_order.remove(cache_key)
+                self._misses += 1
+                self._logger.debug(f"Cache entry expired for: {query[:50]}...")
+                return None
+
             self._hits += 1
             self._logger.debug(f"Cache hit for query: {query[:50]}...")
             # Return a copy to prevent external modification
-            return self._cache[cache_key].copy()
+            return embedding.copy()
 
         self._misses += 1
         self._logger.debug(f"Cache miss for query: {query[:50]}...")
@@ -108,7 +123,8 @@ class QueryEmbeddingCache:
         """Add or update an embedding in the cache.
 
         Implements LRU eviction: if the cache is full, removes the least
-        recently used entry before adding the new one.
+        recently used entry before adding the new one. Stores with current
+        timestamp for TTL checking.
 
         Args:
             query: The query text
@@ -130,11 +146,11 @@ class QueryEmbeddingCache:
             oldest_key = self._cache_order.pop(0)
             del self._cache[oldest_key]
 
-        # Add to cache (store a copy to prevent external modification)
-        self._cache[cache_key] = embedding.copy()
+        # Add to cache with timestamp (store a copy to prevent external modification)
+        self._cache[cache_key] = (time.time(), embedding.copy())
         self._cache_order.append(cache_key)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get cache hit/miss statistics.
 
         Returns:

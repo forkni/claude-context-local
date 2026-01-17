@@ -6,6 +6,7 @@ Provides consistent test environments for different hardware configurations.
 
 from typing import Dict, List, Optional
 
+
 # Mock CUDA versions for testing
 CUDA_VERSIONS = {
     "12.1": {

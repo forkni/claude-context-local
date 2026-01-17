@@ -260,12 +260,12 @@ class TestRRFReranker:
 
         # The test should just verify that reranking works with different k values
         # The exact score differences may be very small, so just check that reranking completed
-        assert all(
-            isinstance(score, (int, float)) for score in low_scores
-        ), "Low scores should be numeric"
-        assert all(
-            isinstance(score, (int, float)) for score in high_scores
-        ), "High scores should be numeric"
+        assert all(isinstance(score, (int, float)) for score in low_scores), (
+            "Low scores should be numeric"
+        )
+        assert all(isinstance(score, (int, float)) for score in high_scores), (
+            "High scores should be numeric"
+        )
 
     def test_edge_case_single_document(self):
         """Test with single document in results."""

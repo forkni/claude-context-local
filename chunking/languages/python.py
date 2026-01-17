@@ -5,7 +5,7 @@ other languages. The main Python chunker used by the system is the AST-based
 one in chunking/python_chunker.py which provides better Python-specific analysis.
 """
 
-from typing import Any, Dict, Optional, Set
+from typing import Any, Optional
 
 from tree_sitter import Language
 
@@ -15,7 +15,7 @@ from .base import LanguageChunker
 class PythonChunker(LanguageChunker):
     """Python-specific chunker using tree-sitter."""
 
-    def __init__(self, language: Optional[Language] = None):
+    def __init__(self, language: Optional[Language] = None) -> None:
         super().__init__("python", language)
 
     def _load_language(self) -> Language:
@@ -30,7 +30,7 @@ class PythonChunker(LanguageChunker):
                 "Install with: pip install tree-sitter-python"
             ) from err
 
-    def _get_splittable_node_types(self) -> Set[str]:
+    def _get_splittable_node_types(self) -> set[str]:
         """Python-specific splittable node types."""
         return {
             "function_definition",
@@ -38,7 +38,7 @@ class PythonChunker(LanguageChunker):
             "decorated_definition",
         }
 
-    def _get_block_boundary_types(self) -> Set[str]:
+    def _get_block_boundary_types(self) -> set[str]:
         """Python-specific block boundary types for splitting large functions.
 
         These node types represent logical split points in Python code.
@@ -89,7 +89,7 @@ class PythonChunker(LanguageChunker):
 
         return "\n".join(sig_lines)
 
-    def extract_metadata(self, node: Any, source: bytes) -> Dict[str, Any]:
+    def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:
         """Extract Python-specific metadata."""
         metadata = {"node_type": node.type}
 
@@ -138,6 +138,14 @@ class PythonChunker(LanguageChunker):
                     metadata["param_count"] = param_count
                     break
 
+        # Calculate cyclomatic complexity for functions
+        if node.type == "function_definition" or (
+            node.type == "decorated_definition"
+            and any(c.type == "function_definition" for c in node.children)
+        ):
+            complexity = self._calculate_complexity(node)
+            metadata["complexity_score"] = complexity
+
         return metadata
 
     def _extract_docstring(self, node: Any, source: bytes) -> Optional[str]:
@@ -177,3 +185,123 @@ class PythonChunker(LanguageChunker):
                     return docstring_text.strip()
 
         return None
+
+    def _calculate_complexity(self, node: Any) -> int:
+        """Calculate cyclomatic complexity for a function.
+
+        Cyclomatic complexity measures the number of linearly independent paths
+        through a program's source code.
+
+        Formula: CC = E - N + 2P
+        Simplified for single method: CC = decision_points + 1
+
+        Decision points in Python:
+        - if/elif statements (+1 each)
+        - for/while loops (+1 each)
+        - except handlers (+1 each)
+        - boolean operators: and, or (+1 each)
+        - conditional expressions (ternary): x if cond else y (+1)
+        - match/case statements (+1 per case)
+        - list/dict/set comprehensions with if clause (+1)
+
+        Args:
+            node: function_definition or decorated_definition tree-sitter node
+
+        Returns:
+            Cyclomatic complexity score (minimum 1)
+
+        Examples:
+            def simple():        # CC = 1 (no branches)
+                return 1
+
+            def with_if(x):      # CC = 2 (1 if)
+                if x > 0:
+                    return x
+                return 0
+
+            def complex(x, y):   # CC = 4 (2 if + 1 for + 1 and)
+                if x > 0:
+                    for i in range(y):
+                        if i % 2 == 0 and i > 10:
+                            return i
+                return 0
+        """
+        # Base complexity for the function itself
+        complexity = 1
+
+        # Find the function body
+        body_node = None
+        if node.type == "decorated_definition":
+            # Find the function_definition child
+            for child in node.children:
+                if child.type == "function_definition":
+                    node = child
+                    break
+
+        # Get the block (body) of the function
+        for child in node.children:
+            if child.type == "block":
+                body_node = child
+                break
+
+        if not body_node:
+            return complexity  # No body, return base complexity
+
+        # Recursively count decision points in the function body
+        complexity += self._count_decision_points(body_node)
+
+        return complexity
+
+    def _count_decision_points(self, node: Any) -> int:
+        """Recursively count decision points in an AST node.
+
+        Args:
+            node: Tree-sitter node to analyze
+
+        Returns:
+            Number of decision points found
+        """
+        count = 0
+
+        # Check current node type
+        if node.type in {
+            "if_statement",  # if/elif
+            "for_statement",  # for loop
+            "while_statement",  # while loop
+            "except_clause",  # except handler
+            "case_clause",  # match/case clause (Python 3.10+)
+        }:
+            count += 1
+
+        # Special handling for if_statement with elif
+        if node.type == "if_statement":
+            # Count elif clauses (each elif is an additional decision point)
+            for child in node.children:
+                if child.type == "elif_clause":
+                    count += 1
+
+        # Boolean operators: and, or
+        if node.type in {"boolean_operator"}:
+            # Each and/or adds a decision point
+            count += 1
+
+        # Conditional expression (ternary): x if cond else y
+        if node.type == "conditional_expression":
+            count += 1
+
+        # List/dict/set comprehensions with if clause
+        if node.type in {
+            "list_comprehension",
+            "dictionary_comprehension",
+            "set_comprehension",
+        }:
+            # Check if comprehension has an if clause
+            for child in node.children:
+                if child.type == "if_clause":
+                    count += 1
+
+        # Recursively process all children
+        for child in node.children:
+            count += self._count_decision_points(child)
+
+        return count

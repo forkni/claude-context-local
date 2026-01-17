@@ -4,15 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-context-local"
-version = "0.8.1"
+version = "0.8.5"
 description = "Local semantic code search for Claude Code (MCP) using EmbeddingGemma, FAISS, and AST/tree-sitter chunking. 100% local embeddings and indexing."
 readme = "README.md"
 requires-python = ">=3.11"
+license = "Apache-2.0"
 authors = [
-    { name = "forkni" }
+    { name = "forkni", email = "forkni@gmail.com" }
 ]
 maintainers = [
-    { name = "forkni" }
+    { name = "forkni", email = "forkni@gmail.com" }
 ]
 keywords = [
     "semantic-search",
@@ -26,18 +27,21 @@ keywords = [
     "python",
 ]
 dependencies = [
+    "aiohttp>=3.13.3",  # Security: Fixes CVE-2025-69223 through CVE-2025-69230
     "einops>=0.8.0",  # Required for CodeRankEmbed model
     "faiss-cpu>=1.13.1",
     "FlagEmbedding>=1.3.0",
+    "fsspec[http]>=2024.2.0,<=2025.10.0",  # Upper bound: datasets 4.4.2 constraint
     "huggingface-hub>=0.36.0",
     "mcp>=1.25.0",
+    "networkx>=3.0",  # Required for graph storage and community detection
     "nltk>=3.8",
     "pandas>=2.0.0",  # Required by datasets (transitive dependency of sentence-transformers)
     "psutil>=7.2.1",
     "rank-bm25>=0.2.2",
-    "torch>=2.6.0",
-    "torchvision>=0.21.0",
-    "torchaudio>=2.6.0",
+    "torch>=2.8.0,<2.9.0",  # 2.9.x breaks ModernBERT torch.compile (template conflict)
+    "torchvision>=0.23.0,<0.24.0",
+    "torchaudio>=2.8.0,<2.9.0",
     "rich>=14.2.0",
     "sentence-transformers>=5.2.0",
     "transformers>=4.57.3",  # Required for Qwen3-0.6B support
@@ -53,9 +57,11 @@ dependencies = [
     "tree-sitter-python>=0.23.6",
     "tree-sitter-rust>=0.24.0",
     "tree-sitter-typescript>=0.23.2",
+    "tiktoken>=0.9.0",
 ]
 
 classifiers = [
+    "Development Status :: 4 - Beta",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -71,6 +77,7 @@ test = [
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=6.2.1",
     "pytest-mock>=3.14.1",
+    "pytest-repeat>=0.9.3",
 ]
 dev = [
     "black>=25.11.0",
@@ -79,6 +86,7 @@ dev = [
     "pip-audit>=2.10.0",
     "pip-licenses>=5.5.0",
     "pipdeptree>=2.24.0",
+    "pre-commit>=4.0.1",
 ]
 
 [project.urls]
@@ -86,6 +94,7 @@ Homepage = "https://github.com/forkni/claude-context-local"
 Repository = "https://github.com/forkni/claude-context-local"
 Documentation = "https://github.com/forkni/claude-context-local#readme"
 Issues = "https://github.com/forkni/claude-context-local/issues"
+Changelog = "https://github.com/forkni/claude-context-local/blob/main/docs/VERSION_HISTORY.md"
 
 [tool.setuptools.packages.find]
 include = ["chunking*", "embeddings*", "mcp_server*", "search*", "merkle*"]
@@ -101,18 +110,18 @@ include = ["chunking*", "embeddings*", "mcp_server*", "search*", "merkle*"]
 # Transitive dependency security updates:
 # authlib>=1.6.5     # Fixes CVE-2025-59420, CVE-2025-61920, CVE-2025-62706
 # pip>=25.3          # Fixes CVE-2025-8869 (tarfile path traversal)
-# starlette>=0.49.1  # Fixes CVE (version: 0.47.3 → 0.49.1)
+# starlette>=0.51.0  # Fixes CVE (version: 0.47.3 → 0.51.0)
 # uv>=0.9.6          # Fixes 2 CVEs (version: 0.8.21 → 0.9.6)
 # werkzeug>=3.1.4    # Fixes CVE-2025-66221 (Windows device name handling)
 #
 # Verification: .venv/Scripts/pip-audit --format json | .venv/Scripts/python.exe tools/summarize_audit.py
 #
 # Transitive dependency version constraints (cannot upgrade):
-# fsspec<=2025.10.0   # datasets 4.4.2 requires fsspec[http]<=2025.10.0
-# sympy==1.13.1       # torch 2.6.0 requires sympy==1.13.1 (pinned)
+# fsspec[http]<=2025.10.0  # Now pinned as direct dep - prevents deepspeed conflict
+# sympy>=1.13.1            # torch 2.8.x requires sympy (version may vary)
 # huggingface-hub<1.0 # transformers 4.57.3 requires huggingface-hub>=0.34.0,<1.0
 # numpy<2.4.0         # Multiple packages constrain numpy (faiss, scipy, pandas, etc.)
-# torch==2.6.0        # Pinned by torchaudio, torchvision exact version match
+# torch>=2.8.0,<2.9.0 # 2.9.x breaks ModernBERT torch.compile (inductor template conflict on Windows)
 #
 # Successfully updated dependencies (tested 2026-01-03):
 # Safe patches: coverage (7.13.0→7.13.1), datasets (4.4.1→4.4.2), filelock (3.20.1→3.20.2)
@@ -122,31 +131,40 @@ include = ["chunking*", "embeddings*", "mcp_server*", "search*", "merkle*"]
 # Safe patches: sse-starlette (3.0.4→3.1.2), uv (0.9.18→0.9.21), uvicorn (0.38.0→0.40.0)
 # Major versions: isort (6.1.0→7.0.0), MarkupSafe (2.1.5→3.0.3), pillow (11.3.0→12.1.0), pyarrow (21.0.0→22.0.0)
 # All 1,160 tests passed, no dependency conflicts
+#
+# Safe patch updates (tested 2026-01-06):
+# ipython (9.8.0→9.9.0), uv (0.9.21→0.9.22)
+# Tested: ipython import successful, uv --version confirmed, no dependency conflicts
+#
+# Safe patch updates (tested 2026-01-13):
+# protobuf (6.33.2→6.33.4), starlette (0.50.0→0.51.0), tomli (2.3.0→2.4.0), uv (0.9.23→0.9.24)
+# Tested: 1387/1414 unit tests passed, 7/8 integration tests passed
+# Known pre-existing failures: 16 unit test failures + 11 errors (unrelated to updates)
 
 [tool.uv]
 index-url = "https://pypi.org/simple"
 
 [[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+# Legacy CUDA 12.4 index (fallback for older systems)
+[[tool.uv.index]]
 name = "pytorch-cu124"
 url = "https://download.pytorch.org/whl/cu124"
 explicit = true
 
-# Legacy CUDA 11.8 index (fallback for older systems)
-[[tool.uv.index]]
-name = "pytorch-cu118"
-url = "https://download.pytorch.org/whl/cu118"
-explicit = true
-
 [tool.uv.sources]
-# CUDA 12.4 (recommended for RTX 4090 and newer GPUs)
+# CUDA 12.8 (recommended for RTX 50 series and newer GPUs)
 torch = [
-    { index = "pytorch-cu124", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 torchvision = [
-    { index = "pytorch-cu124", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 torchaudio = [
-    { index = "pytorch-cu124", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 # Code quality tools configuration
@@ -190,15 +208,27 @@ select = [
     "E",  # pycodestyle errors
     "W",  # pycodestyle warnings
     "F",  # pyflakes
-    "I",  # isort
+    "I",  # isort (replaces standalone isort)
     "B",  # flake8-bugbear
     "C4", # flake8-comprehensions
 ]
 ignore = [
-    "E501",  # line too long (handled by black)
+    "C901",  # McCabe complexity - skip for faster checks (diffusers pattern)
+    "E501",  # line too long (handled by formatter)
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["E402", "F401", "F403", "F811"]
 # Imports inside try-except blocks cause conflicts between ruff and isort
 "tests/integration/test_mcp_functionality.py" = ["I001"]
 "tests/integration/test_token_efficiency_workflow.py" = ["I001"]
+
+[tool.ruff.lint.isort]
+lines-after-imports = 2
+known-first-party = ["chunking", "embeddings", "mcp_server", "search", "merkle", "evaluation"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

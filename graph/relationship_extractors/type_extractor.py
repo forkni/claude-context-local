@@ -11,7 +11,7 @@ Complexity: Medium (recursive type extraction from complex annotations)
 """
 
 import ast
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
 from graph.relationship_types import RelationshipEdge, RelationshipType
@@ -48,7 +48,7 @@ class TypeAnnotationExtractor(BaseRelationshipExtractor):
     - process -> int (return type, from Dict[str, int])
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the type annotation extractor."""
         super().__init__()
         self.relationship_type = RelationshipType.USES_TYPE
@@ -56,8 +56,8 @@ class TypeAnnotationExtractor(BaseRelationshipExtractor):
         self.current_class_id: Optional[str] = None
 
     def extract(
-        self, code: str, chunk_metadata: Dict[str, Any]
-    ) -> List[RelationshipEdge]:
+        self, code: str, chunk_metadata: dict[str, Any]
+    ) -> list[RelationshipEdge]:
         """
         Extract type annotation usage from code.
 
@@ -88,7 +88,7 @@ class TypeAnnotationExtractor(BaseRelationshipExtractor):
 
         return self.edges
 
-    def _extract_from_tree(self, tree: ast.AST, chunk_metadata: Dict[str, Any]) -> None:
+    def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         """
         Walk AST and extract type annotations.
 
@@ -106,7 +106,7 @@ class TypeAnnotationExtractor(BaseRelationshipExtractor):
                 self._extract_from_annotated_assignment(node, chunk_metadata)
 
     def _extract_from_function(
-        self, func_node: ast.FunctionDef, chunk_metadata: Dict[str, Any]
+        self, func_node: ast.FunctionDef, chunk_metadata: dict[str, Any]
     ) -> None:
         """
         Extract type annotations from function/method definition.
@@ -172,7 +172,7 @@ class TypeAnnotationExtractor(BaseRelationshipExtractor):
         self.current_function_id = old_function_id
 
     def _extract_from_annotated_assignment(
-        self, ann_assign_node: ast.AnnAssign, chunk_metadata: Dict[str, Any]
+        self, ann_assign_node: ast.AnnAssign, chunk_metadata: dict[str, Any]
     ) -> None:
         """
         Extract type from annotated assignment (class attribute, variable).
@@ -254,7 +254,7 @@ class TypeAnnotationExtractor(BaseRelationshipExtractor):
                 **metadata,
             )
 
-    def _get_all_type_names(self, node: ast.AST) -> List[str]:
+    def _get_all_type_names(self, node: ast.AST) -> list[str]:
         """
         Recursively extract all type names from annotation node.
 
@@ -337,7 +337,7 @@ class TypeAnnotationExtractor(BaseRelationshipExtractor):
             return attr_node.attr
 
     def _build_function_chunk_id(
-        self, chunk_metadata: Dict[str, Any], func_name: str, line_number: int
+        self, chunk_metadata: dict[str, Any], func_name: str, line_number: int
     ) -> str:
         """
         Build chunk ID for a function.
@@ -359,7 +359,7 @@ class TypeAnnotationExtractor(BaseRelationshipExtractor):
 
 def extract_type_usage_relationships(
     code: str, file_path: str = "unknown.py"
-) -> List[RelationshipEdge]:
+) -> list[RelationshipEdge]:
     """
     Convenience function to extract type annotation usage.
 

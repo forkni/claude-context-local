@@ -254,8 +254,8 @@ try:
     nltk.data.find('tokenizers/punkt')
     nltk.data.find('corpora/stopwords')
     print('NLTK data available')
-except:
-    raise Exception('NLTK data not found')
+except LookupError:
+    raise Exception('NLTK data not found') from None
 """
             data_success, data_output = self._run_python_test(
                 nltk_data_code, "NLTK Data Resources"

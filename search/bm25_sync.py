@@ -1,7 +1,8 @@
 """BM25 index synchronization utilities."""
 
 import logging
-from typing import TYPE_CHECKING, Tuple
+from typing import TYPE_CHECKING
+
 
 if TYPE_CHECKING:
     from .indexer import CodeIndexManager
@@ -23,7 +24,7 @@ class BM25SyncManager:
         """
         self.indexer = indexer
 
-    def sync_if_needed(self, log_prefix: str = "INCREMENTAL") -> Tuple[bool, int]:
+    def sync_if_needed(self, log_prefix: str = "INCREMENTAL") -> tuple[bool, int]:
         """Auto-sync BM25 if significant desync detected (>10% difference).
 
         Args:

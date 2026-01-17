@@ -117,7 +117,11 @@ class TestSplitLargeNode:
         func_node = tree.root_node.children[0]
 
         chunks = chunker._split_large_node(
-            func_node, bytes(code, "utf-8"), None, max_lines=3
+            func_node,
+            bytes(code, "utf-8"),
+            None,
+            max_lines=3,
+            split_size_method="lines",
         )
 
         assert len(chunks) >= 2
@@ -137,7 +141,11 @@ class TestSplitLargeNode:
         func_node = tree.root_node.children[0]
 
         chunks = chunker._split_large_node(
-            func_node, bytes(code, "utf-8"), None, max_lines=2
+            func_node,
+            bytes(code, "utf-8"),
+            None,
+            max_lines=2,
+            split_size_method="lines",
         )
 
         assert len(chunks) >= 2
@@ -156,7 +164,11 @@ class TestSplitLargeNode:
         func_node = tree.root_node.children[0]
 
         chunks = chunker._split_large_node(
-            func_node, bytes(code, "utf-8"), None, max_lines=2
+            func_node,
+            bytes(code, "utf-8"),
+            None,
+            max_lines=2,
+            split_size_method="lines",
         )
 
         for chunk in chunks:
@@ -172,7 +184,11 @@ class TestSplitLargeNode:
 
         # Set high max_lines so function is under threshold
         chunks = chunker._split_large_node(
-            func_node, bytes(code, "utf-8"), None, max_lines=100
+            func_node,
+            bytes(code, "utf-8"),
+            None,
+            max_lines=100,
+            split_size_method="lines",
         )
 
         # Should return empty list (signal to use default)
@@ -190,7 +206,11 @@ class TestSplitLargeNode:
         func_node = tree.root_node.children[0]
 
         chunks = chunker._split_large_node(
-            func_node, bytes(code, "utf-8"), None, max_lines=2
+            func_node,
+            bytes(code, "utf-8"),
+            None,
+            max_lines=2,
+            split_size_method="lines",
         )
 
         for chunk in chunks:
@@ -207,7 +227,11 @@ class TestSplitLargeNode:
         func_node = tree.root_node.children[0]
 
         chunks = chunker._split_large_node(
-            func_node, bytes(code, "utf-8"), None, max_lines=2
+            func_node,
+            bytes(code, "utf-8"),
+            None,
+            max_lines=2,
+            split_size_method="lines",
         )
 
         for chunk in chunks:
@@ -251,7 +275,7 @@ class TestChunkCodeWithSplitting:
         config = ChunkingConfig(
             enable_large_node_splitting=True,
             max_chunk_lines=10,  # Force splitting
-            enable_greedy_merge=False,  # Disable merge to see raw splits
+            split_size_method="lines",
         )
 
         chunks = chunker.chunk_code(code, config=config)
@@ -267,6 +291,7 @@ class TestChunkCodeWithSplitting:
         config = ChunkingConfig(
             enable_large_node_splitting=True,
             max_chunk_lines=100,
+            split_size_method="lines",
         )
 
         chunks = chunker.chunk_code(code, config=config)
@@ -291,7 +316,7 @@ class TestChunkCodeWithSplitting:
         config = ChunkingConfig(
             enable_large_node_splitting=True,
             max_chunk_lines=3,
-            enable_greedy_merge=False,
+            split_size_method="lines",
         )
 
         chunks = chunker.chunk_code(code, config=config)
@@ -324,7 +349,11 @@ class TestEdgeCases:
         func_node = tree.root_node.children[0]
 
         chunks = chunker._split_large_node(
-            func_node, bytes(code, "utf-8"), None, max_lines=1
+            func_node,
+            bytes(code, "utf-8"),
+            None,
+            max_lines=1,
+            split_size_method="lines",
         )
 
         # Should not split a single statement
@@ -340,7 +369,11 @@ class TestEdgeCases:
         func_node = tree.root_node.children[0]
 
         chunks = chunker._split_large_node(
-            func_node, bytes(code, "utf-8"), None, max_lines=1
+            func_node,
+            bytes(code, "utf-8"),
+            None,
+            max_lines=1,
+            split_size_method="lines",
         )
 
         assert len(chunks) <= 1
@@ -356,7 +389,7 @@ class TestEdgeCases:
         config = ChunkingConfig(
             enable_large_node_splitting=True,
             max_chunk_lines=3,
-            enable_greedy_merge=False,
+            split_size_method="lines",
         )
 
         chunks = chunker.chunk_code(code, config=config)
@@ -380,7 +413,11 @@ class TestEdgeCases:
         func_node = tree.root_node.children[0]
 
         chunks = chunker._split_large_node(
-            func_node, bytes(code, "utf-8"), None, max_lines=2
+            func_node,
+            bytes(code, "utf-8"),
+            None,
+            max_lines=2,
+            split_size_method="lines",
         )
 
         # try_statement should be a boundary
@@ -400,7 +437,11 @@ class TestEdgeCases:
         func_node = tree.root_node.children[0]
 
         chunks = chunker._split_large_node(
-            func_node, bytes(code, "utf-8"), None, max_lines=2
+            func_node,
+            bytes(code, "utf-8"),
+            None,
+            max_lines=2,
+            split_size_method="lines",
         )
 
         for chunk in chunks:

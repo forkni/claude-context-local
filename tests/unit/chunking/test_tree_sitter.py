@@ -206,9 +206,9 @@ class TestClass:
 """
         file_path.write_text(code)
 
-        # Disable greedy merge for this test to check basic chunking behavior
+        # Use default config for basic chunking behavior
         mock_config = MagicMock()
-        mock_config.chunking = ChunkingConfig(enable_greedy_merge=False)
+        mock_config.chunking = ChunkingConfig()
 
         locator = ServiceLocator.instance()
         locator.register("config", mock_config)

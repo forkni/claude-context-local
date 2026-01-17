@@ -15,7 +15,7 @@ Examples:
 """
 
 import ast
-from typing import Any, Dict, List
+from typing import Any
 
 from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
 from graph.relationship_types import RelationshipEdge, RelationshipType
@@ -34,14 +34,14 @@ class DataclassFieldExtractor(BaseRelationshipExtractor):
     - Only annotated assignments in class body (field requires annotation)
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize dataclass field extractor."""
         super().__init__()
         self.relationship_type = RelationshipType.DEFINES_FIELD
 
     def extract(
-        self, code: str, chunk_metadata: Dict[str, Any]
-    ) -> List[RelationshipEdge]:
+        self, code: str, chunk_metadata: dict[str, Any]
+    ) -> list[RelationshipEdge]:
         """
         Extract dataclass field relationships from code.
 
@@ -100,7 +100,7 @@ class DataclassFieldExtractor(BaseRelationshipExtractor):
         return False
 
     def _extract_dataclass_fields(
-        self, node: ast.ClassDef, chunk_metadata: Dict[str, Any]
+        self, node: ast.ClassDef, chunk_metadata: dict[str, Any]
     ):
         """
         Extract dataclass field definitions.

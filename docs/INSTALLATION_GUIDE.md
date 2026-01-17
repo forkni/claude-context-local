@@ -509,6 +509,53 @@ scripts\batch\start_mcp_debug.bat    # Debug mode with enhanced logging
 scripts\batch\start_mcp_simple.bat   # Simple mode with minimal output
 ```
 
+### Dependency Version Validation
+
+After installation, validate that all critical dependencies meet minimum version requirements:
+
+```powershell
+# Run version validation
+.venv\Scripts\python.exe -m utils.version_check
+
+# Expected output:
+# [OK] torch==2.8.0+cu118
+# [OK] transformers==4.47.1
+# [OK] sentence-transformers==3.4.1
+# [OK] numpy==2.2.4
+# [OK] faiss-cpu==1.9.0.post1
+# All 5 critical dependencies validated successfully
+```
+
+**What Gets Validated:**
+
+| Package | Minimum Version | Purpose |
+|---------|----------------|---------|
+| torch | >=2.8.0 | Core deep learning framework |
+| transformers | >=4.30.0 | Hugging Face model support |
+| sentence-transformers | >=2.2.0 | Semantic embedding models |
+| numpy | >=1.24.0 | Numerical operations |
+| faiss-cpu | >=1.7.0 | Vector search engine |
+
+**Features:**
+
+- Handles CUDA build metadata (e.g., `2.8.0+cu118` correctly compared)
+- ASCII-safe output compatible with Windows console
+- Clear error messages with upgrade instructions
+- Validates at startup to catch environment issues early
+
+**Common Issues:**
+
+```powershell
+# If versions are too old
+[FAIL] torch==2.0.0 is too old. Required: >=2.8.0
+
+# If package is missing
+[FAIL] transformers is not installed. Install with: pip install transformers
+
+# Upgrade dependencies
+.venv\Scripts\pip.exe install --upgrade torch transformers sentence-transformers
+```
+
 ### Advanced Testing Tools
 
 #### Comprehensive Test Suite
@@ -692,7 +739,7 @@ start_mcp_server.bat
 # Select: Option 2 - Force Reindex Project
 
 # Option 2: Via command line
-.venv\Scripts\python.exe tools\index_project.py --force
+.venv\Scripts\python.exe tools\batch_index.py --mode force
 
 # Option 3: Via repair tool
 scripts\batch\repair_installation.bat
@@ -971,6 +1018,51 @@ python -c "import torch; print('GPU memory:', torch.cuda.get_device_properties(0
 
 ### GPU Acceleration
 
+#### VRAM Management Settings (v0.8.3+)
+
+Two new settings are available to manage GPU memory allocation on systems with limited VRAM (8GB laptops):
+
+**1. RAM Fallback** (`allow_ram_fallback`):
+
+- **Default**: `false` (strict VRAM limit, faster but may OOM)
+- **Enabled**: Allows PyTorch to spill to system RAM when dedicated VRAM is full (slower but reliable)
+- **Use When**: Experiencing OOM errors with neural reranker on 8GB VRAM laptops
+- **Access**: `start_mcp_server.cmd` → 3 (Search Config) → 7 (Performance) → 3 (Configure RAM Fallback)
+
+**2. VRAM Limit Fraction** (`vram_limit_fraction`):
+
+- **Default**: `0.80` (80% of dedicated VRAM)
+- **Range**: 70% - 95%
+- **Purpose**: Sets hard ceiling for dedicated VRAM usage to prevent shared memory spillover
+- **Access**: `start_mcp_server.cmd` → 3 (Search Config) → 7 (Performance) → 4 (Adjust VRAM Limit)
+
+**Recommended Configurations**:
+
+| GPU VRAM | Configuration | Notes |
+|----------|---------------|-------|
+| **8GB Laptop** | `allow_ram_fallback: true` | Reliability over speed |
+| **10-12GB** | `vram_limit_fraction: 0.80` (default) | Balanced |
+| **16GB+** | `vram_limit_fraction: 0.85-0.90` | More headroom |
+| **24GB+** | `vram_limit_fraction: 0.90-0.95` | Maximum capacity |
+
+**How They Work Together**:
+
+1. **Batch Sizing**: `gpu_memory_threshold` (70%) calculates optimal batch size
+2. **Hard Ceiling**: `vram_limit_fraction` (80%) enforces VRAM limit
+3. **Spillover Control**: `allow_ram_fallback` (false) prevents slow shared memory usage
+
+**When `allow_ram_fallback=true`**:
+
+- `vram_limit_fraction` is ignored (no hard limit set)
+- PyTorch can use system RAM when VRAM is full (slower but won't OOM)
+- Recommended for 8GB VRAM laptops to ensure neural reranker works reliably
+
+**Configuration File**: Settings are persisted in `search_config.json` under `performance` section.
+
+**Note**: Changes require MCP server restart to take effect.
+
+---
+
 ### Runtime Performance (v0.5.17+)
 
 **Lazy Model Loading**: Embedding models load on-demand during first search, not at server startup.
@@ -1012,7 +1104,7 @@ Startup (server starts):              0 MB VRAM (lazy loading)
 **Completed Optimizations (v0.5.17+)**:
 
 1. **ThreadPool Reuse** - 71.8% faster parallel search (5.7ms per 50 tasks)
-2. **Query Embedding Cache** - 2-3x faster multi-hop search (eliminates redundant GPU computation)
+2. **Query Embedding Cache** (v0.8.6+) - 2-3x faster multi-hop search with 300s TTL (eliminates redundant GPU computation)
 3. **Lazy Model Loading** - 100% startup VRAM reduction, 5-10x faster startup
 
 **Performance Tips**:
@@ -1072,6 +1164,14 @@ uv sync
 ```
 
 ### Cache Management
+
+**Query Embedding Cache (v0.8.6+)**:
+
+- **Automatic TTL expiration**: Entries expire after 300 seconds (5 minutes)
+- **Configuration**: Set `CLAUDE_QUERY_CACHE_TTL=600` for custom TTL (seconds)
+- **Manual cleanup**: Use `/cleanup_resources` MCP tool to clear cache immediately
+
+**Storage Cache**:
 
 ```bash
 # Clear embedding cache

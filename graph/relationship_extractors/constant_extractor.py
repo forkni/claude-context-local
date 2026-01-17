@@ -17,7 +17,7 @@ Examples:
 """
 
 import ast
-from typing import Any, Dict, List, Set
+from typing import Any
 
 from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
 from graph.relationship_types import RelationshipEdge, RelationshipType
@@ -38,14 +38,14 @@ class ConstantExtractor(BaseRelationshipExtractor):
     - Excludes all-numeric values (trivial constants)
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize constant extractor."""
         super().__init__()
-        self.known_constants: Set[str] = set()
+        self.known_constants: set[str] = set()
 
     def extract(
-        self, code: str, chunk_metadata: Dict[str, Any]
-    ) -> List[RelationshipEdge]:
+        self, code: str, chunk_metadata: dict[str, Any]
+    ) -> list[RelationshipEdge]:
         """
         Extract constant relationships from code.
 
@@ -93,7 +93,7 @@ class ConstantExtractor(BaseRelationshipExtractor):
         return self.edges
 
     def _extract_constant_definitions(
-        self, tree: ast.AST, chunk_metadata: Dict[str, Any]
+        self, tree: ast.AST, chunk_metadata: dict[str, Any]
     ):
         """
         Extract UPPER_CASE = value at module level.
@@ -121,7 +121,7 @@ class ConstantExtractor(BaseRelationshipExtractor):
                             )
                             self.known_constants.add(target.id)
 
-    def _extract_constant_usages(self, tree: ast.AST, chunk_metadata: Dict[str, Any]):
+    def _extract_constant_usages(self, tree: ast.AST, chunk_metadata: dict[str, Any]):
         """
         Extract references to known constants.
 

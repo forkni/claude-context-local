@@ -2,10 +2,12 @@
 
 import json
 import logging
+import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 import numpy as np
+
 
 try:
     import faiss
@@ -29,7 +31,11 @@ class CodeIndexManager:
     """Manages FAISS vector index and metadata storage for code chunks."""
 
     def __init__(
-        self, storage_dir: str, embedder=None, project_id: str = None, config=None
+        self,
+        storage_dir: str,
+        embedder=None,
+        project_id: str | None = None,
+        config=None,
     ):
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
@@ -65,7 +71,7 @@ class CodeIndexManager:
         # Load existing index
         self._faiss_index.load()
 
-    def _check_dependencies(self):
+    def _check_dependencies(self) -> None:
         """Check if required dependencies are available."""
         if faiss is None:
             raise ImportError(
@@ -78,12 +84,12 @@ class CodeIndexManager:
             )
 
     @property
-    def index(self):
+    def index(self) -> Optional["faiss.Index"]:
         """Access to underlying FAISS index."""
         return self._faiss_index.index
 
     @property
-    def chunk_ids(self) -> List[str]:
+    def chunk_ids(self) -> list[str]:
         """Public property - List of all indexed chunk IDs."""
         return self._faiss_index.chunk_ids
 
@@ -98,12 +104,22 @@ class CodeIndexManager:
         return self._faiss_index.is_on_gpu
 
     @property
-    def metadata_store(self):
+    def metadata_store(self) -> MetadataStore:
         """Access to metadata storage layer.
 
         Returns the MetadataStore instance for chunk metadata operations.
         """
         return self._metadata_store
+
+    @property
+    def symbol_cache(self):
+        """Expose symbol cache for direct symbol lookup.
+
+        Returns the SymbolHashCache instance from metadata_store,
+        enabling O(1) symbol name → chunk_id lookups for find_path
+        and other tools without relying on semantic search.
+        """
+        return self._metadata_store._symbol_cache
 
     def create_index(self, embedding_dimension: int, index_type: str = "flat"):
         """Create a new FAISS index.
@@ -114,8 +130,16 @@ class CodeIndexManager:
         """
         self._faiss_index.create(embedding_dimension, index_type)
 
-    def add_embeddings(self, embedding_results: List[EmbeddingResult]) -> None:
-        """Add embeddings to the index and metadata to the database."""
+    def add_embeddings(self, embedding_results: list[EmbeddingResult]) -> None:
+        """Add embeddings to the index and metadata to the database.
+
+        Args:
+            embedding_results: List of EmbeddingResult objects containing embeddings
+                             and their associated metadata (chunk_id, content, etc.)
+
+        Raises:
+            ValueError: If embedding dimension doesn't match the model's expected dimension
+        """
         if not embedding_results:
             return
 
@@ -184,7 +208,7 @@ class CodeIndexManager:
         # Commit metadata in a single transaction for performance
         try:
             self.metadata_store.commit()
-        except Exception:
+        except sqlite3.Error:
             # If commit is unavailable for some reason, continue without failing
             pass
 
@@ -216,8 +240,8 @@ class CodeIndexManager:
         self,
         query_embedding: np.ndarray,
         k: int = 5,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> List[Tuple[str, float, Dict[str, Any]]]:
+        filters: Optional[dict[str, Any]] = None,
+    ) -> list[tuple[str, float, dict[str, Any]]]:
         """Search for similar code chunks."""
         self._logger.info(f"Index manager search called with k={k}, filters={filters}")
 
@@ -263,7 +287,7 @@ class CodeIndexManager:
         return results
 
     def _matches_filters(
-        self, metadata: Dict[str, Any], filters: Dict[str, Any]
+        self, metadata: dict[str, Any], filters: dict[str, Any]
     ) -> bool:
         """Check if metadata matches the provided filters.
 
@@ -272,7 +296,7 @@ class CodeIndexManager:
         """
         return FilterEngine.from_dict(filters).matches(metadata)
 
-    def get_chunk_by_id(self, chunk_id: str) -> Optional[Dict[str, Any]]:
+    def get_chunk_by_id(self, chunk_id: str) -> Optional[dict[str, Any]]:
         """Retrieve chunk metadata by ID with path normalization.
 
         Handles Windows backslash escaping issues in MCP transport by trying
@@ -295,7 +319,7 @@ class CodeIndexManager:
 
     def get_similar_chunks(
         self, chunk_id: str, k: int = 5
-    ) -> List[Tuple[str, float, Dict[str, Any]]]:
+    ) -> list[tuple[str, float, dict[str, Any]]]:
         """Find chunks similar to a given chunk via symbol hash cache (O(1) lookup)."""
         # MetadataStore.get() now handles hash cache lookup + variant fallback internally
         metadata_entry = self.metadata_store.get(chunk_id)
@@ -317,8 +341,8 @@ class CodeIndexManager:
         return [(cid, sim, meta) for cid, sim, meta in results if cid != chunk_id][:k]
 
     def get_similar_chunks_batched(
-        self, chunk_ids: List[str], k: int = 5
-    ) -> Dict[str, List[Tuple[str, float, Dict[str, Any]]]]:
+        self, chunk_ids: list[str], k: int = 5
+    ) -> dict[str, list[tuple[str, float, dict[str, Any]]]]:
         """
         Find chunks similar to multiple chunks in a single batched FAISS search.
 
@@ -468,7 +492,7 @@ class CodeIndexManager:
         # Commit removals in batch
         try:
             self.metadata_store.commit()
-        except Exception:
+        except sqlite3.Error:
             pass
         return len(chunks_to_remove)
 
@@ -504,10 +528,25 @@ class CodeIndexManager:
             clear_index_callback=self.clear_index,
         )
 
-    def save_index(self):
+    def save_index(self) -> None:
         """Save the FAISS index and chunk IDs to disk."""
         # Delegate FAISS index and chunk ID saving to FaissVectorIndex
         self._faiss_index.save()
+
+        # Defensive: Check if graph storage is available
+        if hasattr(self._graph, "storage") and self._graph.storage:
+            # Storage exists, no need to re-init
+            pass
+        else:
+            # Storage is None - try to find project_id
+            # Note: project_id is not stored in CodeIndexManager, only passed to GraphIntegration
+            # This defensive code path may not have access to project_id
+            # Log warning but don't crash
+            if self._graph.storage is None:
+                self._logger.warning(
+                    "[SAVE] Graph storage is None. Graph will not be saved. "
+                    "This may occur if project was indexed without project_id."
+                )
 
         # Save call graph via integration layer
         self._graph.save()
@@ -551,7 +590,7 @@ class CodeIndexManager:
         # Delegate to FaissVectorIndex
         return self._faiss_index.load()
 
-    def _add_to_graph(self, chunk_id: str, metadata: Dict[str, Any]) -> None:
+    def _add_to_graph(self, chunk_id: str, metadata: dict[str, Any]) -> None:
         """Add chunk to call graph storage (compatibility wrapper).
 
         This method is kept for backward compatibility. New code should
@@ -618,7 +657,7 @@ class CodeIndexManager:
         with open(self.stats_path, "w") as f:
             json.dump(stats, f, indent=2)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get index statistics."""
         if self.stats_path.exists():
             with open(self.stats_path, "r") as f:
@@ -635,7 +674,7 @@ class CodeIndexManager:
         """Get the number of chunks in the index."""
         return len(self.chunk_ids)
 
-    def validate_index_consistency(self) -> Tuple[bool, List[str]]:
+    def validate_index_consistency(self) -> tuple[bool, list[str]]:
         """Validate consistency between FAISS index, chunk_ids, and metadata.
 
         This method checks for:
@@ -721,18 +760,26 @@ class CodeIndexManager:
 
         return is_valid, issues
 
-    def clear_index(self):
+    def clear_index(self) -> None:
         """Clear the entire index and metadata."""
-        # Close metadata store
+        # Close metadata store - do NOT reopen yet
         if self._metadata_store is not None:
             self._metadata_store.close()
-            # Reinitialize metadata store for future operations
-            self._metadata_store = MetadataStore(self.metadata_path)
+            self._metadata_store = None
+
+        # Clear BatchOperations reference to prevent lingering file handles (Windows)
+        if hasattr(self, "_batch_ops") and self._batch_ops is not None:
+            self._batch_ops._metadata_store = None
 
         # Clear FAISS index (includes GPU cleanup if needed)
         self._faiss_index.clear()
 
-        # Remove additional files
+        # Force garbage collection to release file handles (Windows)
+        import gc
+
+        gc.collect()
+
+        # Remove additional files - NOW safe because store is closed
         for file_path in [self.metadata_path, self.stats_path]:
             if file_path.exists():
                 file_path.unlink()
@@ -740,11 +787,14 @@ class CodeIndexManager:
         # Clear call graph via integration layer
         self._graph.clear()
 
+        # Reinitialize metadata store AFTER deletion
+        self._metadata_store = MetadataStore(self.metadata_path)
+
         self._logger.info("Index cleared")
 
     def check_memory_requirements(
         self, num_new_vectors: int, dimension: int
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Check if there's enough memory for adding new vectors.
 
         Args:
@@ -757,7 +807,7 @@ class CodeIndexManager:
         # Delegate to FaissVectorIndex
         return self._faiss_index.check_memory_requirements(num_new_vectors, dimension)
 
-    def get_memory_status(self) -> Dict[str, Any]:
+    def get_memory_status(self) -> dict[str, Any]:
         """Get current memory usage status.
 
         Returns:

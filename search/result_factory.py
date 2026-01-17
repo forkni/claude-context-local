@@ -4,8 +4,6 @@ This module provides static factory methods for creating SearchResult instances
 from various search result formats (BM25, dense/semantic, direct lookup).
 """
 
-from typing import Dict, List, Tuple
-
 from .reranker import SearchResult
 
 
@@ -22,7 +20,7 @@ class ResultFactory:
     """
 
     @staticmethod
-    def from_bm25_results(bm25_results: List[Tuple]) -> List[SearchResult]:
+    def from_bm25_results(bm25_results: list[tuple]) -> list[SearchResult]:
         """Convert BM25 search results to SearchResult format.
 
         Args:
@@ -55,7 +53,7 @@ class ResultFactory:
         return search_results
 
     @staticmethod
-    def from_dense_results(dense_results: List[Tuple]) -> List[SearchResult]:
+    def from_dense_results(dense_results: list[tuple]) -> list[SearchResult]:
         """Convert dense/semantic search results to SearchResult format.
 
         Args:
@@ -88,7 +86,7 @@ class ResultFactory:
         return search_results
 
     @staticmethod
-    def from_direct_lookup(chunk_id: str, metadata: Dict) -> SearchResult:
+    def from_direct_lookup(chunk_id: str, metadata: dict) -> SearchResult:
         """Create SearchResult for direct chunk ID lookup.
 
         Normalizes metadata to ensure the 'file' key exists (may be stored as
@@ -128,8 +126,8 @@ class ResultFactory:
 
     @staticmethod
     def from_similarity_results(
-        similar_chunks: List[Tuple[str, float, Dict]], source: str = "similarity"
-    ) -> List[SearchResult]:
+        similar_chunks: list[tuple[str, float, dict]], source: str = "similarity"
+    ) -> list[SearchResult]:
         """Convert similarity search results to SearchResult format.
 
         Args:

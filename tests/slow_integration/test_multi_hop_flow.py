@@ -93,9 +93,9 @@ class TestMultiHopSearchFlow:
 
         # Multi-hop should potentially find more related code
         # (or at least same amount as single-hop)
-        assert (
-            len(multi_hop_results) >= len(single_hop_results) or True
-        ), "Multi-hop should discover related code"
+        assert len(multi_hop_results) >= len(single_hop_results) or True, (
+            "Multi-hop should discover related code"
+        )
 
     def test_multi_hop_expansion_factor(self, indexed_hybrid_searcher):
         """Test that expansion factor affects number of discovered chunks."""
@@ -190,9 +190,9 @@ class TestMultiHopSearchFlow:
         chunk_ids = [r.chunk_id for r in results]
         unique_chunk_ids = set(chunk_ids)
 
-        assert len(chunk_ids) == len(
-            unique_chunk_ids
-        ), "Multi-hop should deduplicate results"
+        assert len(chunk_ids) == len(unique_chunk_ids), (
+            "Multi-hop should deduplicate results"
+        )
 
     def test_multi_hop_reranking(self, indexed_hybrid_searcher):
         """Test that multi-hop properly re-ranks results by query relevance."""
@@ -208,6 +208,6 @@ class TestMultiHopSearchFlow:
 
         # Verify results are sorted by score (descending)
         for i in range(len(results) - 1):
-            assert (
-                results[i].score >= results[i + 1].score
-            ), "Results should be sorted by relevance score"
+            assert results[i].score >= results[i + 1].score, (
+                "Results should be sorted by relevance score"
+            )

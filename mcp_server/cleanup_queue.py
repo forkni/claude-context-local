@@ -8,9 +8,9 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import List
 
 from mcp_server.storage_manager import get_storage_dir
+
 
 logger = logging.getLogger(__name__)
 
@@ -25,13 +25,13 @@ class CleanupQueue:
     Queue items are retried up to 3 times before being marked as permanently failed.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize cleanup queue from persistent storage."""
         self.queue_file = get_storage_dir() / "cleanup_queue.json"
-        self._queue: List[dict] = []
+        self._queue: list[dict] = []
         self._load()
 
-    def _load(self):
+    def _load(self) -> None:
         """Load queue from disk."""
         if self.queue_file.exists():
             try:
@@ -42,7 +42,7 @@ class CleanupQueue:
                 logger.warning(f"Failed to load cleanup queue: {e}")
                 self._queue = []
 
-    def _save(self):
+    def _save(self) -> None:
         """Save queue to disk."""
         try:
             with open(self.queue_file, "w", encoding="utf-8") as f:
@@ -138,7 +138,7 @@ class CleanupQueue:
 
         return result
 
-    def get_pending(self) -> List[dict]:
+    def get_pending(self) -> list[dict]:
         """Get list of pending cleanup tasks.
 
         Returns:

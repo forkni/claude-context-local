@@ -139,12 +139,13 @@ scripts\git\batch\check_lint.bat
 
 **Checks:**
 
-- Ruff linting (Python code style)
-- Black formatting (code consistency)
-- isort import sorting
+- Ruff check (Python linting + import sorting)
+- Ruff format (code formatting consistency)
 - markdownlint (documentation quality)
 
 **Configuration**: Uses pyproject.toml settings (automatically excludes .venv, _archive, all gitignored directories)
+
+**Note**: ShellCheck (bash script validation) is available separately via `scripts/lint/check_shell.sh`
 
 #### fix_lint - Auto-fix Linting Issues
 
@@ -158,7 +159,7 @@ scripts\git\batch\fix_lint.bat
 
 **Fixes:**
 
-- Runs ruff --fix → black → isort → markdownlint --fix
+- Runs ruff check --fix → ruff format → markdownlint --fix
 - Auto-fixes ~90% of Python lint errors
 - Auto-fixes most markdown formatting issues
 - Suggests running check_lint to verify all issues resolved
@@ -633,7 +634,7 @@ cd claude-context-local
 |------|---------|---------|
 | **Safe commit** | `scripts\git\commit_enhanced.bat "message"` | Commits with lint checks and validations |
 | **Automated commit** | `scripts\git\commit_enhanced.bat --non-interactive "message"` | Non-interactive commit with auto-staging and auto-fix |
-| **Check code quality** | `scripts\git\check_lint.bat` | Validates code with ruff/black/isort/markdownlint |
+| **Check code quality** | `scripts\git\check_lint.bat` | Validates code with ruff check/ruff format/markdownlint |
 | **Fix linting** | `scripts\git\fix_lint.bat` | Auto-fixes linting issues (Python + markdown) |
 | **Merge to main** | `scripts\git\merge_with_validation.bat` | Safe merge: development → main (auto-resolves test file conflicts) |
 | **Automated merge** | `scripts\git\merge_with_validation.bat --non-interactive` | Non-interactive merge for automation |
@@ -646,7 +647,7 @@ cd claude-context-local
 
 | Task | Command | Result |
 |------|---------|---------|
-| **Check code quality** | `./scripts/git/check_lint.sh` | Validates code with ruff/black/isort/markdownlint |
+| **Check code quality** | `./scripts/git/check_lint.sh` | Validates code with ruff check/ruff format/markdownlint |
 | **Fix linting** | `./scripts/git/fix_lint.sh` | Auto-fixes linting issues (Python + markdown) |
 | **Validate branches** | `./scripts/git/validate_branches.sh` | Check branch status before merge |
 | **Check status** | `git status` | Shows staged changes |
@@ -1005,11 +1006,11 @@ The .sh scripts rely on pyproject.toml for exclusions (no manual --exclude flags
 [tool.ruff]
 exclude = [".venv", "_archive", "build", "dist", "__pycache__", "tests/test_data"]
 
-[tool.black]
-exclude = ".venv|_archive"
+[tool.ruff.format]
+# Ruff format replaces black
 
-[tool.isort]
-skip_glob = ["_archive/*", ".venv/*"]
+[tool.ruff.lint.isort]
+# Ruff's built-in isort replaces standalone isort
 ```
 
 **Verification**:
@@ -2049,6 +2050,53 @@ scripts\git\fix_lint.bat      # Includes markdownlint --fix
 
 **Match CI/CD**: Local markdown validation matches GitHub Actions `docs-validation.yml` rules
 
+### Shell Script Linting (ShellCheck)
+
+**Installation** (project-local):
+
+- ShellCheck v0.10.0 bundled in `tools/bin/shellcheck.exe`
+- Auto-detected by `scripts/lint/check_shell.sh`
+- Cross-platform: Windows (Git Bash), Linux, macOS
+
+**Local validation** (before commit):
+
+```bash
+# Check all shell scripts
+./scripts/lint/check_shell.sh
+
+# Output shows pass/fail for each .sh file
+# Validates scripts in scripts/git/, scripts/lint/, scripts/test/, scripts/docs/
+```
+
+**What ShellCheck detects**:
+
+- Unquoted variables (SC2086) - prevents word-splitting bugs
+- Unsafe `cd` commands (SC2164) - missing `|| exit` error handling
+- Command substitution style (SC2006) - enforces `$(...)` over backticks
+- POSIX compliance issues
+- Unused variables (SC2034)
+- Syntax errors
+
+**Common fixes**:
+
+```bash
+# Bad: Unquoted variable
+cd $PROJECT_ROOT
+
+# Good: Quoted variable
+cd "$PROJECT_ROOT" || exit
+
+# Bad: Backticks
+result=`command`
+
+# Good: Modern syntax
+result=$(command)
+```
+
+**Configuration**: Excludes SC2154 (sourced variables from `_common.sh`)
+
+**Reference**: See `BASH_STYLE_GUIDE.md` Section 5.4 for complete ShellCheck error codes and fixes
+
 ---
 
 ### Expected Warnings (Updated 2025-10-04)
@@ -2077,9 +2125,9 @@ scripts\git\fix_lint.bat      # Includes markdownlint --fix
 
 | Category | Examples | Auto-fixable | Severity |
 |----------|----------|--------------|----------|
-| **Imports** | F401, F811, I001 | ✅ Yes (isort) | Low |
-| **Formatting** | W293, E501 | ✅ Yes (black) | Low |
-| **Code Style** | C401, C414, B007 | ✅ Yes (--unsafe-fixes) | Low |
+| **Imports** | F401, F811, I001 | ✅ Yes (ruff check) | Low |
+| **Formatting** | W293, E501 | ✅ Yes (ruff format) | Low |
+| **Code Style** | C401, C414, B007 | ✅ Yes (ruff --unsafe-fixes) | Low |
 | **Logic Errors** | F821, F841 | ⚠️ Partial | High |
 | **Exception Handling** | B904 | ❌ Manual recommended | Medium |
 | **Security** | S608, S307 | ❌ Manual required | Critical |
@@ -2093,18 +2141,18 @@ Solution: Activate virtual environment first
 call .venv\Scripts\activate.bat
 ```
 
-**Problem**: "Black would reformat X files"
+**Problem**: "Ruff would reformat X files"
 
 ```batch
-Solution: Let black reformat them
-.venv\Scripts\black.exe .
+Solution: Let ruff format them
+.venv\Scripts\ruff.exe format .
 ```
 
-**Problem**: "isort would reorder imports"
+**Problem**: "Ruff would fix X import order issues"
 
 ```batch
-Solution: Let isort fix them
-.venv\Scripts\isort.exe .
+Solution: Let ruff fix them
+.venv\Scripts\ruff.exe check --fix .
 ```
 
 **Problem**: Lint passes locally but fails in CI

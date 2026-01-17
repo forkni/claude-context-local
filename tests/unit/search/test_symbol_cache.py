@@ -168,12 +168,14 @@ class TestSymbolHashCachePersistence(unittest.TestCase):
             data = json.load(f)
 
         self.assertIn("version", data)
-        self.assertEqual(data["version"], 1)
+        self.assertEqual(data["version"], 2)  # Version 2 includes symbol_buckets
         self.assertIn("bucket_count", data)
         self.assertEqual(data["bucket_count"], 256)
         self.assertIn("total_symbols", data)
         self.assertEqual(data["total_symbols"], 1)
         self.assertIn("buckets", data)
+        self.assertIn("symbol_buckets", data)  # New in version 2
+        self.assertIn("total_symbol_mappings", data)  # New in version 2
 
     def test_load_nonexistent_file(self):
         """Test loading from non-existent file."""
@@ -223,7 +225,7 @@ class TestBucketDistribution(unittest.TestCase):
 
         # Add 1000 diverse chunk_ids
         for i in range(1000):
-            chunk_id = f"file_{i}.py:{i*10}-{i*10+10}:function:func_{i}"
+            chunk_id = f"file_{i}.py:{i * 10}-{i * 10 + 10}:function:func_{i}"
             cache.add(chunk_id)
 
         stats = cache.get_stats()
@@ -250,7 +252,9 @@ class TestPerformance(unittest.TestCase):
         # Populate with realistic data
         self.chunk_ids = []
         for i in range(1000):
-            chunk_id = f"search/module_{i % 10}.py:{i*10}-{i*10+10}:function:func_{i}"
+            chunk_id = (
+                f"search/module_{i % 10}.py:{i * 10}-{i * 10 + 10}:function:func_{i}"
+            )
             self.chunk_ids.append(chunk_id)
             self.cache.add(chunk_id)
 

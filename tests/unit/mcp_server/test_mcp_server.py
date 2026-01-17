@@ -59,16 +59,16 @@ class TestGetterFunctions:
 
         # Verify it returns the manager instance, not None
         assert result is not None, "get_index_manager() must return a value, not None"
-        assert (
-            result is mock_manager_instance
-        ), "get_index_manager() must return the CodeIndexManager instance"
+        assert result is mock_manager_instance, (
+            "get_index_manager() must return the CodeIndexManager instance"
+        )
 
         # Verify the manager was created with correct parameters
         mock_index_manager_class.assert_called_once()
         call_args = mock_index_manager_class.call_args
-        assert (
-            "project_id" in call_args.kwargs
-        ), "CodeIndexManager must be initialized with project_id"
+        assert "project_id" in call_args.kwargs, (
+            "CodeIndexManager must be initialized with project_id"
+        )
 
     @patch("search.searcher.IntelligentSearcher")
     @patch("mcp_server.model_pool_manager.get_embedder")
@@ -125,9 +125,9 @@ class TestGetterFunctions:
         searcher2 = server.get_searcher()
 
         # Verify model was preserved
-        assert (
-            state.current_model_key == "qwen3"
-        ), "Model should be preserved when model_key=None, not reset"
+        assert state.current_model_key == "qwen3", (
+            "Model should be preserved when model_key=None, not reset"
+        )
 
         # Verify searcher was reused (not recreated since model didn't change)
         assert searcher2 is searcher1, "Searcher should be reused when model unchanged"
@@ -368,3 +368,66 @@ class TestToolHandlers:
         assert "utilization_percent" in gpu_0
         assert gpu_0["device_name"] == "NVIDIA GeForce RTX 4090"
         assert gpu_0["compute_capability"] == "8.9"
+
+    @pytest.mark.asyncio
+    @patch("mcp_server.tools.search_handlers.get_state")
+    async def test_search_code_no_project_selected(self, mock_get_state):
+        """Test search_code returns graceful error when no project is selected."""
+        from mcp_server.tools.search_handlers import handle_search_code
+
+        # Mock state with no project selected
+        mock_state = MagicMock()
+        mock_state.current_project = None
+        mock_get_state.return_value = mock_state
+
+        # Call handler
+        result = await handle_search_code({"query": "test query", "k": 5})
+
+        # Verify graceful error response
+        assert "error" in result
+        assert "No indexed project found" in result["error"]
+        assert result["current_project"] is None
+        assert "index_directory" in result["message"]
+        assert "system_message" in result
+
+    @pytest.mark.asyncio
+    @patch("mcp_server.tools.search_handlers.get_state")
+    async def test_find_similar_code_no_project_selected(self, mock_get_state):
+        """Test find_similar_code returns graceful error when no project is selected."""
+        from mcp_server.tools.search_handlers import handle_find_similar_code
+
+        # Mock state with no project selected
+        mock_state = MagicMock()
+        mock_state.current_project = None
+        mock_get_state.return_value = mock_state
+
+        # Call handler
+        result = await handle_find_similar_code(
+            {"chunk_id": "test.py:1-10:function:test_func"}
+        )
+
+        # Verify graceful error response
+        assert "error" in result
+        assert "No indexed project found" in result["error"]
+        assert result["current_project"] is None
+        assert "index_directory" in result["message"]
+
+    @pytest.mark.asyncio
+    @patch("mcp_server.tools.search_handlers.get_state")
+    async def test_find_connections_no_project_selected(self, mock_get_state):
+        """Test find_connections returns graceful error when no project is selected."""
+        from mcp_server.tools.search_handlers import handle_find_connections
+
+        # Mock state with no project selected
+        mock_state = MagicMock()
+        mock_state.current_project = None
+        mock_get_state.return_value = mock_state
+
+        # Call handler
+        result = await handle_find_connections({"symbol_name": "TestClass"})
+
+        # Verify graceful error response
+        assert "error" in result
+        assert "No indexed project found" in result["error"]
+        assert result["current_project"] is None
+        assert "index_directory" in result["message"]

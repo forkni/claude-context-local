@@ -1,6 +1,6 @@
 """TypeScript-specific chunker using tree-sitter."""
 
-from typing import Any, Dict, Optional, Set
+from typing import Any, Optional
 
 from tree_sitter import Language
 
@@ -10,7 +10,9 @@ from .base import LanguageChunker
 class TypeScriptChunker(LanguageChunker):
     """TypeScript-specific chunker using tree-sitter."""
 
-    def __init__(self, language: Optional[Language] = None, use_tsx: bool = False):
+    def __init__(
+        self, language: Optional[Language] = None, use_tsx: bool = False
+    ) -> None:
         self.use_tsx = use_tsx
         language_name = "tsx" if use_tsx else "typescript"
         super().__init__(language_name, language)
@@ -29,7 +31,7 @@ class TypeScriptChunker(LanguageChunker):
                 "Install with: pip install tree-sitter-typescript"
             ) from err
 
-    def _get_splittable_node_types(self) -> Set[str]:
+    def _get_splittable_node_types(self) -> set[str]:
         """TypeScript-specific splittable node types."""
         return {
             "function_declaration",
@@ -44,7 +46,7 @@ class TypeScriptChunker(LanguageChunker):
             "enum_declaration",
         }
 
-    def extract_metadata(self, node: Any, source: bytes) -> Dict[str, Any]:
+    def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:
         """Extract TypeScript-specific metadata."""
         metadata = {"node_type": node.type}
 

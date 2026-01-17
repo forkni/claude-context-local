@@ -1,8 +1,10 @@
 """Graph integration layer for call graph storage operations."""
 
 import logging
+from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
+
 
 # Import graph storage for call graph
 try:
@@ -28,6 +30,8 @@ SEMANTIC_TYPES = (
     "impl",
     "constant",
     "variable",
+    "merged",  # Community-merged chunks (Phase 6 community detection)
+    "split_block",  # Large node split blocks (AST block splitting)
 )
 
 
@@ -38,7 +42,7 @@ class GraphIntegration:
     providing a clean interface for graph operations.
     """
 
-    def __init__(self, project_id: Optional[str], storage_dir: Path):
+    def __init__(self, project_id: Optional[str], storage_dir: Path) -> None:
         """Initialize graph storage if available.
 
         Args:
@@ -61,7 +65,7 @@ class GraphIntegration:
             except Exception as e:
                 self._logger.warning(f"Failed to initialize graph storage: {e}")
 
-    def add_chunk(self, chunk_id: str, metadata: Dict[str, Any]) -> None:
+    def add_chunk(self, chunk_id: str, metadata: dict[str, Any]) -> None:
         """Add chunk to call graph storage.
 
         Args:
@@ -154,27 +158,246 @@ class GraphIntegration:
         except Exception as e:
             self._logger.warning(f"Failed to add {chunk_id} to graph: {e}")
 
+    def build_graph_from_chunks(self, chunks) -> None:
+        """Build graph from chunks WITHOUT embeddings (for pre-embedding community detection).
+
+        This enables the two-pass chunking flow:
+        1. Chunk WITHOUT merging
+        2. Build graph from unmerged chunks
+        3. Detect communities
+        4. Remerge with community boundaries
+        5. Embed and index
+
+        Uses NetworkX DiGraph API:
+        - G.add_node(chunk_id, **attrs)
+        - G.add_edge(caller, callee, **attrs)
+
+        Reference: https://networkx.org/documentation/stable/reference/classes/digraph.html
+
+        Two-pass approach for symbol resolution:
+        - Pass 1: Add all chunk nodes + build name→chunk_id mapping
+        - Pass 2: Add edges with call target resolution (creates direct chunk-chunk edges)
+
+        Args:
+            chunks: List of CodeChunk with chunk_id, calls, relationships populated from AST
+        """
+        if self.storage is None:
+            self._logger.warning(
+                "Graph storage not initialized, cannot build from chunks"
+            )
+            return
+
+        # Clear existing graph for fresh build
+        self.storage.clear()
+
+        # === PASS 1: Add all chunk nodes + build symbol resolution map ===
+        name_to_chunk_ids: dict[str, list[str]] = defaultdict(list)
+        processed_count = 0
+
+        for chunk in chunks:
+            if not chunk.chunk_id:
+                continue
+
+            try:
+                # Add node (NetworkX: G.add_node)
+                self.storage.add_node(
+                    chunk_id=chunk.chunk_id,
+                    name=chunk.name or "unknown",
+                    chunk_type=chunk.chunk_type,
+                    file_path=chunk.file_path,
+                    language=chunk.language,
+                )
+
+                # Build name→chunk_id mapping for call resolution
+                if chunk.name and chunk.name != "unknown":
+                    name_to_chunk_ids[chunk.name].append(chunk.chunk_id)
+
+                    # Also index by bare name for methods (ClassName.method → method)
+                    if "." in chunk.name:
+                        bare_name = chunk.name.split(".")[-1]
+                        name_to_chunk_ids[bare_name].append(chunk.chunk_id)
+
+                    # Phase 1.7.1: Also index by qualified name for self.method() resolution
+                    # Fixes intra-class method calls by indexing "ClassName.method"
+                    if chunk.parent_name and chunk.name:
+                        qualified_name = f"{chunk.parent_name}.{chunk.name}"
+                        name_to_chunk_ids[qualified_name].append(chunk.chunk_id)
+
+                processed_count += 1
+
+            except Exception as e:
+                self._logger.warning(
+                    f"Failed to add chunk {chunk.chunk_id} to graph: {e}"
+                )
+
+        self._logger.info(
+            f"Built graph nodes: {processed_count} chunks, {len(name_to_chunk_ids)} unique symbol names"
+        )
+
+        # === PASS 2: Add edges with call target resolution ===
+        resolved_edges = 0
+        phantom_edges = 0
+
+        for chunk in chunks:
+            if not chunk.chunk_id:
+                continue
+
+            try:
+                # Add call edges with resolution (NetworkX: G.add_edge)
+                for call in chunk.calls or []:
+                    # Handle both CallEdge objects and dicts
+                    if hasattr(call, "callee_name"):
+                        callee_name = call.callee_name
+                        line_number = call.line_number
+                        is_method_call = call.is_method_call
+                    else:
+                        callee_name = call.get("callee_name", "unknown")
+                        line_number = call.get("line_number", 0)
+                        is_method_call = call.get("is_method_call", False)
+
+                    # Try to resolve callee_name to a chunk_id
+                    resolved_chunk_id = self._resolve_call_target(
+                        callee_name, name_to_chunk_ids, caller_file=chunk.file_path
+                    )
+
+                    if resolved_chunk_id:
+                        # Direct chunk-to-chunk edge!
+                        self.storage.add_call_edge(
+                            caller_id=chunk.chunk_id,
+                            callee_name=resolved_chunk_id,  # Use resolved chunk_id
+                            line_number=line_number,
+                            is_method_call=is_method_call,
+                            is_resolved=True,
+                        )
+                        resolved_edges += 1
+                    else:
+                        # Fallback to phantom node (existing behavior)
+                        self.storage.add_call_edge(
+                            caller_id=chunk.chunk_id,
+                            callee_name=callee_name,  # Use bare symbol name
+                            line_number=line_number,
+                            is_method_call=is_method_call,
+                            is_resolved=False,
+                        )
+                        phantom_edges += 1
+
+                # Add relationship edges
+                for rel in chunk.relationships or []:
+                    try:
+                        # Import RelationshipEdge for type handling
+                        from graph.relationship_types import (
+                            RelationshipEdge,
+                            RelationshipType,
+                        )
+
+                        # Handle both RelationshipEdge objects and dicts
+                        if isinstance(rel, RelationshipEdge):
+                            self.storage.add_relationship_edge(rel)
+                        elif isinstance(rel, dict):
+                            edge = RelationshipEdge(
+                                source_id=rel.get("source_id", chunk.chunk_id),
+                                target_name=rel.get("target_name", "unknown"),
+                                relationship_type=RelationshipType(
+                                    rel.get("relationship_type", "calls")
+                                ),
+                                line_number=rel.get("line_number", 0),
+                                confidence=rel.get("confidence", 1.0),
+                                metadata=rel.get("metadata", {}),
+                            )
+                            self.storage.add_relationship_edge(edge)
+                    except Exception as e:
+                        self._logger.debug(f"Failed to add relationship edge: {e}")
+
+            except Exception as e:
+                self._logger.warning(
+                    f"Failed to add edges for chunk {chunk.chunk_id}: {e}"
+                )
+
+        self._logger.info(
+            f"Built graph from {processed_count} chunks: {len(self.storage)} nodes, "
+            f"{resolved_edges} direct edges, {phantom_edges} phantom edges"
+        )
+
+    def _resolve_call_target(
+        self,
+        callee_name: str,
+        name_to_chunk_ids: dict[str, list[str]],
+        caller_file: Optional[str] = None,
+    ) -> Optional[str]:
+        """Resolve a call target name to its chunk_id.
+
+        Conservative approach: Only resolve if exactly ONE match exists.
+        Ambiguous matches (multiple functions with same name) create phantom nodes.
+
+        Args:
+            callee_name: Symbol name from the call (e.g., "foo", "ClassName.method")
+            name_to_chunk_ids: Mapping from symbol names to chunk_ids
+            caller_file: Optional file path of caller for disambiguation
+
+        Returns:
+            chunk_id if exactly one match, None otherwise (creates phantom node)
+        """
+        # Phase 1.7.2: Skip builtins - they never resolve to project code
+        import builtins
+
+        if hasattr(builtins, callee_name):
+            return None  # Create phantom node (will be filtered in traversals)
+
+        # Check if base name (after last dot) is a common method builtin
+        base_name = callee_name.split(".")[-1] if "." in callee_name else callee_name
+        if base_name in {
+            "append",
+            "extend",
+            "get",
+            "items",
+            "keys",
+            "values",
+            "split",
+            "join",
+            "strip",
+            "replace",
+            "format",
+            "lower",
+            "upper",
+        }:
+            return None
+
+        candidates = name_to_chunk_ids.get(callee_name, [])
+
+        if len(candidates) == 1:
+            return candidates[0]
+
+        # Phase 1.7.3: Context-aware disambiguation for ambiguous matches
+        if len(candidates) > 1 and caller_file:
+            # Try same-file preference - overwhelmingly the intended target
+            same_file = [c for c in candidates if caller_file in c]
+            if len(same_file) == 1:
+                return same_file[0]
+
+        # No match or still ambiguous - create phantom node
+        return None
+
     def save(self) -> None:
         """Save call graph to disk."""
         # Check if graph storage exists and has nodes
         graph_status = "not None" if self.storage is not None else "None"
         graph_nodes = len(self.storage) if self.storage else 0
         self._logger.info(
-            f"[save] Graph storage check: storage={graph_status}, nodes={graph_nodes}"
+            f"[SAVE] Graph storage check: storage={graph_status}, nodes={graph_nodes}"
         )
 
         if self.storage is not None and len(self.storage) > 0:
             try:
                 self._logger.info(
-                    f"[save] Saving call graph with {len(self.storage)} nodes to {self.storage.graph_path}"
+                    f"[SAVE] Saving call graph with {len(self.storage)} nodes to {self.storage.graph_path}"
                 )
                 self.storage.save()
-                self._logger.info("[save] Successfully saved call graph")
+                self._logger.info("[SAVE] Successfully saved call graph")
             except Exception as e:
-                self._logger.warning(f"[save] Failed to save call graph: {e}")
+                self._logger.warning(f"[SAVE] Failed to save call graph: {e}")
         else:
             skip_reason = "None" if self.storage is None else "empty (0 nodes)"
-            self._logger.info(f"[save] Skipping graph save: storage is {skip_reason}")
+            self._logger.info(f"[SAVE] Skipping graph save: storage is {skip_reason}")
 
     def clear(self) -> None:
         """Clear call graph."""

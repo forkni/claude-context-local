@@ -1,7 +1,8 @@
 """Batch removal and index rebuilding operations."""
 
 import logging
-from typing import Any, Callable, List, Optional, Set, Tuple
+from collections.abc import Callable
+from typing import Any, Optional
 
 import numpy as np
 
@@ -33,8 +34,8 @@ class BatchOperations:
 
     def remove_files(
         self,
-        file_paths: Set[str],
-        chunk_ids: List[str],
+        file_paths: set[str],
+        chunk_ids: list[str],
         project_name: Optional[str] = None,
         clear_index_callback: Optional[Callable] = None,
     ) -> int:
@@ -152,8 +153,8 @@ class BatchOperations:
             raise
 
     def _rebuild_index_without(
-        self, positions_to_remove: Set[int], chunk_ids: List[str]
-    ) -> Tuple[Optional[np.ndarray], Optional[List[str]]]:
+        self, positions_to_remove: set[int], chunk_ids: list[str]
+    ) -> tuple[Optional[np.ndarray], Optional[list[str]]]:
         """Rebuild FAISS index excluding specific positions.
 
         This method reconstructs the FAISS index by:

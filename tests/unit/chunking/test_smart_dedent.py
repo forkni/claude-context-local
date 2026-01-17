@@ -534,3 +534,40 @@ class TestSmartDedentIntegration:
         for method in methods:
             result = _smart_dedent(method)
             ast.parse(result)
+
+    def test_split_block_no_validation(self):
+        """Split blocks should dedent without AST validation."""
+        # Split blocks are syntactically incomplete by design
+        # They contain the marker "# ... (split block)" and cannot be parsed
+        code = """    def main():
+    # ... (split block)
+    if args.input_file:
+        # Read from file
+        json_file = Path(args.input_file)"""
+
+        result = _smart_dedent(code)
+
+        # Should NOT raise or warn - just return dedented code
+        assert "# ... (split block)" in result
+        assert result.startswith("def main():")
+        # Should be dedented (no leading spaces)
+        assert not result.startswith(" ")
+
+    def test_split_block_complex_function(self):
+        """Test split block with function signature and parameters."""
+        code = """    def generate_markdown_report(
+    summary: dict,
+    tree_data: list | None,
+    direct_deps: set,
+    outdated: list,
+):
+    # ... (split block)
+    report = []
+    report.append("# Dependency Audit Report")"""
+
+        result = _smart_dedent(code)
+
+        # Should handle split blocks with multi-line signatures
+        assert "# ... (split block)" in result
+        assert result.startswith("def generate_markdown_report(")
+        assert "report = []" in result

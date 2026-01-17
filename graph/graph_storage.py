@@ -7,9 +7,10 @@ Provides NetworkX-based storage for code call graphs with JSON persistence.
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Optional
 
 from search.filters import normalize_path
+
 
 if TYPE_CHECKING:
     from graph.relationship_types import RelationshipEdge
@@ -32,7 +33,7 @@ class CodeGraphStorage:
         - Persistence: JSON via nx.node_link_data/graph
     """
 
-    def __init__(self, project_id: str, storage_dir: Optional[Path] = None):
+    def __init__(self, project_id: str, storage_dir: Optional[Path] = None) -> None:
         """
         Initialize graph storage.
 
@@ -196,7 +197,7 @@ class CodeGraphStorage:
             **edge.metadata,  # Include all additional metadata
         )
 
-    def get_callers(self, chunk_id: str) -> List[str]:
+    def get_callers(self, chunk_id: str) -> list[str]:
         """
         Get all functions that call this function.
 
@@ -229,7 +230,7 @@ class CodeGraphStorage:
         )
         return predecessors
 
-    def get_callees(self, chunk_id: str) -> List[str]:
+    def get_callees(self, chunk_id: str) -> list[str]:
         """
         Get all functions called by this function.
 
@@ -252,16 +253,21 @@ class CodeGraphStorage:
     def get_neighbors(
         self,
         chunk_id: str,
-        relation_types: Optional[List[str]] = None,
+        relation_types: Optional[list[str]] = None,
         max_depth: int = 1,
-    ) -> Set[str]:
+        exclude_import_categories: Optional[list[str]] = None,
+    ) -> set[str]:
         """
         Get all related chunks within max_depth hops.
 
         Args:
             chunk_id: Starting chunk ID
-            relation_types: Types of relations to follow (e.g., ["calls", "called_by"])
+            relation_types: Types of relations to follow (e.g., ["calls", "called_by", "inherits", "imports"])
+                Supports all 21 relationship types. Use "_by" suffix for reverse direction
+                (e.g., "called_by", "imported_by", "inherited_by")
             max_depth: Maximum graph traversal depth
+            exclude_import_categories: Categories to exclude for "imports" edges
+                (e.g., ["stdlib", "third_party"] to filter out noise)
 
         Returns:
             Set of related chunk IDs
@@ -273,7 +279,7 @@ class CodeGraphStorage:
         if normalized_chunk_id not in self.graph:
             return set()
 
-        # Default to both directions
+        # Default to both directions of call relationships for backward compatibility
         if relation_types is None:
             relation_types = ["calls", "called_by"]
 
@@ -289,25 +295,134 @@ class CodeGraphStorage:
             if depth >= max_depth:
                 continue
 
-            # Get successors (callees) if "calls" in relation_types
-            if "calls" in relation_types:
-                for callee in self.graph.successors(current_id):
-                    if callee not in visited:
-                        neighbors.add(callee)
-                        visited.add(callee)
-                        queue.append((callee, depth + 1))
+            # Process outgoing edges (forward relationships)
+            for _, target, edge_data in self.graph.out_edges(current_id, data=True):
+                edge_type = edge_data.get("relationship_type") or edge_data.get("type")
 
-            # Get predecessors (callers) if "called_by" in relation_types
-            if "called_by" in relation_types:
-                for caller in self.graph.predecessors(current_id):
-                    if caller not in visited:
-                        neighbors.add(caller)
-                        visited.add(caller)
-                        queue.append((caller, depth + 1))
+                # Check if this edge type is requested
+                if edge_type and edge_type in relation_types:
+                    # Apply import category filtering if needed
+                    if edge_type == "imports" and exclude_import_categories:
+                        if self._should_exclude_edge(
+                            current_id, target, exclude_import_categories
+                        ):
+                            continue
+
+                    if target not in visited:
+                        neighbors.add(target)
+                        visited.add(target)
+                        queue.append((target, depth + 1))
+
+            # Process incoming edges (reverse relationships)
+            for source, _, edge_data in self.graph.in_edges(current_id, data=True):
+                edge_type = edge_data.get("relationship_type") or edge_data.get("type")
+
+                # Convert to reverse type name (e.g., "calls" -> "called_by")
+                reverse_type = (
+                    self._get_reverse_relation_type(edge_type) if edge_type else None
+                )
+
+                # Check if this reverse type is requested
+                if reverse_type and reverse_type in relation_types:
+                    # Apply import category filtering if needed
+                    if edge_type == "imports" and exclude_import_categories:
+                        if self._should_exclude_edge(
+                            source, current_id, exclude_import_categories
+                        ):
+                            continue
+
+                    if source not in visited:
+                        neighbors.add(source)
+                        visited.add(source)
+                        queue.append((source, depth + 1))
 
         return neighbors
 
-    def get_node_data(self, chunk_id: str) -> Optional[Dict[str, Any]]:
+    def _get_reverse_relation_type(self, relation_type: str) -> str:
+        """
+        Get the reverse name for a relationship type.
+
+        Args:
+            relation_type: Forward relationship type (e.g., "calls", "imports", "inherits")
+
+        Returns:
+            Reverse relationship type (e.g., "called_by", "imported_by", "inherited_by")
+
+        Note:
+            Most verb-based types need past participle form + "_by".
+            Special irregular forms are handled explicitly.
+        """
+        # Comprehensive mapping for all relationship types
+        reverse_mapping = {
+            "calls": "called_by",
+            "inherits": "inherited_by",
+            "uses_type": "used_as_type_by",
+            "imports": "imported_by",
+            "decorates": "decorated_by",
+            "raises": "raised_by",
+            "catches": "caught_by",
+            "instantiates": "instantiated_by",
+            "implements": "implemented_by",
+            "overrides": "overridden_by",
+            "assigns_to": "assigned_by",
+            "reads_from": "read_by",
+            "defines_constant": "constant_defined_by",
+            "defines_enum_member": "enum_member_defined_by",
+            "defines_class_attr": "class_attr_defined_by",
+            "defines_field": "field_defined_by",
+            "uses_constant": "constant_used_by",
+            "uses_default": "default_used_by",
+            "uses_global": "global_used_by",
+            "asserts_type": "type_asserted_by",
+            "uses_context_manager": "context_manager_used_by",
+        }
+
+        if relation_type in reverse_mapping:
+            return reverse_mapping[relation_type]
+
+        # Fallback: append "_by" (should not be reached if mapping is complete)
+        return f"{relation_type}_by"
+
+    def _should_exclude_edge(
+        self, source_id: str, target_id: str, exclude_categories: list[str]
+    ) -> bool:
+        """
+        Check if edge should be excluded based on import category.
+
+        Args:
+            source_id: Source node ID
+            target_id: Target node ID
+            exclude_categories: Categories to exclude (e.g., ["stdlib", "third_party"])
+
+        Returns:
+            True if edge should be excluded, False otherwise
+        """
+        # Get edge data
+        edge_data = self.get_edge_data(source_id, target_id)
+        if not edge_data:
+            return False
+
+        # Only filter "imports" relationships
+        edge_type = edge_data.get("relationship_type") or edge_data.get("type")
+        if edge_type != "imports":
+            return False
+
+        # Check import category
+        import_category = edge_data.get("metadata", {}).get("import_category")
+        if not import_category:
+            # Fallback: check if import_category is a direct edge attribute
+            import_category = edge_data.get("import_category")
+
+        if import_category in exclude_categories:
+            self.logger.debug(
+                f"Excluding {edge_type} edge {source_id} -> {target_id} "
+                f"(category: {import_category})"
+            )
+            return True
+
+        return False
+
+    def get_node_data(self, chunk_id: str) -> Optional[dict[str, Any]]:
         """
         Get node metadata.
 
@@ -326,7 +441,7 @@ class CodeGraphStorage:
 
         return dict(self.graph.nodes[normalized_chunk_id])
 
-    def get_edge_data(self, caller_id: str, callee_id: str) -> Optional[Dict[str, Any]]:
+    def get_edge_data(self, caller_id: str, callee_id: str) -> Optional[dict[str, Any]]:
         """
         Get edge metadata with validation and normalization.
 
@@ -455,7 +570,7 @@ class CodeGraphStorage:
         self.graph.clear()
         self.logger.info("Cleared call graph")
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """
         Get graph statistics.
 
@@ -477,3 +592,42 @@ class CodeGraphStorage:
     def __contains__(self, chunk_id: str) -> bool:
         """Check if chunk_id is in graph."""
         return chunk_id in self.graph
+
+    def store_community_map(self, community_map: dict[str, int]) -> None:
+        """Persist community assignments to JSON file.
+
+        Args:
+            community_map: Dict mapping chunk_id -> community_id
+        """
+        community_path = self.storage_dir / f"{self.project_id}_communities.json"
+        with open(community_path, "w") as f:
+            json.dump(community_map, f, indent=2)
+        self.logger.info(
+            f"Stored {len(community_map)} community assignments to {community_path}"
+        )
+
+    def load_community_map(self) -> Optional[dict[str, int]]:
+        """Load stored community assignments.
+
+        Returns:
+            Dict mapping chunk_id -> community_id, or None if not found
+        """
+        community_path = self.storage_dir / f"{self.project_id}_communities.json"
+        if community_path.exists():
+            with open(community_path, "r") as f:
+                return json.load(f)
+        return None
+
+    def get_community_for_chunk(self, chunk_id: str) -> Optional[int]:
+        """Get community ID for a specific chunk.
+
+        Args:
+            chunk_id: Chunk identifier
+
+        Returns:
+            Community ID (int) or None if not found
+        """
+        community_map = self.load_community_map()
+        if community_map:
+            return community_map.get(chunk_id)
+        return None

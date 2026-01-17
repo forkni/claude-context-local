@@ -7,7 +7,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from mcp_server.model_pool_manager import get_embedder
@@ -23,8 +23,8 @@ from mcp_server.storage_manager import (
     update_project_filters,
 )
 from mcp_server.tools.decorators import error_handler
+from mcp_server.utils.config_helpers import temporary_ram_fallback_off
 from search.config import (
-    MODEL_POOL_CONFIG,
     MODEL_REGISTRY,
     SearchConfigManager,
 )
@@ -32,6 +32,7 @@ from search.filters import compute_drive_agnostic_hash, compute_legacy_hash
 from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
+
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,7 @@ def _check_file_accessibility(
                 f.read(1)  # Just read 1 byte to check access
         except (PermissionError, IOError):
             inaccessible.append(fp)
-        except Exception:
+        except (UnicodeDecodeError, OSError):
             # Skip other exceptions (encoding errors, etc.)
             pass
 
@@ -87,10 +88,17 @@ def _create_indexer_for_model(
     Returns:
         tuple: (indexer, embedder, chunker)
     """
+    from graph.relation_filter import RepositoryRelationFilter
+
     config = get_config()
+
+    # Create relation filter for import classification (RepoGraph filtering)
+    relation_filter = RepositoryRelationFilter(project_root=Path(directory_path))
+
     chunker = MultiLanguageChunker(
         directory_path,
         enable_entity_tracking=config.performance.enable_entity_tracking,
+        relation_filter=relation_filter,
     )
     embedder = get_embedder(model_key)
 
@@ -214,6 +222,61 @@ def _build_index_response(
         }
 
 
+def _clear_index_files_before_create(index_dir: Path) -> None:
+    """Clear index files before creating a new HybridSearcher.
+
+    This is needed for force_full reindex to avoid file locks on Windows.
+    When MCP server is running and holds references to metadata.db, deleting
+    files before creating the new HybridSearcher prevents WinError 32.
+
+    Args:
+        index_dir: Directory containing index files to clear
+    """
+    import shutil
+
+    logger.info(
+        f"[PRE-CLEAR] Deleting index files before HybridSearcher creation: {index_dir}"
+    )
+
+    # Delete metadata.db (SQLite database)
+    metadata_path = index_dir / "metadata.db"
+    if metadata_path.exists():
+        try:
+            metadata_path.unlink()
+            logger.info("[PRE-CLEAR] Deleted metadata.db")
+        except OSError as e:
+            logger.warning(f"[PRE-CLEAR] Could not delete metadata.db: {e}")
+
+    # Delete BM25 directory
+    bm25_dir = index_dir / "bm25"
+    if bm25_dir.exists():
+        try:
+            shutil.rmtree(bm25_dir)
+            logger.info("[PRE-CLEAR] Deleted BM25 directory")
+        except OSError as e:
+            logger.warning(f"[PRE-CLEAR] Could not delete BM25 directory: {e}")
+
+    # Delete FAISS index
+    faiss_path = index_dir / "code.index"
+    if faiss_path.exists():
+        try:
+            faiss_path.unlink()
+            logger.info("[PRE-CLEAR] Deleted FAISS index")
+        except OSError as e:
+            logger.warning(f"[PRE-CLEAR] Could not delete FAISS index: {e}")
+
+    # Delete call graph
+    call_graph_pattern = str(index_dir.parent / "*_call_graph.json")
+    import glob
+
+    for graph_file in glob.glob(call_graph_pattern):
+        try:
+            Path(graph_file).unlink()
+            logger.info(f"[PRE-CLEAR] Deleted call graph: {graph_file}")
+        except OSError as e:
+            logger.warning(f"[PRE-CLEAR] Could not delete call graph: {e}")
+
+
 def _index_with_all_models(
     directory_path: Path, incremental: bool, include_dirs=None, exclude_dirs=None
 ) -> list[dict]:
@@ -233,7 +296,11 @@ def _index_with_all_models(
     original_model = original_config.embedding.model_name
 
     try:
-        for model_key, model_name in MODEL_POOL_CONFIG.items():
+        # Use pool from manager (respects config file setting)
+        from mcp_server.model_pool_manager import get_model_pool_manager
+
+        pool_config = get_model_pool_manager()._get_pool_config()
+        for model_key, model_name in pool_config.items():
             # Apply VRAM tier selection for qwen3 (selects 0.6B/4B/8B based on available VRAM)
             if model_key == "qwen3":
                 from search.vram_manager import VRAMTierManager
@@ -288,7 +355,11 @@ def _index_with_all_models(
                 pass
 
             # Get project storage for this model
-            project_dir = get_project_storage_dir(str(directory_path))
+            project_dir = get_project_storage_dir(
+                str(directory_path),
+                include_dirs=include_dirs,
+                exclude_dirs=exclude_dirs,
+            )
             index_dir = project_dir / "index"
             index_dir.mkdir(exist_ok=True)
 
@@ -303,6 +374,11 @@ def _index_with_all_models(
                 enable_entity_tracking=config.performance.enable_entity_tracking,
             )
             embedder = get_embedder(model_key)
+
+            # For force_full reindex, delete index files BEFORE creating HybridSearcher
+            # to avoid WinError 32 (file lock) when MCP server holds references
+            if not incremental:
+                _clear_index_files_before_create(index_dir)
 
             # Create fresh indexer instance directly (bypass global cache)
             if config.search_mode.enable_hybrid:
@@ -373,7 +449,7 @@ def _index_with_all_models(
 
         # Set current_model_key for subsequent operations
         # (same pattern used in model_pool_manager.py:151-155)
-        for key, name in MODEL_POOL_CONFIG.items():
+        for key, name in pool_config.items():
             if name == original_model:
                 state.current_model_key = key
                 break
@@ -387,7 +463,7 @@ def _index_with_all_models(
 
 
 @error_handler("Clear index")
-async def handle_clear_index(arguments: Dict[str, Any]) -> dict:
+async def handle_clear_index(arguments: dict[str, Any]) -> dict:
     """Clear the entire search index for ALL models."""
     import shutil
 
@@ -463,7 +539,7 @@ async def handle_clear_index(arguments: Dict[str, Any]) -> dict:
 
 
 @error_handler("Delete project")
-async def handle_delete_project(arguments: Dict[str, Any]) -> dict:
+async def handle_delete_project(arguments: dict[str, Any]) -> dict:
     """Delete an indexed project completely (indices + Merkle snapshots).
 
     This tool properly closes database connections before deletion to prevent
@@ -605,7 +681,7 @@ async def handle_delete_project(arguments: Dict[str, Any]) -> dict:
 
 
 @error_handler("Index")
-async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
+async def handle_index_directory(arguments: dict[str, Any]) -> dict:
     """Index a directory for code search with multi-model support.
 
     Uses extracted helper functions for clarity:
@@ -717,7 +793,10 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
         # (needed for both first index AND filter changes in multi-model setup)
         if get_state().multi_model_enabled:
             # Update each model's project_info.json
-            for model_key in MODEL_POOL_CONFIG.keys():
+            from mcp_server.model_pool_manager import get_model_pool_manager
+
+            pool_config = get_model_pool_manager()._get_pool_config()
+            for model_key in pool_config.keys():
                 update_project_filters(
                     str(directory_path),
                     include_dirs,
@@ -731,68 +810,75 @@ async def handle_index_directory(arguments: Dict[str, Any]) -> dict:
     # Set as current project (using setter for proper cross-module sync)
     set_current_project(str(directory_path))
 
-    # Multi-model batch indexing
-    if multi_model and get_state().multi_model_enabled:
-        logger.info(f"Multi-model batch indexing for: {directory_path}")
-        # Run in thread pool to avoid blocking asyncio event loop
-        import asyncio
+    # Temporarily disable allow_ram_fallback during indexing for performance
+    with temporary_ram_fallback_off() as original_value:
+        if original_value:
+            logger.info(
+                "[INDEX] RAM fallback auto-disabled for this indexing operation"
+            )
 
-        results = await asyncio.to_thread(
-            _index_with_all_models,
-            directory_path,
-            incremental,
-            include_dirs,
-            exclude_dirs,
-        )
-        return _build_index_response(
-            results, str(directory_path), multi_model=True, incremental=incremental
-        )
+        # Multi-model batch indexing
+        if multi_model and get_state().multi_model_enabled:
+            logger.info(f"Multi-model batch indexing for: {directory_path}")
+            # Run in thread pool to avoid blocking asyncio event loop
+            import asyncio
 
-    # Single model indexing (original behavior)
-    else:
-        logger.info(f"Single-model indexing for: {directory_path}")
+            results = await asyncio.to_thread(
+                _index_with_all_models,
+                directory_path,
+                incremental,
+                include_dirs,
+                exclude_dirs,
+            )
+            return _build_index_response(
+                results, str(directory_path), multi_model=True, incremental=incremental
+            )
 
-        # Get or create project storage
-        project_dir = get_project_storage_dir(str(directory_path))
-        index_dir = project_dir / "index"
-        index_dir.mkdir(exist_ok=True)
+        # Single model indexing (original behavior)
+        else:
+            logger.info(f"Single-model indexing for: {directory_path}")
 
-        # Load config for chunker initialization
-        config = get_config()
+            # Get or create project storage
+            project_dir = get_project_storage_dir(str(directory_path))
+            index_dir = project_dir / "index"
+            index_dir.mkdir(exist_ok=True)
 
-        # Initialize components using cached getter functions
-        chunker = MultiLanguageChunker(
-            str(directory_path),
-            include_dirs,
-            exclude_dirs,
-            enable_entity_tracking=config.performance.enable_entity_tracking,
-        )
-        embedder = get_embedder()
-        searcher_instance = get_searcher(str(directory_path))
-        indexer = (
-            searcher_instance
-            if config.search_mode.enable_hybrid
-            else get_index_manager(str(directory_path))
-        )
+            # Load config for chunker initialization
+            config = get_config()
 
-        # Run indexing (using helper) - in thread pool to avoid blocking event loop
-        import asyncio
+            # Initialize components using cached getter functions
+            chunker = MultiLanguageChunker(
+                str(directory_path),
+                include_dirs,
+                exclude_dirs,
+                enable_entity_tracking=config.performance.enable_entity_tracking,
+            )
+            embedder = get_embedder()
+            searcher_instance = get_searcher(str(directory_path))
+            indexer = (
+                searcher_instance
+                if config.search_mode.enable_hybrid
+                else get_index_manager(str(directory_path))
+            )
 
-        result = await asyncio.to_thread(
-            _run_indexing,
-            indexer,
-            embedder,
-            chunker,
-            str(directory_path),
-            incremental,
-            include_dirs,
-            exclude_dirs,
-        )
+            # Run indexing (using helper) - in thread pool to avoid blocking event loop
+            import asyncio
 
-        # Build response (using helper)
-        return _build_index_response(
-            [result],
-            str(directory_path),
-            multi_model=False,
-            incremental=incremental,
-        )
+            result = await asyncio.to_thread(
+                _run_indexing,
+                indexer,
+                embedder,
+                chunker,
+                str(directory_path),
+                incremental,
+                include_dirs,
+                exclude_dirs,
+            )
+
+            # Build response (using helper)
+            return _build_index_response(
+                [result],
+                str(directory_path),
+                multi_model=False,
+                incremental=incremental,
+            )

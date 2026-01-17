@@ -23,7 +23,7 @@ def test_phase2_symbol_hash_cache():
     # Add test chunks
     test_chunks = []
     for i in range(100):
-        chunk_id = f"search/module_{i % 10}.py:{i*10}-{i*10+10}:function:func_{i}"
+        chunk_id = f"search/module_{i % 10}.py:{i * 10}-{i * 10 + 10}:function:func_{i}"
         metadata = {
             "relative_path": f"search/module_{i % 10}.py",
             "chunk_type": "function",
@@ -74,9 +74,9 @@ def test_phase2_symbol_hash_cache():
 
     # Verify symbols reloaded
     for chunk_id in test_chunks[:5]:
-        assert (
-            chunk_id in store2._symbol_cache
-        ), f"Symbol {chunk_id} should be in reloaded cache"
+        assert chunk_id in store2._symbol_cache, (
+            f"Symbol {chunk_id} should be in reloaded cache"
+        )
 
     print("\n[OK] Phase 2 tests passed!")
     print(f"[OK] Symbol cache O(1) lookups: {avg_time_us:.2f} us average")

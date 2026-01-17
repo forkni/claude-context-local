@@ -12,6 +12,7 @@ from typing import Optional
 
 from search.filters import find_project_at_different_drive
 
+
 logger = logging.getLogger(__name__)
 
 # Default storage location (same as main storage)

@@ -1,10 +1,12 @@
 """Incremental indexing using Merkle tree change detection."""
 
+import gc
 import logging
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from chunking.python_ast_chunker import CodeChunk
@@ -15,8 +17,10 @@ from merkle.snapshot_manager import SnapshotManager
 
 from .bm25_sync import BM25SyncManager
 from .config import get_search_config
+from .graph_integration import GraphIntegration
 from .indexer import CodeIndexManager as Indexer
 from .parallel_chunker import ParallelChunker
+
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +40,7 @@ class IncrementalIndexResult:
     bm25_resynced: bool = False
     bm25_resync_count: int = 0
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         """Convert to dictionary."""
         return {
             "files_added": self.files_added,
@@ -74,7 +78,12 @@ class IncrementalIndexer:
             include_dirs: Optional list of directories to include
             exclude_dirs: Optional list of directories to exclude
         """
-        self.indexer = indexer or Indexer()
+        if indexer is None:
+            # Create indexer with temporary storage directory for testing
+            temp_dir = tempfile.mkdtemp(prefix="incremental_index_")
+            self.indexer = Indexer(temp_dir)
+        else:
+            self.indexer = indexer
         self.embedder = embedder or CodeEmbedder()
 
         # Load configuration for chunker initialization
@@ -109,9 +118,27 @@ class IncrementalIndexer:
         )
         self._bm25_sync = BM25SyncManager(indexer=self.indexer)
 
+    def _get_symbol_cache(self):
+        """Get symbol cache, handling both CodeIndexManager and HybridSearcher.
+
+        Returns:
+            SymbolHashCache instance or None if not available
+        """
+        # Try direct access (CodeIndexManager)
+        if hasattr(self.indexer, "metadata_store"):
+            return self.indexer.metadata_store._symbol_cache
+
+        # Try via dense_index (HybridSearcher)
+        if hasattr(self.indexer, "dense_index"):
+            dense_index = self.indexer.dense_index
+            if hasattr(dense_index, "metadata_store"):
+                return dense_index.metadata_store._symbol_cache
+
+        return None
+
     def _chunk_files_parallel(
-        self, project_path: str, file_paths: List[str]
-    ) -> List[CodeChunk]:
+        self, project_path: str, file_paths: list[str]
+    ) -> list[CodeChunk]:
         """Chunk files in parallel or sequentially based on configuration.
 
         Args:
@@ -123,7 +150,7 @@ class IncrementalIndexer:
         """
         return self._parallel_chunker.chunk_files(project_path, file_paths)
 
-    def detect_changes(self, project_path: str) -> Tuple[FileChanges, MerkleDAG]:
+    def detect_changes(self, project_path: str) -> tuple[FileChanges, MerkleDAG]:
         """Detect changes in project since last snapshot.
 
         Args:
@@ -186,6 +213,18 @@ class IncrementalIndexer:
             # Check if we should do full index
             if force_full or not self.snapshot_manager.has_snapshot(project_path):
                 logger.info(f"Performing full index for {project_name}")
+
+                # Free VRAM before full reindex to speed up indexing and prevent memory pressure
+                if force_full:
+                    logger.info("Freeing VRAM before force_full reindex...")
+                else:
+                    logger.info("Freeing VRAM before initial indexing...")
+                try:
+                    self.embedder.cleanup()
+                    logger.info("VRAM cleanup completed successfully")
+                except Exception as e:
+                    logger.warning(f"VRAM cleanup failed (continuing with index): {e}")
+
                 return self._full_index(project_path, project_name, start_time)
 
             # Detect changes
@@ -419,6 +458,91 @@ class IncrementalIndexer:
 
             logger.info(f"Total chunks collected: {len(all_chunks)}")
 
+            # ========== Community Detection & Remerge ==========
+            # Community merge flow: Chunk → Build graph → Detect communities → (Optional) Remerge → Embed
+            # FIX: Community detection can now run independently of chunk merging
+            config = get_search_config()
+            community_map = None  # Will be populated if community detection runs
+
+            # Step A: Community Detection (Independent - can run without merging)
+            if config.chunking.enable_community_detection and all_chunks:
+                logger.info("[COMMUNITY_DETECT] Running community detection")
+                logger.info(
+                    f"[COMMUNITY_DETECT] Starting with {len(all_chunks)} chunks"
+                )
+
+                try:
+                    # Build graph from chunks (NetworkX DiGraph)
+                    # Uses GraphIntegration.build_graph_from_chunks() - no embeddings needed
+                    temp_graph = self._build_temp_graph(all_chunks)
+
+                    # Detect communities using native Louvain algorithm
+                    # NetworkX native (no external dependencies: igraph/leidenalg)
+                    from graph.community_detector import CommunityDetector
+
+                    detector = CommunityDetector(temp_graph.storage)
+                    community_map = detector.detect_communities(
+                        resolution=config.chunking.community_resolution
+                    )
+                    logger.info(
+                        f"[COMMUNITY_DETECT] Detected {len(set(community_map.values()))} communities from {len(community_map)} nodes"
+                    )
+
+                    # NEW: Persist community_map to graph storage for future use
+                    if community_map and temp_graph:
+                        temp_graph.storage.store_community_map(community_map)
+                        logger.info(
+                            "[COMMUNITY_DETECT] Community map persisted to graph storage"
+                        )
+
+                except Exception as e:
+                    logger.error(f"[COMMUNITY_DETECT] Failed: {e}")
+                    import traceback
+
+                    logger.error(traceback.format_exc())
+                    logger.warning(
+                        "[COMMUNITY_DETECT] Continuing without community data"
+                    )
+                    community_map = None
+
+            # Step B: Community-based Remerge (Full index only)
+            if config.chunking.enable_community_merge and community_map and all_chunks:
+                logger.info("[COMMUNITY_MERGE] Running community-based remerge")
+
+                try:
+                    # Remerge with community boundaries
+                    # Uses fixed remerge_chunks_with_communities() from base.py
+                    from chunking.languages.base import LanguageChunker
+
+                    all_chunks = LanguageChunker.remerge_chunks_with_communities(
+                        chunks=all_chunks,
+                        community_map=community_map,
+                        min_tokens=config.chunking.min_chunk_tokens,
+                        max_merged_tokens=config.chunking.max_merged_tokens,
+                        token_method=config.chunking.token_estimation,
+                        size_method=config.chunking.size_method,
+                    )
+                    logger.info(
+                        f"[COMMUNITY_MERGE] Community remerge complete: {len(all_chunks)} chunks"
+                    )
+
+                    # Regenerate proper chunk_ids (line numbers changed after merge)
+                    all_chunks = self._regenerate_chunk_ids(all_chunks, project_path)
+
+                    logger.info(
+                        f"[COMMUNITY_MERGE] Community merge complete: {len(all_chunks)} final chunks"
+                    )
+
+                except Exception as e:
+                    logger.error(f"[COMMUNITY_MERGE] Failed: {e}")
+                    import traceback
+
+                    logger.error(traceback.format_exc())
+                    logger.warning(
+                        "[COMMUNITY_MERGE] Continuing with unmerged chunks from Pass 1"
+                    )
+            # ========== END Community Detection & Remerge ==========
+
             # Embed all chunks in one batched call
             all_embedding_results = []
             if all_chunks:
@@ -512,8 +636,8 @@ class IncrementalIndexer:
         return 0
 
     def _get_supported_files(
-        self, project_path: str, all_files: List[str]
-    ) -> List[str]:
+        self, project_path: str, all_files: list[str]
+    ) -> list[str]:
         """Filter files to only those supported for indexing.
 
         Args:
@@ -525,15 +649,131 @@ class IncrementalIndexer:
         """
         return [f for f in all_files if self._is_supported_file(project_path, f)]
 
+    def _build_temp_graph(self, chunks: list[CodeChunk]) -> GraphIntegration:
+        """Build temporary graph from chunks for community detection.
+
+        Creates a GraphIntegration instance and builds the NetworkX graph
+        from unmerged chunks WITHOUT embeddings. Used for pre-embedding
+        community detection in two-pass chunking flow.
+
+        Args:
+            chunks: List of CodeChunk objects with chunk_id, calls, relationships
+
+        Returns:
+            GraphIntegration instance with populated NetworkX graph
+
+        Reference:
+            search/graph_integration.py:build_graph_from_chunks()
+        """
+        # Create temporary GraphIntegration with project ID
+        # Use indexer's storage directory for graph storage
+        storage_dir = (
+            Path(self.indexer.storage_dir)
+            if hasattr(self.indexer, "storage_dir")
+            else Path(tempfile.mkdtemp(prefix="temp_graph_"))
+        )
+
+        # Extract project ID from storage directory name if available
+        project_id = (
+            storage_dir.name if storage_dir.exists() else "temp_community_graph"
+        )
+
+        graph_integration = GraphIntegration(
+            project_id=project_id, storage_dir=storage_dir
+        )
+
+        # Build graph from chunks (NetworkX DiGraph API)
+        graph_integration.build_graph_from_chunks(chunks)
+
+        logger.info(
+            f"[COMMUNITY_MERGE] Built temporary graph: {graph_integration.node_count} nodes"
+        )
+
+        return graph_integration
+
+    def _regenerate_chunk_ids(
+        self, chunks: list[CodeChunk], project_path: str
+    ) -> list[CodeChunk]:
+        """Regenerate proper chunk_ids after community-based remerge.
+
+        After remerging chunks with community boundaries, line numbers change
+        and chunk_ids become invalid. This method regenerates chunk_ids with
+        correct line ranges and proper format.
+
+        Format: {relative_path}:{start_line}-{end_line}:{chunk_type}:{name}
+
+        Args:
+            chunks: List of CodeChunk objects after remerge
+            project_path: Root project directory for computing relative paths
+
+        Returns:
+            List of CodeChunk with regenerated chunk_ids
+
+        Example:
+            src/auth.py:10-50:function:login
+            src/models.py:5-120:class:User
+            src/utils.py:15-45:method:Database.connect
+        """
+        from dataclasses import replace
+
+        result = []
+        project_root = Path(project_path)
+
+        for chunk in chunks:
+            # Compute relative path
+            if chunk.relative_path:
+                rel_path = chunk.relative_path
+            else:
+                chunk_path = Path(chunk.file_path)
+                try:
+                    rel_path = str(chunk_path.relative_to(project_root))
+                except ValueError:
+                    # If relative_to fails, use the filename
+                    rel_path = chunk_path.name
+
+            # Normalize path separators to forward slash
+            normalized_path = str(rel_path).replace("\\", "/")
+
+            # Build chunk_id: path:lines:type:name
+            chunk_id = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
+
+            # Add qualified name if available
+            if chunk.parent_name and chunk.name:
+                chunk_id += f":{chunk.parent_name}.{chunk.name}"
+            elif chunk.name:
+                chunk_id += f":{chunk.name}"
+
+            # Create new chunk with regenerated ID
+            new_chunk = replace(chunk, chunk_id=chunk_id)
+            result.append(new_chunk)
+
+            # Register symbol mappings for all symbols in this chunk
+            symbol_cache = self._get_symbol_cache()
+            if symbol_cache is not None:
+                # Register primary symbol name
+                if chunk.name:
+                    symbol_cache.add_symbol_mapping(chunk.name, chunk_id)
+
+                # Register all merged symbol names (for merged chunks)
+                # Phase A6: Use merged_from attribute instead of metadata
+                if chunk.merged_from:
+                    for symbol_name in chunk.merged_from:
+                        if symbol_name:  # Skip empty names
+                            symbol_cache.add_symbol_mapping(symbol_name, chunk_id)
+
+        logger.info(f"[COMMUNITY_MERGE] Regenerated chunk_ids for {len(result)} chunks")
+
+        return result
+
     def _build_snapshot_metadata(
         self,
         project_name: str,
-        all_files: List,
-        supported_files: List,
+        all_files: list,
+        supported_files: list,
         total_chunks: int,
         is_full: bool = False,
         **changes,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Build metadata dictionary for snapshot storage.
 
         Args:
@@ -668,7 +908,7 @@ class IncrementalIndexer:
 
         return len(all_embedding_results)
 
-    def _sync_bm25_if_needed(self, log_prefix: str = "INCREMENTAL") -> Tuple[bool, int]:
+    def _sync_bm25_if_needed(self, log_prefix: str = "INCREMENTAL") -> tuple[bool, int]:
         """Auto-sync BM25 if significant desync detected (>10% difference).
 
         Args:
@@ -697,7 +937,7 @@ class IncrementalIndexer:
         except ImportError:
             pass
 
-    def get_indexing_stats(self, project_path: str) -> Optional[Dict]:
+    def get_indexing_stats(self, project_path: str) -> Optional[dict]:
         """Get indexing statistics for a project.
 
         Args:
@@ -762,6 +1002,92 @@ class IncrementalIndexer:
             logger.info(
                 f"Auto-reindexing {project_path} (index older than {max_age_minutes} minutes)"
             )
+
+            # Free VRAM before re-indexing to prevent OOM in multi-model mode
+            logger.info("Freeing VRAM before auto-reindex (multi-model cleanup)...")
+            try:
+                # Import here to avoid circular dependencies
+                from mcp_server.model_pool_manager import reset_pool_manager
+                from mcp_server.services import get_state
+
+                state = get_state()
+
+                # Clear ALL embedders in multi-model pool (not just self.embedder)
+                if state.embedders:
+                    embedder_count = len(state.embedders)
+                    logger.info(
+                        f"Clearing {embedder_count} cached embedder(s) before reindex: "
+                        f"{list(state.embedders.keys())}"
+                    )
+                    state.clear_embedders()
+                    logger.info("Embedder pool cleared - VRAM released")
+
+                # Reset ModelPoolManager singleton to release all model references
+                reset_pool_manager()
+                logger.info("ModelPoolManager singleton reset")
+
+                # Force garbage collection and GPU cache cleanup
+                gc.collect()
+                logger.info("Garbage collection completed")
+
+                try:
+                    import torch
+
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        logger.info("GPU cache cleared")
+                except ImportError:
+                    pass
+
+                logger.info("Multi-model VRAM cleanup completed successfully")
+            except Exception as e:
+                logger.warning(
+                    f"Multi-model VRAM cleanup failed (continuing with reindex): {e}"
+                )
+
+            # Cleanup OUR OWN embedder reference before creating a new one
+            # This prevents VRAM accumulation (old embedder + new embedder)
+            if hasattr(self, "embedder") and hasattr(self.embedder, "cleanup"):
+                logger.info("Cleaning up IncrementalIndexer's embedder reference...")
+                self.embedder.cleanup()
+                logger.info("IncrementalIndexer's embedder cleaned")
+
+            # Refresh embedder after cleanup - old one can't reload (model loader cleared)
+            # This ensures cleanup happens before model is loaded for reindex
+            from mcp_server.model_pool_manager import (
+                get_embedder,
+                get_model_key_from_name,
+            )
+            from search.dimension_validator import read_index_metadata
+
+            # CRITICAL: Read the model from the existing index to ensure we use the SAME model
+            # that was used to create the index (prevents dimension mismatch errors)
+            model_key = None
+            try:
+                # Get storage_dir from indexer (CodeIndexManager or HybridSearcher.dense_index)
+                if hasattr(self.indexer, "storage_dir"):
+                    storage_dir = self.indexer.storage_dir
+                elif hasattr(self.indexer, "dense_index") and hasattr(
+                    self.indexer.dense_index, "storage_dir"
+                ):
+                    storage_dir = self.indexer.dense_index.storage_dir
+                else:
+                    storage_dir = None
+
+                if storage_dir:
+                    metadata = read_index_metadata(storage_dir)
+                    if metadata and metadata.get("embedding_model"):
+                        model_name = metadata["embedding_model"]
+                        model_key = get_model_key_from_name(model_name)
+                        logger.info(
+                            f"Using model from index: {model_name} (key: {model_key})"
+                        )
+            except Exception as e:
+                logger.warning(f"Could not read model from index metadata: {e}")
+
+            self.embedder = get_embedder(model_key)
+            logger.info("Embedder refreshed after cleanup - ready for reindex")
+
             return self.incremental_index(project_path, project_name)
         else:
             logger.debug(f"Index for {project_path} is fresh, skipping reindex")

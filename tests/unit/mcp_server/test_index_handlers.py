@@ -75,9 +75,9 @@ class TestCheckFileAccessibility:
             _check_file_accessibility(files, sample_size=10)
 
         # Verify only 10 files were opened (sample_size)
-        assert (
-            open_count[0] == 10
-        ), f"Expected 10 files to be opened, but {open_count[0]} were opened"
+        assert open_count[0] == 10, (
+            f"Expected 10 files to be opened, but {open_count[0]} were opened"
+        )
 
 
 if __name__ == "__main__":

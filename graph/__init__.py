@@ -26,6 +26,7 @@ from .call_graph_extractor import (
 from .graph_queries import GraphQueryEngine
 from .graph_storage import CodeGraphStorage
 
+
 __all__ = [
     "CallEdge",
     "CallGraphExtractor",

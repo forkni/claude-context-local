@@ -18,7 +18,7 @@ Examples:
 """
 
 import ast
-from typing import Any, Dict, List
+from typing import Any
 
 from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
 from graph.relationship_types import RelationshipEdge, RelationshipType
@@ -37,14 +37,14 @@ class EnumMemberExtractor(BaseRelationshipExtractor):
     - Metadata includes enum_class and member fields for filtering
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize enum extractor."""
         super().__init__()
         self.relationship_type = RelationshipType.DEFINES_ENUM_MEMBER
 
     def extract(
-        self, code: str, chunk_metadata: Dict[str, Any]
-    ) -> List[RelationshipEdge]:
+        self, code: str, chunk_metadata: dict[str, Any]
+    ) -> list[RelationshipEdge]:
         """
         Extract enum member relationships from code.
 
@@ -121,7 +121,7 @@ class EnumMemberExtractor(BaseRelationshipExtractor):
 
         return False
 
-    def _extract_enum_members(self, node: ast.ClassDef, chunk_metadata: Dict[str, Any]):
+    def _extract_enum_members(self, node: ast.ClassDef, chunk_metadata: dict[str, Any]):
         """
         Extract Enum.MEMBER definitions from enum class body.
 
@@ -164,7 +164,7 @@ class EnumMemberExtractor(BaseRelationshipExtractor):
         class_name: str,
         member_name: str,
         line_number: int,
-        chunk_metadata: Dict[str, Any],
+        chunk_metadata: dict[str, Any],
         has_annotation: bool = False,
     ):
         """

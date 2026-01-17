@@ -11,12 +11,12 @@ Supported formats:
 Key principle: NO data is filtered or limited, only formatting is optimized.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 
 def format_response(
-    data: Dict[str, Any], output_format: str = "compact"
-) -> Dict[str, Any]:
+    data: dict[str, Any], output_format: str = "compact"
+) -> dict[str, Any]:
     """Format response based on output_format parameter.
 
     Args:
@@ -34,7 +34,7 @@ def format_response(
         return _to_compact_format(data)
 
 
-def _to_compact_format(data: Dict[str, Any]) -> Dict[str, Any]:
+def _to_compact_format(data: dict[str, Any]) -> dict[str, Any]:
     """Compact format: omit empty fields, remove redundant fields, keep full key names.
 
     Optimizations:
@@ -77,7 +77,7 @@ def _to_compact_format(data: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def _compact_dict(d: Dict[str, Any]) -> Dict[str, Any]:
+def _compact_dict(d: dict[str, Any]) -> dict[str, Any]:
     """Compact a single dict: omit redundant fields, keep full key names.
 
     Args:
@@ -106,7 +106,7 @@ def _compact_dict(d: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def _to_toon_format(data: Dict[str, Any]) -> Dict[str, Any]:
+def _to_toon_format(data: dict[str, Any]) -> dict[str, Any]:
     """TOON-inspired tabular format for arrays.
 
     TOON format reference: https://github.com/toon-format/toon
@@ -134,17 +134,22 @@ def _to_toon_format(data: Dict[str, Any]) -> Dict[str, Any]:
 
         if isinstance(value, list) and value and isinstance(value[0], dict):
             # Convert array of dicts to tabular format
-            first_item = value[0]
+            # Collect ALL unique fields from ALL items (not just first item)
+            all_fields = set()
+            for item in value:
+                all_fields.update(item.keys())
 
             # Determine fields (exclude redundant file/lines if chunk_id present)
             fields = []
-            for field_name in first_item.keys():
+            has_chunk_id = any(item.get("chunk_id") for item in value)
+            for field_name in sorted(all_fields):  # Sort for consistent order
                 # Skip redundant fields
-                if field_name in ("file", "lines") and first_item.get("chunk_id"):
+                if field_name in ("file", "lines") and has_chunk_id:
                     continue
-                # Skip empty fields
-                if first_item.get(field_name) not in ([], {}, None, ""):
-                    fields.append(field_name)
+                # Skip fields that are empty in all items
+                if all(item.get(field_name) in ([], {}, None, "") for item in value):
+                    continue
+                fields.append(field_name)
 
             if fields:
                 # Create TOON header: "key[count]{field1,field2,...}"

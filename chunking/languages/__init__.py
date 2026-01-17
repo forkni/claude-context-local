@@ -28,6 +28,7 @@ from .python import PythonChunker
 from .rust import RustChunker
 from .typescript import TypeScriptChunker
 
+
 __all__ = [
     # Base classes
     "TreeSitterChunk",

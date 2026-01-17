@@ -11,10 +11,14 @@ Complexity: Medium (handling relative imports, aliases, star imports)
 """
 
 import ast
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Optional
 
 from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
 from graph.relationship_types import RelationshipEdge, RelationshipType
+
+
+if TYPE_CHECKING:
+    from graph.relation_filter import RepositoryRelationFilter
 
 
 class ImportExtractor(BaseRelationshipExtractor):
@@ -26,6 +30,7 @@ class ImportExtractor(BaseRelationshipExtractor):
     - Parse ast.ImportFrom nodes (from module import symbol)
     - Handle relative imports (from . import, from .. import)
     - Track import aliases
+    - Classify imports (stdlib/third-party/local) when filter provided
 
     Edge Direction:
     - Source: File/module doing the importing
@@ -42,20 +47,27 @@ class ImportExtractor(BaseRelationshipExtractor):
     ```
 
     Creates edges:
-    - file.py -> os
-    - file.py -> typing.List
-    - file.py -> typing.Dict
-    - file.py -> .local.helper (relative import)
+    - file.py -> os (import_category: stdlib)
+    - file.py -> typing.List (import_category: stdlib)
+    - file.py -> typing.Dict (import_category: stdlib)
+    - file.py -> .local.helper (import_category: local)
     """
 
-    def __init__(self):
-        """Initialize the import extractor."""
+    def __init__(
+        self, relation_filter: Optional["RepositoryRelationFilter"] = None
+    ) -> None:
+        """Initialize the import extractor.
+
+        Args:
+            relation_filter: Optional RepositoryRelationFilter for import classification
+        """
         super().__init__()
         self.relationship_type = RelationshipType.IMPORTS
+        self.relation_filter = relation_filter
 
     def extract(
-        self, code: str, chunk_metadata: Dict[str, Any]
-    ) -> List[RelationshipEdge]:
+        self, code: str, chunk_metadata: dict[str, Any]
+    ) -> list[RelationshipEdge]:
         """
         Extract import relationships from code.
 
@@ -86,7 +98,7 @@ class ImportExtractor(BaseRelationshipExtractor):
 
         return self.edges
 
-    def _extract_from_tree(self, tree: ast.AST, chunk_metadata: Dict[str, Any]) -> None:
+    def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         """
         Walk AST and extract import statements.
 
@@ -104,7 +116,7 @@ class ImportExtractor(BaseRelationshipExtractor):
                 self._extract_from_import_from(node, chunk_metadata)
 
     def _extract_from_import(
-        self, import_node: ast.Import, chunk_metadata: Dict[str, Any]
+        self, import_node: ast.Import, chunk_metadata: dict[str, Any]
     ) -> None:
         """
         Extract from import statement.
@@ -129,6 +141,11 @@ class ImportExtractor(BaseRelationshipExtractor):
             # if self._should_skip_target(module_name, include_stdlib=False):
             #     continue
 
+            # Classify import if filter available
+            import_category = "unknown"
+            if self.relation_filter:
+                import_category = self.relation_filter.classify_import(module_name)
+
             # Create import edge
             self._add_edge(
                 source_id=source_id,
@@ -136,11 +153,12 @@ class ImportExtractor(BaseRelationshipExtractor):
                 line_number=line_number,
                 confidence=1.0,
                 import_type="import",
+                import_category=import_category,
                 alias=alias_name,
             )
 
     def _extract_from_import_from(
-        self, import_node: ast.ImportFrom, chunk_metadata: Dict[str, Any]
+        self, import_node: ast.ImportFrom, chunk_metadata: dict[str, Any]
     ) -> None:
         """
         Extract from "from module import symbol" statement.
@@ -198,6 +216,11 @@ class ImportExtractor(BaseRelationshipExtractor):
             # if self._should_skip_target(target_name, include_stdlib=False):
             #     continue
 
+            # Classify import if filter available
+            import_category = "unknown"
+            if self.relation_filter:
+                import_category = self.relation_filter.classify_import(target_name)
+
             # Create import edge
             self._add_edge(
                 source_id=source_id,
@@ -205,6 +228,7 @@ class ImportExtractor(BaseRelationshipExtractor):
                 line_number=line_number,
                 confidence=1.0,
                 import_type="from_import",
+                import_category=import_category,
                 module=full_module,
                 symbol=symbol_name,
                 alias=alias_name,
@@ -241,7 +265,7 @@ class ImportExtractor(BaseRelationshipExtractor):
 
 def extract_import_relationships(
     code: str, file_path: str = "unknown.py"
-) -> List[RelationshipEdge]:
+) -> list[RelationshipEdge]:
     """
     Convenience function to extract import relationships.
 
