@@ -13,7 +13,7 @@ This modular reference can be embedded in any project instructions for Claude Co
 | **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=5, search_mode="hybrid", model_key, use_routing=True, file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False |
 | **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (~90% accuracy with import resolution) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs, relationship_types |
 | **index_directory** | 🔴 **SETUP** | Index project (multi-model support) | directory_path (required), project_name, incremental=True, multi_model=auto |
-| find_similar_code | Secondary | Find alternative implementations | chunk_id (required), k=5 |
+| **find_similar_code** | 🟡 **IMPACT** | Find alternative implementations | chunk_id (required), k=5 |
 | configure_search_mode | Config | Set search mode & weights | search_mode="hybrid", bm25_weight=0.4, dense_weight=0.6, enable_parallel=True |
 | configure_query_routing | Config | Configure multi-model routing (v0.5.4+) | enable_multi_model, default_model, confidence_threshold=0.05 |
 | configure_reranking | Config | Configure neural reranker settings | enabled, model_name, top_k_candidates=50 |
@@ -281,7 +281,7 @@ The `search_code` tool returns results with the following fields:
 
 ## Output Format Options
 
-All 18 MCP tools support configurable output formatting via the `output_format` parameter. This allows you to optimize token usage while preserving 100% of data.
+All 19 MCP tools support configurable output formatting via the `output_format` parameter. This allows you to optimize token usage while preserving 100% of data.
 
 ### Available Formats
 

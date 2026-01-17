@@ -35,7 +35,7 @@
 - **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
 - **18 MCP Tools**: Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
 
-**Status**: ✅ Production-ready | 1,068+ passing tests | All 18 MCP tools operational | Windows 10/11
+**Status**: ✅ Production-ready | 1,068+ passing tests | All 19 MCP tools operational | Windows 10/11
 
 ## Quick Start
 
