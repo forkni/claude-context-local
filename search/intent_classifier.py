@@ -26,6 +26,9 @@ class QueryIntent(Enum):
     LOCAL = "local"  # Symbol lookup: "where is QueryRouter defined"
     GLOBAL = "global"  # Architectural: "how does search pipeline work"
     NAVIGATIONAL = "navigational"  # Relationships: "what calls handle_search_code"
+    PATH_TRACING = "path_tracing"  # Path finding: "trace path from X to Y"
+    SIMILARITY = "similarity"  # Code similarity: "find code similar to X"
+    CONTEXTUAL = "contextual"  # Context exploration: "explore context around X"
     HYBRID = "hybrid"  # Ambiguous/uncertain queries
 
 
@@ -64,6 +67,22 @@ class IntentClassifier:
                 "implementation of",
                 "locate",
                 "show me",
+                # Retrieval verbs
+                "lookup",
+                "retrieve",
+                "get the",
+                "obtain",
+                "fetch",
+                # Phase 2: Thesaurus additions
+                "pinpoint",
+                "track down",
+                "spot",
+                "unearth",
+                "detect",
+                "turn up",
+                # Discovery terms
+                "discover",
+                "identify",
                 # Symbol-specific
                 "class",
                 "function",
@@ -72,12 +91,37 @@ class IntentClassifier:
                 "constant",
                 "module",
                 "file",
+                "interface",
+                "type",
+                "enum",
+                "struct",
             ],
             "patterns": [
                 (r"\b[A-Z][a-z]+([A-Z][a-z]+)+\b", 0.5),  # CamelCase
                 (r"\bwhere\s+is\b", 1.5),
                 (r"\bfind\s+(the\s+)?(implementation|definition)\b", 1.5),
                 (r"\bshow\s+me\s+(the\s+)?", 1.2),
+                (r"\b(lookup|retrieve|fetch)\s+(\w+)\b", 1.3),  # "lookup QueryRouter"
+                (
+                    r"\bget\s+(the\s+)?(\w+)\s+(class|function|definition)\b",
+                    1.5,
+                ),  # "get the QueryRouter class"
+                (
+                    r"\b(enum|interface|struct|type)\s+\w+\b",
+                    1.2,
+                ),  # "interface SearchResult"
+                (
+                    r"\b(pinpoint|spot|detect)\s+(\w+)\b",
+                    1.3,
+                ),  # Phase 2: "pinpoint QueryRouter"
+                (
+                    r"\b(track\s+down|turn\s+up)\s+(\w+)\b",
+                    1.4,
+                ),  # Phase 2: "track down the definition"
+                (
+                    r"\bunearth\s+(the\s+)?\w+\b",
+                    1.3,
+                ),  # Phase 2: "unearth the implementation"
             ],
             "max_tokens": 6,  # Short, focused queries
             "weight": 1.0,
@@ -100,6 +144,31 @@ class IntentClassifier:
                 "process",
                 "mechanism",
                 "strategy",
+                # Software patterns
+                "pattern",
+                "approach",
+                "paradigm",
+                "model",
+                "framework",
+                # Phase 2: Thesaurus additions
+                "arrangement",
+                "organization",
+                "scheme",
+                "procedure",
+                "technique",
+                "network",
+                "methodology",
+                # Conceptual understanding
+                "concept",
+                "rationale",
+                "purpose",
+                "reasoning",
+                "logic behind",
+                # System terms
+                "component",
+                "module interaction",
+                "integration",
+                "data flow",
                 # Understanding queries
                 "understand",
                 "learn about",
@@ -112,6 +181,23 @@ class IntentClassifier:
                 (r"\bhow\s+do\s+.+\s+work\b", 1.8),
                 (r"\b(architecture|pipeline|flow|overview)\b", 1.2),
                 (r"\bexplain\s+(the\s+)?", 1.3),
+                (r"\bwhy\s+(does|is)\b", 1.3),  # "why does search use embeddings"
+                (
+                    r"\bwhat\s+is\s+the\s+(purpose|rationale|logic)\b",
+                    1.4,
+                ),  # "what is the purpose of..."
+                (
+                    r"\b(component|layer)s?\s+(interact|work)\b",
+                    1.2,
+                ),  # "how components interact"
+                (
+                    r"\b(arrangement|organization|scheme)\s+of\b",
+                    1.2,
+                ),  # Phase 2: "organization of search system"
+                (
+                    r"\b(procedure|technique|methodology)\s+(for|of)\b",
+                    1.3,
+                ),  # Phase 2: "methodology for indexing"
             ],
             "weight": 1.0,
             "description": "Architectural/conceptual queries",
@@ -130,6 +216,31 @@ class IntentClassifier:
                 "depends on",
                 "dependencies",
                 "dependents",
+                # Phase 2: Thesaurus additions
+                "relations",
+                "reliance",
+                "correlations",
+                # Caller/Callee terminology
+                "callee",
+                "callees",
+                "invokes",
+                "invoked by",
+                "triggers",
+                "triggered by",
+                # Upstream/Downstream
+                "upstream",
+                "downstream",
+                "upstream of",
+                "downstream of",
+                # Consumer/Provider
+                "consumer",
+                "consumers",
+                "provider",
+                "providers",
+                "client",
+                "clients",
+                "supplier",
+                "suppliers",
                 # Relationship queries
                 "imports",
                 "imported by",
@@ -139,6 +250,17 @@ class IntentClassifier:
                 "extended by",
                 "implements",
                 "implemented by",
+                "decorates",
+                "decorated by",
+                # Exception handling
+                "raises",
+                "throws",
+                "exception",
+                "exceptions",
+                # Instantiation
+                "creates",
+                "instantiates",
+                "instances",
                 # Flow tracing
                 "trace",
                 "flow from",
@@ -152,16 +274,239 @@ class IntentClassifier:
                 (r"\bwhat\s+(calls|uses|depends)\b", 1.8),
                 (r"\b(who\s+)?(calls|uses)\b", 1.5),
                 (r"\b(imports?|inherits?|extends?|implements?)\b", 1.5),
+                (r"\b(decorates?|decorated\s+by)\b", 1.5),
+                (r"\b(raises?|throws?|exceptions?)\b", 1.5),
+                (r"\b(creates?|instantiates?|instances?)\b", 1.5),
+                (r"\b(callee|callees)\s+(of|for)\b", 1.8),  # "callees of process_query"
+                (
+                    r"\b(upstream|downstream)\s+(of|from|to)\b",
+                    1.5,
+                ),  # "upstream of QueryRouter"
+                (
+                    r"\b(consumer|provider|client|supplier)s?\s+(of|for)\b",
+                    1.5,
+                ),  # "consumers of API"
+                (r"\b(invokes?|triggers?)\s+\w+\b", 1.3),  # "invokes handle_search"
                 (r"\btrace\s+", 1.3),
                 (r"\bdependenc(y|ies)\b", 1.2),
+                (
+                    r"\b(relations|reliance|correlations)\s+(of|between)\b",
+                    1.3,
+                ),  # Phase 2: "relations of IntentClassifier"
             ],
             "weight": 1.2,  # Higher weight for strong signal
             "description": "Relationship/dependency queries",
         },
+        "path_tracing": {
+            "keywords": [
+                "trace",
+                "follow",
+                "path from",
+                "path to",
+                "path between",
+                "connect",
+                "connection between",
+                "how does X connect",
+                "flow from",
+                "flow to",
+                "reaches",
+                "leads to",
+                # Phase 2: Thesaurus additions
+                "trail",
+                "pursue",
+                # Journey metaphors
+                "route",
+                "route from",
+                "route to",
+                "journey",
+                # Linking terms
+                "link",
+                "link between",
+                "bridge",
+                "bridge to",
+                # Sequence terms
+                "traversal",
+            ],
+            "patterns": [
+                (r"\btrace\s+(path\s+)?(from|to)\b", 2.0),
+                (
+                    r"\bfollow\s+(the\s+)?(path|call|execution|flow)\b",
+                    1.8,
+                ),  # "follow the path", "follow call"
+                (r"\bpath\s+(from|to|between)\b", 2.0),
+                (r"\bhow\s+does\s+\w+\s+connect\s+to\b", 1.8),
+                (r"\bconnection\s+between\b", 1.5),
+                (r"\b(from|to)\s+\w+\s+(to|from)\s+\w+\b", 1.3),
+                (
+                    r"\b(trail|pursue)\s+(the\s+)?(path|call|flow)\b",
+                    1.5,
+                ),  # Phase 2: "trail the path"
+                (
+                    r"\b(route|journey)\s+(from|to|between)\b",
+                    1.8,
+                ),  # "route from login to logout"
+                (r"\blink\s+(between|from|to)\b", 1.5),  # "link between modules"
+            ],
+            "weight": 1.3,
+            "description": "Path tracing queries between code entities",
+        },
+        "similarity": {
+            "keywords": [
+                "similar to",
+                "similar code",
+                "like this",
+                "patterns like",
+                "code like",
+                "implementations like",
+                "similar implementations",
+                "same pattern",
+                "resembles",
+                "looks like",
+                # Phase 2: Thesaurus additions
+                "replicate",
+                "mimic",
+                "emulate",
+                "replica",
+                "mirror",
+                "counterpart",
+                "look-alike",
+                "parallel",
+                "twin",
+                # Clone detection terminology
+                "clone",
+                "clones",
+                "clone of",
+                "duplicate",
+                "duplicates",
+                "duplicate of",
+                "copy",
+                "copies",
+                "copy of",
+                # Comparative terms
+                "equivalent",
+                "analogous",
+                "comparable",
+                "matching",
+                "matches",
+            ],
+            "patterns": [
+                (r"\bsimilar\s+(to|code|implementations?)\b", 2.0),
+                (r"\b(code|patterns?|implementations?)\s+like\b", 1.8),
+                (r"\bfind\s+(code\s+)?similar\b", 1.8),
+                (r"\b(resembles?|looks?\s+like)\b", 1.3),
+                (
+                    r"\b(clone|duplicate|copy)\s+(of|code)\b",
+                    2.0,
+                ),  # "clone of QueryRouter"
+                (r"\bfind\s+(clones?|duplicates?|copies)\b", 1.8),  # "find clones"
+                (
+                    r"\b(equivalent|analogous|comparable)\s+to\b",
+                    1.5,
+                ),  # "equivalent to X"
+                (r"\b(matches|matching)\s+\w+\b", 1.3),  # "matches QueryRouter pattern"
+                (
+                    r"\b(replicate|mimic|emulate)s?\s+\w+\b",
+                    1.5,
+                ),  # Phase 2: "replicate QueryRouter"
+                (
+                    r"\b(replica|counterpart|twin)\s+(of|for)\b",
+                    1.8,
+                ),  # Phase 2: "replica of QueryRouter"
+                (
+                    r"\b(mirror|parallel)\s+(of|to)\b",
+                    1.5,
+                ),  # Phase 2: "mirror of IntentClassifier"
+                (
+                    r"\blook-alike\s+(of|for|to)\b",
+                    1.5,
+                ),  # Phase 2: "look-alike of QueryRouter"
+            ],
+            "weight": 1.2,
+            "description": "Code similarity queries",
+        },
+        "contextual": {
+            "keywords": [
+                "context",
+                "around",
+                "related to",
+                "connected to",
+                "neighbors",
+                "surrounding",
+                "nearby code",
+                "explore",
+                "overview of",
+                "understand",
+                # Phase 2: Thesaurus additions
+                "investigate",
+                "examine",
+                "probe",
+                "inspect",
+                "survey",
+                "look into",
+                "delve into",
+                "delve",
+                "scout",
+                "scour",
+                # Spatial metaphors
+                "vicinity",
+                "vicinity of",
+                "proximity",
+                "proximity to",
+                "neighborhood",
+                "periphery",
+                # Scope terms
+                "scope",
+                "scope of",
+                "environment",
+                "ecosystem",
+                # Discovery
+                "discover related",
+                "what touches",
+            ],
+            "patterns": [
+                (r"\b(context|surrounding)\b.*\b(of|around|for)\b", 1.8),
+                (r"\brelated\s+(to|code)\b", 1.5),
+                (r"\bexplore\s+\w+\b", 1.3),
+                (r"\bunderstand\s+(how|the)\b", 1.2),
+                (
+                    r"\b(investigate|examine|inspect)\s+\w+\b",
+                    1.3,
+                ),  # Phase 2: "investigate handle_search_code"
+                (
+                    r"\b(delve|probe)\s+(into\s+)?\w+\b",
+                    1.5,
+                ),  # Phase 2: "delve into QueryRouter"
+                (
+                    r"\b(survey|scout)\s+(the\s+)?\w+\b",
+                    1.2,
+                ),  # Phase 2: "survey the codebase"
+                (
+                    r"\b(vicinity|proximity|neighborhood)\s+(of|around)\b",
+                    1.8,
+                ),  # "vicinity of QueryRouter"
+                (
+                    r"\bwhat\s+(touches|interacts\s+with)\b",
+                    1.5,
+                ),  # "what touches this module"
+                (
+                    r"\b(ecosystem|environment)\s+(of|around)\b",
+                    1.3,
+                ),  # "ecosystem of search"
+            ],
+            "weight": 1.0,
+            "description": "Contextual exploration queries (ego-graph beneficial)",
+        },
     }
 
     # Precedence order for tie-breaking (highest priority first)
-    PRECEDENCE = ["navigational", "local", "global"]
+    PRECEDENCE = [
+        "path_tracing",
+        "similarity",
+        "navigational",
+        "contextual",
+        "local",
+        "global",
+    ]
 
     # Default intent when no patterns match
     DEFAULT_INTENT = QueryIntent.HYBRID
@@ -370,6 +715,33 @@ class IntentClassifier:
             if symbol_name:
                 params["symbol_name"] = symbol_name
                 params["tool"] = "find_connections"
+            # Suggest relationship_types filter for specific relationship queries
+            rel_types = self._detect_relationship_types(query)
+            if rel_types:
+                params["relationship_types"] = rel_types
+
+        elif intent == QueryIntent.PATH_TRACING:
+            # Extract source and target for find_path
+            source, target = self._extract_path_endpoints(query)
+            if source and target:
+                params["source"] = source
+                params["target"] = target
+                params["tool"] = "find_path"
+
+        elif intent == QueryIntent.SIMILARITY:
+            # Extract reference symbol for find_similar_code
+            reference = self._extract_symbol_from_query(query)
+            if reference:
+                params["symbol_name"] = reference
+                params["tool"] = "find_similar_code"
+
+        elif intent == QueryIntent.CONTEXTUAL:
+            # Suggest ego_graph for broader context
+            params["ego_graph_enabled"] = True
+            params["ego_graph_k_hops"] = 2
+            symbol_name = self._extract_symbol_from_query(query)
+            if symbol_name:
+                params["symbol_name"] = symbol_name
 
         return params
 
@@ -421,6 +793,115 @@ class IntentClassifier:
                 return word
 
         return None
+
+    def _detect_relationship_types(self, query: str) -> list[str]:
+        """Detect which relationship_types filter to suggest based on query.
+
+        Args:
+            query: Search query string.
+
+        Returns:
+            List of relationship types to filter by, or empty for all.
+
+        Examples:
+            >>> classifier = IntentClassifier()
+            >>> classifier._detect_relationship_types("what inherits from BaseChunker")
+            ['inherits']
+            >>> classifier._detect_relationship_types("what imports QueryRouter")
+            ['imports']
+            >>> classifier._detect_relationship_types("callee of process_query")
+            ['calls']
+        """
+        query_lower = query.lower()
+        types = []
+
+        # Caller/Callee detection (for calls relationship)
+        if any(
+            kw in query_lower
+            for kw in ["caller", "callee", "calls", "invokes", "triggers"]
+        ):
+            types.append("calls")
+
+        # Consumer/Provider detection (maps to calls/uses)
+        if any(
+            kw in query_lower for kw in ["consumer", "provider", "client", "supplier"]
+        ):
+            types.append("calls")
+
+        # Inheritance patterns
+        if any(
+            kw in query_lower
+            for kw in ["inherit", "parent", "child", "extends", "subclass"]
+        ):
+            types.append("inherits")
+
+        # Import patterns
+        if any(
+            kw in query_lower for kw in ["import", "imported by", "module dependencies"]
+        ):
+            types.append("imports")
+
+        # Decorator patterns
+        if any(kw in query_lower for kw in ["decorate", "decorated", "@"]):
+            types.append("decorates")
+
+        # Type usage patterns
+        if any(
+            kw in query_lower for kw in ["type annotation", "typed as", "uses type"]
+        ):
+            types.append("uses_type")
+
+        # Exception patterns
+        if any(kw in query_lower for kw in ["raises", "throws", "exception"]):
+            types.extend(["raises", "catches"])
+
+        # Instantiation patterns
+        if any(kw in query_lower for kw in ["creates", "instantiate", "new instance"]):
+            types.append("instantiates")
+
+        return types
+
+    def _extract_path_endpoints(
+        self, query: str
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Extract source and target symbols from path-tracing queries.
+
+        Args:
+            query: Path tracing query string.
+
+        Returns:
+            Tuple of (source, target) or (None, None) if not found.
+
+        Examples:
+            >>> classifier = IntentClassifier()
+            >>> classifier._extract_path_endpoints("trace path from login to database")
+            ('login', 'database')
+            >>> classifier._extract_path_endpoints("how does UserModel connect to API")
+            ('UserModel', 'API')
+        """
+        query = query.strip()
+
+        # Pattern 1: "from X to Y"
+        match = re.search(r"from\s+(\w+)\s+to\s+(\w+)", query, re.I)
+        if match:
+            return match.group(1), match.group(2)
+
+        # Pattern 2: "between X and Y"
+        match = re.search(r"between\s+(\w+)\s+and\s+(\w+)", query, re.I)
+        if match:
+            return match.group(1), match.group(2)
+
+        # Pattern 3: "how does X connect to Y"
+        match = re.search(r"how\s+does\s+(\w+)\s+connect\s+to\s+(\w+)", query, re.I)
+        if match:
+            return match.group(1), match.group(2)
+
+        # Pattern 4: "X to Y path/connection"
+        match = re.search(r"(\w+)\s+to\s+(\w+)\s+(path|connection)", query, re.I)
+        if match:
+            return match.group(1), match.group(2)
+
+        return None, None
 
     def get_intent_patterns(self, intent: QueryIntent) -> Optional[dict]:
         """Get pattern details for a specific intent type.

@@ -460,6 +460,20 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     if chunk_id:
         return _handle_chunk_id_lookup(chunk_id)
 
+    # Early extraction for model routing (needed by intent redirects)
+    use_routing = arguments.get("use_routing", True)
+    model_key = arguments.get("model_key")
+
+    # Ego-graph defaults (may be overridden by CONTEXTUAL intent)
+    ego_graph_enabled = arguments.get("ego_graph_enabled", False)
+    ego_graph_k_hops = arguments.get("ego_graph_k_hops", 2)
+    ego_graph_max_neighbors = arguments.get("ego_graph_max_neighbors_per_hop", 10)
+
+    # Route query to optimal embedding model
+    selected_model_key, routing_info = _route_query_to_model(
+        query, use_routing, model_key
+    )
+
     # Intent Classification (Phase 2)
     config = get_config()
     if config.intent.enabled:
@@ -474,6 +488,65 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
             f"(conf={intent_decision.confidence:.2f}, reason={intent_decision.reason})"
         )
 
+        # Redirect PATH_TRACING queries to find_path
+        if (
+            intent_decision.intent == QueryIntent.PATH_TRACING
+            and intent_decision.confidence >= config.intent.confidence_threshold
+        ):
+            source = intent_decision.suggested_params.get("source")
+            target = intent_decision.suggested_params.get("target")
+            if source and target:
+                logger.info(
+                    f"[INTENT] Redirecting PATH_TRACING query to find_path: {source} → {target}"
+                )
+                return await handle_find_path(
+                    {
+                        "source": source,
+                        "target": target,
+                        "max_hops": 10,
+                    }
+                )
+
+        # Redirect SIMILARITY queries to find_similar_code
+        if (
+            intent_decision.intent == QueryIntent.SIMILARITY
+            and intent_decision.confidence >= config.intent.confidence_threshold
+        ):
+            symbol_name = intent_decision.suggested_params.get("symbol_name")
+            if symbol_name:
+                # First search to get chunk_id, then find similar
+                logger.info(
+                    f"[INTENT] Redirecting SIMILARITY query to find_similar_code: {symbol_name}"
+                )
+                try:
+                    # Get searcher if not already initialized
+                    if "searcher" not in locals():
+                        searcher = get_searcher(model_key=selected_model_key)
+                    search_result = searcher.search(symbol_name, k=1)
+                    if search_result:
+                        return await handle_find_similar_code(
+                            {
+                                "chunk_id": search_result[0].chunk_id,
+                                "k": k,
+                            }
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"[INTENT] Failed to redirect SIMILARITY query: {e}. "
+                        f"Falling back to normal search."
+                    )
+
+        # Apply ego_graph for CONTEXTUAL queries (don't redirect, enhance search)
+        if intent_decision.intent == QueryIntent.CONTEXTUAL:
+            if intent_decision.suggested_params.get("ego_graph_enabled"):
+                ego_graph_enabled = True
+                ego_graph_k_hops = intent_decision.suggested_params.get(
+                    "ego_graph_k_hops", 2
+                )
+                logger.info(
+                    f"[INTENT] Enabling ego_graph for CONTEXTUAL query (k_hops={ego_graph_k_hops})"
+                )
+
         # Redirect NAVIGATIONAL queries to find_connections
         if (
             intent_decision.intent == QueryIntent.NAVIGATIONAL
@@ -481,15 +554,18 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
             and config.intent.enable_navigational_redirect
         ):
             symbol_name = intent_decision.suggested_params.get("symbol_name")
+            rel_types = intent_decision.suggested_params.get("relationship_types")
             if symbol_name:
                 logger.info(
                     f"[INTENT] Redirecting NAVIGATIONAL query to find_connections: {symbol_name}"
+                    + (f" with relationship_types={rel_types}" if rel_types else "")
                 )
                 return await handle_find_connections(
                     {
                         "symbol_name": symbol_name,
                         "exclude_dirs": arguments.get("exclude_dirs"),
                         "max_depth": 3,
+                        "relationship_types": rel_types,  # Pass detected relationship types
                     }
                 )
 
@@ -514,13 +590,6 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     max_age_minutes = arguments.get(
         "max_age_minutes", get_config().performance.max_index_age_minutes
     )
-    use_routing = arguments.get("use_routing", True)
-    model_key = arguments.get("model_key")
-
-    # Ego-graph retrieval parameters (RepoGraph-style k-hop expansion)
-    ego_graph_enabled = arguments.get("ego_graph_enabled", False)
-    ego_graph_k_hops = arguments.get("ego_graph_k_hops", 2)
-    ego_graph_max_neighbors = arguments.get("ego_graph_max_neighbors_per_hop", 10)
 
     # Parent chunk retrieval parameter (Match Small, Retrieve Big)
     include_parent = arguments.get("include_parent", False)
@@ -536,11 +605,6 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
             "current_project": None,
             "system_message": "No project indexed. Use index_directory(directory_path) to index a project first.",
         }
-
-    # Route query to optimal embedding model
-    selected_model_key, routing_info = _route_query_to_model(
-        query, use_routing, model_key
-    )
 
     # Check and perform auto-reindex if index is stale
     current_project = get_state().current_project

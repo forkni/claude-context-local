@@ -264,6 +264,17 @@ class CodeRelationshipAnalyzer:
                 "[INIT] No graph_storage found on searcher - relationship queries will be empty"
             )
 
+        # Access symbol_cache for O(1) type resolution (inherits, catches)
+        self.symbol_cache = None
+        if hasattr(searcher, "dense_index") and hasattr(
+            searcher.dense_index, "symbol_cache"
+        ):
+            self.symbol_cache = searcher.dense_index.symbol_cache
+            logger.debug("[INIT] Symbol cache available for type resolution")
+        elif hasattr(searcher, "symbol_cache"):
+            self.symbol_cache = searcher.symbol_cache
+            logger.debug("[INIT] Symbol cache available from searcher")
+
     def analyze_impact(
         self,
         chunk_id: str = None,
@@ -561,7 +572,7 @@ class CodeRelationshipAnalyzer:
                         final_score = 0.0
                     similar_dict = {
                         "chunk_id": result_id,
-                        "file": file_path,
+                        "file": normalize_path(file_path) if file_path else "",
                         "lines": f"{result.start_line}-{result.end_line}",
                         "kind": result.chunk_type,
                         "score": final_score,
@@ -610,10 +621,27 @@ class CodeRelationshipAnalyzer:
             if caller_callers:
                 dependency_graph[caller_id] = caller_callers
 
-        # Step 7: Calculate unique files
-        unique_files = {symbol_info["file"]}
-        for item in direct_callers + indirect_callers + similar_code:
-            unique_files.add(item.get("file", ""))
+        # Step 7: Calculate unique files (normalized to relative paths with forward slashes)
+        unique_files = set()
+
+        # Extract file path from chunk_id (always relative) and normalize
+        def extract_normalized_path(item_dict: dict) -> str:
+            """Extract file path from chunk_id or file field, normalized to forward slashes."""
+            # Prefer chunk_id as it's always relative
+            chunk_id = item_dict.get("chunk_id", "")
+            if chunk_id and ":" in chunk_id:
+                # Extract file path from chunk_id format: "file.py:10-20:function:name"
+                file_path = chunk_id.split(":")[0]
+                return normalize_path(file_path)
+            # Fallback to file field if no chunk_id
+            file_path = item_dict.get("file", "")
+            return normalize_path(file_path) if file_path else ""
+
+        # Collect normalized paths
+        for item in [symbol_info] + direct_callers + indirect_callers + similar_code:
+            normalized = extract_normalized_path(item)
+            if normalized:
+                unique_files.add(normalized)
 
         # Build report
         total_impacted = len(direct_callers) + len(indirect_callers) + len(similar_code)
@@ -662,30 +690,35 @@ class CodeRelationshipAnalyzer:
         )
 
     def _result_to_dict(self, result, chunk_id: str) -> dict[str, Any]:
-        """Convert search result to dict format."""
+        """Convert search result to dict format with normalized file paths."""
         if isinstance(result, dict):
             result["chunk_id"] = chunk_id
+            # Normalize file path if present
+            if "file" in result:
+                result["file"] = normalize_path(result["file"])
             return result
 
         # Handle both reranker.SearchResult and searcher.SearchResult
         if hasattr(result, "metadata"):
             # reranker.SearchResult (from HybridSearcher)
+            file_path = result.metadata.get(
+                "file", result.metadata.get("file_path", "")
+            )
             return {
                 "chunk_id": chunk_id,
-                "file": result.metadata.get(
-                    "file", result.metadata.get("file_path", "")
-                ),
+                "file": normalize_path(file_path) if file_path else "",
                 "lines": f"{result.metadata.get('start_line', 0)}-{result.metadata.get('end_line', 0)}",
                 "kind": result.metadata.get("chunk_type", "unknown"),
                 "score": result.score,
             }
         else:
             # searcher.SearchResult (from IntelligentSearcher)
+            file_path = getattr(
+                result, "file_path", getattr(result, "relative_path", "")
+            )
             return {
                 "chunk_id": chunk_id,
-                "file": getattr(
-                    result, "file_path", getattr(result, "relative_path", "")
-                ),
+                "file": normalize_path(file_path) if file_path else "",
                 "lines": f"{getattr(result, 'start_line', 0)}-{getattr(result, 'end_line', 0)}",
                 "kind": getattr(result, "chunk_type", "unknown"),
                 "score": getattr(result, "similarity_score", 0.0),
@@ -733,6 +766,22 @@ class CodeRelationshipAnalyzer:
                 "lines": f"{getattr(result, 'start_line', 0)}-{getattr(result, 'end_line', 0)}",
                 "kind": getattr(result, "chunk_type", "unknown"),
             }
+
+    def _get_chunk_info(self, chunk_id: str) -> dict:
+        """Get basic info about a chunk from its chunk_id.
+
+        Args:
+            chunk_id: Chunk ID in format "file.py:10-20:class:Name"
+
+        Returns:
+            Dict with file, kind, and name extracted from chunk_id
+        """
+        parts = chunk_id.split(":")
+        return {
+            "file": parts[0] if parts else "",
+            "kind": parts[2] if len(parts) > 2 else "unknown",
+            "name": parts[3] if len(parts) > 3 else "",
+        }
 
     def _extract_relationships(
         self, chunk_id: str, exclude_dirs: list[str] | None = None
@@ -947,24 +996,54 @@ class CodeRelationshipAnalyzer:
                                     ):
                                         result[forward_field].append(info)
                                 else:
-                                    # Target is a name (expected case for inherits)
-                                    # Store with graceful degradation (no file info)
-                                    if _should_include_relationship(""):
-                                        result[forward_field].append(
-                                            {
-                                                "target_name": target,
-                                                "relationship_type": rel_type,
-                                                "line": edge_data.get("line_number")
-                                                or edge_data.get("line", 0),
-                                                "confidence": edge_data.get(
-                                                    "confidence", 1.0
-                                                ),
-                                                "metadata": edge_data.get(
-                                                    "metadata", {}
-                                                ),
-                                                "note": "Type resolution not implemented - showing name only",
-                                            }
+                                    # Target is a name - try to resolve via SymbolHashCache
+                                    resolved_chunk_id = None
+
+                                    # Try O(1) symbol cache lookup
+                                    if self.symbol_cache:
+                                        resolved_chunk_id = (
+                                            self.symbol_cache.get_by_symbol_name(target)
                                         )
+
+                                    if resolved_chunk_id:
+                                        # Found in index - get full chunk info
+                                        chunk_info = self._get_chunk_info(
+                                            resolved_chunk_id
+                                        )
+                                        if _should_include_relationship(
+                                            chunk_info.get("file", "")
+                                        ):
+                                            result[forward_field].append(
+                                                {
+                                                    "chunk_id": resolved_chunk_id,
+                                                    "target_name": target,
+                                                    "kind": chunk_info.get(
+                                                        "kind", "unknown"
+                                                    ),
+                                                    "file": chunk_info.get("file"),
+                                                    "line": edge_data.get("line_number")
+                                                    or edge_data.get("line", 0),
+                                                    "confidence": edge_data.get(
+                                                        "confidence", 1.0
+                                                    ),
+                                                    "relationship_type": rel_type,
+                                                }
+                                            )
+                                    else:
+                                        # Not in index - likely external/builtin type
+                                        if _should_include_relationship(""):
+                                            result[forward_field].append(
+                                                {
+                                                    "target_name": target,
+                                                    "relationship_type": rel_type,
+                                                    "line": edge_data.get("line_number")
+                                                    or edge_data.get("line", 0),
+                                                    "confidence": edge_data.get(
+                                                        "confidence", 1.0
+                                                    ),
+                                                    "note": "External or builtin type (not in index)",
+                                                }
+                                            )
                 except Exception as e:
                     logger.debug(
                         f"Failed to process outgoing edge {chunk_id} -> {target}: {e}"
