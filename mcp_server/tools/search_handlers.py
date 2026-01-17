@@ -371,8 +371,7 @@ def _format_search_results(results: list) -> list[dict]:
                 "score": round(result.similarity_score, 2),
                 "chunk_id": result.chunk_id,
             }
-            if hasattr(result, "name") and result.name:
-                item["name"] = result.name
+            # Note: name field omitted (redundant with chunk_id last component)
             # Add complexity score if available (functions only)
             if hasattr(result, "complexity_score") and result.complexity_score:
                 item["complexity_score"] = result.complexity_score
@@ -681,8 +680,20 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
 
     # Build response
     response = {"query": query, "results": formatted_results}
+
+    # Only include routing info when useful for debugging:
+    # - Skip for explicit user overrides (they know what they picked)
+    # - Skip for high-confidence routing (>= 0.9, expected behavior)
+    # - Include for low confidence (< 0.9) or fallback scenarios
     if routing_info:
-        response["routing"] = routing_info
+        confidence = routing_info.get("confidence", 0.0)
+        reason = routing_info.get("reason", "")
+
+        # Include routing info if:
+        # - Low confidence routing (< 0.9) - might need review
+        # - Fallback scenarios - user should know routing failed
+        if confidence < 0.9 or "Fallback" in reason or "routed" in reason.lower():
+            response["routing"] = routing_info
 
     # Add AI guidance system message
     response = add_system_message(
