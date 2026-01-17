@@ -386,8 +386,12 @@ class TestToonFormat:
         for i, field in enumerate(fields):
             assert rows[0][i] == data["items"][0][field]
 
-    def test_format_note_added_to_toon_output(self):
-        """TOON format should include interpretation hint."""
+    def test_toon_format_no_format_note(self):
+        """TOON format should not include format note (token optimization).
+
+        Format note removed to save 15-30 tokens per response.
+        TOON format is self-explanatory and documented in MCP_TOOLS_REFERENCE.md.
+        """
         data = {
             "items": [
                 {"id": "a", "score": 1.0},
@@ -397,14 +401,10 @@ class TestToonFormat:
 
         result = _to_toon_format(data)
 
-        # Should have format note
-        assert "_format_note" in result
-        assert (
-            result["_format_note"]
-            == "TOON format: header[count]{fields}: [[row1], [row2], ...]"
-        )
+        # Should NOT have format note (removed for token savings)
+        assert "_format_note" not in result
 
-        # Format note should not interfere with data
+        # Data should still be formatted correctly
         assert "items[2]{id,score}" in result
 
 

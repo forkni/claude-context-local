@@ -295,8 +295,19 @@ tools/benchmark_models.py
 tools/update_ground_truth_merge.py
 tools/update_gt_mcp.py
 tools/run_benchmark_mcp.py
+tools/run_mcp_benchmark.py
 tools/chunking_ground_truth.json
+tools/chunking_ground_truth_verified.json
 tools/benchmark_chunking.py
+tools/benchmark_quick_test.py
+tools/benchmark_retrieval_quality.py
+tools/analyze_batch_results.py
+tools/create_corrected_ground_truth.py
+tools/verify_ground_truth_from_source.py
+tools/ground_truth_verification_report.json
+
+# Benchmark results and analysis outputs
+results/
 
 # Development-only tests (require local evaluation module, invalid imports, or gated models)
 tests/unit/test_evaluation.py

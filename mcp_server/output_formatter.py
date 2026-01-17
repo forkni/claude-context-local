@@ -173,10 +173,7 @@ def _to_toon_format(data: dict[str, Any]) -> dict[str, Any]:
             # For primitives, keep as-is
             result[key] = value
 
-    # Add format interpretation hint for agent understanding
-    if result:  # Only add if we have data
-        result["_format_note"] = (
-            "TOON format: header[count]{fields}: [[row1], [row2], ...]"
-        )
+    # Format is self-explanatory and documented in MCP_TOOLS_REFERENCE.md
+    # Removed _format_note to save 15-30 tokens per response
 
     return result
