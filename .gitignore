@@ -278,6 +278,10 @@ docs/PER_MODEL_INDICES_IMPLEMENTATION.md
 docs/RELATIONSHIP_TYPES_IMPLEMENTATION.md
 docs/PRE_COMMIT_HOOKS.md
 
+# Call graph implementation planning (tracked in repo)
+!docs/Call_Graph_Implementation/
+!docs/Call_Graph_Implementation/**
+
 # Evaluation and test results (temporary/generated files)
 custom_evaluation_results/
 evaluation_results/
