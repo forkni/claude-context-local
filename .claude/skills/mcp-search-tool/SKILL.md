@@ -125,7 +125,7 @@ What are you trying to do?
 - `chunk_id` (optional): Direct chunk ID for O(1) lookup (format: "file:lines:type:name")
 - `k` (default: 5): Number of results to return
 - `search_mode` (default: "hybrid"): Search method - "hybrid", "semantic", or "bm25"
-- `model_key` (optional): Force specific model - "qwen3", "bge_m3", or "coderankembed"
+- `model_key` (optional): Force specific model - "qwen3", "bge_m3", "coderankembed", "gte_modernbert", "c2llm"
 - `use_routing` (default: True): Enable multi-model query routing
 - `file_pattern` (optional): Filter by filename/path pattern (e.g., "auth", "models")
 - `include_dirs` (optional): Only search in these directories (e.g., ["src/", "lib/"])
@@ -138,6 +138,7 @@ What are you trying to do?
 - `max_age_minutes` (default: 5): Maximum age of index before auto-reindex
 - `ego_graph_enabled` (default: False): Enable RepoGraph-style k-hop ego-graph expansion for graph neighbors
 - `ego_graph_k_hops` (default: 2, range: 1-5): Depth of graph traversal (higher = more neighbors)
+- **Weighted Graph Traversal** (v0.8.7+): Ego-graph uses edge-type-weighted BFS — `calls` edges (weight=1.0) are prioritized over `imports` edges (weight=0.3). Based on SOG paper ablation showing different relation types contribute differently to code understanding.
 - **Automatic Import Filtering** (v0.8.3+): When ego-graph is enabled, stdlib and third-party imports are automatically filtered from graph traversal for cleaner, more relevant neighbors (RepoGraph Feature #5: Repository-Dependent Relation Filtering)
 - `ego_graph_max_neighbors_per_hop` (default: 10, range: 1-50): Maximum neighbors to retrieve per hop
 - `include_parent` (default: False): Enable parent-child retrieval - when a method is matched, also retrieve its enclosing class for fuller context ("Match Small, Retrieve Big")
@@ -181,11 +182,12 @@ search_code("ParallelChunker chunk_files", chunk_type="split_block")
 | `chunk_id` | string | ✅ | Unique identifier (format: `"file:lines:type:name"`) |
 | `kind` | string | ✅ | Chunk type (`function`, `class`, `method`, etc.) |
 | `score` | float | ✅ | Relevance score (0.0-1.0) |
+| `blended_score` | float | ✅ | Final ranking score (centrality × alpha + semantic × (1-alpha)) |
+| `centrality` | float | ✅ | PageRank centrality score (structurally important code scores higher) |
+| `source` | string | ✅ | How result was found: `"hybrid"`, `"multi_hop"`, `"ego_graph"` |
 | `complexity_score` | int | ⚠️ Optional | Cyclomatic complexity (functions/methods only, Python) |
 | `graph` | object | ⚠️ Optional | Call relationships (`calls`, `called_by` arrays) |
 | `reranker_score` | float | ⚠️ Optional | Neural reranker score (when enabled) |
-
-**Note**: `file` and `lines` fields are present in verbose mode but omitted in compact/ultra modes since `chunk_id` contains this information.
 
 #### 2. `index_directory(directory_path, project_name=None, incremental=True, multi_model=None, include_dirs=None, exclude_dirs=None)`
 
@@ -258,6 +260,8 @@ index_directory("C:\Projects\MyApp", multi_model=True)
 - `relationship_types` (optional, v0.8.4+): Filter to only include specific relationship types (e.g., `["inherits", "imports", "decorates"]`). If not provided, all relationship types are included.
 
   **Valid types (21 total)**: `calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`, `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`, `uses_context_manager`
+
+**Relationship Extractors** (v0.8.7+): 15 extractors active, including P3 extractors for `implements` (Protocol/ABC detection) and `overrides` (method override detection via inheritance graph)
 
 **Returns**: Structured report with direct callers, indirect callers, similar code, and dependency graph
 
@@ -708,28 +712,61 @@ get_search_config_status()
 
 **Performance**: 52-57ms average
 
-## Advanced Features (Enabled by Default)
+## Advanced Features
 
-### Multi-Hop Search
+### Feature Classification
 
-**Purpose**: Discover interconnected code relationships through iterative semantic search
+| Category | Features | Control | Description |
+|----------|----------|---------|-------------|
+| **Always-on quality** | Multi-Hop (hybrid mode), Centrality Reranking, BM25 Stemming | Global config | Directly improve result quality — no opt-in needed |
+| **Per-query opt-in** | `ego_graph_enabled`, `include_parent` | MCP parameter | Change output shape — Claude agent enables when helpful |
 
-**How It Works**:
+### Multi-Hop Search (Graph-Aware)
+
+**Purpose**: Discover interconnected code relationships through graph traversal and semantic similarity
+
+**How It Works** (3 expansion modes):
+
+| Mode | Expansion Method | Use Case |
+|------|-----------------|----------|
+| `"hybrid"` (default) | Graph neighbors first, then semantic similarity | Best quality — structurally relevant + semantically similar |
+| `"graph"` | Code graph neighbors only (`calls`, `inherits`, `imports`) | When structural dependencies matter most |
+| `"semantic"` | FAISS similarity only (legacy) | Pure semantic matching |
 
 1. **Hop 1**: Find chunks matching your query (hybrid search with k×2 results)
-2. **Hop 2**: For each top result, find semantically similar chunks (k×0.3 per result)
-3. **Re-ranking**: Sort all discovered chunks by query relevance
+2. **Hop 2 (graph)**: For each top result, find graph neighbors via weighted BFS (prioritizes `calls`=1.0 over `imports`=0.3)
+3. **Hop 2 (semantic)**: Find semantically similar chunks (skips already-seen from graph)
+4. **Re-ranking**: Sort ALL discovered chunks by query relevance through the reranker
+
+**Key Research Finding** (RepoGraph ICLR 2025, SOG USENIX '24):
+Graph traversal finds **functionally necessary dependencies** that semantic search misses. A query for `process_payment()` now also finds `db.connect()` and `validate_card()` via `calls` edges.
 
 **Benefits** (Empirically Validated):
-
 - **93.3% of queries benefit** from multi-hop
-- **Average 3.2 unique chunks** discovered per query
-- **40-60% top result changes** for complex queries
-- **Example**: "configuration management" → finds primary class + env vars + validation + persistence
+- **Graph neighbors compete through reranker** — only the best-ranked results survive
+- Results show `source: "multi_hop"` when discovered via graph expansion
 
 **Performance**: +25-35ms overhead (negligible for 93% benefit rate)
 
-**Status**: **Enabled by default** with optimal settings (2 hops, 0.3 expansion)
+**Status**: **Always-on** with optimal settings (2 hops, 0.3 expansion, hybrid mode)
+
+### Centrality Reranking (Always-On)
+
+**Purpose**: Boost structurally important code in search results using PageRank graph analysis
+
+**How It Works**: Blends PageRank centrality scores with semantic similarity:
+```
+blended_score = centrality × alpha + semantic_score × (1 - alpha)
+```
+Where `alpha = 0.3` (30% centrality, 70% semantic).
+
+**Effect**: Functions that are frequently called, imported, or inherited rank higher. A utility function called by 50 other functions gets a centrality boost over an isolated helper.
+
+**Result Fields Added**:
+- `blended_score`: Final ranking score after centrality blending
+- `centrality`: Raw PageRank score for the code chunk
+
+**Status**: **Always-on** when graph data is available (no opt-in needed)
 
 ### BM25 Snowball Stemming
 
