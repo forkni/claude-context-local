@@ -7,7 +7,8 @@
     "enable_import_context": true,
     "enable_class_context": true,
     "max_import_lines": 10,
-    "max_class_signature_lines": 5
+    "max_class_signature_lines": 5,
+    "enable_structural_header": true
   },
   "search_mode": {
     "default_mode": "hybrid",

@@ -458,6 +458,7 @@ class SearchConfig:
                 "enable_class_context": self.embedding.enable_class_context,
                 "max_import_lines": self.embedding.max_import_lines,
                 "max_class_signature_lines": self.embedding.max_class_signature_lines,
+                "enable_structural_header": self.embedding.enable_structural_header,
             },
             "search_mode": {
                 "default_mode": self.search_mode.default_mode,
@@ -604,6 +605,9 @@ class SearchConfig:
                 max_import_lines=embedding_data.get("max_import_lines", 10),
                 max_class_signature_lines=embedding_data.get(
                     "max_class_signature_lines", 5
+                ),
+                enable_structural_header=embedding_data.get(
+                    "enable_structural_header", True
                 ),
             )
 
@@ -759,6 +763,7 @@ class SearchConfig:
                 enable_class_context=data.get("enable_class_context", True),
                 max_import_lines=data.get("max_import_lines", 10),
                 max_class_signature_lines=data.get("max_class_signature_lines", 5),
+                enable_structural_header=data.get("enable_structural_header", True),
             )
 
             search_mode = SearchModeConfig(

@@ -115,7 +115,7 @@ What are you trying to do?
 
 ### 🔴 Essential Tools (Use First)
 
-#### 1. `search_code(query OR chunk_id, k=5, search_mode="hybrid", model_key=None, use_routing=True, file_pattern=None, include_dirs=None, exclude_dirs=None, chunk_type=None, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False)`
+#### 1. `search_code(query OR chunk_id, k=4, search_mode="hybrid", model_key=None, use_routing=True, file_pattern=None, include_dirs=None, exclude_dirs=None, chunk_type=None, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=1, ego_graph_max_neighbors_per_hop=5, include_parent=False)`
 
 **Purpose**: Find code with natural language queries OR direct symbol lookup (40-45% token savings vs file reading)
 
@@ -123,7 +123,7 @@ What are you trying to do?
 
 - `query` (optional): Natural language description of what you're looking for
 - `chunk_id` (optional): Direct chunk ID for O(1) lookup (format: "file:lines:type:name")
-- `k` (default: 5): Number of results to return
+- `k` (default: 4): Number of results to return
 - `search_mode` (default: "hybrid"): Search method - "hybrid", "semantic", or "bm25"
 - `model_key` (optional): Force specific model - "qwen3", "bge_m3", "coderankembed", "gte_modernbert", "c2llm"
 - `use_routing` (default: True): Enable multi-model query routing
@@ -137,10 +137,10 @@ What are you trying to do?
 - `auto_reindex` (default: True): Automatically reindex if index is stale
 - `max_age_minutes` (default: 5): Maximum age of index before auto-reindex
 - `ego_graph_enabled` (default: False): Enable RepoGraph-style k-hop ego-graph expansion for graph neighbors
-- `ego_graph_k_hops` (default: 2, range: 1-5): Depth of graph traversal (higher = more neighbors)
+- `ego_graph_k_hops` (default: 1, range: 1-5): Depth of graph traversal (1=direct neighbors, reduced from 2 to limit noise)
 - **Weighted Graph Traversal** (v0.8.7+): Ego-graph uses edge-type-weighted BFS — `calls` edges (weight=1.0) are prioritized over `imports` edges (weight=0.3). Based on SOG paper ablation showing different relation types contribute differently to code understanding.
 - **Automatic Import Filtering** (v0.8.3+): When ego-graph is enabled, stdlib and third-party imports are automatically filtered from graph traversal for cleaner, more relevant neighbors (RepoGraph Feature #5: Repository-Dependent Relation Filtering)
-- `ego_graph_max_neighbors_per_hop` (default: 10, range: 1-50): Maximum neighbors to retrieve per hop
+- `ego_graph_max_neighbors_per_hop` (default: 5, range: 1-50): Maximum neighbors to retrieve per hop (reduced from 10 for precision)
 - `include_parent` (default: False): Enable parent-child retrieval - when a method is matched, also retrieve its enclosing class for fuller context ("Match Small, Retrieve Big")
 
 **Examples**:
@@ -186,7 +186,7 @@ search_code("ParallelChunker chunk_files", chunk_type="split_block")
 | `centrality` | float | ✅ | PageRank centrality score (structurally important code scores higher) |
 | `source` | string | ✅ | How result was found: `"hybrid"`, `"multi_hop"`, `"ego_graph"` |
 | `complexity_score` | int | ⚠️ Optional | Cyclomatic complexity (functions/methods only, Python) |
-| `graph` | object | ⚠️ Optional | Call relationships (`calls`, `called_by` arrays) |
+| `graph` | object | ⚠️ Optional | Code relationships (21 types: `calls`, `inherits`, `imports`, `uses_type`, etc.) |
 | `reranker_score` | float | ⚠️ Optional | Neural reranker score (when enabled) |
 
 #### 2. `index_directory(directory_path, project_name=None, incremental=True, multi_model=None, include_dirs=None, exclude_dirs=None)`
@@ -635,28 +635,28 @@ switch_embedding_model("google/embeddinggemma-300m")
 - Memory running low
 - GPU memory needs to be freed
 
-#### 19. `configure_chunking(enable_chunk_merging=None, min_chunk_tokens=None, max_merged_tokens=None, token_estimation=None, enable_large_node_splitting=None, max_chunk_lines=None)`
+#### 19. `configure_chunking(enable_community_detection=None, enable_community_merge=None, community_resolution=None, token_estimation=None, enable_large_node_splitting=None, max_chunk_lines=None)`
 
 **Purpose**: Configure code chunking settings at runtime
 
 **Parameters**:
 
-- `enable_chunk_merging` (optional): Enable/disable greedy chunk merging (default: True)
-- `min_chunk_tokens` (optional): Minimum tokens before merge (10-500, default: 50)
-- `max_merged_tokens` (optional): Maximum tokens for merged chunks (100-5000, default: 1000)
+- `enable_community_detection` (optional): Enable/disable community detection via Louvain algorithm (default: True)
+- `enable_community_merge` (optional): Enable/disable community-based remerge for full index (default: True)
+- `community_resolution` (optional): Resolution parameter for Louvain community detection (0.1-2.0, default: 1.0, higher = more communities)
 - `token_estimation` (optional): Token estimation method - "whitespace" (fast) or "tiktoken" (accurate, default: "whitespace")
 - `enable_large_node_splitting` (optional): Enable AST block splitting for large functions (default: False)
 - `max_chunk_lines` (optional): Maximum lines per chunk before splitting at AST boundaries (10-1000, default: 100)
 
 **Returns**: Updated configuration + system message
 
-**Note**: Re-index project to apply changes
+**Note**: Re-index project to apply changes. `min_chunk_tokens` (50) and `max_merged_tokens` (1000) are optimal defaults and not exposed as parameters.
 
 **Example**:
 
 ```bash
-# Enable greedy merging with custom token limits
-configure_chunking(enable_chunk_merging=True, min_chunk_tokens=50, max_merged_tokens=1000)
+# Configure community detection with custom resolution
+configure_chunking(enable_community_detection=True, community_resolution=1.5)
 
 # Enable large node splitting for better granularity
 configure_chunking(enable_large_node_splitting=True, max_chunk_lines=100)
