@@ -280,10 +280,14 @@ class SubgraphExtractor:
         )  # includes search results + ego neighbors if present
         topology_order = self._build_topology_order(all_ids)
 
+        # SSCG Phase 4: Annotate nodes with community IDs and generate labels
+        communities = self._annotate_communities(nodes)
+
         return SubgraphResult(
             nodes=nodes,
             edges=edges,
             topology_order=topology_order,
+            communities=communities if communities else None,
         )
 
     def _build_topology_order(self, chunk_ids: list[str]) -> list[str]:
