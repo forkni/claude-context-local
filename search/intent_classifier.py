@@ -20,6 +20,51 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 
+# Blocklist of common programming terms that shouldn't be matched as symbols
+_CODE_TERM_BLOCKLIST = {
+    "method",
+    "function",
+    "class",
+    "module",
+    "variable",
+    "constant",
+    "attribute",
+    "property",
+    "field",
+    "parameter",
+    "argument",
+    "type",
+    "interface",
+    "enum",
+    "struct",
+    "trait",
+    "protocol",
+    "caller",
+    "callers",
+    "callee",
+    "callees",
+    "implementation",
+    "definition",
+    "declaration",
+    "reference",
+    "import",
+    "imports",
+    "export",
+    "exports",
+    "handler",
+    "helper",
+    "utility",
+    "wrapper",
+    "factory",
+    "object",
+    "instance",
+    "value",
+    "result",
+    "error",
+    "exception",
+}
+
+
 class QueryIntent(Enum):
     """Query intent types for retrieval strategy selection."""
 
@@ -781,13 +826,25 @@ class IntentClassifier:
         if match:
             return match.group(1)
 
-        # Pattern 5: Last CamelCase or snake_case word
+        # Pattern 5: Last CamelCase or snake_case word (3-pass with blocklist)
         words = query.split()
+
+        # First pass: prefer words with underscores (strong symbol signal)
         for word in reversed(words):
-            # Remove trailing punctuation
             word = word.rstrip(".,!?;:")
-            # Check if it looks like a symbol (CamelCase or snake_case)
-            if re.match(r"^[A-Z][a-zA-Z0-9]+$", word) or re.match(
+            if "_" in word and re.match(r"^[a-z][a-z0-9_]+$", word):
+                return word
+
+        # Second pass: CamelCase (always a symbol)
+        for word in reversed(words):
+            word = word.rstrip(".,!?;:")
+            if re.match(r"^[A-Z][a-zA-Z0-9]+$", word):
+                return word
+
+        # Third pass: plain lowercase (but not blocklisted)
+        for word in reversed(words):
+            word = word.rstrip(".,!?;:")
+            if word.lower() not in _CODE_TERM_BLOCKLIST and re.match(
                 r"^[a-z][a-z0-9_]+$", word
             ):
                 return word
