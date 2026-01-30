@@ -509,10 +509,17 @@ class CodeRelationshipAnalyzer:
 
                         # Get callers using both chunk_id AND symbol name
                         callers_by_id = self.graph.get_callers(caller_id)
+                        # Skip bare name lookup for dunder methods and very short names
+                        # (they are too generic and produce massive false-positive fan-out)
+                        _skip_bare_name = (
+                            caller_symbol == caller_id
+                            or caller_symbol.startswith("__")
+                            or len(caller_symbol) <= 3
+                        )
                         callers_by_name = (
-                            self.graph.get_callers(caller_symbol)
-                            if caller_symbol != caller_id
-                            else []
+                            []
+                            if _skip_bare_name
+                            else self.graph.get_callers(caller_symbol)
                         )
                         next_callers = list(set(callers_by_id + callers_by_name))
 
@@ -520,6 +527,9 @@ class CodeRelationshipAnalyzer:
                             # Normalize next_id before checking visited set
                             normalized_next = normalize_path(next_id)
                             if normalized_next not in visited:
+                                visited.add(
+                                    normalized_next
+                                )  # Add to visited to prevent duplicates
                                 result = self.searcher.get_by_chunk_id(next_id)
                                 if result:
                                     result_dict = self._result_to_dict(result, next_id)

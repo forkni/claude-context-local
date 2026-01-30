@@ -633,8 +633,7 @@ Also passes `centrality_scores` to subgraph extraction for node annotation.
 
 **Files Modified:**
 - `mcp_server/tools/search_handlers.py` — Phase 3 integration block + centrality_reranking parameter handling
-- `mcp_server/tool_registry.py` — Added `centrality_reranking` parameter to search_code tool schema
-- `search/config.py` — Added `GraphEnhancedConfig` dataclass with Phase 3 fields
+- `search/config.py` — Added `GraphEnhancedConfig` dataclass with Phase 3 fields (`centrality_reranking` defaults to `True`, always-on)
 - `search_config.json` — Added `graph_enhanced` section with defaults
 - `search/subgraph_extractor.py` — Added `centrality_scores` parameter to populate node centrality
 - `tests/unit/search/test_search_config.py` — Added 2 GraphEnhancedConfig tests
@@ -1010,11 +1009,11 @@ file_path = (
 
 ---
 
-## Current Implementation Status (4/5 Phases Complete)
+## Current Implementation Status (5/5 Phases Complete)
 
 ### What's Working Now
 
-After completing Phases 1, 2, 3, and 5, the MCP `search_code` tool now returns:
+After completing all 5 Phases, the MCP `search_code` tool now returns:
 
 **Enhanced per-result data:**
 - ✅ **All 21 relationship types** in `graph` field (not just `calls`/`called_by`)
@@ -1077,13 +1076,6 @@ After completing Phases 1, 2, 3, and 5, the MCP `search_code` tool now returns:
 }
 ```
 
-### What's Missing (Phase 4 Only)
-
-- ❌ **Community labels** in subgraph nodes
-  - Community detection runs during indexing but isn't surfaced in search results
-  - Would add architectural context (e.g., "auth cluster", "database layer")
-  - Low effort to implement (~50 lines, following existing patterns)
-
 ### Impact of Completed Phases
 
 **For Claude Code agents:**
@@ -1099,7 +1091,7 @@ After completing Phases 1, 2, 3, and 5, the MCP `search_code` tool now returns:
 - structuredContent: Eliminates double JSON encoding overhead
 
 **Test coverage:**
-- 37 new unit tests across 4 phases (all passing)
+- 43 new unit tests across 5 phases (all passing)
 - Zero regressions in existing 1,472 unit + 84 integration tests
 - MCP functional validation confirms all features working end-to-end
 
@@ -1145,13 +1137,13 @@ After completing Phases 1, 2, 3, and 5, the MCP `search_code` tool now returns:
 Phase 1 (Subgraph Extraction) ✅ COMPLETED (2026-01-29) ─── foundation for all others
     ├── Phase 2 (Full Relationships) ✅ COMPLETED (2026-01-29) ── independent, low effort
     ├── Phase 3 (Centrality Ranking) ✅ COMPLETED (2026-01-29) ── independent, medium effort
-    ├── Phase 4 (Community Context) ── depends on Phase 1 (annotates subgraph nodes)
+    ├── Phase 4 (Community Context) ✅ COMPLETED (2026-01-30) ── depends on Phase 1 (annotates subgraph nodes)
     └── Phase 5 (Ego-Graph Structure) ✅ COMPLETED (2026-01-29) ── depends on Phase 1 (feeds edges into subgraph)
 ```
 
-**Recommended order**: 1 ✅ → 2 ✅ → 3 ✅ → 5 ✅ → 4
+**Recommended order**: 1 ✅ → 2 ✅ → 3 ✅ → 5 ✅ → 4 ✅
 
-**Completion status**: 4/5 phases complete (80%)
+**Completion status**: 5/5 phases complete (100%)
 
 ---
 
