@@ -340,6 +340,10 @@ class EgoGraphConfig:
     # RepoGraph relation filtering (Feature #5)
     exclude_stdlib_imports: bool = True  # Filter stdlib from graph traversal
     exclude_third_party_imports: bool = True  # Filter third-party from traversal
+    # Weighted graph traversal (Phase 1)
+    edge_weights: Optional[dict[str, float]] = (
+        None  # Edge-type weights for weighted BFS (None = unweighted)
+    )
 
 
 @dataclass

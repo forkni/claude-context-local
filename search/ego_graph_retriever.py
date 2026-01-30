@@ -71,6 +71,7 @@ class EgoGraphRetriever:
                     exclude_import_categories=(
                         exclude_categories if exclude_categories else None
                     ),
+                    edge_weights=config.edge_weights,
                 )
 
                 # Filter to keep only valid chunk_ids (format: "file:lines:type:name")

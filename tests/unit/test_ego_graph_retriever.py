@@ -49,6 +49,7 @@ class TestEgoGraphRetriever:
             relation_types=None,
             max_depth=2,
             exclude_import_categories=["stdlib", "builtin", "third_party"],
+            edge_weights=None,
         )
 
     def test_retrieve_ego_graph_multiple_anchors(self, retriever, mock_graph_storage):
