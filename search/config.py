@@ -166,7 +166,7 @@ def resolve_qwen3_variant_for_lookup(project_hash: str, project_name: str) -> st
 
 @dataclass
 class EmbeddingConfig:
-    """Embedding model configuration (8 fields)."""
+    """Embedding model configuration (9 fields)."""
 
     model_name: str = "google/embeddinggemma-300m"
     dimension: int = 768
@@ -178,6 +178,9 @@ class EmbeddingConfig:
     enable_class_context: bool = True  # Include parent class signature for methods
     max_import_lines: int = 10  # Maximum import lines to extract
     max_class_signature_lines: int = 5  # Maximum lines for class signature
+    enable_structural_header: bool = (
+        True  # Prepend file path + chunk type + qualified name
+    )
 
 
 @dataclass

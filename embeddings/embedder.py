@@ -594,6 +594,7 @@ class CodeEmbedder:
             enable_class_ctx = config.embedding.enable_class_context
             max_import_lines = config.embedding.max_import_lines
             max_class_sig_lines = config.embedding.max_class_signature_lines
+            enable_structural_header = config.embedding.enable_structural_header
         except Exception as e:
             self._logger.debug(f"Failed to load context config, using defaults: {e}")
             # Fallback to defaults
@@ -601,6 +602,30 @@ class CodeEmbedder:
             enable_class_ctx = True
             max_import_lines = 10
             max_class_sig_lines = 5
+            enable_structural_header = True
+
+        # NEW (v0.9.0): Structural header for module/name/type disambiguation
+        if enable_structural_header:
+            header_parts = []
+            # Add file path for module context
+            if hasattr(chunk, "relative_path") and chunk.relative_path:
+                header_parts.append(chunk.relative_path)
+
+            # Add chunk type + qualified name (ClassName.method_name or function_name)
+            type_name = ""
+            if chunk.chunk_type:
+                type_name = chunk.chunk_type
+            if chunk.parent_name and chunk.name:
+                type_name += f" {chunk.parent_name}.{chunk.name}"
+            elif chunk.name:
+                type_name += f" {chunk.name}"
+
+            if type_name:
+                header_parts.append(type_name.strip())
+
+            # Prepend structural header line if any parts exist
+            if header_parts:
+                content_parts.append(f"# {' | '.join(header_parts)}")
 
         # NEW: Add import context from file header (if enabled and available)
         if enable_import_ctx:
