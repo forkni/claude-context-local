@@ -817,6 +817,47 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
         formatted_results, index_manager
     )
 
+    # === SSCG Phase 3: Centrality annotation/reranking ===
+    centrality_scores = None
+    centrality_reranking = arguments.get("centrality_reranking", False)
+    if search_config is None:
+        search_config = get_search_config()
+    graph_config = getattr(search_config, "graph_enhanced", None)
+
+    if (
+        graph_config
+        and graph_config.centrality_annotation
+        and index_manager
+        and index_manager.graph_storage
+    ):
+        try:
+            from graph.graph_queries import GraphQueryEngine
+            from search.centrality_ranker import CentralityRanker
+
+            graph_query_engine = GraphQueryEngine(index_manager.graph_storage)
+            ranker = CentralityRanker(
+                graph_query_engine=graph_query_engine,
+                method=graph_config.centrality_method,
+                alpha=graph_config.centrality_alpha,
+            )
+
+            # Compute centrality scores for subgraph population
+            centrality_scores = ranker._get_centrality_scores()
+
+            # Optionally rerank results by blended score
+            if centrality_reranking or graph_config.centrality_reranking:
+                formatted_results = ranker.rerank(formatted_results)
+                logger.debug(
+                    f"[SSCG Phase 3] Reranked {len(formatted_results)} results by centrality"
+                )
+            else:
+                formatted_results = ranker.annotate(formatted_results)
+                logger.debug(
+                    f"[SSCG Phase 3] Annotated {len(formatted_results)} results with centrality"
+                )
+        except Exception as e:
+            logger.debug(f"[SSCG Phase 3] Centrality ranking failed: {e}")
+
     # === SSCG Phase 1: Extract subgraph over search results ===
     subgraph_data = None
     if index_manager and index_manager.graph_storage is not None:
@@ -832,7 +873,9 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
 
             if result_chunk_ids:
                 subgraph = extractor.extract_subgraph(
-                    result_chunk_ids, include_boundary_edges=True
+                    result_chunk_ids,
+                    include_boundary_edges=True,
+                    centrality_scores=centrality_scores,
                 )
                 # Include subgraph if there are nodes (boundary edges provide structural context)
                 if subgraph.nodes:

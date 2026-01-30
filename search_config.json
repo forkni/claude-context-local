@@ -89,5 +89,11 @@
     "relation_types": null,
     "include_anchor": true,
     "deduplicate": true
+  },
+  "graph_enhanced": {
+    "centrality_method": "pagerank",
+    "centrality_alpha": 0.3,
+    "centrality_annotation": true,
+    "centrality_reranking": false
   }
 }

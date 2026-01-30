@@ -140,6 +140,11 @@ WHEN NOT TO USE:
                     "default": False,
                     "description": "Enable parent chunk retrieval (default: False). When a method is matched, also retrieves its enclosing class for fuller context. Implements 'Match Small, Retrieve Big' pattern for improved comprehension.",
                 },
+                "centrality_reranking": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Enable centrality-based reranking to boost structurally important results (default: False). Blends PageRank centrality scores with semantic similarity to prioritize code that is frequently called or imported. Part of SSCG Phase 3.",
+                },
             },
             "required": [],
         },

@@ -113,6 +113,7 @@ class SubgraphExtractor:
         chunk_ids: list[str],
         include_boundary_edges: bool = False,
         max_boundary_depth: int = 1,
+        centrality_scores: Optional[dict[str, float]] = None,
     ) -> SubgraphResult:
         """Extract the induced subgraph over the given chunk_ids.
 
@@ -128,6 +129,7 @@ class SubgraphExtractor:
             chunk_ids: List of chunk_ids from search results
             include_boundary_edges: Include edges to nodes outside result set
             max_boundary_depth: Ignored for now (future: multi-hop boundary)
+            centrality_scores: Optional dict mapping chunk_id -> centrality score
 
         Returns:
             SubgraphResult with nodes, edges, topology_order
@@ -158,17 +160,22 @@ class SubgraphExtractor:
                     # If relpath fails (different drives on Windows), keep original
                     pass
 
-            nodes.append(
-                SubgraphNode(
-                    chunk_id=chunk_id,
-                    name=node_data.get(
-                        "name", chunk_id.split(":")[-1] if ":" in chunk_id else chunk_id
-                    ),
-                    kind=node_data.get("type", "unknown"),
-                    file=file_path,
-                    is_search_result=True,
-                )
+            # Create node with optional centrality score
+            node = SubgraphNode(
+                chunk_id=chunk_id,
+                name=node_data.get(
+                    "name", chunk_id.split(":")[-1] if ":" in chunk_id else chunk_id
+                ),
+                kind=node_data.get("type", "unknown"),
+                file=file_path,
+                is_search_result=True,
             )
+
+            # Populate centrality if scores provided
+            if centrality_scores:
+                node.centrality = centrality_scores.get(chunk_id)
+
+            nodes.append(node)
 
         # Extract edges between result nodes
         # Cap boundary edges to avoid token explosion (max 3 per source node)

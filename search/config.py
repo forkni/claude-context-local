@@ -351,6 +351,16 @@ class ParentRetrievalConfig:
     max_parents_per_result: int = 1  # Usually 1 (direct parent only)
 
 
+@dataclass
+class GraphEnhancedConfig:
+    """Graph-enhanced search settings for SSCG Phase 3+."""
+
+    centrality_method: str = "pagerank"  # Centrality algorithm
+    centrality_alpha: float = 0.3  # Blending weight (0=semantic, 1=centrality)
+    centrality_annotation: bool = True  # Always annotate centrality when graph exists
+    centrality_reranking: bool = False  # Opt-in reordering by blended score
+
+
 class SearchConfig:
     """Root configuration with nested sub-configs.
 
@@ -375,6 +385,7 @@ class SearchConfig:
         chunking: Optional[ChunkingConfig] = None,
         ego_graph: Optional[EgoGraphConfig] = None,
         parent_retrieval: Optional[ParentRetrievalConfig] = None,
+        graph_enhanced: Optional[GraphEnhancedConfig] = None,
     ):
         """Initialize SearchConfig with nested sub-configs.
 
@@ -390,6 +401,7 @@ class SearchConfig:
             chunking: ChunkingConfig instance (optional, defaults to ChunkingConfig())
             ego_graph: EgoGraphConfig instance (optional, defaults to EgoGraphConfig())
             parent_retrieval: ParentRetrievalConfig instance (optional, defaults to ParentRetrievalConfig())
+            graph_enhanced: GraphEnhancedConfig instance (optional, defaults to GraphEnhancedConfig())
         """
         # Initialize nested configs with defaults
         self.embedding = embedding if embedding is not None else EmbeddingConfig()
@@ -410,6 +422,9 @@ class SearchConfig:
             parent_retrieval
             if parent_retrieval is not None
             else ParentRetrievalConfig()
+        )
+        self.graph_enhanced = (
+            graph_enhanced if graph_enhanced is not None else GraphEnhancedConfig()
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -510,6 +525,12 @@ class SearchConfig:
                 "include_anchor": self.ego_graph.include_anchor,
                 "deduplicate": self.ego_graph.deduplicate,
             },
+            "graph_enhanced": {
+                "centrality_method": self.graph_enhanced.centrality_method,
+                "centrality_alpha": self.graph_enhanced.centrality_alpha,
+                "centrality_annotation": self.graph_enhanced.centrality_annotation,
+                "centrality_reranking": self.graph_enhanced.centrality_reranking,
+            },
         }
 
     @classmethod
@@ -541,6 +562,7 @@ class SearchConfig:
             output_data = data.get("output", {})
             chunking_data = data.get("chunking", {})
             ego_graph_data = data.get("ego_graph", {})
+            graph_enhanced_data = data.get("graph_enhanced", {})
 
             # Auto-update dimension from model registry
             if "model_name" in embedding_data:
@@ -682,6 +704,19 @@ class SearchConfig:
                 deduplicate=ego_graph_data.get("deduplicate", True),
             )
 
+            graph_enhanced = GraphEnhancedConfig(
+                centrality_method=graph_enhanced_data.get(
+                    "centrality_method", "pagerank"
+                ),
+                centrality_alpha=graph_enhanced_data.get("centrality_alpha", 0.3),
+                centrality_annotation=graph_enhanced_data.get(
+                    "centrality_annotation", True
+                ),
+                centrality_reranking=graph_enhanced_data.get(
+                    "centrality_reranking", False
+                ),
+            )
+
         else:
             # LEGACY: Flat format (pre-v0.8.0) - backward compatibility
             # Auto-update dimension and batch size if model is in registry
@@ -801,6 +836,13 @@ class SearchConfig:
                 deduplicate=data.get("ego_graph_deduplicate", True),
             )
 
+            graph_enhanced = GraphEnhancedConfig(
+                centrality_method=data.get("centrality_method", "pagerank"),
+                centrality_alpha=data.get("centrality_alpha", 0.3),
+                centrality_annotation=data.get("centrality_annotation", True),
+                centrality_reranking=data.get("centrality_reranking", False),
+            )
+
         return cls(
             embedding=embedding,
             search_mode=search_mode,
@@ -812,6 +854,7 @@ class SearchConfig:
             output=output,
             chunking=chunking,
             ego_graph=ego_graph,
+            graph_enhanced=graph_enhanced,
         )
 
 
