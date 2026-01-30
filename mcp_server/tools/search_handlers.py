@@ -525,7 +525,14 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     # Extract arguments
     query = arguments.get("query")
     chunk_id = arguments.get("chunk_id")
-    k = arguments.get("k", 5)
+
+    # Get k from arguments, falling back to config default_k (Easy Win 2 + 3)
+    search_config = get_search_config()
+    config_default_k = search_config.search_mode.default_k
+    k = arguments.get("k", config_default_k)
+
+    # Enforce max_k limit (Easy Win 3)
+    k = min(k, search_config.search_mode.max_k)
 
     # Validate: must provide either query OR chunk_id, not both
     if not query and not chunk_id:

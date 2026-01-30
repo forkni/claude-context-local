@@ -36,7 +36,7 @@ class TestEgoGraphRetriever:
             ]
         )
 
-        config = EgoGraphConfig(k_hops=2, max_neighbors_per_hop=10)
+        config = EgoGraphConfig(k_hops=2, max_neighbors_per_hop=10, edge_weights=None)
         result = retriever.retrieve_ego_graph(["anchor1"], config)
 
         assert "anchor1" in result

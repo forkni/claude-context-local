@@ -743,17 +743,35 @@ class HybridSearcher(BaseSearcher):
             original_chunk_ids = {r.chunk_id for r in results}
             neighbor_chunk_ids = set(expanded_chunk_ids) - original_chunk_ids
 
+            # Build neighbor→anchor mapping for decay scoring
+            # ego_graphs: dict[anchor_id, list[neighbor_ids]]
+            neighbor_to_anchor = {}
+            for anchor_id, neighbors in ego_graphs.items():
+                for neighbor_id in neighbors:
+                    if neighbor_id not in original_chunk_ids:
+                        neighbor_to_anchor[neighbor_id] = anchor_id
+
+            # Build anchor_id→score mapping from results
+            anchor_scores = {r.chunk_id: r.score for r in results}
+
             # Retrieve metadata for neighbor chunks
             neighbor_results = []
             for chunk_id in neighbor_chunk_ids:
                 try:
                     metadata = self.dense_index.get_chunk_by_id(chunk_id)
                     if metadata:
-                        # Create SearchResult for neighbor (score=0 as it's context)
-                        # Uses reranker.py SearchResult with correct fields
+                        # Decay scoring: neighbor inherits 50% of anchor's score
+                        # This gives structural context a meaningful but lower score than semantic matches
+                        anchor_id = neighbor_to_anchor.get(chunk_id)
+                        anchor_score = (
+                            anchor_scores.get(anchor_id, 0.0) if anchor_id else 0.0
+                        )
+                        decay_score = anchor_score * 0.5
+
+                        # Create SearchResult for neighbor with decay score
                         neighbor_result = SearchResult(
                             chunk_id=chunk_id,
-                            score=0.0,  # Neighbors are context, no similarity score
+                            score=decay_score,  # Decay from anchor score (not 0.0)
                             metadata=metadata,  # All metadata stored in dict
                             source="ego_graph",  # Mark as ego-graph neighbor
                             rank=0,  # Default rank

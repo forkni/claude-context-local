@@ -3,8 +3,11 @@
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
+
+# Import DEFAULT_EDGE_WEIGHTS for ego-graph weighted BFS
+from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
 
 
 # Model registry with specifications
@@ -199,7 +202,9 @@ class SearchModeConfig:
     enable_result_reranking: bool = True
 
     # Search Result Limits
-    default_k: int = 5
+    default_k: int = (
+        4  # Reduced from 5: 0% result loss post-ego-fix + 20% token savings
+    )
     max_k: int = 50
 
 
@@ -333,8 +338,10 @@ class EgoGraphConfig:
     """Ego-graph retrieval settings (RepoGraph ICLR 2025)."""
 
     enabled: bool = False  # Enable ego-graph expansion
-    k_hops: int = 2  # Number of hops (1-2 recommended)
-    max_neighbors_per_hop: int = 10  # Max neighbors per hop to prevent explosion
+    k_hops: int = 1  # Number of hops (1=direct neighbors, reduces noise vs 2-hop)
+    max_neighbors_per_hop: int = (
+        5  # Max neighbors per hop (reduced from 10 to limit noise)
+    )
     relation_types: Optional[list] = None  # Filter to specific relations (None = all)
     include_anchor: bool = True  # Include original anchor nodes in results
     deduplicate: bool = True  # Remove duplicate chunk_ids
@@ -342,9 +349,9 @@ class EgoGraphConfig:
     exclude_stdlib_imports: bool = True  # Filter stdlib from graph traversal
     exclude_third_party_imports: bool = True  # Filter third-party from traversal
     # Weighted graph traversal (Phase 1)
-    edge_weights: Optional[dict[str, float]] = (
-        None  # Edge-type weights for weighted BFS (None = unweighted)
-    )
+    edge_weights: Optional[dict[str, float]] = field(
+        default_factory=lambda: DEFAULT_EDGE_WEIGHTS.copy()
+    )  # Use weighted BFS by default (calls > imports priority)
 
 
 @dataclass
