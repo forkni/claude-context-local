@@ -732,11 +732,11 @@ class TestSubgraphFormatting:
         # Verify results array is TOON-formatted
         assert "results[1]{chunk_id,kind,score}" in result
 
-        # Verify subgraph_nodes array is TOON-formatted
-        assert "subgraph_nodes[2]{file,id,kind,name}" in result
-        nodes_rows = result["subgraph_nodes[2]{file,id,kind,name}"]
+        # Verify subgraph_nodes array is TOON-formatted (file is stripped since id contains path)
+        assert "subgraph_nodes[2]{id,kind,name}" in result
+        nodes_rows = result["subgraph_nodes[2]{id,kind,name}"]
         assert len(nodes_rows) == 2
-        assert nodes_rows[0] == ["a.py", "a.py:1-10:function:foo", "function", "foo"]
+        assert nodes_rows[0] == ["a.py:1-10:function:foo", "function", "foo"]
 
         # Verify subgraph_edges array is TOON-formatted
         assert "subgraph_edges[1]{line,rel,src,tgt}" in result
@@ -791,7 +791,7 @@ class TestSubgraphFormatting:
         assert "id" in node
         assert "name" in node
         assert "kind" in node
-        assert "file" in node
+        assert "file" not in node  # Stripped because id contains path
         assert "centrality" in node  # Zero is valid
         assert "community" not in node  # None omitted
 

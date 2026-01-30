@@ -87,7 +87,8 @@ def _compact_dict(d: dict[str, Any]) -> dict[str, Any]:
         Compacted dict with redundant fields removed
     """
     result = {}
-    chunk_id = d.get("chunk_id", "")
+    # Check both "chunk_id" (search results) and "id" (subgraph nodes) for path info
+    chunk_id = d.get("chunk_id", "") or d.get("id", "")
 
     for key, value in d.items():
         # Skip redundant fields (info already in chunk_id)
@@ -141,9 +142,10 @@ def _to_toon_format(data: dict[str, Any]) -> dict[str, Any]:
             for item in value:
                 all_fields.update(item.keys())
 
-            # Determine fields (exclude redundant file/lines if chunk_id present)
+            # Determine fields (exclude redundant file/lines if chunk_id or id present)
             fields = []
-            has_chunk_id = any(item.get("chunk_id") for item in value)
+            # Check both "chunk_id" (search results) and "id" (subgraph nodes) for path info
+            has_chunk_id = any(item.get("chunk_id") or item.get("id") for item in value)
             for field_name in sorted(all_fields):  # Sort for consistent order
                 # Skip redundant fields
                 if field_name in ("file", "lines") and has_chunk_id:

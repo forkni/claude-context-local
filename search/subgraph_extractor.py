@@ -11,7 +11,6 @@ Based on research:
 """
 
 import logging
-import os
 from collections import Counter
 from dataclasses import dataclass
 from typing import Optional
@@ -114,6 +113,7 @@ class SubgraphExtractor:
         include_boundary_edges: bool = False,
         max_boundary_depth: int = 1,
         centrality_scores: Optional[dict[str, float]] = None,
+        ego_neighbor_ids: Optional[list[str]] = None,
     ) -> SubgraphResult:
         """Extract the induced subgraph over the given chunk_ids.
 
@@ -130,6 +130,7 @@ class SubgraphExtractor:
             include_boundary_edges: Include edges to nodes outside result set
             max_boundary_depth: Ignored for now (future: multi-hop boundary)
             centrality_scores: Optional dict mapping chunk_id -> centrality score
+            ego_neighbor_ids: Optional list of ego-graph neighbor chunk_ids (marked with is_search_result=False)
 
         Returns:
             SubgraphResult with nodes, edges, topology_order
@@ -149,16 +150,11 @@ class SubgraphExtractor:
                 logger.debug(f"[SUBGRAPH] Node {chunk_id} not found in graph")
                 continue
 
-            # Convert absolute path to relative path for token efficiency
-            file_path = node_data.get("file", "")
-            if self.project_root and file_path:
-                try:
-                    file_path = os.path.relpath(file_path, self.project_root).replace(
-                        "\\", "/"
-                    )
-                except (ValueError, TypeError):
-                    # If relpath fails (different drives on Windows), keep original
-                    pass
+            # Extract relative file path from chunk_id (format: "relative/path/file.py:lines:type:name")
+            # chunk_id already uses relative forward-slash paths, so we can extract the file path directly
+            file_path = (
+                chunk_id.split(":")[0] if ":" in chunk_id else node_data.get("file", "")
+            )
 
             # Create node with optional centrality score
             node = SubgraphNode(
@@ -177,12 +173,58 @@ class SubgraphExtractor:
 
             nodes.append(node)
 
-        # Extract edges between result nodes
+        # SSCG Phase 5: Add ego-graph neighbor nodes (is_search_result=False)
+        if ego_neighbor_ids:
+            for neighbor_id in ego_neighbor_ids:
+                if neighbor_id in chunk_id_set:
+                    continue  # Already a search result node, skip duplication
+
+                node_data = self.graph.nodes.get(neighbor_id, {})
+                if not node_data:
+                    logger.debug(
+                        f"[SUBGRAPH] Ego-graph neighbor {neighbor_id} not found in graph"
+                    )
+                    continue
+
+                # Extract relative file path from chunk_id (same pattern as search result nodes)
+                file_path = (
+                    neighbor_id.split(":")[0]
+                    if ":" in neighbor_id
+                    else node_data.get("file", "")
+                )
+
+                # Create ego-graph neighbor node
+                node = SubgraphNode(
+                    chunk_id=neighbor_id,
+                    name=node_data.get(
+                        "name",
+                        neighbor_id.split(":")[-1]
+                        if ":" in neighbor_id
+                        else neighbor_id,
+                    ),
+                    kind=node_data.get("type", "unknown"),
+                    file=file_path,
+                    is_search_result=False,  # KEY: marks as ego-graph neighbor
+                )
+
+                # Populate centrality if scores provided
+                if centrality_scores:
+                    node.centrality = centrality_scores.get(neighbor_id)
+
+                nodes.append(node)
+
+            # Expand chunk_id_set to include ego neighbors for edge discovery
+            chunk_id_set.update(ego_neighbor_ids)
+
+        # Extract edges between all nodes (search results + ego neighbors)
         # Cap boundary edges to avoid token explosion (max 3 per source node)
         MAX_BOUNDARY_PER_NODE = 3
         boundary_counts: dict[str, int] = {}
 
-        for chunk_id in chunk_ids:
+        # Convert ego_neighbor_ids to set for fast lookup
+        ego_neighbor_id_set = set(ego_neighbor_ids) if ego_neighbor_ids else set()
+
+        for chunk_id in chunk_id_set:
             if chunk_id not in self.graph:
                 continue
 
@@ -191,6 +233,10 @@ class SubgraphExtractor:
                 rel_type = edge_data.get("type", "calls")
                 line = edge_data.get("line", 0)
                 is_boundary = target not in chunk_id_set
+
+                # Skip boundary edges from ego-graph neighbors (2+ hops from query = noise)
+                if is_boundary and chunk_id in ego_neighbor_id_set:
+                    continue
 
                 # Cap boundary edges per source node
                 if is_boundary:
@@ -228,8 +274,11 @@ class SubgraphExtractor:
                         )
                     )
 
-        # Build topological ordering
-        topology_order = self._build_topology_order(chunk_ids)
+        # Build topological ordering (includes both search results and ego neighbors)
+        all_ids = list(
+            chunk_id_set
+        )  # includes search results + ego neighbors if present
+        topology_order = self._build_topology_order(all_ids)
 
         return SubgraphResult(
             nodes=nodes,

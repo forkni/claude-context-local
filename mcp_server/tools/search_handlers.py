@@ -450,6 +450,9 @@ def _format_search_results(results: list) -> list[dict]:
             # Add complexity score if available (functions only)
             if hasattr(result, "complexity_score") and result.complexity_score:
                 item["complexity_score"] = result.complexity_score
+            # SSCG Phase 5: Propagate source field for ego-graph neighbor identification
+            if hasattr(result, "source") and result.source:
+                item["source"] = result.source
         else:
             # HybridSearcher result format
             item = {
@@ -465,6 +468,9 @@ def _format_search_results(results: list) -> list[dict]:
             # Add complexity score if available (functions only)
             if result.metadata.get("complexity_score"):
                 item["complexity_score"] = result.metadata["complexity_score"]
+            # SSCG Phase 5: Propagate source field for ego-graph neighbor identification
+            if hasattr(result, "source") and result.source:
+                item["source"] = result.source
         formatted_results.append(item)
     return formatted_results
 
@@ -865,10 +871,16 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
             from search.subgraph_extractor import SubgraphExtractor
 
             extractor = SubgraphExtractor(index_manager.graph_storage)
-            # Only extract subgraph for top-k results (ego-graph neighbors excluded)
-            # formatted_results[:k] gives original top-k since neighbors are appended after
+            # Extract top-k search result chunk_ids
             result_chunk_ids = [
                 r["chunk_id"] for r in formatted_results[:k] if "chunk_id" in r
+            ]
+
+            # SSCG Phase 5: Collect ego-graph neighbor chunk_ids (if present)
+            ego_neighbor_ids = [
+                r["chunk_id"]
+                for r in formatted_results[k:]
+                if r.get("source") == "ego_graph" and "chunk_id" in r
             ]
 
             if result_chunk_ids:
@@ -876,12 +888,15 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
                     result_chunk_ids,
                     include_boundary_edges=True,
                     centrality_scores=centrality_scores,
+                    ego_neighbor_ids=ego_neighbor_ids if ego_neighbor_ids else None,
                 )
                 # Include subgraph if there are nodes (boundary edges provide structural context)
                 if subgraph.nodes:
                     subgraph_data = subgraph.to_dict()
+                    ego_count = len(ego_neighbor_ids) if ego_neighbor_ids else 0
                     logger.debug(
-                        f"[SSCG] Extracted subgraph: {len(subgraph.nodes)} nodes, {len(subgraph.edges)} edges"
+                        f"[SSCG] Extracted subgraph: {len(subgraph.nodes)} nodes "
+                        f"({ego_count} ego-graph neighbors), {len(subgraph.edges)} edges"
                     )
                 else:
                     logger.info(

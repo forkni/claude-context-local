@@ -84,8 +84,8 @@
   },
   "ego_graph": {
     "enabled": true,
-    "k_hops": 3,
-    "max_neighbors_per_hop": 20,
+    "k_hops": 1,
+    "max_neighbors_per_hop": 10,
     "relation_types": null,
     "include_anchor": true,
     "deduplicate": true

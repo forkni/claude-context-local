@@ -398,55 +398,49 @@ def test_boundary_edge_marker():
 
 
 def test_relative_path_conversion():
-    """Test absolute paths are converted to relative paths."""
+    """Test file paths are extracted from chunk_id (which uses relative forward-slash paths)."""
     import os
-    import tempfile
     from unittest.mock import MagicMock
 
-    # Create a temp directory to simulate project root
-    with tempfile.TemporaryDirectory() as tmpdir:
-        # Create a fresh graph storage mock for this test
-        storage = MagicMock()
-        g = nx.DiGraph()
+    # Create a fresh graph storage mock for this test
+    storage = MagicMock()
+    g = nx.DiGraph()
 
-        # Create absolute paths under tmpdir
-        abs_path_auth = os.path.join(tmpdir, "src", "auth.py")
-        abs_path_db = os.path.join(tmpdir, "src", "db.py")
+    # Add nodes with absolute paths in file attribute (real-world scenario)
+    # chunk_ids contain relative paths (as they do in production)
+    g.add_node(
+        "src/auth.py:10-50:function:login",
+        name="login",
+        type="function",
+        file=r"F:\RD_PROJECTS\COMPONENTS\claude-context-local\src\auth.py",  # absolute
+    )
+    g.add_node(
+        "src/db.py:5-20:function:query",
+        name="query",
+        type="function",
+        file=r"F:\RD_PROJECTS\COMPONENTS\claude-context-local\src\db.py",  # absolute
+    )
 
-        # Add nodes with absolute paths
-        g.add_node(
-            "auth.py:10-50:function:login",
-            name="login",
-            type="function",
-            file=abs_path_auth,
+    storage.graph = g
+    storage.project_root = None  # project_root is always None in production
+
+    extractor = SubgraphExtractor(storage)
+
+    chunk_ids = [
+        "src/auth.py:10-50:function:login",
+        "src/db.py:5-20:function:query",
+    ]
+
+    result = extractor.extract_subgraph(chunk_ids)
+
+    # Verify paths are extracted from chunk_id (relative, forward-slash)
+    for node in result.nodes:
+        assert not os.path.isabs(node.file), f"Expected relative path, got: {node.file}"
+        assert node.file.startswith("src/"), f"Expected src/ prefix, got: {node.file}"
+        # Verify forward slashes (not backslashes)
+        assert "\\" not in node.file, (
+            f"Expected forward slashes, got backslashes: {node.file}"
         )
-        g.add_node(
-            "db.py:5-20:function:query",
-            name="query",
-            type="function",
-            file=abs_path_db,
-        )
-
-        storage.graph = g
-        storage.project_root = tmpdir
-
-        extractor = SubgraphExtractor(storage)
-
-        chunk_ids = [
-            "auth.py:10-50:function:login",
-            "db.py:5-20:function:query",
-        ]
-
-        result = extractor.extract_subgraph(chunk_ids)
-
-        # Verify paths are relative
-        for node in result.nodes:
-            assert not os.path.isabs(node.file), (
-                f"Expected relative path, got: {node.file}"
-            )
-            assert node.file.startswith("src/"), (
-                f"Expected src/ prefix, got: {node.file}"
-            )
 
 
 def test_boundary_edge_cap():
