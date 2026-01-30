@@ -673,9 +673,12 @@ class IncrementalIndexer:
             else Path(tempfile.mkdtemp(prefix="temp_graph_"))
         )
 
-        # Extract project ID from storage directory name if available
+        # Extract project ID from parent directory name matching search_factory.py convention
+        # Parent dir name = "projectname_hash_modelslug_dimd", strip "_dimd" suffix
         project_id = (
-            storage_dir.name if storage_dir.exists() else "temp_community_graph"
+            storage_dir.parent.name.rsplit("_", 1)[0]
+            if storage_dir.exists()
+            else "temp_community_graph"
         )
 
         graph_integration = GraphIntegration(

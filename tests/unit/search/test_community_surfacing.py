@@ -247,3 +247,51 @@ def test_community_with_ego_neighbors():
 
     # Community should have count of 3
     assert result.communities[0]["count"] == 3
+
+
+def test_build_temp_graph_project_id(tmp_path):
+    """Test that _build_temp_graph derives correct project_id from parent directory."""
+    from pathlib import Path
+    from unittest.mock import MagicMock, patch
+
+    from search.incremental_indexer import IncrementalIndexer
+
+    # Create a real temp directory structure to test path logic
+    project_dir = tmp_path / "myproject_abc123_bge-m3_1024d"
+    index_dir = project_dir / "index"
+    index_dir.mkdir(parents=True)
+
+    # Mock indexer with storage_dir pointing to index subdirectory
+    mock_indexer = MagicMock()
+    mock_indexer.storage_dir = index_dir
+
+    # Create IncrementalIndexer with mocked indexer
+    inc_indexer = IncrementalIndexer(indexer=mock_indexer)
+
+    # Mock GraphIntegration to capture what project_id it receives
+    captured_project_id = None
+    captured_storage_dir = None
+
+    def mock_graph_integration_init(self, project_id, storage_dir):
+        nonlocal captured_project_id, captured_storage_dir
+        captured_project_id = project_id
+        captured_storage_dir = storage_dir
+        self.storage = MagicMock()
+        self._logger = MagicMock()
+        return None  # __init__ returns None
+
+    with patch(
+        "search.incremental_indexer.GraphIntegration.__init__",
+        mock_graph_integration_init,
+    ), patch("search.incremental_indexer.GraphIntegration.build_graph_from_chunks"), patch(
+        "search.incremental_indexer.logger"
+    ):
+        # Call _build_temp_graph
+        inc_indexer._build_temp_graph([])
+
+    # Verify project_id is derived from parent directory name with dimension suffix stripped
+    # Parent dir: myproject_abc123_bge-m3_1024d
+    # Expected project_id: myproject_abc123_bge-m3 (strip "_1024d")
+    assert (
+        captured_project_id == "myproject_abc123_bge-m3"
+    ), f"Expected 'myproject_abc123_bge-m3', got '{captured_project_id}'"
