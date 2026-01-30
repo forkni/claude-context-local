@@ -6,7 +6,7 @@ Tests edge-type weighted BFS implementation for Phase 1.
 
 import pytest
 
-from graph.graph_storage import CodeGraphStorage, DEFAULT_EDGE_WEIGHTS
+from graph.graph_storage import DEFAULT_EDGE_WEIGHTS, CodeGraphStorage
 from graph.relationship_types import RelationshipEdge, RelationshipType
 
 
@@ -19,9 +19,7 @@ def temp_storage_dir(tmp_path):
 @pytest.fixture
 def graph_storage(temp_storage_dir):
     """Create a CodeGraphStorage instance for testing."""
-    storage = CodeGraphStorage(
-        project_id="test_weighted", storage_dir=temp_storage_dir
-    )
+    storage = CodeGraphStorage(project_id="test_weighted", storage_dir=temp_storage_dir)
     return storage
 
 
@@ -297,12 +295,10 @@ def test_default_edge_weights_coverage():
     ]
 
     for edge_type in expected_types:
-        assert (
-            edge_type in DEFAULT_EDGE_WEIGHTS
-        ), f"Missing weight for {edge_type}"
-        assert (
-            0.0 <= DEFAULT_EDGE_WEIGHTS[edge_type] <= 1.0
-        ), f"Weight for {edge_type} out of range [0, 1]"
+        assert edge_type in DEFAULT_EDGE_WEIGHTS, f"Missing weight for {edge_type}"
+        assert 0.0 <= DEFAULT_EDGE_WEIGHTS[edge_type] <= 1.0, (
+            f"Weight for {edge_type} out of range [0, 1]"
+        )
 
 
 def test_weighted_bfs_empty_graph(graph_storage):

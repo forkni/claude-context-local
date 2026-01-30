@@ -357,7 +357,9 @@ class CodeGraphStorage:
 
                     # Convert to reverse type name (e.g., "calls" -> "called_by")
                     reverse_type = (
-                        self._get_reverse_relation_type(edge_type) if edge_type else None
+                        self._get_reverse_relation_type(edge_type)
+                        if edge_type
+                        else None
                     )
 
                     # Check if this reverse type is requested
@@ -379,9 +381,7 @@ class CodeGraphStorage:
             # Priority queue format: (-weight, counter, chunk_id, depth)
             # Use negative weight so heapq min-heap becomes max-heap for weights
             counter = 0  # Tie-breaker for equal weights
-            pq = [
-                (0.0, counter, normalized_chunk_id, 0)
-            ]  # Start node has priority 0
+            pq = [(0.0, counter, normalized_chunk_id, 0)]  # Start node has priority 0
             visited = {normalized_chunk_id}
 
             while pq:
@@ -412,9 +412,7 @@ class CodeGraphStorage:
                             # Get weight for this edge type (default 0.5 if not in dict)
                             weight = edge_weights.get(edge_type, 0.5)
                             counter += 1
-                            heapq.heappush(
-                                pq, (-weight, counter, target, depth + 1)
-                            )
+                            heapq.heappush(pq, (-weight, counter, target, depth + 1))
 
                 # Process incoming edges (reverse relationships)
                 for source, _, edge_data in self.graph.in_edges(current_id, data=True):
@@ -424,7 +422,9 @@ class CodeGraphStorage:
 
                     # Convert to reverse type name (e.g., "calls" -> "called_by")
                     reverse_type = (
-                        self._get_reverse_relation_type(edge_type) if edge_type else None
+                        self._get_reverse_relation_type(edge_type)
+                        if edge_type
+                        else None
                     )
 
                     # Check if this reverse type is requested
@@ -443,9 +443,7 @@ class CodeGraphStorage:
                             # Get weight for the forward edge type (not reverse)
                             weight = edge_weights.get(edge_type, 0.5)
                             counter += 1
-                            heapq.heappush(
-                                pq, (-weight, counter, source, depth + 1)
-                            )
+                            heapq.heappush(pq, (-weight, counter, source, depth + 1))
 
         return neighbors
 
