@@ -30,13 +30,11 @@ dependencies = [
     "aiohttp>=3.13.3",  # Security: Fixes CVE-2025-69223 through CVE-2025-69230
     "einops>=0.8.0",  # Required for CodeRankEmbed model
     "faiss-cpu>=1.13.1",
-    "FlagEmbedding>=1.3.0",
     "fsspec[http]>=2024.2.0,<=2025.10.0",  # Upper bound: datasets 4.4.2 constraint
     "huggingface-hub>=0.36.0",
     "mcp>=1.25.0",
     "networkx>=3.0",  # Required for graph storage and community detection
     "nltk>=3.8",
-    "pandas>=2.0.0",  # Required by datasets (transitive dependency of sentence-transformers)
     "psutil>=7.2.1",
     "rank-bm25>=0.2.2",
     "torch>=2.8.0,<2.9.0",  # 2.9.x breaks ModernBERT torch.compile (template conflict)
@@ -147,7 +145,7 @@ include = ["chunking*", "embeddings*", "mcp_server*", "search*", "merkle*"]
 # Safe patches: setuptools (80.10.1→80.10.2), soupsieve (2.8.1→2.8.3), sse-starlette (3.1.2→3.2.0)
 # Safe patches: starlette (0.51.0→0.52.1), uv (0.9.24→0.9.27), wcwidth (0.2.14→0.5.0)
 # Tested: 656/657 unit tests passed (1 pre-existing failure), CUDA verified, pip check passed
-# Remaining CVE: protobuf CVE-2026-0994 (DoS) - no fix available yet (monitoring)
+# Remaining CVEs: 0 (all resolved as of 2026-01-30)
 
 [tool.uv]
 index-url = "https://pypi.org/simple"
