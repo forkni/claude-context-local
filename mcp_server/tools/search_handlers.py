@@ -492,7 +492,9 @@ def _enrich_results_with_graph_data(
 
     for item in results:
         chunk_id = item.get("chunk_id")
-        if chunk_id:
+        # Skip per-result graph data for ego-graph neighbors (captured in subgraph_edges instead)
+        # Saves ~400 chars per ego neighbor, ~8K chars total for 20 neighbors
+        if chunk_id and item.get("source") != "ego_graph":
             graph_data = _get_graph_data_for_chunk(index_manager, chunk_id)
             if graph_data:
                 item["graph"] = graph_data
@@ -882,6 +884,11 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
                 for r in formatted_results[k:]
                 if r.get("source") == "ego_graph" and "chunk_id" in r
             ]
+
+            # Cap ego-graph neighbors in subgraph to limit output size (defensive)
+            MAX_EGO_IN_SUBGRAPH = 10
+            if ego_neighbor_ids and len(ego_neighbor_ids) > MAX_EGO_IN_SUBGRAPH:
+                ego_neighbor_ids = ego_neighbor_ids[:MAX_EGO_IN_SUBGRAPH]
 
             if result_chunk_ids:
                 subgraph = extractor.extract_subgraph(
