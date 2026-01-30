@@ -25,6 +25,7 @@ from search.config import (
     get_search_config,
 )
 from search.exceptions import DimensionMismatchError
+from search.filters import normalize_path
 from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
@@ -325,27 +326,101 @@ def _get_index_manager_from_searcher(searcher) -> CodeIndexManager | None:
     return None
 
 
+# ============================================================================
+# SSCG Phase 2: Full Relationship Enrichment Per Result
+# ============================================================================
+
+# Reverse relation names for incoming edge enrichment
+# Matches graph_storage._get_reverse_relation_type() naming convention
+_REVERSE_RELATION_MAP: dict[str, str] = {
+    "calls": "called_by",
+    "inherits": "inherited_by",
+    "uses_type": "used_as_type_by",
+    "imports": "imported_by",
+    "decorates": "decorated_by",
+    "raises": "raised_by",
+    "catches": "caught_by",
+    "instantiates": "instantiated_by",
+    "implements": "implemented_by",
+    "overrides": "overridden_by",
+    "assigns_to": "assigned_by",
+    "reads_from": "read_by",
+    "defines_constant": "constant_defined_by",
+    "defines_enum_member": "enum_member_defined_by",
+    "defines_class_attr": "class_attr_defined_by",
+    "defines_field": "field_defined_by",
+    "uses_constant": "constant_used_by",
+    "uses_default": "default_used_by",
+    "uses_global": "global_used_by",
+    "asserts_type": "type_asserted_by",
+    "uses_context_manager": "context_manager_used_by",
+}
+
+
+def _get_reverse_relation_name(rel_type: str) -> str:
+    """Get the reverse name for a relationship type.
+
+    Args:
+        rel_type: Forward relationship type (e.g., "calls", "inherits")
+
+    Returns:
+        Reverse relationship name (e.g., "called_by", "inherited_by")
+    """
+    return _REVERSE_RELATION_MAP.get(rel_type, f"{rel_type}_by")
+
+
 def _get_graph_data_for_chunk(
-    index_manager: CodeIndexManager, chunk_id: str
+    index_manager: CodeIndexManager, chunk_id: str, max_per_type: int = 5
 ) -> dict | None:
-    """Get graph relationship data for a chunk.
+    """Get all graph relationship data for a chunk (21 relationship types).
+
+    Iterates outgoing and incoming edges, grouping by relationship type.
+    Also checks incoming edges by bare symbol name, since edges often
+    target symbol names (e.g., "login") rather than full chunk_ids.
 
     Args:
         index_manager: The index manager with graph storage
         chunk_id: The chunk to get graph data for
+        max_per_type: Maximum targets/sources per relationship type (default: 5)
 
     Returns:
-        dict with 'calls' and 'called_by' lists, or None
+        dict mapping relationship names to lists of chunk_ids/symbols, or None
     """
     try:
-        calls = index_manager.graph_storage.get_callees(chunk_id)
-        called_by = index_manager.graph_storage.get_callers(chunk_id)
+        graph = index_manager.graph_storage
+        normalized = normalize_path(chunk_id)
+        result: dict[str, list[str]] = {}
 
-        if calls or called_by:
-            return {
-                "calls": calls if calls else [],
-                "called_by": called_by if called_by else [],
-            }
+        # Early return if node not in graph
+        if normalized not in graph.graph:
+            return None
+
+        # Outgoing edges (this chunk is source) -> forward relation names
+        for _, target, edge_data in graph.graph.out_edges(normalized, data=True):
+            rel_type = edge_data.get("type", "calls")
+            lst = result.setdefault(rel_type, [])
+            if len(lst) < max_per_type:
+                lst.append(target)
+
+        # Incoming edges by chunk_id -> reverse relation names
+        for source, _, edge_data in graph.graph.in_edges(normalized, data=True):
+            rel_type = edge_data.get("type", "calls")
+            reverse = _get_reverse_relation_name(rel_type)
+            lst = result.setdefault(reverse, [])
+            if len(lst) < max_per_type:
+                lst.append(source)
+
+        # Incoming edges by symbol name (edges often target bare names)
+        symbol_name = normalized.rsplit(":", 1)[-1] if ":" in normalized else None
+        if symbol_name and symbol_name != normalized and symbol_name in graph.graph:
+            for source, _, edge_data in graph.graph.in_edges(symbol_name, data=True):
+                rel_type = edge_data.get("type", "calls")
+                reverse = _get_reverse_relation_name(rel_type)
+                lst = result.setdefault(reverse, [])
+                if len(lst) < max_per_type and source not in lst:
+                    lst.append(source)
+
+        return result if result else None
     except Exception as e:
         logger.debug(f"Failed to get graph data for {chunk_id}: {e}")
     return None
@@ -742,8 +817,46 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
         formatted_results, index_manager
     )
 
+    # === SSCG Phase 1: Extract subgraph over search results ===
+    subgraph_data = None
+    if index_manager and index_manager.graph_storage is not None:
+        try:
+            from search.subgraph_extractor import SubgraphExtractor
+
+            extractor = SubgraphExtractor(index_manager.graph_storage)
+            # Only extract subgraph for top-k results (ego-graph neighbors excluded)
+            # formatted_results[:k] gives original top-k since neighbors are appended after
+            result_chunk_ids = [
+                r["chunk_id"] for r in formatted_results[:k] if "chunk_id" in r
+            ]
+
+            if result_chunk_ids:
+                subgraph = extractor.extract_subgraph(
+                    result_chunk_ids, include_boundary_edges=True
+                )
+                # Include subgraph if there are nodes (boundary edges provide structural context)
+                if subgraph.nodes:
+                    subgraph_data = subgraph.to_dict()
+                    logger.debug(
+                        f"[SSCG] Extracted subgraph: {len(subgraph.nodes)} nodes, {len(subgraph.edges)} edges"
+                    )
+                else:
+                    logger.info(
+                        f"[SSCG] No graph nodes found for {len(result_chunk_ids)} chunk_ids"
+                    )
+        except Exception as e:
+            logger.debug(f"[SSCG] Subgraph extraction failed: {e}")
+
     # Build response
     response = {"query": query, "results": formatted_results}
+    # Flatten subgraph to top-level keys for ultra format TOON conversion
+    if subgraph_data:
+        response["subgraph_nodes"] = subgraph_data["nodes"]
+        response["subgraph_edges"] = subgraph_data["edges"]
+        if subgraph_data.get("topology_order"):
+            response["subgraph_order"] = subgraph_data["topology_order"]
+        if subgraph_data.get("communities"):
+            response["subgraph_communities"] = subgraph_data["communities"]
 
     # Only include routing info when useful for debugging:
     # - Skip for explicit user overrides (they know what they picked)
@@ -807,7 +920,6 @@ async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
     return {
         "reference_chunk": chunk_id,
         "similar_chunks": formatted_results,
-        "count": len(formatted_results),
     }
 
 
@@ -1027,7 +1139,6 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
 
         response = {
             "path_found": False,
-            "path_length": 0,
             "source": {
                 "chunk_id": resolved_source,
                 "name": (
@@ -1046,7 +1157,6 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
                 ),
                 "exists_in_graph": resolved_target in graph_storage.graph,
             },
-            "path": [],
             "reason": "No path exists"
             + (f" with edge_types={edge_types}" if edge_types else ""),
         }

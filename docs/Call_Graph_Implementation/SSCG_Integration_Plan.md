@@ -331,7 +331,7 @@ No changes needed to `output_formatter.py` for Phase 1.
 
 ---
 
-### Phase 2: Full Relationship Enrichment Per Result
+### Phase 2: Full Relationship Enrichment Per Result ✅ COMPLETED (2026-01-29)
 
 **Goal**: Expand per-result `graph` field from `{calls, called_by}` to all 21 relationship types.
 
@@ -425,6 +425,41 @@ def _get_reverse_relation_name(rel_type: str) -> str:
 **Functional validation via MCP**:
 - `search_code("BaseRelationshipExtractor", chunk_type="class")`
 - Verify: result `graph` field contains `inherits`, `inherited_by`, `imports` etc. (not just calls)
+
+#### Phase 2 Implementation Status: ✅ COMPLETED (2026-01-29)
+
+**Files Modified:**
+- `mcp_server/tools/search_handlers.py` — Added `normalize_path` import, `_REVERSE_RELATION_MAP` dict (21 entries), `_get_reverse_relation_name()` helper, and replaced `_get_graph_data_for_chunk()` with full 21-type implementation
+
+**Files Created:**
+- `tests/unit/mcp_server/test_graph_enrichment.py` — 9 unit tests (165 lines)
+
+**All planned targets achieved:**
+
+| Plan Target | Status | Implementation |
+|-------------|--------|----------------|
+| `_REVERSE_RELATION_MAP` dict | ✅ | 21 entries matching `graph_storage.py:356-378` naming (using `_by` suffixes, not plan doc's `_in` suffixes for consistency) |
+| `_get_reverse_relation_name()` helper | ✅ | With `f"{rel_type}_by"` fallback |
+| `normalize_path` import | ✅ | Added to search_handlers.py line 28 |
+| Replace `_get_graph_data_for_chunk()` | ✅ | New signature with `max_per_type=5` parameter, iterates out_edges + in_edges (chunk_id + symbol name) |
+| 4 planned unit tests | ✅ | 9 tests implemented (exceeded): full enrichment, max_per_type cap, backward compat, empty graph, symbol name lookup, reverse name mapping (3 tests), node not in graph |
+| Backward compatibility | ✅ | Existing callers unchanged (default `max_per_type=5`), 197/197 MCP server tests pass |
+
+**Key implementation details:**
+1. **Reverse relation naming**: Used existing `graph_storage.py` convention (`"used_as_type_by"`, `"constant_defined_by"` etc.) instead of plan doc's `"type_used_by"`, `"constant_defined_in"` for codebase consistency
+2. **Edge attribute access**: Uses `edge_data.get("type", "calls")` matching how edges are stored in `add_relationship_edge()`
+3. **Symbol name extraction**: `normalized.rsplit(":", 1)[-1]` for safer parsing of chunk_ids with colons in paths
+4. **Deduplication**: Only applied to symbol name incoming edges (`source not in lst`) to avoid double-counting
+
+**Test results:**
+- 9/9 new graph enrichment tests pass
+- 197/197 total MCP server tests pass (was 188, +9 new tests)
+- Zero regressions
+
+**Deviations from plan (all improvements):**
+- Used `graph_storage.py` reverse naming convention instead of plan doc's naming for consistency
+- Implemented 9 tests instead of 4 (added completeness checks and edge cases)
+- Added comprehensive docstring explaining symbol name lookup behavior
 
 ---
 
@@ -687,13 +722,13 @@ Ego-graph neighbor nodes added to subgraph with `is_search_result=False`. Ego-gr
 
 ```
 Phase 1 (Subgraph Extraction) ✅ COMPLETED ─── foundation for all others
-    ├── Phase 2 (Full Relationships) ── independent, low effort
+    ├── Phase 2 (Full Relationships) ✅ COMPLETED ── independent, low effort
     ├── Phase 3 (Centrality Ranking) ── independent, medium effort
     ├── Phase 4 (Community Context) ── depends on Phase 1 (annotates subgraph nodes)
     └── Phase 5 (Ego-Graph Structure) ── depends on Phase 1 (feeds edges into subgraph)
 ```
 
-**Recommended order**: 1 ✅ → 2 → 5 → 3 → 4
+**Recommended order**: 1 ✅ → 2 ✅ → 5 → 3 → 4
 
 ---
 
@@ -703,9 +738,10 @@ Phase 1 (Subgraph Extraction) ✅ COMPLETED ─── foundation for all others
 |------|------|--------|--------|
 | `search/subgraph_extractor.py` | **CREATED** - Core subgraph extraction (315 lines) | 1, 4, 5 | ✅ Phase 1 |
 | `tests/unit/search/test_subgraph_extractor.py` | **CREATED** - Subgraph extraction tests (14 tests) | 1 | ✅ Phase 1 |
-| `search/centrality_ranker.py` | **NEW** - PageRank reranking | 3 | Planned |
-| `mcp_server/tools/search_handlers.py` | Integration point (lines 748-778: `handle_search_code`) | 1, 2, 3 | ✅ Phase 1 |
+| `mcp_server/tools/search_handlers.py` | **MODIFIED** - SSCG integration + full relationship enrichment | 1, 2, 3 | ✅ Phase 1+2 |
+| `tests/unit/mcp_server/test_graph_enrichment.py` | **CREATED** - Graph enrichment tests (9 tests, 165 lines) | 2 | ✅ Phase 2 |
 | `tests/unit/mcp_server/test_output_formatter.py` | **MODIFIED** - Added 3 subgraph formatting tests | 1 | ✅ Phase 1 |
+| `search/centrality_ranker.py` | **NEW** - PageRank reranking | 3 | Planned |
 | `search/config.py` | Configuration (`GraphEnhancedConfig`) | 3 | Planned |
 | `search/ego_graph_retriever.py` | Structured ego-graph retrieval | 5 | Planned |
 | `graph/graph_storage.py` | Foundation (NetworkX DiGraph access) | All | Production |

@@ -107,13 +107,14 @@ def _compact_dict(d: dict[str, Any]) -> dict[str, Any]:
 
 
 def _to_toon_format(data: dict[str, Any]) -> dict[str, Any]:
-    """TOON-inspired tabular format for arrays.
+    """TOON-inspired tabular format for arrays with sparse column optimization.
 
     TOON format reference: https://github.com/toon-format/toon
 
     Converts arrays of dicts to tabular format:
     - Header: "array_name[count]{field1,field2,...}"
     - Values: [[row1_val1, row1_val2, ...], [row2_val1, row2_val2, ...]]
+    - Sparse columns (fill rate <25%) moved to separate structure
 
     Example:
         Input:  {"callers": [{"chunk_id": "a.py:1:func:f", "kind": "function"}]}
@@ -123,9 +124,10 @@ def _to_toon_format(data: dict[str, Any]) -> dict[str, Any]:
         data: Response dict
 
     Returns:
-        TOON-formatted dict with tabular arrays
+        TOON-formatted dict with tabular arrays and sparse column optimization
     """
     result = {}
+    SPARSE_THRESHOLD = 0.25  # If <25% of rows have values, move to sparse
 
     for key, value in data.items():
         # Skip empty values
@@ -152,16 +154,46 @@ def _to_toon_format(data: dict[str, Any]) -> dict[str, Any]:
                 fields.append(field_name)
 
             if fields:
-                # Create TOON header: "key[count]{field1,field2,...}"
-                header = f"{key}[{len(value)}]{{{','.join(fields)}}}"
+                # Split fields into dense vs sparse based on fill ratio
+                dense_fields = []
+                sparse_fields = []
+                for field_name in fields:
+                    # Count non-empty values for this field
+                    non_empty_count = sum(
+                        1
+                        for item in value
+                        if item.get(field_name) not in ([], {}, None, "")
+                    )
+                    fill_ratio = non_empty_count / len(value)
 
-                # Create rows: [[val1, val2, ...], ...]
-                rows = []
-                for item in value:
-                    row = [item.get(f) for f in fields]
-                    rows.append(row)
+                    if fill_ratio >= SPARSE_THRESHOLD:
+                        dense_fields.append(field_name)
+                    else:
+                        sparse_fields.append(field_name)
 
-                result[header] = rows
+                # Create main TOON table with dense fields only
+                if dense_fields:
+                    header = f"{key}[{len(value)}]{{{','.join(dense_fields)}}}"
+                    rows = []
+                    for item in value:
+                        row = [item.get(f) for f in dense_fields]
+                        rows.append(row)
+                    result[header] = rows
+
+                # For sparse fields, create compact index-value structure
+                if sparse_fields:
+                    sparse_data = {}
+                    for sf in sparse_fields:
+                        # Collect (index, value) pairs for non-empty values only
+                        entries = [
+                            [i, item.get(sf)]
+                            for i, item in enumerate(value)
+                            if item.get(sf) not in ([], {}, None, "")
+                        ]
+                        if entries:
+                            sparse_data[sf] = entries
+                    if sparse_data:
+                        result[f"{key}_sparse"] = sparse_data
 
         elif isinstance(value, dict):
             # For nested dicts, compact (don't convert to tabular)
