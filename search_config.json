@@ -45,7 +45,8 @@
     "enabled": true,
     "hop_count": 2,
     "expansion": 0.3,
-    "initial_k_multiplier": 2.0
+    "initial_k_multiplier": 2.0,
+    "multi_hop_mode": "hybrid"
   },
   "routing": {
     "multi_model_enabled": true,

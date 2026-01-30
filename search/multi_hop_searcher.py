@@ -8,6 +8,7 @@ import logging
 import time
 from typing import Any, Optional
 
+from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
 from mcp_server.utils.config_helpers import (
     get_config_via_service_locator as _get_config_via_service_locator,
 )
@@ -31,6 +32,7 @@ class MultiHopSearcher:
         dense_index,
         single_hop_callback,  # Callable for _single_hop_search
         reranking_engine,  # RerankingEngine instance
+        graph_storage=None,  # CodeGraphStorage instance for graph-based expansion
         logger: Optional[logging.Logger] = None,
     ):
         """
@@ -47,6 +49,7 @@ class MultiHopSearcher:
         self.dense_index = dense_index
         self._single_hop_search = single_hop_callback
         self.reranking_engine = reranking_engine
+        self.graph_storage = graph_storage
         self._logger = logger or logging.getLogger(__name__)
 
     def validate_params(self, hops: int, expansion_factor: float) -> tuple[int, float]:
@@ -152,6 +155,125 @@ class MultiHopSearcher:
             )
 
         return expansion_timings
+
+    def _graph_expand(
+        self,
+        initial_results: list,
+        all_chunk_ids: set,
+        all_results: dict,
+        expansion_k: int,
+        k: int,
+    ) -> dict[int, float]:
+        """Expand results via graph neighbor traversal (weighted BFS).
+
+        Modifies all_chunk_ids and all_results IN-PLACE.
+
+        Returns:
+            Dict mapping hop number to duration in seconds.
+        """
+        expansion_timings = {}
+
+        if not self.graph_storage:
+            self._logger.warning(
+                "[MULTI_HOP] Graph expansion requested but graph_storage is None"
+            )
+            return expansion_timings
+
+        hop_start = time.time()
+        hop_discovered = 0
+
+        source_results = initial_results[:k]
+
+        for result in source_results:
+            # Weighted BFS from Phase 1 — prioritizes calls (1.0) over imports (0.3)
+            neighbors: set[str] = self.graph_storage.get_neighbors(
+                chunk_id=result.chunk_id,
+                max_depth=1,
+                edge_weights=DEFAULT_EDGE_WEIGHTS,
+            )
+
+            added_for_source = 0
+            for neighbor_id in neighbors:
+                # Filter symbol_name nodes (e.g. "Exception", "ABC").
+                # Real chunk IDs: "file.py:10-20:function:name" (>= 3 colons)
+                if neighbor_id.count(":") < 3:
+                    continue
+
+                if neighbor_id in all_chunk_ids:
+                    continue
+
+                if added_for_source >= expansion_k:
+                    break
+
+                # Look up metadata from dense index
+                metadata_entry = self.dense_index.metadata_store.get(neighbor_id)
+                if metadata_entry is None:
+                    continue  # In graph but not in search index
+
+                metadata = metadata_entry.get("metadata", {})
+
+                all_chunk_ids.add(neighbor_id)
+                all_results[neighbor_id] = RerankerSearchResult(
+                    chunk_id=neighbor_id,
+                    score=0.0,  # Reranker assigns final score
+                    metadata=metadata,
+                    source="graph_hop",
+                )
+                hop_discovered += 1
+                added_for_source += 1
+
+        expansion_timings[2] = time.time() - hop_start
+
+        self._logger.info(
+            f"[MULTI_HOP] Graph expand: {hop_discovered} new chunks "
+            f"(total: {len(all_results)}, {expansion_timings[2] * 1000:.1f}ms)"
+        )
+
+        return expansion_timings
+
+    def _hybrid_expand(
+        self,
+        initial_results: list,
+        all_chunk_ids: set,
+        all_results: dict,
+        expansion_k: int,
+        hops: int,
+        k: int,
+    ) -> dict[int, float]:
+        """Expand using graph neighbors first, then semantic similarity.
+
+        Graph runs first so graph_hop results claim chunk IDs. Semantic
+        expansion then naturally skips already-seen IDs, giving graph priority.
+
+        Modifies all_chunk_ids and all_results IN-PLACE.
+        """
+        # Phase A: Graph expansion first (claims chunk IDs with source="graph_hop")
+        graph_timings = self._graph_expand(
+            initial_results=initial_results,
+            all_chunk_ids=all_chunk_ids,
+            all_results=all_results,
+            expansion_k=expansion_k,
+            k=k,
+        )
+
+        # Phase B: Semantic expansion (skips already-seen IDs from graph phase)
+        semantic_timings = self.expand_from_initial_results(
+            initial_results=initial_results,
+            all_chunk_ids=all_chunk_ids,
+            all_results=all_results,
+            expansion_k=expansion_k,
+            hops=hops,
+            k=k,
+        )
+
+        # Merge timing dicts (sum durations on collision)
+        combined = {}
+        for hop_num, duration in graph_timings.items():
+            combined[hop_num] = duration
+        for hop_num, duration in semantic_timings.items():
+            combined[hop_num] = combined.get(hop_num, 0) + duration
+
+        return combined
 
     def apply_post_expansion_filters(
         self,
@@ -295,14 +417,35 @@ class MultiHopSearcher:
 
         # Hop 2+: Expand from initial results
         expansion_k = max(1, int(k * expansion_factor))
-        timings["expansion"] = self.expand_from_initial_results(
-            initial_results=initial_results,
-            all_chunk_ids=all_chunk_ids,
-            all_results=all_results,
-            expansion_k=expansion_k,
-            hops=hops,
-            k=k,
-        )
+        multi_hop_mode = config.multi_hop.multi_hop_mode
+
+        if multi_hop_mode == "graph" and self.graph_storage:
+            timings["expansion"] = self._graph_expand(
+                initial_results=initial_results,
+                all_chunk_ids=all_chunk_ids,
+                all_results=all_results,
+                expansion_k=expansion_k,
+                k=k,
+            )
+        elif multi_hop_mode == "hybrid" and self.graph_storage:
+            timings["expansion"] = self._hybrid_expand(
+                initial_results=initial_results,
+                all_chunk_ids=all_chunk_ids,
+                all_results=all_results,
+                expansion_k=expansion_k,
+                hops=hops,
+                k=k,
+            )
+        else:
+            # "semantic" (default) or fallback when graph_storage is None
+            timings["expansion"] = self.expand_from_initial_results(
+                initial_results=initial_results,
+                all_chunk_ids=all_chunk_ids,
+                all_results=all_results,
+                expansion_k=expansion_k,
+                hops=hops,
+                k=k,
+            )
 
         # Apply filters to expanded results
         all_results = self.apply_post_expansion_filters(

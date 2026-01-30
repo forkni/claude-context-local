@@ -159,6 +159,10 @@ class HybridSearcher(BaseSearcher):
         # Initialize graph components (ego-graph retrieval)
         self._init_graph_components(project_id=project_id)
 
+        # Wire graph_storage into multi-hop searcher for graph expansion (Phase 3)
+        if self._graph_storage is not None:
+            self.multi_hop_searcher.graph_storage = self._graph_storage
+
         # Backward compatibility
         self.max_workers = max_workers
         self._shutdown_lock = threading.Lock()
