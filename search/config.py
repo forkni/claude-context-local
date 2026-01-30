@@ -363,7 +363,7 @@ class GraphEnhancedConfig:
     centrality_method: str = "pagerank"  # Centrality algorithm
     centrality_alpha: float = 0.3  # Blending weight (0=semantic, 1=centrality)
     centrality_annotation: bool = True  # Always annotate centrality when graph exists
-    centrality_reranking: bool = False  # Opt-in reordering by blended score
+    centrality_reranking: bool = True  # Always rerank by blended score
 
 
 class SearchConfig:
@@ -486,6 +486,7 @@ class SearchConfig:
                 "hop_count": self.multi_hop.hop_count,
                 "expansion": self.multi_hop.expansion,
                 "initial_k_multiplier": self.multi_hop.initial_k_multiplier,
+                "multi_hop_mode": self.multi_hop.multi_hop_mode,
             },
             "routing": {
                 "multi_model_enabled": self.routing.multi_model_enabled,
@@ -650,6 +651,7 @@ class SearchConfig:
                 hop_count=multi_hop_data.get("hop_count", 2),
                 expansion=multi_hop_data.get("expansion", 0.3),
                 initial_k_multiplier=multi_hop_data.get("initial_k_multiplier", 2.0),
+                multi_hop_mode=multi_hop_data.get("multi_hop_mode", "hybrid"),
             )
 
             routing = RoutingConfig(
@@ -718,7 +720,7 @@ class SearchConfig:
                     "centrality_annotation", True
                 ),
                 centrality_reranking=graph_enhanced_data.get(
-                    "centrality_reranking", False
+                    "centrality_reranking", True
                 ),
             )
 
@@ -786,6 +788,7 @@ class SearchConfig:
                 hop_count=data.get("multi_hop_count", 2),
                 expansion=data.get("multi_hop_expansion", 0.3),
                 initial_k_multiplier=data.get("multi_hop_initial_k_multiplier", 2.0),
+                multi_hop_mode=data.get("multi_hop_mode", "hybrid"),
             )
 
             routing = RoutingConfig(
@@ -845,7 +848,7 @@ class SearchConfig:
                 centrality_method=data.get("centrality_method", "pagerank"),
                 centrality_alpha=data.get("centrality_alpha", 0.3),
                 centrality_annotation=data.get("centrality_annotation", True),
-                centrality_reranking=data.get("centrality_reranking", False),
+                centrality_reranking=data.get("centrality_reranking", True),
             )
 
         return cls(

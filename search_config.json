@@ -95,6 +95,6 @@
     "centrality_method": "pagerank",
     "centrality_alpha": 0.3,
     "centrality_annotation": true,
-    "centrality_reranking": false
+    "centrality_reranking": true
   }
 }

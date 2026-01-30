@@ -827,7 +827,6 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
 
     # === SSCG Phase 3: Centrality annotation/reranking ===
     centrality_scores = None
-    centrality_reranking = arguments.get("centrality_reranking", False)
     if search_config is None:
         search_config = get_search_config()
     graph_config = getattr(search_config, "graph_enhanced", None)
@@ -852,8 +851,8 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
             # Compute centrality scores for subgraph population
             centrality_scores = ranker._get_centrality_scores()
 
-            # Optionally rerank results by blended score
-            if centrality_reranking or graph_config.centrality_reranking:
+            # Rerank results by blended score if enabled in config
+            if graph_config.centrality_reranking:
                 formatted_results = ranker.rerank(formatted_results)
                 logger.debug(
                     f"[SSCG Phase 3] Reranked {len(formatted_results)} results by centrality"
