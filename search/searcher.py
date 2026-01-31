@@ -386,7 +386,7 @@ class IntelligentSearcher(BaseSearcher):
         self,
         query: str,
         file_patterns: list[str],
-        k: int = 4,  # [Fix6]
+        k: int = 4,
     ) -> list[SearchResult]:
         """Search within specific file patterns."""
         filters = {"file_pattern": file_patterns}

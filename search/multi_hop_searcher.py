@@ -185,7 +185,7 @@ class MultiHopSearcher:
         source_results = initial_results[:k]
 
         for result in source_results:
-            # Weighted BFS from Phase 1 — prioritizes calls (1.0) over imports (0.3)
+            # Weighted BFS -- prioritizes calls (1.0) over imports (0.3)
             neighbors: set[str] = self.graph_storage.get_neighbors(
                 chunk_id=result.chunk_id,
                 max_depth=1,
@@ -247,7 +247,7 @@ class MultiHopSearcher:
 
         Modifies all_chunk_ids and all_results IN-PLACE.
         """
-        # Phase A: Graph expansion first (claims chunk IDs with source="graph_hop")
+        # Graph expansion first (claims chunk IDs with source="graph_hop")
         graph_timings = self._graph_expand(
             initial_results=initial_results,
             all_chunk_ids=all_chunk_ids,
@@ -256,7 +256,7 @@ class MultiHopSearcher:
             k=k,
         )
 
-        # Phase B: Semantic expansion (skips already-seen IDs from graph phase)
+        # Semantic expansion (skips IDs already found via graph)
         semantic_timings = self.expand_from_initial_results(
             initial_results=initial_results,
             all_chunk_ids=all_chunk_ids,

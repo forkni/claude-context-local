@@ -327,7 +327,7 @@ def _get_index_manager_from_searcher(searcher) -> CodeIndexManager | None:
 
 
 # ============================================================================
-# SSCG Phase 2: Full Relationship Enrichment Per Result
+# Full Relationship Enrichment Per Result
 # ============================================================================
 
 # Reverse relation names for incoming edge enrichment
@@ -450,7 +450,7 @@ def _format_search_results(results: list) -> list[dict]:
             # Add complexity score if available (functions only)
             if hasattr(result, "complexity_score") and result.complexity_score:
                 item["complexity_score"] = result.complexity_score
-            # SSCG Phase 5: Propagate source field for ego-graph neighbor identification
+            # Propagate source field for ego-graph neighbor identification
             if hasattr(result, "source") and result.source:
                 item["source"] = result.source
         else:
@@ -468,7 +468,7 @@ def _format_search_results(results: list) -> list[dict]:
             # Add complexity score if available (functions only)
             if result.metadata.get("complexity_score"):
                 item["complexity_score"] = result.metadata["complexity_score"]
-            # SSCG Phase 5: Propagate source field for ego-graph neighbor identification
+            # Propagate source field for ego-graph neighbor identification
             if hasattr(result, "source") and result.source:
                 item["source"] = result.source
         formatted_results.append(item)
@@ -564,7 +564,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
         query, use_routing, model_key
     )
 
-    # [TNO-T1] Initialize intent_decision (may be set by intent classifier below)
+    # Initialize intent_decision (may be set by intent classifier below)
     intent_decision = None
 
     # Intent Classification (Phase 2)
@@ -675,7 +675,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     # NORMAL PATH: Search by query
     search_mode = arguments.get("search_mode", "auto")
 
-    # [TNO-T1] Apply intent classifier's suggested search_mode when user specifies 'auto'
+    # Apply intent classifier's suggested search_mode when user specifies 'auto'
     if intent_decision and search_mode == "auto":
         suggested_mode = intent_decision.suggested_params.get("search_mode")
         if suggested_mode:
@@ -698,7 +698,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     # Parent chunk retrieval parameter (Match Small, Retrieve Big)
     include_parent = arguments.get("include_parent", False)
 
-    # [TNO-T3] Context budget
+    # Context budget
     max_context_tokens = arguments.get(
         "max_context_tokens", get_config().search_mode.default_max_context_tokens
     )
@@ -822,7 +822,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
         search_config.parent_retrieval = parent_config
         logger.info("[PARENT_RETRIEVAL] Enabled")
 
-    # [TNO-T2] Apply intent-driven weight overrides
+    # Apply intent-driven weight overrides
     if isinstance(searcher, HybridSearcher) and intent_decision:
         suggested_bm25 = intent_decision.suggested_params.get("bm25_weight")
         suggested_dense = intent_decision.suggested_params.get("dense_weight")
@@ -830,7 +830,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
             orig_bm25, orig_dense = searcher.bm25_weight, searcher.dense_weight
             searcher.bm25_weight = suggested_bm25
             searcher.dense_weight = suggested_dense
-            # [Q12-FIX-3] Propagate weights to SearchExecutor (has its own weight copies)
+            # Propagate weights to SearchExecutor (has its own weight copies)
             if hasattr(searcher, "search_executor"):
                 searcher.search_executor.bm25_weight = suggested_bm25
                 searcher.search_executor.dense_weight = suggested_dense
@@ -868,7 +868,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
         formatted_results, index_manager
     )
 
-    # === SSCG Phase 3: Centrality annotation/reranking ===
+    # === Centrality annotation/reranking ===
     centrality_scores = None
     if search_config is None:
         search_config = get_search_config()
@@ -898,17 +898,17 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
             if graph_config.centrality_reranking:
                 formatted_results = ranker.rerank(formatted_results, query=query)
                 logger.debug(
-                    f"[SSCG Phase 3] Reranked {len(formatted_results)} results by centrality"
+                    f"Reranked {len(formatted_results)} results by centrality"
                 )
             else:
                 formatted_results = ranker.annotate(formatted_results)
                 logger.debug(
-                    f"[SSCG Phase 3] Annotated {len(formatted_results)} results with centrality"
+                    f"Annotated {len(formatted_results)} results with centrality"
                 )
         except Exception as e:
-            logger.debug(f"[SSCG Phase 3] Centrality ranking failed: {e}")
+            logger.debug(f"Centrality ranking failed: {e}")
 
-    # === SSCG Phase 1: Extract subgraph over search results ===
+    # === Extract subgraph over search results ===
     subgraph_data = None
     if index_manager and index_manager.graph_storage is not None:
         try:
@@ -920,7 +920,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
                 r["chunk_id"] for r in formatted_results[:k] if "chunk_id" in r
             ]
 
-            # SSCG Phase 5: Collect ego-graph neighbor chunk_ids (if present)
+            # Collect ego-graph neighbor chunk_ids (if present)
             ego_neighbor_ids = [
                 r["chunk_id"]
                 for r in formatted_results[k:]
@@ -954,7 +954,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
         except Exception as e:
             logger.debug(f"[SSCG] Subgraph extraction failed: {e}")
 
-    # [TNO-T3] Apply context budget truncation
+    # Apply context budget truncation
     if max_context_tokens > 0 and formatted_results:
         import json as _json
 
@@ -1009,7 +1009,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
 async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
     """Find code chunks similar to a reference chunk."""
     chunk_id = arguments["chunk_id"]
-    k = arguments.get("k", 4)  # [Fix6] Align with default_k=4
+    k = arguments.get("k", 4)  # Align with default_k=4
 
     # Normalize chunk_id path separators
     # Use CodeIndexManager's normalize_chunk_id for proper cross-platform handling

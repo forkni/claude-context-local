@@ -132,7 +132,7 @@ def resolve_qwen3_variant_for_lookup(project_hash: str, project_name: str) -> st
     # Try 0.6B first (more common on typical systems)
     qwen_variants = [
         ("Qwen/Qwen3-Embedding-0.6B", "qwen3-0.6b", 1024),
-        ("Qwen/Qwen3-Embedding-4B", "qwen3-4b", 1024),  # Fixed: MRL uses 1024, not 2560
+        ("Qwen/Qwen3-Embedding-4B", "qwen3-4b", 1024),  # MRL dimension is 1024
     ]
 
     for model_name, slug, dim in qwen_variants:
@@ -140,7 +140,7 @@ def resolve_qwen3_variant_for_lookup(project_hash: str, project_name: str) -> st
         pattern = f"{project_name}_{project_hash}_{slug}_{dim}d"
         index_path = (
             storage_dir / pattern / "index" / "code.index"
-        )  # Fixed: check dense index
+        )
         if index_path.exists():
             logging.getLogger(__name__).debug(
                 f"[QWEN3_RESOLUTION] Found {model_name} index at {pattern}"
@@ -210,7 +210,7 @@ class SearchModeConfig:
     )
     max_k: int = 50
 
-    # [TNO-T3] Context budget (0 = unlimited)
+    # Context budget (0 = unlimited)
     default_max_context_tokens: int = 0
 
 
@@ -354,7 +354,7 @@ class EgoGraphConfig:
     # RepoGraph relation filtering (Feature #5)
     exclude_stdlib_imports: bool = True  # Filter stdlib from graph traversal
     exclude_third_party_imports: bool = True  # Filter third-party from traversal
-    # Weighted graph traversal (Phase 1)
+    # Weighted graph traversal
     edge_weights: Optional[dict[str, float]] = field(
         default_factory=lambda: DEFAULT_EDGE_WEIGHTS.copy()
     )  # Use weighted BFS by default (calls > imports priority)
@@ -371,7 +371,7 @@ class ParentRetrievalConfig:
 
 @dataclass
 class GraphEnhancedConfig:
-    """Graph-enhanced search settings for SSCG Phase 3+."""
+    """Graph-enhanced search settings."""
 
     centrality_method: str = "pagerank"  # Centrality algorithm
     centrality_alpha: float = 0.3  # Blending weight (0=semantic, 1=centrality)

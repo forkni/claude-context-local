@@ -193,7 +193,7 @@ class CentralityRanker:
             blended = (1 - blend_alpha) * semantic_score + blend_alpha * centrality
             result["blended_score"] = round(blended, 4)
 
-            # [Q33-FIX] Query-aware boosting (ported from IntelligentSearcher)
+            # Query-aware boosting (ported from IntelligentSearcher)
             if query:
                 chunk_type = result.get("kind", "")
                 query_lower = query.lower()
@@ -242,7 +242,7 @@ class CentralityRanker:
                 if is_test_code and not query_has_test_intent:
                     result["blended_score"] = round(result["blended_score"] * 0.85, 4)
 
-                # Name-match boost (Q32-FIX: extract name from chunk_id when field absent)
+                # Name-match boost: extract name from chunk_id when field absent
                 chunk_id = result.get("chunk_id", "")
                 name = result.get("name", "") or _extract_name_from_chunk_id(chunk_id)
                 if name and query_lower:

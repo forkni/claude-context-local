@@ -173,7 +173,7 @@ class SubgraphExtractor:
 
             nodes.append(node)
 
-        # SSCG Phase 5: Add ego-graph neighbor nodes (is_search_result=False)
+        # Add ego-graph neighbor nodes (is_search_result=False)
         if ego_neighbor_ids:
             for neighbor_id in ego_neighbor_ids:
                 if neighbor_id in chunk_id_set:
@@ -280,7 +280,7 @@ class SubgraphExtractor:
         )  # includes search results + ego neighbors if present
         topology_order = self._build_topology_order(all_ids)
 
-        # SSCG Phase 4: Annotate nodes with community IDs and generate labels
+        # Annotate nodes with community IDs and generate labels
         communities = self._annotate_communities(nodes)
 
         return SubgraphResult(

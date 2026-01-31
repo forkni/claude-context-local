@@ -460,7 +460,7 @@ class IncrementalIndexer:
 
             # ========== Community Detection & Remerge ==========
             # Community merge flow: Chunk → Build graph → Detect communities → (Optional) Remerge → Embed
-            # FIX: Community detection can now run independently of chunk merging
+            # Community detection runs independently of chunk merging
             config = get_search_config()
             community_map = None  # Will be populated if community detection runs
 
@@ -758,7 +758,7 @@ class IncrementalIndexer:
                     symbol_cache.add_symbol_mapping(chunk.name, chunk_id)
 
                 # Register all merged symbol names (for merged chunks)
-                # Phase A6: Use merged_from attribute instead of metadata
+                # Use merged_from attribute instead of metadata
                 if chunk.merged_from:
                     for symbol_name in chunk.merged_from:
                         if symbol_name:  # Skip empty names

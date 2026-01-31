@@ -30,7 +30,7 @@ SEMANTIC_TYPES = (
     "impl",
     "constant",
     "variable",
-    "merged",  # Community-merged chunks (Phase 6 community detection)
+    "merged",  # Community-merged chunks from Louvain detection
     "split_block",  # Large node split blocks (AST block splitting)
 )
 
@@ -217,7 +217,7 @@ class GraphIntegration:
                         bare_name = chunk.name.split(".")[-1]
                         name_to_chunk_ids[bare_name].append(chunk.chunk_id)
 
-                    # Phase 1.7.1: Also index by qualified name for self.method() resolution
+                    # Index qualified name (ClassName.method) for self.method() resolution
                     # Fixes intra-class method calls by indexing "ClassName.method"
                     if chunk.parent_name and chunk.name:
                         qualified_name = f"{chunk.parent_name}.{chunk.name}"
@@ -337,7 +337,7 @@ class GraphIntegration:
         Returns:
             chunk_id if exactly one match, None otherwise (creates phantom node)
         """
-        # Phase 1.7.2: Skip builtins - they never resolve to project code
+        # Skip builtins (len, print, etc.) -- they never resolve to project code
         import builtins
 
         if hasattr(builtins, callee_name):
@@ -367,7 +367,7 @@ class GraphIntegration:
         if len(candidates) == 1:
             return candidates[0]
 
-        # Phase 1.7.3: Context-aware disambiguation for ambiguous matches
+        # Context-aware disambiguation: prefer same-file match for ambiguous calls
         if len(candidates) > 1 and caller_file:
             # Try same-file preference - overwhelmingly the intended target
             same_file = [c for c in candidates if caller_file in c]

@@ -1,6 +1,6 @@
 """GPU memory monitoring utilities for optimal batch sizing.
 
-Extracted from hybrid_searcher.py (Phase 3.1 refactoring).
+Extracted from hybrid_searcher.py.
 This module provides GPU memory monitoring functionality for determining
 optimal batch sizes and checking GPU availability.
 """

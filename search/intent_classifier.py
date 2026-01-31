@@ -77,7 +77,7 @@ class QueryIntent(Enum):
     HYBRID = "hybrid"  # Ambiguous/uncertain queries
 
 
-# [TNO-T2] Intent-driven BM25/Dense weight profiles
+# Intent-driven BM25/Dense weight profiles
 INTENT_WEIGHT_PROFILES: dict[QueryIntent, tuple[float, float]] = {
     QueryIntent.LOCAL: (
         0.6,
@@ -106,7 +106,7 @@ class IntentClassifier:
     """Classifies search queries by intent for optimal handling.
 
     Routing strategy based on intent:
-    - LOCAL: Direct dense search with k=4 (symbol definitions)  # [Fix6]
+    - LOCAL: Direct dense search with k=4 (symbol definitions)
     - GLOBAL: Multi-hop search with k=10+ (architectural understanding)
     - NAVIGATIONAL: Redirect to find_connections (dependency analysis)
     - HYBRID: Default hybrid search (uncertain intent)
@@ -135,7 +135,7 @@ class IntentClassifier:
                 # Discovery terms
                 "discover",
                 "identify",
-                # [Q12-FIX] Existence checking
+                # Existence-checking query patterns
                 "check if",
                 "does",
                 "is there",
@@ -166,14 +166,14 @@ class IntentClassifier:
                 (
                     r"\bget\s+\w+(\s+\w+)*\s+from\b",
                     1.3,
-                ),  # [Q07-FIX] "get node text from tree sitter"
+                ),  # "get node text from tree sitter"
                 (
                     r"\b(enum|interface|struct|type)\s+\w+\b",
                     1.2,
                 ),  # "interface SearchResult"
-                (r"\bcheck\s+if\s+\w+\s+exists?\b", 1.4),  # [Q12-FIX]
-                (r"\bdoes\s+\w+\s+exist\b", 1.4),  # [Q12-FIX]
-                (r"\bis\s+there\s+(a\s+)?\w+\b", 1.3),  # [Q12-FIX]
+                (r"\bcheck\s+if\s+\w+\s+exists?\b", 1.4),
+                (r"\bdoes\s+\w+\s+exist\b", 1.4),
+                (r"\bis\s+there\s+(a\s+)?\w+\b", 1.3),
             ],
             "max_tokens": 8,  # Short, focused queries (raised for natural language function lookups)
             "weight": 1.0,
@@ -237,11 +237,11 @@ class IntentClassifier:
                 (
                     r"\b(arrangement|organization|scheme)\s+of\b",
                     1.2,
-                ),  # Phase 2: "organization of search system"
+                ),  # e.g., "organization of search system"
                 (
                     r"\b(procedure|technique|methodology)\s+(for|of)\b",
                     1.3,
-                ),  # Phase 2: "methodology for indexing"
+                ),  # e.g., "methodology for indexing"
             ],
             "weight": 1.0,
             "description": "Architectural/conceptual queries",
@@ -260,7 +260,7 @@ class IntentClassifier:
                 "depends on",
                 "dependencies",
                 "dependents",
-                # Phase 2: Thesaurus additions
+                # Synonym coverage for dependency terminology
                 "relations",
                 "reliance",
                 "correlations",
@@ -336,7 +336,7 @@ class IntentClassifier:
                 (
                     r"\b(relations|reliance|correlations)\s+(of|between)\b",
                     1.3,
-                ),  # Phase 2: "relations of IntentClassifier"
+                ),  # e.g., "relations of IntentClassifier"
             ],
             "weight": 1.2,  # Higher weight for strong signal
             "description": "Relationship/dependency queries",
@@ -355,7 +355,7 @@ class IntentClassifier:
                 "flow to",
                 "reaches",
                 "leads to",
-                # Phase 2: Thesaurus additions
+                # Synonym coverage for path-tracing terminology
                 "trail",
                 "pursue",
                 # Journey metaphors
@@ -384,7 +384,7 @@ class IntentClassifier:
                 (
                     r"\b(trail|pursue)\s+(the\s+)?(path|call|flow)\b",
                     1.5,
-                ),  # Phase 2: "trail the path"
+                ),  # e.g., "trail the path"
                 (
                     r"\b(route|journey)\s+(from|to|between)\b",
                     1.8,
@@ -406,7 +406,7 @@ class IntentClassifier:
                 "same pattern",
                 "resembles",
                 "looks like",
-                # Phase 2: Thesaurus additions
+                # Synonym coverage for similarity terminology
                 "replicate",
                 "mimic",
                 "emulate",
@@ -451,19 +451,19 @@ class IntentClassifier:
                 (
                     r"\b(replicate|mimic|emulate)s?\s+\w+\b",
                     1.5,
-                ),  # Phase 2: "replicate QueryRouter"
+                ),  # e.g., "replicate QueryRouter"
                 (
                     r"\b(replica|counterpart|twin)\s+(of|for)\b",
                     1.8,
-                ),  # Phase 2: "replica of QueryRouter"
+                ),  # e.g., "replica of QueryRouter"
                 (
                     r"\b(mirror|parallel)\s+(of|to)\b",
                     1.5,
-                ),  # Phase 2: "mirror of IntentClassifier"
+                ),  # e.g., "mirror of IntentClassifier"
                 (
                     r"\blook-alike\s+(of|for|to)\b",
                     1.5,
-                ),  # Phase 2: "look-alike of QueryRouter"
+                ),  # e.g., "look-alike of QueryRouter"
             ],
             "weight": 1.2,
             "description": "Code similarity queries",
@@ -480,7 +480,7 @@ class IntentClassifier:
                 "explore",
                 "overview of",
                 "understand",
-                # Phase 2: Thesaurus additions
+                # Synonym coverage for contextual exploration terminology
                 "investigate",
                 "examine",
                 "probe",
@@ -515,15 +515,15 @@ class IntentClassifier:
                 (
                     r"\b(investigate|examine|inspect)\s+\w+\b",
                     1.3,
-                ),  # Phase 2: "investigate handle_search_code"
+                ),  # e.g., "investigate handle_search_code"
                 (
                     r"\b(delve|probe)\s+(into\s+)?\w+\b",
                     1.5,
-                ),  # Phase 2: "delve into QueryRouter"
+                ),  # e.g., "delve into QueryRouter"
                 (
                     r"\b(survey|scout)\s+(the\s+)?\w+\b",
                     1.2,
-                ),  # Phase 2: "survey the codebase"
+                ),  # e.g., "survey the codebase"
                 (
                     r"\b(vicinity|proximity|neighborhood)\s+(of|around)\b",
                     1.8,
@@ -763,7 +763,7 @@ class IntentClassifier:
             params["k"] = 5
             params["search_mode"] = "hybrid"
 
-            # [Q12-FIX-2] Existence-checking queries benefit from semantic-heavy weights.
+            # Existence-checking queries benefit from semantic-heavy weights.
             # BM25 over-matches "index" and "exists" on internal implementation code,
             # while semantic search better understands user intent for discovery queries.
             query_lower = query.lower()
@@ -808,7 +808,7 @@ class IntentClassifier:
             if symbol_name:
                 params["symbol_name"] = symbol_name
 
-        # [TNO-T2] Add weight suggestions from profile (don't overwrite intent-specific)
+        # Add weight suggestions from profile (don't overwrite intent-specific)
         if intent in INTENT_WEIGHT_PROFILES and "bm25_weight" not in params:
             bm25_w, dense_w = INTENT_WEIGHT_PROFILES[intent]
             params["bm25_weight"] = bm25_w
