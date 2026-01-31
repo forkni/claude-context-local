@@ -87,7 +87,8 @@ def _compact_dict(d: dict[str, Any]) -> dict[str, Any]:
         Compacted dict with redundant fields removed
     """
     result = {}
-    chunk_id = d.get("chunk_id", "")
+    # Check both "chunk_id" (search results) and "id" (subgraph nodes) for path info
+    chunk_id = d.get("chunk_id", "") or d.get("id", "")
 
     for key, value in d.items():
         # Skip redundant fields (info already in chunk_id)
@@ -107,13 +108,14 @@ def _compact_dict(d: dict[str, Any]) -> dict[str, Any]:
 
 
 def _to_toon_format(data: dict[str, Any]) -> dict[str, Any]:
-    """TOON-inspired tabular format for arrays.
+    """TOON-inspired tabular format for arrays with sparse column optimization.
 
     TOON format reference: https://github.com/toon-format/toon
 
     Converts arrays of dicts to tabular format:
     - Header: "array_name[count]{field1,field2,...}"
     - Values: [[row1_val1, row1_val2, ...], [row2_val1, row2_val2, ...]]
+    - Sparse columns (fill rate <25%) moved to separate structure
 
     Example:
         Input:  {"callers": [{"chunk_id": "a.py:1:func:f", "kind": "function"}]}
@@ -123,9 +125,10 @@ def _to_toon_format(data: dict[str, Any]) -> dict[str, Any]:
         data: Response dict
 
     Returns:
-        TOON-formatted dict with tabular arrays
+        TOON-formatted dict with tabular arrays and sparse column optimization
     """
     result = {}
+    SPARSE_THRESHOLD = 0.25  # If <25% of rows have values, move to sparse
 
     for key, value in data.items():
         # Skip empty values
@@ -139,9 +142,10 @@ def _to_toon_format(data: dict[str, Any]) -> dict[str, Any]:
             for item in value:
                 all_fields.update(item.keys())
 
-            # Determine fields (exclude redundant file/lines if chunk_id present)
+            # Determine fields (exclude redundant file/lines if chunk_id or id present)
             fields = []
-            has_chunk_id = any(item.get("chunk_id") for item in value)
+            # Check both "chunk_id" (search results) and "id" (subgraph nodes) for path info
+            has_chunk_id = any(item.get("chunk_id") or item.get("id") for item in value)
             for field_name in sorted(all_fields):  # Sort for consistent order
                 # Skip redundant fields
                 if field_name in ("file", "lines") and has_chunk_id:
@@ -152,16 +156,46 @@ def _to_toon_format(data: dict[str, Any]) -> dict[str, Any]:
                 fields.append(field_name)
 
             if fields:
-                # Create TOON header: "key[count]{field1,field2,...}"
-                header = f"{key}[{len(value)}]{{{','.join(fields)}}}"
+                # Split fields into dense vs sparse based on fill ratio
+                dense_fields = []
+                sparse_fields = []
+                for field_name in fields:
+                    # Count non-empty values for this field
+                    non_empty_count = sum(
+                        1
+                        for item in value
+                        if item.get(field_name) not in ([], {}, None, "")
+                    )
+                    fill_ratio = non_empty_count / len(value)
 
-                # Create rows: [[val1, val2, ...], ...]
-                rows = []
-                for item in value:
-                    row = [item.get(f) for f in fields]
-                    rows.append(row)
+                    if fill_ratio >= SPARSE_THRESHOLD:
+                        dense_fields.append(field_name)
+                    else:
+                        sparse_fields.append(field_name)
 
-                result[header] = rows
+                # Create main TOON table with dense fields only
+                if dense_fields:
+                    header = f"{key}[{len(value)}]{{{','.join(dense_fields)}}}"
+                    rows = []
+                    for item in value:
+                        row = [item.get(f) for f in dense_fields]
+                        rows.append(row)
+                    result[header] = rows
+
+                # For sparse fields, create compact index-value structure
+                if sparse_fields:
+                    sparse_data = {}
+                    for sf in sparse_fields:
+                        # Collect (index, value) pairs for non-empty values only
+                        entries = [
+                            [i, item.get(sf)]
+                            for i, item in enumerate(value)
+                            if item.get(sf) not in ([], {}, None, "")
+                        ]
+                        if entries:
+                            sparse_data[sf] = entries
+                    if sparse_data:
+                        result[f"{key}_sparse"] = sparse_data
 
         elif isinstance(value, dict):
             # For nested dicts, compact (don't convert to tabular)
@@ -173,10 +207,7 @@ def _to_toon_format(data: dict[str, Any]) -> dict[str, Any]:
             # For primitives, keep as-is
             result[key] = value
 
-    # Add format interpretation hint for agent understanding
-    if result:  # Only add if we have data
-        result["_format_note"] = (
-            "TOON format: header[count]{fields}: [[row1], [row2], ...]"
-        )
+    # Format is self-explanatory and documented in MCP_TOOLS_REFERENCE.md
+    # Removed _format_note to save 15-30 tokens per response
 
     return result

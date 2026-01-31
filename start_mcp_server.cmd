@@ -2365,7 +2365,7 @@ if exist "scripts\batch\install_pytorch_cuda.bat" (
 ) else (
     echo [WARNING] CUDA installer script not found
     echo [INFO] You can manually install PyTorch CUDA with:
-    echo [INFO] .venv\Scripts\pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+    echo [INFO] .venv\Scripts\pip install torch --index-url https://download.pytorch.org/whl/cu121
 )
 pause
 goto menu_restart

@@ -155,7 +155,9 @@ def test_prefixing_logic(mock_sentence_transformer, mock_model_loader_st):
     embedder_bge._model = MockSentenceTransformer()
 
     embedder_bge.embed_chunk(sample_chunk)
-    assert MockSentenceTransformer.encoded_input[0] == "test content"
+    # v0.9.0: structural header prepended by default
+    expected_content = "# fake.py | function\ntest content"
+    assert MockSentenceTransformer.encoded_input[0] == expected_content
 
     # 3. Test with a model that has a query_prefix (hypothetical)
     # We need to add a temporary model to the registry for this test
