@@ -41,11 +41,13 @@ try:
     )
     from graph.relationship_extractors.enum_extractor import EnumMemberExtractor
     from graph.relationship_extractors.exception_extractor import ExceptionExtractor
+    from graph.relationship_extractors.implements_extractor import ImplementsExtractor
     from graph.relationship_extractors.import_extractor import ImportExtractor
     from graph.relationship_extractors.inheritance_extractor import InheritanceExtractor
     from graph.relationship_extractors.instantiation_extractor import (
         InstantiationExtractor,
     )
+    from graph.relationship_extractors.override_extractor import OverrideExtractor
     from graph.relationship_extractors.type_extractor import TypeAnnotationExtractor
 
     CALL_GRAPH_AVAILABLE = True
@@ -119,6 +121,9 @@ class MultiLanguageChunker:
                 ClassAttributeExtractor(),  # Class data models (self.x = ...)
                 DataclassFieldExtractor(),  # Dataclass fields (field(...))
                 ConstantExtractor(),  # Module-level UPPER_CASE constants
+                # Priority 3 (Advanced) - always enabled
+                ImplementsExtractor(),  # Protocol/ABC implementations
+                OverrideExtractor(),  # Method overriding
             ]
 
             # Priority 4-5 (Entity Tracking) - conditional

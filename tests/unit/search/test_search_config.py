@@ -249,3 +249,52 @@ def test_global_config_functions():
 
     assert isinstance(is_hybrid_search_enabled(), bool)
     assert get_default_search_mode() in ["hybrid", "semantic", "bm25", "auto"]
+
+
+def test_graph_enhanced_config_round_trip():
+    """Test GraphEnhancedConfig serialization and deserialization."""
+    from search.config import GraphEnhancedConfig, SearchConfig
+
+    # Create config with custom graph_enhanced settings
+    graph_config = GraphEnhancedConfig(
+        centrality_method="betweenness",
+        centrality_alpha=0.5,
+        centrality_annotation=False,
+        centrality_reranking=True,
+    )
+    config = SearchConfig(graph_enhanced=graph_config)
+
+    # Serialize to dict
+    config_dict = config.to_dict()
+    assert "graph_enhanced" in config_dict
+    assert config_dict["graph_enhanced"]["centrality_method"] == "betweenness"
+    assert config_dict["graph_enhanced"]["centrality_alpha"] == 0.5
+    assert config_dict["graph_enhanced"]["centrality_annotation"] is False
+    assert config_dict["graph_enhanced"]["centrality_reranking"] is True
+
+    # Deserialize from dict (nested format)
+    config2 = SearchConfig.from_dict(config_dict)
+    assert config2.graph_enhanced.centrality_method == "betweenness"
+    assert config2.graph_enhanced.centrality_alpha == 0.5
+    assert config2.graph_enhanced.centrality_annotation is False
+    assert config2.graph_enhanced.centrality_reranking is True
+
+
+def test_graph_enhanced_config_legacy_keys():
+    """Test GraphEnhancedConfig with legacy flat-key format."""
+    from search.config import SearchConfig
+
+    # Legacy flat format (pre-v0.8.0)
+    legacy_dict = {
+        "centrality_method": "degree",
+        "centrality_alpha": 0.2,
+        "centrality_annotation": False,
+        "centrality_reranking": True,
+        "embedding_model_name": "BAAI/bge-m3",  # Other legacy keys
+    }
+
+    config = SearchConfig.from_dict(legacy_dict)
+    assert config.graph_enhanced.centrality_method == "degree"
+    assert config.graph_enhanced.centrality_alpha == 0.2
+    assert config.graph_enhanced.centrality_annotation is False
+    assert config.graph_enhanced.centrality_reranking is True

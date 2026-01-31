@@ -3,8 +3,11 @@
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
+
+# Import DEFAULT_EDGE_WEIGHTS for ego-graph weighted BFS
+from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
 
 
 # Model registry with specifications
@@ -163,7 +166,7 @@ def resolve_qwen3_variant_for_lookup(project_hash: str, project_name: str) -> st
 
 @dataclass
 class EmbeddingConfig:
-    """Embedding model configuration (8 fields)."""
+    """Embedding model configuration (9 fields)."""
 
     model_name: str = "google/embeddinggemma-300m"
     dimension: int = 768
@@ -175,6 +178,9 @@ class EmbeddingConfig:
     enable_class_context: bool = True  # Include parent class signature for methods
     max_import_lines: int = 10  # Maximum import lines to extract
     max_class_signature_lines: int = 5  # Maximum lines for class signature
+    enable_structural_header: bool = (
+        True  # Prepend file path + chunk type + qualified name
+    )
 
 
 @dataclass
@@ -199,7 +205,9 @@ class SearchModeConfig:
     enable_result_reranking: bool = True
 
     # Search Result Limits
-    default_k: int = 5
+    default_k: int = (
+        4  # Reduced from 5: 0% result loss post-ego-fix + 20% token savings
+    )
     max_k: int = 50
 
 
@@ -243,12 +251,13 @@ class PerformanceConfig:
 
 @dataclass
 class MultiHopConfig:
-    """Multi-hop search settings (4 fields)."""
+    """Multi-hop search settings (5 fields)."""
 
     enabled: bool = True
     hop_count: int = 2  # Number of expansion hops
     expansion: float = 0.3  # Expansion factor per hop
     initial_k_multiplier: float = 2.0  # Multiplier for initial results (k * multiplier)
+    multi_hop_mode: str = "hybrid"  # "semantic" | "graph" | "hybrid"
 
 
 @dataclass
@@ -332,14 +341,20 @@ class EgoGraphConfig:
     """Ego-graph retrieval settings (RepoGraph ICLR 2025)."""
 
     enabled: bool = False  # Enable ego-graph expansion
-    k_hops: int = 2  # Number of hops (1-2 recommended)
-    max_neighbors_per_hop: int = 10  # Max neighbors per hop to prevent explosion
+    k_hops: int = 1  # Number of hops (1=direct neighbors, reduces noise vs 2-hop)
+    max_neighbors_per_hop: int = (
+        5  # Max neighbors per hop (reduced from 10 to limit noise)
+    )
     relation_types: Optional[list] = None  # Filter to specific relations (None = all)
     include_anchor: bool = True  # Include original anchor nodes in results
     deduplicate: bool = True  # Remove duplicate chunk_ids
     # RepoGraph relation filtering (Feature #5)
     exclude_stdlib_imports: bool = True  # Filter stdlib from graph traversal
     exclude_third_party_imports: bool = True  # Filter third-party from traversal
+    # Weighted graph traversal (Phase 1)
+    edge_weights: Optional[dict[str, float]] = field(
+        default_factory=lambda: DEFAULT_EDGE_WEIGHTS.copy()
+    )  # Use weighted BFS by default (calls > imports priority)
 
 
 @dataclass
@@ -349,6 +364,16 @@ class ParentRetrievalConfig:
     enabled: bool = False  # Enable parent chunk expansion
     include_parent_content: bool = True  # Include parent's full content
     max_parents_per_result: int = 1  # Usually 1 (direct parent only)
+
+
+@dataclass
+class GraphEnhancedConfig:
+    """Graph-enhanced search settings for SSCG Phase 3+."""
+
+    centrality_method: str = "pagerank"  # Centrality algorithm
+    centrality_alpha: float = 0.3  # Blending weight (0=semantic, 1=centrality)
+    centrality_annotation: bool = True  # Always annotate centrality when graph exists
+    centrality_reranking: bool = True  # Always rerank by blended score
 
 
 class SearchConfig:
@@ -375,6 +400,7 @@ class SearchConfig:
         chunking: Optional[ChunkingConfig] = None,
         ego_graph: Optional[EgoGraphConfig] = None,
         parent_retrieval: Optional[ParentRetrievalConfig] = None,
+        graph_enhanced: Optional[GraphEnhancedConfig] = None,
     ):
         """Initialize SearchConfig with nested sub-configs.
 
@@ -390,6 +416,7 @@ class SearchConfig:
             chunking: ChunkingConfig instance (optional, defaults to ChunkingConfig())
             ego_graph: EgoGraphConfig instance (optional, defaults to EgoGraphConfig())
             parent_retrieval: ParentRetrievalConfig instance (optional, defaults to ParentRetrievalConfig())
+            graph_enhanced: GraphEnhancedConfig instance (optional, defaults to GraphEnhancedConfig())
         """
         # Initialize nested configs with defaults
         self.embedding = embedding if embedding is not None else EmbeddingConfig()
@@ -411,6 +438,9 @@ class SearchConfig:
             if parent_retrieval is not None
             else ParentRetrievalConfig()
         )
+        self.graph_enhanced = (
+            graph_enhanced if graph_enhanced is not None else GraphEnhancedConfig()
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to nested dictionary for JSON serialization.
@@ -428,6 +458,7 @@ class SearchConfig:
                 "enable_class_context": self.embedding.enable_class_context,
                 "max_import_lines": self.embedding.max_import_lines,
                 "max_class_signature_lines": self.embedding.max_class_signature_lines,
+                "enable_structural_header": self.embedding.enable_structural_header,
             },
             "search_mode": {
                 "default_mode": self.search_mode.default_mode,
@@ -466,6 +497,7 @@ class SearchConfig:
                 "hop_count": self.multi_hop.hop_count,
                 "expansion": self.multi_hop.expansion,
                 "initial_k_multiplier": self.multi_hop.initial_k_multiplier,
+                "multi_hop_mode": self.multi_hop.multi_hop_mode,
             },
             "routing": {
                 "multi_model_enabled": self.routing.multi_model_enabled,
@@ -510,6 +542,12 @@ class SearchConfig:
                 "include_anchor": self.ego_graph.include_anchor,
                 "deduplicate": self.ego_graph.deduplicate,
             },
+            "graph_enhanced": {
+                "centrality_method": self.graph_enhanced.centrality_method,
+                "centrality_alpha": self.graph_enhanced.centrality_alpha,
+                "centrality_annotation": self.graph_enhanced.centrality_annotation,
+                "centrality_reranking": self.graph_enhanced.centrality_reranking,
+            },
         }
 
     @classmethod
@@ -541,6 +579,7 @@ class SearchConfig:
             output_data = data.get("output", {})
             chunking_data = data.get("chunking", {})
             ego_graph_data = data.get("ego_graph", {})
+            graph_enhanced_data = data.get("graph_enhanced", {})
 
             # Auto-update dimension from model registry
             if "model_name" in embedding_data:
@@ -566,6 +605,9 @@ class SearchConfig:
                 max_import_lines=embedding_data.get("max_import_lines", 10),
                 max_class_signature_lines=embedding_data.get(
                     "max_class_signature_lines", 5
+                ),
+                enable_structural_header=embedding_data.get(
+                    "enable_structural_header", True
                 ),
             )
 
@@ -623,6 +665,7 @@ class SearchConfig:
                 hop_count=multi_hop_data.get("hop_count", 2),
                 expansion=multi_hop_data.get("expansion", 0.3),
                 initial_k_multiplier=multi_hop_data.get("initial_k_multiplier", 2.0),
+                multi_hop_mode=multi_hop_data.get("multi_hop_mode", "hybrid"),
             )
 
             routing = RoutingConfig(
@@ -682,6 +725,19 @@ class SearchConfig:
                 deduplicate=ego_graph_data.get("deduplicate", True),
             )
 
+            graph_enhanced = GraphEnhancedConfig(
+                centrality_method=graph_enhanced_data.get(
+                    "centrality_method", "pagerank"
+                ),
+                centrality_alpha=graph_enhanced_data.get("centrality_alpha", 0.3),
+                centrality_annotation=graph_enhanced_data.get(
+                    "centrality_annotation", True
+                ),
+                centrality_reranking=graph_enhanced_data.get(
+                    "centrality_reranking", True
+                ),
+            )
+
         else:
             # LEGACY: Flat format (pre-v0.8.0) - backward compatibility
             # Auto-update dimension and batch size if model is in registry
@@ -707,6 +763,7 @@ class SearchConfig:
                 enable_class_context=data.get("enable_class_context", True),
                 max_import_lines=data.get("max_import_lines", 10),
                 max_class_signature_lines=data.get("max_class_signature_lines", 5),
+                enable_structural_header=data.get("enable_structural_header", True),
             )
 
             search_mode = SearchModeConfig(
@@ -746,6 +803,7 @@ class SearchConfig:
                 hop_count=data.get("multi_hop_count", 2),
                 expansion=data.get("multi_hop_expansion", 0.3),
                 initial_k_multiplier=data.get("multi_hop_initial_k_multiplier", 2.0),
+                multi_hop_mode=data.get("multi_hop_mode", "hybrid"),
             )
 
             routing = RoutingConfig(
@@ -801,6 +859,13 @@ class SearchConfig:
                 deduplicate=data.get("ego_graph_deduplicate", True),
             )
 
+            graph_enhanced = GraphEnhancedConfig(
+                centrality_method=data.get("centrality_method", "pagerank"),
+                centrality_alpha=data.get("centrality_alpha", 0.3),
+                centrality_annotation=data.get("centrality_annotation", True),
+                centrality_reranking=data.get("centrality_reranking", True),
+            )
+
         return cls(
             embedding=embedding,
             search_mode=search_mode,
@@ -812,6 +877,7 @@ class SearchConfig:
             output=output,
             chunking=chunking,
             ego_graph=ego_graph,
+            graph_enhanced=graph_enhanced,
         )
 
 
