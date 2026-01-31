@@ -25,6 +25,7 @@ from graph.relationship_types import RelationshipEdge, RelationshipType
 from mcp_server.utils.config_helpers import (
     get_config_via_service_locator as _get_config_via_service_locator,
 )
+from search.graph_integration import SEMANTIC_TYPES
 
 from .base_searcher import BaseSearcher
 from .bm25_index import BM25Index
@@ -1099,16 +1100,8 @@ class HybridSearcher(BaseSearcher):
                 graph_edges_added = 0
                 relationship_edges_added = 0
                 resolved_count = 0
-                semantic_types = {
-                    "function",
-                    "method",
-                    "class",
-                    "decorated_definition",
-                    "interface",
-                    "enum",
-                    "struct",
-                    "type",
-                }
+                # Use canonical SEMANTIC_TYPES from graph_integration
+                semantic_types = set(SEMANTIC_TYPES)
 
                 # Build name resolution map for call target resolution
                 # Maps symbol names to their chunk_ids for resolving call targets
@@ -1120,6 +1113,13 @@ class HybridSearcher(BaseSearcher):
                         if name not in name_to_chunk_ids:
                             name_to_chunk_ids[name] = []
                         name_to_chunk_ids[name].append(chunk_id)
+
+                        # Also index by bare name for methods (ClassName.method → method)
+                        if "." in name:
+                            bare_name = name.split(".")[-1]
+                            if bare_name not in name_to_chunk_ids:
+                                name_to_chunk_ids[bare_name] = []
+                            name_to_chunk_ids[bare_name].append(chunk_id)
 
                 for result in embedding_results:
                     chunk_id = result.chunk_id
@@ -1145,11 +1145,32 @@ class HybridSearcher(BaseSearcher):
                         callee_name = call_dict.get("callee_name", "unknown")
 
                         # Try to resolve call target to full chunk_id
-                        # Only resolve if exactly ONE match exists (conservative approach)
+                        # Conservative approach with same-file preference and split_block disambiguation
                         resolved_target = None
                         candidates = name_to_chunk_ids.get(callee_name, [])
                         if len(candidates) == 1:
                             resolved_target = candidates[0]
+                        elif len(candidates) > 1:
+                            # Same-file preference
+                            caller_file = result.metadata.get("file_path", "")
+                            same_file = [c for c in candidates if caller_file in c]
+                            if len(same_file) == 1:
+                                resolved_target = same_file[0]
+                            else:
+                                # Split block disambiguation: all split_blocks → pick entry block (lowest start line)
+                                split_blocks = [c for c in candidates if ":split_block:" in c]
+                                if len(split_blocks) == len(candidates):
+                                    def _start_line(cid: str) -> int:
+                                        parts = cid.split(":")
+                                        if len(parts) >= 2:
+                                            try:
+                                                return int(parts[1].split("-")[0])
+                                            except (ValueError, IndexError):
+                                                pass
+                                        return float("inf")
+                                    split_blocks.sort(key=_start_line)
+                                    resolved_target = split_blocks[0]
+                        if resolved_target:
                             resolved_count += 1
 
                         # Use resolved chunk_id if available, otherwise use bare name
