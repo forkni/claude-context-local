@@ -1086,8 +1086,7 @@ class SearchConfigManager:
 
         # Text-heavy queries -> BM25
         if any(
-            keyword in query_lower
-            for keyword in ["text", "string", "message", "error", "log"]
+            keyword in query_lower for keyword in ["string", "message", "error", "log"]
         ):
             return "bm25"
 

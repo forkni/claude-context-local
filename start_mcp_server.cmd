@@ -379,7 +379,7 @@ echo.
 echo Current Settings:
 ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Search Mode:', cfg.search_mode.default_mode); print('  BM25 Weight:', cfg.search_mode.bm25_weight); print('  Dense Weight:', cfg.search_mode.dense_weight); print('  Parallel Search:', 'Enabled' if cfg.performance.use_parallel_search else 'Disabled')" 2>nul
 echo.
-echo   1. Set Search Mode              - Hybrid/Semantic/BM25/Auto ^(Hybrid recommended^)
+echo   1. Set Search Mode              - Hybrid/Semantic/BM25/Auto ^(Auto recommended - intent-driven^)
 echo   2. Configure Search Weights     - Balance BM25 vs semantic matching
 echo   3. Configure Parallel Search    - Run BM25+Dense in parallel ^(faster^)
 echo   0. Back to Search Configuration

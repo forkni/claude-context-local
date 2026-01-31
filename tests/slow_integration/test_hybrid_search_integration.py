@@ -31,7 +31,7 @@ def _has_hf_token():
 class TestHybridSearchIntegration:
     """Integration tests for hybrid search system."""
 
-    @pytest.fixture(autouse=True)
+    @pytest.fixture(autouse=True, scope="class")
     def mock_embedder(self):
         """Mock SentenceTransformer to prevent model downloads for all tests."""
 
@@ -70,6 +70,9 @@ class TestHybridSearchIntegration:
         # Initialize components ONCE for the whole class
         try:
             embedder = CodeEmbedder()
+            embedder.cleanup = (
+                lambda: None
+            )  # Prevent cleanup from destroying model_loader in tests
             chunker = MultiLanguageChunker(str(project_dir))
             hybrid_searcher = HybridSearcher(
                 storage_dir=str(storage_dir), bm25_weight=0.4, dense_weight=0.6

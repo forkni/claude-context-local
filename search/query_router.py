@@ -329,31 +329,12 @@ class QueryRouter:
                 "implementing",
                 "algorithm",
                 "algorithmic",
-                "function",
-                "method",
-                "class",
-                "code",
-                "how does",  # Benchmark winner: implementation details
-                "how do",
-                "how is",
                 # Parsing and chunking (VALIDATED: parse/chunk queries won)
                 "parse",
                 "parsing",
                 "parser",
                 "chunk",
                 "chunking",
-                # Validation logic (VALIDATED: validate chunk id query won)
-                "validate",
-                "validation",
-                "validator",
-                "normalize",
-                # Error handling
-                "error",
-                "error handling",
-                "exception",
-                "try except",
-                "catch",
-                "raise",
                 # Data structures and types (VALIDATED: found dataclass in results)
                 "data structure",
                 "dataclass",
@@ -361,20 +342,14 @@ class QueryRouter:
                 "type definition",
                 "type schema",
                 "merkle",
-                "tree",
-                "tree structure",
-                "graph",
                 "binary",
                 "dag",
-                "schema",
                 # OOP concepts (VALIDATED: base class queries won)
                 "base class",
                 "inheritance",
                 "extends",
                 "inherits",
-                # Search and algorithms
-                "search",
-                "searching",
+                # Search-specific algorithms
                 "bm25",
                 "multi-hop",
                 "recursive",
@@ -388,8 +363,6 @@ class QueryRouter:
                 "extract",
                 "extraction",
                 "extractor",
-                "handler",
-                "handlers",
                 # Call graph (VALIDATED: call graph extraction won)
                 "call graph",
                 "caller",
@@ -400,11 +373,8 @@ class QueryRouter:
                 "dependencies",
                 "relationship",
                 "relationships",
-                # Snapshot and change detection (from merkle queries)
-                "snapshot",
-                "change detection",
             ],
-            "weight": 1.5,  # Prioritize code model for code queries
+            "weight": 1.2,  # Reduced from 1.5 to prevent thin-evidence routing
             "description": "Code-specific queries (routes to gte-modernbert)",
         },
         "bge_m3": {

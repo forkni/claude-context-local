@@ -162,18 +162,40 @@ class CentralityRanker:
                         "class": 1.15,
                         "function": 1.1,
                         "method": 1.1,
+                        "decorated_definition": 1.1,
                         "module": 0.92,
                     }
                 else:
                     type_boosts = {
                         "function": 1.1,
                         "method": 1.1,
+                        "decorated_definition": 1.1,
                         "class": 1.05,
                         "module": 0.95,
                     }
                 result["blended_score"] = round(
                     result["blended_score"] * type_boosts.get(chunk_type, 1.0), 4
                 )
+
+                # Test/verification code demotion (generalizable pattern)
+                chunk_id = result.get("chunk_id", "")
+                file_path = chunk_id.split(":")[0] if ":" in chunk_id else ""
+                is_test_code = any(
+                    pattern in file_path.lower()
+                    for pattern in (
+                        "test_",
+                        "_test.",
+                        "tests/",
+                        "verify_",
+                        "verification",
+                    )
+                )
+                query_has_test_intent = any(
+                    w in query_lower
+                    for w in ("test", "testing", "verify", "verification")
+                )
+                if is_test_code and not query_has_test_intent:
+                    result["blended_score"] = round(result["blended_score"] * 0.85, 4)
 
                 # Name-match boost
                 name = result.get("name", "")

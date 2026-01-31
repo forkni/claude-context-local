@@ -325,7 +325,6 @@ lightweight_pool:
         - type definition
         - type schema
         - merkle
-        - tree
         - tree structure
         - graph
         - binary

@@ -47,9 +47,7 @@ class TestIntentClassifierBasicDetection:
     def test_local_intent_short_query_penalty(self, classifier):
         """Test that long queries reduce LOCAL confidence via token penalty."""
         short_query = "where is User"  # 3 tokens
-        long_query = (
-            "where is the user authentication system implemented"  # 7 tokens > 6 max
-        )
+        long_query = "where is the user authentication system implementation located in the code"  # 11 tokens > 8 max
 
         short_decision = classifier.classify(short_query)
         long_decision = classifier.classify(long_query)
@@ -195,7 +193,7 @@ class TestIntentClassifierBasicDetection:
         decision = classifier.classify("where is QueryRouter")
         if decision.intent == QueryIntent.LOCAL:
             assert decision.suggested_params.get("k") == 5
-            assert decision.suggested_params.get("search_mode") == "semantic"
+            assert decision.suggested_params.get("search_mode") == "hybrid"
 
     def test_suggested_params_navigational_symbol(self, classifier):
         """Test that NAVIGATIONAL queries extract symbol name."""

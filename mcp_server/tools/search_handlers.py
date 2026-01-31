@@ -637,7 +637,8 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
                     "ego_graph_k_hops", 2
                 )
                 logger.info(
-                    f"[INTENT] Enabling ego_graph for CONTEXTUAL query (k_hops={ego_graph_k_hops})"
+                    f"[INTENT] Enabling ego_graph for CONTEXTUAL query "
+                    f"(k_hops={ego_graph_k_hops})"
                 )
 
         # Redirect NAVIGATIONAL queries to find_connections

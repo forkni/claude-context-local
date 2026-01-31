@@ -79,7 +79,10 @@ class QueryIntent(Enum):
 
 # [TNO-T2] Intent-driven BM25/Dense weight profiles
 INTENT_WEIGHT_PROFILES: dict[QueryIntent, tuple[float, float]] = {
-    QueryIntent.LOCAL: (0.6, 0.4),  # (bm25, dense) - exact name matches matter
+    QueryIntent.LOCAL: (
+        0.6,
+        0.4,
+    ),  # (bm25, dense) - BM25-heavy for exact symbol matching
     QueryIntent.GLOBAL: (0.3, 0.7),  # semantic understanding matters
     QueryIntent.CONTEXTUAL: (0.3, 0.7),  # similar to GLOBAL
     QueryIntent.PATH_TRACING: (0.4, 0.6),
@@ -129,13 +132,6 @@ class IntentClassifier:
                 "get the",
                 "obtain",
                 "fetch",
-                # Phase 2: Thesaurus additions
-                "pinpoint",
-                "track down",
-                "spot",
-                "unearth",
-                "detect",
-                "turn up",
                 # Discovery terms
                 "discover",
                 "identify",
@@ -168,26 +164,18 @@ class IntentClassifier:
                     1.5,
                 ),  # "get the QueryRouter class"
                 (
+                    r"\bget\s+\w+(\s+\w+)*\s+from\b",
+                    1.3,
+                ),  # [Q07-FIX] "get node text from tree sitter"
+                (
                     r"\b(enum|interface|struct|type)\s+\w+\b",
                     1.2,
                 ),  # "interface SearchResult"
-                (
-                    r"\b(pinpoint|spot|detect)\s+(\w+)\b",
-                    1.3,
-                ),  # Phase 2: "pinpoint QueryRouter"
-                (
-                    r"\b(track\s+down|turn\s+up)\s+(\w+)\b",
-                    1.4,
-                ),  # Phase 2: "track down the definition"
-                (
-                    r"\bunearth\s+(the\s+)?\w+\b",
-                    1.3,
-                ),  # Phase 2: "unearth the implementation"
                 (r"\bcheck\s+if\s+\w+\s+exists?\b", 1.4),  # [Q12-FIX]
                 (r"\bdoes\s+\w+\s+exist\b", 1.4),  # [Q12-FIX]
                 (r"\bis\s+there\s+(a\s+)?\w+\b", 1.3),  # [Q12-FIX]
             ],
-            "max_tokens": 6,  # Short, focused queries
+            "max_tokens": 8,  # Short, focused queries (raised for natural language function lookups)
             "weight": 1.0,
             "description": "Symbol/entity lookup queries",
         },
@@ -214,14 +202,6 @@ class IntentClassifier:
                 "paradigm",
                 "model",
                 "framework",
-                # Phase 2: Thesaurus additions
-                "arrangement",
-                "organization",
-                "scheme",
-                "procedure",
-                "technique",
-                "network",
-                "methodology",
                 # Conceptual understanding
                 "concept",
                 "rationale",
@@ -771,7 +751,7 @@ class IntentClassifier:
         elif intent == QueryIntent.LOCAL:
             # Suggest smaller k for symbol lookups
             params["k"] = 5
-            params["search_mode"] = "semantic"
+            params["search_mode"] = "hybrid"
 
         elif intent == QueryIntent.NAVIGATIONAL:
             # Extract symbol name for find_connections redirect
