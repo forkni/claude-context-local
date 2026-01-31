@@ -1158,8 +1158,11 @@ class HybridSearcher(BaseSearcher):
                                 resolved_target = same_file[0]
                             else:
                                 # Split block disambiguation: all split_blocks → pick entry block (lowest start line)
-                                split_blocks = [c for c in candidates if ":split_block:" in c]
+                                split_blocks = [
+                                    c for c in candidates if ":split_block:" in c
+                                ]
                                 if len(split_blocks) == len(candidates):
+
                                     def _start_line(cid: str) -> int:
                                         parts = cid.split(":")
                                         if len(parts) >= 2:
@@ -1168,6 +1171,7 @@ class HybridSearcher(BaseSearcher):
                                             except (ValueError, IndexError):
                                                 pass
                                         return float("inf")
+
                                     split_blocks.sort(key=_start_line)
                                     resolved_target = split_blocks[0]
                         if resolved_target:
