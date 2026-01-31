@@ -830,9 +830,13 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
             orig_bm25, orig_dense = searcher.bm25_weight, searcher.dense_weight
             searcher.bm25_weight = suggested_bm25
             searcher.dense_weight = suggested_dense
+            # [Q12-FIX-3] Propagate weights to SearchExecutor (has its own weight copies)
+            if hasattr(searcher, "search_executor"):
+                searcher.search_executor.bm25_weight = suggested_bm25
+                searcher.search_executor.dense_weight = suggested_dense
             logger.info(
                 f"[INTENT] Weight override for {intent_decision.intent.value}: "
-                f"BM25={orig_bm25:.1f}→{suggested_bm25:.1f}, Dense={orig_dense:.1f}→{suggested_dense:.1f}"
+                f"BM25={orig_bm25:.2f}→{suggested_bm25:.2f}, Dense={orig_dense:.2f}→{suggested_dense:.2f}"
             )
 
     if isinstance(searcher, HybridSearcher):

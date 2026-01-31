@@ -661,6 +661,16 @@ class IntentClassifier:
             )
             if scores:
                 logger.debug(f"[INTENT] Scores: {scores}")
+            # Log weight overrides for debugging Q12
+            if "bm25_weight" in decision.suggested_params:
+                bm25_w = decision.suggested_params["bm25_weight"]
+                dense_w = decision.suggested_params["dense_weight"]
+                profile_w = INTENT_WEIGHT_PROFILES.get(decision.intent, (None, None))
+                if (bm25_w, dense_w) != profile_w:
+                    logger.info(
+                        f"[INTENT] Weight override active: BM25={bm25_w}, Dense={dense_w} "
+                        f"(profile default would be {profile_w})"
+                    )
 
         return decision
 
@@ -753,6 +763,16 @@ class IntentClassifier:
             params["k"] = 5
             params["search_mode"] = "hybrid"
 
+            # [Q12-FIX-2] Existence-checking queries benefit from semantic-heavy weights.
+            # BM25 over-matches "index" and "exists" on internal implementation code,
+            # while semantic search better understands user intent for discovery queries.
+            query_lower = query.lower()
+            if any(
+                p in query_lower for p in ("check if", "does ", "is there", "exists for")
+            ):
+                params["bm25_weight"] = 0.35
+                params["dense_weight"] = 0.65
+
         elif intent == QueryIntent.NAVIGATIONAL:
             # Extract symbol name for find_connections redirect
             symbol_name = self._extract_symbol_from_query(query)
@@ -787,8 +807,8 @@ class IntentClassifier:
             if symbol_name:
                 params["symbol_name"] = symbol_name
 
-        # [TNO-T2] Add weight suggestions from profile
-        if intent in INTENT_WEIGHT_PROFILES:
+        # [TNO-T2] Add weight suggestions from profile (don't overwrite intent-specific)
+        if intent in INTENT_WEIGHT_PROFILES and "bm25_weight" not in params:
             bm25_w, dense_w = INTENT_WEIGHT_PROFILES[intent]
             params["bm25_weight"] = bm25_w
             params["dense_weight"] = dense_w
