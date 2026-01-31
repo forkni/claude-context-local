@@ -95,7 +95,7 @@ include = ["chunking*", "embeddings*", "mcp_server*", "search*", "merkle*"]
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2026-01-29 (pip-audit - 1 vulnerability with no fix yet)
+# Last audit: 2026-01-30 (pip-audit - 0 vulnerabilities)
 #
 # Direct dependency security updates:
 # mcp>=1.25.0        # Fixes CVE-2025-66416 (DNS rebinding vulnerability)
@@ -115,7 +115,7 @@ include = ["chunking*", "embeddings*", "mcp_server*", "search*", "merkle*"]
 # fsspec[http]<=2025.10.0  # Now pinned as direct dep - prevents deepspeed conflict
 # sympy>=1.13.1            # torch 2.8.x requires sympy (version may vary)
 # huggingface-hub<1.0 # transformers 4.57.3 requires huggingface-hub>=0.34.0,<1.0
-# numpy<2.4.0         # Multiple packages constrain numpy (faiss, scipy, pandas, etc.)
+# numpy<2.4.0         # Multiple packages constrain numpy (faiss, scipy, etc.)
 # torch>=2.8.0,<2.9.0 # 2.9.x breaks ModernBERT torch.compile (inductor template conflict on Windows)
 #
 # Successfully updated dependencies (tested 2026-01-03):

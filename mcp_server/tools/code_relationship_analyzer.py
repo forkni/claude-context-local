@@ -896,7 +896,9 @@ class CodeRelationshipAnalyzer:
                                 target_chunk = None
                                 try:
                                     # Search for classes/types with this name
-                                    search_results = self.searcher.search(target, k=5)
+                                    search_results = self.searcher.search(
+                                        target, k=4
+                                    )  # [Fix6]
                                     # Find best match (prefer class definitions)
                                     for sr in search_results:
                                         sr_name = (

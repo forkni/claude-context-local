@@ -564,6 +564,9 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
         query, use_routing, model_key
     )
 
+    # [TNO-T1] Initialize intent_decision (may be set by intent classifier below)
+    intent_decision = None
+
     # Intent Classification (Phase 2)
     config = get_config()
     if config.intent.enabled:
@@ -670,6 +673,16 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
 
     # NORMAL PATH: Search by query
     search_mode = arguments.get("search_mode", "auto")
+
+    # [TNO-T1] Apply intent classifier's suggested search_mode when user specifies 'auto'
+    if intent_decision and search_mode == "auto":
+        suggested_mode = intent_decision.suggested_params.get("search_mode")
+        if suggested_mode:
+            logger.info(
+                f"[INTENT] Applying suggested search_mode '{suggested_mode}' for {intent_decision.intent.value} query"
+            )
+            search_mode = suggested_mode
+
     file_pattern = arguments.get("file_pattern")
     include_dirs = arguments.get("include_dirs")
     exclude_dirs = arguments.get("exclude_dirs")
@@ -683,6 +696,11 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
 
     # Parent chunk retrieval parameter (Match Small, Retrieve Big)
     include_parent = arguments.get("include_parent", False)
+
+    # [TNO-T3] Context budget
+    max_context_tokens = arguments.get(
+        "max_context_tokens", get_config().search_mode.default_max_context_tokens
+    )
 
     logger.info(f"[SEARCH] query='{query}', k={k}, mode='{search_mode}'")
 
@@ -803,6 +821,19 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
         search_config.parent_retrieval = parent_config
         logger.info("[PARENT_RETRIEVAL] Enabled")
 
+    # [TNO-T2] Apply intent-driven weight overrides
+    if isinstance(searcher, HybridSearcher) and intent_decision:
+        suggested_bm25 = intent_decision.suggested_params.get("bm25_weight")
+        suggested_dense = intent_decision.suggested_params.get("dense_weight")
+        if suggested_bm25 is not None and suggested_dense is not None:
+            orig_bm25, orig_dense = searcher.bm25_weight, searcher.dense_weight
+            searcher.bm25_weight = suggested_bm25
+            searcher.dense_weight = suggested_dense
+            logger.info(
+                f"[INTENT] Weight override for {intent_decision.intent.value}: "
+                f"BM25={orig_bm25:.1f}→{suggested_bm25:.1f}, Dense={orig_dense:.1f}→{suggested_dense:.1f}"
+            )
+
     if isinstance(searcher, HybridSearcher):
         results = searcher.search(
             query=query,
@@ -860,7 +891,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
 
             # Rerank results by blended score if enabled in config
             if graph_config.centrality_reranking:
-                formatted_results = ranker.rerank(formatted_results)
+                formatted_results = ranker.rerank(formatted_results, query=query)
                 logger.debug(
                     f"[SSCG Phase 3] Reranked {len(formatted_results)} results by centrality"
                 )
@@ -918,6 +949,24 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
         except Exception as e:
             logger.debug(f"[SSCG] Subgraph extraction failed: {e}")
 
+    # [TNO-T3] Apply context budget truncation
+    if max_context_tokens > 0 and formatted_results:
+        import json as _json
+
+        budget_used = 0
+        truncated = []
+        for r in formatted_results:
+            est_tokens = len(_json.dumps(r).split()) + 10
+            if budget_used + est_tokens <= max_context_tokens:
+                truncated.append(r)
+                budget_used += est_tokens
+            else:
+                logger.info(
+                    f"[CONTEXT_BUDGET] Truncated {len(formatted_results)}→{len(truncated)} results (budget={max_context_tokens})"
+                )
+                break
+        formatted_results = truncated
+
     # Build response
     response = {"query": query, "results": formatted_results}
     # Flatten subgraph to top-level keys for ultra format TOON conversion
@@ -955,7 +1004,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
 async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
     """Find code chunks similar to a reference chunk."""
     chunk_id = arguments["chunk_id"]
-    k = arguments.get("k", 5)
+    k = arguments.get("k", 4)  # [Fix6] Align with default_k=4
 
     # Normalize chunk_id path separators
     # Use CodeIndexManager's normalize_chunk_id for proper cross-platform handling

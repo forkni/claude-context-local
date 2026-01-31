@@ -121,12 +121,15 @@ class CentralityRanker:
 
         return results
 
-    def rerank(self, results: list[dict], alpha: Optional[float] = None) -> list[dict]:
+    def rerank(
+        self, results: list[dict], alpha: Optional[float] = None, query: str = ""
+    ) -> list[dict]:
         """Rerank results by blended semantic + centrality score.
 
         Args:
             results: List of search result dicts with "score" field
             alpha: Blending weight override (None = use self.alpha)
+            query: Query string for query-aware boosting (optional)
 
         Returns:
             Reranked results with "centrality" and "blended_score" fields
@@ -146,6 +149,53 @@ class CentralityRanker:
             # Blend: (1 - alpha) * semantic + alpha * centrality
             blended = (1 - blend_alpha) * semantic_score + blend_alpha * centrality
             result["blended_score"] = round(blended, 4)
+
+            # [Q33-FIX] Query-aware boosting (ported from IntelligentSearcher)
+            if query:
+                chunk_type = result.get("kind", "")
+                query_lower = query.lower()
+                is_entity_query = any(
+                    w in query_lower for w in ("class", "module", "struct", "enum")
+                )
+                if is_entity_query:
+                    type_boosts = {
+                        "class": 1.15,
+                        "function": 1.1,
+                        "method": 1.1,
+                        "module": 0.92,
+                    }
+                else:
+                    type_boosts = {
+                        "function": 1.1,
+                        "method": 1.1,
+                        "class": 1.05,
+                        "module": 0.95,
+                    }
+                result["blended_score"] = round(
+                    result["blended_score"] * type_boosts.get(chunk_type, 1.0), 4
+                )
+
+                # Name-match boost
+                name = result.get("name", "")
+                if name and query_lower:
+                    name_lower = name.lower()
+                    query_tokens = set(query_lower.split())
+                    name_tokens = set(name_lower.replace("_", " ").split())
+                    overlap = len(query_tokens & name_tokens) / max(
+                        len(query_tokens), 1
+                    )
+                    if overlap >= 0.8:
+                        result["blended_score"] = round(
+                            result["blended_score"] * 1.3, 4
+                        )
+                    elif overlap >= 0.5:
+                        result["blended_score"] = round(
+                            result["blended_score"] * 1.2, 4
+                        )
+                    elif overlap >= 0.3:
+                        result["blended_score"] = round(
+                            result["blended_score"] * 1.1, 4
+                        )
 
         # Sort by blended score descending
         results.sort(key=lambda r: r.get("blended_score", 0.0), reverse=True)

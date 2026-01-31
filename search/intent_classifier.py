@@ -77,6 +77,17 @@ class QueryIntent(Enum):
     HYBRID = "hybrid"  # Ambiguous/uncertain queries
 
 
+# [TNO-T2] Intent-driven BM25/Dense weight profiles
+INTENT_WEIGHT_PROFILES: dict[QueryIntent, tuple[float, float]] = {
+    QueryIntent.LOCAL: (0.6, 0.4),  # (bm25, dense) - exact name matches matter
+    QueryIntent.GLOBAL: (0.3, 0.7),  # semantic understanding matters
+    QueryIntent.CONTEXTUAL: (0.3, 0.7),  # similar to GLOBAL
+    QueryIntent.PATH_TRACING: (0.4, 0.6),
+    QueryIntent.SIMILARITY: (0.4, 0.6),
+    QueryIntent.HYBRID: (0.4, 0.6),  # default balanced
+}
+
+
 @dataclass
 class IntentDecision:
     """Result of intent classification decision."""
@@ -92,7 +103,7 @@ class IntentClassifier:
     """Classifies search queries by intent for optimal handling.
 
     Routing strategy based on intent:
-    - LOCAL: Direct dense search with k=5 (symbol definitions)
+    - LOCAL: Direct dense search with k=4 (symbol definitions)  # [Fix6]
     - GLOBAL: Multi-hop search with k=10+ (architectural understanding)
     - NAVIGATIONAL: Redirect to find_connections (dependency analysis)
     - HYBRID: Default hybrid search (uncertain intent)
@@ -128,6 +139,11 @@ class IntentClassifier:
                 # Discovery terms
                 "discover",
                 "identify",
+                # [Q12-FIX] Existence checking
+                "check if",
+                "does",
+                "is there",
+                "exists",
                 # Symbol-specific
                 "class",
                 "function",
@@ -167,6 +183,9 @@ class IntentClassifier:
                     r"\bunearth\s+(the\s+)?\w+\b",
                     1.3,
                 ),  # Phase 2: "unearth the implementation"
+                (r"\bcheck\s+if\s+\w+\s+exists?\b", 1.4),  # [Q12-FIX]
+                (r"\bdoes\s+\w+\s+exist\b", 1.4),  # [Q12-FIX]
+                (r"\bis\s+there\s+(a\s+)?\w+\b", 1.3),  # [Q12-FIX]
             ],
             "max_tokens": 6,  # Short, focused queries
             "weight": 1.0,
@@ -787,6 +806,12 @@ class IntentClassifier:
             symbol_name = self._extract_symbol_from_query(query)
             if symbol_name:
                 params["symbol_name"] = symbol_name
+
+        # [TNO-T2] Add weight suggestions from profile
+        if intent in INTENT_WEIGHT_PROFILES:
+            bm25_w, dense_w = INTENT_WEIGHT_PROFILES[intent]
+            params["bm25_weight"] = bm25_w
+            params["dense_weight"] = dense_w
 
         return params
 

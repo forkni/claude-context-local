@@ -379,7 +379,7 @@ echo.
 echo Current Settings:
 ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Search Mode:', cfg.search_mode.default_mode); print('  BM25 Weight:', cfg.search_mode.bm25_weight); print('  Dense Weight:', cfg.search_mode.dense_weight); print('  Parallel Search:', 'Enabled' if cfg.performance.use_parallel_search else 'Disabled')" 2>nul
 echo.
-echo   1. Set Search Mode              - Hybrid/Semantic/BM25 ^(Hybrid recommended^)
+echo   1. Set Search Mode              - Hybrid/Semantic/BM25/Auto ^(Hybrid recommended^)
 echo   2. Configure Search Weights     - Balance BM25 vs semantic matching
 echo   3. Configure Parallel Search    - Run BM25+Dense in parallel ^(faster^)
 echo   0. Back to Search Configuration
@@ -1034,10 +1034,11 @@ echo Available Search Modes:
 echo   1. Hybrid ^(BM25 + Semantic, Recommended^)
 echo   2. Semantic Only ^(Dense vector search^)
 echo   3. BM25 Only ^(Text-based search^)
+echo   4. Auto ^(Intent-driven mode selection^)
 echo   0. Back to Search Mode Configuration
 echo.
 set "mode_choice="
-set /p mode_choice="Select mode (0-3): "
+set /p mode_choice="Select mode (0-4): "
 
 REM Handle empty input or back option
 if not defined mode_choice goto search_mode_menu
@@ -1048,11 +1049,12 @@ set "SEARCH_MODE="
 if "!mode_choice!"=="1" set "SEARCH_MODE=hybrid"
 if "!mode_choice!"=="2" set "SEARCH_MODE=semantic"
 if "!mode_choice!"=="3" set "SEARCH_MODE=bm25"
+if "!mode_choice!"=="4" set "SEARCH_MODE=auto"
 
 if defined SEARCH_MODE (
     echo [INFO] Setting search mode to: !SEARCH_MODE!
     REM Persist to config file via Python
-    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.search_mode.default_mode = '!SEARCH_MODE!'; cfg.search_mode.enable_hybrid = '!SEARCH_MODE!' == 'hybrid'; mgr.save_config(cfg); print('[OK] Search mode saved to config file')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.search_mode.default_mode = '!SEARCH_MODE!'; cfg.search_mode.enable_hybrid = '!SEARCH_MODE!' in ('hybrid', 'auto'); mgr.save_config(cfg); print('[OK] Search mode saved to config file')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
         set "CLAUDE_SEARCH_MODE=!SEARCH_MODE!"

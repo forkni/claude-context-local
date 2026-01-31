@@ -11,7 +11,7 @@
     "enable_structural_header": true
   },
   "search_mode": {
-    "default_mode": "hybrid",
+    "default_mode": "auto",
     "enable_hybrid": true,
     "bm25_weight": 0.6,
     "dense_weight": 0.4,

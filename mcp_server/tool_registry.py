@@ -140,6 +140,12 @@ WHEN NOT TO USE:
                     "default": False,
                     "description": "Enable parent chunk retrieval (default: False). When a method is matched, also retrieves its enclosing class for fuller context. Implements 'Match Small, Retrieve Big' pattern for improved comprehension.",
                 },
+                "max_context_tokens": {
+                    "type": "integer",
+                    "default": 0,
+                    "minimum": 0,
+                    "description": "Maximum total tokens in results (0 = unlimited). Prevents LLM context overflow by truncating results when budget exceeded.",
+                },
             },
             "required": [],
         },
