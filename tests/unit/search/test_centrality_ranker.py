@@ -163,3 +163,54 @@ def test_generic_exception_returns_empty_scores():
     scores = ranker._get_centrality_scores()
 
     assert scores == {}
+
+
+def test_split_block_type_boost():
+    """Test that split_block chunks get 1.1× type boost (same as function/method)."""
+    # Create graph with nodes
+    graph = nx.DiGraph()
+    graph.add_node("A")
+    graph.add_node("B")
+
+    engine = MagicMock()
+    engine.storage = MagicMock()
+    engine.storage.graph = graph
+    engine.compute_centrality = MagicMock(return_value={"A": 0.5, "B": 0.5})
+
+    results = [
+        {"chunk_id": "A", "score": 0.8, "kind": "function"},
+        {"chunk_id": "B", "score": 0.8, "kind": "split_block"},
+    ]
+
+    ranker = CentralityRanker(engine, method="pagerank", alpha=0.3)
+    reranked = ranker.rerank(results, query="test query")
+
+    # Both should have the same blended score (semantic 0.8, centrality 1.0 normalized)
+    # Blended = 0.7 * 0.8 + 0.3 * 1.0 = 0.86
+    # With 1.1× boost: 0.86 * 1.1 = 0.946
+    assert reranked[0]["blended_score"] == pytest.approx(0.946, abs=0.01)
+    assert reranked[1]["blended_score"] == pytest.approx(0.946, abs=0.01)
+
+
+def test_split_block_entity_query_boost():
+    """Test that split_block gets 1.1× boost for entity queries too."""
+    # Create graph with node
+    graph = nx.DiGraph()
+    graph.add_node("A")
+
+    engine = MagicMock()
+    engine.storage = MagicMock()
+    engine.storage.graph = graph
+    engine.compute_centrality = MagicMock(return_value={"A": 0.5})
+
+    results = [
+        {"chunk_id": "A", "score": 0.8, "kind": "split_block"},
+    ]
+
+    ranker = CentralityRanker(engine, method="pagerank", alpha=0.3)
+    reranked = ranker.rerank(results, query="what class does this")
+
+    # Entity query (contains "class"), split_block should still get 1.1× boost
+    # Blended = 0.7 * 0.8 + 0.3 * 1.0 = 0.86
+    # With 1.1× boost: 0.86 * 1.1 = 0.946
+    assert reranked[0]["blended_score"] == pytest.approx(0.946, abs=0.01)

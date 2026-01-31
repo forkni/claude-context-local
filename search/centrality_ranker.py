@@ -6,12 +6,55 @@ structurally important code in search results.
 """
 
 import logging
+import re
 from typing import Optional
 
 import networkx as nx
 
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_name_from_chunk_id(chunk_id: str) -> str:
+    """Extract name from 'file:lines:type:Name' format.
+
+    Examples:
+        "embeddings/embedder.py:276-1330:class:CodeEmbedder" -> "CodeEmbedder"
+        "search/searcher.py:37-52:method:IntelligentSearcher.__init__" -> "IntelligentSearcher.__init__"
+        "scripts/list_projects_display.py:24-85:function:main" -> "main"
+
+    Returns:
+        The qualified name (fourth component), or empty string if invalid format.
+    """
+    parts = chunk_id.split(":")
+    return parts[3] if len(parts) >= 4 else ""
+
+
+def _tokenize_for_matching(text: str) -> set[str]:
+    """Tokenize text splitting CamelCase, snake_case, and dot-separated names.
+
+    Filters out tokens with length <= 1 (e.g., "a", "I").
+
+    Examples:
+        "CodeEmbedder" -> {"code", "embedder"}
+        "embed_chunks" -> {"embed", "chunks"}
+        "IntelligentSearcher.__init__" -> {"intelligent", "searcher", "init"}
+        "what does CodeEmbedder do with batch processing" -> {"what", "does", "code", "embedder", "do", "with", "batch", "processing"}
+
+    Returns:
+        Set of lowercase alphanumeric tokens (length > 1).
+    """
+    # Split dot-separated qualified names (e.g., "Class.method")
+    text = text.replace(".", " ")
+    # Split CamelCase: "CodeEmbedder" -> "Code Embedder"
+    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
+    # Split uppercase runs: "HTMLParser" -> "HTML Parser"
+    text = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", text)
+    # Split snake_case and kebab-case
+    text = text.replace("_", " ").replace("-", " ")
+    # Extract lowercase tokens, filter single-char tokens
+    tokens = {t for t in re.findall(r"[a-zA-Z0-9]+", text.lower()) if len(t) > 1}
+    return tokens
 
 
 class CentralityRanker:
@@ -163,6 +206,7 @@ class CentralityRanker:
                         "function": 1.1,
                         "method": 1.1,
                         "decorated_definition": 1.1,
+                        "split_block": 1.1,  # Function/method fragments
                         "module": 0.92,
                     }
                 else:
@@ -170,6 +214,7 @@ class CentralityRanker:
                         "function": 1.1,
                         "method": 1.1,
                         "decorated_definition": 1.1,
+                        "split_block": 1.1,  # Function/method fragments
                         "class": 1.05,
                         "module": 0.95,
                     }
@@ -197,27 +242,40 @@ class CentralityRanker:
                 if is_test_code and not query_has_test_intent:
                     result["blended_score"] = round(result["blended_score"] * 0.85, 4)
 
-                # Name-match boost
-                name = result.get("name", "")
+                # Name-match boost (Q32-FIX: extract name from chunk_id when field absent)
+                chunk_id = result.get("chunk_id", "")
+                name = result.get("name", "") or _extract_name_from_chunk_id(chunk_id)
                 if name and query_lower:
-                    name_lower = name.lower()
-                    query_tokens = set(query_lower.split())
-                    name_tokens = set(name_lower.replace("_", " ").split())
-                    overlap = len(query_tokens & name_tokens) / max(
-                        len(query_tokens), 1
-                    )
-                    if overlap >= 0.8:
-                        result["blended_score"] = round(
-                            result["blended_score"] * 1.3, 4
-                        )
-                    elif overlap >= 0.5:
-                        result["blended_score"] = round(
-                            result["blended_score"] * 1.2, 4
-                        )
-                    elif overlap >= 0.3:
-                        result["blended_score"] = round(
-                            result["blended_score"] * 1.1, 4
-                        )
+                    query_tokens = _tokenize_for_matching(query_lower)
+                    name_tokens = _tokenize_for_matching(name)
+                    if name_tokens:
+                        # Name-centric overlap: what fraction of the NAME appears in query?
+                        # This avoids penalizing name-match for long queries
+                        overlap = len(query_tokens & name_tokens) / len(name_tokens)
+                        pre_boost_score = result["blended_score"]
+                        boost_multiplier = 1.0
+                        if overlap >= 0.8:
+                            result["blended_score"] = round(
+                                result["blended_score"] * 1.3, 4
+                            )
+                            boost_multiplier = 1.3
+                        elif overlap >= 0.5:
+                            result["blended_score"] = round(
+                                result["blended_score"] * 1.2, 4
+                            )
+                            boost_multiplier = 1.2
+                        elif overlap >= 0.3:
+                            result["blended_score"] = round(
+                                result["blended_score"] * 1.1, 4
+                            )
+                            boost_multiplier = 1.1
+
+                        if boost_multiplier > 1.0:
+                            logger.debug(
+                                f"[CENTRALITY] Name-match boost {boost_multiplier}x for '{name}': "
+                                f"overlap={overlap:.2f}, tokens={query_tokens & name_tokens}, "
+                                f"score {pre_boost_score:.4f} → {result['blended_score']:.4f}"
+                            )
 
         # Sort by blended score descending
         results.sort(key=lambda r: r.get("blended_score", 0.0), reverse=True)

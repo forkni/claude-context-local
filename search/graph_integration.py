@@ -374,6 +374,27 @@ class GraphIntegration:
             if len(same_file) == 1:
                 return same_file[0]
 
+            # Split block disambiguation: when all candidates are split_blocks
+            # of the same function (same file, same name), resolve to the first
+            # block (lowest start line = function entry point). This fixes graph
+            # isolation for large split functions.
+            if len(candidates) > 1:
+                split_blocks = [c for c in candidates if ":split_block:" in c]
+                if len(split_blocks) == len(candidates):
+                    # All candidates are split_blocks - pick the entry block
+                    def _start_line(chunk_id: str) -> int:
+                        parts = chunk_id.split(":")
+                        if len(parts) >= 2:
+                            line_range = parts[1]  # e.g., "793-860"
+                            try:
+                                return int(line_range.split("-")[0])
+                            except (ValueError, IndexError):
+                                pass
+                        return float("inf")
+
+                    split_blocks.sort(key=_start_line)
+                    return split_blocks[0]
+
         # No match or still ambiguous - create phantom node
         return None
 
