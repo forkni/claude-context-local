@@ -624,7 +624,7 @@ class SearchConfig:
                 enable_result_reranking=search_mode_data.get(
                     "enable_result_reranking", True
                 ),
-                default_k=search_mode_data.get("default_k", 5),
+                default_k=search_mode_data.get("default_k", 4),
                 max_k=search_mode_data.get("max_k", 50),
             )
 
@@ -777,7 +777,7 @@ class SearchConfig:
                 min_bm25_score=data.get("min_bm25_score", 0.1),
                 rrf_k_parameter=data.get("rrf_k_parameter", 100),
                 enable_result_reranking=data.get("enable_result_reranking", True),
-                default_k=data.get("default_k", 5),
+                default_k=data.get("default_k", 4),
                 max_k=data.get("max_k", 50),
             )
 

@@ -37,8 +37,8 @@ WHEN NOT TO USE:
                 },
                 "k": {
                     "type": "integer",
-                    "default": 5,
-                    "description": "Number of results to return (default: 5, max recommended: 20)",
+                    "default": 4,
+                    "description": "Number of results to return (default: 4, max recommended: 20)",
                     "minimum": 1,
                     "maximum": 100,
                 },
@@ -222,8 +222,8 @@ WORKFLOW:
                 },
                 "k": {
                     "type": "integer",
-                    "default": 5,
-                    "description": "Number of similar chunks to return (default: 5)",
+                    "default": 4,
+                    "description": "Number of similar chunks to return (default: 4)",
                 },
                 "output_format": {
                     "type": "string",

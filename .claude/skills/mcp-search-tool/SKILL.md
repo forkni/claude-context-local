@@ -524,14 +524,14 @@ configure_query_routing(enable_multi_model=True, default_model="qwen3", confiden
 
 ### 🔵 Advanced Tools
 
-#### 13. `find_similar_code(chunk_id, k=5)`
+#### 13. `find_similar_code(chunk_id, k=4)`
 
 **Purpose**: Find code chunks functionally similar to a reference chunk
 
 **Parameters**:
 
 - `chunk_id` (required): ID from search_code results (format: "file:lines:type:name")
-- `k` (default: 5): Number of similar chunks to return
+- `k` (default: 4): Number of similar chunks to return
 
 **Workflow**:
 
@@ -545,7 +545,7 @@ configure_query_routing(enable_multi_model=True, default_model="qwen3", confiden
 # First find a reference
 search_code("authentication handler")
 # Then find similar code using the chunk_id from results
-find_similar_code("src/auth.py:10-50:function:authenticate", k=5)
+find_similar_code("src/auth.py:10-50:function:authenticate", k=4)
 ```
 
 #### 14. `configure_reranking(enabled=None, model_name=None, top_k_candidates=None)`

@@ -955,7 +955,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
 async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
     """Find code chunks similar to a reference chunk."""
     chunk_id = arguments["chunk_id"]
-    k = arguments.get("k", 5)
+    k = arguments.get("k", 4)
 
     # Normalize chunk_id path separators
     # Use CodeIndexManager's normalize_chunk_id for proper cross-platform handling
