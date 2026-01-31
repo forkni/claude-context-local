@@ -20,12 +20,14 @@ class TestMultiHopSearcher:
         self.mock_dense_index = MagicMock()
         self.mock_single_hop_callback = MagicMock()
         self.mock_reranking_engine = MagicMock()
+        self.mock_graph_storage = MagicMock()
 
         self.searcher = MultiHopSearcher(
             embedder=self.mock_embedder,
             dense_index=self.mock_dense_index,
             single_hop_callback=self.mock_single_hop_callback,
             reranking_engine=self.mock_reranking_engine,
+            graph_storage=self.mock_graph_storage,
         )
 
     def test_validate_params_valid(self):
@@ -372,3 +374,183 @@ class TestMultiHopSearcher:
 
             # Verify no embedding was computed
             self.mock_embedder.embed_query.assert_not_called()
+
+    # Phase 3 Tests: Graph-based expansion
+
+    def test_graph_expand_discovers_neighbors(self):
+        """Test graph expansion finds graph neighbors and adds to results."""
+        initial_results = [
+            SearchResult(chunk_id="src/a.py:1-10:function:foo", score=0.9, metadata={}),
+        ]
+        all_chunk_ids = {"src/a.py:1-10:function:foo"}
+        all_results = {"src/a.py:1-10:function:foo": initial_results[0]}
+
+        # Mock graph neighbors (returns set[str])
+        self.mock_graph_storage.get_neighbors.return_value = {
+            "src/b.py:20-30:function:bar",
+            "Exception",  # symbol_name node, should be filtered
+        }
+
+        # Mock metadata lookup
+        self.mock_dense_index.metadata_store.get.return_value = {
+            "index_id": 5,
+            "metadata": {"file": "src/b.py", "type": "function"},
+        }
+
+        timings = self.searcher._graph_expand(
+            initial_results=initial_results,
+            all_chunk_ids=all_chunk_ids,
+            all_results=all_results,
+            expansion_k=5,
+            k=5,
+        )
+
+        assert "src/b.py:20-30:function:bar" in all_chunk_ids
+        assert "Exception" not in all_chunk_ids  # Filtered out
+        assert all_results["src/b.py:20-30:function:bar"].source == "graph_hop"
+        assert 2 in timings
+
+    def test_graph_expand_no_graph_storage(self):
+        """Test graph expansion gracefully handles missing graph_storage."""
+        self.searcher.graph_storage = None
+
+        initial_results = [
+            SearchResult(chunk_id="src/a.py:1-10:function:foo", score=0.9, metadata={}),
+        ]
+        all_chunk_ids = {"src/a.py:1-10:function:foo"}
+        all_results = {"src/a.py:1-10:function:foo": initial_results[0]}
+
+        timings = self.searcher._graph_expand(
+            initial_results=initial_results,
+            all_chunk_ids=all_chunk_ids,
+            all_results=all_results,
+            expansion_k=5,
+            k=5,
+        )
+
+        assert timings == {}
+        assert len(all_results) == 1  # No new results added
+
+    def test_graph_expand_filters_symbol_nodes(self):
+        """Test that symbol_name nodes (< 3 colons) are filtered out."""
+        initial_results = [
+            SearchResult(chunk_id="src/a.py:1-10:function:foo", score=0.9, metadata={}),
+        ]
+        all_chunk_ids = {"src/a.py:1-10:function:foo"}
+        all_results = {"src/a.py:1-10:function:foo": initial_results[0]}
+
+        self.mock_graph_storage.get_neighbors.return_value = {
+            "BaseClass",  # 0 colons - symbol
+            "os.path",  # 0 colons - symbol
+            "module:func",  # 1 colon  - not a chunk
+        }
+
+        self.searcher._graph_expand(
+            initial_results=initial_results,
+            all_chunk_ids=all_chunk_ids,
+            all_results=all_results,
+            expansion_k=5,
+            k=5,
+        )
+
+        assert len(all_results) == 1  # No new results added
+
+    def test_graph_expand_metadata_not_found(self):
+        """Test neighbor is skipped if metadata not found."""
+        initial_results = [
+            SearchResult(chunk_id="src/a.py:1-10:function:foo", score=0.9, metadata={}),
+        ]
+        all_chunk_ids = {"src/a.py:1-10:function:foo"}
+        all_results = {"src/a.py:1-10:function:foo": initial_results[0]}
+
+        # Neighbor exists in graph
+        self.mock_graph_storage.get_neighbors.return_value = {
+            "src/orphan.py:1-10:function:bar",
+        }
+
+        # But not in search index
+        self.mock_dense_index.metadata_store.get.return_value = None
+
+        self.searcher._graph_expand(
+            initial_results=initial_results,
+            all_chunk_ids=all_chunk_ids,
+            all_results=all_results,
+            expansion_k=5,
+            k=5,
+        )
+
+        assert len(all_results) == 1  # Neighbor was skipped
+        assert "src/orphan.py:1-10:function:bar" not in all_chunk_ids
+
+    def test_hybrid_expand_runs_both(self):
+        """Test hybrid expansion runs graph first, then semantic."""
+        initial_results = [
+            SearchResult(chunk_id="src/a.py:1-10:function:foo", score=0.9, metadata={}),
+        ]
+        all_chunk_ids = {"src/a.py:1-10:function:foo"}
+        all_results = {"src/a.py:1-10:function:foo": initial_results[0]}
+
+        # Graph returns one neighbor
+        self.mock_graph_storage.get_neighbors.return_value = {
+            "src/b.py:20-30:function:bar",
+        }
+        self.mock_dense_index.metadata_store.get.return_value = {
+            "index_id": 5,
+            "metadata": {"file": "src/b.py"},
+        }
+
+        # Semantic returns a different neighbor
+        self.mock_dense_index.get_similar_chunks_batched.return_value = {
+            "src/a.py:1-10:function:foo": [
+                ("src/c.py:40-50:function:baz", 0.7, {"file": "src/c.py"}),
+            ],
+        }
+
+        self.searcher._hybrid_expand(
+            initial_results=initial_results,
+            all_chunk_ids=all_chunk_ids,
+            all_results=all_results,
+            expansion_k=5,
+            hops=2,
+            k=5,
+        )
+
+        # Both neighbors should be found
+        assert "src/b.py:20-30:function:bar" in all_chunk_ids
+        assert "src/c.py:40-50:function:baz" in all_chunk_ids
+        assert all_results["src/b.py:20-30:function:bar"].source == "graph_hop"
+        assert all_results["src/c.py:40-50:function:baz"].source == "multi_hop"
+
+    @patch("search.multi_hop_searcher._get_config_via_service_locator")
+    def test_search_dispatches_graph_mode(self, mock_config):
+        """Test search() dispatches to graph expansion when mode is 'graph'."""
+        mock_multi_hop_config = MagicMock()
+        mock_multi_hop_config.initial_k_multiplier = 2.0
+        mock_multi_hop_config.multi_hop_mode = "graph"
+        mock_config.return_value.multi_hop = mock_multi_hop_config
+
+        # Provide initial results from hop 1
+        self.mock_single_hop_callback.return_value = [
+            SearchResult(chunk_id="src/a.py:1-10:function:foo", score=0.9, metadata={}),
+        ]
+
+        # Graph returns neighbor
+        self.mock_graph_storage.get_neighbors.return_value = {
+            "src/b.py:20-30:function:bar",
+        }
+        self.mock_dense_index.metadata_store.get.return_value = {
+            "index_id": 5,
+            "metadata": {"file": "src/b.py"},
+        }
+
+        # Reranker returns whatever it gets
+        self.mock_reranking_engine.rerank_by_query.side_effect = (
+            lambda **kwargs: kwargs["results"]
+        )
+
+        self.searcher.search(query="test", k=5, hops=2)
+
+        # Verify graph_storage.get_neighbors was called (graph mode)
+        self.mock_graph_storage.get_neighbors.assert_called()
+        # Verify batched search was NOT called (not semantic mode)
+        self.mock_dense_index.get_similar_chunks_batched.assert_not_called()

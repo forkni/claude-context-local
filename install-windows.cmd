@@ -377,7 +377,7 @@ goto :eof
 :install_cpu_mode
 call :setup_environment
 echo [INFO] Installing PyTorch CPU-only version...
-".venv\Scripts\uv.exe" pip install torch torchvision torchaudio
+".venv\Scripts\uv.exe" pip install torch
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] PyTorch CPU installation failed
     pause
@@ -389,11 +389,11 @@ goto :eof
 
 :install_with_index
 set "INDEX_URL=%~1"
-".venv\Scripts\uv.exe" pip install torch torchvision torchaudio --index-url %INDEX_URL%
+".venv\Scripts\uv.exe" pip install torch --index-url %INDEX_URL%
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] PyTorch installation failed with index %INDEX_URL%
     echo [INFO] Falling back to CPU-only installation...
-    ".venv\Scripts\uv.exe" pip install torch torchvision torchaudio
+    ".venv\Scripts\uv.exe" pip install torch
     if %ERRORLEVEL% neq 0 (
         echo [ERROR] Fallback installation also failed
         pause

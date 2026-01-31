@@ -49,9 +49,7 @@ See [tests/TESTING_GUIDE.md](tests/TESTING_GUIDE.md) for detailed testing docume
 
 This project uses automated code quality tools:
 
-- **ruff**: Python linting
-- **black**: Code formatting
-- **isort**: Import sorting
+- **ruff**: Python linting, formatting, and import sorting
 - **markdownlint**: Documentation formatting
 - **shellcheck**: Bash script validation
 
@@ -124,7 +122,7 @@ All linting must pass before submitting a PR.
 
 - Target the `development` branch
 - Include tests for new functionality
-- Follow existing code style (enforced by ruff, black, isort)
+- Follow existing code style (enforced by ruff)
 - Write clear commit messages using [Conventional Commits](https://www.conventionalcommits.org/):
   - `feat:` - New feature
   - `fix:` - Bug fix

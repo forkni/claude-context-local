@@ -1,13 +1,14 @@
 {
   "embedding": {
-    "model_name": "nomic-ai/CodeRankEmbed",
-    "dimension": 768,
+    "model_name": "BAAI/bge-m3",
+    "dimension": 1024,
     "batch_size": 128,
     "query_cache_size": 128,
     "enable_import_context": true,
     "enable_class_context": true,
     "max_import_lines": 10,
-    "max_class_signature_lines": 5
+    "max_class_signature_lines": 5,
+    "enable_structural_header": true
   },
   "search_mode": {
     "default_mode": "hybrid",
@@ -45,12 +46,13 @@
     "enabled": true,
     "hop_count": 2,
     "expansion": 0.3,
-    "initial_k_multiplier": 2.0
+    "initial_k_multiplier": 2.0,
+    "multi_hop_mode": "hybrid"
   },
   "routing": {
     "multi_model_enabled": true,
     "default_model": "bge_m3",
-    "multi_model_pool": "full"
+    "multi_model_pool": "lightweight-speed"
   },
   "intent": {
     "enabled": true,
@@ -61,7 +63,7 @@
   },
   "reranker": {
     "enabled": true,
-    "model_name": "BAAI/bge-reranker-v2-m3",
+    "model_name": "Alibaba-NLP/gte-reranker-modernbert-base",
     "top_k_candidates": 50,
     "min_vram_gb": 6.0,
     "batch_size": 16
@@ -73,7 +75,7 @@
     "min_chunk_tokens": 50,
     "max_merged_tokens": 1000,
     "enable_community_detection": true,
-    "enable_community_merge": true,
+    "enable_community_merge": false,
     "community_resolution": 1.5,
     "enable_large_node_splitting": true,
     "max_chunk_lines": 100,
@@ -89,5 +91,11 @@
     "relation_types": null,
     "include_anchor": true,
     "deduplicate": true
+  },
+  "graph_enhanced": {
+    "centrality_method": "pagerank",
+    "centrality_alpha": 0.3,
+    "centrality_annotation": true,
+    "centrality_reranking": true
   }
 }

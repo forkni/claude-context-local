@@ -1,5 +1,5 @@
 checkCommands:
-  fix: pip install ruff black isort && ruff check --fix . && black . && isort .
+  fix: ruff check --fix . && ruff format .
   lint: pip install ruff && ruff check .
   types: pip install mypy && mypy mcp_server/
   test: pip install pytest && pytest tests/ -x -q

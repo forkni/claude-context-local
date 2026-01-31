@@ -195,31 +195,35 @@ def _build_index_response(
         total_files_added = sum(r["files_added"] for r in results)
         total_chunks_added = sum(r["chunks_added"] for r in results)
 
-        return {
+        response = {
             "success": True,
             "multi_model": True,
-            "project": str(directory_path),
             "models_indexed": len(results),
+            "project": str(directory_path),
             "results": results,
             "total_time": round(total_time, 2),
             "total_files_added": total_files_added,
             "total_chunks_added": total_chunks_added,
             "mode": "incremental" if incremental else "full",
         }
+        return response
     else:
         # Single model - results has one item
         r = results[0]
-        return {
+        response = {
             "success": True,
-            "multi_model": False,
             "project": str(directory_path),
             "files_added": r["files_added"],
-            "files_modified": r["files_modified"],
-            "files_removed": r["files_removed"],
             "chunks_added": r["chunks_added"],
             "time_taken": r["time_taken"],
             "mode": "incremental" if incremental else "full",
         }
+        # Only include modified/removed counts when non-zero (token optimization)
+        if r["files_modified"] > 0:
+            response["files_modified"] = r["files_modified"]
+        if r["files_removed"] > 0:
+            response["files_removed"] = r["files_removed"]
+        return response
 
 
 def _clear_index_files_before_create(index_dir: Path) -> None:
@@ -530,12 +534,14 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
 
     logger.info(f"Cleared indices for {len(cleared_dirs)} models: {cleared_dirs}")
 
-    return {
+    result = {
         "success": True,
-        "message": f"Index cleared for project: {project_name}",
         "cleared_models": cleared_dirs,
-        "snapshots_cleared": snapshots_cleared,
     }
+    # Only include snapshot count when non-zero (token optimization)
+    if snapshots_cleared > 0:
+        result["snapshots_cleared"] = snapshots_cleared
+    return result
 
 
 @error_handler("Delete project")
@@ -658,8 +664,10 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
     result = {
         "success": success,
         "deleted_directories": deleted_dirs,
-        "deleted_snapshots": deleted_snapshots,
     }
+    # Only include snapshot count when non-zero (token optimization)
+    if deleted_snapshots > 0:
+        result["deleted_snapshots"] = deleted_snapshots
 
     if errors:
         result["errors"] = errors

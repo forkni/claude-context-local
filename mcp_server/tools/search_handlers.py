@@ -25,6 +25,7 @@ from search.config import (
     get_search_config,
 )
 from search.exceptions import DimensionMismatchError
+from search.filters import normalize_path
 from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
@@ -325,27 +326,101 @@ def _get_index_manager_from_searcher(searcher) -> CodeIndexManager | None:
     return None
 
 
+# ============================================================================
+# SSCG Phase 2: Full Relationship Enrichment Per Result
+# ============================================================================
+
+# Reverse relation names for incoming edge enrichment
+# Matches graph_storage._get_reverse_relation_type() naming convention
+_REVERSE_RELATION_MAP: dict[str, str] = {
+    "calls": "called_by",
+    "inherits": "inherited_by",
+    "uses_type": "used_as_type_by",
+    "imports": "imported_by",
+    "decorates": "decorated_by",
+    "raises": "raised_by",
+    "catches": "caught_by",
+    "instantiates": "instantiated_by",
+    "implements": "implemented_by",
+    "overrides": "overridden_by",
+    "assigns_to": "assigned_by",
+    "reads_from": "read_by",
+    "defines_constant": "constant_defined_by",
+    "defines_enum_member": "enum_member_defined_by",
+    "defines_class_attr": "class_attr_defined_by",
+    "defines_field": "field_defined_by",
+    "uses_constant": "constant_used_by",
+    "uses_default": "default_used_by",
+    "uses_global": "global_used_by",
+    "asserts_type": "type_asserted_by",
+    "uses_context_manager": "context_manager_used_by",
+}
+
+
+def _get_reverse_relation_name(rel_type: str) -> str:
+    """Get the reverse name for a relationship type.
+
+    Args:
+        rel_type: Forward relationship type (e.g., "calls", "inherits")
+
+    Returns:
+        Reverse relationship name (e.g., "called_by", "inherited_by")
+    """
+    return _REVERSE_RELATION_MAP.get(rel_type, f"{rel_type}_by")
+
+
 def _get_graph_data_for_chunk(
-    index_manager: CodeIndexManager, chunk_id: str
+    index_manager: CodeIndexManager, chunk_id: str, max_per_type: int = 5
 ) -> dict | None:
-    """Get graph relationship data for a chunk.
+    """Get all graph relationship data for a chunk (21 relationship types).
+
+    Iterates outgoing and incoming edges, grouping by relationship type.
+    Also checks incoming edges by bare symbol name, since edges often
+    target symbol names (e.g., "login") rather than full chunk_ids.
 
     Args:
         index_manager: The index manager with graph storage
         chunk_id: The chunk to get graph data for
+        max_per_type: Maximum targets/sources per relationship type (default: 5)
 
     Returns:
-        dict with 'calls' and 'called_by' lists, or None
+        dict mapping relationship names to lists of chunk_ids/symbols, or None
     """
     try:
-        calls = index_manager.graph_storage.get_callees(chunk_id)
-        called_by = index_manager.graph_storage.get_callers(chunk_id)
+        graph = index_manager.graph_storage
+        normalized = normalize_path(chunk_id)
+        result: dict[str, list[str]] = {}
 
-        if calls or called_by:
-            return {
-                "calls": calls if calls else [],
-                "called_by": called_by if called_by else [],
-            }
+        # Early return if node not in graph
+        if normalized not in graph.graph:
+            return None
+
+        # Outgoing edges (this chunk is source) -> forward relation names
+        for _, target, edge_data in graph.graph.out_edges(normalized, data=True):
+            rel_type = edge_data.get("type", "calls")
+            lst = result.setdefault(rel_type, [])
+            if len(lst) < max_per_type:
+                lst.append(target)
+
+        # Incoming edges by chunk_id -> reverse relation names
+        for source, _, edge_data in graph.graph.in_edges(normalized, data=True):
+            rel_type = edge_data.get("type", "calls")
+            reverse = _get_reverse_relation_name(rel_type)
+            lst = result.setdefault(reverse, [])
+            if len(lst) < max_per_type:
+                lst.append(source)
+
+        # Incoming edges by symbol name (edges often target bare names)
+        symbol_name = normalized.rsplit(":", 1)[-1] if ":" in normalized else None
+        if symbol_name and symbol_name != normalized and symbol_name in graph.graph:
+            for source, _, edge_data in graph.graph.in_edges(symbol_name, data=True):
+                rel_type = edge_data.get("type", "calls")
+                reverse = _get_reverse_relation_name(rel_type)
+                lst = result.setdefault(reverse, [])
+                if len(lst) < max_per_type and source not in lst:
+                    lst.append(source)
+
+        return result if result else None
     except Exception as e:
         logger.debug(f"Failed to get graph data for {chunk_id}: {e}")
     return None
@@ -371,11 +446,13 @@ def _format_search_results(results: list) -> list[dict]:
                 "score": round(result.similarity_score, 2),
                 "chunk_id": result.chunk_id,
             }
-            if hasattr(result, "name") and result.name:
-                item["name"] = result.name
+            # Note: name field omitted (redundant with chunk_id last component)
             # Add complexity score if available (functions only)
             if hasattr(result, "complexity_score") and result.complexity_score:
                 item["complexity_score"] = result.complexity_score
+            # SSCG Phase 5: Propagate source field for ego-graph neighbor identification
+            if hasattr(result, "source") and result.source:
+                item["source"] = result.source
         else:
             # HybridSearcher result format
             item = {
@@ -391,6 +468,9 @@ def _format_search_results(results: list) -> list[dict]:
             # Add complexity score if available (functions only)
             if result.metadata.get("complexity_score"):
                 item["complexity_score"] = result.metadata["complexity_score"]
+            # SSCG Phase 5: Propagate source field for ego-graph neighbor identification
+            if hasattr(result, "source") and result.source:
+                item["source"] = result.source
         formatted_results.append(item)
     return formatted_results
 
@@ -412,7 +492,9 @@ def _enrich_results_with_graph_data(
 
     for item in results:
         chunk_id = item.get("chunk_id")
-        if chunk_id:
+        # Skip per-result graph data for ego-graph neighbors (captured in subgraph_edges instead)
+        # Saves ~400 chars per ego neighbor, ~8K chars total for 20 neighbors
+        if chunk_id and item.get("source") != "ego_graph":
             graph_data = _get_graph_data_for_chunk(index_manager, chunk_id)
             if graph_data:
                 item["graph"] = graph_data
@@ -443,7 +525,14 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     # Extract arguments
     query = arguments.get("query")
     chunk_id = arguments.get("chunk_id")
-    k = arguments.get("k", 5)
+
+    # Get k from arguments, falling back to config default_k (Easy Win 2 + 3)
+    search_config = get_search_config()
+    config_default_k = search_config.search_mode.default_k
+    k = arguments.get("k", config_default_k)
+
+    # Enforce max_k limit (Easy Win 3)
+    k = min(k, search_config.search_mode.max_k)
 
     # Validate: must provide either query OR chunk_id, not both
     if not query and not chunk_id:
@@ -461,6 +550,20 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     if chunk_id:
         return _handle_chunk_id_lookup(chunk_id)
 
+    # Early extraction for model routing (needed by intent redirects)
+    use_routing = arguments.get("use_routing", True)
+    model_key = arguments.get("model_key")
+
+    # Ego-graph defaults (may be overridden by CONTEXTUAL intent)
+    ego_graph_enabled = arguments.get("ego_graph_enabled", False)
+    ego_graph_k_hops = arguments.get("ego_graph_k_hops", 2)
+    ego_graph_max_neighbors = arguments.get("ego_graph_max_neighbors_per_hop", 10)
+
+    # Route query to optimal embedding model
+    selected_model_key, routing_info = _route_query_to_model(
+        query, use_routing, model_key
+    )
+
     # Intent Classification (Phase 2)
     config = get_config()
     if config.intent.enabled:
@@ -475,6 +578,65 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
             f"(conf={intent_decision.confidence:.2f}, reason={intent_decision.reason})"
         )
 
+        # Redirect PATH_TRACING queries to find_path
+        if (
+            intent_decision.intent == QueryIntent.PATH_TRACING
+            and intent_decision.confidence >= config.intent.confidence_threshold
+        ):
+            source = intent_decision.suggested_params.get("source")
+            target = intent_decision.suggested_params.get("target")
+            if source and target:
+                logger.info(
+                    f"[INTENT] Redirecting PATH_TRACING query to find_path: {source} → {target}"
+                )
+                return await handle_find_path(
+                    {
+                        "source": source,
+                        "target": target,
+                        "max_hops": 10,
+                    }
+                )
+
+        # Redirect SIMILARITY queries to find_similar_code
+        if (
+            intent_decision.intent == QueryIntent.SIMILARITY
+            and intent_decision.confidence >= config.intent.confidence_threshold
+        ):
+            symbol_name = intent_decision.suggested_params.get("symbol_name")
+            if symbol_name:
+                # First search to get chunk_id, then find similar
+                logger.info(
+                    f"[INTENT] Redirecting SIMILARITY query to find_similar_code: {symbol_name}"
+                )
+                try:
+                    # Get searcher if not already initialized
+                    if "searcher" not in locals():
+                        searcher = get_searcher(model_key=selected_model_key)
+                    search_result = searcher.search(symbol_name, k=1)
+                    if search_result:
+                        return await handle_find_similar_code(
+                            {
+                                "chunk_id": search_result[0].chunk_id,
+                                "k": k,
+                            }
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"[INTENT] Failed to redirect SIMILARITY query: {e}. "
+                        f"Falling back to normal search."
+                    )
+
+        # Apply ego_graph for CONTEXTUAL queries (don't redirect, enhance search)
+        if intent_decision.intent == QueryIntent.CONTEXTUAL:
+            if intent_decision.suggested_params.get("ego_graph_enabled"):
+                ego_graph_enabled = True
+                ego_graph_k_hops = intent_decision.suggested_params.get(
+                    "ego_graph_k_hops", 2
+                )
+                logger.info(
+                    f"[INTENT] Enabling ego_graph for CONTEXTUAL query (k_hops={ego_graph_k_hops})"
+                )
+
         # Redirect NAVIGATIONAL queries to find_connections
         if (
             intent_decision.intent == QueryIntent.NAVIGATIONAL
@@ -482,15 +644,18 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
             and config.intent.enable_navigational_redirect
         ):
             symbol_name = intent_decision.suggested_params.get("symbol_name")
+            rel_types = intent_decision.suggested_params.get("relationship_types")
             if symbol_name:
                 logger.info(
                     f"[INTENT] Redirecting NAVIGATIONAL query to find_connections: {symbol_name}"
+                    + (f" with relationship_types={rel_types}" if rel_types else "")
                 )
                 return await handle_find_connections(
                     {
                         "symbol_name": symbol_name,
                         "exclude_dirs": arguments.get("exclude_dirs"),
                         "max_depth": 3,
+                        "relationship_types": rel_types,  # Pass detected relationship types
                     }
                 )
 
@@ -515,13 +680,6 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     max_age_minutes = arguments.get(
         "max_age_minutes", get_config().performance.max_index_age_minutes
     )
-    use_routing = arguments.get("use_routing", True)
-    model_key = arguments.get("model_key")
-
-    # Ego-graph retrieval parameters (RepoGraph-style k-hop expansion)
-    ego_graph_enabled = arguments.get("ego_graph_enabled", False)
-    ego_graph_k_hops = arguments.get("ego_graph_k_hops", 2)
-    ego_graph_max_neighbors = arguments.get("ego_graph_max_neighbors_per_hop", 10)
 
     # Parent chunk retrieval parameter (Match Small, Retrieve Big)
     include_parent = arguments.get("include_parent", False)
@@ -537,11 +695,6 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
             "current_project": None,
             "system_message": "No project indexed. Use index_directory(directory_path) to index a project first.",
         }
-
-    # Route query to optimal embedding model
-    selected_model_key, routing_info = _route_query_to_model(
-        query, use_routing, model_key
-    )
 
     # Check and perform auto-reindex if index is stale
     current_project = get_state().current_project
@@ -679,10 +832,116 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
         formatted_results, index_manager
     )
 
+    # === SSCG Phase 3: Centrality annotation/reranking ===
+    centrality_scores = None
+    if search_config is None:
+        search_config = get_search_config()
+    graph_config = getattr(search_config, "graph_enhanced", None)
+
+    if (
+        graph_config
+        and graph_config.centrality_annotation
+        and index_manager
+        and index_manager.graph_storage
+    ):
+        try:
+            from graph.graph_queries import GraphQueryEngine
+            from search.centrality_ranker import CentralityRanker
+
+            graph_query_engine = GraphQueryEngine(index_manager.graph_storage)
+            ranker = CentralityRanker(
+                graph_query_engine=graph_query_engine,
+                method=graph_config.centrality_method,
+                alpha=graph_config.centrality_alpha,
+            )
+
+            # Compute centrality scores for subgraph population
+            centrality_scores = ranker._get_centrality_scores()
+
+            # Rerank results by blended score if enabled in config
+            if graph_config.centrality_reranking:
+                formatted_results = ranker.rerank(formatted_results)
+                logger.debug(
+                    f"[SSCG Phase 3] Reranked {len(formatted_results)} results by centrality"
+                )
+            else:
+                formatted_results = ranker.annotate(formatted_results)
+                logger.debug(
+                    f"[SSCG Phase 3] Annotated {len(formatted_results)} results with centrality"
+                )
+        except Exception as e:
+            logger.debug(f"[SSCG Phase 3] Centrality ranking failed: {e}")
+
+    # === SSCG Phase 1: Extract subgraph over search results ===
+    subgraph_data = None
+    if index_manager and index_manager.graph_storage is not None:
+        try:
+            from search.subgraph_extractor import SubgraphExtractor
+
+            extractor = SubgraphExtractor(index_manager.graph_storage)
+            # Extract top-k search result chunk_ids
+            result_chunk_ids = [
+                r["chunk_id"] for r in formatted_results[:k] if "chunk_id" in r
+            ]
+
+            # SSCG Phase 5: Collect ego-graph neighbor chunk_ids (if present)
+            ego_neighbor_ids = [
+                r["chunk_id"]
+                for r in formatted_results[k:]
+                if r.get("source") == "ego_graph" and "chunk_id" in r
+            ]
+
+            # Cap ego-graph neighbors in subgraph to limit output size (defensive)
+            MAX_EGO_IN_SUBGRAPH = 10
+            if ego_neighbor_ids and len(ego_neighbor_ids) > MAX_EGO_IN_SUBGRAPH:
+                ego_neighbor_ids = ego_neighbor_ids[:MAX_EGO_IN_SUBGRAPH]
+
+            if result_chunk_ids:
+                subgraph = extractor.extract_subgraph(
+                    result_chunk_ids,
+                    include_boundary_edges=True,
+                    centrality_scores=centrality_scores,
+                    ego_neighbor_ids=ego_neighbor_ids if ego_neighbor_ids else None,
+                )
+                # Include subgraph if there are nodes (boundary edges provide structural context)
+                if subgraph.nodes:
+                    subgraph_data = subgraph.to_dict()
+                    ego_count = len(ego_neighbor_ids) if ego_neighbor_ids else 0
+                    logger.debug(
+                        f"[SSCG] Extracted subgraph: {len(subgraph.nodes)} nodes "
+                        f"({ego_count} ego-graph neighbors), {len(subgraph.edges)} edges"
+                    )
+                else:
+                    logger.info(
+                        f"[SSCG] No graph nodes found for {len(result_chunk_ids)} chunk_ids"
+                    )
+        except Exception as e:
+            logger.debug(f"[SSCG] Subgraph extraction failed: {e}")
+
     # Build response
     response = {"query": query, "results": formatted_results}
+    # Flatten subgraph to top-level keys for ultra format TOON conversion
+    if subgraph_data:
+        response["subgraph_nodes"] = subgraph_data["nodes"]
+        response["subgraph_edges"] = subgraph_data["edges"]
+        if subgraph_data.get("topology_order"):
+            response["subgraph_order"] = subgraph_data["topology_order"]
+        if subgraph_data.get("communities"):
+            response["subgraph_communities"] = subgraph_data["communities"]
+
+    # Only include routing info when useful for debugging:
+    # - Skip for explicit user overrides (they know what they picked)
+    # - Skip for high-confidence routing (>= 0.9, expected behavior)
+    # - Include for low confidence (< 0.9) or fallback scenarios
     if routing_info:
-        response["routing"] = routing_info
+        confidence = routing_info.get("confidence", 0.0)
+        reason = routing_info.get("reason", "")
+
+        # Include routing info if:
+        # - Low confidence routing (< 0.9) - might need review
+        # - Fallback scenarios - user should know routing failed
+        if confidence < 0.9 or "Fallback" in reason or "routed" in reason.lower():
+            response["routing"] = routing_info
 
     # Add AI guidance system message
     response = add_system_message(
@@ -696,7 +955,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
 async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
     """Find code chunks similar to a reference chunk."""
     chunk_id = arguments["chunk_id"]
-    k = arguments.get("k", 5)
+    k = arguments.get("k", 4)
 
     # Normalize chunk_id path separators
     # Use CodeIndexManager's normalize_chunk_id for proper cross-platform handling
@@ -732,7 +991,6 @@ async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
     return {
         "reference_chunk": chunk_id,
         "similar_chunks": formatted_results,
-        "count": len(formatted_results),
     }
 
 
@@ -952,7 +1210,6 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
 
         response = {
             "path_found": False,
-            "path_length": 0,
             "source": {
                 "chunk_id": resolved_source,
                 "name": (
@@ -971,7 +1228,6 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
                 ),
                 "exists_in_graph": resolved_target in graph_storage.graph,
             },
-            "path": [],
             "reason": "No path exists"
             + (f" with edge_types={edge_types}" if edge_types else ""),
         }
