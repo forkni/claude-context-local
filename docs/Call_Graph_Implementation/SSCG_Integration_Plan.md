@@ -12,6 +12,7 @@
 This plan transforms MCP `search_code` output from a flat list of matching code chunks into a **coherent subgraph** with typed connections between nodes, topological ordering, community context, and centrality-informed ranking.
 
 **Research basis**:
+
 - **RepoGraph** (ICLR 2025): +27% absolute improvement on SWE-bench via ego-graph retrieval over code dependency graphs
 - **LogicLens** (arXiv 2601.10773, Jan 2026): Three-phase graph construction (structural → semantic → concept extraction) yielding 0%→69.5% accuracy improvement over flat RAG
 - **GRACE**: Dual-path encoding (semantic + structural) with graph-aware reranking via PageRank centrality
@@ -212,6 +213,7 @@ class SubgraphExtractor:
 ```
 
 **Topological ordering approach:**
+
 - Extract induced subgraph as `nx.DiGraph.subgraph(chunk_ids)`
 - Try `nx.topological_sort()` first (works if DAG)
 - If cycle detected (`NetworkXUnfeasible`), use `nx.condensation()` to create SCC-based DAG, topologically sort that, then expand SCCs back to individual nodes
@@ -256,6 +258,7 @@ if subgraph_data:
 #### 1.3 Output formatter compatibility
 
 The existing `output_formatter.py` handles nested dicts automatically:
+
 - **Compact mode**: Omits empty fields (already the pattern)
 - **Ultra/TOON mode**: Converts `nodes`/`edges` arrays to tabular format via existing `_to_toon_format()` logic
 
@@ -264,6 +267,7 @@ No changes needed to `output_formatter.py` for Phase 1.
 #### 1.4 Testing
 
 **Unit tests** (`tests/unit/search/test_subgraph_extractor.py`):
+
 - `test_extract_subgraph_basic` -- 5 nodes with 8 typed edges, verify correct extraction
 - `test_extract_subgraph_no_edges` -- disconnected nodes, verify no subgraph returned
 - `test_topological_order_dag` -- linear dependency chain, verify correct ordering
@@ -273,6 +277,7 @@ No changes needed to `output_formatter.py` for Phase 1.
 - `test_token_budget` -- measure JSON string length, assert < 600 tokens for 5 nodes + 10 edges
 
 **Functional validation via MCP**:
+
 - Index this project: `index_directory("F:/RD_PROJECTS/COMPONENTS/claude-context-local")`
 - Run: `search_code("graph storage operations", k=5)`
 - Verify: response contains `"subgraph"` field with typed edges between result chunks
@@ -280,10 +285,12 @@ No changes needed to `output_formatter.py` for Phase 1.
 #### Phase 1 Implementation Status: ✅ COMPLETED (2026-01-29)
 
 **Files Created:**
+
 - `search/subgraph_extractor.py` — Core extraction module (315 lines)
 - `tests/unit/search/test_subgraph_extractor.py` — 14 unit tests
 
 **Files Modified:**
+
 - `mcp_server/tools/search_handlers.py` — Integration block (lines 748-778)
 - `tests/unit/mcp_server/test_output_formatter.py` — 3 subgraph formatting tests
 
@@ -316,14 +323,17 @@ No changes needed to `output_formatter.py` for Phase 1.
 6. **Condition relaxed**: Changed `if subgraph.edges:` to `if subgraph.nodes:` to include subgraph even when only boundary edges exist.
 
 **Known issue (deferred):**
+
 - `file` field in subgraph nodes contains absolute paths in MCP output because `CodeGraphStorage` does not expose `project_root`. The relative path logic works (unit tested) but requires `graph_storage.project_root` to be set. Fix in Phase 4 or dedicated follow-up.
 
 **Test results:**
+
 - 14/14 subgraph extractor tests pass
 - 40/40 output formatter tests pass
 - 188/188 full MCP server tests pass
 
 **MCP validation results (2026-01-29):**
+
 - Ultra: `subgraph_nodes[5]{file,id,kind,name}` + `subgraph_edges[7]{boundary,line,rel,src,tgt}` ✅
 - Compact: `subgraph_nodes` + `subgraph_edges` arrays ✅
 - Verbose: Full JSON with all subgraph fields ✅
@@ -417,21 +427,25 @@ def _get_reverse_relation_name(rel_type: str) -> str:
 #### 2.2 Testing
 
 **Unit tests** (`tests/unit/mcp_server/test_graph_enrichment.py`):
+
 - `test_full_relationship_enrichment` -- mock graph with inherits, imports, uses_type edges; verify all appear
 - `test_max_per_type_cap` -- 10 callers but cap=5, verify truncation
 - `test_backward_compat_calls` -- existing `calls`/`called_by` behavior unchanged
 - `test_empty_graph` -- verify None returned gracefully
 
 **Functional validation via MCP**:
+
 - `search_code("BaseRelationshipExtractor", chunk_type="class")`
 - Verify: result `graph` field contains `inherits`, `inherited_by`, `imports` etc. (not just calls)
 
 #### Phase 2 Implementation Status: ✅ COMPLETED (2026-01-29)
 
 **Files Modified:**
+
 - `mcp_server/tools/search_handlers.py` — Added `normalize_path` import, `_REVERSE_RELATION_MAP` dict (21 entries), `_get_reverse_relation_name()` helper, and replaced `_get_graph_data_for_chunk()` with full 21-type implementation
 
 **Files Created:**
+
 - `tests/unit/mcp_server/test_graph_enrichment.py` — 9 unit tests (165 lines)
 
 **All planned targets achieved:**
@@ -446,17 +460,20 @@ def _get_reverse_relation_name(rel_type: str) -> str:
 | Backward compatibility | ✅ | Existing callers unchanged (default `max_per_type=5`), 197/197 MCP server tests pass |
 
 **Key implementation details:**
+
 1. **Reverse relation naming**: Used existing `graph_storage.py` convention (`"used_as_type_by"`, `"constant_defined_by"` etc.) instead of plan doc's `"type_used_by"`, `"constant_defined_in"` for codebase consistency
 2. **Edge attribute access**: Uses `edge_data.get("type", "calls")` matching how edges are stored in `add_relationship_edge()`
 3. **Symbol name extraction**: `normalized.rsplit(":", 1)[-1]` for safer parsing of chunk_ids with colons in paths
 4. **Deduplication**: Only applied to symbol name incoming edges (`source not in lst`) to avoid double-counting
 
 **Test results:**
+
 - 9/9 new graph enrichment tests pass
 - 197/197 total MCP server tests pass (was 188, +9 new tests)
 - Zero regressions
 
 **Deviations from plan (all improvements):**
+
 - Used `graph_storage.py` reverse naming convention instead of plan doc's naming for consistency
 - Implemented 9 tests instead of 4 (added completeness checks and edge cases)
 - Added comprehensive docstring explaining symbol name lookup behavior
@@ -605,6 +622,7 @@ Also passes `centrality_scores` to subgraph extraction for node annotation.
 #### 3.4 Testing
 
 **Unit tests** (`tests/unit/search/test_centrality_ranker.py` - 163 lines):
+
 - `test_annotate_adds_centrality_field` ✅ -- Verify centrality field added without reordering
 - `test_rerank_reorders_by_blended_score` ✅ -- Verify blended_score computation and sorting
 - `test_alpha_zero_preserves_semantic_order` ✅ -- Regression test for alpha=0.0
@@ -614,10 +632,12 @@ Also passes `centrality_scores` to subgraph extraction for node annotation.
 - `test_generic_exception_returns_empty_scores` ✅ -- Generic exception handling
 
 **Configuration tests** (`tests/unit/search/test_search_config.py`):
+
 - `test_graph_enhanced_config_round_trip` ✅ -- Serialization/deserialization
 - `test_graph_enhanced_config_legacy_keys` ✅ -- Backward compatibility with flat keys
 
 **Functional validation via MCP** (2026-01-29):
+
 - `search_code("BaseRelationshipExtractor", output_format="ultra")` ✅
   - Confirmed `centrality` field in all 121 results
   - Subgraph nodes also include centrality field
@@ -628,10 +648,12 @@ Also passes `centrality_scores` to subgraph extraction for node annotation.
 #### Phase 3 Implementation Status: ✅ COMPLETED (2026-01-29)
 
 **Files Created:**
+
 - `search/centrality_ranker.py` — Core ranking module (162 lines)
 - `tests/unit/search/test_centrality_ranker.py` — 7 unit tests (163 lines)
 
 **Files Modified:**
+
 - `mcp_server/tools/search_handlers.py` — Phase 3 integration block + centrality_reranking parameter handling
 - `search/config.py` — Added `GraphEnhancedConfig` dataclass with Phase 3 fields (`centrality_reranking` defaults to `True`, always-on)
 - `search_config.json` — Added `graph_enhanced` section with defaults
@@ -673,6 +695,7 @@ Also passes `centrality_scores` to subgraph extraction for node annotation.
    - Bug C: Test mocks used `engine.graph` instead of `engine.storage.graph`
 
 **Test results:**
+
 - 7/7 centrality ranker tests pass
 - 2/2 config tests pass
 - 197/197 MCP server tests pass
@@ -680,6 +703,7 @@ Also passes `centrality_scores` to subgraph extraction for node annotation.
 - **Total: 818/818 tests pass**
 
 **MCP validation results (2026-01-29):**
+
 - **Annotation mode** (`centrality_reranking=False`, default):
   - Header: `results[121]{centrality,chunk_id,complexity_score,graph,kind,score}`
   - All results include `centrality` field (e.g., BaseRelationshipExtractor: 0.0083)
@@ -720,6 +744,7 @@ return SubgraphResult(
 ```
 
 **Existing infrastructure leveraged** (no new code needed):
+
 - `SubgraphNode.community_id: Optional[int]` field (line 32)
 - `SubgraphResult.communities: Optional[dict[int, dict]]` field (line 55)
 - `_annotate_communities()` method (lines 326-352) - fully implemented
@@ -732,6 +757,7 @@ return SubgraphResult(
 #### 4.2 Testing
 
 **Unit tests** (`tests/unit/search/test_community_surfacing.py`) - 6 tests, 100% passing:
+
 - ✅ `test_community_annotation` - Basic community annotation with labels and counts
 - ✅ `test_community_labels_from_directories` - Directory-based heuristic label generation
 - ✅ `test_empty_community_map` - Graceful handling when community map is None
@@ -740,11 +766,13 @@ return SubgraphResult(
 - ✅ `test_community_with_ego_neighbors` - Ego neighbors also get community annotation
 
 **Regression validation**:
+
 - ✅ All 14 existing `test_subgraph_extractor.py` tests passing
 - ✅ All 7 existing `test_ego_graph_structured.py` tests passing
 - ✅ Full unit test suite: 1,540 tests passing
 
 **Output format**:
+
 ```json
 {
   "subgraph_nodes": [
@@ -882,6 +910,7 @@ file_path = (
 **Root cause analysis**: The original plan's `os.path.relpath()` approach was dead code because `CodeGraphStorage.project_root` is never set. The fix extracts relative paths directly from chunk_id which already contains them in the correct format.
 
 **Files modified for path normalization**:
+
 - `search/subgraph_extractor.py` - Lines 154-158, 197-201 (chunk_id-based path extraction)
 - `mcp_server/output_formatter.py` - Lines 90, 147 (check both `chunk_id` and `id` for path info)
 - `tests/unit/search/test_subgraph_extractor.py` - Updated `test_relative_path_conversion` test
@@ -893,6 +922,7 @@ file_path = (
 **Solution implemented**:
 
 1. **Skip per-result graph data for ego-graph neighbors** (`search_handlers.py:493-500`):
+
    ```python
    # Skip per-result graph data for ego-graph neighbors (captured in subgraph_edges instead)
    if chunk_id and item.get("source") != "ego_graph":
@@ -900,9 +930,11 @@ file_path = (
        if graph_data:
            item["graph"] = graph_data
    ```
+
    Impact: ~8K char reduction (50% output size reduction)
 
 2. **Add structuredContent for wire efficiency** (`mcp_server/server.py:162-171`):
+
    ```python
    # Return both content (backward compat) and structuredContent (native JSON, no double encoding)
    # MCP SDK 1.25.0+ supports structuredContent - clients can choose which to read
@@ -915,19 +947,23 @@ file_path = (
        else None,
    )
    ```
+
    Impact: Eliminates MCP protocol's double JSON encoding for clients that read `structuredContent`
 
 3. **Cap ego-graph neighbors in subgraph** (`search_handlers.py:888-891`):
+
    ```python
    MAX_EGO_IN_SUBGRAPH = 10
    if ego_neighbor_ids and len(ego_neighbor_ids) > MAX_EGO_IN_SUBGRAPH:
        ego_neighbor_ids = ego_neighbor_ids[:MAX_EGO_IN_SUBGRAPH]
    ```
+
    Impact: Defensive limit preventing token explosion on dense graphs
 
 #### 5.6 Testing
 
 **Unit tests** (`tests/unit/search/test_ego_graph_structured.py` - NEW FILE, 286 lines):
+
 - `test_ego_neighbors_in_subgraph` ✅ -- Verify ego neighbors added to subgraph with `is_search_result=False`
 - `test_edges_between_results_and_neighbors` ✅ -- Verify edges discovered between search results and ego neighbors
 - `test_edges_between_ego_neighbors` ✅ -- Verify edges discovered between two ego neighbors
@@ -937,10 +973,12 @@ file_path = (
 - `test_ego_neighbor_deduplication` ✅ -- Verify ego neighbors already in search results aren't duplicated
 
 **Modified tests**:
+
 - `tests/unit/search/test_subgraph_extractor.py` - Updated `test_relative_path_conversion` to verify chunk_id-based path extraction
 - `tests/unit/mcp_server/test_output_formatter.py` - Updated 2 tests to expect `file` field stripped from subgraph nodes
 
 **Functional validation via MCP** (2026-01-29):
+
 - `search_code("HybridSearcher search method", k=1, ego_graph_enabled=True, ego_graph_k_hops=2, output_format="ultra")`
 - Verified:
   - Search result has `graph` field with relationship data ✅
@@ -953,9 +991,11 @@ file_path = (
 #### Phase 5 Implementation Status: ✅ COMPLETED (2026-01-29)
 
 **Files Created:**
+
 - `tests/unit/search/test_ego_graph_structured.py` — 7 comprehensive unit tests (286 lines)
 
 **Files Modified:**
+
 - `mcp_server/tools/search_handlers.py` — Phase 5 integration (lines 453-455, 472-473, 493-500, 881-891)
 - `search/subgraph_extractor.py` — Added `ego_neighbor_ids` parameter, ego neighbor node building, boundary edge skip logic, chunk_id-based path extraction
 - `mcp_server/server.py` — Added `structuredContent` to CallToolResult (lines 162-171)
@@ -987,6 +1027,7 @@ file_path = (
 5. **Enhanced testing**: 7 tests instead of 3, covering deduplication, source field propagation, and edge cases.
 
 **Test results:**
+
 - 7/7 ego-graph structured tests pass (new)
 - 21/21 subgraph extractor tests pass
 - 40/40 output formatter tests pass
@@ -994,6 +1035,7 @@ file_path = (
 - **Total: All tests passing**
 
 **MCP validation results (2026-01-29):**
+
 - **Before optimization**: ~15K chars inner JSON, ~20K+ on wire with double encoding
 - **After optimization**: ~7.5K chars (50% reduction)
 - Search results include `graph` field ✅
@@ -1004,6 +1046,7 @@ file_path = (
 - structuredContent field present for native JSON clients ✅
 
 **Commits**:
+
 - `c9d41cf` - "feat: SSCG Phase 5 - Ego-graph structure preservation with path normalization fixes" (2026-01-29)
 - `d8c505f` - "perf: Reduce ego-graph output size and add structuredContent" (2026-01-29)
 
@@ -1016,6 +1059,7 @@ file_path = (
 After completing all 5 Phases, the MCP `search_code` tool now returns:
 
 **Enhanced per-result data:**
+
 - ✅ **All 21 relationship types** in `graph` field (not just `calls`/`called_by`)
   - Example: `imports`, `inherits`, `uses_type`, `raises`, `catches`, `decorates`, `instantiates`, etc.
   - Capped at 5 per relationship type to prevent token explosion
@@ -1025,6 +1069,7 @@ After completing all 5 Phases, the MCP `search_code` tool now returns:
 - ✅ **Source field** to distinguish search results from ego-graph neighbors
 
 **Structured subgraph data:**
+
 - ✅ **Nodes**: All search results + ego-graph neighbors (when enabled)
   - Includes: chunk_id, name, kind, file, centrality, community_id (when available)
   - Ego neighbors marked with `is_search_result=false`
@@ -1038,6 +1083,7 @@ After completing all 5 Phases, the MCP `search_code` tool now returns:
 - ✅ **Relative paths**: All file paths use relative forward-slash format (not absolute Windows paths)
 
 **Performance optimizations:**
+
 - ✅ **Output size reduction**: 50% smaller ego-graph queries via graph data skipping for neighbors
 - ✅ **Wire efficiency**: structuredContent field for native JSON (MCP SDK 1.25.0+)
 - ✅ **Defensive limits**: Max 10 ego neighbors in subgraph, max 3 boundary edges per node
@@ -1079,6 +1125,7 @@ After completing all 5 Phases, the MCP `search_code` tool now returns:
 ### Impact of Completed Phases
 
 **For Claude Code agents:**
+
 - Can now traverse code relationships beyond just function calls
 - Can identify structurally important code via centrality scores
 - Can understand dependency ordering via topological sort
@@ -1086,11 +1133,13 @@ After completing all 5 Phases, the MCP `search_code` tool now returns:
 - Can distinguish core results from contextual neighbors
 
 **For token efficiency:**
+
 - Phases 1-3: +50-65% tokens for dramatically richer context
 - Phase 5 optimizations: 50% reduction in ego-graph output size
 - structuredContent: Eliminates double JSON encoding overhead
 
 **Test coverage:**
+
 - 43 new unit tests across 5 phases (all passing)
 - Zero regressions in existing 1,472 unit + 84 integration tests
 - MCP functional validation confirms all features working end-to-end
@@ -1110,6 +1159,7 @@ After completing all 5 Phases, the MCP `search_code` tool now returns:
 | **Total with Phases 1-3, 5** | ~1200-2000 | ~50-65% increase for dramatically richer context |
 
 **Phase 5 optimization impact**:
+
 - **Before optimization**: +400-600 tokens (ego neighbors with redundant graph data)
 - **After optimization**: +100-200 tokens (50% reduction via skipping per-result graph data for ego neighbors)
 - Ego neighbor graph data is redundant with subgraph edges, so skipping it maintains full information while reducing tokens
@@ -1202,5 +1252,6 @@ Each phase follows this verification sequence:
 6. **JSON Graph Format** - Lightweight interchange for agent consumption.
 
 Local copies:
+
 - `docs/Call_Graph_Implementation/Improving Code RAG with Structural Analysis.md`
 - `docs/Call_Graph_Implementation/LogicLens_Leveraging_Semantic_Code_Graph_to_explor.pdf`
