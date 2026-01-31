@@ -92,7 +92,7 @@ class IntentClassifier:
     """Classifies search queries by intent for optimal handling.
 
     Routing strategy based on intent:
-    - LOCAL: Direct dense search with k=5 (symbol definitions)
+    - LOCAL: Direct dense search with k=4 (symbol definitions)
     - GLOBAL: Multi-hop search with k=10+ (architectural understanding)
     - NAVIGATIONAL: Redirect to find_connections (dependency analysis)
     - HYBRID: Default hybrid search (uncertain intent)
@@ -128,6 +128,10 @@ class IntentClassifier:
                 # Discovery terms
                 "discover",
                 "identify",
+                # Verification terms (Q12 fix)
+                "check if",
+                "check whether",
+                "verify",
                 # Symbol-specific
                 "class",
                 "function",
@@ -167,6 +171,9 @@ class IntentClassifier:
                     r"\bunearth\s+(the\s+)?\w+\b",
                     1.3,
                 ),  # Phase 2: "unearth the implementation"
+                # Q12 fix: "check if X exists" patterns
+                (r"\bcheck\s+(if|whether)\s+\w+\s+(exists?|present|available)\b", 1.3),
+                (r"\bverify\s+(that\s+)?\w+\s+(exists?|is\s+present)\b", 1.2),
             ],
             "max_tokens": 6,  # Short, focused queries
             "weight": 1.0,
