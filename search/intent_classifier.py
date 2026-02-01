@@ -85,6 +85,7 @@ INTENT_WEIGHT_PROFILES: dict[QueryIntent, tuple[float, float]] = {
     ),  # (bm25, dense) - BM25-heavy for exact symbol matching
     QueryIntent.GLOBAL: (0.3, 0.7),  # semantic understanding matters
     QueryIntent.CONTEXTUAL: (0.3, 0.7),  # similar to GLOBAL
+    QueryIntent.NAVIGATIONAL: (0.5, 0.5),  # balanced for relationship tracing
     QueryIntent.PATH_TRACING: (0.4, 0.6),
     QueryIntent.SIMILARITY: (0.4, 0.6),
     QueryIntent.HYBRID: (0.4, 0.6),  # default balanced

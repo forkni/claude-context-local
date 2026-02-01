@@ -647,6 +647,7 @@ class HybridSearcher(BaseSearcher):
                 use_parallel=use_parallel,
                 min_bm25_score=min_bm25_score,
                 filters=filters,
+                edge_weights=effective_config.multi_hop.edge_weights,
             )
         else:
             # Single-hop search (direct matching only)

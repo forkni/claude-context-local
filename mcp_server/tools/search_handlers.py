@@ -839,6 +839,24 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
                 f"BM25={orig_bm25:.2f}→{suggested_bm25:.2f}, Dense={orig_dense:.2f}→{suggested_dense:.2f}"
             )
 
+    # Apply intent-driven edge weights for graph traversal (A1)
+    if isinstance(searcher, HybridSearcher) and intent_decision:
+        from graph.graph_storage import INTENT_EDGE_WEIGHT_PROFILES
+
+        intent_key = intent_decision.intent.value  # e.g. "local", "global"
+        edge_profile = INTENT_EDGE_WEIGHT_PROFILES.get(intent_key)
+        if edge_profile:
+            if search_config is None:
+                search_config = get_search_config()
+            search_config.multi_hop.edge_weights = edge_profile
+            # Also set for ego-graph path (EgoGraphConfig already has edge_weights field)
+            if hasattr(search_config, "ego_graph") and search_config.ego_graph:
+                search_config.ego_graph.edge_weights = edge_profile
+            logger.info(
+                f"[INTENT] Edge weight profile set for {intent_key}: "
+                f"calls={edge_profile.get('calls', 'N/A')}, imports={edge_profile.get('imports', 'N/A')}"
+            )
+
     if isinstance(searcher, HybridSearcher):
         results = searcher.search(
             query=query,

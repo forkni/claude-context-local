@@ -554,3 +554,106 @@ class TestMultiHopSearcher:
         self.mock_graph_storage.get_neighbors.assert_called()
         # Verify batched search was NOT called (not semantic mode)
         self.mock_dense_index.get_similar_chunks_batched.assert_not_called()
+
+
+class TestIntentAdaptiveWeights:
+    """Tests for A1: intent-driven edge weight profiles."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.mock_embedder = MagicMock()
+        self.mock_dense_index = MagicMock()
+        self.mock_single_hop_callback = MagicMock()
+        self.mock_reranking_engine = MagicMock()
+        self.mock_graph_storage = MagicMock()
+
+        self.searcher = MultiHopSearcher(
+            embedder=self.mock_embedder,
+            dense_index=self.mock_dense_index,
+            single_hop_callback=self.mock_single_hop_callback,
+            reranking_engine=self.mock_reranking_engine,
+            graph_storage=self.mock_graph_storage,
+        )
+
+    def test_graph_expand_uses_custom_weights(self):
+        """_graph_expand() should pass custom edge_weights to get_neighbors()."""
+
+        custom_weights = {"calls": 0.5, "imports": 1.0}
+
+        # Setup: get_neighbors returns empty set
+        self.mock_graph_storage.get_neighbors.return_value = set()
+
+        # Create mock result
+        mock_result = MagicMock()
+        mock_result.chunk_id = "test.py:1-10:function:foo"
+
+        self.searcher._graph_expand(
+            initial_results=[mock_result],
+            all_chunk_ids=set(),
+            all_results={},
+            expansion_k=5,
+            k=5,
+            edge_weights=custom_weights,
+        )
+
+        # Verify get_neighbors was called with custom weights
+        call_args = self.mock_graph_storage.get_neighbors.call_args
+        assert call_args.kwargs["edge_weights"] == custom_weights
+
+    def test_graph_expand_default_weights_when_none(self):
+        """_graph_expand() should use DEFAULT_EDGE_WEIGHTS when edge_weights=None."""
+        from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
+
+        # Setup: get_neighbors returns empty set
+        self.mock_graph_storage.get_neighbors.return_value = set()
+
+        # Create mock result
+        mock_result = MagicMock()
+        mock_result.chunk_id = "test.py:1-10:function:foo"
+
+        self.searcher._graph_expand(
+            initial_results=[mock_result],
+            all_chunk_ids=set(),
+            all_results={},
+            expansion_k=5,
+            k=5,
+            edge_weights=None,
+        )
+
+        # Verify get_neighbors was called with DEFAULT_EDGE_WEIGHTS
+        call_args = self.mock_graph_storage.get_neighbors.call_args
+        assert call_args.kwargs["edge_weights"] == DEFAULT_EDGE_WEIGHTS
+
+    def test_search_threads_edge_weights(self):
+        """search() should thread edge_weights to _graph_expand()."""
+        custom_weights = {"calls": 0.3, "imports": 0.9}
+
+        # Mock the single_hop_callback to return initial results
+        mock_result = SearchResult(
+            chunk_id="test.py:1-10:function:foo",
+            score=0.9,
+            metadata={},
+            source="initial",
+            rank=1,
+        )
+        self.mock_single_hop_callback.return_value = [mock_result]
+
+        # Mock reranker to return results as-is
+        self.mock_reranking_engine.rerank_by_query.side_effect = (
+            lambda **kwargs: kwargs["results"]
+        )
+
+        # Mock graph_storage.get_neighbors to return empty set
+        self.mock_graph_storage.get_neighbors.return_value = set()
+
+        # Patch _graph_expand to verify it receives edge_weights
+        with patch.object(self.searcher, "_graph_expand") as mock_expand:
+            mock_expand.return_value = {}  # timings dict
+
+            # Search with custom edge_weights
+            self.searcher.search(query="test", k=5, hops=2, edge_weights=custom_weights)
+
+            # Verify _graph_expand was called with edge_weights
+            assert mock_expand.called
+            call_args = mock_expand.call_args
+            assert call_args.kwargs.get("edge_weights") == custom_weights

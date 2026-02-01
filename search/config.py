@@ -252,13 +252,16 @@ class PerformanceConfig:
 
 @dataclass
 class MultiHopConfig:
-    """Multi-hop search settings (5 fields)."""
+    """Multi-hop search settings (6 fields)."""
 
     enabled: bool = True
     hop_count: int = 2  # Number of expansion hops
     expansion: float = 0.3  # Expansion factor per hop
     initial_k_multiplier: float = 2.0  # Multiplier for initial results (k * multiplier)
     multi_hop_mode: str = "hybrid"  # "semantic" | "graph" | "hybrid"
+    edge_weights: Optional[dict[str, float]] = (
+        None  # Intent-specific weights (None = DEFAULT_EDGE_WEIGHTS)
+    )
 
 
 @dataclass

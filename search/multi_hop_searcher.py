@@ -163,6 +163,7 @@ class MultiHopSearcher:
         all_results: dict,
         expansion_k: int,
         k: int,
+        edge_weights: Optional[dict[str, float]] = None,
     ) -> dict[int, float]:
         """Expand results via graph neighbor traversal (weighted BFS).
 
@@ -189,7 +190,7 @@ class MultiHopSearcher:
             neighbors: set[str] = self.graph_storage.get_neighbors(
                 chunk_id=result.chunk_id,
                 max_depth=1,
-                edge_weights=DEFAULT_EDGE_WEIGHTS,
+                edge_weights=edge_weights or DEFAULT_EDGE_WEIGHTS,
             )
 
             added_for_source = 0
@@ -239,6 +240,7 @@ class MultiHopSearcher:
         expansion_k: int,
         hops: int,
         k: int,
+        edge_weights: Optional[dict[str, float]] = None,
     ) -> dict[int, float]:
         """Expand using graph neighbors first, then semantic similarity.
 
@@ -254,6 +256,7 @@ class MultiHopSearcher:
             all_results=all_results,
             expansion_k=expansion_k,
             k=k,
+            edge_weights=edge_weights,
         )
 
         # Semantic expansion (skips IDs already found via graph)
@@ -326,6 +329,7 @@ class MultiHopSearcher:
         use_parallel: bool = True,
         min_bm25_score: float = 0.0,
         filters: Optional[dict[str, Any]] = None,
+        edge_weights: Optional[dict[str, float]] = None,
     ) -> list:
         """
         Internal multi-hop search implementation.
@@ -426,6 +430,7 @@ class MultiHopSearcher:
                 all_results=all_results,
                 expansion_k=expansion_k,
                 k=k,
+                edge_weights=edge_weights,
             )
         elif multi_hop_mode == "hybrid" and self.graph_storage:
             timings["expansion"] = self._hybrid_expand(
@@ -435,6 +440,7 @@ class MultiHopSearcher:
                 expansion_k=expansion_k,
                 hops=hops,
                 k=k,
+                edge_weights=edge_weights,
             )
         else:
             # "semantic" (default) or fallback when graph_storage is None

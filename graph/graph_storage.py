@@ -48,6 +48,53 @@ DEFAULT_EDGE_WEIGHTS: dict[str, float] = {
     "uses_context_manager": 0.4,  # Context manager usage
 }
 
+# Intent-specific edge weight profiles for graph traversal
+# Each profile adjusts weights to prioritize relationships relevant to the query intent
+INTENT_EDGE_WEIGHT_PROFILES: dict[str, dict[str, float]] = {
+    "local": {
+        # Symbol lookup: boost calls, inherits, overrides (structural relationships)
+        **DEFAULT_EDGE_WEIGHTS,
+        "calls": 1.0,
+        "inherits": 1.0,
+        "overrides": 1.0,
+        "implements": 1.0,
+        "imports": 0.1,  # Suppress noisy import edges
+    },
+    "global": {
+        # Architectural: boost imports, uses_type (module-level relationships)
+        **DEFAULT_EDGE_WEIGHTS,
+        "imports": 0.7,
+        "uses_type": 0.9,
+        "instantiates": 0.8,
+        "calls": 0.6,  # Less emphasis on individual call chains
+    },
+    "navigational": {
+        # Relationship tracing: boost calls, called_by direction
+        **DEFAULT_EDGE_WEIGHTS,
+        "calls": 1.0,
+        "inherits": 0.9,
+        "imports": 0.5,
+    },
+    "path_tracing": {
+        # Path finding: uniform-ish weights for shortest path
+        **dict.fromkeys(DEFAULT_EDGE_WEIGHTS, 0.7),
+        "calls": 1.0,
+        "inherits": 0.9,
+    },
+    "similarity": {
+        # Similar code: boost structural relationships
+        **DEFAULT_EDGE_WEIGHTS,
+        "uses_type": 0.9,
+        "decorates": 0.7,
+        "defines_class_attr": 0.7,
+    },
+    "contextual": {
+        # Context exploration: all relationships matter equally
+        **{k: max(v, 0.5) for k, v in DEFAULT_EDGE_WEIGHTS.items()},
+    },
+    "hybrid": DEFAULT_EDGE_WEIGHTS.copy(),  # Default fallback
+}
+
 
 class CodeGraphStorage:
     """
