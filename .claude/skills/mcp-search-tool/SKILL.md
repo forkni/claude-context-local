@@ -88,7 +88,7 @@ What are you trying to do?
 | configure_query_routing | Config | Multi-model routing settings | `enable_multi_model`, `default_model`, `confidence_threshold` | [Details](#12-configure_query_routingenable_multi_modelnone-default_modelnone-confidence_thresholdnone) |
 | find_similar_code | Secondary | Find functionally similar code | `chunk_id`, `k` | [Details](#13-find_similar_codechunk_id-k5) |
 | configure_reranking | Config | Neural reranking settings | `enabled`, `model_name`, `top_k_candidates` | [Details](#14-configure_rerankingenablednone-model_namenone-top_k_candidatesnone) |
-| configure_chunking | Config | Configure code chunking settings | `enable_chunk_merging`, `min_chunk_tokens`, `max_merged_tokens`, `token_estimation`, `enable_large_node_splitting`, `max_chunk_lines` | [Details](#19-configure_chunkingenable_chunk_mergingnone-min_chunk_tokensnone-max_merged_tokensnone-token_estimationnone-enable_large_node_splittingnone-max_chunk_linesnone) |
+| configure_chunking | Config | Configure code chunking settings | `enable_community_detection`, `enable_community_merge`, `community_resolution`, `token_estimation`, `enable_large_node_splitting`, `max_chunk_lines` | [Details](#19-configure_chunkingenable_community_detectionnone-enable_community_mergenone-community_resolutionnone-token_estimationnone-enable_large_node_splittingnone-max_chunk_linesnone) |
 | list_embedding_models | Model | Show available models | *(none)* | [Details](#15-list_embedding_models) |
 | switch_embedding_model | Model | Change embedding model | `model_name` | [Details](#16-switch_embedding_modelmodel_name) |
 | get_memory_status | Monitor | Check RAM/VRAM usage | *(none)* | [Details](#17-get_memory_status) |
@@ -115,7 +115,7 @@ What are you trying to do?
 
 ### 🔴 Essential Tools (Use First)
 
-#### 1. `search_code(query OR chunk_id, k=4, search_mode="hybrid", model_key=None, use_routing=True, file_pattern=None, include_dirs=None, exclude_dirs=None, chunk_type=None, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=1, ego_graph_max_neighbors_per_hop=5, include_parent=False)`
+#### 1. `search_code(query OR chunk_id, k=4, search_mode="auto", model_key=None, use_routing=True, file_pattern=None, include_dirs=None, exclude_dirs=None, chunk_type=None, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=1, ego_graph_max_neighbors_per_hop=5, include_parent=False)`
 
 **Purpose**: Find code with natural language queries OR direct symbol lookup (40-45% token savings vs file reading)
 
@@ -124,7 +124,7 @@ What are you trying to do?
 - `query` (optional): Natural language description of what you're looking for
 - `chunk_id` (optional): Direct chunk ID for O(1) lookup (format: "file:lines:type:name")
 - `k` (default: 4): Number of results to return
-- `search_mode` (default: "hybrid"): Search method - "hybrid", "semantic", or "bm25"
+- `search_mode` (default: "auto"): Search method - "hybrid", "semantic", "bm25", or "auto"
 - `model_key` (optional): Force specific model - "qwen3", "bge_m3", "coderankembed", "gte_modernbert", "c2llm"
 - `use_routing` (default: True): Enable multi-model query routing
 - `file_pattern` (optional): Filter by filename/path pattern (e.g., "auth", "models")
@@ -585,8 +585,8 @@ configure_reranking(enabled=True, top_k_candidates=100)
 
 - **BGE-M3** ⭐: 1024d, 1-1.5GB VRAM, production baseline
 - **Qwen3-0.6B**: 1024d, 2.3GB VRAM, best value & high efficiency
-- **Qwen3-4B** 🆕: 1024d (MRL), 8-10GB VRAM, best quality with Matryoshka MRL
-- **CodeRankEmbed**: 768d, 2GB VRAM, code-specific retrieval
+- **CodeRankEmbed**: 768d, 0.5-0.6GB VRAM, code-specific retrieval
+- **GTE-ModernBERT**: 768d, 0.28GB VRAM, lightweight code-optimized (CoIR: 79.31 NDCG@10)
 - **EmbeddingGemma-300m**: 768d, 4-8GB VRAM, default model (fast)
 
 #### 16. `switch_embedding_model(model_name)`
