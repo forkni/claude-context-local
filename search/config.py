@@ -547,6 +547,8 @@ class SearchConfig:
                 "size_method": self.chunking.size_method,
                 "split_size_method": self.chunking.split_size_method,
                 "max_split_chars": self.chunking.max_split_chars,
+                "enable_file_summaries": self.chunking.enable_file_summaries,
+                "enable_community_summaries": self.chunking.enable_community_summaries,
             },
             "ego_graph": {
                 "enabled": self.ego_graph.enabled,
@@ -728,6 +730,10 @@ class SearchConfig:
                 size_method=chunking_data.get("size_method", "tokens"),
                 split_size_method=chunking_data.get("split_size_method", "characters"),
                 max_split_chars=chunking_data.get("max_split_chars", 3000),
+                enable_file_summaries=chunking_data.get("enable_file_summaries", True),
+                enable_community_summaries=chunking_data.get(
+                    "enable_community_summaries", True
+                ),
             )
 
             ego_graph = EgoGraphConfig(
