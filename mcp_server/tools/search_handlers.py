@@ -467,7 +467,7 @@ def _format_search_results(results: list) -> list[dict]:
             if name:
                 item["name"] = name
             # Add docstring preview for module summaries (compressed context)
-            if result.metadata.get("chunk_type") == "module":
+            if result.metadata.get("chunk_type") in ("module", "community"):
                 doc = result.metadata.get("docstring", "")
                 if doc:
                     item["summary"] = doc[:200]

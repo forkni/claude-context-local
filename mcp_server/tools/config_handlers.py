@@ -296,6 +296,7 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
     split_size_method = arguments.get("split_size_method")
     max_split_chars = arguments.get("max_split_chars")
     enable_file_summaries = arguments.get("enable_file_summaries")
+    enable_community_summaries = arguments.get("enable_community_summaries")
 
     if enable_community_detection is not None:
         config.chunking.enable_community_detection = enable_community_detection
@@ -333,6 +334,8 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
             }
     if enable_file_summaries is not None:
         config.chunking.enable_file_summaries = enable_file_summaries
+    if enable_community_summaries is not None:
+        config.chunking.enable_community_summaries = enable_community_summaries
 
     config_manager.save_config(config)
 
@@ -348,6 +351,7 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
             "split_size_method": config.chunking.split_size_method,
             "max_split_chars": config.chunking.max_split_chars,
             "enable_file_summaries": config.chunking.enable_file_summaries,
+            "enable_community_summaries": config.chunking.enable_community_summaries,
         },
         "system_message": "Chunking configuration updated. Re-index project to apply changes.",
     }

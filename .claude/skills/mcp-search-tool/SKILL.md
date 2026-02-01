@@ -107,6 +107,8 @@ What are you trying to do?
 | **Find similar patterns** | `search_code()` → `find_similar_code(chunk_id)` | - | Similarity search |
 | **Find code + graph neighbors** | `search_code(ego_graph_enabled=True)` | - | Graph-enhanced search |
 | **Match method, retrieve class** | `search_code(query, include_parent=True)` | - | Parent-child retrieval |
+| **Find module summaries** | `search_code(query, chunk_type="module")` | - | A2 file-level summaries |
+| **Find community summaries** | `search_code(query, chunk_type="community")` | - | B1 community summaries |
 | **Setup new project** | `index_directory(path)` | `get_index_status()` | One-time indexing |
 | **Switch projects** | `list_projects()` → `switch_project(path)` | - | Project management |
 | **Memory cleanup** | `get_memory_status()` → `cleanup_resources()` | - | Resource management |
@@ -130,9 +132,11 @@ What are you trying to do?
 - `file_pattern` (optional): Filter by filename/path pattern (e.g., "auth", "models")
 - `include_dirs` (optional): Only search in these directories (e.g., ["src/", "lib/"])
 - `exclude_dirs` (optional): Exclude from search (e.g., ["tests/", "vendor/"])
-- `chunk_type` (optional): Filter by code structure - "function", "class", "method", "module", "decorated_definition", "interface", "enum", "struct", "type", "merged", "split_block", or None for all
+- `chunk_type` (optional): Filter by code structure - "function", "class", "method", "module", "decorated_definition", "interface", "enum", "struct", "type", "merged", "split_block", "community", or None for all
   - `"merged"`: Community-merged chunks (multiple related code blocks merged together for better context)
   - `"split_block"`: Large function blocks split at AST boundaries for better granularity
+  - `"module"`: File-level module summary chunks (A2 feature - synthetic chunks for GLOBAL query recall)
+  - `"community"`: Community-level summary chunks (B1 feature - synthetic chunks grouping related code via Louvain detection)
 - `include_context` (default: True): Include similar chunks and relationships
 - `auto_reindex` (default: True): Automatically reindex if index is stale
 - `max_age_minutes` (default: 5): Maximum age of index before auto-reindex
@@ -140,6 +144,7 @@ What are you trying to do?
 - `ego_graph_k_hops` (default: 1, range: 1-5): Depth of graph traversal (1=direct neighbors, reduced from 2 to limit noise)
 - **Weighted Graph Traversal** (v0.8.7+): Ego-graph uses edge-type-weighted BFS — `calls` edges (weight=1.0) are prioritized over `imports` edges (weight=0.3). Based on SOG paper ablation showing different relation types contribute differently to code understanding.
 - **Automatic Import Filtering** (v0.8.3+): When ego-graph is enabled, stdlib and third-party imports are automatically filtered from graph traversal for cleaner, more relevant neighbors (RepoGraph Feature #5: Repository-Dependent Relation Filtering)
+- **Post-Expansion Neural Reranking** (v0.8.6+): After ego-graph expansion adds new results, a second reranking pass unifies scoring across primary results (cross-encoder scores) and ego-graph neighbors (heuristic scores) for consistent ranking
 - `ego_graph_max_neighbors_per_hop` (default: 5, range: 1-50): Maximum neighbors to retrieve per hop (reduced from 10 for precision)
 - `include_parent` (default: False): Enable parent-child retrieval - when a method is matched, also retrieve its enclosing class for fuller context ("Match Small, Retrieve Big")
 
@@ -180,7 +185,7 @@ search_code("ParallelChunker chunk_files", chunk_type="split_block")
 | Field | Type | Always Present | Description |
 |-------|------|----------------|-------------|
 | `chunk_id` | string | ✅ | Unique identifier (format: `"file:lines:type:name"`) |
-| `kind` | string | ✅ | Chunk type (`function`, `class`, `method`, etc.) |
+| `kind` | string | ✅ | Chunk type (`function`, `class`, `method`, `module`, `community`, etc.) |
 | `score` | float | ✅ | Relevance score (0.0-1.0) |
 | `blended_score` | float | ✅ | Final ranking score (centrality × alpha + semantic × (1-alpha)) |
 | `centrality` | float | ✅ | PageRank centrality score (structurally important code scores higher) |
@@ -188,6 +193,7 @@ search_code("ParallelChunker chunk_files", chunk_type="split_block")
 | `complexity_score` | int | ⚠️ Optional | Cyclomatic complexity (functions/methods only, Python) |
 | `graph` | object | ⚠️ Optional | Code relationships (21 types: `calls`, `inherits`, `imports`, `uses_type`, etc.) |
 | `reranker_score` | float | ⚠️ Optional | Neural reranker score (when enabled) |
+| `summary` | string | ⚠️ Optional | Summary content for `module` and `community` chunk types (A2/B1 features) |
 
 #### 2. `index_directory(directory_path, project_name=None, incremental=True, multi_model=None, include_dirs=None, exclude_dirs=None)`
 
@@ -635,7 +641,7 @@ switch_embedding_model("google/embeddinggemma-300m")
 - Memory running low
 - GPU memory needs to be freed
 
-#### 19. `configure_chunking(enable_community_detection=None, enable_community_merge=None, community_resolution=None, token_estimation=None, enable_large_node_splitting=None, max_chunk_lines=None)`
+#### 19. `configure_chunking(enable_community_detection=None, enable_community_merge=None, community_resolution=None, token_estimation=None, enable_large_node_splitting=None, max_chunk_lines=None, split_size_method=None, max_split_chars=None, enable_file_summaries=None, enable_community_summaries=None)`
 
 **Purpose**: Configure code chunking settings at runtime
 
@@ -647,6 +653,10 @@ switch_embedding_model("google/embeddinggemma-300m")
 - `token_estimation` (optional): Token estimation method - "whitespace" (fast) or "tiktoken" (accurate, default: "whitespace")
 - `enable_large_node_splitting` (optional): Enable AST block splitting for large functions (default: False)
 - `max_chunk_lines` (optional): Maximum lines per chunk before splitting at AST boundaries (10-1000, default: 100)
+- `split_size_method` (optional): Size method for splitting - "lines" or "characters" (default: "characters")
+- `max_split_chars` (optional): Maximum characters per split chunk (1000-10000, default: 3000)
+- `enable_file_summaries` (optional): Enable/disable file-level module summary chunks (A2 feature, default: True)
+- `enable_community_summaries` (optional): Enable/disable community-level summary chunks (B1 feature, default: True)
 
 **Returns**: Updated configuration + system message
 
@@ -750,6 +760,30 @@ Graph traversal finds **functionally necessary dependencies** that semantic sear
 
 **Status**: **Always-on** with optimal settings (2 hops, 0.3 expansion, hybrid mode)
 
+### A1: Intent-Adaptive Edge Weight Profiles
+
+**Purpose**: Automatically adjust graph traversal edge weights based on query intent classification for more relevant graph expansion
+
+**How It Works**: The system classifies queries into 7 intent categories and applies optimized edge weight profiles:
+
+| Intent | Key Adjustments | Use Case |
+|--------|----------------|----------|
+| `local` | `calls`=1.0, `inherits`=1.0, `imports`=**0.1** (suppressed) | "where is X defined" — focus on direct relationships, suppress cross-file imports |
+| `global` | `imports`=**0.7**, `uses_type`=0.9, `instantiates`=0.8 | "how does X work" — boost cross-file connections for holistic understanding |
+| `navigational` | `calls`=1.0, `inherits`=0.9, `imports`=0.5 | "find callers of X" — prioritize call chains |
+| `path_tracing` | Uniform 0.7 base, `calls`=1.0, `inherits`=0.9 | "trace flow from X to Y" — balanced traversal |
+| `similarity` | `uses_type`=0.9, `decorates`=0.7, `defines_class_attr`=0.7 | "find similar code to X" — prioritize structural similarity |
+| `contextual` | All weights raised to min 0.5 | Broad context gathering |
+| `hybrid` | Default weights (fallback) | Mixed intent queries |
+
+**Intent Classification**: Based on query keywords and structure (e.g., "where is" → local, "how does" → global)
+
+**Effect**: LOCAL queries suppress noisy stdlib/third-party imports (0.1x weight), while GLOBAL queries boost them (0.7x) for comprehensive understanding
+
+**Based On**: SOG (USENIX Security '24) ablation study showing different relation types contribute differently to code understanding
+
+**Status**: **Always-on** with automatic intent detection (v0.8.6+)
+
 ### Centrality Reranking (Always-On)
 
 **Purpose**: Boost structurally important code in search results using PageRank graph analysis
@@ -786,6 +820,52 @@ Where `alpha = 0.3` (30% centrality, 70% semantic).
 - **11% smaller indices** due to vocabulary consolidation
 
 **Status**: **Enabled by default**
+
+### A2/B1: Synthetic Summary Chunks
+
+**Purpose**: Improve GLOBAL query recall by generating synthetic summary chunks at file and community levels
+
+#### A2: File-Level Module Summaries
+
+**How It Works**: During full indexing, generates one synthetic `chunk_type="module"` CodeChunk per file with 2+ real chunks.
+
+**Summary Content**:
+- File path and module name
+- Classes, functions, key methods
+- Imports and docstring excerpts
+- Package information
+
+**Chunk ID Format**: `{normalized_path}:0-0:module:{module_name}`
+
+**Controlled By**: `enable_file_summaries` (default: True) via `configure_chunking()`
+
+**Use Case**: GLOBAL queries like "how does authentication work" benefit from module-level context that spans multiple functions/classes
+
+**Score Demotion**: Module chunks get 0.9-0.95x multiplier to prevent outranking real code on LOCAL queries
+
+#### B1: Community-Level Summaries
+
+**How It Works**: During full indexing, uses Louvain community detection to group related code chunks, then generates one synthetic `chunk_type="community"` chunk per community with 2+ members.
+
+**Summary Content**:
+- Community ID and dominant directory
+- Classes, functions, key methods in the community
+- Imports, docstring excerpts
+- Hub function (largest chunk in community)
+
+**Chunk ID Format**: `__community__/{label}:0-0:community:{label}` where label = `{dominant_directory}_{primary_symbol}`
+
+**Controlled By**: `enable_community_summaries` (default: True) via `configure_chunking()`
+
+**Requires**: Full reindex to compute community structure (not available in incremental mode)
+
+**Use Case**: GLOBAL queries benefit from thematic groupings that cross file boundaries
+
+**Score Demotion**: Community chunks get 0.9-0.95x multiplier similar to module chunks
+
+**Graph Exclusion**: Both module and community chunks are excluded from the call graph to prevent isolated nodes
+
+**Status**: Both features **enabled by default** in v0.8.6+
 
 ## Troubleshooting
 

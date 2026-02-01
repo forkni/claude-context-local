@@ -342,6 +342,9 @@ class ChunkingConfig:
     # File-level module summaries (A2: improve GLOBAL query recall)
     enable_file_summaries: bool = True  # Generate module-summary chunks per file
 
+    # Community-level summaries (B1: thematic grouping via Louvain communities)
+    enable_community_summaries: bool = True  # Generate community-summary chunks
+
 
 @dataclass
 class EgoGraphConfig:

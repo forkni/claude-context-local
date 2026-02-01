@@ -76,8 +76,9 @@ WHEN NOT TO USE:
                         "type",
                         "merged",
                         "split_block",
+                        "community",
                     ],
-                    "description": "Filter by code structure type (function, class, method, module, decorated_definition, interface, enum, struct, type, merged, split_block), or None for all",
+                    "description": "Filter by code structure type (function, class, method, module, decorated_definition, interface, enum, struct, type, merged, split_block, community), or None for all",
                 },
                 "include_context": {
                     "type": "boolean",
@@ -665,6 +666,10 @@ Args:
     token_estimation: Token estimation method - "whitespace" (fast) or "tiktoken" (accurate) (default: "whitespace")
     enable_large_node_splitting: Enable/disable AST block splitting for large functions (default: False)
     max_chunk_lines: Maximum lines per chunk before splitting at AST boundaries (default: 100)
+    split_size_method: Size method for splitting - "lines" (default) or "characters" (default: "characters")
+    max_split_chars: Maximum characters per split chunk (1000-10000, default: 3000)
+    enable_file_summaries: Enable/disable file-level module summary chunks (A2 feature, default: True)
+    enable_community_summaries: Enable/disable community-level summary chunks (B1 feature, default: True)
 
 Note: min_chunk_tokens (50) and max_merged_tokens (1000) are optimal defaults and not exposed for configuration.""",
         "input_schema": {
@@ -698,6 +703,25 @@ Note: min_chunk_tokens (50) and max_merged_tokens (1000) are optimal defaults an
                     "description": "Maximum lines per chunk before splitting at AST boundaries",
                     "minimum": 10,
                     "maximum": 1000,
+                },
+                "split_size_method": {
+                    "type": "string",
+                    "enum": ["lines", "characters"],
+                    "description": "Size method for splitting - 'lines' or 'characters'",
+                },
+                "max_split_chars": {
+                    "type": "integer",
+                    "description": "Maximum characters per split chunk",
+                    "minimum": 1000,
+                    "maximum": 10000,
+                },
+                "enable_file_summaries": {
+                    "type": "boolean",
+                    "description": "Enable/disable file-level module summary chunks (A2 feature)",
+                },
+                "enable_community_summaries": {
+                    "type": "boolean",
+                    "description": "Enable/disable community-level summary chunks (B1 feature)",
                 },
                 "output_format": {
                     "type": "string",

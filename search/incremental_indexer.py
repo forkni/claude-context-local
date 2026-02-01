@@ -509,6 +509,27 @@ class IncrementalIndexer:
                     )
                     community_map = None
 
+            # ========== Community Summaries (B1) — PHASE 1: Compute ==========
+            # CRITICAL: Compute BEFORE remerge (chunk_ids match community_map)
+            community_summaries = []
+            if (
+                config.chunking.enable_community_summaries
+                and community_map
+                and all_chunks
+            ):
+                try:
+                    from graph.community_summarizer import generate_community_summaries
+
+                    community_summaries = generate_community_summaries(
+                        all_chunks, community_map
+                    )
+                    logger.info(
+                        f"[COMMUNITY_SUMMARIES] Computed {len(community_summaries)} community summary chunks"
+                    )
+                except Exception as e:
+                    logger.warning(f"[COMMUNITY_SUMMARIES] Failed to compute: {e}")
+            # ========== END Community Summaries Phase 1 ==========
+
             # Step B: Community-based Remerge (Full index only)
             if config.chunking.enable_community_merge and community_map and all_chunks:
                 logger.info("[COMMUNITY_MERGE] Running community-based remerge")
@@ -562,6 +583,15 @@ class IncrementalIndexer:
                 except Exception as e:
                     logger.warning(f"[FILE_SUMMARIES] Failed: {e}")
             # ========== END File-Level Module Summaries ==========
+
+            # ========== Community Summaries (B1) — PHASE 2: Append ==========
+            # CRITICAL: Append AFTER remerge (avoid being processed by remerge)
+            if community_summaries:
+                all_chunks.extend(community_summaries)
+                logger.info(
+                    f"[COMMUNITY_SUMMARIES] Appended {len(community_summaries)} community summaries to chunk list"
+                )
+            # ========== END Community Summaries Phase 2 ==========
 
             # Embed all chunks in one batched call
             all_embedding_results = []
@@ -903,6 +933,13 @@ class IncrementalIndexer:
             f"[INCREMENTAL] Chunking {len(supported_files)} files (parallel={'enabled' if self.enable_parallel_chunking else 'disabled'})"
         )
         chunks_to_embed = self._chunk_files_parallel(project_path, supported_files)
+
+        # ========== Community Summaries (B1) — INCREMENTAL MODE SKIP ==========
+        # NOTE: Community summaries require community_map, which is only generated
+        # during full indexing (with community detection). Incremental mode cannot
+        # generate community summaries since it doesn't have access to the full
+        # project graph or community_map. Re-index fully to generate community summaries.
+        # ========== END Community Summaries Skip Explanation ==========
 
         # ========== File-Level Module Summaries (A2) ==========
         config = get_search_config()

@@ -254,7 +254,8 @@ class CentralityRanker:
                         "method": 1.1,
                         "decorated_definition": 1.1,
                         "split_block": 1.1,  # Function/method fragments
-                        "module": 0.92,
+                        "module": 0.92,  # File-level summaries (A2)
+                        "community": 0.92,  # Community-level summaries (B1)
                     }
                 else:
                     type_boosts = {
@@ -263,7 +264,8 @@ class CentralityRanker:
                         "decorated_definition": 1.0,  # Neutral — includes dataclasses, not just functions
                         "split_block": 1.1,  # Function/method fragments
                         "class": 1.05,
-                        "module": 0.95,
+                        "module": 0.95,  # File-level summaries (A2)
+                        "community": 0.95,  # Community-level summaries (B1)
                     }
                 result["blended_score"] = round(
                     result["blended_score"] * type_boosts.get(chunk_type, 1.0), 4

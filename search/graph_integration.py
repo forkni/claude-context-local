@@ -197,8 +197,9 @@ class GraphIntegration:
         for chunk in chunks:
             if not chunk.chunk_id:
                 continue
-            # Skip synthetic module summaries — no parseable code, would be isolated nodes
-            if chunk.chunk_type == "module":
+            # Skip synthetic summaries — no parseable code, would be isolated nodes
+            # (module summaries from A2, community summaries from B1)
+            if chunk.chunk_type in ("module", "community"):
                 continue
 
             try:

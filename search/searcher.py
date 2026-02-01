@@ -230,7 +230,8 @@ class IntelligentSearcher(BaseSearcher):
                     "class": 1.3,
                     "function": 1.05,
                     "method": 1.05,
-                    "module": 0.9,
+                    "module": 0.9,  # File-level summaries (A2)
+                    "community": 0.9,  # Community-level summaries (B1)
                 }
             elif is_entity_query:
                 # Moderate preference for classes on entity-like queries
@@ -238,7 +239,8 @@ class IntelligentSearcher(BaseSearcher):
                     "class": 1.15,
                     "function": 1.1,
                     "method": 1.1,
-                    "module": 0.92,
+                    "module": 0.92,  # File-level summaries (A2)
+                    "community": 0.92,  # Community-level summaries (B1)
                 }
             else:
                 # Default boosts for general queries
@@ -246,7 +248,8 @@ class IntelligentSearcher(BaseSearcher):
                     "function": 1.1,
                     "method": 1.1,
                     "class": 1.05,
-                    "module": 0.95,
+                    "module": 0.95,  # File-level summaries (A2)
+                    "community": 0.95,  # Community-level summaries (B1)
                 }
 
             score *= type_boosts.get(result.chunk_type, 1.0)

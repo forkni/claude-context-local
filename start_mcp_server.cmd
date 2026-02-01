@@ -412,14 +412,15 @@ echo.
 echo === Entity Tracking Configuration ===
 echo.
 echo Current Settings:
-".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Entity Tracking:', 'Enabled' if cfg.performance.enable_entity_tracking else 'Disabled'); print('  Import Context:', 'Enabled' if cfg.embedding.enable_import_context else 'Disabled'); print('  Class Context:', 'Enabled' if cfg.embedding.enable_class_context else 'Disabled')" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Entity Tracking:', 'Enabled' if cfg.performance.enable_entity_tracking else 'Disabled'); print('  Import Context:', 'Enabled' if cfg.embedding.enable_import_context else 'Disabled'); print('  Class Context:', 'Enabled' if cfg.embedding.enable_class_context else 'Disabled'); print('  File Summaries:', 'Enabled' if cfg.chunking.enable_file_summaries else 'Disabled'); print('  Community Summaries:', 'Enabled' if cfg.chunking.enable_community_summaries else 'Disabled')" 2>nul
 echo.
 echo   1. Configure Entity Tracking    - Enable/disable symbol tracking
 echo   2. Configure Context Enhancement - Import/class context in embeddings ^(+1-5%% quality^)
+echo   3. Configure Summary Chunks      - File/community-level summaries ^(A2/B1^)
 echo   0. Back to Search Configuration
 echo.
 set "entity_choice="
-set /p entity_choice="Select option (0-2): "
+set /p entity_choice="Select option (0-3): "
 
 REM Handle empty input gracefully
 if not defined entity_choice (
@@ -433,12 +434,91 @@ if "!entity_choice!"=="" (
 
 if "!entity_choice!"=="1" goto configure_entity_tracking
 if "!entity_choice!"=="2" goto configure_context_enhancement
+if "!entity_choice!"=="3" goto configure_summary_chunks
 if "!entity_choice!"=="0" goto search_config_menu
 
-echo [ERROR] Invalid choice. Please select 0-2.
+echo [ERROR] Invalid choice. Please select 0-3.
 pause
 cls
 goto entity_tracking_menu
+
+:configure_summary_chunks
+echo.
+echo === Configure Summary Chunks ===
+echo.
+echo Current Settings:
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  File Summaries:', 'Enabled' if cfg.chunking.enable_file_summaries else 'Disabled'); print('  Community Summaries:', 'Enabled' if cfg.chunking.enable_community_summaries else 'Disabled')" 2>nul
+echo.
+echo   1. Enable File Summaries        - Module-level summaries ^(A2^)
+echo   2. Disable File Summaries       - Skip file summary generation
+echo   3. Enable Community Summaries   - Community-level summaries ^(B1^)
+echo   4. Disable Community Summaries  - Skip community summary generation
+echo   0. Back to Entity Tracking Configuration
+echo.
+set "summary_choice="
+set /p summary_choice="Select option (0-4): "
+
+if not defined summary_choice goto entity_tracking_menu
+if "!summary_choice!"=="" goto entity_tracking_menu
+if "!summary_choice!"=="0" goto entity_tracking_menu
+
+if "!summary_choice!"=="1" (
+    echo.
+    echo [INFO] Enabling file summaries...
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_file_summaries = True; mgr.save_config(cfg); print('[OK] File summaries enabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Module-level summary chunks will be generated
+        echo [INFO] Re-index project to apply changes
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+    )
+    goto summary_chunks_end
+)
+if "!summary_choice!"=="2" (
+    echo.
+    echo [INFO] Disabling file summaries...
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_file_summaries = False; mgr.save_config(cfg); print('[OK] File summaries disabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] File summary generation will be skipped
+        echo [INFO] Re-index project to apply changes
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+    )
+    goto summary_chunks_end
+)
+if "!summary_choice!"=="3" (
+    echo.
+    echo [INFO] Enabling community summaries...
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_community_summaries = True; mgr.save_config(cfg); print('[OK] Community summaries enabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Community-level summary chunks will be generated
+        echo [INFO] Re-index project to apply changes
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+    )
+    goto summary_chunks_end
+)
+if "!summary_choice!"=="4" (
+    echo.
+    echo [INFO] Disabling community summaries...
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_community_summaries = False; mgr.save_config(cfg); print('[OK] Community summaries disabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Community summary generation will be skipped
+        echo [INFO] Re-index project to apply changes
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+    )
+    goto summary_chunks_end
+)
+
+echo [ERROR] Invalid choice. Please select 0-4.
+:summary_chunks_end
+pause
+goto configure_summary_chunks
 
 :project_management_menu
 echo.
@@ -1013,7 +1093,7 @@ REM Search Configuration Functions
 echo.
 echo [INFO] Current Search Configuration:
 if exist ".venv\Scripts\python.exe" (
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = config.routing.multi_model_enabled; pool = config.routing.multi_model_pool or 'full'; model_display = f'BGE-M3 + gte-modernbert ({pool})' if multi_enabled and pool == 'lightweight-speed' else f'BGE-M3 + Qwen3 + CodeRankEmbed ({pool})' if multi_enabled else f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print('    Multi-Model Routing:', 'Enabled' if multi_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print(); print('  Chunking Settings:'); print('    Community Detection:', 'Enabled' if config.chunking.enable_community_detection else 'Disabled'); print('    Community Merge (full re-index only):', 'Enabled' if config.chunking.enable_community_merge else 'Disabled'); print(f'    Community Resolution: {config.chunking.community_resolution}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'    Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(f'    Split Size Method: {config.chunking.split_size_method}'); print(f'    Max Split Chars: {config.chunking.max_split_chars}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    RAM Fallback: {\"On\" if config.performance.allow_ram_fallback else \"Off\"}'); print(); print('  Output Format:', config.output.format)"
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = config.routing.multi_model_enabled; pool = config.routing.multi_model_pool or 'full'; model_display = f'BGE-M3 + gte-modernbert ({pool})' if multi_enabled and pool == 'lightweight-speed' else f'BGE-M3 + Qwen3 + CodeRankEmbed ({pool})' if multi_enabled else f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print('    Multi-Model Routing:', 'Enabled' if multi_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print('    File Summaries:', 'Enabled' if config.chunking.enable_file_summaries else 'Disabled'); print('    Community Summaries:', 'Enabled' if config.chunking.enable_community_summaries else 'Disabled'); print(); print('  Chunking Settings:'); print('    Community Detection:', 'Enabled' if config.chunking.enable_community_detection else 'Disabled'); print('    Community Merge (full re-index only):', 'Enabled' if config.chunking.enable_community_merge else 'Disabled'); print(f'    Community Resolution: {config.chunking.community_resolution}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'    Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(f'    Split Size Method: {config.chunking.split_size_method}'); print(f'    Max Split Chars: {config.chunking.max_split_chars}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    RAM Fallback: {\"On\" if config.performance.allow_ram_fallback else \"Off\"}'); print(); print('  Output Format:', config.output.format)"
     if "!ERRORLEVEL!" neq "0" (
         echo Error loading configuration
         echo Using defaults: hybrid mode, BM25=0.4, Dense=0.6
