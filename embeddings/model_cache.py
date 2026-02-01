@@ -134,7 +134,7 @@ class ModelCacheManager:
             config_path = snapshot_dir / "config.json"
             return config_path.exists()
 
-        except Exception as e:
+        except OSError as e:
             self._logger.debug(f"Error checking config at {cache_path}: {e}")
             return False
 
@@ -180,7 +180,7 @@ class ModelCacheManager:
 
             return has_weights
 
-        except Exception as e:
+        except OSError as e:
             self._logger.debug(f"Error checking weights at {cache_path}: {e}")
             return False
 
@@ -304,7 +304,7 @@ class ModelCacheManager:
                         )
             except json.JSONDecodeError as e:
                 return False, f"Corrupted config.json (invalid JSON): {e}"
-            except Exception as e:
+            except OSError as e:
                 return False, f"Cannot read config.json: {e}"
 
             # Validate model weights exist (single-file or sharded formats)
@@ -377,7 +377,7 @@ class ModelCacheManager:
 
                 except json.JSONDecodeError as e:
                     return False, f"Corrupted index file {index_file.name}: {e}"
-                except Exception as e:
+                except OSError as e:
                     return False, f"Error validating shards: {e}"
 
             elif not (has_safetensors or has_pytorch):
@@ -398,7 +398,7 @@ class ModelCacheManager:
             # All checks passed
             return True, f"Valid cache at {snapshot_dir}"
 
-        except Exception as e:
+        except OSError as e:
             self._logger.debug(f"Error during cache validation: {e}")
             return False, f"Validation error: {str(e)}"
 
@@ -499,7 +499,7 @@ class ModelCacheManager:
 
             return True, message
 
-        except Exception as e:
+        except OSError as e:
             self._logger.debug(f"Error checking incomplete downloads: {e}")
             return False, f"Error: {str(e)}"
 
@@ -537,7 +537,7 @@ class ModelCacheManager:
                     self._logger.info(
                         f"Removed incomplete download: {incomplete_file.name} ({size_mb:.1f}MB)"
                     )
-                except Exception as e:
+                except OSError as e:
                     self._logger.warning(
                         f"Failed to remove {incomplete_file.name}: {e}"
                     )
@@ -639,7 +639,7 @@ class ModelCacheManager:
                 if default_snapshot:
                     return default_snapshot
 
-        except Exception as e:
+        except OSError as e:
             self._logger.debug(f"Error during find_local_model_dir: {e}")
             return None
 

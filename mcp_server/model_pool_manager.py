@@ -45,7 +45,7 @@ class ModelPoolManager:
                 logger.info("Using full model pool from config (5.3GB total)")
                 return MODEL_POOL_CONFIG
             # If None or unrecognized, fall through to env var / VRAM detection
-        except Exception as e:
+        except (ImportError, AttributeError) as e:
             logger.debug(f"Could not read pool config from file: {e}")
 
         # 2. Check environment variable override
@@ -177,7 +177,7 @@ class ModelPoolManager:
                                 f"VRAM tier '{tier.name}' detected: "
                                 f"Using {model_name} instead of {original_model}"
                             )
-                    except Exception as e:
+                    except (ImportError, RuntimeError) as e:
                         logger.warning(
                             f"Failed to detect VRAM tier, using configured model: {e}"
                         )
@@ -229,7 +229,7 @@ class ModelPoolManager:
                             f"Config model '{config_model_name}' not in pool, using bge_m3"
                         )
                         model_key = "bge_m3"
-                except Exception as e:
+                except (RuntimeError, AttributeError) as e:
                     logger.warning(
                         f"Failed to load model from config: {e}, using bge_m3"
                     )
@@ -264,7 +264,7 @@ class ModelPoolManager:
                                 f"VRAM tier '{tier.name}' detected: "
                                 f"Using {model_name} instead of {original_model}"
                             )
-                    except Exception as e:
+                    except (ImportError, RuntimeError) as e:
                         logger.warning(
                             f"Failed to detect VRAM tier, using configured model: {e}"
                         )
@@ -311,7 +311,7 @@ class ModelPoolManager:
                     config = get_config()
                     model_name = config.embedding.model_name
                     logger.info(f"Using single embedding model: {model_name}")
-                except Exception as e:
+                except (RuntimeError, AttributeError) as e:
                     logger.warning(f"Failed to load model from config: {e}")
                     model_name = "google/embeddinggemma-300m"
                     logger.info(f"Falling back to default model: {model_name}")

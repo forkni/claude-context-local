@@ -150,12 +150,12 @@ class GraphIntegration:
                         # Add to graph storage
                         self.storage.add_relationship_edge(edge)
 
-                    except Exception as e:
+                    except (ValueError, KeyError, TypeError) as e:
                         self._logger.warning(
                             f"Failed to add relationship edge from {chunk_id}: {e}"
                         )
 
-        except Exception as e:
+        except (KeyError, TypeError) as e:
             self._logger.warning(f"Failed to add {chunk_id} to graph: {e}")
 
     def build_graph_from_chunks(self, chunks) -> None:
@@ -225,7 +225,7 @@ class GraphIntegration:
 
                 processed_count += 1
 
-            except Exception as e:
+            except (AttributeError, KeyError, TypeError) as e:
                 self._logger.warning(
                     f"Failed to add chunk {chunk.chunk_id} to graph: {e}"
                 )
@@ -305,7 +305,7 @@ class GraphIntegration:
                                 metadata=rel.get("metadata", {}),
                             )
                             self.storage.add_relationship_edge(edge)
-                    except Exception as e:
+                    except (ValueError, KeyError, TypeError) as e:
                         self._logger.debug(f"Failed to add relationship edge: {e}")
 
             except Exception as e:
@@ -414,7 +414,7 @@ class GraphIntegration:
                 )
                 self.storage.save()
                 self._logger.info("[SAVE] Successfully saved call graph")
-            except Exception as e:
+            except (OSError, RuntimeError) as e:
                 self._logger.warning(f"[SAVE] Failed to save call graph: {e}")
         else:
             skip_reason = "None" if self.storage is None else "empty (0 nodes)"
@@ -426,7 +426,7 @@ class GraphIntegration:
             try:
                 self.storage.clear()
                 self._logger.info("Call graph cleared")
-            except Exception as e:
+            except (RuntimeError, AttributeError) as e:
                 self._logger.warning(f"Failed to clear call graph: {e}")
 
     @property

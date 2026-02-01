@@ -67,7 +67,7 @@ class TextPreprocessor:
         if use_stopwords and stopwords:
             try:
                 self._stop_words = set(stopwords.words("english"))
-            except Exception as e:
+            except (LookupError, OSError) as e:
                 self._logger.warning(f"Could not load stopwords: {e}")
                 self.use_stopwords = False
 
@@ -76,7 +76,7 @@ class TextPreprocessor:
             try:
                 self._stemmer = SnowballStemmer("english")
                 self._logger.debug("Snowball stemmer initialized")
-            except Exception as e:
+            except (LookupError, OSError) as e:
                 self._logger.warning(f"Could not initialize stemmer: {e}")
                 self.use_stemming = False
 
@@ -125,7 +125,7 @@ class TextPreprocessor:
         if self.use_stemming and self._stemmer:
             try:
                 tokens = [self._stemmer.stem(token) for token in tokens]
-            except Exception as e:
+            except (ValueError, TypeError) as e:
                 self._logger.warning(f"Stemming failed, using original tokens: {e}")
 
         return tokens
@@ -301,7 +301,7 @@ class BM25Index:
                     f"[BM25_INDEX] BM25 index type: {type(self._bm25).__name__}"
                 )
 
-            except Exception as bm25_error:
+            except (ValueError, TypeError) as bm25_error:
                 self._logger.error(
                     f"[BM25_INDEX] Failed to create BM25 index: {bm25_error}"
                 )
@@ -618,7 +618,7 @@ class BM25Index:
             )
             return True
 
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self._logger.error(f"Failed to load BM25 index: {e}")
             # Reset state on load failure
             self._bm25 = None
@@ -704,7 +704,7 @@ class BM25Index:
                     # No documents left, clear the index
                     self._bm25 = None
                     self._logger.debug("Cleared BM25 index (no documents remaining)")
-            except Exception as e:
+            except (ValueError, TypeError) as e:
                 self._logger.warning(f"Failed to rebuild BM25 index: {e}")
                 # Reset to empty state on rebuild failure
                 self._bm25 = None

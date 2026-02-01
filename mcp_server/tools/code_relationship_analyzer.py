@@ -478,7 +478,7 @@ class CodeRelationshipAnalyzer:
                         f"[FIND_CONNECTIONS] {stale_caller_count} of {len(all_callers)} caller chunk_ids "
                         f"not found in index (stale from previous indexing)"
                     )
-            except Exception as e:
+            except (KeyError, AttributeError) as e:
                 logger.warning(f"Failed to get callers from graph: {e}")
 
         # Step 3: Find indirect callers (multi-hop)
@@ -548,7 +548,7 @@ class CodeRelationshipAnalyzer:
                                         current_level.append(result_dict)
                                 else:
                                     stale_indirect_count += 1
-                    except Exception as e:
+                    except (KeyError, AttributeError) as e:
                         logger.debug(f"Failed to get callers for {caller_id}: {e}")
 
                 if not current_level:

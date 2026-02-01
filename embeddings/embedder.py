@@ -127,7 +127,7 @@ def set_vram_limit(fraction: float = 0.90) -> bool:
             f"[VRAM_LIMIT] Set hard limit to {fraction:.0%} of dedicated VRAM"
         )
         return True
-    except Exception as e:
+    except RuntimeError as e:
         logging.getLogger(__name__).warning(f"[VRAM_LIMIT] Failed to set: {e}")
         return False
 
@@ -236,7 +236,7 @@ def calculate_optimal_batch_size(
 
         return result
 
-    except Exception as e:
+    except (RuntimeError, ValueError) as e:
         logger = logging.getLogger(__name__)
         logger.warning(
             f"[DYNAMIC_BATCH] Failed to calculate batch size: {e}, using min_batch={min_batch}"
@@ -458,7 +458,7 @@ class CodeEmbedder:
             should_abort = usage_pct > VRAM_ABORT_THRESHOLD
 
             return usage_pct, should_warn, should_abort
-        except Exception as e:
+        except RuntimeError as e:
             self._logger.warning(f"Failed to check VRAM status: {e}")
             return 0.0, False, False
 
@@ -507,7 +507,7 @@ class CodeEmbedder:
                             break
                         # Otherwise keep scanning (might have docstring before imports)
                 return "\n".join(lines)
-        except Exception as e:
+        except (OSError, UnicodeDecodeError) as e:
             self._logger.debug(
                 f"Failed to extract import context from {file_path}: {e}"
             )
@@ -565,7 +565,7 @@ class CodeEmbedder:
 
             return signature
 
-        except Exception as e:
+        except (OSError, UnicodeDecodeError) as e:
             self._logger.debug(
                 f"Failed to extract class signature for {chunk.parent_name}: {e}"
             )
@@ -1197,7 +1197,7 @@ class CodeEmbedder:
                     f"[VRAM] High memory usage detected ({usage_percent:.1f}%). "
                     f"Consider reducing batch_size to avoid OOM."
                 )
-        except Exception as e:
+        except RuntimeError as e:
             self._logger.debug(f"Failed to log VRAM usage: {e}")
 
     def _get_model_vram_gb(self) -> float:
@@ -1215,7 +1215,7 @@ class CodeEmbedder:
         try:
             allocated_bytes = torch.cuda.memory_allocated()
             return allocated_bytes / (1024**3)
-        except Exception as e:
+        except RuntimeError as e:
             self._logger.debug(f"Failed to get model VRAM: {e}")
             return 0.0
 

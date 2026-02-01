@@ -778,7 +778,7 @@ class HybridSearcher(BaseSearcher):
                             rank=0,  # Default rank
                         )
                         neighbor_results.append(neighbor_result)
-                except Exception as e:
+                except (KeyError, TypeError) as e:
                     self._logger.debug(
                         f"Failed to retrieve metadata for {chunk_id}: {e}"
                     )
@@ -848,7 +848,7 @@ class HybridSearcher(BaseSearcher):
                             rank=0,
                         )
                         parent_results.append(parent_result)
-                except Exception as e:
+                except (KeyError, TypeError) as e:
                     self._logger.debug(
                         f"Failed to retrieve parent chunk {parent_id}: {e}"
                     )
@@ -1010,7 +1010,7 @@ class HybridSearcher(BaseSearcher):
                 )
                 self._graph_storage.save()
                 self._logger.info("[SAVE_INDICES] Call graph saved successfully")
-            except Exception as e:
+            except (OSError, RuntimeError) as e:
                 self._logger.warning(f"[SAVE_INDICES] Failed to save call graph: {e}")
 
     def validate_index_sync(self) -> bool:
@@ -1209,7 +1209,7 @@ class HybridSearcher(BaseSearcher):
                             self._graph_storage.add_relationship_edge(edge)
                             relationship_edges_added += 1
 
-                        except Exception as e:
+                        except (ValueError, KeyError, TypeError) as e:
                             self._logger.debug(
                                 f"Failed to add relationship edge from {chunk_id}: {e}"
                             )
