@@ -197,6 +197,9 @@ class GraphIntegration:
         for chunk in chunks:
             if not chunk.chunk_id:
                 continue
+            # Skip synthetic module summaries — no parseable code, would be isolated nodes
+            if chunk.chunk_type == "module":
+                continue
 
             try:
                 # Add node (NetworkX: G.add_node)

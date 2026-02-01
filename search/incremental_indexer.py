@@ -547,6 +547,22 @@ class IncrementalIndexer:
                     )
             # ========== END Community Detection & Remerge ==========
 
+            # ========== File-Level Module Summaries (A2) ==========
+            config = get_search_config()
+            if config.chunking.enable_file_summaries and all_chunks:
+                try:
+                    from chunking.file_summarizer import generate_file_summaries
+
+                    file_summaries = generate_file_summaries(all_chunks)
+                    if file_summaries:
+                        all_chunks.extend(file_summaries)
+                        logger.info(
+                            f"[FILE_SUMMARIES] Generated {len(file_summaries)} module summary chunks"
+                        )
+                except Exception as e:
+                    logger.warning(f"[FILE_SUMMARIES] Failed: {e}")
+            # ========== END File-Level Module Summaries ==========
+
             # Embed all chunks in one batched call
             all_embedding_results = []
             if all_chunks:
@@ -887,6 +903,22 @@ class IncrementalIndexer:
             f"[INCREMENTAL] Chunking {len(supported_files)} files (parallel={'enabled' if self.enable_parallel_chunking else 'disabled'})"
         )
         chunks_to_embed = self._chunk_files_parallel(project_path, supported_files)
+
+        # ========== File-Level Module Summaries (A2) ==========
+        config = get_search_config()
+        if config.chunking.enable_file_summaries and chunks_to_embed:
+            try:
+                from chunking.file_summarizer import generate_file_summaries
+
+                file_summaries = generate_file_summaries(chunks_to_embed)
+                if file_summaries:
+                    chunks_to_embed.extend(file_summaries)
+                    logger.info(
+                        f"[INCREMENTAL] Generated {len(file_summaries)} module summary chunks"
+                    )
+            except Exception as e:
+                logger.warning(f"[INCREMENTAL] File summary generation failed: {e}")
+        # ========== END File-Level Module Summaries ==========
 
         all_embedding_results = []
         if chunks_to_embed:

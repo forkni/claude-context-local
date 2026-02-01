@@ -339,6 +339,9 @@ class ChunkingConfig:
     split_size_method: str = "characters"  # "lines" or "characters"
     max_split_chars: int = 3000  # Character-based splitting (benchmark winner)
 
+    # File-level module summaries (A2: improve GLOBAL query recall)
+    enable_file_summaries: bool = True  # Generate module-summary chunks per file
+
 
 @dataclass
 class EgoGraphConfig:
