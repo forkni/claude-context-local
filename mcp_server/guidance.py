@@ -6,6 +6,7 @@ and understand next steps based on search results.
 
 from typing import Any
 
+
 # Static system message strings (no variable interpolation needed)
 _NO_RESULTS_MSG = (
     "No results found. Suggestions: (1) Check if project is indexed, "

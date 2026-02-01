@@ -203,7 +203,9 @@ def calculate_optimal_batch_size(
         if model_vram_gb >= 6:  # Large models (e.g., Qwen3-4B: 7.5GB, 36 layers)
             gb_per_item = GB_PER_ITEM_LARGE_MODEL
             model_tier = "large"
-        elif model_vram_gb >= 0.8:  # Medium models (e.g., BGE-M3: 1.07GB bf16, ~12 layers)
+        elif (
+            model_vram_gb >= 0.8
+        ):  # Medium models (e.g., BGE-M3: 1.07GB bf16, ~12 layers)
             gb_per_item = GB_PER_ITEM_MEDIUM_MODEL
             model_tier = "medium"
         else:  # Small models (e.g., CodeRankEmbed: 0.5GB, GTE-ModernBERT: 0.29GB, ~6 layers)

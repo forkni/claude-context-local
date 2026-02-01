@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from embeddings.embedder import CodeEmbedder
+    from graph.graph_storage import CodeGraphStorage
 
     from .reranker import SearchResult
 

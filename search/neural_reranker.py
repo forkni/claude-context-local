@@ -1,9 +1,13 @@
 """Neural cross-encoder reranker for semantic scoring."""
 
 import logging
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import torch
+
+
+if TYPE_CHECKING:
+    from sentence_transformers import CrossEncoder
 
 
 # Reranker model registry

@@ -7,7 +7,7 @@ import asyncio
 import functools
 import logging
 from collections.abc import Callable
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 import anyio
 

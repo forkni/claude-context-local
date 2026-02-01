@@ -138,9 +138,7 @@ def resolve_qwen3_variant_for_lookup(project_hash: str, project_name: str) -> st
     for model_name, slug, dim in qwen_variants:
         # Check for both hash variants (drive-agnostic and legacy)
         pattern = f"{project_name}_{project_hash}_{slug}_{dim}d"
-        index_path = (
-            storage_dir / pattern / "index" / "code.index"
-        )
+        index_path = storage_dir / pattern / "index" / "code.index"
         if index_path.exists():
             logging.getLogger(__name__).debug(
                 f"[QWEN3_RESOLUTION] Found {model_name} index at {pattern}"

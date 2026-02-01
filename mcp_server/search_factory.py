@@ -225,7 +225,9 @@ def get_search_factory() -> SearchFactory:
     return _search_factory
 
 
-def get_index_manager(project_path: Optional[str] = None, model_key: Optional[str] = None) -> "CodeIndexManager":
+def get_index_manager(
+    project_path: Optional[str] = None, model_key: Optional[str] = None
+) -> "CodeIndexManager":
     """Get index manager for specific project or current project.
 
     Args:

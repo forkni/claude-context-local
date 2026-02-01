@@ -4,9 +4,10 @@ import json
 import logging
 import sqlite3
 from pathlib import Path
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
+
 
 if TYPE_CHECKING:
     from search.symbol_cache import SymbolHashCache

@@ -3,12 +3,16 @@
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from embeddings.embedder import CodeEmbedder
 
 from .base_searcher import BaseSearcher
 from .indexer import CodeIndexManager
+
+
+if TYPE_CHECKING:
+    from graph.graph_storage import CodeGraphStorage
 
 
 @dataclass
