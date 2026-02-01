@@ -438,6 +438,11 @@ class HybridSearcher(BaseSearcher):
         """
         return self.index_sync
 
+    def _set_hybrid_weights(self, bm25_weight: float, dense_weight: float) -> None:
+        """Set both BM25 and dense weights atomically (for weight optimizer)."""
+        self.bm25_weight = bm25_weight
+        self.dense_weight = dense_weight
+
     @property
     def neural_reranker(self) -> Optional[NeuralReranker]:
         """Access the neural reranker instance (backward compatibility).
@@ -988,8 +993,7 @@ class HybridSearcher(BaseSearcher):
         optimizer = WeightOptimizer(
             search_callback=lambda q, k: self.search(q, k=k, use_parallel=False),
             analyze_callback=self.reranker.analyze_fusion_quality,
-            set_weights_callback=lambda b, d: setattr(self, "bm25_weight", b)
-            or setattr(self, "dense_weight", d),
+            set_weights_callback=self._set_hybrid_weights,
             get_weights_callback=lambda: (self.bm25_weight, self.dense_weight),
             logger=self._logger,
         )
