@@ -381,7 +381,7 @@ class HybridSearcher(BaseSearcher):
         return is_ready
 
     @property
-    def graph_storage(self):
+    def graph_storage(self) -> Optional[CodeGraphStorage]:
         """Access graph storage for relationship queries.
 
         Returns:
@@ -390,7 +390,7 @@ class HybridSearcher(BaseSearcher):
         return self._graph_storage
 
     @graph_storage.setter
-    def graph_storage(self, value):
+    def graph_storage(self, value: Optional[CodeGraphStorage]) -> None:
         """Set graph storage (primarily for testing).
 
         Args:

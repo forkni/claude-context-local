@@ -42,7 +42,7 @@ def read_index_metadata(storage_dir: Path) -> Optional[dict]:
 
 
 def validate_embedder_index_compatibility(
-    embedder,
+    embedder: Optional["CodeEmbedder"],
     storage_dir: Path,
     raise_on_mismatch: bool = True,
 ) -> tuple[bool, Optional[str]]:

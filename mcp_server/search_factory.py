@@ -6,7 +6,7 @@ with proper lifecycle management and caching.
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 
 if TYPE_CHECKING:
@@ -225,7 +225,7 @@ def get_search_factory() -> SearchFactory:
     return _search_factory
 
 
-def get_index_manager(project_path: str = None, model_key: str = None):
+def get_index_manager(project_path: Optional[str] = None, model_key: Optional[str] = None) -> "CodeIndexManager":
     """Get index manager for specific project or current project.
 
     Args:

@@ -51,7 +51,7 @@ class IntelligentSearcher(BaseSearcher):
         self._validate_dimensions(self.index_manager.index, self.embedder)
 
     @property
-    def graph_storage(self):
+    def graph_storage(self) -> Optional["CodeGraphStorage"]:
         """Access graph storage from index manager."""
         return getattr(self.index_manager, "graph_storage", None)
 
@@ -412,7 +412,7 @@ class IntelligentSearcher(BaseSearcher):
 
         return results
 
-    def get_by_chunk_id(self, chunk_id: str):
+    def get_by_chunk_id(self, chunk_id: str) -> Optional[SearchResult]:
         """
         Direct lookup by chunk_id (unambiguous, no search needed).
 

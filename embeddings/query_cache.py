@@ -119,7 +119,7 @@ class QueryEmbeddingCache:
         embedding: np.ndarray,
         task_instruction: str = "",
         query_prefix: str = "",
-    ):
+    ) -> None:
         """Add or update an embedding in the cache.
 
         Implements LRU eviction: if the cache is full, removes the least
@@ -171,7 +171,7 @@ class QueryEmbeddingCache:
             "max_size": self._max_size,
         }
 
-    def clear(self):
+    def clear(self) -> None:
         """Clear the cache and reset statistics.
 
         Removes all cached embeddings and resets hit/miss counters.

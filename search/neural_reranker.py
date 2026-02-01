@@ -57,7 +57,7 @@ class NeuralReranker:
             self.device = device
 
     @property
-    def model(self):
+    def model(self) -> "CrossEncoder":
         """Lazy load cross-encoder model on first access.
 
         Returns:
@@ -136,7 +136,7 @@ class NeuralReranker:
         """
         return self._model is not None
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Release GPU memory and model resources."""
         if self._model is not None:
             self._logger.info("Cleaning up reranker model")

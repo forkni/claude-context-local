@@ -7,7 +7,7 @@ import asyncio
 import functools
 import logging
 from collections.abc import Callable
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import anyio
 
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 def error_handler(
     action_name: str,
     error_context: Optional[Callable[[dict[str, Any]], dict[str, Any]]] = None,
-):
+) -> Callable[[Callable], Callable]:
     """Decorator for consistent error handling in MCP tool handlers.
 
     Provides unified error handling with:

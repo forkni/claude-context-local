@@ -242,7 +242,7 @@ class FaissVectorIndex:
                         self._index = None
                         self._chunk_ids = []
                         return False
-                except (RuntimeError, AttributeError) as e:
+                except (RuntimeError, AttributeError, KeyError) as e:
                     self._logger.debug(f"Could not validate index dimension: {e}")
 
             # Move to GPU if available

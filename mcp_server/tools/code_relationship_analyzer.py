@@ -349,7 +349,7 @@ class CodeRelationshipAnalyzer:
 
             # Sort by type priority (prefer classes over methods)
             # ALSO deprioritize test files to prefer production code
-            def get_priority(result):
+            def get_priority(result: Any) -> int:
                 if hasattr(result, "metadata"):
                     chunk_type = result.metadata.get("chunk_type", "unknown")
                     file_path = result.metadata.get(

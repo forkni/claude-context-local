@@ -118,7 +118,7 @@ class IncrementalIndexer:
         )
         self._bm25_sync = BM25SyncManager(indexer=self.indexer)
 
-    def _get_symbol_cache(self):
+    def _get_symbol_cache(self) -> Optional["SymbolHashCache"]:
         """Get symbol cache, handling both CodeIndexManager and HybridSearcher.
 
         Returns:

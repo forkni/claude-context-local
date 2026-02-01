@@ -64,7 +64,7 @@ class BaseSearcher(ABC):
 
     @property
     @abstractmethod
-    def graph_storage(self):
+    def graph_storage(self) -> Optional["CodeGraphStorage"]:
         """Access graph storage for relationship queries.
 
         Returns:

@@ -73,7 +73,7 @@ class ModelLoader:
         self._logger = logging.getLogger(__name__)
         self._model_vram_usage: dict[str, float] = {}
 
-    def log_gpu_memory(self, stage: str):
+    def log_gpu_memory(self, stage: str) -> None:
         """Log GPU memory usage at specific loading stages.
 
         Args:
@@ -98,7 +98,7 @@ class ModelLoader:
         except Exception as e:
             self._logger.debug(f"GPU memory logging failed: {e}")
 
-    def get_torch_dtype(self):
+    def get_torch_dtype(self) -> Optional["torch.dtype"]:
         """Get torch dtype based on config and GPU capability.
 
         Returns:

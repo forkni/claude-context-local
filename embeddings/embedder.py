@@ -1262,13 +1262,13 @@ class CodeEmbedder:
             except Exception as e:
                 self._logger.warning(f"Error during model cleanup: {e}")
 
-    def __enter__(self):
+    def __enter__(self) -> "CodeEmbedder":
         """Context manager entry - ensure model is loaded."""
         # Trigger model loading
         _ = self.model
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Context manager exit - cleanup resources."""
         self.cleanup()
         return False  # Don't suppress exceptions
