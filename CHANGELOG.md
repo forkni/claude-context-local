@@ -11,10 +11,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Config Rename**: `enable_greedy_merge` → `enable_chunk_merging`
-  - Old name was misleading (suggested only greedy merge)
-  - New name accurately reflects Two-Pass Chunking (Pass 1: greedy per-file + Pass 2: community cross-file)
-  - Backward compatible: accepts both `enable_chunk_merging` (new) and `enable_greedy_merge` (deprecated)
+- No unreleased changes
+
+---
+
+## [0.9.0] - 2026-02-01
+
+### Added
+
+- **SSCG Integration (Phases 1-5)** - Structural-Semantic Code Graph based on RepoGraph (ICLR 2025), SOG (USENIX '24), GRACE, Microsoft GraphRAG
+  - Phase 1: Subgraph extraction from call graphs
+  - Phase 2: 21 relationship types (calls, inherits, imports, uses_type, decorates, raises, catches, instantiates, implements, overrides, assigns_to, reads_from, defines_constant, defines_enum_member, defines_class_attr, defines_field, uses_constant, uses_default, uses_global, asserts_type, uses_context_manager)
+  - Phase 3: PageRank centrality scoring with blended reranking (alpha=0.3)
+  - Phase 4: Community detection via Louvain algorithm for contextual grouping
+  - Phase 5: Ego-graph structure for k-hop expansion with edge-type-weighted BFS
+- **A1: Intent-Adaptive Edge Weight Profiles** - 7 query intent categories adjusting graph traversal weights dynamically
+- **A2: File-Level Module Summary Chunks** - Synthetic `chunk_type="module"` chunks per file for improved GLOBAL query recall with 3-tier demotion (0.82x/0.85x/0.90x)
+- **B1: Community-Level Summary Chunks** - Synthetic `chunk_type="community"` chunks via Louvain detection for GLOBAL query recall with demotion tuning
+- **`find_path` tool** (19th MCP tool) - Bidirectional BFS shortest path between code entities with edge type filtering
+- **Post-Expansion Neural Reranking** - Second reranking pass after ego-graph expansion for improved precision
+- **BM25 Snowball Stemming** - 93.3% queries benefit, 0.47ms overhead (always-on)
+
+### Changed
+
+- **k=4 Standardization** - Default result count changed from k=5 to k=4 (20% token efficiency gain, Recall@4=1.00)
+- **`configure_chunking` parameters expanded** - Added `enable_community_detection`, `enable_community_merge`, `community_resolution`, `enable_file_summaries`, `enable_community_summaries`, `split_size_method`, `max_split_chars`
+- **chunk_type enum expanded** - Added `"module"` and `"community"` synthetic summary types
+
+### Performance
+
+- **SSCG Benchmark**: Recall@4=1.00 (perfect), MRR=0.81, 9/13 Rank-1 accuracy across 13 scored queries
+- **Dependency Cleanup**: 76 packages removed (201→125, 38% reduction), eliminated protobuf CVE-2026-0994, saved ~565MB
+
+---
+
+## [0.8.7] - 2026-01-29
+
+### Added
+
+- **SSCG Phase 1-5 Implementation** - Complete Structural-Semantic Code Graph
+  - Edge-type-weighted BFS (SOG-inspired: calls=1.0, imports=0.3)
+  - PageRank centrality scoring
+  - Community context via Louvain detection
+  - P3 relationship extractors
+
+---
+
+## [0.8.6] - 2026-01-16
+
+### Added
+
+- **Performance Instrumentation** - `@timed` decorator and `Timer` context manager for 5 critical search paths
+- **Query Embedding Cache** - LRU cache with 300s TTL for <50ms cached query results
+
+---
+
+## [0.8.5] - 2026-01-15
+
+### Changed
+
+- **Chunk Type Enum Expansion** - Added `merged` and `split_block` chunk types for greedy merge and AST splitting
+
+---
+
+## [0.8.4] - 2026-01-06
+
+### Fixed
+
+- **Ultra Format Bug** - Fixed field name rendering issue in ultra output format
+- **Field Rename** - Corrected inconsistent field names in output formatter
+
+---
+
+## [0.8.3] - 2026-01-06
+
+### Changed
+
+- **Documentation Cleanup** - Major documentation reorganization
+- **CLAUDE.md Restructure** - Streamlined project instructions
 
 ---
 
@@ -1269,6 +1343,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **v0.9.0** - SSCG Integration, A1/A2/B1 features, k=4 standardization, dependency cleanup (2026-02-01)
+- **v0.8.7** - SSCG Phase 1-5 complete (2026-01-29)
+- **v0.8.6** - Performance instrumentation, query cache (2026-01-16)
+- **v0.8.5** - Chunk type enum expansion (2026-01-15)
+- **v0.8.4** - Ultra format bug fix & field rename (2026-01-06)
+- **v0.8.3** - Documentation cleanup & CLAUDE.md restructure (2026-01-06)
 - **v0.7.2** - Reliability improvements: SSE protection, 6-layer indexing protection (2026-01-01)
 - **v0.7.1** - Bug fixes: Release Resources option, index validation, memory status (2025-12-27)
 - **v0.7.0** - Major release: Output formatting, mmap storage, entity tracking, refactoring (2025-12-22)
