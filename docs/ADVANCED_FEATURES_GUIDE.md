@@ -1672,7 +1672,7 @@ export CLAUDE_LOG_LEVEL=INFO
 
 ### Performance Baselines
 
-**Typical hybrid search timing** (k=5, with cache hit):
+**Typical hybrid search timing** (k=4, with cache hit):
 
 - **embed_query**: 0ms (cached)
 - **bm25_search**: 3-8ms
@@ -1765,7 +1765,7 @@ Symbol ID Lookups enable direct, unambiguous code retrieval without semantic sea
 **Traditional Semantic Search** (every query):
 
 1. Embed query text → vector
-2. FAISS similarity search (k=5)
+2. FAISS similarity search (k=4)
 3. BM25 keyword matching
 4. Reciprocal Rank Fusion reranking
 5. Multi-hop expansion
@@ -1970,7 +1970,7 @@ AI Guidance Messages provide intelligent, context-aware suggestions automaticall
     }
   ],
   "query": "authentication functions",
-  "k": 5,
+  "k": 4,
   "search_mode": "hybrid",
   "system_message": "💡 TIP: Use chunk_id 'auth.py:15-42:function:login' with find_connections() to analyze dependencies, or with search_code(chunk_id=...) for O(1) direct lookup."
 }

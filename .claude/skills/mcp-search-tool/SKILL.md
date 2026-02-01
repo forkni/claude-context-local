@@ -74,7 +74,7 @@ What are you trying to do?
 
 | Tool | Category | Purpose | Key Parameters | Jump To |
 |------|----------|---------|----------------|---------|
-| **search_code** | 🔴 Essential | Find code with NL query or chunk_id lookup | `query`, `chunk_id`, `chunk_type`, `include_dirs`, `exclude_dirs` | [Details](#1-search_codequery-or-chunk_id-k5-search_modehybrid-model_keynone-use_routingtrue-file_patternnone-include_dirsnone-exclude_dirsnone-chunk_typenone-include_contexttrue-auto_reindextrue-max_age_minutes5) |
+| **search_code** | 🔴 Essential | Find code with NL query or chunk_id lookup | `query`, `chunk_id`, `chunk_type`, `include_dirs`, `exclude_dirs` | [Details](#1-search_codequery-or-chunk_id-k4-search_modehybrid-model_keynone-use_routingtrue-file_patternnone-include_dirsnone-exclude_dirsnone-chunk_typenone-include_contexttrue-auto_reindextrue-max_age_minutes5) |
 | **find_connections** | 🔴 Essential | Find callers, dependencies, flow (graph analysis) | `chunk_id`, `symbol_name`, `max_depth`, `exclude_dirs`, `relationship_types` | [Details](#3-find_connectionschunk_idnone-symbol_namenone-max_depth3-exclude_dirsnone-relationship_typesnone) |
 | **find_path** | 🔴 Essential | Trace shortest path between code entities | `source`, `target`, `source_chunk_id`, `target_chunk_id`, `edge_types`, `max_hops` | [Details](#4-find_pathsourcenone-targetnone-source_chunk_idnone-target_chunk_idnone-edge_typesnone-max_hops10) |
 | **index_directory** | 🔴 Setup | Index project for search (one-time) | `directory_path`, `incremental`, `multi_model`, `include_dirs`, `exclude_dirs` | [Details](#2-index_directorydirectory_path-project_namenone-incrementaltrue-multi_modelnone-include_dirsnone-exclude_dirsnone) |
@@ -841,7 +841,7 @@ Where `alpha = 0.3` (30% centrality, 70% semantic).
 
 **Use Case**: GLOBAL queries like "how does authentication work" benefit from module-level context that spans multiple functions/classes
 
-**Score Demotion**: Module chunks get 0.9-0.95x multiplier to prevent outranking real code on LOCAL queries
+**Score Demotion**: Module chunks get 0.82-0.90x multiplier (context-adaptive) to prevent outranking real code on LOCAL queries
 
 #### B1: Community-Level Summaries
 

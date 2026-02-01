@@ -21,7 +21,7 @@
     "min_bm25_score": 0.1,
     "rrf_k_parameter": 100,
     "enable_result_reranking": true,
-    "default_k": 5,
+    "default_k": 4,
     "max_k": 50
   },
   "performance": {
@@ -82,7 +82,9 @@
     "token_estimation": "tiktoken",
     "size_method": "tokens",
     "split_size_method": "characters",
-    "max_split_chars": 3000
+    "max_split_chars": 3000,
+    "enable_file_summaries": true,
+    "enable_community_summaries": true
   },
   "ego_graph": {
     "enabled": true,

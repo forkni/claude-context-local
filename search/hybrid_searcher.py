@@ -583,7 +583,7 @@ class HybridSearcher(BaseSearcher):
     def search(
         self,
         query: str,
-        k: int = 5,
+        k: int = 4,
         search_mode: str = "hybrid",
         use_parallel: bool = True,
         min_bm25_score: float = 0.0,

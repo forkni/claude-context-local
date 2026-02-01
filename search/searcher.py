@@ -73,7 +73,7 @@ class IntelligentSearcher(BaseSearcher):
     def search(
         self,
         query: str,
-        k: int = 5,
+        k: int = 4,
         search_mode: str = "semantic",
         context_depth: int = 1,
         filters: Optional[dict[str, Any]] = None,
@@ -99,7 +99,7 @@ class IntelligentSearcher(BaseSearcher):
     def _semantic_search(
         self,
         query: str,
-        k: int = 5,
+        k: int = 4,
         context_depth: int = 1,
         filters: Optional[dict[str, Any]] = None,
     ) -> list[SearchResult]:
@@ -230,8 +230,8 @@ class IntelligentSearcher(BaseSearcher):
                     "class": 1.3,
                     "function": 1.05,
                     "method": 1.05,
-                    "module": 0.9,  # File-level summaries (A2)
-                    "community": 0.9,  # Community-level summaries (B1)
+                    "module": 0.82,  # File-level summaries (A2) - strengthened demotion
+                    "community": 0.82,  # Community-level summaries (B1) - strengthened demotion
                 }
             elif is_entity_query:
                 # Moderate preference for classes on entity-like queries
@@ -239,8 +239,8 @@ class IntelligentSearcher(BaseSearcher):
                     "class": 1.15,
                     "function": 1.1,
                     "method": 1.1,
-                    "module": 0.92,  # File-level summaries (A2)
-                    "community": 0.92,  # Community-level summaries (B1)
+                    "module": 0.85,  # File-level summaries (A2) - strengthened demotion
+                    "community": 0.85,  # Community-level summaries (B1) - strengthened demotion
                 }
             else:
                 # Default boosts for general queries
@@ -248,8 +248,8 @@ class IntelligentSearcher(BaseSearcher):
                     "function": 1.1,
                     "method": 1.1,
                     "class": 1.05,
-                    "module": 0.95,  # File-level summaries (A2)
-                    "community": 0.95,  # Community-level summaries (B1)
+                    "module": 0.90,  # File-level summaries (A2) - strengthened demotion
+                    "community": 0.90,  # Community-level summaries (B1) - strengthened demotion
                 }
 
             score *= type_boosts.get(result.chunk_type, 1.0)
@@ -400,13 +400,13 @@ class IntelligentSearcher(BaseSearcher):
         return self.search(query, k=k, filters=filters)
 
     def search_by_chunk_type(
-        self, query: str, chunk_type: str, k: int = 5
+        self, query: str, chunk_type: str, k: int = 4
     ) -> list[SearchResult]:
         """Search for specific types of code chunks."""
         filters = {"chunk_type": chunk_type}
         return self.search(query, k=k, filters=filters)
 
-    def find_similar_to_chunk(self, chunk_id: str, k: int = 5) -> list[SearchResult]:
+    def find_similar_to_chunk(self, chunk_id: str, k: int = 4) -> list[SearchResult]:
         """Find chunks similar to a given chunk."""
         similar_chunks = self.index_manager.get_similar_chunks(chunk_id, k)
 

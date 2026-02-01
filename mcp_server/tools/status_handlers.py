@@ -288,6 +288,8 @@ async def handle_get_search_config_status(arguments: dict[str, Any]) -> dict:
         "reranker_enabled": config.reranker.enabled,
         "reranker_model": config.reranker.model_name,
         "reranker_top_k_candidates": config.reranker.top_k_candidates,
+        "default_k": config.search_mode.default_k,
+        "max_k": config.search_mode.max_k,
     }
 
 
