@@ -671,6 +671,20 @@ class HybridSearcher(BaseSearcher):
                 results, effective_config.parent_retrieval, max_results_to_expand=k
             )
 
+        # Post-expansion neural reranking: unify scoring across primary + ego results
+        # Only runs when ego-graph added results, putting all on same cross-encoder scale
+        if (
+            effective_config.ego_graph.enabled
+            and self.reranking_engine
+            and len(results) > k
+        ):
+            results = self.reranking_engine.rerank_by_query(
+                query=query,
+                results=results,
+                k=len(results),  # Keep all results, just re-score and re-sort
+                search_mode=search_mode,
+            )
+
         return results
 
     def _single_hop_search(
