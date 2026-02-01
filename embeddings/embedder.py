@@ -127,7 +127,7 @@ def set_vram_limit(fraction: float = 0.90) -> bool:
             f"[VRAM_LIMIT] Set hard limit to {fraction:.0%} of dedicated VRAM"
         )
         return True
-    except RuntimeError as e:
+    except (RuntimeError, ValueError) as e:
         logging.getLogger(__name__).warning(f"[VRAM_LIMIT] Failed to set: {e}")
         return False
 
@@ -181,12 +181,14 @@ def calculate_optimal_batch_size(
         return min_batch  # CPU fallback
 
     try:
-        # Get total GPU memory (not free, to be consistent across runs)
-        _, total_memory = torch.cuda.mem_get_info()
+        # Get system-wide free/total GPU memory (accounts for ALL processes)
+        free_memory, total_memory = torch.cuda.mem_get_info()
         total_gb = total_memory / (1024**3)
+        free_gb = free_memory / (1024**3)
 
-        # Calculate available memory for activations (total - model weights)
-        available_gb = total_gb - model_vram_gb
+        # Use free memory (accounts for other processes like TouchDesigner)
+        # Our model is already loaded, so free_memory already excludes our model weight
+        available_gb = free_gb
 
         # Apply fragmentation factor: PyTorch reserves ~18% extra for block management
         # Validated from OOM analysis: 2.67GB fragmentation / 14.74GB allocated = 18% overhead
@@ -226,7 +228,7 @@ def calculate_optimal_batch_size(
         # Log calculation details for debugging
         logger = logging.getLogger(__name__)
         logger.info(
-            f"[DYNAMIC_BATCH] GPU: {total_gb:.1f}GB total, "
+            f"[DYNAMIC_BATCH] GPU: {free_gb:.1f}GB free / {total_gb:.1f}GB total, "
             f"model: {model_vram_gb:.1f}GB ({model_tier}), "
             f"available: {available_gb:.1f}GB → "
             f"target: {target_activation_gb:.1f}GB ({memory_fraction:.0%} × {fragmentation_overhead:.0%} frag), "
@@ -450,9 +452,9 @@ class CodeEmbedder:
             return 0.0, False, False
 
         try:
-            allocated = torch.cuda.memory_allocated()
-            total = torch.cuda.get_device_properties(0).total_memory
-            usage_pct = allocated / total if total > 0 else 0.0
+            # Use system-wide free/total (accounts for ALL processes, not just ours)
+            free_memory, total_memory = torch.cuda.mem_get_info(0)
+            usage_pct = 1.0 - (free_memory / total_memory) if total_memory > 0 else 0.0
 
             should_warn = usage_pct > VRAM_WARNING_THRESHOLD
             should_abort = usage_pct > VRAM_ABORT_THRESHOLD

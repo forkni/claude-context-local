@@ -752,10 +752,8 @@ class TestCheckVramStatus:
     def test_vram_below_warning_threshold(self, mock_torch):
         """Test VRAM at 50% - no warnings."""
         mock_torch.cuda.is_available.return_value = True
-        mock_torch.cuda.memory_allocated.return_value = 5 * 1024**3  # 5GB
-        mock_props = MagicMock()
-        mock_props.total_memory = 10 * 1024**3  # 10GB total
-        mock_torch.cuda.get_device_properties.return_value = mock_props
+        # mem_get_info() returns (free, total) - 5GB free / 10GB total = 50% usage
+        mock_torch.cuda.mem_get_info.return_value = (5 * 1024**3, 10 * 1024**3)
 
         from embeddings.embedder import CodeEmbedder
 
@@ -773,10 +771,8 @@ class TestCheckVramStatus:
     def test_vram_at_warning_threshold(self, mock_torch):
         """Test VRAM at 90% - should warn but not abort."""
         mock_torch.cuda.is_available.return_value = True
-        mock_torch.cuda.memory_allocated.return_value = 9 * 1024**3  # 9GB
-        mock_props = MagicMock()
-        mock_props.total_memory = 10 * 1024**3
-        mock_torch.cuda.get_device_properties.return_value = mock_props
+        # mem_get_info() returns (free, total) - 1GB free / 10GB total = 90% usage
+        mock_torch.cuda.mem_get_info.return_value = (1 * 1024**3, 10 * 1024**3)
 
         from embeddings.embedder import CodeEmbedder
 
@@ -793,10 +789,8 @@ class TestCheckVramStatus:
     def test_vram_at_abort_threshold(self, mock_torch):
         """Test VRAM at 96% - should abort."""
         mock_torch.cuda.is_available.return_value = True
-        mock_torch.cuda.memory_allocated.return_value = int(9.6 * 1024**3)  # 96%
-        mock_props = MagicMock()
-        mock_props.total_memory = 10 * 1024**3
-        mock_torch.cuda.get_device_properties.return_value = mock_props
+        # mem_get_info() returns (free, total) - 0.4GB free / 10GB total = 96% usage
+        mock_torch.cuda.mem_get_info.return_value = (int(0.4 * 1024**3), 10 * 1024**3)
 
         from embeddings.embedder import CodeEmbedder
 
