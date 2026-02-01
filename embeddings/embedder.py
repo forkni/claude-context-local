@@ -203,10 +203,10 @@ def calculate_optimal_batch_size(
         if model_vram_gb >= 6:  # Large models (e.g., Qwen3-4B: 7.5GB, 36 layers)
             gb_per_item = GB_PER_ITEM_LARGE_MODEL
             model_tier = "large"
-        elif model_vram_gb >= 2:  # Medium models (e.g., BGE-M3: 2GB, ~12 layers)
+        elif model_vram_gb >= 0.8:  # Medium models (e.g., BGE-M3: 1.07GB bf16, ~12 layers)
             gb_per_item = GB_PER_ITEM_MEDIUM_MODEL
             model_tier = "medium"
-        else:  # Small models (e.g., CodeRankEmbed: 0.5GB, ~6 layers)
+        else:  # Small models (e.g., CodeRankEmbed: 0.5GB, GTE-ModernBERT: 0.29GB, ~6 layers)
             gb_per_item = GB_PER_ITEM_SMALL_MODEL
             model_tier = "small"
 
@@ -221,6 +221,12 @@ def calculate_optimal_batch_size(
         elif total_gb <= 10:  # laptop tier (6-10GB)
             max_batch = min(max_batch, 32)
             min_batch = min(min_batch, 4)
+
+        # Additional cap based on actual free memory (other processes may use VRAM)
+        if free_gb < 4:
+            max_batch = min(max_batch, 8)
+        elif free_gb < 6:
+            max_batch = min(max_batch, 16)
 
         # Clamp to safe bounds
         result = max(min_batch, min(optimal_batch, max_batch))
