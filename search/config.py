@@ -362,7 +362,9 @@ class EgoGraphConfig:
 class ParentRetrievalConfig:
     """Parent chunk retrieval settings for Match Small, Retrieve Big."""
 
-    enabled: bool = False  # Enable parent chunk expansion
+    enabled: bool = (
+        True  # Enable parent chunk expansion (provides class context for methods)
+    )
     include_parent_content: bool = True  # Include parent's full content
     max_parents_per_result: int = 1  # Usually 1 (direct parent only)
 
@@ -375,6 +377,10 @@ class GraphEnhancedConfig:
     centrality_alpha: float = 0.3  # Blending weight (0=semantic, 1=centrality)
     centrality_annotation: bool = True  # Always annotate centrality when graph exists
     centrality_reranking: bool = True  # Always rerank by blended score
+    # Chunk-size normalization (penalize oversized chunks)
+    enable_size_normalization: bool = True  # Enable logarithmic size penalty
+    size_norm_target_lines: int = 200  # Target chunk size (no penalty below this)
+    size_norm_alpha: float = 0.1  # Penalty strength (higher = stronger penalty)
 
 
 class SearchConfig:

@@ -662,13 +662,13 @@ class HybridSearcher(BaseSearcher):
         # Apply ego-graph expansion if enabled
         if effective_config.ego_graph.enabled and self.ego_graph_retriever and results:
             results = self._apply_ego_graph_expansion(
-                results, effective_config.ego_graph, k
+                results, effective_config.ego_graph, k, query
             )
 
-        # Apply parent expansion if enabled
+        # Apply parent expansion if enabled (limit to primary k results to prevent bloat)
         if effective_config.parent_retrieval.enabled and results:
             results = self._apply_parent_expansion(
-                results, effective_config.parent_retrieval
+                results, effective_config.parent_retrieval, max_results_to_expand=k
             )
 
         return results
@@ -711,7 +711,11 @@ class HybridSearcher(BaseSearcher):
         )
 
     def _apply_ego_graph_expansion(
-        self, results: list[SearchResult], ego_config: "EgoGraphConfig", original_k: int
+        self,
+        results: list[SearchResult],
+        ego_config: "EgoGraphConfig",
+        original_k: int,
+        query: str,
     ) -> list[SearchResult]:
         """Apply ego-graph expansion to search results.
 
@@ -722,6 +726,7 @@ class HybridSearcher(BaseSearcher):
             results: Initial search results
             ego_config: EgoGraphConfig instance
             original_k: Original k parameter for search
+            query: Original search query (for similarity scoring of neighbors)
 
         Returns:
             Expanded search results (anchors + neighbors)
@@ -757,7 +762,19 @@ class HybridSearcher(BaseSearcher):
                     if neighbor_id not in original_chunk_ids:
                         neighbor_to_anchor[neighbor_id] = anchor_id
 
-            # Build anchor_id→score mapping from results
+            # Compute query embedding once for all neighbor scoring
+            try:
+                query_embedding = self.embedder.embed_query(query)
+                query_embedding_available = True
+            except Exception as e:
+                self._logger.warning(
+                    f"Failed to compute query embedding for ego-graph scoring: {e}. "
+                    f"Falling back to fixed decay."
+                )
+                query_embedding = None
+                query_embedding_available = False
+
+            # Pre-compute anchor scores for relative scoring
             anchor_scores = {r.chunk_id: r.score for r in results}
 
             # Retrieve metadata for neighbor chunks
@@ -765,29 +782,79 @@ class HybridSearcher(BaseSearcher):
             for chunk_id in neighbor_chunk_ids:
                 try:
                     metadata = self.dense_index.get_chunk_by_id(chunk_id)
-                    if metadata:
-                        # Decay scoring: neighbor inherits 50% of anchor's score
-                        # This gives structural context a meaningful but lower score than semantic matches
+                    if not metadata:
+                        continue
+
+                    # Similarity-based scoring: compute cosine similarity with query
+                    if query_embedding_available:
+                        try:
+                            # Get neighbor's index position
+                            chunk_ids_list = list(self.dense_index.chunk_ids)
+                            idx = chunk_ids_list.index(chunk_id)
+                            # Reconstruct neighbor embedding via FAISS
+                            neighbor_embedding = (
+                                self.dense_index._faiss_index.reconstruct(idx)
+                            )
+                            # Compute cosine similarity (embeddings are L2-normalized)
+                            similarity = float(
+                                np.dot(query_embedding, neighbor_embedding)
+                            )
+                            # Optional: filter very low relevance neighbors
+                            if similarity < 0.15:
+                                self._logger.debug(
+                                    f"Filtering ego-graph neighbor {chunk_id}: "
+                                    f"similarity={similarity:.3f} < 0.15"
+                                )
+                                continue
+                            # Scale score relative to anchor (prevents neighbors from outranking anchors)
+                            anchor_id = neighbor_to_anchor.get(chunk_id)
+                            anchor_score = (
+                                anchor_scores.get(anchor_id, 0.0) if anchor_id else 0.0
+                            )
+                            neighbor_score = anchor_score * similarity
+                        except (ValueError, IndexError, AttributeError) as e:
+                            # Fallback to decay if reconstruction fails
+                            self._logger.debug(
+                                f"Failed to reconstruct embedding for {chunk_id}: {e}. Using decay."
+                            )
+                            anchor_id = neighbor_to_anchor.get(chunk_id)
+                            anchor_score = (
+                                anchor_scores.get(anchor_id, 0.0) if anchor_id else 0.0
+                            )
+                            neighbor_score = anchor_score * 0.5
+                    else:
+                        # Fallback: fixed decay scoring
                         anchor_id = neighbor_to_anchor.get(chunk_id)
                         anchor_score = (
                             anchor_scores.get(anchor_id, 0.0) if anchor_id else 0.0
                         )
-                        decay_score = anchor_score * 0.5
+                        neighbor_score = anchor_score * 0.5
 
-                        # Create SearchResult for neighbor with decay score
-                        neighbor_result = SearchResult(
-                            chunk_id=chunk_id,
-                            score=decay_score,  # Decay from anchor score (not 0.0)
-                            metadata=metadata,  # All metadata stored in dict
-                            source="ego_graph",  # Mark as ego-graph neighbor
-                            rank=0,  # Default rank
-                        )
-                        neighbor_results.append(neighbor_result)
+                    # Create SearchResult for neighbor with similarity score
+                    neighbor_result = SearchResult(
+                        chunk_id=chunk_id,
+                        score=neighbor_score,  # Similarity-based or decay fallback
+                        metadata=metadata,  # All metadata stored in dict
+                        source="ego_graph",  # Mark as ego-graph neighbor
+                        rank=0,  # Default rank
+                    )
+                    neighbor_results.append(neighbor_result)
                 except (KeyError, TypeError) as e:
                     self._logger.debug(
                         f"Failed to retrieve metadata for {chunk_id}: {e}"
                     )
                     continue
+
+            # Cap ego-graph neighbors to prevent token bloat
+            max_ego = min(
+                ego_config.max_neighbors_per_hop * ego_config.k_hops, original_k * 3
+            )
+            if len(neighbor_results) > max_ego:
+                neighbor_results.sort(key=lambda r: r.score, reverse=True)
+                self._logger.info(
+                    f"Capping ego-graph neighbors: {len(neighbor_results)} -> {max_ego}"
+                )
+                neighbor_results = neighbor_results[:max_ego]
 
             # Combine original results (with scores) + neighbor results (context)
             # Original results first (sorted by score), then neighbors
@@ -807,7 +874,10 @@ class HybridSearcher(BaseSearcher):
             return results
 
     def _apply_parent_expansion(
-        self, results: list[SearchResult], config: "SearchConfig"
+        self,
+        results: list[SearchResult],
+        config: "SearchConfig",
+        max_results_to_expand: int = 0,
     ) -> list[SearchResult]:
         """Apply parent chunk expansion to search results.
 
@@ -829,8 +899,13 @@ class HybridSearcher(BaseSearcher):
             parent_chunk_ids: set = set()
             original_chunk_ids = {r.chunk_id for r in results}
 
-            # Find parent_chunk_ids from result metadata
-            for result in results:
+            # Find parent_chunk_ids from result metadata (limit to primary results if specified)
+            results_to_expand = (
+                results[:max_results_to_expand]
+                if max_results_to_expand > 0
+                else results
+            )
+            for result in results_to_expand:
                 parent_id = result.metadata.get("parent_chunk_id")
                 if parent_id and parent_id not in original_chunk_ids:
                     parent_chunk_ids.add(parent_id)

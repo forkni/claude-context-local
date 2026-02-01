@@ -32,7 +32,7 @@
     "enable_entity_tracking": true,
     "prefer_gpu": true,
     "gpu_memory_threshold": 0.65,
-    "vram_limit_fraction": 0.9,
+    "vram_limit_fraction": 0.8,
     "allow_ram_fallback": true,
     "enable_fp16": true,
     "prefer_bf16": true,
@@ -52,7 +52,7 @@
   "routing": {
     "multi_model_enabled": true,
     "default_model": "bge_m3",
-    "multi_model_pool": "lightweight-speed"
+    "multi_model_pool": "full"
   },
   "intent": {
     "enabled": true,
@@ -63,7 +63,7 @@
   },
   "reranker": {
     "enabled": true,
-    "model_name": "Alibaba-NLP/gte-reranker-modernbert-base",
+    "model_name": "BAAI/bge-reranker-v2-m3",
     "top_k_candidates": 50,
     "min_vram_gb": 6.0,
     "batch_size": 16

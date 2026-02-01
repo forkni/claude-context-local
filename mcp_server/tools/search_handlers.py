@@ -889,6 +889,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
                 graph_query_engine=graph_query_engine,
                 method=graph_config.centrality_method,
                 alpha=graph_config.centrality_alpha,
+                config=graph_config,
             )
 
             # Compute centrality scores for subgraph population
@@ -905,6 +906,12 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
                 )
         except Exception as e:
             logger.debug(f"Centrality ranking failed: {e}")
+
+    # Cap total results to prevent token bloat (k primary + up to 3k context)
+    max_total = k * 4
+    if len(formatted_results) > max_total:
+        logger.info(f"Capping total results: {len(formatted_results)} -> {max_total}")
+        formatted_results = formatted_results[:max_total]
 
     # === Extract subgraph over search results ===
     subgraph_data = None

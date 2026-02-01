@@ -57,6 +57,30 @@ def _tokenize_for_matching(text: str) -> set[str]:
     return tokens
 
 
+def _extract_chunk_lines(chunk_id: str) -> int:
+    """Extract line count from 'file:start-end:type:name' format.
+
+    Examples:
+        "embeddings/embedder.py:276-1330:class:CodeEmbedder" -> 1054 lines
+        "search/filters.py:22-31:function:normalize_path" -> 9 lines
+        "invalid:format" -> 0 (fallback)
+
+    Returns:
+        Number of lines in chunk, or 0 if format is invalid.
+    """
+    parts = chunk_id.split(":")
+    if len(parts) < 2:
+        return 0
+    line_range = parts[1]  # "start-end" format
+    if "-" not in line_range:
+        return 0
+    try:
+        start, end = map(int, line_range.split("-"))
+        return end - start + 1  # Inclusive range
+    except (ValueError, IndexError):
+        return 0
+
+
 class CentralityRanker:
     """Ranks search results by blending semantic scores with centrality.
 
@@ -70,6 +94,7 @@ class CentralityRanker:
         graph_query_engine,
         method: str = "pagerank",
         alpha: float = 0.3,
+        config=None,
     ):
         """Initialize centrality ranker.
 
@@ -77,10 +102,12 @@ class CentralityRanker:
             graph_query_engine: GraphQueryEngine instance
             method: Centrality method (pagerank, degree, betweenness, closeness)
             alpha: Blending weight (0=semantic only, 1=centrality only)
+            config: GraphEnhancedConfig instance for size normalization (optional)
         """
         self.graph_query_engine = graph_query_engine
         self.method = method
         self.alpha = alpha
+        self.config = config
 
         # Cache centrality scores to avoid recomputation
         self._cache: dict[str, float] = {}
@@ -193,6 +220,26 @@ class CentralityRanker:
             blended = (1 - blend_alpha) * semantic_score + blend_alpha * centrality
             result["blended_score"] = round(blended, 4)
 
+            # Chunk-size normalization (penalize oversized chunks)
+            if self.config is not None and self.config.enable_size_normalization:
+                chunk_id = result.get("chunk_id", "")
+                chunk_lines = _extract_chunk_lines(chunk_id)
+                if chunk_lines > self.config.size_norm_target_lines:
+                    import math
+
+                    size_factor = 1.0 / (
+                        1.0
+                        + self.config.size_norm_alpha
+                        * math.log(chunk_lines / self.config.size_norm_target_lines)
+                    )
+                    result["blended_score"] = round(
+                        result["blended_score"] * size_factor, 4
+                    )
+                    logger.debug(
+                        f"[CENTRALITY] Size normalization for {chunk_id}: "
+                        f"{chunk_lines} lines → factor={size_factor:.3f}"
+                    )
+
             # Query-aware boosting (ported from IntelligentSearcher)
             if query:
                 chunk_type = result.get("kind", "")
@@ -213,7 +260,7 @@ class CentralityRanker:
                     type_boosts = {
                         "function": 1.1,
                         "method": 1.1,
-                        "decorated_definition": 1.1,
+                        "decorated_definition": 1.0,  # Neutral — includes dataclasses, not just functions
                         "split_block": 1.1,  # Function/method fragments
                         "class": 1.05,
                         "module": 0.95,
@@ -242,11 +289,25 @@ class CentralityRanker:
                 if is_test_code and not query_has_test_intent:
                     result["blended_score"] = round(result["blended_score"] * 0.85, 4)
 
+                # Config/settings file demotion (analogous to test demotion above)
+                is_config_code = any(
+                    pattern in file_path.lower()
+                    for pattern in ("config.py", "settings.py", "constants.py")
+                )
+                query_has_config_intent = any(
+                    w in query_lower
+                    for w in ("config", "configuration", "setting", "constant")
+                )
+                if is_config_code and not query_has_config_intent:
+                    result["blended_score"] = round(result["blended_score"] * 0.88, 4)
+
                 # Name-match boost: extract name from chunk_id when field absent
                 chunk_id = result.get("chunk_id", "")
                 name = result.get("name", "") or _extract_name_from_chunk_id(chunk_id)
                 if name and query_lower:
-                    query_tokens = _tokenize_for_matching(query_lower)
+                    query_tokens = _tokenize_for_matching(
+                        query
+                    )  # Preserve CamelCase for splitting
                     name_tokens = _tokenize_for_matching(name)
                     if name_tokens:
                         # Name-centric overlap: what fraction of the NAME appears in query?
