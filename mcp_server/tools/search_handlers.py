@@ -897,9 +897,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
             # Rerank results by blended score if enabled in config
             if graph_config.centrality_reranking:
                 formatted_results = ranker.rerank(formatted_results, query=query)
-                logger.debug(
-                    f"Reranked {len(formatted_results)} results by centrality"
-                )
+                logger.debug(f"Reranked {len(formatted_results)} results by centrality")
             else:
                 formatted_results = ranker.annotate(formatted_results)
                 logger.debug(
