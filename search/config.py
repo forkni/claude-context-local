@@ -362,9 +362,7 @@ class EgoGraphConfig:
 class ParentRetrievalConfig:
     """Parent chunk retrieval settings for Match Small, Retrieve Big."""
 
-    enabled: bool = (
-        True  # Enable parent chunk expansion (provides class context for methods)
-    )
+    enabled: bool = False  # Disabled — parents get score=0, no ranking value
     include_parent_content: bool = True  # Include parent's full content
     max_parents_per_result: int = 1  # Usually 1 (direct parent only)
 
