@@ -36,26 +36,31 @@ Complete integration of Structural-Semantic Code Graph (SSCG) features based on 
 #### SSCG Phase 1-5 Complete (v0.8.7, 2026-01-29)
 
 **Phase 1: Subgraph Extraction**
+
 - Induced subgraphs with typed edges (calls, inherits, imports, etc.)
 - Topological ordering for dependency-aware traversal
 - JSON Graph Format serialization
 - Boundary edge tracking
 
 **Phase 2: Full Relationship Enrichment**
+
 - All 21 relationship types in graph field output
 - Dual lookup strategy (by-file + by-qualified-name)
 - Per-type capping to prevent output explosion
 
 **Phase 3: Centrality-Informed Result Ranking**
+
 - PageRank blending with semantic scores (alpha=0.3)
 - `CentralityRanker` class with annotate/rerank modes
 - `blended_score` and `centrality` fields in results
 
 **Phase 4: Community Context Surfacing**
+
 - Community ID annotation on subgraph nodes
 - Heuristic label generation from dominant symbols
 
 **Phase 5: Ego-Graph Structure Preservation**
+
 - Structured ego-graph retrieval with edge preservation
 - `EgoGraphData` dataclass for formatted output
 - Edge-type-weighted BFS traversal
@@ -65,6 +70,7 @@ Complete integration of Structural-Semantic Code Graph (SSCG) features based on 
 **Query Intent Classification**: 7 intent categories (local, global, navigational, path_tracing, similarity, contextual, hybrid)
 
 **Adaptive Edge Weights**: Graph traversal weights automatically adjusted based on query intent
+
 - LOCAL queries: Suppress imports (0.1x), boost calls/inherits (1.0x)
 - GLOBAL queries: Boost imports (0.7x), uses_type (0.9x), instantiates (0.8x)
 - Based on SOG (USENIX Security '24) ablation study
@@ -76,6 +82,7 @@ Complete integration of Structural-Semantic Code Graph (SSCG) features based on 
 **Content**: File path, module name, classes, functions, key methods, imports, docstring excerpts
 
 **Demotion Tuning**: 3-tier demotion factors (0.82x-0.90x) prevent inappropriate displacement
+
 - 0.82x for "class" queries
 - 0.85x for entity queries
 - 0.90x for general queries
@@ -95,20 +102,24 @@ Complete integration of Structural-Semantic Code Graph (SSCG) features based on 
 #### Additional Research Improvements
 
 **Post-Expansion Neural Reranking** (2026-02-01)
+
 - Second reranking pass after ego-graph expansion
 - Unifies scoring scale between primary results (cross-encoder) and ego-graph neighbors (heuristic)
 
 **Name-Match Tokenization Bug Fix** (2026-02-01)
+
 - Fixed CamelCase tokenization: "HybridSearcher" now correctly splits to {"hybrid", "searcher"}
 - Q31 improved from MRR 0.50→1.00
 
 **BM25 Snowball Stemming** (Always-on)
+
 - 93.3% of queries benefit
 - 3.33 average unique discoveries per query
 - 0.47ms overhead (negligible)
 - 11% smaller indices
 
 **k=4 Standardization** (2026-02-01)
+
 - Default k changed from 5→4 across all 7 entry points
 - 20% token efficiency gain
 - Perfect Recall@4 maintained (1.00)
@@ -126,12 +137,14 @@ Complete integration of Structural-Semantic Code Graph (SSCG) features based on 
 **Test Suite**: 13 queries across 4 categories (Small Function Discovery, Sibling Context, Class Overview, Cross-Method References)
 
 **Overall Metrics** (Post-Tuning k=4):
+
 - **Recall@4**: 1.00 (perfect - all relevant results found)
 - **MRR**: 0.81 (maintained from k=5, acceptable trade-off for 20% efficiency)
 - **Rank-1 Accuracy**: 9/13 (69%, +1 vs k=5)
 - **Model Distribution**: 3 models used appropriately (BGE-M3, Qwen3, CodeRankEmbed)
 
 **Category Performance**:
+
 - Category A (Small Function Discovery): Recall@4=1.00, MRR=0.90
 - Category B (Sibling Context): Recall@4=1.00, MRR=0.67
 - Category C (Class Overview): Recall@4=1.00, MRR=0.73 (+17.7% vs k=5)
@@ -140,6 +153,7 @@ Complete integration of Structural-Semantic Code Graph (SSCG) features based on 
 ### 📦 Dependency Cleanup (2026-01-30)
 
 **Removed 76 packages** (38% reduction):
+
 - torchaudio, torchvision (not needed for embeddings)
 - FlagEmbedding + 26 transitive dependencies (phantom dependency)
 - pandas (unused)
@@ -151,10 +165,12 @@ Complete integration of Structural-Semantic Code Graph (SSCG) features based on 
 ### 📁 Files Changed
 
 **New**:
+
 - `chunking/file_summarizer.py` - A2 module summary generation (~90 lines)
 - `search/intent_adaptive_weights.py` - A1 edge weight profiles (if separate module)
 
 **Modified**:
+
 - `search/searcher.py` - A1 intent-adaptive weights, A2/B1 demotion tuning
 - `search/centrality_ranker.py` - PageRank blending, 2-tier demotion
 - `search/incremental_indexer.py` - A2/B1 summary generation integration
@@ -172,6 +188,7 @@ Complete integration of Structural-Semantic Code Graph (SSCG) features based on 
 ### Git Commits
 
 Key commits from development branch:
+
 - `5f01004` - feat(search): Tune A2/B1 demotion factors and standardize k=4 default
 - `52c66d0` - feat(search): Add community-level summary chunks (B1)
 - `5a826d5` - feat(search): Add file-level module summaries (A2)

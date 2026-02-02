@@ -46,6 +46,7 @@ Complete guide to advanced features in claude-context-local MCP server.
 | `"semantic"` | FAISS similarity only (legacy) | Pure semantic matching |
 
 **Hybrid Mode Flow** (recommended):
+
 1. **Hop 1**: Find chunks matching query (hybrid search, k×2 results)
 2. **Hop 2 (graph)**: For each top result, find graph neighbors via **edge-type-weighted BFS** (prioritizes `calls`=1.0 over `imports`=0.3)
 3. **Hop 2 (semantic)**: Find semantically similar chunks (skips already-seen from graph)
@@ -3523,26 +3524,31 @@ The Structural-Semantic Code Graph (SSCG) is a comprehensive 5-phase integration
 ### Five Phases
 
 **Phase 1: Subgraph Extraction**
+
 - Induced subgraphs with typed edges (calls, inherits, imports, etc.)
 - Topological ordering for dependency-aware traversal
 - JSON Graph Format serialization
 - Boundary edge tracking
 
 **Phase 2: Full Relationship Enrichment**
+
 - All 21 relationship types in graph field output
 - Dual lookup strategy (by-file + by-qualified-name)
 - Per-type capping to prevent output explosion
 
 **Phase 3: Centrality-Informed Result Ranking**
+
 - PageRank blending with semantic scores
 - `CentralityRanker` class with annotate/rerank modes
 - See [Centrality Reranking](#centrality-reranking-v090) section below
 
 **Phase 4: Community Context Surfacing**
+
 - Community ID annotation on subgraph nodes
 - Heuristic label generation from dominant symbols
 
 **Phase 5: Ego-Graph Structure Preservation**
+
 - Structured ego-graph retrieval with edge preservation
 - `EgoGraphData` dataclass for formatted output
 - Edge-type-weighted BFS traversal
@@ -3572,6 +3578,7 @@ PageRank-based centrality scoring is blended with semantic search scores to boos
 ### How It Works
 
 **Blended Scoring Formula**:
+
 ```
 blended_score = centrality × alpha + semantic_score × (1 - alpha)
 ```
@@ -3583,6 +3590,7 @@ Where `alpha = 0.3` (30% centrality, 70% semantic).
 ### Result Fields
 
 When centrality reranking is active, search results include:
+
 - `blended_score`: Final ranking score after centrality blending
 - `centrality`: Raw PageRank score for the code chunk
 
@@ -3623,16 +3631,19 @@ The system classifies queries into 7 categories:
 ### Edge Weight Tables
 
 **LOCAL Intent** (suppress imports):
+
 - `calls`: 1.0
 - `inherits`: 1.0
 - `imports`: **0.1** (suppressed)
 
 **GLOBAL Intent** (boost cross-file):
+
 - `imports`: **0.7** (boosted)
 - `uses_type`: 0.9
 - `instantiates`: 0.8
 
 **NAVIGATIONAL Intent** (prioritize calls):
+
 - `calls`: 1.0
 - `inherits`: 0.9
 - `imports`: 0.5
@@ -3657,12 +3668,14 @@ Synthetic `chunk_type="module"` chunks generated per file with 2+ real chunks. T
 ### How It Works
 
 **Generation**: During indexing (full or incremental), for each file with 2+ chunks:
+
 1. Aggregate metadata: classes, functions, key methods, imports
 2. Extract docstring excerpts
 3. Generate summary text with file path, module name, symbols
 4. Create synthetic CodeChunk with `chunk_type="module"`, `chunk_id` format: `{path}:0-0:module:{name}`
 
 **Content Example**:
+
 ```
 # search/intent_classifier.py | module intent_classifier
 # Module containing 5 symbols in the search package
@@ -3703,12 +3716,14 @@ Synthetic `chunk_type="community"` chunks generated per community (via Louvain c
 **Community Detection**: Louvain algorithm on the code graph groups related chunks into communities.
 
 **Generation**: For each community with 2+ members:
+
 1. Aggregate community metadata: dominant directory, classes/functions in community
 2. Identify hub function (largest chunk)
 3. Generate summary text with community ID, symbols, imports
 4. Create synthetic CodeChunk with `chunk_type="community"`, `chunk_id` format: `__community__/{label}:0-0:community:{label}`
 
 **Content Example**:
+
 ```
 # Community: search_graph_analysis | 8 members
 # Dominant directory: search/
@@ -3769,6 +3784,7 @@ Normalizes word forms in BM25 keyword search to improve recall. "indexing", "ind
 **Snowball Stemmer**: English stemming algorithm applied to both document indexing and query processing.
 
 **Examples**:
+
 - "searching", "search", "searches", "searched" → all match
 - "authentication", "authenticator", "authenticate" → all match
 - "optimization", "optimize", "optimized" → all match
