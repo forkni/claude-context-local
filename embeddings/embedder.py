@@ -41,8 +41,20 @@ FRAGMENTATION_OVERHEAD = 0.82  # 1.0 - 0.18 = 82% usable VRAM, 18% fragmentation
 # Activation memory costs per batch item (GB) based on model size tier
 # Larger models have deeper layer stacks → more activation memory per item
 GB_PER_ITEM_LARGE_MODEL = 0.40  # ~400MB per item (e.g., Qwen3-4B: 36 layers)
-GB_PER_ITEM_MEDIUM_MODEL = 0.08  # ~80MB per item (e.g., BGE-M3: ~12 layers)
-GB_PER_ITEM_SMALL_MODEL = 0.04  # ~40MB per item (e.g., CodeRankEmbed: ~6 layers)
+GB_PER_ITEM_MEDIUM_MODEL = (
+    0.08  # ~80MB per item (e.g., BGE-M3, CodeRankEmbed: ~12 layers)
+)
+GB_PER_ITEM_SMALL_MODEL = 0.04  # ~40MB per item (e.g., GTE-ModernBERT: ~6 layers)
+
+# Model-specific activation cost overrides (GB per batch item)
+# For models whose VRAM weight doesn't reflect their actual activation memory.
+# Empirically measured via GPU monitoring during batch embedding.
+MODEL_ACTIVATION_COST_OVERRIDES: dict[str, float] = {
+    # CodeRankEmbed: 137M params, NomicBERT arch, 8192 context, ~12 layers
+    # Weight is only 0.52GB (bf16) but activation memory is 0.19-0.32 GB/item
+    # due to long context (8192 tokens) and full BERT-base layer stack
+    "nomic-ai/CodeRankEmbed": 0.25,  # Conservative estimate between observed 0.19-0.32
+}
 
 
 # Configure PyTorch CUDA allocator BEFORE any torch imports
@@ -148,8 +160,9 @@ def calculate_optimal_batch_size(
 
     Activation Cost Tiers (empirically derived):
     - Large models (≥6GB): 0.40 GB/item (e.g., Qwen3-4B with 36 layers)
-    - Medium models (2-6GB): 0.08 GB/item (e.g., BGE-M3 with ~12 layers)
-    - Small models (<2GB): 0.04 GB/item (e.g., CodeRankEmbed with ~6 layers)
+    - Medium models (≥0.5GB): 0.08 GB/item (e.g., BGE-M3 with ~12 layers)
+    - Small models (<0.5GB): 0.04 GB/item (e.g., GTE-ModernBERT with ~6 layers)
+    - Model overrides: Use MODEL_ACTIVATION_COST_OVERRIDES for special cases
 
     Target VRAM utilization: 80% of available memory (20% headroom for CUDA overhead)
 
@@ -198,17 +211,24 @@ def calculate_optimal_batch_size(
         # Target VRAM for activations (leave headroom for CUDA overhead + fragmentation)
         target_activation_gb = available_gb * memory_fraction * fragmentation_overhead
 
+        # Check for model-specific activation cost overrides first
+        # Some models have activation memory that doesn't correlate with their weight VRAM
+        # (e.g., CodeRankEmbed: small weight but long context → high activation memory)
+        override_cost = MODEL_ACTIVATION_COST_OVERRIDES.get(model_name)
+        if override_cost is not None:
+            gb_per_item = override_cost
+            model_tier = "override"
         # Determine activation cost per batch item based on model size
         # Larger models have deeper layer stacks → more activation memory per item
-        if model_vram_gb >= 6:  # Large models (e.g., Qwen3-4B: 7.5GB, 36 layers)
+        elif model_vram_gb >= 6:  # Large models (e.g., Qwen3-4B: 7.5GB, 36 layers)
             gb_per_item = GB_PER_ITEM_LARGE_MODEL
             model_tier = "large"
         elif (
-            model_vram_gb >= 0.8
+            model_vram_gb >= 0.5
         ):  # Medium models (e.g., BGE-M3: 1.07GB bf16, ~12 layers)
             gb_per_item = GB_PER_ITEM_MEDIUM_MODEL
             model_tier = "medium"
-        else:  # Small models (e.g., CodeRankEmbed: 0.5GB, GTE-ModernBERT: 0.29GB, ~6 layers)
+        else:  # Small models (e.g., GTE-ModernBERT: 0.29GB, ~6 layers)
             gb_per_item = GB_PER_ITEM_SMALL_MODEL
             model_tier = "small"
 
@@ -840,11 +860,15 @@ class CodeEmbedder:
                         model_vram_mb = self._model_vram_usage.get(self.model_name, 0.0)
                         model_vram_gb = model_vram_mb / 1024.0
 
+                # Derive memory_fraction from vram_limit_fraction to maintain consistent safety margin
+                # Target ~81% of hard VRAM ceiling for batch sizing (0.8125 ratio)
+                memory_fraction = config.performance.vram_limit_fraction * 0.8125
+
                 batch_size = calculate_optimal_batch_size(
                     embedding_dim=config.embedding.dimension,
                     min_batch=config.performance.dynamic_batch_min,
                     max_batch=config.performance.dynamic_batch_max,
-                    memory_fraction=config.performance.gpu_memory_threshold,
+                    memory_fraction=memory_fraction,
                     model_vram_gb=model_vram_gb,
                     model_name=self.model_name,
                 )

@@ -228,7 +228,6 @@ class PerformanceConfig:
 
     # GPU Configuration
     prefer_gpu: bool = True
-    gpu_memory_threshold: float = 0.65  # Conservative for fragmentation headroom
     vram_limit_fraction: float = 0.80  # Hard VRAM ceiling (80% of dedicated)
     allow_ram_fallback: bool = (
         False  # Allow spillover to system RAM (slower but reliable)
@@ -495,7 +494,6 @@ class SearchConfig:
                 "max_chunking_workers": self.performance.max_chunking_workers,
                 "enable_entity_tracking": self.performance.enable_entity_tracking,
                 "prefer_gpu": self.performance.prefer_gpu,
-                "gpu_memory_threshold": self.performance.gpu_memory_threshold,
                 "vram_limit_fraction": self.performance.vram_limit_fraction,
                 "allow_ram_fallback": self.performance.allow_ram_fallback,
                 "enable_fp16": self.performance.enable_fp16,
@@ -655,7 +653,6 @@ class SearchConfig:
                     "enable_entity_tracking", False
                 ),
                 prefer_gpu=performance_data.get("prefer_gpu", True),
-                gpu_memory_threshold=performance_data.get("gpu_memory_threshold", 0.8),
                 vram_limit_fraction=performance_data.get("vram_limit_fraction", 0.80),
                 allow_ram_fallback=performance_data.get(
                     "allow_ram_fallback",
@@ -808,7 +805,6 @@ class SearchConfig:
                 max_chunking_workers=data.get("max_chunking_workers", 4),
                 enable_entity_tracking=data.get("enable_entity_tracking", False),
                 prefer_gpu=data.get("prefer_gpu", True),
-                gpu_memory_threshold=data.get("gpu_memory_threshold", 0.8),
                 enable_fp16=data.get("enable_fp16", True),
                 prefer_bf16=data.get("prefer_bf16", True),
                 enable_dynamic_batch_size=data.get("enable_dynamic_batch_size", True),
@@ -990,7 +986,6 @@ class SearchConfigManager:
                 self._bool_from_env,
             ),
             "CLAUDE_PREFER_GPU": ("prefer_gpu", self._bool_from_env),
-            "CLAUDE_GPU_THRESHOLD": ("gpu_memory_threshold", float),
             "CLAUDE_ENABLE_FP16": ("enable_fp16", self._bool_from_env),
             "CLAUDE_PREFER_BF16": ("prefer_bf16", self._bool_from_env),
             "CLAUDE_DYNAMIC_BATCH_ENABLED": (
