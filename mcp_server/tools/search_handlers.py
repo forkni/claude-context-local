@@ -208,7 +208,7 @@ def _route_query_to_model(
 
 def _check_auto_reindex(
     project_path: str, selected_model_key: str | None, max_age_minutes: int
-) -> bool:
+) -> tuple[bool, str | None]:
     """Check if auto-reindex is needed and perform if necessary.
 
     Args:
@@ -217,7 +217,9 @@ def _check_auto_reindex(
         max_age_minutes: Maximum age of index before reindex
 
     Returns:
-        bool: True if reindex was performed
+        Tuple of (reindexed: bool, stored_model_key: str | None)
+        - reindexed: True if reindex was performed
+        - stored_model_key: The model key from project_info.json (for cache consistency)
     """
     # Load filters from project_info.json to ensure consistent filtering
     import json
@@ -307,7 +309,9 @@ def _check_auto_reindex(
             project_path, max_age_minutes=max_age_minutes
         )
 
-    return reindex_result.files_modified > 0 or reindex_result.files_added > 0
+    reindexed = reindex_result.files_modified > 0 or reindex_result.files_added > 0
+    # Return stored model key for searcher cache consistency
+    return reindexed, model_key_for_embedder
 
 
 def _get_index_manager_from_searcher(searcher) -> CodeIndexManager | None:
@@ -726,9 +730,10 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
 
     # Check and perform auto-reindex if index is stale
     current_project = get_state().current_project
+    stored_model_key = None  # Track for searcher cache consistency
     if auto_reindex and current_project:
         try:
-            reindexed = _check_auto_reindex(
+            reindexed, stored_model_key = _check_auto_reindex(
                 current_project, selected_model_key, max_age_minutes
             )
             if reindexed:
@@ -746,9 +751,19 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
                 "index_dimension": e.index_dim,
             }
 
-    # Execute search with selected model index
+    # Use stored model key if available (preserves searcher cache across routing changes)
+    effective_search_model = (
+        stored_model_key if stored_model_key else selected_model_key
+    )
+    if stored_model_key and stored_model_key != selected_model_key:
+        logger.info(
+            f"[SEARCH] Using stored index model '{stored_model_key}' instead of "
+            f"routed model '{selected_model_key}' to preserve searcher cache"
+        )
+
+    # Execute search with stored model index (preserves cache)
     try:
-        searcher = get_searcher(model_key=selected_model_key)
+        searcher = get_searcher(model_key=effective_search_model)
     except DimensionMismatchError as e:
         return {
             "error": "Dimension mismatch",

@@ -1525,15 +1525,21 @@ if "!reranker_choice!"=="4" (
     echo === Select Reranker Model ===
     echo.
     echo   1. BGE Reranker ^(BAAI/bge-reranker-v2-m3^)
-    echo      Full quality, ~1.5GB VRAM - for 10GB+ GPUs
+    echo      Full quality, ~1.5GB VRAM - discriminative cross-encoder
     echo.
     echo   2. GTE Reranker ^(Alibaba-NLP/gte-reranker-modernbert-base^)
     echo      Lightweight, ~0.3GB VRAM - for 8GB GPUs
     echo.
+    echo   3. Qwen3 Reranker ^(Qwen/Qwen3-Reranker-0.6B^)
+    echo      Generative LLM reranker, ~1.5GB VRAM - +8.7 pts over BGE
+    echo.
+    echo   4. Jina Reranker v3 ^(jinaai/jina-reranker-v3^) [NEW]
+    echo      Code-optimized listwise, ~1.5GB VRAM - CoIR 70.64
+    echo.
     echo   0. Cancel
     echo.
     set "model_sel="
-    set /p model_sel="Select model (0-2): "
+    set /p model_sel="Select model (0-4): "
 
     if "!model_sel!"=="1" (
         echo.
@@ -1550,6 +1556,28 @@ if "!reranker_choice!"=="4" (
         echo.
         echo [INFO] Setting reranker to GTE...
         ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.model_name = 'Alibaba-NLP/gte-reranker-modernbert-base'; mgr.save_config(cfg); print('[OK] Reranker set to GTE (gte-reranker-modernbert-base)')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Failed to save configuration
+        ) else (
+            REM Notify running MCP server to reload config
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+    if "!model_sel!"=="3" (
+        echo.
+        echo [INFO] Setting reranker to Qwen3 Generative...
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.model_name = 'Qwen/Qwen3-Reranker-0.6B'; mgr.save_config(cfg); print('[OK] Reranker set to Qwen3 Generative (Qwen3-Reranker-0.6B)')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Failed to save configuration
+        ) else (
+            REM Notify running MCP server to reload config
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+    if "!model_sel!"=="4" (
+        echo.
+        echo [INFO] Setting reranker to Jina v3...
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.model_name = 'jinaai/jina-reranker-v3'; mgr.save_config(cfg); print('[OK] Reranker set to Jina v3 (jina-reranker-v3)')" 2>nul
         if errorlevel 1 (
             echo [ERROR] Failed to save configuration
         ) else (

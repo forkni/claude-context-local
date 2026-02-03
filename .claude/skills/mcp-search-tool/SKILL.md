@@ -1,6 +1,6 @@
 ---
 name: mcp-search-tool
-description: MCP semantic search instructions. ON ACTIVATION: Acknowledge and wait. Apply rules to all code searches.
+description: MCP semantic search workflow. Results are ranked candidates — scan top-4, don't blindly trust rank-1. Acknowledge on load, apply to all searches.
 ---
 
 # MCP Search Tool Skill
@@ -11,7 +11,7 @@ description: MCP semantic search instructions. ON ACTIVATION: Acknowledge and wa
 
 **When this skill loads**:
 
-1. Acknowledge: "MCP Search skill active. Ready to use semantic search for code exploration."
+1. Acknowledge: "MCP Search skill active. Results are ranked candidates — I'll scan all results, not just rank-1."
 2. Wait for the user's actual task
 3. Apply the guidance below to all subsequent code search operations
 
@@ -22,6 +22,36 @@ description: MCP semantic search instructions. ON ACTIVATION: Acknowledge and wa
 ## Purpose
 
 Ensures all MCP semantic search operations follow correct workflows for accurate, relevant results with maximum token efficiency (40-45% savings). Enforces project context validation before searches and applies optimal search configuration.
+
+## ⚠️ Critical: Search Results Are Candidates, Not Answers
+
+MCP search returns **ranked candidates**, not definitive answers. The correct result is reliably present in the top-4 results (Recall@4 = 1.00), but it is NOT always ranked first (Rank-1 accuracy ≈ 69%).
+
+**What this means for you:**
+
+1. **SCAN all returned results** (default k=4) — don't stop at rank-1
+2. **EVALUATE relevance** — read chunk names, file paths, and code snippets
+3. **The answer is IN the results** — if you need to find X, it's there, but possibly at rank 2-4
+4. **Module/summary chunks** may appear — these provide overview context but may not be the specific implementation you need
+
+**Result Interpretation Workflow:**
+
+1. Run `search_code()` with appropriate query and filters
+2. **Scan ALL k results** — read each chunk_id and code snippet
+3. **Identify the best match** based on your actual need (not just highest score)
+4. If the best match is a module/summary chunk but you need specific code, look at lower-ranked results
+5. Use `chunk_id` from the best match for follow-up tools (`find_connections`, `find_similar_code`)
+
+**When rank-1 is reliable (≈90% MRR):**
+
+- Small function discovery: "get X", "validate Y", "normalize Z"
+- Exact symbol lookup via `chunk_id` parameter
+
+**When you MUST scan all results (≈67-73% MRR):**
+
+- Class overview queries: "what does X do", "how does X work"
+- Sibling context queries: "encode and decode", "save and load"
+- Queries where module-level summaries may surface alongside implementations
 
 ## 🎯 QUICK START: Which Tool to Use?
 
@@ -133,6 +163,13 @@ search_code("token merging", ego_graph_enabled=True, ego_graph_k_hops=2)
 **Performance**: Hybrid 68-105ms | Semantic 62-94ms | BM25 3-8ms | Auto 52-57ms
 
 **Result Fields**: `chunk_id`, `kind`, `score`, `blended_score`, `centrality`, `source` (always) | `complexity_score`, `graph`, `reranker_score`, `summary` (optional)
+
+**Result Quality Expectations:**
+
+- **Recall@4 = 1.00**: The relevant result IS in the top 4 — guaranteed for well-formed queries
+- **Rank-1 accuracy ≈ 69%**: The best result is first ~70% of the time
+- **MRR ≈ 0.81**: On average, the best result is near position 1-2
+- **Action**: Always scan all k results before selecting the one to use or read
 
 ### 2. find_connections()
 
@@ -299,6 +336,7 @@ Both enabled by default, controlled via `configure_chunking(enable_file_summarie
 |-------|----------|
 | **No results** | Check project context: `list_projects()`, `switch_project()` if needed. Verify index: `get_index_status()`. Re-index if stale: `index_directory(project_path)` |
 | **Bad results** | Try different search mode (hybrid → semantic → BM25). Adjust weights: `configure_search_mode("hybrid", 0.7, 0.3)` for exact matching. Use filters: `file_pattern`, `chunk_type`. Increase k: `k=10` |
+| **Wrong result at rank-1** | Scan all k results — answer is likely at rank 2-4. Module/summary chunks may outrank specific implementations. Use `chunk_type` filter to exclude module chunks if needed. |
 | **Too slow** | Use BM25 mode for exact symbols (3-8ms). Check GPU: `get_memory_status()`. Cleanup: `cleanup_resources()`. Reduce k: `k=3` |
 | **Memory issues** | Monitor: `get_memory_status()`. Cleanup: `cleanup_resources()`. Switch to smaller model: `switch_embedding_model("google/embeddinggemma-300m")` |
 
