@@ -16,8 +16,7 @@ from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
 # Note: "qwen3" now uses 0.6B for all tiers to prevent OOM (5.8% quality vs 4B for 6.8x less VRAM)
 MODEL_POOL_CONFIG = {
     "qwen3": "Qwen/Qwen3-Embedding-0.6B",  # Use 0.6B for all tiers to prevent OOM
-    "bge_m3": "BAAI/bge-m3",
-    "coderankembed": "nomic-ai/CodeRankEmbed",
+    "bge_code": "BAAI/bge-code-v1",  # SOTA Code Retrieval (CoIR 81.77)
 }
 
 # Lightweight pool configuration for 8GB VRAM GPUs
@@ -42,6 +41,14 @@ MODEL_REGISTRY = {
         "description": "Recommended upgrade, hybrid search support",
         "vram_gb": "1-1.5GB",  # Updated from "3-4GB" (actual measured: 1.07GB)
         "fallback_batch_size": 256,  # Used when dynamic sizing disabled
+    },
+    "BAAI/bge-code-v1": {
+        "dimension": 1536,
+        "max_context": 4096,  # 4k context
+        "description": "SOTA Code Retrieval (CoIR 81.77), 2B params, Qwen2-based",
+        "vram_gb": "4GB",  # ~4GB in FP16
+        "fallback_batch_size": 32,  # Conservative batch size for 2B model
+        "trust_remote_code": False,
     },
     "Qwen/Qwen3-Embedding-0.6B": {
         "dimension": 1024,
@@ -189,8 +196,8 @@ class SearchModeConfig:
     enable_hybrid: bool = True
 
     # Hybrid Search Weights
-    bm25_weight: float = 0.4
-    dense_weight: float = 0.6
+    bm25_weight: float = 0.5
+    dense_weight: float = 0.5
 
     # BM25 Configuration
     bm25_k_parameter: int = 100
@@ -268,7 +275,7 @@ class RoutingConfig:
     """Multi-model routing settings (3 fields)."""
 
     multi_model_enabled: bool = True  # Enable intelligent query routing across models
-    default_model: str = "bge_m3"  # Default model key for routing (most balanced)
+    default_model: str = "bge_code"  # Default model key for routing (most balanced)
     multi_model_pool: Optional[str] = (
         None  # Pool type: "full", "lightweight-speed", or "lightweight-accuracy"
     )
@@ -683,7 +690,7 @@ class SearchConfig:
 
             routing = RoutingConfig(
                 multi_model_enabled=routing_data.get("multi_model_enabled", True),
-                default_model=routing_data.get("default_model", "bge_m3"),
+                default_model=routing_data.get("default_model", "bge_code"),
                 multi_model_pool=routing_data.get("multi_model_pool", None),
             )
 
@@ -824,7 +831,7 @@ class SearchConfig:
 
             routing = RoutingConfig(
                 multi_model_enabled=data.get("multi_model_enabled", True),
-                default_model=data.get("routing_default_model", "bge_m3"),
+                default_model=data.get("routing_default_model", "bge_code"),
                 multi_model_pool=data.get("routing_multi_model_pool", None),
             )
 

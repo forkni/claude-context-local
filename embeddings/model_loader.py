@@ -348,14 +348,16 @@ class ModelLoader:
 
         try:
             # Build constructor kwargs
+            model_config = self._get_model_config()
+            trust_remote_code = model_config.get("trust_remote_code", True)
+            
             constructor_kwargs = {
                 "cache_folder": self.cache_dir,
                 "device": resolved_device,
-                "trust_remote_code": True,  # Required for some models like Qodo
+                "trust_remote_code": trust_remote_code,
             }
 
             # Add Matryoshka Representation Learning (MRL) support
-            model_config = self._get_model_config()
             truncate_dim = model_config.get("truncate_dim")
             if truncate_dim is not None:
                 constructor_kwargs["truncate_dim"] = truncate_dim
@@ -413,14 +415,17 @@ class ModelLoader:
 
                 try:
                     # Build constructor kwargs for fallback
+                    # Ensure model_config is available (it might be defined in try block)
+                    model_config = self._get_model_config()
+                    trust_remote_code = model_config.get("trust_remote_code", True)
+
                     fallback_kwargs = {
                         "cache_folder": self.cache_dir,
                         "device": resolved_device,
-                        "trust_remote_code": True,
+                        "trust_remote_code": trust_remote_code,
                     }
 
                     # Preserve truncate_dim for MRL support
-                    model_config = self._get_model_config()
                     truncate_dim = model_config.get("truncate_dim")
                     if truncate_dim is not None:
                         fallback_kwargs["truncate_dim"] = truncate_dim

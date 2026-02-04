@@ -10,7 +10,7 @@
 # Full Model Pool Configuration (12GB+ VRAM GPUs)
 # ============================================================================
 # Used when multi_model_pool="full" (default)
-# Models: BGE-M3, Qwen3, CodeRankEmbed
+# Models: BGE-Code-v1, Qwen3, CodeRankEmbed
 
 full_pool:
   # Confidence threshold for routing (below this, use default model)
@@ -20,17 +20,17 @@ full_pool:
   confidence_threshold: 0.05
 
   # Default fallback model (most balanced)
-  default_model: bge_m3
+  default_model: bge_code
 
   # Explicit precedence for tie-breaking
   # When scores are within 0.01 margin, use this order:
   # 1. CodeRankEmbed (specialized algorithms)
   # 2. Qwen3 (implementation logic)
-  # 3. BGE-M3 (workflow/config)
+  # 3. BGE-Code (workflow/config/code)
   precedence:
     - coderankembed
     - qwen3
-    - bge_m3
+    - bge_code
 
   # Model-specific routing rules
   models:
@@ -194,9 +194,9 @@ full_pool:
         - parsing
         - parse
 
-    bge_m3:
+    bge_code:
       weight: 1.0
-      description: "Workflow and configuration queries"
+      description: "Workflow, configuration, and SOTA code retrieval"
       keywords:
         # Workflow & configuration (3/8 wins, most consistent)
         - workflow

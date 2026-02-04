@@ -424,6 +424,10 @@ class JinaRerankerV3:
             content = candidate.metadata.get("content_preview", "")
             if not content:
                 content = candidate.chunk_id
+            
+            # Prepend chunk_id to provide structural context (file path, symbol name)
+            # This helps distinguish methods from their containing classes
+            content = f"ID: {candidate.chunk_id}\n{content}"
             documents.append(content)
 
         # Call Jina's native rerank method (listwise)

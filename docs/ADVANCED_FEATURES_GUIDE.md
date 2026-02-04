@@ -174,7 +174,7 @@ Keywords: "merkle", "rrf", "reranking", "tree structure", "hybrid search", "rank
 **Improvements**:
 
 - **Lowered confidence threshold**: 0.10 → 0.05 (more sensitive routing)
-- **Added 24 single-word keyword variants** across all 3 models
+- **Added 24 single-word keyword variants** across all models in the pool
 - **Natural queries** like "error handling" now trigger routing effectively
 
 **Before vs After**:
@@ -229,11 +229,11 @@ Keywords: "merkle", "rrf", "reranking", "tree structure", "hybrid search", "rank
 
 - **VRAM at startup**: 0 MB (models load on first search)
 - **First search delay**: 5-10s one-time model loading
-- **After first search**: 5.3 GB VRAM (all 3 models loaded)
+- **After first search**: 6.3 GB VRAM (all models in the pool loaded)
 
-**Loaded State** (all 3 models in memory):
+**Loaded State** (all models in the pool in memory):
 
-- **Total VRAM**: 5.3 GB (on RTX 4090 with 25.8 GB capacity)
+- **Total VRAM**: 6.3 GB (on RTX 4090 with 25.8 GB capacity)
 - **Qwen3-0.6B**: ~2.4 GB
 - **BGE-M3**: ~2.3 GB (additional)
 - **CodeRankEmbed**: ~0.6 GB (additional)
@@ -265,7 +265,7 @@ Keywords: "merkle", "rrf", "reranking", "tree structure", "hybrid search", "rank
 - **Startup**: 0 MB VRAM, 3-5s server start (lazy loading)
 - **First search**: 8-15s total (5-10s model loading + 3-5s search)
 - **Subsequent searches**: 3-5s (models stay loaded)
-- **Model load time** (when needed): 5-10 seconds for all 3 models
+- **Model load time** (when needed): 5-10 seconds for all models in the pool
 
 **Expected Quality Improvements** (vs single BGE-M3):
 
@@ -380,11 +380,10 @@ MODEL_POOL_CONFIG = {
 
 ### Overview
 
-When multi-model query routing is enabled (`CLAUDE_MULTI_MODEL_ENABLED=true`), project indexing automatically updates indices for **all 3 models**:
+When multi-model query routing is enabled (`CLAUDE_MULTI_MODEL_ENABLED=true`), project indexing automatically updates indices for **all models in the pool**:
 
-- **Qwen3-0.6B** (1024d) - Implementation & algorithms
-- **BGE-M3** (1024d) - Workflow & configuration
-- **CodeRankEmbed** (768d) - Specialized algorithms
+- **Qwen3-0.6B** (1024d) - Logic specialist: action-oriented queries and algorithms
+- **BGE-Code-v1** (1536d) - Semantic specialist: workflow and architectural reasoning
 
 ### How It Works
 
@@ -395,15 +394,15 @@ When multi-model query routing is enabled (`CLAUDE_MULTI_MODEL_ENABLED=true`), p
 3. Maintains per-model index isolation (fresh HybridSearcher instances per model)
 4. Restores original model after completion
 
-**Implementation**: `mcp_server/tool_handlers.py:728-759` - Creates fresh indexer instances bypassing global caches to ensure correct storage paths.
+**Implementation**: `mcp_server/tool_handlers.py` - Creates fresh indexer instances bypassing global caches to ensure correct storage paths.
 
 **Index Storage**:
 
 ```
 ~/.claude_code_search/projects/
-├── myproject_abc123_bge-m3_1024d/
+├── myproject_abc123_bge-code_1536d/
 ├── myproject_abc123_qwen3-0.6b_1024d/
-└── myproject_abc123_coderankembed_768d/
+└── ...
 ```
 
 ### Performance
@@ -418,7 +417,7 @@ When multi-model query routing is enabled (`CLAUDE_MULTI_MODEL_ENABLED=true`), p
 
 ```bash
 /index_directory "C:\Projects\MyProject"
-# Automatically indexes with all 3 models
+# Automatically indexes with all models in the pool
 ```
 
 **Explicit Control** (override behavior):
@@ -1091,7 +1090,7 @@ The system automatically:
 |-------|------------|-------|
 | **Startup** | 0 MB | Lazy loading enabled, models not loaded |
 | **First search** | 8-15s latency | 5-10s one-time model loading + 3-5s search |
-| **After first search** | ~5.3 GB | All 3 models loaded for multi-model routing |
+| **After first search** | ~6.3 GB | All 3 models loaded for multi-model routing |
 | **Subsequent searches** | 3-5s latency | Models cached in memory (fast) |
 | **After cleanup** | 0 MB | `/cleanup_resources` frees all VRAM |
 

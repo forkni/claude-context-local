@@ -1093,7 +1093,7 @@ REM Search Configuration Functions
 echo.
 echo [INFO] Current Search Configuration:
 if exist ".venv\Scripts\python.exe" (
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = config.routing.multi_model_enabled; pool = config.routing.multi_model_pool or 'full'; model_display = f'BGE-M3 + gte-modernbert ({pool})' if multi_enabled and pool == 'lightweight-speed' else f'BGE-M3 + Qwen3 + CodeRankEmbed ({pool})' if multi_enabled else f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print('    Multi-Model Routing:', 'Enabled' if multi_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print('    File Summaries:', 'Enabled' if config.chunking.enable_file_summaries else 'Disabled'); print('    Community Summaries:', 'Enabled' if config.chunking.enable_community_summaries else 'Disabled'); print(); print('  Chunking Settings:'); print('    Community Detection:', 'Enabled' if config.chunking.enable_community_detection else 'Disabled'); print('    Community Merge (full re-index only):', 'Enabled' if config.chunking.enable_community_merge else 'Disabled'); print(f'    Community Resolution: {config.chunking.community_resolution}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'    Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(f'    Split Size Method: {config.chunking.split_size_method}'); print(f'    Max Split Chars: {config.chunking.max_split_chars}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    RAM Fallback: {\"On\" if config.performance.allow_ram_fallback else \"Off\"}'); print(); print('  Output Format:', config.output.format)"
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = config.routing.multi_model_enabled; pool = config.routing.multi_model_pool or 'full'; model_display = f'BGE-M3 + gte-modernbert ({pool})' if multi_enabled and pool == 'lightweight-speed' else f'BGE-Code-v1 + Qwen3 ({pool})' if multi_enabled else f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print('    Multi-Model Routing:', 'Enabled' if multi_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print('    File Summaries:', 'Enabled' if config.chunking.enable_file_summaries else 'Disabled'); print('    Community Summaries:', 'Enabled' if config.chunking.enable_community_summaries else 'Disabled'); print(); print('  Chunking Settings:'); print('    Community Detection:', 'Enabled' if config.chunking.enable_community_detection else 'Disabled'); print('    Community Merge (full re-index only):', 'Enabled' if config.chunking.enable_community_merge else 'Disabled'); print(f'    Community Resolution: {config.chunking.community_resolution}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'    Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(f'    Split Size Method: {config.chunking.split_size_method}'); print(f'    Max Split Chars: {config.chunking.max_split_chars}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    RAM Fallback: {\"On\" if config.performance.allow_ram_fallback else \"Off\"}'); print(); print('  Output Format:', config.output.format)"
     if "!ERRORLEVEL!" neq "0" (
         echo Error loading configuration
         echo Using defaults: hybrid mode, BM25=0.4, Dense=0.6
@@ -1213,8 +1213,8 @@ echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+^)
 echo   4. Qwen3-0.6B ^(1024d, 2.3GB^)
 echo      High efficiency, best value/performance
 echo.
-echo   5. Full Multi-Model Routing ^(5.3GB^)
-echo      BGE-M3 + Qwen3 + CodeRankEmbed, 100%% accuracy
+echo   5. Full Multi-Model Routing ^(6.3GB^)
+echo      BGE-Code-v1 + Qwen3, smart routing
 echo.
 echo   0. Back to Search Configuration
 echo.
@@ -1262,13 +1262,12 @@ echo.
 echo === Enable Multi-Model Routing ===
 echo.
 echo This will enable intelligent query routing across:
-echo   - BGE-M3 ^(1024d, 1-1.5GB^)
+echo   - BGE-Code-v1 ^(1536d, ~4GB^)
 echo   - Qwen3-0.6B ^(1024d, 2.3GB^)
-echo   - CodeRankEmbed ^(768d, ~2GB^)
 echo.
-echo Total VRAM: 5.3GB
+echo Total VRAM: 6.3GB
 echo Routing Accuracy: 100%% ^(validated^)
-echo Performance: 15-25%% quality improvement on complex queries
+echo Performance: SOTA Code Retrieval ^(CoIR 81.77^)
 echo.
 echo [WARNING] Requires 10+ GB VRAM. NOT recommended for 8GB GPUs.
 echo For 8GB GPUs, choose option 1 ^(BGE-M3^) instead.
@@ -1277,7 +1276,7 @@ set "confirm_multi="
 set /p confirm_multi="Enable multi-model routing? (y/N): "
 if /i "!confirm_multi!"=="y" (
     REM Persist to config file via Python
-    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.routing.multi_model_enabled = True; cfg.routing.multi_model_pool = 'full'; cfg.reranker.enabled = True; cfg.reranker.model_name = 'BAAI/bge-reranker-v2-m3'; mgr.save_config(cfg); print('[OK] Full multi-model routing enabled and saved to config')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.routing.multi_model_enabled = True; cfg.routing.multi_model_pool = 'full'; cfg.reranker.enabled = True; cfg.reranker.model_name = 'jinaai/jina-reranker-v3'; mgr.save_config(cfg); print('[OK] Full multi-model routing enabled and saved to config')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save to config file
         set "CLAUDE_MULTI_MODEL_ENABLED=true"
@@ -1285,9 +1284,9 @@ if /i "!confirm_multi!"=="y" (
     ) else (
         echo.
         echo [OK] Full multi-model configuration saved
-        echo [INFO] Pool: BGE-M3 + Qwen3 + CodeRankEmbed
-        echo [INFO] Reranker: bge-reranker-v2-m3
-        echo [INFO] Total VRAM: ~6.8GB
+        echo [INFO] Pool: BGE-Code-v1 + Qwen3
+        echo [INFO] Reranker: jina-reranker-v3
+        echo [INFO] Total VRAM: ~7.8GB
         echo.
         echo [WARNING] Existing indexes need to be rebuilt for multi-model pool
         echo [INFO] Next time you index a project, it will use the full pool
@@ -1852,8 +1851,8 @@ echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+^)
 echo   4. Qwen3-0.6B ^(1024d, 2.3GB^)
 echo      High efficiency, best value/performance
 echo.
-echo   5. Full Multi-Model Routing ^(5.3GB^)
-echo      BGE-M3 + Qwen3 + CodeRankEmbed, 100%% accuracy
+echo   5. Full Multi-Model Routing ^(6.3GB^)
+echo      BGE-Code-v1 + Qwen3, smart routing
 echo.
 echo   0. Back to Main Menu
 echo.
@@ -2525,17 +2524,7 @@ REM System Status Functions
 :show_system_status
 echo [Runtime Status]
 if exist ".venv\Scripts\python.exe" (
-    REM Display model status
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = cfg.routing.multi_model_enabled; pool = cfg.routing.multi_model_pool or 'full'; print('Model: [MULTI] BGE-M3 + gte-modernbert (1.65GB total)' if pool == 'lightweight-speed' else 'Model: [MULTI] BGE-M3 + Qwen3 + CodeRankEmbed (5.3GB total)') if multi_enabled else print(f'Model: [SINGLE] {model_short} ({dim}d, {vram})'); print(f'       Active routing - {pool} pool') if multi_enabled else print('Tip: Press M for Quick Model Switch')" 2>nul
-    REM Display reranker status
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); model = cfg.reranker.model_name.split('/')[-1] if cfg.reranker.enabled else None; print(f'       Reranker: {model} (enabled)' if model else '       Reranker: Disabled')" 2>nul
-    echo.
-    REM Display RAM fallback status
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); val = cfg.performance.allow_ram_fallback; print(f'RAM Fallback: {\"On\" if val else \"Off\"}')" 2>nul
-    REM Display output format
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print(f'Output Format: {cfg.output.format}')" 2>nul
-    REM Display current project using helper script
-    ".\.venv\Scripts\python.exe" scripts\get_current_project.py 2>nul
+    ".\.venv\Scripts\python.exe" scripts\get_system_status_fast.py 2>nul
 ) else (
     echo Runtime: Python | Status: Not installed
 )

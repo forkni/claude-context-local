@@ -65,7 +65,7 @@ VRAM_TIERS: list[VRAMTier] = [
         recommended_model="Qwen/Qwen3-Embedding-0.6B",  # Keep 0.6B for OOM prevention
         multi_model_enabled=True,
         neural_reranking_enabled=True,
-        multi_model_pool="full",  # Full 3-model pool (5.3GB)
+        multi_model_pool="full",  # Full 3-model pool (6.8GB)
         reranker_model="full",  # Full bge-reranker-v2-m3 (1.5GB)
     ),
     VRAMTier(
@@ -75,7 +75,7 @@ VRAM_TIERS: list[VRAMTier] = [
         recommended_model="Qwen/Qwen3-Embedding-0.6B",  # Keep 0.6B for OOM prevention
         multi_model_enabled=True,
         neural_reranking_enabled=True,
-        multi_model_pool="full",  # Full 3-model pool (5.3GB)
+        multi_model_pool="full",  # Full 3-model pool (6.8GB)
         reranker_model="full",  # Full bge-reranker-v2-m3 (1.5GB)
     ),
 ]

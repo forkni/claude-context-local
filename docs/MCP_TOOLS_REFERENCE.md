@@ -1142,11 +1142,10 @@ def process_order(order: Order, payment: PaymentGateway):
 
 ### How It Works
 
-When multi-model mode is enabled, `index_directory` automatically indexes with **all 3 models** sequentially:
+When multi-model mode is enabled, `index_directory` automatically indexes with **all models in the pool** sequentially:
 
-1. **Qwen3-0.6B** (1024d) - Best for implementation & algorithms
-2. **BGE-M3** (1024d) - Best for workflow & configuration
-3. **CodeRankEmbed** (768d) - Best for specialized algorithms
+1. **Qwen3-0.6B** (1024d) - Logic specialist: action-oriented queries and algorithms
+2. **BGE-Code-v1** (1536d) - Semantic specialist: workflow and architectural reasoning
 
 ### Parameters
 
@@ -1155,7 +1154,7 @@ When multi-model mode is enabled, `index_directory` automatically indexes with *
 - `incremental` (boolean, default: true): Use incremental indexing if snapshot exists
 - `multi_model` (boolean, default: auto): Index for all models
   - `null` (default): Auto-detect from `CLAUDE_MULTI_MODEL_ENABLED`
-  - `true`: Force multi-model indexing (all 3 models)
+  - `true`: Force multi-model indexing (all models in the pool)
   - `false`: Force single-model indexing (current model only)
 
 ### Usage Examples
@@ -1164,7 +1163,7 @@ When multi-model mode is enabled, `index_directory` automatically indexes with *
 
 ```bash
 /index_directory "C:\Projects\MyProject"
-# Indexes with all 3 models automatically
+# Indexes with all models in the pool automatically
 ```
 
 **Explicit Control**:

@@ -117,7 +117,7 @@ def main():
         if pool_type == "lightweight-speed":
             print("Multi-Model: Enabled (BGE-M3 + gte-modernbert, 1.65GB)")
         else:
-            print("Multi-Model: Enabled (Qwen3, BGE-M3, CodeRankEmbed)")
+            print("Multi-Model: Enabled (Qwen3, BGE-Code)")
     else:
         print("Multi-Model: Disabled (single model only)")
     if include_dirs:

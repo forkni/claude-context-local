@@ -42,7 +42,7 @@ class ModelPoolManager:
                 )
                 return MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED
             elif pool_type == "full":
-                logger.info("Using full model pool from config (5.3GB total)")
+                logger.info("Using full model pool from config (6.8GB total)")
                 return MODEL_POOL_CONFIG
             # If None or unrecognized, fall through to env var / VRAM detection
         except (ImportError, AttributeError) as e:
@@ -55,7 +55,7 @@ class ModelPoolManager:
             logger.info("Using lightweight-speed model pool (1.65GB total)")
             return MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED
         elif pool_type == "full":
-            logger.info("Using full model pool (5.3GB total)")
+            logger.info("Using full model pool (6.8GB total)")
             return MODEL_POOL_CONFIG
 
         # Auto-detect based on VRAM tier
@@ -71,7 +71,7 @@ class ModelPoolManager:
                 )
                 return MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED
             elif tier.multi_model_pool == "full":
-                logger.info(f"VRAM tier '{tier.name}' → full model pool (5.3GB total)")
+                logger.info(f"VRAM tier '{tier.name}' → full model pool (6.8GB total)")
                 return MODEL_POOL_CONFIG
             else:
                 # Tier doesn't specify pool type (minimal tier, single-model)
@@ -341,7 +341,7 @@ def get_model_pool_manager() -> ModelPoolManager:
 
 # Backward-compatible module-level functions
 def initialize_model_pool(lazy_load: bool = True) -> None:
-    """Initialize multi-model pool with all 3 models.
+    """Initialize multi-model pool with all models in the pool.
 
     Backward-compatible wrapper for ModelPoolManager.initialize_pool().
     """

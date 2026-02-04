@@ -1,7 +1,7 @@
 {
   "embedding": {
-    "model_name": "BAAI/bge-m3",
-    "dimension": 1024,
+    "model_name": "BAAI/bge-code-v1",
+    "dimension": 1536,
     "batch_size": 128,
     "query_cache_size": 128,
     "enable_import_context": true,
@@ -11,10 +11,10 @@
     "enable_structural_header": true
   },
   "search_mode": {
-    "default_mode": "auto",
+    "default_mode": "hybrid",
     "enable_hybrid": true,
-    "bm25_weight": 0.6,
-    "dense_weight": 0.4,
+    "bm25_weight": 0.5,
+    "dense_weight": 0.5,
     "bm25_k_parameter": 100,
     "bm25_use_stopwords": true,
     "bm25_use_stemming": true,
@@ -50,7 +50,7 @@
   },
   "routing": {
     "multi_model_enabled": true,
-    "default_model": "bge_m3",
+    "default_model": "bge_code",
     "multi_model_pool": "full"
   },
   "intent": {

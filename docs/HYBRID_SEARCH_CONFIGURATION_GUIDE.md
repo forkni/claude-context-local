@@ -290,20 +290,19 @@ set CLAUDE_MULTI_MODEL_ENABLED=false
 | **BGE-M3** | Workflow, configuration | "configuration loading", "embedding workflow", "incremental indexing" | 37.5% (3/8) | ~2.3 GB |
 | **CodeRankEmbed** | Specialized algorithms | "Merkle tree detection", "RRF reranking" | 25.0% (2/8) | ~0.6 GB |
 
-**Total VRAM**: 5.3 GB for all 3 models (v0.5.17+ lazy loading)
+**Total VRAM**: 6.3 GB for all models in the pool (v0.5.17+ lazy loading)
 
 **Startup (lazy loading enabled)**:
 
 - **VRAM at startup**: 0 MB (models load on first search)
 - **First search**: 5-10s one-time model loading delay
-- **After first search**: 5.3 GB VRAM (all 3 models loaded)
+- **After first search**: 6.3 GB VRAM (all models in the pool loaded)
 
 **Loaded State Breakdown**:
 
 - **Qwen3-0.6B**: ~2.4 GB (1024d embeddings)
-- **BGE-M3**: ~2.3 GB (1024d embeddings)
-- **CodeRankEmbed**: ~0.6 GB (768d embeddings)
-- **Total**: 5.3 GB (vs 2.3 GB single-model)
+- **BGE-Code-v1**: ~3.9 GB (1536d embeddings)
+- **Total**: 6.3 GB (vs 3.9 GB single-model)
 
 **Memory Management**:
 
