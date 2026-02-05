@@ -37,9 +37,27 @@ jobs:
     outputs:
       available_labels: '${{ steps.get_labels.outputs.available_labels }}'
       triaged_issues: '${{ env.TRIAGED_ISSUES }}'
+      has_issues: '${{ steps.check_issues.outputs.has_issues }}'
     steps:
+      - name: 'Check if issues are enabled'
+        id: 'check_issues'
+        env:
+          GITHUB_REPOSITORY: '${{ github.repository }}'
+          GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN || github.token }}'
+        run: |-
+          echo '🔍 Checking if issues are enabled on this repository...'
+          HAS_ISSUES="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.has_issues')"
+          echo "has_issues=${HAS_ISSUES}" >> "${GITHUB_OUTPUT}"
+          if [ "${HAS_ISSUES}" != "true" ]; then
+            echo "⚠️ Issues are disabled on this repository. Skipping triage."
+          else
+            echo "✅ Issues are enabled. Proceeding with triage."
+          fi
+
       - name: 'Get repository labels'
         id: 'get_labels'
+        if: |-
+          ${{ steps.check_issues.outputs.has_issues == 'true' }}
         uses: 'actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd' # ratchet:actions/github-script@v8.0.0
         with:
           # NOTE: we intentionally do not use the minted token. The default
@@ -66,6 +84,8 @@ jobs:
 
       - name: 'Find untriaged issues'
         id: 'find_issues'
+        if: |-
+          ${{ steps.check_issues.outputs.has_issues == 'true' }}
         env:
           GITHUB_REPOSITORY: '${{ github.repository }}'
           GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN || github.token }}'
@@ -88,7 +108,7 @@ jobs:
       - name: 'Run Gemini Issue Analysis'
         id: 'gemini_issue_analysis'
         if: |-
-          ${{ steps.find_issues.outputs.issues_to_triage != '[]' }}
+          ${{ steps.check_issues.outputs.has_issues == 'true' && steps.find_issues.outputs.issues_to_triage != '[]' }}
         uses: 'google-github-actions/run-gemini-cli@v0' # ratchet:exclude
         env:
           GITHUB_TOKEN: '' # Do not pass any auth token here since this runs on untrusted inputs
@@ -134,6 +154,7 @@ jobs:
     needs:
       - 'triage'
     if: |-
+      needs.triage.outputs.has_issues == 'true' &&
       needs.triage.outputs.available_labels != '' &&
       needs.triage.outputs.available_labels != '[]' &&
       needs.triage.outputs.triaged_issues != '' &&
