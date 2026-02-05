@@ -1487,6 +1487,7 @@ set CLAUDE_QUERY_CACHE_SIZE=0
 ```
 
 **TTL Configuration** (v0.8.6+):
+
 - **Default**: 300s (5 minutes) - balances freshness vs performance
 - **Increase** (600-900s): Stable production, infrequent model changes
 - **Decrease** (60-120s): Development, frequent model switching

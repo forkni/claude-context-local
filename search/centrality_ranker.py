@@ -156,6 +156,7 @@ class CentralityRanker:
             return {}
 
         # Normalize to [0, 1] range
+        max_score = 0.0  # Initialize before conditional to avoid UnboundLocalError
         if raw_scores:
             max_score = max(raw_scores.values())
             if max_score > 0:
@@ -183,6 +184,9 @@ class CentralityRanker:
 
         Returns:
             Results with added "centrality" field
+
+        Note:
+            Mutates input result dicts in-place (adds "centrality" field).
         """
         centrality_scores = self._get_centrality_scores()
 
@@ -206,6 +210,9 @@ class CentralityRanker:
 
         Returns:
             Reranked results with "centrality" and "blended_score" fields
+
+        Note:
+            Mutates input result dicts in-place (adds "centrality", "blended_score" fields).
         """
         # First, annotate with centrality scores
         results = self.annotate(results)
@@ -326,7 +333,8 @@ class CentralityRanker:
                     "__repr__",
                     "__str__",
                 }
-                if name in lifecycle_methods:
+                terminal_name = name.split(".")[-1] if "." in name else name
+                if terminal_name in lifecycle_methods:
                     query_has_lifecycle_intent = any(
                         w in query_lower
                         for w in ("init", "enter", "exit", "del", "repr", "lifecycle")

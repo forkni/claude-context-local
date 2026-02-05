@@ -7,6 +7,7 @@ Provides NetworkX-based storage for code call graphs with JSON persistence.
 import heapq
 import json
 import logging
+from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -367,11 +368,11 @@ class CodeGraphStorage:
         # Choose BFS implementation based on edge_weights parameter
         if edge_weights is None:
             # Unweighted BFS (original behavior, backward compatible)
-            queue = [(normalized_chunk_id, 0)]
+            queue = deque([(normalized_chunk_id, 0)])
             visited = {normalized_chunk_id}
 
             while queue:
-                current_id, depth = queue.pop(0)
+                current_id, depth = queue.popleft()
 
                 if depth >= max_depth:
                     continue
@@ -427,12 +428,22 @@ class CodeGraphStorage:
             # Weighted BFS using priority queue (higher weight = higher priority)
             # Priority queue format: (-weight, counter, chunk_id, depth)
             # Use negative weight so heapq min-heap becomes max-heap for weights
+            # Mark visited on dequeue (not enqueue) for correct priority semantics
             counter = 0  # Tie-breaker for equal weights
             pq = [(0.0, counter, normalized_chunk_id, 0)]  # Start node has priority 0
-            visited = {normalized_chunk_id}
+            visited = set()
 
             while pq:
                 neg_weight, _, current_id, depth = heapq.heappop(pq)
+
+                # Skip if already processed via higher-priority path
+                if current_id in visited:
+                    continue
+                visited.add(current_id)
+
+                # Add to neighbors (except start node)
+                if current_id != normalized_chunk_id:
+                    neighbors.add(current_id)
 
                 if depth >= max_depth:
                     continue
@@ -453,9 +464,6 @@ class CodeGraphStorage:
                                 continue
 
                         if target not in visited:
-                            neighbors.add(target)
-                            visited.add(target)
-
                             # Get weight for this edge type (default 0.5 if not in dict)
                             weight = edge_weights.get(edge_type, 0.5)
                             counter += 1
@@ -484,9 +492,6 @@ class CodeGraphStorage:
                                 continue
 
                         if source not in visited:
-                            neighbors.add(source)
-                            visited.add(source)
-
                             # Get weight for the forward edge type (not reverse)
                             weight = edge_weights.get(edge_type, 0.5)
                             counter += 1

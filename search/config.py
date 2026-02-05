@@ -378,7 +378,7 @@ class EgoGraphConfig:
     # Weighted graph traversal
     edge_weights: Optional[dict[str, float]] = field(
         default_factory=lambda: DEFAULT_EDGE_WEIGHTS.copy()
-    )  # Use weighted BFS by default (calls > imports priority)
+    )  # Weighted BFS enabled by default; set to None for unweighted BFS
 
 
 @dataclass
@@ -501,6 +501,7 @@ class SearchConfig:
                 "enable_result_reranking": self.search_mode.enable_result_reranking,
                 "default_k": self.search_mode.default_k,
                 "max_k": self.search_mode.max_k,
+                "default_max_context_tokens": self.search_mode.default_max_context_tokens,
             },
             "performance": {
                 "use_parallel_search": self.performance.use_parallel_search,
@@ -569,6 +570,9 @@ class SearchConfig:
                 "relation_types": self.ego_graph.relation_types,
                 "include_anchor": self.ego_graph.include_anchor,
                 "deduplicate": self.ego_graph.deduplicate,
+                "edge_weights": self.ego_graph.edge_weights,
+                "exclude_stdlib_imports": self.ego_graph.exclude_stdlib_imports,
+                "exclude_third_party_imports": self.ego_graph.exclude_third_party_imports,
             },
             "graph_enhanced": {
                 "centrality_method": self.graph_enhanced.centrality_method,
@@ -654,6 +658,9 @@ class SearchConfig:
                 ),
                 default_k=search_mode_data.get("default_k", 4),
                 max_k=search_mode_data.get("max_k", 50),
+                default_max_context_tokens=search_mode_data.get(
+                    "default_max_context_tokens", 0
+                ),
             )
 
             performance = PerformanceConfig(
@@ -746,11 +753,18 @@ class SearchConfig:
 
             ego_graph = EgoGraphConfig(
                 enabled=ego_graph_data.get("enabled", False),
-                k_hops=ego_graph_data.get("k_hops", 2),
-                max_neighbors_per_hop=ego_graph_data.get("max_neighbors_per_hop", 10),
+                k_hops=ego_graph_data.get("k_hops", 1),
+                max_neighbors_per_hop=ego_graph_data.get("max_neighbors_per_hop", 5),
                 relation_types=ego_graph_data.get("relation_types"),
                 include_anchor=ego_graph_data.get("include_anchor", True),
                 deduplicate=ego_graph_data.get("deduplicate", True),
+                edge_weights=ego_graph_data.get("edge_weights"),
+                exclude_stdlib_imports=ego_graph_data.get(
+                    "exclude_stdlib_imports", True
+                ),
+                exclude_third_party_imports=ego_graph_data.get(
+                    "exclude_third_party_imports", True
+                ),
             )
 
             graph_enhanced = GraphEnhancedConfig(
@@ -876,11 +890,18 @@ class SearchConfig:
 
             ego_graph = EgoGraphConfig(
                 enabled=data.get("ego_graph_enabled", False),
-                k_hops=data.get("ego_graph_k_hops", 2),
-                max_neighbors_per_hop=data.get("ego_graph_max_neighbors_per_hop", 10),
+                k_hops=data.get("ego_graph_k_hops", 1),
+                max_neighbors_per_hop=data.get("ego_graph_max_neighbors_per_hop", 5),
                 relation_types=data.get("ego_graph_relation_types"),
                 include_anchor=data.get("ego_graph_include_anchor", True),
                 deduplicate=data.get("ego_graph_deduplicate", True),
+                edge_weights=data.get("ego_graph_edge_weights"),
+                exclude_stdlib_imports=data.get(
+                    "ego_graph_exclude_stdlib_imports", True
+                ),
+                exclude_third_party_imports=data.get(
+                    "ego_graph_exclude_third_party_imports", True
+                ),
             )
 
             graph_enhanced = GraphEnhancedConfig(
