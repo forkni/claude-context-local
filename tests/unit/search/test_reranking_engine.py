@@ -135,7 +135,7 @@ class TestRerankingEngine:
         assert reranked[0].chunk_id == "chunk2"  # Higher score
         assert reranked[1].chunk_id == "chunk1"
 
-    @patch("search.reranking_engine.NeuralReranker")
+    @patch("search.neural_reranker.NeuralReranker")
     def test_shutdown_cleans_up_neural_reranker(self, mock_neural_reranker_class):
         """Test shutdown method cleans up neural reranker."""
         mock_reranker = MagicMock()
@@ -196,7 +196,7 @@ class TestRerankingEngine:
         assert len(reranked) == 2
 
     @patch("search.reranking_engine.torch")
-    @patch("search.reranking_engine.NeuralReranker")
+    @patch("search.neural_reranker.NeuralReranker")
     def test_neural_reranker_reload_after_disable_reenable(
         self, mock_neural_reranker_class, mock_torch
     ):

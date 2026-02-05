@@ -34,30 +34,36 @@ class TestGenerativeReranker:
     @patch("transformers.AutoTokenizer.from_pretrained")
     def test_rerank_adds_score_metadata(self, mock_tokenizer_class, mock_model_class):
         """Reranking should add reranker_score to metadata."""
-        # Setup mock tokenizer
-        mock_tokenizer = MagicMock()
-        mock_tokenizer.encode.side_effect = lambda text, **kwargs: (
-            [100] if text == "Yes" else [101]
-        )
-
-        # Mock tokenizer call to return object with .to() method
-        mock_inputs = MagicMock()
-        mock_inputs.to.return_value = mock_inputs
-        mock_tokenizer.return_value = mock_inputs
-        mock_tokenizer_class.return_value = mock_tokenizer
-
-        # Setup mock model
-        mock_model = MagicMock()
-        mock_outputs = MagicMock()
-
-        # Create logits tensor with high probability for "Yes" token
+        # Create full logits tensor (batch=1, seq_len=1, vocab_size=1000)
         logits_tensor = torch.zeros(1, 1, 1000)
         logits_tensor[0, -1, 100] = 2.0  # Yes token high logit
         logits_tensor[0, -1, 101] = 0.5  # No token low logit
-        mock_outputs.logits = logits_tensor
 
-        mock_model.return_value = mock_outputs
-        mock_model_class.return_value = mock_model
+        # Create proper mock tokenizer with encode method AND callable behavior
+        class MockTokenizer:
+            def encode(self, text, **kwargs):
+                return [100] if text == "Yes" else [101]
+
+            def __call__(self, prompt, **kwargs):
+                # Return mock inputs with .to() method
+                mock_inputs = MagicMock()
+                mock_inputs.to.return_value = mock_inputs
+                return mock_inputs
+
+        # Create proper mock model with .to() method AND callable behavior
+        class MockModel:
+            def to(self, device):
+                return self
+
+            def __call__(self, **inputs):
+                # Return outputs with proper tensor
+                class Outputs:
+                    logits = logits_tensor
+
+                return Outputs()
+
+        mock_tokenizer_class.return_value = MockTokenizer()
+        mock_model_class.return_value = MockModel()
 
         reranker = GenerativeReranker()
         candidates = [

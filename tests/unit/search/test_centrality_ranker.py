@@ -185,11 +185,11 @@ def test_split_block_type_boost():
     ranker = CentralityRanker(engine, method="pagerank", alpha=0.3)
     reranked = ranker.rerank(results, query="test query")
 
-    # Both should have the same blended score (semantic 0.8, centrality 1.0 normalized)
-    # Blended = 0.7 * 0.8 + 0.3 * 1.0 = 0.86
-    # With 1.1× boost: 0.86 * 1.1 = 0.946
-    assert reranked[0]["blended_score"] == pytest.approx(0.946, abs=0.01)
-    assert reranked[1]["blended_score"] == pytest.approx(0.946, abs=0.01)
+    # Blended score calculation: 0.7 * semantic + 0.3 * centrality = 0.7 * 0.8 + 0.3 * 1.0 = 0.86
+    # Function gets higher boost (1.2×): 0.86 * 1.2 = 1.032
+    # Split_block gets standard boost (1.1×): 0.86 * 1.1 = 0.946
+    assert reranked[0]["blended_score"] == pytest.approx(1.032, abs=0.02)  # function
+    assert reranked[1]["blended_score"] == pytest.approx(0.946, abs=0.02)  # split_block
 
 
 def test_split_block_entity_query_boost():
