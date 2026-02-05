@@ -44,8 +44,9 @@ class TestWeightOptimizer:
 
         current_weights = [0.4, 0.6]  # Mutable list to track weight changes
         set_weights_fn = MagicMock(
-            side_effect=lambda b, d: current_weights.__setitem__(0, b)
-            or current_weights.__setitem__(1, d)
+            side_effect=lambda b, d: (
+                current_weights.__setitem__(0, b) or current_weights.__setitem__(1, d)
+            )
         )
         get_weights_fn = MagicMock(side_effect=lambda: tuple(current_weights))
 
@@ -84,8 +85,9 @@ class TestWeightOptimizer:
         )
         current_weights = [0.5, 0.5]
         set_weights_fn = MagicMock(
-            side_effect=lambda b, d: current_weights.__setitem__(0, b)
-            or current_weights.__setitem__(1, d)
+            side_effect=lambda b, d: (
+                current_weights.__setitem__(0, b) or current_weights.__setitem__(1, d)
+            )
         )
         get_weights_fn = MagicMock(side_effect=lambda: tuple(current_weights))
 
@@ -111,8 +113,9 @@ class TestWeightOptimizer:
         analyze_fn = MagicMock()
         current_weights = [0.4, 0.6]
         set_weights_fn = MagicMock(
-            side_effect=lambda b, d: current_weights.__setitem__(0, b)
-            or current_weights.__setitem__(1, d)
+            side_effect=lambda b, d: (
+                current_weights.__setitem__(0, b) or current_weights.__setitem__(1, d)
+            )
         )
         get_weights_fn = MagicMock(side_effect=lambda: tuple(current_weights))
 
@@ -139,8 +142,9 @@ class TestWeightOptimizer:
         analyze_fn = MagicMock()  # Should not be called
         current_weights = [0.4, 0.6]
         set_weights_fn = MagicMock(
-            side_effect=lambda b, d: current_weights.__setitem__(0, b)
-            or current_weights.__setitem__(1, d)
+            side_effect=lambda b, d: (
+                current_weights.__setitem__(0, b) or current_weights.__setitem__(1, d)
+            )
         )
         get_weights_fn = MagicMock(side_effect=lambda: tuple(current_weights))
 
@@ -181,8 +185,9 @@ class TestWeightOptimizer:
 
         current_weights = [0.4, 0.6]
         set_weights_fn = MagicMock(
-            side_effect=lambda b, d: current_weights.__setitem__(0, b)
-            or current_weights.__setitem__(1, d)
+            side_effect=lambda b, d: (
+                current_weights.__setitem__(0, b) or current_weights.__setitem__(1, d)
+            )
         )
         get_weights_fn = MagicMock(side_effect=lambda: tuple(current_weights))
 
@@ -249,8 +254,9 @@ class TestWeightOptimizer:
         )
         current_weights = [0.4, 0.6]
         set_weights_fn = MagicMock(
-            side_effect=lambda b, d: current_weights.__setitem__(0, b)
-            or current_weights.__setitem__(1, d)
+            side_effect=lambda b, d: (
+                current_weights.__setitem__(0, b) or current_weights.__setitem__(1, d)
+            )
         )
         get_weights_fn = MagicMock(side_effect=lambda: tuple(current_weights))
 
@@ -282,8 +288,9 @@ class TestWeightOptimizer:
 
         current_weights = [0.4, 0.6]
         set_weights_fn = MagicMock(
-            side_effect=lambda b, d: current_weights.__setitem__(0, b)
-            or current_weights.__setitem__(1, d)
+            side_effect=lambda b, d: (
+                current_weights.__setitem__(0, b) or current_weights.__setitem__(1, d)
+            )
         )
         get_weights_fn = MagicMock(side_effect=lambda: tuple(current_weights))
 

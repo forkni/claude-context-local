@@ -965,8 +965,9 @@ class HybridSearcher(BaseSearcher):
         optimizer = WeightOptimizer(
             search_callback=lambda q, k: self.search(q, k=k, use_parallel=False),
             analyze_callback=self.reranker.analyze_fusion_quality,
-            set_weights_callback=lambda b, d: setattr(self, "bm25_weight", b)
-            or setattr(self, "dense_weight", d),
+            set_weights_callback=lambda b, d: (
+                setattr(self, "bm25_weight", b) or setattr(self, "dense_weight", d)
+            ),
             get_weights_callback=lambda: (self.bm25_weight, self.dense_weight),
             logger=self._logger,
         )

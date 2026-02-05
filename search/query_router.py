@@ -54,181 +54,55 @@ class RoutingDecision:
 class QueryRouter:
     """Routes queries to optimal embedding model based on query characteristics.
 
-    Routing strategy based on verification results:
-    - Qwen3 (3/8 wins): Implementation-heavy queries, algorithms, complete systems
-      (Adaptive: Qwen3-4B on 12GB+ GPUs, Qwen3-0.6B on 8GB GPUs)
-    - BGE-M3 (3/8 wins): Workflow queries, configuration, system plumbing (most consistent)
-    - CodeRankEmbed (2/8 wins): Specialized algorithms (Merkle, RRF, etc.)
+    # Routing strategy based on verification results:
+    - Qwen3 (Logic specialist): Action-oriented queries, logic flow, validation, and algorithms.
+    - BGE-Code (Semantic specialist): Workflow queries, complex code structure, and SOTA reasoning.
     """
 
     # Routing rules based on verification results (analysis/model_relevance_verification_results.md)
-    # Enhanced with single-word variants for natural query support (2025-11-15)
     ROUTING_RULES = {
-        "coderankembed": {
-            "keywords": [
-                # Specialized algorithms (2/8 wins, but high precision)
-                "merkle",
-                "merkle tree",
-                "merkle dag",
-                "tree",
-                "change detection",
-                "rrf",
-                "reranking",
-                "reciprocal rank",
-                "rank fusion",
-                "rerank",
-                "tree structure",
-                "directed acyclic",
-                "dag",
-                # Data structures
-                "binary tree",
-                "graph structure",
-                "binary",
-                "graph",
-                # Hybrid search components
-                "hybrid",
-                "fusion",
-                "fuse",
-                "combine",
-                # NEW - Compound data structure phrases (SAFE)
-                "data structure",
-                "data structures",
-                "data model",
-                "data modeling",
-                "dataclass",
-                "dataclasses",
-                "pydantic",
-                # NEW - Type system compounds (SAFE)
-                "type definition",
-                "type definitions",
-                "type schema",
-                "schema definition",
-                "schema definitions",
-                "type system",
-                "type annotation",
-                "type annotations",
-                # NEW - Specific OOP compounds (SAFE)
-                "class definition",
-                "class schema",
-                "class hierarchy",
-                "interface definition",
-                "protocol definition",
-                "enum definition",
-                "struct definition",
-                # NEW - Safe single words (unambiguous)
-                "schema",
-                "struct",
-                "enum",
-                "interface",
-                "protocol",
-                "inheritance",
-                "polymorphism",
-                "generic",
-                "template",
-                # NEW - Call graph and dependency analysis (2025-12-15, moved from bge_m3)
-                "call graph",
-                "callgraph",
-                "caller",
-                "callers",
-                "callee",
-                "callees",
-                "dependency",
-                "dependencies",
-                "dependency graph",
-            ],
-            "weight": 1.5,  # Higher weight for specialized matches
-            "description": "Specialized algorithms (Merkle trees, RRF reranking, data structures)",
-        },
         "qwen3": {
             "keywords": [
-                # Implementation-heavy queries (3/8 wins)
+                # Logic and Validation (Qwen3 strength)
+                "validate",
+                "validation",
+                "validator",
+                "check",
+                "checking",
+                "explain",
+                "explanation",
+                "how to",
+                "how does",
+                "how do",
+                "logic",
+                "logic flow",
+                # Action-oriented (Implementation)
                 "implementation",
                 "implement",
                 "implementing",
-                "implements",
-                "how to implement",
-                "algorithm",
                 "algorithmic",
                 "algorithms",
                 "pattern",
                 "patterns",
-                "design pattern",
-                "how does",
-                "how do",
-                "how is",
-                "how to",
-                "how can",
-                "class structure",
-                "method flow",
-                "function flow",
                 "function",
                 "method",
-                "class",
-                "complete system",
-                "full implementation",
-                # Error handling (verified win) - expanded
-                "error",
-                "error handling",
-                "exception",
-                "try except",
-                "error pattern",
-                "exception handling",
-                "catch",
-                "raise",
-                "throw",
-                # BM25 implementation (verified win) - expanded
-                "bm25",
-                "sparse index",
-                "keyword search",
-                "index implementation",
-                "search implementation",
-                "search",
-                "searching",
-                "query",
-                # Multi-hop search (verified win) - expanded
-                "multi-hop",
-                "multi hop",
-                "iterative search",
-                "search algorithm",
-                "hop",
-                "iterative",
-                "recursive",
-                # Common programming terms
-                "code",
-                "coding",
-                "write",
-                "create",
-                "build",
-                # Async programming
-                "async",
-                "await",
-                "coroutine",
-                "asyncio",
-                "async def",
-                "concurrent",
-                "concurrency",
-                # NEW - Validation and code logic (2025-12-15)
-                "validate",
-                "validation",
-                "validator",
-                "validators",
-                "handler",
-                "handlers",
-                "registry",
-                "registries",
-                "extract",
+                "action",
+                "do with",
                 "extraction",
                 "extractor",
-                "parser",
-                "parsing",
                 "parse",
+                "parsing",
+                "error handling",
+                "exception",
+                "async",
+                "concurrent",
             ],
-            "weight": 1.0,
-            "description": "Implementation queries and algorithms",
+            "weight": 1.2,  # Priority for logic
+            "description": "Logic, validation, and implementation queries",
         },
-        "bge_m3": {
+        "bge_code": {
             "keywords": [
-                # Workflow & configuration (3/8 wins, most consistent)
+                # Workflow & configuration
                 "workflow",
                 "process",
                 "pipeline",
@@ -243,73 +117,60 @@ class QueryRouter:
                 "settings",
                 "manager",
                 "configure",
-                # Configuration loading (verified win) - expanded
                 "load config",
-                "config file",
-                "environment variable",
-                "loading system",
                 "load",
-                # Incremental indexing (verified win) - expanded
                 "incremental",
-                "indexing logic",
                 "reindex",
                 "indexing",
-                "logic",
                 "index",
-                # Embedding workflow (verified win) - expanded
                 "embedding",
                 "embed",
-                "generation",
-                "batch",
-                "generation workflow",
                 "generate",
-                # Vector search components
                 "faiss",
                 "vector",
-                "vectors",
                 "similarity",
                 "dense",
-                "nearest neighbor",
-                "knn",
-                "ann",
-                # General system queries
                 "system",
                 "integration",
                 "connection",
                 "connect",
-                "integrate",
-                # Relationship queries (graph/dependency moved to coderankembed)
-                "relationship",
-                "relationships",
-                "impact",
-                "inheritance",
-                "inherits",
-                "extends",
-                "uses",
-                "type usage",
-                "imports",
-                # NEW - Project and workflow terms (2025-12-15)
-                "switch",
-                "switching",
-                "verify",
-                "verification",
                 "project",
                 "projects",
+                # Specialized algorithms (Moved from coderankembed)
+                "merkle",
+                "merkle tree",
+                "merkle dag",
+                "tree",
+                "change detection",
+                "rrf",
+                "reranking",
+                "rerank",
+                "dag",
+                "graph",
+                "graph structure",
+                "call graph",
+                "caller",
+                "callee",
+                "dependency",
+                "relationship",
+                "inheritance",
+                "type system",
+                "interface",
+                "enum",
+                "struct",
             ],
             "weight": 1.0,
-            "description": "Workflow and configuration queries",
+            "description": "Workflow, configuration, and SOTA code retrieval",
         },
     }
 
-    # Explicit precedence for tie-breaking (2025-12-15)
-    # When scores are within 0.01 margin, use this order:
-    # 1. CodeRankEmbed (specialized algorithms)
-    # 2. Qwen3 (implementation logic)
-    # 3. BGE-M3 (workflow/config)
-    PRECEDENCE = ["coderankembed", "qwen3", "bge_m3"]
+    # Explicit precedence for tie-breaking
+    # 1. Qwen3 (Logic/Action)
+    # 2. BGE-Code (Semantic/Workflow)
+    PRECEDENCE = ["qwen3", "bge_code"]
 
-    # Default fallback model (most balanced)
-    DEFAULT_MODEL = "bge_m3"
+    # Default fallback model
+    DEFAULT_MODEL = "bge_code"
 
     # Confidence threshold for routing (below this, use default)
     # Lowered from 0.3 → 0.15 → 0.10 → 0.05 based on empirical testing
@@ -329,31 +190,12 @@ class QueryRouter:
                 "implementing",
                 "algorithm",
                 "algorithmic",
-                "function",
-                "method",
-                "class",
-                "code",
-                "how does",  # Benchmark winner: implementation details
-                "how do",
-                "how is",
                 # Parsing and chunking (VALIDATED: parse/chunk queries won)
                 "parse",
                 "parsing",
                 "parser",
                 "chunk",
                 "chunking",
-                # Validation logic (VALIDATED: validate chunk id query won)
-                "validate",
-                "validation",
-                "validator",
-                "normalize",
-                # Error handling
-                "error",
-                "error handling",
-                "exception",
-                "try except",
-                "catch",
-                "raise",
                 # Data structures and types (VALIDATED: found dataclass in results)
                 "data structure",
                 "dataclass",
@@ -361,20 +203,14 @@ class QueryRouter:
                 "type definition",
                 "type schema",
                 "merkle",
-                "tree",
-                "tree structure",
-                "graph",
                 "binary",
                 "dag",
-                "schema",
                 # OOP concepts (VALIDATED: base class queries won)
                 "base class",
                 "inheritance",
                 "extends",
                 "inherits",
-                # Search and algorithms
-                "search",
-                "searching",
+                # Search-specific algorithms
                 "bm25",
                 "multi-hop",
                 "recursive",
@@ -388,8 +224,6 @@ class QueryRouter:
                 "extract",
                 "extraction",
                 "extractor",
-                "handler",
-                "handlers",
                 # Call graph (VALIDATED: call graph extraction won)
                 "call graph",
                 "caller",
@@ -400,11 +234,8 @@ class QueryRouter:
                 "dependencies",
                 "relationship",
                 "relationships",
-                # Snapshot and change detection (from merkle queries)
-                "snapshot",
-                "change detection",
             ],
-            "weight": 1.5,  # Prioritize code model for code queries
+            "weight": 1.2,  # Reduced from 1.5 to prevent thin-evidence routing
             "description": "Code-specific queries (routes to gte-modernbert)",
         },
         "bge_m3": {
