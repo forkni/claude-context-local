@@ -3,7 +3,7 @@
 Routes queries to the optimal embedding model based on query characteristics.
 Based on empirical verification results comparing Qwen3, BGE-M3, and CodeRankEmbed.
 
-Note: Qwen3 adaptively selects Qwen3-4B (12GB+ GPUs) or Qwen3-0.6B (8GB GPUs).
+Note: Qwen3 uses Qwen3-0.6B across all VRAM tiers for safety and compatibility.
 """
 
 import logging

@@ -673,7 +673,6 @@ set CLAUDE_DEFAULT_PROJECT=C:\Projects\MyProject
 |-------|------|------------|------|----------|
 | **BGE-M3** ⭐ | General | 1024 | 1-1.5GB | Production baseline, hybrid search support |
 | **Qwen3-0.6B** | General | 1024 | 2.3GB | Best value, high efficiency |
-| **Qwen3-4B** | General | 1024* | 8-10GB | Best quality with MRL (4B quality @ 0.6B storage) |
 | **CodeRankEmbed** | Code | 768 | 2GB | Code-specific retrieval (CSN: 77.9 MRR) |
 | **EmbeddingGemma-300m** | General | 768 | 4-8GB | Default model, fast and efficient |
 
@@ -793,16 +792,16 @@ python tools/benchmark_instructions.py --model Qwen/Qwen3-Embedding-0.6B
 
 **What it does**: Reduces embedding dimension output while maintaining model quality
 
-**Status**: Enabled by default for Qwen3-4B (truncate_dim=1024)
+**Status**: Enabled by default for Qwen3-0.6B (truncate_dim=1024)
 
 **Configuration**:
 
 ```python
 # In search/config.py MODEL_REGISTRY:
-"Qwen/Qwen3-Embedding-4B": {
-    "dimension": 2560,  # Full model dimension
-    "truncate_dim": 1024,  # Output dimension (50% reduction)
-    "mrl_dimensions": [2560, 1024, 512, 256, 128, 64, 32],  # Supported dims
+"Qwen/Qwen3-Embedding-0.6B": {
+    "dimension": 1024,  # Full model dimension
+    "truncate_dim": 1024,  # Output dimension (no reduction for 0.6B)
+    "mrl_dimensions": [1024, 512, 256, 128, 64, 32],  # Supported dims
 }
 ```
 
@@ -816,7 +815,7 @@ python tools/benchmark_instructions.py --model Qwen/Qwen3-Embedding-0.6B
 
 **Benefits**:
 
-- **2x storage reduction** with Qwen3-4B using truncate_dim=1024
+- **2x storage reduction** with Qwen3-0.6B using truncate_dim=1024
 - Match 0.6B storage footprint while keeping 4B model quality (36 layers vs 28)
 - Minimal quality drop (~1.47% per sentence-transformers benchmarks)
 
@@ -825,8 +824,8 @@ python tools/benchmark_instructions.py --model Qwen/Qwen3-Embedding-0.6B
 ```python
 # Sentence-transformers truncates embeddings during model instantiation
 model = SentenceTransformer(
-    "Qwen/Qwen3-Embedding-4B",
-    truncate_dim=1024  # Output 1024d instead of 2560d
+    "Qwen/Qwen3-Embedding-0.6B",
+    truncate_dim=512  # Output 512d instead of 1024d
 )
 
 # All embeddings automatically truncated
@@ -846,8 +845,8 @@ embedding = model.encode("query")
 
 ```python
 # Edit search/config.py
-"Qwen/Qwen3-Embedding-4B": {
-    "truncate_dim": None,  # Use full 2560 dimensions
+"Qwen/Qwen3-Embedding-0.6B": {
+    "truncate_dim": None,  # Use full 1024 dimensions
 }
 ```
 
@@ -866,7 +865,7 @@ embedding = model.encode("query")
 from search.config import MODEL_REGISTRY
 
 # Temporarily change for testing
-MODEL_REGISTRY["Qwen/Qwen3-Embedding-4B"]["truncate_dim"] = 512
+MODEL_REGISTRY["Qwen/Qwen3-Embedding-0.6B"]["truncate_dim"] = 512
 MODEL_REGISTRY["Qwen/Qwen3-Embedding-0.6B"]["instruction_mode"] = "prompt_name"
 ```
 
@@ -1034,7 +1033,7 @@ The VRAM Tier Management system automatically detects available GPU memory and r
 |------|------------|-------------------|------------------|
 | **Minimal** | <6GB | EmbeddingGemma-300m OR CodeRankEmbed | Single-model only, no multi-model routing, no neural reranking |
 | **Laptop** | 6-10GB | BGE-M3 OR Qwen3-0.6B | Multi-model routing ENABLED, Neural reranking ENABLED |
-| **Desktop** | 10-18GB | Qwen3-4B + BGE-M3 + CodeRankEmbed | Full 3-model pool, Neural reranking ENABLED |
+| **Desktop** | 10-18GB | Qwen3-0.6B + BGE-M3 + CodeRankEmbed | Full 3-model pool, Neural reranking ENABLED |
 | **Workstation** | 18GB+ | Full 3-model pool + neural reranking | All features ENABLED, maximum quality |
 
 ### Automatic Configuration

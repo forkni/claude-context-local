@@ -40,7 +40,7 @@ FRAGMENTATION_OVERHEAD = 0.82  # 1.0 - 0.18 = 82% usable VRAM, 18% fragmentation
 
 # Activation memory costs per batch item (GB) based on model size tier
 # Larger models have deeper layer stacks → more activation memory per item
-GB_PER_ITEM_LARGE_MODEL = 0.40  # ~400MB per item (e.g., Qwen3-4B: 36 layers)
+GB_PER_ITEM_LARGE_MODEL = 0.40  # ~400MB per item (large embedding models: 36+ layers)
 GB_PER_ITEM_MEDIUM_MODEL = 0.08  # ~80MB per item (e.g., BGE-M3: ~12 layers)
 GB_PER_ITEM_SMALL_MODEL = 0.04  # ~40MB per item (e.g., CodeRankEmbed: ~6 layers)
 
@@ -147,7 +147,7 @@ def calculate_optimal_batch_size(
     batch item, so batch size must be reduced accordingly.
 
     Activation Cost Tiers (empirically derived):
-    - Large models (≥6GB): 0.40 GB/item (e.g., Qwen3-4B with 36 layers)
+    - Large models (≥6GB): 0.40 GB/item (large models with 36+ layers)
     - Medium models (2-6GB): 0.08 GB/item (e.g., BGE-M3 with ~12 layers)
     - Small models (<2GB): 0.04 GB/item (e.g., CodeRankEmbed with ~6 layers)
 
@@ -165,7 +165,7 @@ def calculate_optimal_batch_size(
         Batch size based on model-aware activation estimation, clamped to [min_batch, max_batch]
 
     Examples:
-        >>> # RTX 4090 (24GB) with Qwen3-4B (7.5GB model, large)
+        >>> # RTX 4090 (24GB) with large embedding model (≥6GB VRAM)
         >>> calculate_optimal_batch_size(model_vram_gb=7.5)
         33  # (24 - 7.5) * 0.8 / 0.40 = 33 batch
 
@@ -198,7 +198,7 @@ def calculate_optimal_batch_size(
 
         # Determine activation cost per batch item based on model size
         # Larger models have deeper layer stacks → more activation memory per item
-        if model_vram_gb >= 6:  # Large models (e.g., Qwen3-4B: 7.5GB, 36 layers)
+        if model_vram_gb >= 6:  # Large models (≥6GB VRAM, 36+ layers)
             gb_per_item = GB_PER_ITEM_LARGE_MODEL
             model_tier = "large"
         elif model_vram_gb >= 2:  # Medium models (e.g., BGE-M3: 2GB, ~12 layers)
@@ -251,13 +251,13 @@ def parse_vram_gb_from_registry(model_name: str) -> float:
     Uses upper bound of range for conservative batch sizing.
 
     Args:
-        model_name: Model identifier (e.g., "Qwen/Qwen3-Embedding-4B")
+        model_name: Model identifier (e.g., "Qwen/Qwen3-Embedding-0.6B")
 
     Returns:
         VRAM estimate in GB, or 0.0 if not found/parseable
 
     Examples:
-        >>> parse_vram_gb_from_registry("Qwen/Qwen3-Embedding-4B")
+        >>> parse_vram_gb_from_registry("Qwen/Qwen3-Embedding-0.6B")
         10.0  # From "8-10GB" (upper bound)
 
         >>> parse_vram_gb_from_registry("Qwen/Qwen3-Embedding-0.6B")

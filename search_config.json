@@ -100,6 +100,9 @@
     "centrality_method": "pagerank",
     "centrality_alpha": 0.2,
     "centrality_annotation": true,
-    "centrality_reranking": true
+    "centrality_reranking": true,
+    "enable_size_normalization": true,
+    "size_norm_target_lines": 200,
+    "size_norm_alpha": 0.1
   }
 }

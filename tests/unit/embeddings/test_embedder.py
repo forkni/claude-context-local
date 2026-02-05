@@ -33,7 +33,7 @@ def test_model_loading_and_embedding(
     """
     # Get model config to determine expected dimension
     model_config = MODEL_REGISTRY.get(model_name, {})
-    # Use truncate_dim if available (for MRL models like Qwen3-4B), otherwise use dimension
+    # Use truncate_dim if available (for MRL models), otherwise use dimension
     # Note: Use `or` to handle truncate_dim=None (not just missing key)
     expected_dimension = model_config.get("truncate_dim") or model_config.get(
         "dimension", 768
@@ -584,35 +584,47 @@ def test_query_cache_with_task_instruction(
 @patch("embeddings.embedder.SentenceTransformer")
 def test_mrl_truncate_dim_support(mock_sentence_transformer, mock_model_loader_st):
     """Test that Matryoshka Representation Learning (MRL) truncate_dim is passed correctly."""
+    from search.config import MODEL_REGISTRY
+
     # Track constructor kwargs
     constructor_kwargs_list = []
 
     def mock_constructor(model_name_or_path, **kwargs):
         constructor_kwargs_list.append(kwargs)
         mock_model = MagicMock()
-        mock_model.encode.return_value = np.ones((1, 1024), dtype=np.float32) * 0.5
+        mock_model.encode.return_value = np.ones((1, 512), dtype=np.float32) * 0.5
         mock_model.device = "cpu"  # Add device attribute for ModelLoader
         return mock_model
 
     # Set side_effect on the model_loader mock (where actual loading happens)
     mock_model_loader_st.side_effect = mock_constructor
 
-    # Test Qwen3-4B with MRL enabled (truncate_dim=1024)
-    embedder = CodeEmbedder(model_name="Qwen/Qwen3-Embedding-4B")
+    # Temporarily enable MRL for Qwen3-0.6B (native dimension 1024 → 512)
+    original_truncate_dim = MODEL_REGISTRY["Qwen/Qwen3-Embedding-0.6B"]["truncate_dim"]
+    MODEL_REGISTRY["Qwen/Qwen3-Embedding-0.6B"]["truncate_dim"] = 512
 
-    # Trigger model loading by accessing the model property
-    _ = embedder.model
+    try:
+        # Test Qwen3-0.6B with MRL enabled (truncate_dim=512)
+        embedder = CodeEmbedder(model_name="Qwen/Qwen3-Embedding-0.6B")
 
-    # Verify truncate_dim was passed to constructor
-    assert len(constructor_kwargs_list) == 1
-    assert "truncate_dim" in constructor_kwargs_list[0]
-    assert constructor_kwargs_list[0]["truncate_dim"] == 1024
+        # Trigger model loading by accessing the model property
+        _ = embedder.model
 
-    # Test embedding works
-    query = "test query"
-    embedding = embedder.embed_query(query)
-    assert isinstance(embedding, np.ndarray)
-    assert embedding.shape == (1024,)  # Should match truncate_dim
+        # Verify truncate_dim was passed to constructor
+        assert len(constructor_kwargs_list) == 1
+        assert "truncate_dim" in constructor_kwargs_list[0]
+        assert constructor_kwargs_list[0]["truncate_dim"] == 512
+
+        # Test embedding works
+        query = "test query"
+        embedding = embedder.embed_query(query)
+        assert isinstance(embedding, np.ndarray)
+        assert embedding.shape == (512,)  # Should match truncate_dim
+    finally:
+        # Restore original value
+        MODEL_REGISTRY["Qwen/Qwen3-Embedding-0.6B"]["truncate_dim"] = (
+            original_truncate_dim
+        )
 
 
 @patch("embeddings.model_loader.SentenceTransformer")

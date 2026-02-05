@@ -65,29 +65,6 @@ MODEL_REGISTRY = {
         "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
         "prompt_name": "query",  # Alternative: use model's built-in prompt (generic)
     },
-    "Qwen/Qwen3-Embedding-4B": {
-        "dimension": 2560,
-        "max_context": 32768,
-        "description": "Best value upgrade - 87.93% CodeSearchNet, +6% vs 0.6B (MTEB-Code 80.06)",
-        "vram_gb": "7.5-8GB",  # Updated from "8-10GB" (actual measured: 7.55GB)
-        "fallback_batch_size": 64,  # Conservative fallback (model-aware calculation handles dynamic sizing)
-        "vram_tier": "desktop",  # 12GB+ recommended
-        # Matryoshka Representation Learning (MRL) support
-        "mrl_dimensions": [
-            2560,
-            1024,
-            512,
-            256,
-            128,
-            64,
-            32,
-        ],  # Supported MRL dimensions
-        "truncate_dim": 1024,  # ENABLED BY DEFAULT: Match 0.6B storage with 4B quality (36 layers)
-        # Instruction tuning for code retrieval
-        "instruction_mode": "custom",  # "custom" or "prompt_name"
-        "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
-        "prompt_name": "query",  # Alternative: use model's built-in prompt (generic)
-    },
     # Code-specific models (optimized for Python, C++, and programming languages)
     "nomic-ai/CodeRankEmbed": {
         "dimension": 768,
@@ -125,7 +102,7 @@ def resolve_qwen3_variant_for_lookup(project_hash: str, project_name: str) -> st
 
     Returns:
         Full model name of indexed Qwen3 variant ("Qwen/Qwen3-Embedding-0.6B" or
-        "Qwen/Qwen3-Embedding-4B"), or MODEL_POOL_CONFIG["qwen3"] if neither found.
+        "Qwen/Qwen3-Embedding-0.6B"), or MODEL_POOL_CONFIG["qwen3"] if not found.
 
     Example:
         >>> resolve_qwen3_variant_for_lookup("abc123", "my-project")
@@ -139,7 +116,6 @@ def resolve_qwen3_variant_for_lookup(project_hash: str, project_name: str) -> st
     # Try 0.6B first (more common on typical systems)
     qwen_variants = [
         ("Qwen/Qwen3-Embedding-0.6B", "qwen3-0.6b", 1024),
-        ("Qwen/Qwen3-Embedding-4B", "qwen3-4b", 1024),  # MRL dimension is 1024
     ]
 
     for model_name, slug, dim in qwen_variants:
@@ -160,17 +136,10 @@ def resolve_qwen3_variant_for_lookup(project_hash: str, project_name: str) -> st
     tier = VRAMTierManager().detect_tier()
     logger = logging.getLogger(__name__)
 
-    # Log at INFO level when workstation tier enables 4B for visibility
-    if tier.name == "workstation" and "4B" in tier.recommended_model:
-        logger.info(
-            f"[QWEN3_RESOLUTION] Workstation tier detected (18GB+ VRAM): "
-            f"Using {tier.recommended_model} for best quality"
-        )
-    else:
-        logger.debug(
-            f"[QWEN3_RESOLUTION] No Qwen3 index found, using VRAM tier '{tier.name}': {tier.recommended_model}"
-        )
-    return tier.recommended_model  # e.g., "Qwen/Qwen3-Embedding-4B" for 18GB+ VRAM
+    logger.debug(
+        f"[QWEN3_RESOLUTION] No Qwen3 index found, using VRAM tier '{tier.name}': {tier.recommended_model}"
+    )
+    return tier.recommended_model  # e.g., "Qwen/Qwen3-Embedding-0.6B" for all tiers
 
 
 # Multi-hop search configuration
@@ -579,6 +548,9 @@ class SearchConfig:
                 "centrality_alpha": self.graph_enhanced.centrality_alpha,
                 "centrality_annotation": self.graph_enhanced.centrality_annotation,
                 "centrality_reranking": self.graph_enhanced.centrality_reranking,
+                "enable_size_normalization": self.graph_enhanced.enable_size_normalization,
+                "size_norm_target_lines": self.graph_enhanced.size_norm_target_lines,
+                "size_norm_alpha": self.graph_enhanced.size_norm_alpha,
             },
         }
 
@@ -778,6 +750,13 @@ class SearchConfig:
                 centrality_reranking=graph_enhanced_data.get(
                     "centrality_reranking", True
                 ),
+                enable_size_normalization=graph_enhanced_data.get(
+                    "enable_size_normalization", True
+                ),
+                size_norm_target_lines=graph_enhanced_data.get(
+                    "size_norm_target_lines", 200
+                ),
+                size_norm_alpha=graph_enhanced_data.get("size_norm_alpha", 0.1),
             )
 
         else:
@@ -811,8 +790,8 @@ class SearchConfig:
             search_mode = SearchModeConfig(
                 default_mode=data.get("default_search_mode", "hybrid"),
                 enable_hybrid=data.get("enable_hybrid_search", True),
-                bm25_weight=data.get("bm25_weight", 0.4),
-                dense_weight=data.get("dense_weight", 0.6),
+                bm25_weight=data.get("bm25_weight", 0.35),
+                dense_weight=data.get("dense_weight", 0.65),
                 bm25_k_parameter=data.get("bm25_k_parameter", 100),
                 bm25_use_stopwords=data.get("bm25_use_stopwords", True),
                 bm25_use_stemming=data.get("bm25_use_stemming", True),
@@ -909,6 +888,9 @@ class SearchConfig:
                 centrality_alpha=data.get("centrality_alpha", 0.3),
                 centrality_annotation=data.get("centrality_annotation", True),
                 centrality_reranking=data.get("centrality_reranking", True),
+                enable_size_normalization=data.get("enable_size_normalization", True),
+                size_norm_target_lines=data.get("size_norm_target_lines", 200),
+                size_norm_alpha=data.get("size_norm_alpha", 0.1),
             )
 
         return cls(

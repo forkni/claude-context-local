@@ -581,7 +581,6 @@ configure_reranking(enabled=True, top_k_candidates=100)
 
 - **BGE-M3** ⭐: 1024d, 1-1.5GB VRAM, production baseline
 - **Qwen3-0.6B**: 1024d, 2.3GB VRAM, best value & high efficiency
-- **Qwen3-4B** 🆕: 1024d (MRL), 8-10GB VRAM, best quality with Matryoshka MRL
 - **CodeRankEmbed**: 768d, 2GB VRAM, code-specific retrieval
 - **EmbeddingGemma-300m**: 768d, 4-8GB VRAM, default model (fast)
 
