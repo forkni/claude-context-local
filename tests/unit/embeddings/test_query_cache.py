@@ -1,5 +1,8 @@
 """Tests for QueryEmbeddingCache."""
 
+import threading
+import time
+
 import numpy as np
 
 from embeddings.query_cache import QueryEmbeddingCache
@@ -102,8 +105,7 @@ class TestQueryEmbeddingCache:
     def test_lru_eviction(self):
         """Test that LRU eviction works correctly.
 
-        Note: In this implementation, GET operations don't update LRU order,
-        only PUT operations do. This matches the original embedder behavior.
+        With OrderedDict implementation, GET operations now update LRU order.
         """
         cache = QueryEmbeddingCache(max_size=3)
 
@@ -123,6 +125,26 @@ class TestQueryEmbeddingCache:
         assert cache.get("query2", "model") is not None
         assert cache.get("query3", "model") is not None
         assert cache.get("query4", "model") is not None
+
+    def test_access_updates_lru_order(self):
+        """Test that accessing an entry via GET moves it to most recently used."""
+        cache = QueryEmbeddingCache(max_size=2)
+
+        cache.put("query1", "model", np.array([1.0]))
+        cache.put("query2", "model", np.array([2.0]))
+
+        # Access query1, making it most recently used
+        cache.get("query1", "model")
+
+        # Add query3 - should evict query2 (oldest), not query1 (just accessed)
+        cache.put("query3", "model", np.array([3.0]))
+
+        # query1 should still be present (was accessed)
+        assert cache.get("query1", "model") is not None
+        # query2 should be evicted
+        assert cache.get("query2", "model") is None
+        # query3 should be present
+        assert cache.get("query3", "model") is not None
 
     def test_update_existing_entry(self):
         """Test that updating an existing entry moves it to end of LRU order."""
@@ -291,3 +313,73 @@ class TestQueryEmbeddingCache:
             query = f"query{i % 20}"
             result = cache.get(query, "model")
             assert result is not None
+
+    def test_ttl_expiration(self):
+        """Test that entries expire after TTL."""
+        cache = QueryEmbeddingCache(max_size=10, ttl_seconds=1)
+        cache.put("query", "model", np.array([1.0]))
+
+        # Immediate access works
+        assert cache.get("query", "model") is not None
+
+        # Wait for expiration
+        time.sleep(1.1)
+        result = cache.get("query", "model")
+        assert result is None
+
+        # Verify misses incremented for expired entry
+        stats = cache.get_stats()
+        assert stats["misses"] == 1
+
+    def test_thread_safety(self):
+        """Test concurrent access does not cause race conditions."""
+        cache = QueryEmbeddingCache(max_size=100)
+        errors = []
+
+        def writer(thread_id):
+            try:
+                for i in range(100):
+                    cache.put(f"query_{thread_id}_{i}", "model", np.array([float(i)]))
+            except Exception as e:
+                errors.append(e)
+
+        def reader(thread_id):
+            try:
+                for i in range(100):
+                    cache.get(f"query_{thread_id}_{i}", "model")
+            except Exception as e:
+                errors.append(e)
+
+        threads = []
+        for t in range(10):
+            threads.append(threading.Thread(target=writer, args=(t,)))
+            threads.append(threading.Thread(target=reader, args=(t,)))
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(errors) == 0, f"Thread errors: {errors}"
+
+    def test_thread_safety_stats(self):
+        """Test that statistics remain accurate under concurrent access."""
+        cache = QueryEmbeddingCache(max_size=50)
+        embedding = np.array([1.0, 2.0, 3.0])
+
+        def worker():
+            for i in range(50):
+                cache.put(f"query_{i}", "model", embedding)
+                cache.get(f"query_{i}", "model")
+
+        threads = [threading.Thread(target=worker) for _ in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Verify stats are consistent (no corruption)
+        stats = cache.get_stats()
+        assert stats["hits"] >= 0
+        assert stats["misses"] >= 0
+        assert stats["cache_size"] <= 50

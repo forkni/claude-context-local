@@ -7,7 +7,9 @@ to automatically expire stale entries.
 
 import hashlib
 import logging
+import threading
 import time
+from collections import OrderedDict
 from typing import Any, Optional
 
 import numpy as np
@@ -41,8 +43,9 @@ class QueryEmbeddingCache:
         """
         self._max_size = max_size
         self._ttl_seconds = ttl_seconds
-        self._cache: dict[str, tuple[float, np.ndarray]] = {}  # (timestamp, embedding)
-        self._cache_order: list = []  # Track insertion order for LRU
+        # OrderedDict for O(1) LRU operations (move_to_end, popitem)
+        self._cache: OrderedDict[str, tuple[float, np.ndarray]] = OrderedDict()
+        self._lock = threading.Lock()  # Thread safety for async context
         self._hits = 0
         self._misses = 0
         self._logger = logging.getLogger(__name__)
@@ -75,7 +78,7 @@ class QueryEmbeddingCache:
         task_instruction: str = "",
         query_prefix: str = "",
     ) -> Optional[np.ndarray]:
-        """Retrieve cached embedding for a query.
+        """Retrieve cached embedding for a query (thread-safe).
 
         Args:
             query: The query text
@@ -91,26 +94,26 @@ class QueryEmbeddingCache:
             query, model_name, task_instruction, query_prefix
         )
 
-        if cache_key in self._cache:
+        with self._lock:
+            if cache_key not in self._cache:
+                self._misses += 1
+                self._logger.debug(f"Cache miss for query: {query[:50]}...")
+                return None
+
             timestamp, embedding = self._cache[cache_key]
 
             # Check TTL expiration
             if time.time() - timestamp > self._ttl_seconds:
-                del self._cache[cache_key]
-                if cache_key in self._cache_order:
-                    self._cache_order.remove(cache_key)
+                del self._cache[cache_key]  # O(1) for OrderedDict
                 self._misses += 1
                 self._logger.debug(f"Cache entry expired for: {query[:50]}...")
                 return None
 
+            # Move to end (most recently used) - O(1)
+            self._cache.move_to_end(cache_key)
             self._hits += 1
             self._logger.debug(f"Cache hit for query: {query[:50]}...")
-            # Return a copy to prevent external modification
             return embedding.copy()
-
-        self._misses += 1
-        self._logger.debug(f"Cache miss for query: {query[:50]}...")
-        return None
 
     def put(
         self,
@@ -120,7 +123,7 @@ class QueryEmbeddingCache:
         task_instruction: str = "",
         query_prefix: str = "",
     ) -> None:
-        """Add or update an embedding in the cache.
+        """Add or update an embedding in the cache (thread-safe).
 
         Implements LRU eviction: if the cache is full, removes the least
         recently used entry before adding the new one. Stores with current
@@ -137,21 +140,20 @@ class QueryEmbeddingCache:
             query, model_name, task_instruction, query_prefix
         )
 
-        # Remove key if it already exists (to update order)
-        if cache_key in self._cache:
-            self._cache_order.remove(cache_key)
+        with self._lock:
+            # Remove if exists (to update position)
+            if cache_key in self._cache:
+                del self._cache[cache_key]  # O(1)
 
-        # Evict oldest entry if cache is full
-        if len(self._cache) >= self._max_size:
-            oldest_key = self._cache_order.pop(0)
-            del self._cache[oldest_key]
+            # Evict oldest if full - O(1) popitem(last=False)
+            while len(self._cache) >= self._max_size:
+                self._cache.popitem(last=False)
 
-        # Add to cache with timestamp (store a copy to prevent external modification)
-        self._cache[cache_key] = (time.time(), embedding.copy())
-        self._cache_order.append(cache_key)
+            # Add to end (most recently used)
+            self._cache[cache_key] = (time.time(), embedding.copy())
 
     def get_stats(self) -> dict[str, Any]:
-        """Get cache hit/miss statistics.
+        """Get cache hit/miss statistics (thread-safe).
 
         Returns:
             Dictionary containing:
@@ -161,31 +163,33 @@ class QueryEmbeddingCache:
                 - cache_size: Current number of cached entries
                 - max_size: Maximum cache capacity
         """
-        total = self._hits + self._misses
-        hit_rate = (self._hits / total * 100) if total > 0 else 0
-        return {
-            "hits": self._hits,
-            "misses": self._misses,
-            "hit_rate": f"{hit_rate:.1f}%",
-            "cache_size": len(self._cache),
-            "max_size": self._max_size,
-        }
+        with self._lock:
+            total = self._hits + self._misses
+            hit_rate = (self._hits / total * 100) if total > 0 else 0
+            return {
+                "hits": self._hits,
+                "misses": self._misses,
+                "hit_rate": f"{hit_rate:.1f}%",
+                "cache_size": len(self._cache),
+                "max_size": self._max_size,
+            }
 
     def clear(self) -> None:
-        """Clear the cache and reset statistics.
+        """Clear the cache and reset statistics (thread-safe).
 
         Removes all cached embeddings and resets hit/miss counters.
         """
-        self._cache.clear()
-        self._cache_order.clear()
-        self._hits = 0
-        self._misses = 0
+        with self._lock:
+            self._cache.clear()
+            self._hits = 0
+            self._misses = 0
         self._logger.info("Query embedding cache cleared")
 
     @property
     def size(self) -> int:
-        """Current number of cached entries."""
-        return len(self._cache)
+        """Current number of cached entries (thread-safe)."""
+        with self._lock:
+            return len(self._cache)
 
     @property
     def max_size(self) -> int:
