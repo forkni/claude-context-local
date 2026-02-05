@@ -74,7 +74,7 @@ class SubgraphResult:
         d = {"id": n.chunk_id, "name": n.name, "kind": n.kind, "file": n.file}
         if n.community_id is not None:
             d["community"] = n.community_id
-        if n.centrality:
+        if n.centrality is not None:
             d["centrality"] = round(n.centrality, 4)
         if not n.is_search_result:
             d["source"] = "ego_graph"

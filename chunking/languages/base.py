@@ -307,7 +307,9 @@ class LanguageChunker(ABC):
         current_group: list[TreeSitterChunk] = []
         current_size: int = 0
         current_parent: Optional[str] = None
-        current_community: Optional[int] = None  # Current community for boundary detection
+        current_community: Optional[int] = (
+            None  # Current community for boundary detection
+        )
         total_size_estimated: int = 0  # Track for summary logging
 
         current_file: Optional[str] = (
@@ -360,7 +362,9 @@ class LanguageChunker(ABC):
             current_group.append(chunk)
             current_size += chunk_size
             current_parent = chunk_parent
-            current_community = chunk_community  # Update for community boundary detection
+            current_community = (
+                chunk_community  # Update for community boundary detection
+            )
             current_file = chunk_file  # Track file path
 
         # Flush remaining group

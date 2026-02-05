@@ -12,6 +12,7 @@ from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
 from mcp_server.utils.config_helpers import (
     get_config_via_service_locator as _get_config_via_service_locator,
 )
+from search.graph_integration import is_chunk_id
 from utils.timing import timed
 
 from .reranker import SearchResult as RerankerSearchResult
@@ -163,13 +164,13 @@ class MultiHopSearcher:
         all_results: dict,
         expansion_k: int,
         k: int,
-    ) -> dict[int, float]:
+    ) -> dict[int | str, float]:
         """Expand results via graph neighbor traversal (weighted BFS).
 
         Modifies all_chunk_ids and all_results IN-PLACE.
 
         Returns:
-            Dict mapping hop number to duration in seconds.
+            Dict mapping hop number/name to duration in seconds.
         """
         expansion_timings = {}
 
@@ -196,7 +197,7 @@ class MultiHopSearcher:
             for neighbor_id in neighbors:
                 # Filter symbol_name nodes (e.g. "Exception", "ABC").
                 # Real chunk IDs: "file.py:10-20:function:name" (>= 3 colons)
-                if neighbor_id.count(":") < 3:
+                if not is_chunk_id(neighbor_id):
                     continue
 
                 if neighbor_id in all_chunk_ids:
@@ -206,11 +207,9 @@ class MultiHopSearcher:
                     break
 
                 # Look up metadata from dense index
-                metadata_entry = self.dense_index.metadata_store.get(neighbor_id)
-                if metadata_entry is None:
+                metadata = self.dense_index.get_chunk_by_id(neighbor_id)
+                if metadata is None:
                     continue  # In graph but not in search index
-
-                metadata = metadata_entry.get("metadata", {})
 
                 all_chunk_ids.add(neighbor_id)
                 all_results[neighbor_id] = RerankerSearchResult(
@@ -222,11 +221,11 @@ class MultiHopSearcher:
                 hop_discovered += 1
                 added_for_source += 1
 
-        expansion_timings[2] = time.time() - hop_start
+        expansion_timings["graph"] = time.time() - hop_start
 
         self._logger.info(
             f"[MULTI_HOP] Graph expand: {hop_discovered} new chunks "
-            f"(total: {len(all_results)}, {expansion_timings[2] * 1000:.1f}ms)"
+            f"(total: {len(all_results)}, {expansion_timings['graph'] * 1000:.1f}ms)"
         )
 
         return expansion_timings
@@ -239,7 +238,7 @@ class MultiHopSearcher:
         expansion_k: int,
         hops: int,
         k: int,
-    ) -> dict[int, float]:
+    ) -> dict[int | str, float]:
         """Expand using graph neighbors first, then semantic similarity.
 
         Graph runs first so graph_hop results claim chunk IDs. Semantic
@@ -298,9 +297,8 @@ class MultiHopSearcher:
         filtered_results = {}
         for chunk_id, result in all_results.items():
             # Get metadata from dense index
-            metadata_entry = self.dense_index.metadata_store.get(chunk_id)
-            if metadata_entry:
-                metadata = metadata_entry.get("metadata", {})
+            metadata = self.dense_index.get_chunk_by_id(chunk_id)
+            if metadata:
                 if self.dense_index._matches_filters(metadata, filters):
                     filtered_results[chunk_id] = result
             else:

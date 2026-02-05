@@ -897,15 +897,13 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
             # Rerank results by blended score if enabled in config
             if graph_config.centrality_reranking:
                 formatted_results = ranker.rerank(formatted_results, query=query)
-                logger.debug(
-                    f"Reranked {len(formatted_results)} results by centrality"
-                )
+                logger.debug(f"Reranked {len(formatted_results)} results by centrality")
             else:
                 formatted_results = ranker.annotate(formatted_results)
                 logger.debug(
                     f"Annotated {len(formatted_results)} results with centrality"
                 )
-        except Exception as e:
+        except (ImportError, ValueError, KeyError, RuntimeError) as e:
             logger.debug(f"Centrality ranking failed: {e}")
 
     # === Extract subgraph over search results ===
@@ -961,7 +959,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
         budget_used = 0
         truncated = []
         for r in formatted_results:
-            est_tokens = len(_json.dumps(r).split()) + 10
+            est_tokens = len(_json.dumps(r)) // 4  # ~4 chars per token approximation
             if budget_used + est_tokens <= max_context_tokens:
                 truncated.append(r)
                 budget_used += est_tokens
@@ -1129,7 +1127,7 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
     target = arguments.get("target")
     source_chunk_id = arguments.get("source_chunk_id")
     target_chunk_id = arguments.get("target_chunk_id")
-    max_hops = arguments.get("max_hops", 10)
+    max_hops = min(arguments.get("max_hops", 10), 20)
     edge_types = arguments.get("edge_types")
 
     # Validate: need at least one source and one target identifier

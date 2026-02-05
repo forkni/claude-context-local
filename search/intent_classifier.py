@@ -760,7 +760,7 @@ class IntentClassifier:
 
         elif intent == QueryIntent.LOCAL:
             # Suggest smaller k for symbol lookups
-            params["k"] = 5
+            params["k"] = 4
             params["search_mode"] = "hybrid"
 
             # Existence-checking queries benefit from semantic-heavy weights.

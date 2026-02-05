@@ -70,8 +70,8 @@ class TestHybridSearchIntegration:
         # Initialize components ONCE for the whole class
         try:
             embedder = CodeEmbedder()
-            embedder.cleanup = (
-                lambda: None
+            embedder.cleanup = lambda: (
+                None
             )  # Prevent cleanup from destroying model_loader in tests
             chunker = MultiLanguageChunker(str(project_dir))
             hybrid_searcher = HybridSearcher(
