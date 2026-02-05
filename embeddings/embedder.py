@@ -40,9 +40,27 @@ FRAGMENTATION_OVERHEAD = 0.82  # 1.0 - 0.18 = 82% usable VRAM, 18% fragmentation
 
 # Activation memory costs per batch item (GB) based on model size tier
 # Larger models have deeper layer stacks → more activation memory per item
-GB_PER_ITEM_LARGE_MODEL = 0.40  # ~400MB per item (e.g., Qwen3-4B: 36 layers)
-GB_PER_ITEM_MEDIUM_MODEL = 0.08  # ~80MB per item (e.g., BGE-M3: ~12 layers)
-GB_PER_ITEM_SMALL_MODEL = 0.04  # ~40MB per item (e.g., CodeRankEmbed: ~6 layers)
+GB_PER_ITEM_LARGE_MODEL = (
+    0.40  # ~400MB per item (e.g., BGE-Code-v1: deep architectures)
+)
+GB_PER_ITEM_MEDIUM_MODEL = (
+    0.08  # ~80MB per item (e.g., BGE-M3, CodeRankEmbed: ~12 layers)
+)
+GB_PER_ITEM_SMALL_MODEL = 0.04  # ~40MB per item (e.g., GTE-ModernBERT: ~6 layers)
+
+# Model-specific activation cost overrides (GB per batch item)
+# For models whose VRAM weight doesn't reflect their actual activation memory.
+# Empirically measured via GPU monitoring during batch embedding.
+MODEL_ACTIVATION_COST_OVERRIDES: dict[str, float] = {
+    # CodeRankEmbed: 137M params, NomicBERT arch, 8192 context, ~12 layers
+    # Weight is only 0.52GB (bf16) but activation memory is 0.19-0.32 GB/item
+    # due to long context (8192 tokens) and full BERT-base layer stack
+    "nomic-ai/CodeRankEmbed": 0.25,  # Conservative estimate between observed 0.19-0.32
+    # BGE-Code-v1: 2B params, Qwen2 architecture, 4096 context.
+    # Weight is ~4GB but activation memory matches 'large' models (>=6GB) tier
+    # due to its parameter count and layer depth (deep architecture).
+    "BAAI/bge-code-v1": 0.40,
+}
 
 
 # Configure PyTorch CUDA allocator BEFORE any torch imports
@@ -127,7 +145,7 @@ def set_vram_limit(fraction: float = 0.90) -> bool:
             f"[VRAM_LIMIT] Set hard limit to {fraction:.0%} of dedicated VRAM"
         )
         return True
-    except Exception as e:
+    except (RuntimeError, ValueError) as e:
         logging.getLogger(__name__).warning(f"[VRAM_LIMIT] Failed to set: {e}")
         return False
 
@@ -147,9 +165,10 @@ def calculate_optimal_batch_size(
     batch item, so batch size must be reduced accordingly.
 
     Activation Cost Tiers (empirically derived):
-    - Large models (≥6GB): 0.40 GB/item (e.g., Qwen3-4B with 36 layers)
-    - Medium models (2-6GB): 0.08 GB/item (e.g., BGE-M3 with ~12 layers)
-    - Small models (<2GB): 0.04 GB/item (e.g., CodeRankEmbed with ~6 layers)
+    - Large models (≥6GB): 0.40 GB/item (e.g., BGE-Code-v1, deep architectures)
+    - Medium models (≥0.5GB): 0.08 GB/item (e.g., BGE-M3 with ~12 layers)
+    - Small models (<0.5GB): 0.04 GB/item (e.g., GTE-ModernBERT with ~6 layers)
+    - Model overrides: Use MODEL_ACTIVATION_COST_OVERRIDES for special cases
 
     Target VRAM utilization: 80% of available memory (20% headroom for CUDA overhead)
 
@@ -165,7 +184,7 @@ def calculate_optimal_batch_size(
         Batch size based on model-aware activation estimation, clamped to [min_batch, max_batch]
 
     Examples:
-        >>> # RTX 4090 (24GB) with Qwen3-4B (7.5GB model, large)
+        >>> # RTX 4090 (24GB) with BGE-Code-v1 (4GB model, large)
         >>> calculate_optimal_batch_size(model_vram_gb=7.5)
         33  # (24 - 7.5) * 0.8 / 0.40 = 33 batch
 
@@ -181,12 +200,14 @@ def calculate_optimal_batch_size(
         return min_batch  # CPU fallback
 
     try:
-        # Get total GPU memory (not free, to be consistent across runs)
-        _, total_memory = torch.cuda.mem_get_info()
+        # Get system-wide free/total GPU memory (accounts for ALL processes)
+        free_memory, total_memory = torch.cuda.mem_get_info()
         total_gb = total_memory / (1024**3)
+        free_gb = free_memory / (1024**3)
 
-        # Calculate available memory for activations (total - model weights)
-        available_gb = total_gb - model_vram_gb
+        # Use free memory (accounts for other processes like TouchDesigner)
+        # Our model is already loaded, so free_memory already excludes our model weight
+        available_gb = free_gb
 
         # Apply fragmentation factor: PyTorch reserves ~18% extra for block management
         # Validated from OOM analysis: 2.67GB fragmentation / 14.74GB allocated = 18% overhead
@@ -196,15 +217,24 @@ def calculate_optimal_batch_size(
         # Target VRAM for activations (leave headroom for CUDA overhead + fragmentation)
         target_activation_gb = available_gb * memory_fraction * fragmentation_overhead
 
+        # Check for model-specific activation cost overrides first
+        # Some models have activation memory that doesn't correlate with their weight VRAM
+        # (e.g., CodeRankEmbed: small weight but long context → high activation memory)
+        override_cost = MODEL_ACTIVATION_COST_OVERRIDES.get(model_name)
+        if override_cost is not None:
+            gb_per_item = override_cost
+            model_tier = "override"
         # Determine activation cost per batch item based on model size
         # Larger models have deeper layer stacks → more activation memory per item
-        if model_vram_gb >= 6:  # Large models (e.g., Qwen3-4B: 7.5GB, 36 layers)
+        elif model_vram_gb >= 6:  # Large models (e.g., BGE-Code-v1: 4GB, deep arch)
             gb_per_item = GB_PER_ITEM_LARGE_MODEL
             model_tier = "large"
-        elif model_vram_gb >= 2:  # Medium models (e.g., BGE-M3: 2GB, ~12 layers)
+        elif (
+            model_vram_gb >= 0.5
+        ):  # Medium models (e.g., BGE-M3: 1.07GB bf16, ~12 layers)
             gb_per_item = GB_PER_ITEM_MEDIUM_MODEL
             model_tier = "medium"
-        else:  # Small models (e.g., CodeRankEmbed: 0.5GB, ~6 layers)
+        else:  # Small models (e.g., GTE-ModernBERT: 0.29GB, ~6 layers)
             gb_per_item = GB_PER_ITEM_SMALL_MODEL
             model_tier = "small"
 
@@ -220,13 +250,19 @@ def calculate_optimal_batch_size(
             max_batch = min(max_batch, 32)
             min_batch = min(min_batch, 4)
 
+        # Additional cap based on actual free memory (other processes may use VRAM)
+        if free_gb < 4:
+            max_batch = min(max_batch, 8)
+        elif free_gb < 6:
+            max_batch = min(max_batch, 16)
+
         # Clamp to safe bounds
         result = max(min_batch, min(optimal_batch, max_batch))
 
         # Log calculation details for debugging
         logger = logging.getLogger(__name__)
         logger.info(
-            f"[DYNAMIC_BATCH] GPU: {total_gb:.1f}GB total, "
+            f"[DYNAMIC_BATCH] GPU: {free_gb:.1f}GB free / {total_gb:.1f}GB total, "
             f"model: {model_vram_gb:.1f}GB ({model_tier}), "
             f"available: {available_gb:.1f}GB → "
             f"target: {target_activation_gb:.1f}GB ({memory_fraction:.0%} × {fragmentation_overhead:.0%} frag), "
@@ -236,7 +272,7 @@ def calculate_optimal_batch_size(
 
         return result
 
-    except Exception as e:
+    except (RuntimeError, ValueError) as e:
         logger = logging.getLogger(__name__)
         logger.warning(
             f"[DYNAMIC_BATCH] Failed to calculate batch size: {e}, using min_batch={min_batch}"
@@ -251,13 +287,13 @@ def parse_vram_gb_from_registry(model_name: str) -> float:
     Uses upper bound of range for conservative batch sizing.
 
     Args:
-        model_name: Model identifier (e.g., "Qwen/Qwen3-Embedding-4B")
+        model_name: Model identifier (e.g., "BAAI/bge-code-v1")
 
     Returns:
         VRAM estimate in GB, or 0.0 if not found/parseable
 
     Examples:
-        >>> parse_vram_gb_from_registry("Qwen/Qwen3-Embedding-4B")
+        >>> parse_vram_gb_from_registry("BAAI/bge-code-v1")
         10.0  # From "8-10GB" (upper bound)
 
         >>> parse_vram_gb_from_registry("Qwen/Qwen3-Embedding-0.6B")
@@ -450,15 +486,15 @@ class CodeEmbedder:
             return 0.0, False, False
 
         try:
-            allocated = torch.cuda.memory_allocated()
-            total = torch.cuda.get_device_properties(0).total_memory
-            usage_pct = allocated / total if total > 0 else 0.0
+            # Use system-wide free/total (accounts for ALL processes, not just ours)
+            free_memory, total_memory = torch.cuda.mem_get_info(0)
+            usage_pct = 1.0 - (free_memory / total_memory) if total_memory > 0 else 0.0
 
             should_warn = usage_pct > VRAM_WARNING_THRESHOLD
             should_abort = usage_pct > VRAM_ABORT_THRESHOLD
 
             return usage_pct, should_warn, should_abort
-        except Exception as e:
+        except RuntimeError as e:
             self._logger.warning(f"Failed to check VRAM status: {e}")
             return 0.0, False, False
 
@@ -507,7 +543,7 @@ class CodeEmbedder:
                             break
                         # Otherwise keep scanning (might have docstring before imports)
                 return "\n".join(lines)
-        except Exception as e:
+        except (OSError, UnicodeDecodeError) as e:
             self._logger.debug(
                 f"Failed to extract import context from {file_path}: {e}"
             )
@@ -565,7 +601,7 @@ class CodeEmbedder:
 
             return signature
 
-        except Exception as e:
+        except (OSError, UnicodeDecodeError) as e:
             self._logger.debug(
                 f"Failed to extract class signature for {chunk.parent_name}: {e}"
             )
@@ -594,6 +630,7 @@ class CodeEmbedder:
             enable_class_ctx = config.embedding.enable_class_context
             max_import_lines = config.embedding.max_import_lines
             max_class_sig_lines = config.embedding.max_class_signature_lines
+            enable_structural_header = config.embedding.enable_structural_header
         except Exception as e:
             self._logger.debug(f"Failed to load context config, using defaults: {e}")
             # Fallback to defaults
@@ -601,6 +638,30 @@ class CodeEmbedder:
             enable_class_ctx = True
             max_import_lines = 10
             max_class_sig_lines = 5
+            enable_structural_header = True
+
+        # NEW (v0.9.0): Structural header for module/name/type disambiguation
+        if enable_structural_header:
+            header_parts = []
+            # Add file path for module context
+            if hasattr(chunk, "relative_path") and chunk.relative_path:
+                header_parts.append(chunk.relative_path)
+
+            # Add chunk type + qualified name (ClassName.method_name or function_name)
+            type_name = ""
+            if chunk.chunk_type:
+                type_name = chunk.chunk_type
+            if chunk.parent_name and chunk.name:
+                type_name += f" {chunk.parent_name}.{chunk.name}"
+            elif chunk.name:
+                type_name += f" {chunk.name}"
+
+            if type_name:
+                header_parts.append(type_name.strip())
+
+            # Prepend structural header line if any parts exist
+            if header_parts:
+                content_parts.append(f"# {' | '.join(header_parts)}")
 
         # NEW: Add import context from file header (if enabled and available)
         if enable_import_ctx:
@@ -805,11 +866,15 @@ class CodeEmbedder:
                         model_vram_mb = self._model_vram_usage.get(self.model_name, 0.0)
                         model_vram_gb = model_vram_mb / 1024.0
 
+                # Derive memory_fraction from vram_limit_fraction to maintain consistent safety margin
+                # Target ~81% of hard VRAM ceiling for batch sizing (0.8125 ratio)
+                memory_fraction = config.performance.vram_limit_fraction * 0.8125
+
                 batch_size = calculate_optimal_batch_size(
                     embedding_dim=config.embedding.dimension,
                     min_batch=config.performance.dynamic_batch_min,
                     max_batch=config.performance.dynamic_batch_max,
-                    memory_fraction=config.performance.gpu_memory_threshold,
+                    memory_fraction=memory_fraction,
                     model_vram_gb=model_vram_gb,
                     model_name=self.model_name,
                 )
@@ -1172,7 +1237,7 @@ class CodeEmbedder:
                     f"[VRAM] High memory usage detected ({usage_percent:.1f}%). "
                     f"Consider reducing batch_size to avoid OOM."
                 )
-        except Exception as e:
+        except RuntimeError as e:
             self._logger.debug(f"Failed to log VRAM usage: {e}")
 
     def _get_model_vram_gb(self) -> float:
@@ -1190,7 +1255,7 @@ class CodeEmbedder:
         try:
             allocated_bytes = torch.cuda.memory_allocated()
             return allocated_bytes / (1024**3)
-        except Exception as e:
+        except RuntimeError as e:
             self._logger.debug(f"Failed to get model VRAM: {e}")
             return 0.0
 
@@ -1237,13 +1302,13 @@ class CodeEmbedder:
             except Exception as e:
                 self._logger.warning(f"Error during model cleanup: {e}")
 
-    def __enter__(self):
+    def __enter__(self) -> "CodeEmbedder":
         """Context manager entry - ensure model is loaded."""
         # Trigger model loading
         _ = self.model
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Context manager exit - cleanup resources."""
         self.cleanup()
         return False  # Don't suppress exceptions

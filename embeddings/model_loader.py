@@ -73,7 +73,7 @@ class ModelLoader:
         self._logger = logging.getLogger(__name__)
         self._model_vram_usage: dict[str, float] = {}
 
-    def log_gpu_memory(self, stage: str):
+    def log_gpu_memory(self, stage: str) -> None:
         """Log GPU memory usage at specific loading stages.
 
         Args:
@@ -98,7 +98,7 @@ class ModelLoader:
         except Exception as e:
             self._logger.debug(f"GPU memory logging failed: {e}")
 
-    def get_torch_dtype(self):
+    def get_torch_dtype(self) -> Optional["torch.dtype"]:
         """Get torch dtype based on config and GPU capability.
 
         Returns:
@@ -347,15 +347,21 @@ class ModelLoader:
             model_kwargs_dict["dtype"] = torch_dtype
 
         try:
+            # Get model config first for trust_remote_code and other settings
+            model_config = self._get_model_config()
+            trust_remote_code = model_config.get("trust_remote_code", True)
+
             # Build constructor kwargs
+            model_config = self._get_model_config()
+            trust_remote_code = model_config.get("trust_remote_code", True)
+
             constructor_kwargs = {
                 "cache_folder": self.cache_dir,
                 "device": resolved_device,
-                "trust_remote_code": True,  # Required for some models like Qodo
+                "trust_remote_code": trust_remote_code,
             }
 
             # Add Matryoshka Representation Learning (MRL) support
-            model_config = self._get_model_config()
             truncate_dim = model_config.get("truncate_dim")
             if truncate_dim is not None:
                 constructor_kwargs["truncate_dim"] = truncate_dim
@@ -412,15 +418,22 @@ class ModelLoader:
                 os.environ.pop("TRANSFORMERS_OFFLINE", None)
 
                 try:
+                    # Get model config for trust_remote_code and other settings
+                    model_config = self._get_model_config()
+                    trust_remote_code = model_config.get("trust_remote_code", True)
+
                     # Build constructor kwargs for fallback
+                    # Ensure model_config is available (it might be defined in try block)
+                    model_config = self._get_model_config()
+                    trust_remote_code = model_config.get("trust_remote_code", True)
+
                     fallback_kwargs = {
                         "cache_folder": self.cache_dir,
                         "device": resolved_device,
-                        "trust_remote_code": True,
+                        "trust_remote_code": trust_remote_code,
                     }
 
                     # Preserve truncate_dim for MRL support
-                    model_config = self._get_model_config()
                     truncate_dim = model_config.get("truncate_dim")
                     if truncate_dim is not None:
                         fallback_kwargs["truncate_dim"] = truncate_dim

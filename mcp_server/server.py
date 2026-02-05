@@ -512,8 +512,9 @@ if __name__ == "__main__":
                     # Suppress noisy ASGI errors for disconnected clients
                     # (secondary errors after BrokenResourceError)
                     logging.getLogger("uvicorn.error").addFilter(
-                        lambda record: "Unexpected ASGI message"
-                        not in record.getMessage()
+                        lambda record: (
+                            "Unexpected ASGI message" not in record.getMessage()
+                        )
                     )
 
                     yield  # Application runs

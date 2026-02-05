@@ -476,8 +476,8 @@ def mock_snapshot_manager_for_unit_tests(
     mock_instance.save_snapshot.return_value = None
     mock_instance.delete_snapshot.return_value = None
     mock_instance.load_snapshot.return_value = None
-    mock_instance.get_project_id.side_effect = (
-        lambda path: f"test_{hash(path) & 0xFFFFFFFF:08x}"
+    mock_instance.get_project_id.side_effect = lambda path: (
+        f"test_{hash(path) & 0xFFFFFFFF:08x}"
     )
 
     # Patch at definition point
