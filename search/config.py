@@ -13,9 +13,9 @@ from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
 # Model registry with specifications
 # Multi-model pool configuration for query routing
 # Maps model keys to full model names in MODEL_REGISTRY
-# Note: "qwen3" defaults to 4B for quality (MRL enabled), adaptive VRAM manager downgrades to 0.6B on <10GB VRAM
+# Note: Using 0.6B variant for systems with limited VRAM (<18GB)
 MODEL_POOL_CONFIG = {
-    "qwen3": "Qwen/Qwen3-Embedding-4B",  # Default to 4B (downgrades automatically if needed)
+    "qwen3": "Qwen/Qwen3-Embedding-0.6B",  # 2.3GB VRAM - lighter than 4B variant
     "bge_code": "BAAI/bge-code-v1",  # SOTA Code Retrieval (CoIR 81.77)
 }
 
@@ -297,7 +297,6 @@ class IntentConfig:
     enabled: bool = True  # Enable intent classification for query routing
     confidence_threshold: float = 0.3  # Minimum confidence for intent-specific routing
     default_intent: str = "HYBRID"  # Default intent when confidence is low
-    enable_navigational_redirect: bool = True  # Auto-redirect to find_connections
     log_classifications: bool = True  # Log intent classification decisions
 
 
@@ -536,7 +535,6 @@ class SearchConfig:
                 "enabled": self.intent.enabled,
                 "confidence_threshold": self.intent.confidence_threshold,
                 "default_intent": self.intent.default_intent,
-                "enable_navigational_redirect": self.intent.enable_navigational_redirect,
                 "log_classifications": self.intent.log_classifications,
             },
             "reranker": {
@@ -707,9 +705,6 @@ class SearchConfig:
                 enabled=intent_data.get("enabled", True),
                 confidence_threshold=intent_data.get("confidence_threshold", 0.3),
                 default_intent=intent_data.get("default_intent", "HYBRID"),
-                enable_navigational_redirect=intent_data.get(
-                    "enable_navigational_redirect", True
-                ),
                 log_classifications=intent_data.get("log_classifications", True),
             )
 
@@ -848,9 +843,6 @@ class SearchConfig:
                 enabled=data.get("intent_enabled", True),
                 confidence_threshold=data.get("intent_confidence_threshold", 0.3),
                 default_intent=data.get("intent_default_intent", "HYBRID"),
-                enable_navigational_redirect=data.get(
-                    "intent_enable_navigational_redirect", True
-                ),
                 log_classifications=data.get("intent_log_classifications", True),
             )
 

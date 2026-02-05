@@ -654,28 +654,6 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
                     f"(k_hops={ego_graph_k_hops})"
                 )
 
-        # Redirect NAVIGATIONAL queries to find_connections
-        if (
-            intent_decision.intent == QueryIntent.NAVIGATIONAL
-            and intent_decision.confidence >= config.intent.confidence_threshold
-            and config.intent.enable_navigational_redirect
-        ):
-            symbol_name = intent_decision.suggested_params.get("symbol_name")
-            rel_types = intent_decision.suggested_params.get("relationship_types")
-            if symbol_name:
-                logger.info(
-                    f"[INTENT] Redirecting NAVIGATIONAL query to find_connections: {symbol_name}"
-                    + (f" with relationship_types={rel_types}" if rel_types else "")
-                )
-                return await handle_find_connections(
-                    {
-                        "symbol_name": symbol_name,
-                        "exclude_dirs": arguments.get("exclude_dirs"),
-                        "max_depth": 3,
-                        "relationship_types": rel_types,  # Pass detected relationship types
-                    }
-                )
-
         # Adjust k parameter for GLOBAL queries
         if intent_decision.intent == QueryIntent.GLOBAL:
             suggested_k = intent_decision.suggested_params.get("k", k)
