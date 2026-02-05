@@ -17,8 +17,8 @@ class TestSearchConfig:
 
         assert config.search_mode.default_mode == "hybrid"
         assert config.search_mode.enable_hybrid is True
-        assert config.search_mode.bm25_weight == 0.5  # Updated in PR #1
-        assert config.search_mode.dense_weight == 0.5  # Updated in PR #1
+        assert config.search_mode.bm25_weight == 0.35  # Benchmark-verified optimal
+        assert config.search_mode.dense_weight == 0.65  # Benchmark-verified optimal
         assert config.performance.use_parallel_search is True
 
     def test_to_dict_conversion(self):

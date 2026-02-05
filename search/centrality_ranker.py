@@ -70,14 +70,17 @@ def _extract_chunk_lines(chunk_id: str) -> int:
     """
     parts = chunk_id.split(":")
     if len(parts) < 2:
+        logger.warning(f"Malformed chunk_id (insufficient parts): {chunk_id}")
         return 0
     line_range = parts[1]  # "start-end" format
     if "-" not in line_range:
+        logger.warning(f"Malformed chunk_id (no line range): {chunk_id}")
         return 0
     try:
         start, end = map(int, line_range.split("-"))
         return end - start + 1  # Inclusive range
     except (ValueError, IndexError):
+        logger.warning(f"Malformed chunk_id (invalid line range): {chunk_id}")
         return 0
 
 
@@ -153,6 +156,7 @@ class CentralityRanker:
             return {}
 
         # Normalize to [0, 1] range
+        max_score = 0.0  # Initialize before conditional to avoid UnboundLocalError
         if raw_scores:
             max_score = max(raw_scores.values())
             if max_score > 0:
@@ -323,7 +327,8 @@ class CentralityRanker:
                     "__repr__",
                     "__str__",
                 }
-                if name in lifecycle_methods:
+                terminal_name = name.split(".")[-1] if "." in name else name
+                if terminal_name in lifecycle_methods:
                     query_has_lifecycle_intent = any(
                         w in query_lower
                         for w in ("init", "enter", "exit", "del", "repr", "lifecycle")

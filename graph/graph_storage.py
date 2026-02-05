@@ -7,6 +7,7 @@ Provides NetworkX-based storage for code call graphs with JSON persistence.
 import heapq
 import json
 import logging
+from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -367,11 +368,11 @@ class CodeGraphStorage:
         # Choose BFS implementation based on edge_weights parameter
         if edge_weights is None:
             # Unweighted BFS (original behavior, backward compatible)
-            queue = [(normalized_chunk_id, 0)]
+            queue = deque([(normalized_chunk_id, 0)])
             visited = {normalized_chunk_id}
 
             while queue:
-                current_id, depth = queue.pop(0)
+                current_id, depth = queue.popleft()
 
                 if depth >= max_depth:
                     continue

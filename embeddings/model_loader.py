@@ -347,6 +347,10 @@ class ModelLoader:
             model_kwargs_dict["dtype"] = torch_dtype
 
         try:
+            # Get model config first for trust_remote_code and other settings
+            model_config = self._get_model_config()
+            trust_remote_code = model_config.get("trust_remote_code", True)
+
             # Build constructor kwargs
             model_config = self._get_model_config()
             trust_remote_code = model_config.get("trust_remote_code", True)
@@ -414,6 +418,10 @@ class ModelLoader:
                 os.environ.pop("TRANSFORMERS_OFFLINE", None)
 
                 try:
+                    # Get model config for trust_remote_code and other settings
+                    model_config = self._get_model_config()
+                    trust_remote_code = model_config.get("trust_remote_code", True)
+
                     # Build constructor kwargs for fallback
                     # Ensure model_config is available (it might be defined in try block)
                     model_config = self._get_model_config()

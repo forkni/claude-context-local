@@ -174,7 +174,7 @@ Keywords: "merkle", "rrf", "reranking", "tree structure", "hybrid search", "rank
 **Improvements**:
 
 - **Lowered confidence threshold**: 0.10 → 0.05 (more sensitive routing)
-- **Added 24 single-word keyword variants** across all models in the pool
+- **Added 24 single-word keyword variants** across all 3 models
 - **Natural queries** like "error handling" now trigger routing effectively
 
 **Before vs After**:
@@ -229,16 +229,15 @@ Keywords: "merkle", "rrf", "reranking", "tree structure", "hybrid search", "rank
 
 - **VRAM at startup**: 0 MB (models load on first search)
 - **First search delay**: 5-10s one-time model loading
-- **After first search**: 6.3 GB VRAM (all models in the pool loaded)
+- **After first search**: 5.3 GB VRAM (all 3 models loaded)
 
-**Loaded State** (all models in the pool in memory):
+**Loaded State** (all 3 models in memory):
 
-- **Total VRAM** (Workstation tier, 18GB+): Up to ~15 GB (on RTX 4090 with 25.8 GB capacity)
-- **Qwen3-0.6B**: ~7.5 GB (workstation tier)
-- **Qwen3-0.6B**: ~2.4 GB (desktop tier, 10-18GB)
-- **BGE-Code**: ~4 GB (additional)
-- **BGE-M3**: ~1.1 GB (additional)
-- **Headroom**: 10+ GB (40%+ free on workstation)
+- **Total VRAM**: 5.3 GB (on RTX 4090 with 25.8 GB capacity)
+- **Qwen3-0.6B**: ~2.4 GB
+- **BGE-M3**: ~2.3 GB (additional)
+- **CodeRankEmbed**: ~0.6 GB (additional)
+- **Headroom**: 20.5 GB (79.5% free)
 
 **Minimum Requirements**:
 
@@ -266,7 +265,7 @@ Keywords: "merkle", "rrf", "reranking", "tree structure", "hybrid search", "rank
 - **Startup**: 0 MB VRAM, 3-5s server start (lazy loading)
 - **First search**: 8-15s total (5-10s model loading + 3-5s search)
 - **Subsequent searches**: 3-5s (models stay loaded)
-- **Model load time** (when needed): 5-10 seconds for all models in the pool
+- **Model load time** (when needed): 5-10 seconds for all 3 models
 
 **Expected Quality Improvements** (vs single BGE-M3):
 
@@ -356,12 +355,10 @@ set CLAUDE_MULTI_MODEL_ENABLED=false
 
 ```python
 MODEL_POOL_CONFIG = {
-    "qwen3": "Qwen/Qwen3-Embedding-0.6B",  # Full pool
-    "bge_code": "BAAI/bge-code-v1",                # Full pool - code-specific
-    "gte_modernbert": "Alibaba-NLP/gte-modernbert-base",  # Lightweight pool
-    "bge_m3": "BAAI/bge-m3",                       # Lightweight pool
+    "qwen3": "Qwen/Qwen3-Embedding-0.6B",
+    "bge_m3": "BAAI/bge-m3",
+    "coderankembed": "nomic-ai/CodeRankEmbed"
 }
-# Note: Workstation tier (18GB+) uses 4B, Desktop tier (10-18GB) uses 0.6B
 ```
 
 **Key Features**:
@@ -383,10 +380,11 @@ MODEL_POOL_CONFIG = {
 
 ### Overview
 
-When multi-model query routing is enabled (`CLAUDE_MULTI_MODEL_ENABLED=true`), project indexing automatically updates indices for **all models in the pool**:
+When multi-model query routing is enabled (`CLAUDE_MULTI_MODEL_ENABLED=true`), project indexing automatically updates indices for **all 3 models**:
 
-- **Qwen3-0.6B** (1024d) - Logic specialist: action-oriented queries and algorithms
-- **BGE-Code-v1** (1536d) - Semantic specialist: workflow and architectural reasoning
+- **Qwen3-0.6B** (1024d) - Implementation & algorithms
+- **BGE-M3** (1024d) - Workflow & configuration
+- **CodeRankEmbed** (768d) - Specialized algorithms
 
 ### How It Works
 
@@ -397,15 +395,15 @@ When multi-model query routing is enabled (`CLAUDE_MULTI_MODEL_ENABLED=true`), p
 3. Maintains per-model index isolation (fresh HybridSearcher instances per model)
 4. Restores original model after completion
 
-**Implementation**: `mcp_server/tool_handlers.py` - Creates fresh indexer instances bypassing global caches to ensure correct storage paths.
+**Implementation**: `mcp_server/tool_handlers.py:728-759` - Creates fresh indexer instances bypassing global caches to ensure correct storage paths.
 
 **Index Storage**:
 
 ```
 ~/.claude_code_search/projects/
-├── myproject_abc123_bge-code_1536d/
+├── myproject_abc123_bge-m3_1024d/
 ├── myproject_abc123_qwen3-0.6b_1024d/
-└── ...
+└── myproject_abc123_coderankembed_768d/
 ```
 
 ### Performance
@@ -420,7 +418,7 @@ When multi-model query routing is enabled (`CLAUDE_MULTI_MODEL_ENABLED=true`), p
 
 ```bash
 /index_directory "C:\Projects\MyProject"
-# Automatically indexes with all models in the pool
+# Automatically indexes with all 3 models
 ```
 
 **Explicit Control** (override behavior):
@@ -686,7 +684,7 @@ set CLAUDE_DEFAULT_PROJECT=C:\Projects\MyProject
 |-------|------|------------|------|----------|
 | **BGE-M3** ⭐ | General | 1024 | 1-1.5GB | Production baseline, hybrid search support |
 | **Qwen3-0.6B** | General | 1024 | 2.3GB | Best value, high efficiency |
-| **Qwen3-0.6B** | General | 1024* | 8-10GB | Best quality with MRL (4B quality @ 0.6B storage) |
+| **Qwen3-4B** | General | 1024* | 8-10GB | Best quality with MRL (4B quality @ 0.6B storage) |
 | **CodeRankEmbed** | Code | 768 | 2GB | Code-specific retrieval (CSN: 77.9 MRR) |
 | **EmbeddingGemma-300m** | General | 768 | 4-8GB | Default model, fast and efficient |
 
@@ -806,13 +804,13 @@ python tools/benchmark_instructions.py --model Qwen/Qwen3-Embedding-0.6B
 
 **What it does**: Reduces embedding dimension output while maintaining model quality
 
-**Status**: Enabled by default for Qwen3-0.6B (truncate_dim=1024)
+**Status**: Enabled by default for Qwen3-4B (truncate_dim=1024)
 
 **Configuration**:
 
 ```python
 # In search/config.py MODEL_REGISTRY:
-"Qwen/Qwen3-Embedding-0.6B": {
+"Qwen/Qwen3-Embedding-4B": {
     "dimension": 2560,  # Full model dimension
     "truncate_dim": 1024,  # Output dimension (50% reduction)
     "mrl_dimensions": [2560, 1024, 512, 256, 128, 64, 32],  # Supported dims
@@ -829,7 +827,7 @@ python tools/benchmark_instructions.py --model Qwen/Qwen3-Embedding-0.6B
 
 **Benefits**:
 
-- **2x storage reduction** with Qwen3-0.6B using truncate_dim=1024
+- **2x storage reduction** with Qwen3-4B using truncate_dim=1024
 - Match 0.6B storage footprint while keeping 4B model quality (36 layers vs 28)
 - Minimal quality drop (~1.47% per sentence-transformers benchmarks)
 
@@ -838,7 +836,7 @@ python tools/benchmark_instructions.py --model Qwen/Qwen3-Embedding-0.6B
 ```python
 # Sentence-transformers truncates embeddings during model instantiation
 model = SentenceTransformer(
-    "Qwen/Qwen3-Embedding-0.6B",
+    "Qwen/Qwen3-Embedding-4B",
     truncate_dim=1024  # Output 1024d instead of 2560d
 )
 
@@ -851,7 +849,7 @@ embedding = model.encode("query")
 
 - **Requires re-indexing** if changing truncate_dim
 - Different dimensions create separate index directories
-- Example: `project_abc123_qwen3-0.6b_1024d/` vs `project_abc123_qwen3-0.6b_2560d/`
+- Example: `project_abc123_qwen3-4b_1024d/` vs `project_abc123_qwen3-4b_2560d/`
 
 ### Customization
 
@@ -859,7 +857,7 @@ embedding = model.encode("query")
 
 ```python
 # Edit search/config.py
-"Qwen/Qwen3-Embedding-0.6B": {
+"Qwen/Qwen3-Embedding-4B": {
     "truncate_dim": None,  # Use full 2560 dimensions
 }
 ```
@@ -879,7 +877,7 @@ embedding = model.encode("query")
 from search.config import MODEL_REGISTRY
 
 # Temporarily change for testing
-MODEL_REGISTRY["Qwen/Qwen3-Embedding-0.6B"]["truncate_dim"] = 512
+MODEL_REGISTRY["Qwen/Qwen3-Embedding-4B"]["truncate_dim"] = 512
 MODEL_REGISTRY["Qwen/Qwen3-Embedding-0.6B"]["instruction_mode"] = "prompt_name"
 ```
 
@@ -1047,8 +1045,8 @@ The VRAM Tier Management system automatically detects available GPU memory and r
 |------|------------|-------------------|------------------|
 | **Minimal** | <6GB | EmbeddingGemma-300m OR CodeRankEmbed | Single-model only, no multi-model routing, no neural reranking |
 | **Laptop** | 6-10GB | BGE-M3 OR Qwen3-0.6B | Multi-model routing ENABLED, Neural reranking ENABLED |
-| **Desktop** | 10-18GB | Qwen3-0.6B + BGE-Code | Full 2-model pool, Neural reranking ENABLED |
-| **Workstation** | 18GB+ | Qwen3-0.6B (full quality) | VRAM-optimized, all features ENABLED |
+| **Desktop** | 10-18GB | Qwen3-4B + BGE-M3 + CodeRankEmbed | Full 3-model pool, Neural reranking ENABLED |
+| **Workstation** | 18GB+ | Full 3-model pool + neural reranking | All features ENABLED, maximum quality |
 
 ### Automatic Configuration
 
@@ -1093,7 +1091,7 @@ The system automatically:
 |-------|------------|-------|
 | **Startup** | 0 MB | Lazy loading enabled, models not loaded |
 | **First search** | 8-15s latency | 5-10s one-time model loading + 3-5s search |
-| **After first search** | ~6.3 GB | All 3 models loaded for multi-model routing |
+| **After first search** | ~5.3 GB | All 3 models loaded for multi-model routing |
 | **Subsequent searches** | 3-5s latency | Models cached in memory (fast) |
 | **After cleanup** | 0 MB | `/cleanup_resources` frees all VRAM |
 
@@ -1247,31 +1245,6 @@ From `tools/benchmark_models.py`:
 | Mixed queries | 0.83 MRR | 0.79 MRR | +5% |
 
 **Implementation**: `search/neural_reranker.py`, `search/reranking_engine.py`
-
-### Jina v3 Reranker (Alternative)
-
-**Model**: `jinaai/jina-reranker-v3`
-
-**Version**: v0.9.1+
-
-**Advantages over BGE reranker**:
-- **131K context window** (vs 8K for BGE) - handles larger documents
-- **Listwise reranking** - scores all documents together for better relative ranking
-- **Better on long code** - 16x larger context allows full function bodies
-
-**Configuration**:
-```python
-# Via environment variable
-set CLAUDE_RERANKER_MODEL=jinaai/jina-reranker-v3
-
-# Via code
-from search.neural_reranker import create_reranker
-reranker = create_reranker("jinaai/jina-reranker-v3")
-```
-
-**VRAM Usage**: ~1.2GB (similar to BGE)
-
-**Performance**: 100-250ms per rerank (slightly slower than BGE due to larger context)
 
 ---
 
@@ -1598,7 +1571,7 @@ print(f"Hit rate: {embedder._cache_hits / (embedder._cache_hits + embedder._cach
 
 **Cache type**: LRU (Least Recently Used) dictionary with TTL (v0.8.6+)
 
-**Thread safety**: Thread-safe via `threading.Lock` (v0.9.1+)
+**Thread safety**: Not thread-safe (single-threaded MCP server)
 
 **Persistence**: In-memory only (no disk storage)
 

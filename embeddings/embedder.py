@@ -40,7 +40,7 @@ FRAGMENTATION_OVERHEAD = 0.82  # 1.0 - 0.18 = 82% usable VRAM, 18% fragmentation
 
 # Activation memory costs per batch item (GB) based on model size tier
 # Larger models have deeper layer stacks → more activation memory per item
-GB_PER_ITEM_LARGE_MODEL = 0.40  # ~400MB per item (e.g., Qwen3-4B: 36 layers)
+GB_PER_ITEM_LARGE_MODEL = 0.40  # ~400MB per item (e.g., BGE-Code-v1: deep architectures)
 GB_PER_ITEM_MEDIUM_MODEL = (
     0.08  # ~80MB per item (e.g., BGE-M3, CodeRankEmbed: ~12 layers)
 )
@@ -56,7 +56,7 @@ MODEL_ACTIVATION_COST_OVERRIDES: dict[str, float] = {
     "nomic-ai/CodeRankEmbed": 0.25,  # Conservative estimate between observed 0.19-0.32
     # BGE-Code-v1: 2B params, Qwen2 architecture, 4096 context.
     # Weight is ~4GB but activation memory matches 'large' models (>=6GB) tier
-    # due to its parameter count and layer depth (similar to Qwen3-4B).
+    # due to its parameter count and layer depth (deep architecture).
     "BAAI/bge-code-v1": 0.40,
 }
 
@@ -163,7 +163,7 @@ def calculate_optimal_batch_size(
     batch item, so batch size must be reduced accordingly.
 
     Activation Cost Tiers (empirically derived):
-    - Large models (≥6GB): 0.40 GB/item (e.g., Qwen3-4B with 36 layers)
+    - Large models (≥6GB): 0.40 GB/item (e.g., BGE-Code-v1, deep architectures)
     - Medium models (≥0.5GB): 0.08 GB/item (e.g., BGE-M3 with ~12 layers)
     - Small models (<0.5GB): 0.04 GB/item (e.g., GTE-ModernBERT with ~6 layers)
     - Model overrides: Use MODEL_ACTIVATION_COST_OVERRIDES for special cases
@@ -182,7 +182,7 @@ def calculate_optimal_batch_size(
         Batch size based on model-aware activation estimation, clamped to [min_batch, max_batch]
 
     Examples:
-        >>> # RTX 4090 (24GB) with Qwen3-4B (7.5GB model, large)
+        >>> # RTX 4090 (24GB) with BGE-Code-v1 (4GB model, large)
         >>> calculate_optimal_batch_size(model_vram_gb=7.5)
         33  # (24 - 7.5) * 0.8 / 0.40 = 33 batch
 
@@ -224,7 +224,7 @@ def calculate_optimal_batch_size(
             model_tier = "override"
         # Determine activation cost per batch item based on model size
         # Larger models have deeper layer stacks → more activation memory per item
-        elif model_vram_gb >= 6:  # Large models (e.g., Qwen3-4B: 7.5GB, 36 layers)
+        elif model_vram_gb >= 6:  # Large models (e.g., BGE-Code-v1: 4GB, deep arch)
             gb_per_item = GB_PER_ITEM_LARGE_MODEL
             model_tier = "large"
         elif (
@@ -285,13 +285,13 @@ def parse_vram_gb_from_registry(model_name: str) -> float:
     Uses upper bound of range for conservative batch sizing.
 
     Args:
-        model_name: Model identifier (e.g., "Qwen/Qwen3-Embedding-4B")
+        model_name: Model identifier (e.g., "BAAI/bge-code-v1")
 
     Returns:
         VRAM estimate in GB, or 0.0 if not found/parseable
 
     Examples:
-        >>> parse_vram_gb_from_registry("Qwen/Qwen3-Embedding-4B")
+        >>> parse_vram_gb_from_registry("BAAI/bge-code-v1")
         10.0  # From "8-10GB" (upper bound)
 
         >>> parse_vram_gb_from_registry("Qwen/Qwen3-Embedding-0.6B")

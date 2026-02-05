@@ -19,7 +19,6 @@ MODEL_REGISTRY = {
     "BAAI/bge-m3": {"dim": 1024, "vram": "1-1.5GB", "short": "bge-m3"},
     "BAAI/bge-code-v1": {"dim": 1536, "vram": "4GB", "short": "bge-code-v1"},
     "Qwen/Qwen3-Embedding-0.6B": {"dim": 1024, "vram": "2.3GB", "short": "qwen3-0.6b"},
-    "Qwen/Qwen3-Embedding-4B": {"dim": 2560, "vram": "7.5-8GB", "short": "qwen3-4b"},
     "nomic-ai/CodeRankEmbed": {
         "dim": 768,
         "vram": "0.5-0.6GB",
