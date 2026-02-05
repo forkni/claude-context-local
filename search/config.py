@@ -733,8 +733,12 @@ class SearchConfig:
                 centrality_reranking=graph_enhanced_data.get(
                     "centrality_reranking", True
                 ),
-                enable_size_normalization=graph_enhanced_data.get("enable_size_normalization", True),
-                size_norm_target_lines=graph_enhanced_data.get("size_norm_target_lines", 200),
+                enable_size_normalization=graph_enhanced_data.get(
+                    "enable_size_normalization", True
+                ),
+                size_norm_target_lines=graph_enhanced_data.get(
+                    "size_norm_target_lines", 200
+                ),
                 size_norm_alpha=graph_enhanced_data.get("size_norm_alpha", 0.1),
             )
 

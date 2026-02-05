@@ -40,7 +40,9 @@ FRAGMENTATION_OVERHEAD = 0.82  # 1.0 - 0.18 = 82% usable VRAM, 18% fragmentation
 
 # Activation memory costs per batch item (GB) based on model size tier
 # Larger models have deeper layer stacks → more activation memory per item
-GB_PER_ITEM_LARGE_MODEL = 0.40  # ~400MB per item (e.g., BGE-Code-v1: deep architectures)
+GB_PER_ITEM_LARGE_MODEL = (
+    0.40  # ~400MB per item (e.g., BGE-Code-v1: deep architectures)
+)
 GB_PER_ITEM_MEDIUM_MODEL = (
     0.08  # ~80MB per item (e.g., BGE-M3, CodeRankEmbed: ~12 layers)
 )
