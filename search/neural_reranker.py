@@ -8,6 +8,7 @@ import torch
 
 if TYPE_CHECKING:
     from sentence_transformers import CrossEncoder
+    from transformers import AutoModel
 
 
 # Reranker model registry
@@ -373,7 +374,7 @@ class JinaRerankerV3:
             self.device = device
 
     @property
-    def model(self):
+    def model(self) -> "AutoModel":
         """Lazy load Jina v3 model on first access.
 
         Returns:
@@ -414,6 +415,9 @@ class JinaRerankerV3:
 
         Returns:
             Reranked list of SearchResult objects with reranker_score
+
+        Raises:
+            RuntimeError: If model inference fails (OOM or other error)
         """
         if not candidates:
             return []
@@ -424,15 +428,22 @@ class JinaRerankerV3:
             content = candidate.metadata.get("content_preview", "")
             if not content:
                 content = candidate.chunk_id
-            
+
             # Prepend chunk_id to provide structural context (file path, symbol name)
             # This helps distinguish methods from their containing classes
             content = f"ID: {candidate.chunk_id}\n{content}"
             documents.append(content)
 
-        # Call Jina's native rerank method (listwise)
-        with torch.no_grad():
-            jina_results = self.model.rerank(query, documents, top_n=top_k)
+        # Call Jina's native rerank method (listwise) with error handling
+        try:
+            with torch.no_grad():
+                jina_results = self.model.rerank(query, documents, top_n=top_k)
+        except torch.cuda.OutOfMemoryError as e:
+            self._logger.error(f"CUDA OOM during reranking: {e}")
+            raise RuntimeError(f"Insufficient GPU memory for reranking: {e}") from e
+        except Exception as e:
+            self._logger.error(f"Jina reranker inference failed: {e}")
+            raise RuntimeError(f"Reranking failed: {e}") from e
 
         # Map back to SearchResult objects
         results = []

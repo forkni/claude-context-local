@@ -249,9 +249,9 @@ class CentralityRanker:
                 )
                 if is_entity_query:
                     type_boosts = {
-                        "class": 1.15,
-                        "function": 1.1,
-                        "method": 1.1,
+                        "class": 1.35,
+                        "function": 1.15,
+                        "method": 1.15,
                         "decorated_definition": 1.1,
                         "split_block": 1.1,  # Function/method fragments
                         "module": 0.85,  # File-level summaries (A2) - strengthened demotion
@@ -259,17 +259,23 @@ class CentralityRanker:
                     }
                 else:
                     type_boosts = {
-                        "function": 1.1,
-                        "method": 1.1,
+                        "function": 1.2,
+                        "method": 1.2,
                         "decorated_definition": 1.0,  # Neutral — includes dataclasses, not just functions
                         "split_block": 1.1,  # Function/method fragments
-                        "class": 1.05,
+                        "class": 1.35,
                         "module": 0.90,  # File-level summaries (A2) - strengthened demotion
                         "community": 0.90,  # Community-level summaries (B1) - strengthened demotion
                     }
                 result["blended_score"] = round(
                     result["blended_score"] * type_boosts.get(chunk_type, 1.0), 4
                 )
+
+                # Core Logic Boost: Prioritize engine internals over glue code/tools
+                chunk_id = result.get("chunk_id", "")
+                core_dirs = ("embeddings/", "search/", "graph/", "chunking/", "merkle/")
+                if any(chunk_id.startswith(d) for d in core_dirs):
+                    result["blended_score"] = round(result["blended_score"] * 1.1, 4)
 
                 # Test/verification code demotion (generalizable pattern)
                 chunk_id = result.get("chunk_id", "")
@@ -306,6 +312,27 @@ class CentralityRanker:
                 # Name-match boost: extract name from chunk_id when field absent
                 chunk_id = result.get("chunk_id", "")
                 name = result.get("name", "") or _extract_name_from_chunk_id(chunk_id)
+
+                # Lifecycle method demotion (e.g., __init__, __exit__)
+                # Prevents boilerplate methods from displacing core logic unless specifically requested
+                lifecycle_methods = {
+                    "__init__",
+                    "__enter__",
+                    "__exit__",
+                    "__del__",
+                    "__repr__",
+                    "__str__",
+                }
+                if name in lifecycle_methods:
+                    query_has_lifecycle_intent = any(
+                        w in query_lower
+                        for w in ("init", "enter", "exit", "del", "repr", "lifecycle")
+                    )
+                    if not query_has_lifecycle_intent:
+                        result["blended_score"] = round(
+                            result["blended_score"] * 0.85, 4
+                        )
+
                 if name and query_lower:
                     query_tokens = _tokenize_for_matching(
                         query

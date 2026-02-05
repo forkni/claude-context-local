@@ -78,11 +78,11 @@ class TestJinaRerankerV3:
 
         reranker.rerank("test query", candidates, top_k=1)
 
-        # Verify rerank was called with content_preview
+        # Verify rerank was called with content_preview (with ID prefix)
         mock_model.rerank.assert_called_once()
         call_args = mock_model.rerank.call_args
         assert call_args[0][0] == "test query"  # Query
-        assert call_args[0][1] == ["code a"]  # Documents
+        assert call_args[0][1] == ["ID: a\ncode a"]  # Documents with ID prefix
 
     def test_rerank_fallback_to_chunk_id(self):
         """Should use chunk_id when content_preview is missing."""
@@ -101,9 +101,9 @@ class TestJinaRerankerV3:
 
         reranker.rerank("test query", candidates, top_k=1)
 
-        # Verify rerank was called with chunk_id as fallback
+        # Verify rerank was called with chunk_id as fallback (with ID prefix)
         call_args = mock_model.rerank.call_args
-        assert call_args[0][1] == ["chunk_a"]
+        assert call_args[0][1] == ["ID: chunk_a\nchunk_a"]  # ID prefix + chunk_id
 
     @patch("transformers.AutoModel.from_pretrained")
     def test_cleanup_releases_resources(self, mock_model_class):

@@ -54,6 +54,10 @@ MODEL_ACTIVATION_COST_OVERRIDES: dict[str, float] = {
     # Weight is only 0.52GB (bf16) but activation memory is 0.19-0.32 GB/item
     # due to long context (8192 tokens) and full BERT-base layer stack
     "nomic-ai/CodeRankEmbed": 0.25,  # Conservative estimate between observed 0.19-0.32
+    # BGE-Code-v1: 2B params, Qwen2 architecture, 4096 context.
+    # Weight is ~4GB but activation memory matches 'large' models (>=6GB) tier
+    # due to its parameter count and layer depth (similar to Qwen3-4B).
+    "BAAI/bge-code-v1": 0.40,
 }
 
 

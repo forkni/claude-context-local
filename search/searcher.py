@@ -227,27 +227,27 @@ class IntelligentSearcher(BaseSearcher):
             if has_class_keyword:
                 # Strong preference for classes when "class" is mentioned
                 type_boosts = {
-                    "class": 1.3,
-                    "function": 1.05,
-                    "method": 1.05,
+                    "class": 1.4,
+                    "function": 1.2,
+                    "method": 1.2,
                     "module": 0.82,  # File-level summaries (A2) - strengthened demotion
                     "community": 0.82,  # Community-level summaries (B1) - strengthened demotion
                 }
             elif is_entity_query:
                 # Moderate preference for classes on entity-like queries
                 type_boosts = {
-                    "class": 1.15,
-                    "function": 1.1,
-                    "method": 1.1,
+                    "class": 1.35,
+                    "function": 1.15,
+                    "method": 1.15,
                     "module": 0.85,  # File-level summaries (A2) - strengthened demotion
                     "community": 0.85,  # Community-level summaries (B1) - strengthened demotion
                 }
             else:
                 # Default boosts for general queries
                 type_boosts = {
-                    "function": 1.1,
-                    "method": 1.1,
-                    "class": 1.05,
+                    "function": 1.2,
+                    "method": 1.2,
+                    "class": 1.35,
                     "module": 0.90,  # File-level summaries (A2) - strengthened demotion
                     "community": 0.90,  # Community-level summaries (B1) - strengthened demotion
                 }
@@ -263,6 +263,24 @@ class IntelligentSearcher(BaseSearcher):
             # Path/filename relevance boost
             path_boost = self._calculate_path_boost(result.relative_path, query_tokens)
             score *= path_boost
+
+            # Lifecycle method demotion (e.g., __init__, __exit__)
+            # Prevents boilerplate methods from displacing core logic unless specifically requested
+            lifecycle_methods = {
+                "__init__",
+                "__enter__",
+                "__exit__",
+                "__del__",
+                "__repr__",
+                "__str__",
+            }
+            if result.name in lifecycle_methods:
+                query_has_lifecycle_intent = any(
+                    word in original_query.lower()
+                    for word in ("init", "enter", "exit", "del", "repr", "lifecycle")
+                )
+                if not query_has_lifecycle_intent:
+                    score *= 0.85
 
             # Boost based on docstring presence (but less for module chunks on entity queries)
             if result.docstring:

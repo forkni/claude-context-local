@@ -97,7 +97,7 @@ class QueryRouter:
                 "async",
                 "concurrent",
             ],
-            "weight": 1.2, # Priority for logic
+            "weight": 1.2,  # Priority for logic
             "description": "Logic, validation, and implementation queries",
         },
         "bge_code": {

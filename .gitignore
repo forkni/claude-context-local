@@ -368,3 +368,6 @@ local_config.json
 *.tmp
 tmp/
 temp/
+
+.gemini/
+gha-creds-*.json

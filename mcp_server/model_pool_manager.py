@@ -375,6 +375,10 @@ def get_model_key_from_name(model_name: str) -> Optional[str]:
         if name == model_name:
             return key
 
+    # Special case: Qwen3 variants (ensure 0.6B and 4B both map to 'qwen3')
+    if "qwen3" in model_name.lower() or "qwen-3" in model_name.lower():
+        return "qwen3"
+
     return None
 
 

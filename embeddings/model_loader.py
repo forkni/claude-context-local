@@ -350,7 +350,7 @@ class ModelLoader:
             # Build constructor kwargs
             model_config = self._get_model_config()
             trust_remote_code = model_config.get("trust_remote_code", True)
-            
+
             constructor_kwargs = {
                 "cache_folder": self.cache_dir,
                 "device": resolved_device,

@@ -13,9 +13,9 @@ from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
 # Model registry with specifications
 # Multi-model pool configuration for query routing
 # Maps model keys to full model names in MODEL_REGISTRY
-# Note: "qwen3" now uses 0.6B for all tiers to prevent OOM (5.8% quality vs 4B for 6.8x less VRAM)
+# Note: "qwen3" defaults to 4B for quality (MRL enabled), adaptive VRAM manager downgrades to 0.6B on <10GB VRAM
 MODEL_POOL_CONFIG = {
-    "qwen3": "Qwen/Qwen3-Embedding-0.6B",  # Use 0.6B for all tiers to prevent OOM
+    "qwen3": "Qwen/Qwen3-Embedding-4B",  # Default to 4B (downgrades automatically if needed)
     "bge_code": "BAAI/bge-code-v1",  # SOTA Code Retrieval (CoIR 81.77)
 }
 

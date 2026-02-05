@@ -10,107 +10,31 @@
 # Full Model Pool Configuration (12GB+ VRAM GPUs)
 # ============================================================================
 # Used when multi_model_pool="full" (default)
-# Models: BGE-Code-v1, Qwen3, CodeRankEmbed
+# Models: BGE-Code-v1, Qwen3-4B (MRL enabled)
 
 full_pool:
   # Confidence threshold for routing (below this, use default model)
   # Lowered from 0.3 → 0.15 → 0.10 → 0.05 based on empirical testing
   # Enhanced routing with single-word keywords enables lower threshold
   # Natural queries now trigger routing with 2-3 keyword matches
-  confidence_threshold: 0.05
+  confidence_threshold: 0.02
 
   # Default fallback model (most balanced)
   default_model: bge_code
 
   # Explicit precedence for tie-breaking
   # When scores are within 0.01 margin, use this order:
-  # 1. CodeRankEmbed (specialized algorithms)
-  # 2. Qwen3 (implementation logic)
-  # 3. BGE-Code (workflow/config/code)
+  # 1. Qwen3 (implementation logic specialist)
+  # 2. BGE-Code (workflow/config/code structure specialist)
   precedence:
-    - coderankembed
     - qwen3
     - bge_code
 
   # Model-specific routing rules
   models:
-    coderankembed:
-      weight: 1.5  # Higher weight for specialized matches
-      description: "Specialized algorithms (Merkle trees, RRF reranking, data structures)"
-      keywords:
-        # Specialized algorithms (2/8 wins, but high precision)
-        - merkle
-        - merkle tree
-        - merkle dag
-        - tree
-        - change detection
-        - rrf
-        - reranking
-        - reciprocal rank
-        - rank fusion
-        - rerank
-        - tree structure
-        - directed acyclic
-        - dag
-        # Data structures
-        - binary tree
-        - graph structure
-        - binary
-        - graph
-        # Hybrid search components
-        - hybrid
-        - fusion
-        - fuse
-        - combine
-        # Compound data structure phrases (SAFE)
-        - data structure
-        - data structures
-        - data model
-        - data modeling
-        - dataclass
-        - dataclasses
-        - pydantic
-        # Type system compounds (SAFE)
-        - type definition
-        - type definitions
-        - type schema
-        - schema definition
-        - schema definitions
-        - type system
-        - type annotation
-        - type annotations
-        # Specific OOP compounds (SAFE)
-        - class definition
-        - class schema
-        - class hierarchy
-        - interface definition
-        - protocol definition
-        - enum definition
-        - struct definition
-        # Safe single words (unambiguous)
-        - schema
-        - struct
-        - enum
-        - interface
-        - protocol
-        - inheritance
-        - polymorphism
-        - generic
-        - template
-        # Call graph and dependency analysis (moved from bge_m3 2025-12-15)
-        - call graph
-        - callgraph
-        - caller
-        - callers
-        - callee
-        - callees
-        - dependency
-        - dependencies
-        - dependency graph
-
     qwen3:
-      weight: 1.0
-      description: "Implementation queries and algorithms"
+      weight: 1.2
+      description: "Implementation queries and specialized algorithms"
       keywords:
         # Implementation-heavy queries (3/8 wins)
         - implementation
@@ -193,10 +117,29 @@ full_pool:
         - parser
         - parsing
         - parse
+        - encode
+        - decode
+        - format
+        - transform
+        # Specialized logic (moved from coderankembed)
+        - reranking
+        - rrf
+        - reciprocal rank
+        - rank fusion
+        - rerank
+        - normalization
+        - normalize
+        - generic
+        - template
+        - polymorphism
+        - fusion
+        - fuse
+        - combine
+        - binary
 
     bge_code:
       weight: 1.0
-      description: "Workflow, configuration, and SOTA code retrieval"
+      description: "Workflow, configuration, and structural code retrieval"
       keywords:
         # Workflow & configuration (3/8 wins, most consistent)
         - workflow
@@ -219,6 +162,14 @@ full_pool:
         - environment variable
         - loading system
         - load
+        # Storage and persistence
+        - store
+        - storage
+        - persistence
+        - database
+        - sqlite
+        - db
+        - memory
         # Incremental indexing (verified win) - expanded
         - incremental
         - indexing logic
@@ -265,6 +216,39 @@ full_pool:
         - verification
         - project
         - projects
+        # Structural & Relationship logic (moved from coderankembed)
+        - merkle
+        - merkle tree
+        - merkle dag
+        - tree
+        - tree structure
+        - directed acyclic
+        - dag
+        - graph
+        - graph structure
+        - call graph
+        - callgraph
+        - caller
+        - callers
+        - callee
+        - callees
+        - dependency
+        - dependencies
+        - dependency graph
+        - data structure
+        - data structures
+        - data model
+        - dataclass
+        - dataclasses
+        - pydantic
+        - schema
+        - struct
+        - enum
+        - interface
+        - protocol
+        - type definition
+        - type system
+        - type annotation
 
 # ============================================================================
 # Lightweight Model Pool Configuration (8GB VRAM GPUs)
