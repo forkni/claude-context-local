@@ -805,11 +805,15 @@ class CodeEmbedder:
                         model_vram_mb = self._model_vram_usage.get(self.model_name, 0.0)
                         model_vram_gb = model_vram_mb / 1024.0
 
+                # Derive memory_fraction from vram_limit_fraction to maintain consistent safety margin
+                # Target ~81% of hard VRAM ceiling for batch sizing (0.8125 ratio)
+                memory_fraction = config.performance.vram_limit_fraction * 0.8125
+
                 batch_size = calculate_optimal_batch_size(
                     embedding_dim=config.embedding.dimension,
                     min_batch=config.performance.dynamic_batch_min,
                     max_batch=config.performance.dynamic_batch_max,
-                    memory_fraction=config.performance.gpu_memory_threshold,
+                    memory_fraction=memory_fraction,
                     model_vram_gb=model_vram_gb,
                     model_name=self.model_name,
                 )

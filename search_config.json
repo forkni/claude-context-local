@@ -22,7 +22,8 @@
     "rrf_k_parameter": 100,
     "enable_result_reranking": true,
     "default_k": 4,
-    "max_k": 50
+    "max_k": 50,
+    "default_max_context_tokens": 0
   },
   "performance": {
     "use_parallel_search": true,
@@ -90,7 +91,10 @@
     "max_neighbors_per_hop": 5,
     "relation_types": null,
     "include_anchor": true,
-    "deduplicate": true
+    "deduplicate": true,
+    "edge_weights": null,
+    "exclude_stdlib_imports": true,
+    "exclude_third_party_imports": true
   },
   "graph_enhanced": {
     "centrality_method": "pagerank",

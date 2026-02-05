@@ -48,7 +48,7 @@ MODEL_REGISTRY = {
         "description": "SOTA Code Retrieval (CoIR 81.77), 2B params, Qwen2-based",
         "vram_gb": "4GB",  # ~4GB in FP16
         "fallback_batch_size": 32,  # Conservative batch size for 2B model
-        "trust_remote_code": False,
+        "trust_remote_code": False,  # Custom tokenizer has incompatible imports
     },
     "Qwen/Qwen3-Embedding-0.6B": {
         "dimension": 1024,
