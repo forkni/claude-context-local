@@ -193,17 +193,14 @@ class GenerativeReranker:
         self,
         model_name: str = "Qwen/Qwen3-Reranker-0.6B",
         device: Optional[str] = None,
-        batch_size: int = 8,
     ):
         """Initialize GenerativeReranker with lazy loading.
 
         Args:
             model_name: HuggingFace model ID for generative reranker
             device: Device to run on ('cuda', 'cpu', or None for auto-detect)
-            batch_size: Batch size for inference (smaller than discriminative due to LLM)
         """
         self.model_name = model_name
-        self.batch_size = batch_size
         self._model = None
         self._tokenizer = None
         self._logger = logging.getLogger(__name__)
@@ -215,7 +212,7 @@ class GenerativeReranker:
             self.device = device
 
     @property
-    def model(self):
+    def model(self) -> tuple:
         """Lazy load generative reranker model on first access.
 
         Returns:
@@ -268,20 +265,24 @@ class GenerativeReranker:
             # Qwen3-Reranker prompt format
             prompt = f"Query: {query}\nDocument: {content}\nIs this document relevant to the query? Answer Yes or No:"
 
-            inputs = tokenizer(
-                prompt, return_tensors="pt", truncate=True, max_length=512
-            ).to(self.device)
+            try:
+                inputs = tokenizer(
+                    prompt, return_tensors="pt", truncate=True, max_length=512
+                ).to(self.device)
 
-            with torch.no_grad():
-                outputs = model(**inputs)
-                logits = outputs.logits[0, -1, :]  # Last token logits
+                with torch.no_grad():
+                    outputs = model(**inputs)
+                    logits = outputs.logits[0, -1, :]  # Last token logits
 
-                # Get probability of "Yes" token
-                yes_token_id = tokenizer.encode("Yes", add_special_tokens=False)[0]
-                no_token_id = tokenizer.encode("No", add_special_tokens=False)[0]
+                    # Get probability of "Yes" token
+                    yes_token_id = tokenizer.encode("Yes", add_special_tokens=False)[0]
+                    no_token_id = tokenizer.encode("No", add_special_tokens=False)[0]
 
-                probs = torch.softmax(logits[[yes_token_id, no_token_id]], dim=0)
-                score = probs[0].item()  # P(Yes)
+                    probs = torch.softmax(logits[[yes_token_id, no_token_id]], dim=0)
+                    score = probs[0].item()  # P(Yes)
+            except Exception as e:
+                self._logger.warning(f"Skipping candidate {candidate.chunk_id}: {e}")
+                score = 0.0
 
             scores.append(score)
 
@@ -440,6 +441,7 @@ class JinaRerankerV3:
                 jina_results = self.model.rerank(query, documents, top_n=top_k)
         except torch.cuda.OutOfMemoryError as e:
             self._logger.error(f"CUDA OOM during reranking: {e}")
+            torch.cuda.empty_cache()
             raise RuntimeError(f"Insufficient GPU memory for reranking: {e}") from e
         except Exception as e:
             self._logger.error(f"Jina reranker inference failed: {e}")
@@ -493,7 +495,7 @@ class JinaRerankerV3:
 
 def create_reranker(
     model_name: str, device: Optional[str] = None, batch_size: int = 16
-):
+) -> "NeuralReranker | GenerativeReranker | JinaRerankerV3":
     """Factory function to create appropriate reranker based on model name.
 
     This function auto-detects whether to use a discriminative cross-encoder (NeuralReranker),
@@ -503,7 +505,7 @@ def create_reranker(
     Args:
         model_name: HuggingFace model ID for reranker
         device: Device to run on ('cuda', 'cpu', or None for auto-detect)
-        batch_size: Batch size for inference
+        batch_size: Batch size for inference (only used for NeuralReranker)
 
     Returns:
         NeuralReranker, GenerativeReranker, or JinaRerankerV3 instance
@@ -514,9 +516,7 @@ def create_reranker(
         >>> reranker = create_reranker("BAAI/bge-reranker-v2-m3")   # Returns NeuralReranker
     """
     if model_name in GENERATIVE_RERANKERS:
-        return GenerativeReranker(
-            model_name, device, batch_size=8
-        )  # Smaller batch for LLM
+        return GenerativeReranker(model_name, device)  # No batch_size parameter
     if model_name in JINA_V3_RERANKERS:
         return JinaRerankerV3(model_name, device)  # Listwise reranker
     return NeuralReranker(model_name, device, batch_size)
