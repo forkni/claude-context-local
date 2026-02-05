@@ -35,8 +35,9 @@ class VRAMTier:
 
 # VRAM tier definitions based on GPU capabilities
 # RTX 3060/4060 (8GB) → laptop tier → BGE-M3 with lightweight multi-model option
-# RTX 3090 (24GB) → desktop tier    → Qwen3-0.6B (full multi-model pool)
-# RTX 4090 (24GB) → workstation tier → Qwen3-0.6B (full multi-model pool)
+# RTX 3060 12GB (12GB) → desktop tier → Qwen3-0.6B (full multi-model pool)
+# RTX 3090 (24GB) → workstation tier → Qwen3-4B (full multi-model pool)
+# RTX 4090 (24GB) → workstation tier → Qwen3-4B (full multi-model pool)
 VRAM_TIERS: list[VRAMTier] = [
     VRAMTier(
         name="minimal",
@@ -72,7 +73,7 @@ VRAM_TIERS: list[VRAMTier] = [
         name="workstation",
         min_vram_gb=18,
         max_vram_gb=999,  # No upper limit
-        recommended_model="Qwen/Qwen3-Embedding-0.6B",  # Keep 0.6B for OOM prevention
+        recommended_model="Qwen/Qwen3-Embedding-4B",  # Use 4B for 18GB+ systems (7.5GB model + plenty headroom)
         multi_model_enabled=True,
         neural_reranking_enabled=True,
         multi_model_pool="full",  # Full 3-model pool (6.8GB)

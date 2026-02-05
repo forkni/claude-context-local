@@ -158,10 +158,19 @@ def resolve_qwen3_variant_for_lookup(project_hash: str, project_name: str) -> st
     from search.vram_manager import VRAMTierManager
 
     tier = VRAMTierManager().detect_tier()
-    logging.getLogger(__name__).debug(
-        f"[QWEN3_RESOLUTION] No Qwen3 index found, using VRAM tier '{tier.name}': {tier.recommended_model}"
-    )
-    return tier.recommended_model  # e.g., "Qwen/Qwen3-Embedding-0.6B" for 8GB VRAM
+    logger = logging.getLogger(__name__)
+
+    # Log at INFO level when workstation tier enables 4B for visibility
+    if tier.name == "workstation" and "4B" in tier.recommended_model:
+        logger.info(
+            f"[QWEN3_RESOLUTION] Workstation tier detected (18GB+ VRAM): "
+            f"Using {tier.recommended_model} for best quality"
+        )
+    else:
+        logger.debug(
+            f"[QWEN3_RESOLUTION] No Qwen3 index found, using VRAM tier '{tier.name}': {tier.recommended_model}"
+        )
+    return tier.recommended_model  # e.g., "Qwen/Qwen3-Embedding-4B" for 18GB+ VRAM
 
 
 # Multi-hop search configuration

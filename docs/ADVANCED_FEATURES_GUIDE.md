@@ -233,11 +233,12 @@ Keywords: "merkle", "rrf", "reranking", "tree structure", "hybrid search", "rank
 
 **Loaded State** (all models in the pool in memory):
 
-- **Total VRAM**: 6.3 GB (on RTX 4090 with 25.8 GB capacity)
-- **Qwen3-0.6B**: ~2.4 GB
-- **BGE-M3**: ~2.3 GB (additional)
-- **CodeRankEmbed**: ~0.6 GB (additional)
-- **Headroom**: 20.5 GB (79.5% free)
+- **Total VRAM** (Workstation tier, 18GB+): Up to ~15 GB (on RTX 4090 with 25.8 GB capacity)
+- **Qwen3-4B**: ~7.5 GB (workstation tier)
+- **Qwen3-0.6B**: ~2.4 GB (desktop tier, 10-18GB)
+- **BGE-Code**: ~4 GB (additional)
+- **BGE-M3**: ~1.1 GB (additional)
+- **Headroom**: 10+ GB (40%+ free on workstation)
 
 **Minimum Requirements**:
 
@@ -355,10 +356,10 @@ set CLAUDE_MULTI_MODEL_ENABLED=false
 
 ```python
 MODEL_POOL_CONFIG = {
-    "qwen3": "Qwen/Qwen3-Embedding-0.6B",
-    "bge_m3": "BAAI/bge-m3",
-    "coderankembed": "nomic-ai/CodeRankEmbed"
+    "qwen3": "Qwen/Qwen3-Embedding-4B",  # Auto-downgrades to 0.6B on <10GB VRAM
+    "bge_code": "BAAI/bge-code-v1",
 }
+# Note: Workstation tier (18GB+) uses 4B, Desktop tier (10-18GB) uses 0.6B
 ```
 
 **Key Features**:
