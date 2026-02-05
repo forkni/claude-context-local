@@ -55,6 +55,8 @@ class QueryEmbeddingCache:
         self._hits = 0
         self._misses = 0
         self._logger = logging.getLogger(__name__)
+        if self._disabled:
+            self._logger.debug("Query cache disabled (max_size=%d)", max_size)
 
     def _generate_cache_key(
         self,

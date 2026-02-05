@@ -172,6 +172,42 @@ class TestGenerativeReranker:
         assert results[1].metadata["original_score"] == 0.8
         assert results[1].metadata["reranker_score"] == 0.8
 
+    @patch("transformers.AutoModelForCausalLM.from_pretrained")
+    @patch("transformers.AutoTokenizer.from_pretrained")
+    def test_rerank_fallback_on_token_resolution_failure(
+        self, mock_tokenizer_class, mock_model_class
+    ):
+        """Should return original scores when tokenizer can't resolve Yes/No tokens."""
+
+        class MockTokenizer:
+            def encode(self, text, **kwargs):
+                # Always return multi-token for both "Yes"/" Yes" and "No"/" No"
+                return [10, 20]  # Multi-token
+
+        mock_tokenizer_class.return_value = MockTokenizer()
+        mock_model_class.return_value = MagicMock()
+
+        reranker = GenerativeReranker(device="cpu")
+        candidates = [
+            SearchResult(
+                chunk_id="a", score=1.0, metadata={"content_preview": "code a"}
+            ),
+            SearchResult(
+                chunk_id="b", score=0.8, metadata={"content_preview": "code b"}
+            ),
+        ]
+
+        results = reranker.rerank("query", candidates, top_k=2)
+
+        # Should return candidates with original scores preserved (fallback)
+        assert len(results) == 2
+        assert results[0].chunk_id == "a"
+        assert results[0].metadata["original_score"] == 1.0
+        assert results[0].metadata["reranker_score"] == 1.0
+        assert results[1].chunk_id == "b"
+        assert results[1].metadata["original_score"] == 0.8
+        assert results[1].metadata["reranker_score"] == 0.8
+
 
 class TestTokenIdValidation:
     """Tests for _resolve_single_token_id helper."""

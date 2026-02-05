@@ -289,9 +289,20 @@ class GenerativeReranker:
         model = self.model
         tokenizer = self.tokenizer
 
-        # Resolve token IDs with validation (raises RuntimeError if invalid)
-        yes_token_id = _resolve_single_token_id(tokenizer, "Yes")
-        no_token_id = _resolve_single_token_id(tokenizer, "No")
+        # Resolve token IDs with validation and graceful fallback
+        try:
+            yes_token_id = _resolve_single_token_id(tokenizer, "Yes")
+            no_token_id = _resolve_single_token_id(tokenizer, "No")
+        except RuntimeError as e:
+            self._logger.error(
+                f"Token resolution failed: {e}. Returning candidates in original order."
+            )
+            results = []
+            for candidate in candidates[:top_k]:
+                candidate.metadata["original_score"] = candidate.score
+                candidate.metadata["reranker_score"] = candidate.score
+                results.append(candidate)
+            return results
 
         # Build all prompts
         prompts = []
@@ -479,6 +490,8 @@ class JinaRerankerV3:
             self._model.eval()
 
             if not hasattr(self._model, "rerank"):
+                # Clean up invalid model before resetting
+                del self._model
                 self._model = None  # Reset so next access retries loading
                 raise RuntimeError(
                     f"Model {self.model_name} does not support rerank(). "
