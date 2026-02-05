@@ -27,6 +27,30 @@ GENERATIVE_RERANKERS = {"Qwen/Qwen3-Reranker-0.6B", "Qwen/Qwen3-Reranker-4B"}
 JINA_V3_RERANKERS = {"jinaai/jina-reranker-v3"}
 
 
+def _resolve_single_token_id(tokenizer, text: str) -> int:
+    """Resolve a text string to a single token ID, trying variants.
+
+    Args:
+        tokenizer: HuggingFace tokenizer instance
+        text: Token text to resolve (e.g., "Yes", "No")
+
+    Returns:
+        Single token ID
+
+    Raises:
+        RuntimeError: If text cannot be resolved to a single token
+    """
+    for variant in [text, f" {text}"]:
+        ids = tokenizer.encode(variant, add_special_tokens=False)
+        if len(ids) == 1:
+            return ids[0]
+    raise RuntimeError(
+        f"Cannot resolve '{text}' to a single token. "
+        f"Got {len(ids)} tokens for '{text}' and ' {text}'. "
+        f"Tokenizer: {type(tokenizer).__name__}"
+    )
+
+
 class NeuralReranker:
     """Cross-encoder neural reranker using BAAI/bge-reranker-v2-m3.
 
@@ -248,6 +272,9 @@ class GenerativeReranker:
     ) -> list:
         """Rerank candidates using generative Yes/No probability scoring.
 
+        Uses batched inference for O(1) forward passes instead of O(N).
+        Falls back to returning candidates in original order on failure.
+
         Args:
             query: The search query
             candidates: List of SearchResult objects from RRF
@@ -262,37 +289,67 @@ class GenerativeReranker:
         model = self.model
         tokenizer = self.tokenizer
 
-        # Precompute constant token IDs outside loop
-        yes_token_id = tokenizer.encode("Yes", add_special_tokens=False)[0]
-        no_token_id = tokenizer.encode("No", add_special_tokens=False)[0]
+        # Resolve token IDs with validation (raises RuntimeError if invalid)
+        yes_token_id = _resolve_single_token_id(tokenizer, "Yes")
+        no_token_id = _resolve_single_token_id(tokenizer, "No")
 
-        scores = []
+        # Build all prompts
+        prompts = []
         for candidate in candidates:
-            # Use content_preview from metadata for scoring
             content = candidate.metadata.get("content_preview", "")
             if not content:
-                # Fallback to chunk_id if no content
                 content = candidate.chunk_id
+            prompt = (
+                f"Query: {query}\nDocument: {content}\n"
+                "Is this document relevant to the query? Answer Yes or No:"
+            )
+            prompts.append(prompt)
 
-            # Qwen3-Reranker prompt format
-            prompt = f"Query: {query}\nDocument: {content}\nIs this document relevant to the query? Answer Yes or No:"
+        # Batched inference with graceful fallback
+        try:
+            inputs = tokenizer(
+                prompts,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=512,
+            ).to(self.device)
 
-            try:
-                inputs = tokenizer(
-                    prompt, return_tensors="pt", truncate=True, max_length=512
-                ).to(self.device)
-
-                with torch.no_grad():
+            with torch.no_grad():
+                if self.device == "cuda":
+                    with torch.autocast(device_type="cuda"):
+                        outputs = model(**inputs)
+                else:
                     outputs = model(**inputs)
-                    logits = outputs.logits[0, -1, :]  # Last token logits
 
-                    probs = torch.softmax(logits[[yes_token_id, no_token_id]], dim=0)
-                    score = probs[0].item()  # P(Yes)
-            except Exception as e:
-                self._logger.warning(f"Skipping candidate {candidate.chunk_id}: {e}")
-                score = 0.0
+                # Find last real token position per sequence using attention_mask
+                # attention_mask is 1 for real tokens, 0 for padding
+                # Sum along seq dim gives count of real tokens; subtract 1 for 0-indexed
+                last_token_indices = inputs["attention_mask"].sum(dim=1) - 1
 
-            scores.append(score)
+                # Extract logits at last-token positions: shape [batch, vocab_size]
+                batch_indices = torch.arange(len(prompts), device=self.device)
+                last_logits = outputs.logits[batch_indices, last_token_indices, :]
+
+                # Softmax over [yes, no] token logits to get P(Yes)
+                yn_logits = last_logits[:, [yes_token_id, no_token_id]]
+                probs = torch.softmax(yn_logits, dim=1)
+                scores = probs[:, 0].cpu().tolist()  # P(Yes) for each candidate
+
+        except (torch.cuda.OutOfMemoryError, RuntimeError, ValueError) as e:
+            self._logger.error(
+                f"Batched inference failed ({type(e).__name__}): {e}. "
+                "Returning candidates in original order."
+            )
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            # Graceful fallback: return top_k candidates with original scores preserved
+            results = []
+            for candidate in candidates[:top_k]:
+                candidate.metadata["original_score"] = candidate.score
+                candidate.metadata["reranker_score"] = candidate.score
+                results.append(candidate)
+            return results
 
         # Pair candidates with scores and sort
         scored_candidates = list(zip(candidates, scores, strict=True))
@@ -301,10 +358,9 @@ class GenerativeReranker:
         # Return top_k results with updated metadata and score
         results = []
         for candidate, score in scored_candidates[:top_k]:
-            # Preserve original score before mutation
             candidate.metadata["original_score"] = candidate.score
             candidate.metadata["reranker_score"] = float(score)
-            candidate.score = float(score)  # Replace original score with reranker score
+            candidate.score = float(score)
             results.append(candidate)
 
         self._logger.debug(
@@ -392,6 +448,7 @@ class JinaRerankerV3:
         """
         if self._model is None:
             self._logger.info(f"Loading Jina reranker: {self.model_name}")
+            import transformers as _tf
             from transformers import AutoConfig, AutoModel
 
             # Load config first and disable weight tying
@@ -399,18 +456,34 @@ class JinaRerankerV3:
             config = AutoConfig.from_pretrained(self.model_name, trust_remote_code=True)
             config.tie_word_embeddings = False
 
-            self._model = AutoModel.from_pretrained(
-                self.model_name,
-                config=config,
-                dtype="auto",  # Jina's custom parameter
-                trust_remote_code=True,
-            )
+            try:
+                self._model = AutoModel.from_pretrained(
+                    self.model_name,
+                    config=config,
+                    dtype="auto",  # Jina's custom parameter
+                    trust_remote_code=True,
+                )
+            except TypeError:
+                # dtype="auto" is Jina-specific; retry without it on older transformers
+                self._logger.warning(
+                    f"dtype='auto' not supported (transformers {_tf.__version__}), "
+                    "retrying without it"
+                )
+                self._model = AutoModel.from_pretrained(
+                    self.model_name,
+                    config=config,
+                    trust_remote_code=True,
+                )
+
             self._model = self._model.to(self.device)  # Move to GPU if available
             self._model.eval()
+
             if not hasattr(self._model, "rerank"):
+                self._model = None  # Reset so next access retries loading
                 raise RuntimeError(
                     f"Model {self.model_name} does not support rerank(). "
-                    "Ensure you have the correct model with trust_remote_code=True."
+                    "Ensure you have the correct model with trust_remote_code=True. "
+                    f"(transformers=={_tf.__version__})"
                 )
             self._logger.info(f"Jina reranker loaded on {self.device}")
         return self._model
@@ -465,12 +538,22 @@ class JinaRerankerV3:
         n = len(candidates)
         results = []
         for jina_result in jina_results:
-            idx = jina_result["index"]
-            if not isinstance(idx, int) or not (0 <= idx < n):
+            # Coerce index to int (Jina returns numpy.int64, which isn't an int subclass in NumPy 2.x)
+            try:
+                idx = int(jina_result["index"])
+            except (TypeError, ValueError):
                 self._logger.warning(
-                    f"Skipping invalid rerank index {idx} for {n} candidates"
+                    f"Skipping non-numeric rerank index: {jina_result.get('index')}"
                 )
                 continue
+
+            # Validate bounds
+            if not (0 <= idx < n):
+                self._logger.warning(
+                    f"Skipping out-of-bounds rerank index {idx} for {n} candidates"
+                )
+                continue
+
             score = jina_result["relevance_score"]
             candidate = candidates[idx]
             candidate.metadata["original_score"] = candidate.score

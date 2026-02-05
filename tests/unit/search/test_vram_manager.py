@@ -42,7 +42,6 @@ class TestVRAMTiers:
             assert tier.recommended_model in [
                 "BAAI/bge-m3",
                 "Qwen/Qwen3-Embedding-0.6B",
-                "Qwen/Qwen3-Embedding-0.6B",
             ]
             assert len(tier.recommended_model) > 5
 

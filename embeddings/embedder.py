@@ -63,6 +63,30 @@ MODEL_ACTIVATION_COST_OVERRIDES: dict[str, float] = {
 }
 
 
+def _get_activation_cost_override(model_name: str) -> float | None:
+    """Look up activation cost override with fuzzy model name matching.
+
+    Supports exact match, suffix match, and substring match to handle
+    local paths and variant names (e.g., "/path/to/nomic-ai/CodeRankEmbed").
+
+    Args:
+        model_name: Model identifier (may be HF ID or local path)
+
+    Returns:
+        Override cost in GB per item, or None if no match
+    """
+    if model_name is None:
+        return None
+    # Exact match first (fastest path)
+    if model_name in MODEL_ACTIVATION_COST_OVERRIDES:
+        return MODEL_ACTIVATION_COST_OVERRIDES[model_name]
+    # Fuzzy match: suffix or substring
+    for key, cost in MODEL_ACTIVATION_COST_OVERRIDES.items():
+        if model_name.endswith(key) or key in model_name:
+            return cost
+    return None
+
+
 # Configure PyTorch CUDA allocator BEFORE any torch imports
 # This must be done early to prevent fragmentation and enable better memory management
 def _configure_cuda_allocator():
@@ -145,7 +169,7 @@ def set_vram_limit(fraction: float = 0.90) -> bool:
             f"[VRAM_LIMIT] Set hard limit to {fraction:.0%} of dedicated VRAM"
         )
         return True
-    except (RuntimeError, ValueError) as e:
+    except (RuntimeError, ValueError, AssertionError, TypeError) as e:
         logging.getLogger(__name__).warning(f"[VRAM_LIMIT] Failed to set: {e}")
         return False
 
@@ -220,7 +244,7 @@ def calculate_optimal_batch_size(
         # Check for model-specific activation cost overrides first
         # Some models have activation memory that doesn't correlate with their weight VRAM
         # (e.g., CodeRankEmbed: small weight but long context → high activation memory)
-        override_cost = MODEL_ACTIVATION_COST_OVERRIDES.get(model_name)
+        override_cost = _get_activation_cost_override(model_name)
         if override_cost is not None:
             gb_per_item = override_cost
             model_tier = "override"

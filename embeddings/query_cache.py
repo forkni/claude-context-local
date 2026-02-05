@@ -38,10 +38,16 @@ class QueryEmbeddingCache:
         """Initialize the query embedding cache.
 
         Args:
-            max_size: Maximum number of entries to cache. Defaults to 128.
+            max_size: Maximum number of entries to cache. Set to 0 or negative to disable caching.
+                     Defaults to 128.
             ttl_seconds: Time-to-live in seconds for cache entries. Defaults to 300 (5 minutes).
         """
-        self._max_size = max(1, max_size)  # Prevent infinite loop if max_size=0
+        if max_size <= 0:
+            self._disabled = True
+            self._max_size = 0
+        else:
+            self._disabled = False
+            self._max_size = max_size
         self._ttl_seconds = ttl_seconds
         # OrderedDict for O(1) LRU operations (move_to_end, popitem)
         self._cache: OrderedDict[str, tuple[float, np.ndarray]] = OrderedDict()
@@ -90,6 +96,10 @@ class QueryEmbeddingCache:
             Cached embedding if found and not expired, None otherwise. Returns a copy to
             prevent external modification of cached data.
         """
+        if self._disabled:
+            self._misses += 1
+            return None
+
         cache_key = self._generate_cache_key(
             query, model_name, task_instruction, query_prefix
         )
@@ -136,6 +146,9 @@ class QueryEmbeddingCache:
             task_instruction: Optional task instruction
             query_prefix: Optional query prefix
         """
+        if self._disabled:
+            return
+
         cache_key = self._generate_cache_key(
             query, model_name, task_instruction, query_prefix
         )
