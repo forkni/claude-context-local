@@ -136,6 +136,63 @@ class TestJinaRerankerV3:
         reranker = JinaRerankerV3()
         assert reranker.get_vram_usage() == 0.0
 
+    def test_rerank_handles_numpy_indices(self):
+        """Should handle numpy.int64 indices from Jina model."""
+        import numpy as np
+
+        mock_model = MagicMock()
+        # Jina returns numpy.int64 indices, not Python int
+        mock_model.rerank.return_value = [
+            {"index": np.int64(1), "relevance_score": 0.95, "document": "code b"},
+            {"index": np.int64(0), "relevance_score": 0.85, "document": "code a"},
+        ]
+
+        reranker = JinaRerankerV3()
+        reranker._model = mock_model
+
+        candidates = [
+            SearchResult(
+                chunk_id="a", score=1.0, metadata={"content_preview": "code a"}
+            ),
+            SearchResult(
+                chunk_id="b", score=0.8, metadata={"content_preview": "code b"}
+            ),
+        ]
+
+        results = reranker.rerank("test query", candidates, top_k=2)
+
+        # Should successfully map numpy.int64 indices to candidates
+        assert len(results) == 2
+        assert results[0].chunk_id == "b"
+        assert results[0].score == 0.95
+        assert results[1].chunk_id == "a"
+        assert results[1].score == 0.85
+
+    @patch("transformers.AutoModel.from_pretrained")
+    @patch("transformers.AutoConfig.from_pretrained")
+    def test_model_property_resets_on_validation_failure(
+        self, mock_config_class, mock_from_pretrained
+    ):
+        """Model should be reset to None if rerank attribute check fails."""
+        mock_config = MagicMock()
+        mock_config_class.return_value = mock_config
+
+        # Return a model WITHOUT rerank method (but with to/eval)
+        mock_model = MagicMock(spec=["to", "eval"])  # Has to/eval but NOT rerank
+        mock_model.to.return_value = mock_model
+        mock_model.eval.return_value = mock_model
+        mock_from_pretrained.return_value = mock_model
+
+        reranker = JinaRerankerV3()
+
+        import pytest
+
+        with pytest.raises(RuntimeError, match="does not support rerank"):
+            _ = reranker.model
+
+        # Critical: _model should be None so next access retries
+        assert reranker._model is None
+
 
 class TestCreateRerankerFactoryJina:
     """Tests for create_reranker factory with Jina models."""

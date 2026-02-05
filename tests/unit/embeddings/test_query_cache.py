@@ -383,3 +383,36 @@ class TestQueryEmbeddingCache:
         assert stats["hits"] >= 0
         assert stats["misses"] >= 0
         assert stats["cache_size"] <= 50
+
+    def test_disabled_cache_with_zero_max_size(self):
+        """Cache with max_size=0 should be disabled (no storage, no errors)."""
+        cache = QueryEmbeddingCache(max_size=0)
+        embedding = np.array([0.1, 0.2, 0.3])
+
+        # Put should be a no-op
+        cache.put("query", "model", embedding)
+        assert cache.size == 0
+
+        # Get should always return None
+        result = cache.get("query", "model")
+        assert result is None
+
+        # Stats should show all misses
+        stats = cache.get_stats()
+        assert stats["misses"] == 1
+        assert stats["hits"] == 0
+        assert stats["cache_size"] == 0
+        assert stats["max_size"] == 0
+
+    def test_disabled_cache_with_negative_max_size(self):
+        """Cache with negative max_size should be disabled."""
+        cache = QueryEmbeddingCache(max_size=-5)
+        embedding = np.array([0.1, 0.2, 0.3])
+
+        cache.put("query", "model", embedding)
+        assert cache.size == 0
+        assert cache.get("query", "model") is None
+
+        stats = cache.get_stats()
+        assert stats["max_size"] == 0
+        assert stats["cache_size"] == 0

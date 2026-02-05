@@ -33,30 +33,44 @@ class TestGenerativeReranker:
     @patch("transformers.AutoModelForCausalLM.from_pretrained")
     @patch("transformers.AutoTokenizer.from_pretrained")
     def test_rerank_adds_score_metadata(self, mock_tokenizer_class, mock_model_class):
-        """Reranking should add reranker_score to metadata."""
-        # Create full logits tensor (batch=1, seq_len=1, vocab_size=1000)
-        logits_tensor = torch.zeros(1, 1, 1000)
-        logits_tensor[0, -1, 100] = 2.0  # Yes token high logit
-        logits_tensor[0, -1, 101] = 0.5  # No token low logit
+        """Reranking should add reranker_score to metadata (batched inference)."""
+        seq_len = 10
+        vocab_size = 1000
+        batch_size = 2
+        yes_id, no_id = 100, 101
 
-        # Create proper mock tokenizer with encode method AND callable behavior
+        # Logits: shape [batch, seq_len, vocab_size]
+        logits_tensor = torch.zeros(batch_size, seq_len, vocab_size)
+        logits_tensor[0, -1, yes_id] = 2.0  # Candidate 0: P(Yes) high
+        logits_tensor[0, -1, no_id] = 0.5
+        logits_tensor[1, -1, yes_id] = 0.5  # Candidate 1: P(Yes) lower
+        logits_tensor[1, -1, no_id] = 2.0
+
+        # Mock tokenizer
         class MockTokenizer:
             def encode(self, text, **kwargs):
-                return [100] if text == "Yes" else [101]
+                return [yes_id] if text in ("Yes", " Yes") else [no_id]
 
-            def __call__(self, prompt, **kwargs):
-                # Return mock inputs with .to() method
-                mock_inputs = MagicMock()
-                mock_inputs.to.return_value = mock_inputs
-                return mock_inputs
+            def __call__(self, prompts, **kwargs):
+                n = len(prompts) if isinstance(prompts, list) else 1
+                mock_inputs = {
+                    "input_ids": torch.ones(n, seq_len, dtype=torch.long),
+                    "attention_mask": torch.ones(n, seq_len, dtype=torch.long),
+                }
 
-        # Create proper mock model with .to() method AND callable behavior
+                # Add .to() method that returns self
+                class TensorDict(dict):
+                    def to(self, device):
+                        return self
+
+                return TensorDict(mock_inputs)
+
+        # Mock model
         class MockModel:
             def to(self, device):
                 return self
 
             def __call__(self, **inputs):
-                # Return outputs with proper tensor
                 class Outputs:
                     logits = logits_tensor
 
@@ -65,7 +79,7 @@ class TestGenerativeReranker:
         mock_tokenizer_class.return_value = MockTokenizer()
         mock_model_class.return_value = MockModel()
 
-        reranker = GenerativeReranker()
+        reranker = GenerativeReranker(device="cpu")
         candidates = [
             SearchResult(
                 chunk_id="a", score=1.0, metadata={"content_preview": "code a"}
@@ -80,8 +94,13 @@ class TestGenerativeReranker:
         assert len(results) == 2
         assert "reranker_score" in results[0].metadata
         assert isinstance(results[0].metadata["reranker_score"], float)
-        # Verify score is between 0 and 1 (probability)
         assert 0.0 <= results[0].metadata["reranker_score"] <= 1.0
+        # First result should have higher score (candidate "a" has high Yes logit)
+        assert results[0].chunk_id == "a"
+        assert (
+            results[0].metadata["reranker_score"]
+            > results[1].metadata["reranker_score"]
+        )
 
     @patch("transformers.AutoModelForCausalLM.from_pretrained")
     @patch("transformers.AutoTokenizer.from_pretrained")
@@ -116,6 +135,82 @@ class TestGenerativeReranker:
         """VRAM usage should be 0 when model not loaded."""
         reranker = GenerativeReranker()
         assert reranker.get_vram_usage() == 0.0
+
+    @patch("transformers.AutoModelForCausalLM.from_pretrained")
+    @patch("transformers.AutoTokenizer.from_pretrained")
+    def test_rerank_fallback_on_error(self, mock_tokenizer_class, mock_model_class):
+        """Should return candidates in original order on inference failure."""
+
+        class MockTokenizer:
+            def encode(self, text, **kwargs):
+                return [100] if text in ("Yes", " Yes") else [101]
+
+            def __call__(self, prompts, **kwargs):
+                raise RuntimeError("Simulated tokenization failure")
+
+        mock_tokenizer_class.return_value = MockTokenizer()
+        mock_model_class.return_value = MagicMock()
+
+        reranker = GenerativeReranker(device="cpu")
+        candidates = [
+            SearchResult(
+                chunk_id="a", score=1.0, metadata={"content_preview": "code a"}
+            ),
+            SearchResult(
+                chunk_id="b", score=0.8, metadata={"content_preview": "code b"}
+            ),
+        ]
+
+        results = reranker.rerank("query", candidates, top_k=2)
+
+        # Should return candidates with original scores preserved
+        assert len(results) == 2
+        assert results[0].chunk_id == "a"
+        assert results[0].metadata["original_score"] == 1.0
+        assert results[0].metadata["reranker_score"] == 1.0
+        assert results[1].chunk_id == "b"
+        assert results[1].metadata["original_score"] == 0.8
+        assert results[1].metadata["reranker_score"] == 0.8
+
+
+class TestTokenIdValidation:
+    """Tests for _resolve_single_token_id helper."""
+
+    def test_resolves_single_token(self):
+        """Should return token ID when text tokenizes to single token."""
+        from search.neural_reranker import _resolve_single_token_id
+
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.encode.return_value = [42]
+
+        result = _resolve_single_token_id(mock_tokenizer, "Yes")
+        assert result == 42
+
+    def test_tries_space_variant(self):
+        """Should try ' Yes' if 'Yes' produces multiple tokens."""
+        from search.neural_reranker import _resolve_single_token_id
+
+        mock_tokenizer = MagicMock()
+        # "Yes" -> 2 tokens, " Yes" -> 1 token
+        mock_tokenizer.encode.side_effect = lambda text, **kw: (
+            [10, 20] if text == "Yes" else [42]
+        )
+
+        result = _resolve_single_token_id(mock_tokenizer, "Yes")
+        assert result == 42
+        assert mock_tokenizer.encode.call_count == 2
+
+    def test_raises_on_multi_token(self):
+        """Should raise RuntimeError if neither variant is single-token."""
+        import pytest
+
+        from search.neural_reranker import _resolve_single_token_id
+
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.encode.return_value = [10, 20]  # Always multi-token
+
+        with pytest.raises(RuntimeError, match="Cannot resolve"):
+            _resolve_single_token_id(mock_tokenizer, "Yes")
 
 
 class TestCreateRerankerFactory:
