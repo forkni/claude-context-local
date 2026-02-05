@@ -371,4 +371,5 @@ tmp/
 temp/
 
 .gemini/
+gemini-skills/
 gha-creds-*.json
