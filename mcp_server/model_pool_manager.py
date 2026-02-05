@@ -195,14 +195,16 @@ class ModelPoolManager:
                     )
                 except Exception as e:
                     logger.error(f"✗ Failed to load {model_key}: {e}")
-                    # Fallback to bge_m3 if available
+                    # Fallback to first available model in pool
+                    pool_config = self._get_pool_config()
+                    fallback_key = next(iter(pool_config.keys()))
                     if (
-                        model_key != "bge_m3"
-                        and "bge_m3" in state.embedders
-                        and state.embedders["bge_m3"] is not None
+                        model_key != fallback_key
+                        and fallback_key in state.embedders
+                        and state.embedders[fallback_key] is not None
                     ):
-                        logger.warning("Falling back to bge_m3")
-                        return state.embedders["bge_m3"]
+                        logger.warning(f"Falling back to {fallback_key}")
+                        return state.embedders[fallback_key]
                     raise
 
             return state.embedders[model_key]
@@ -225,15 +227,19 @@ class ModelPoolManager:
                             break
 
                     if model_key is None:
+                        pool_config = self._get_pool_config()
+                        fallback_key = next(iter(pool_config.keys()))
                         logger.warning(
-                            f"Config model '{config_model_name}' not in pool, using bge_m3"
+                            f"Config model '{config_model_name}' not in pool, using {fallback_key}"
                         )
-                        model_key = "bge_m3"
+                        model_key = fallback_key
                 except (RuntimeError, AttributeError) as e:
+                    pool_config = self._get_pool_config()
+                    fallback_key = next(iter(pool_config.keys()))
                     logger.warning(
-                        f"Failed to load model from config: {e}, using bge_m3"
+                        f"Failed to load model from config: {e}, using {fallback_key}"
                     )
-                    model_key = "bge_m3"
+                    model_key = fallback_key
 
             # Validate model_key against current pool config
             pool_config = self._get_pool_config()
@@ -241,7 +247,9 @@ class ModelPoolManager:
                 logger.error(
                     f"Invalid model_key '{model_key}', available: {list(pool_config.keys())}"
                 )
-                model_key = "bge_m3"  # Fallback to most reliable model
+                model_key = next(
+                    iter(pool_config.keys())
+                )  # Fallback to first available model
 
             # Lazy load model if not already loaded
             if model_key not in state.embedders or state.embedders[model_key] is None:
@@ -291,14 +299,16 @@ class ModelPoolManager:
                         logger.info(f"✓ {model_key} loaded successfully")
                 except Exception as e:
                     logger.error(f"✗ Failed to load {model_key}: {e}")
-                    # Fallback to bge_m3 if available
+                    # Fallback to first available model in pool
+                    pool_config = self._get_pool_config()
+                    fallback_key = next(iter(pool_config.keys()))
                     if (
-                        model_key != "bge_m3"
-                        and "bge_m3" in state.embedders
-                        and state.embedders["bge_m3"] is not None
+                        model_key != fallback_key
+                        and fallback_key in state.embedders
+                        and state.embedders[fallback_key] is not None
                     ):
-                        logger.warning("Falling back to bge_m3")
-                        return state.embedders["bge_m3"]
+                        logger.warning(f"Falling back to {fallback_key}")
+                        return state.embedders[fallback_key]
                     raise
 
             return state.embedders[model_key]

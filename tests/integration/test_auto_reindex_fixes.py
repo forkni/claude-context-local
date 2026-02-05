@@ -146,18 +146,18 @@ class TestMultiModelCleanupBeforeReindex:
         pool_manager.initialize_pool(lazy_load=True)
 
         # Load all models in the pool by requesting them
-        # Note: lightweight-speed pool has gte_modernbert + bge_m3
-        embedder_gte = pool_manager.get_embedder("gte_modernbert")
-        pool_manager.get_embedder("bge_m3")  # Load but don't need reference
+        # Note: full pool has qwen3 + bge_code
+        embedder_qwen3 = pool_manager.get_embedder("qwen3")
+        pool_manager.get_embedder("bge_code")  # Load but don't need reference
 
         # Verify all models loaded
-        assert state.embedders.get("gte_modernbert") is not None
-        assert state.embedders.get("bge_m3") is not None
+        assert state.embedders.get("qwen3") is not None
+        assert state.embedders.get("bge_code") is not None
         initial_count = len(state.embedders)
         assert initial_count >= 2
 
         # Create indexer and perform initial index
-        indexer = IncrementalIndexer(embedder=embedder_gte)
+        indexer = IncrementalIndexer(embedder=embedder_qwen3)
         result = indexer.incremental_index(str(temp_project), "test_project")
         assert result.success
 
@@ -234,14 +234,12 @@ class TestNoOOMDuringReindex:
         state = get_state()
         pool_manager = get_model_pool_manager()
 
-        # Load all 3 models
+        # Load all 2 models in full pool
         pool_manager.initialize_pool(lazy_load=True)
         embedder_qwen3 = pool_manager.get_embedder("qwen3")
         _ = embedder_qwen3.model  # Force model loading into VRAM
-        embedder_bge = pool_manager.get_embedder("bge_m3")
-        _ = embedder_bge.model  # Force model loading into VRAM
-        embedder_code = pool_manager.get_embedder("coderankembed")
-        _ = embedder_code.model  # Force model loading into VRAM
+        embedder_bge_code = pool_manager.get_embedder("bge_code")
+        _ = embedder_bge_code.model  # Force model loading into VRAM
 
         # Check VRAM before cleanup
         vram_before = torch.cuda.memory_allocated() / (1024**3)  # GB

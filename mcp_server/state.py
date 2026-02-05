@@ -57,8 +57,10 @@ class ApplicationState:
 
     # Configuration
     multi_model_enabled: bool = field(
-        default_factory=lambda: os.getenv("CLAUDE_MULTI_MODEL_ENABLED", "true").lower()
-        in ("true", "1", "yes")
+        default_factory=lambda: (
+            os.getenv("CLAUDE_MULTI_MODEL_ENABLED", "true").lower()
+            in ("true", "1", "yes")
+        )
     )
 
     def reset(self) -> None:

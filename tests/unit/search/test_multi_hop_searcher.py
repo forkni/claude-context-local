@@ -544,8 +544,8 @@ class TestMultiHopSearcher:
         }
 
         # Reranker returns whatever it gets
-        self.mock_reranking_engine.rerank_by_query.side_effect = (
-            lambda **kwargs: kwargs["results"]
+        self.mock_reranking_engine.rerank_by_query.side_effect = lambda **kwargs: (
+            kwargs["results"]
         )
 
         self.searcher.search(query="test", k=5, hops=2)
@@ -639,8 +639,8 @@ class TestIntentAdaptiveWeights:
         self.mock_single_hop_callback.return_value = [mock_result]
 
         # Mock reranker to return results as-is
-        self.mock_reranking_engine.rerank_by_query.side_effect = (
-            lambda **kwargs: kwargs["results"]
+        self.mock_reranking_engine.rerank_by_query.side_effect = lambda **kwargs: (
+            kwargs["results"]
         )
 
         # Mock graph_storage.get_neighbors to return empty set

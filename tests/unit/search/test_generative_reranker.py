@@ -36,8 +36,8 @@ class TestGenerativeReranker:
         """Reranking should add reranker_score to metadata."""
         # Setup mock tokenizer
         mock_tokenizer = MagicMock()
-        mock_tokenizer.encode.side_effect = (
-            lambda text, **kwargs: [100] if text == "Yes" else [101]
+        mock_tokenizer.encode.side_effect = lambda text, **kwargs: (
+            [100] if text == "Yes" else [101]
         )
 
         # Mock tokenizer call to return object with .to() method
