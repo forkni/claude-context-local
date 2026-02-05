@@ -205,8 +205,8 @@ class SearchModeConfig:
     enable_hybrid: bool = True
 
     # Hybrid Search Weights
-    bm25_weight: float = 0.5
-    dense_weight: float = 0.5
+    bm25_weight: float = 0.35
+    dense_weight: float = 0.65
 
     # BM25 Configuration
     bm25_k_parameter: int = 100
@@ -642,8 +642,8 @@ class SearchConfig:
             search_mode = SearchModeConfig(
                 default_mode=search_mode_data.get("default_mode", "hybrid"),
                 enable_hybrid=search_mode_data.get("enable_hybrid", True),
-                bm25_weight=search_mode_data.get("bm25_weight", 0.4),
-                dense_weight=search_mode_data.get("dense_weight", 0.6),
+                bm25_weight=search_mode_data.get("bm25_weight", 0.35),
+                dense_weight=search_mode_data.get("dense_weight", 0.65),
                 bm25_k_parameter=search_mode_data.get("bm25_k_parameter", 100),
                 bm25_use_stopwords=search_mode_data.get("bm25_use_stopwords", True),
                 bm25_use_stemming=search_mode_data.get("bm25_use_stemming", True),

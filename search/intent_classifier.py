@@ -176,7 +176,7 @@ class IntentClassifier:
                 (r"\bdoes\s+\w+\s+exist\b", 1.4),
                 (r"\bis\s+there\s+(a\s+)?\w+\b", 1.3),
             ],
-            "max_tokens": 8,  # Short, focused queries (raised for natural language function lookups)
+            "max_tokens": 10,  # Short, focused queries (raised to avoid penalizing 9-token queries)
             "weight": 1.0,
             "description": "Symbol/entity lookup queries",
         },

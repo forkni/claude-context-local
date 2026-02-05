@@ -70,14 +70,17 @@ def _extract_chunk_lines(chunk_id: str) -> int:
     """
     parts = chunk_id.split(":")
     if len(parts) < 2:
+        logger.warning(f"Malformed chunk_id (insufficient parts): {chunk_id}")
         return 0
     line_range = parts[1]  # "start-end" format
     if "-" not in line_range:
+        logger.warning(f"Malformed chunk_id (no line range): {chunk_id}")
         return 0
     try:
         start, end = map(int, line_range.split("-"))
         return end - start + 1  # Inclusive range
     except (ValueError, IndexError):
+        logger.warning(f"Malformed chunk_id (invalid line range): {chunk_id}")
         return 0
 
 
