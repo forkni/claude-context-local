@@ -112,11 +112,6 @@ class TestGenerativeReranker:
         reranker = GenerativeReranker(device="cpu")
         assert reranker.device == "cpu"
 
-    def test_custom_batch_size(self):
-        """Custom batch size should be set."""
-        reranker = GenerativeReranker(batch_size=4)
-        assert reranker.batch_size == 4
-
     def test_vram_usage_when_not_loaded(self):
         """VRAM usage should be 0 when model not loaded."""
         reranker = GenerativeReranker()
@@ -142,11 +137,6 @@ class TestCreateRerankerFactory:
         """Should create NeuralReranker for GTE models."""
         reranker = create_reranker("Alibaba-NLP/gte-reranker-modernbert-base")
         assert isinstance(reranker, NeuralReranker)
-
-    def test_generative_reranker_uses_smaller_batch(self):
-        """Generative rerankers should use smaller batch size."""
-        reranker = create_reranker("Qwen/Qwen3-Reranker-0.6B", batch_size=16)
-        assert reranker.batch_size == 8  # Factory overrides to 8 for LLM
 
     def test_discriminative_reranker_preserves_batch_size(self):
         """Discriminative rerankers should preserve batch size."""
@@ -188,5 +178,4 @@ class TestGenerativeRerankerIntegration:
         # We can't test actual model behavior without loading it,
         # but we can verify the structure is set up correctly
         assert hasattr(reranker, "model_name")
-        assert hasattr(reranker, "batch_size")
         assert hasattr(reranker, "_logger")

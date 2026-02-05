@@ -131,7 +131,8 @@ class NeuralReranker:
         # Return top_k results with updated metadata and score
         results = []
         for candidate, score in scored_candidates[:top_k]:
-            # Add reranker score to metadata AND update main score
+            # Preserve original score before mutation
+            candidate.metadata["original_score"] = candidate.score
             candidate.metadata["reranker_score"] = float(score)
             candidate.score = float(score)  # Replace original score with reranker score
             results.append(candidate)
@@ -211,13 +212,8 @@ class GenerativeReranker:
         else:
             self.device = device
 
-    @property
-    def model(self) -> tuple:
-        """Lazy load generative reranker model on first access.
-
-        Returns:
-            Tuple of (model, tokenizer)
-        """
+    def _ensure_loaded(self) -> None:
+        """Lazy load model and tokenizer on first access."""
         if self._model is None:
             self._logger.info(f"Loading generative reranker: {self.model_name}")
             from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -231,7 +227,18 @@ class GenerativeReranker:
                 trust_remote_code=True,
             ).to(self.device)
             self._logger.info(f"Generative reranker loaded on {self.device}")
-        return self._model, self._tokenizer
+
+    @property
+    def model(self):
+        """Get the generative reranker model (lazy loaded)."""
+        self._ensure_loaded()
+        return self._model
+
+    @property
+    def tokenizer(self):
+        """Get the tokenizer (lazy loaded)."""
+        self._ensure_loaded()
+        return self._tokenizer
 
     def rerank(
         self,
@@ -252,7 +259,12 @@ class GenerativeReranker:
         if not candidates:
             return []
 
-        model, tokenizer = self.model
+        model = self.model
+        tokenizer = self.tokenizer
+
+        # Precompute constant token IDs outside loop
+        yes_token_id = tokenizer.encode("Yes", add_special_tokens=False)[0]
+        no_token_id = tokenizer.encode("No", add_special_tokens=False)[0]
 
         scores = []
         for candidate in candidates:
@@ -274,10 +286,6 @@ class GenerativeReranker:
                     outputs = model(**inputs)
                     logits = outputs.logits[0, -1, :]  # Last token logits
 
-                    # Get probability of "Yes" token
-                    yes_token_id = tokenizer.encode("Yes", add_special_tokens=False)[0]
-                    no_token_id = tokenizer.encode("No", add_special_tokens=False)[0]
-
                     probs = torch.softmax(logits[[yes_token_id, no_token_id]], dim=0)
                     score = probs[0].item()  # P(Yes)
             except Exception as e:
@@ -293,7 +301,8 @@ class GenerativeReranker:
         # Return top_k results with updated metadata and score
         results = []
         for candidate, score in scored_candidates[:top_k]:
-            # Add reranker score to metadata AND update main score
+            # Preserve original score before mutation
+            candidate.metadata["original_score"] = candidate.score
             candidate.metadata["reranker_score"] = float(score)
             candidate.score = float(score)  # Replace original score with reranker score
             results.append(candidate)
@@ -398,6 +407,11 @@ class JinaRerankerV3:
             )
             self._model = self._model.to(self.device)  # Move to GPU if available
             self._model.eval()
+            if not hasattr(self._model, "rerank"):
+                raise RuntimeError(
+                    f"Model {self.model_name} does not support rerank(). "
+                    "Ensure you have the correct model with trust_remote_code=True."
+                )
             self._logger.info(f"Jina reranker loaded on {self.device}")
         return self._model
 
@@ -447,12 +461,19 @@ class JinaRerankerV3:
             self._logger.error(f"Jina reranker inference failed: {e}")
             raise RuntimeError(f"Reranking failed: {e}") from e
 
-        # Map back to SearchResult objects
+        # Map back to SearchResult objects with index validation
+        n = len(candidates)
         results = []
         for jina_result in jina_results:
             idx = jina_result["index"]
+            if not isinstance(idx, int) or not (0 <= idx < n):
+                self._logger.warning(
+                    f"Skipping invalid rerank index {idx} for {n} candidates"
+                )
+                continue
             score = jina_result["relevance_score"]
             candidate = candidates[idx]
+            candidate.metadata["original_score"] = candidate.score
             candidate.metadata["reranker_score"] = float(score)
             candidate.score = float(score)
             results.append(candidate)

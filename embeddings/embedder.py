@@ -869,6 +869,9 @@ class CodeEmbedder:
                 # Derive memory_fraction from vram_limit_fraction to maintain consistent safety margin
                 # Target ~81% of hard VRAM ceiling for batch sizing (0.8125 ratio)
                 memory_fraction = config.performance.vram_limit_fraction * 0.8125
+                memory_fraction = max(
+                    0.05, min(memory_fraction, 0.95)
+                )  # Clamp to safe range
 
                 batch_size = calculate_optimal_batch_size(
                     embedding_dim=config.embedding.dimension,

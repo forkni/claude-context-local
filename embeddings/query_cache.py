@@ -41,7 +41,7 @@ class QueryEmbeddingCache:
             max_size: Maximum number of entries to cache. Defaults to 128.
             ttl_seconds: Time-to-live in seconds for cache entries. Defaults to 300 (5 minutes).
         """
-        self._max_size = max_size
+        self._max_size = max(1, max_size)  # Prevent infinite loop if max_size=0
         self._ttl_seconds = ttl_seconds
         # OrderedDict for O(1) LRU operations (move_to_end, popitem)
         self._cache: OrderedDict[str, tuple[float, np.ndarray]] = OrderedDict()
