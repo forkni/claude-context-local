@@ -2,9 +2,9 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-02-01)
+## Current Status: All Features Operational (2026-02-04)
 
-- **Version**: 0.9.0
+- **Version**: 0.9.1
 - **Status**: Production-ready
 - **Test Coverage**: 1,557 unit tests + 8 integration tests (100% pass rate)
 - **Dependencies**: 125 packages (38% reduction from 201)
@@ -12,6 +12,68 @@ Complete version history and feature timeline for claude-context-local MCP serve
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
 - **SSCG Benchmark**: Recall@4=1.00 (perfect), MRR=0.81
 - **Recent Features**: SSCG Phase 1-5 integration, A1 (Intent-Adaptive Edge Weight Profiles), A2 (File-Level Module Summary Chunks), B1 (Community-Level Summary Chunks), k=4 standardization
+
+---
+
+## v0.9.1 - Model Pool Optimization & Thread Safety (2026-02-04)
+
+### Status: PATCH RELEASE ✅
+
+Performance optimizations and thread safety improvements.
+
+### Highlights
+
+- **Full Model Pool Update**: Qwen3-4B + BGE-Code dual-model triad
+- **Jina v3 Reranker**: 131K context window, listwise reranking
+- **QueryEmbeddingCache Thread Safety**: O(1) LRU with `threading.Lock`
+- **VRAM Tier Optimization**: Workstation tier (18GB+) uses Qwen3-4B
+
+### 🚀 New Features
+
+#### Model Pool Triad Optimization
+
+**Full Pool**: Qwen3-4B + BGE-Code
+- Qwen3-4B: Best quality embeddings with MRL (4B quality @ 1024d storage)
+- BGE-Code: Code-specific embeddings (1536d)
+
+**Lightweight Pool**: GTE-ModernBERT + BGE-M3
+- GTE-ModernBERT: Fast inference for code queries
+- BGE-M3: Multilingual support
+
+**Commits**: `c6c557e`, `084dd72`, `3800477`
+
+#### Jina v3 Reranker Integration
+
+- **Model**: `jinaai/jina-reranker-v3`
+- **Context**: 131K tokens (16x larger than BGE's 8K)
+- **Reranking**: Listwise (all documents together)
+- **Factory**: `create_reranker()` supports both BGE and Jina
+
+**Commits**: `fd82742`, `3800477`
+
+### 🔧 Performance Improvements
+
+#### QueryEmbeddingCache O(1) LRU + Thread Safety
+
+- **OrderedDict**: O(1) `move_to_end()` and `popitem()` (was O(n) list operations)
+- **Thread Safety**: `threading.Lock` protects all cache operations
+- **Methods**: `get`, `put`, `clear`, `get_stats`, `size` all thread-safe
+
+**Commit**: `23d0819`
+
+#### VRAM Tier Optimization
+
+- **Workstation Tier** (18GB+): Now uses Qwen3-4B for maximum quality
+- **Auto-downgrade**: 4B→0.6B on systems with <10GB VRAM
+
+**Commit**: `738c2c2`
+
+### 📁 Files Changed
+
+- `embeddings/query_cache.py` - Thread-safe LRU cache
+- `search/neural_reranker.py` - Jina v3 reranker class
+- `mcp_server/model_pool_manager.py` - Model pool configuration
+- `search/config.py` - VRAM tier thresholds
 
 ---
 

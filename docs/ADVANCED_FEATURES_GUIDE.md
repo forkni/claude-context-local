@@ -356,8 +356,10 @@ set CLAUDE_MULTI_MODEL_ENABLED=false
 
 ```python
 MODEL_POOL_CONFIG = {
-    "qwen3": "Qwen/Qwen3-Embedding-4B",  # Auto-downgrades to 0.6B on <10GB VRAM
-    "bge_code": "BAAI/bge-code-v1",
+    "qwen3_4b": "Alibaba-NLP/Qwen3-Embedding-4B",  # Full pool - best quality
+    "bge_code": "BAAI/bge-code-v1",                # Full pool - code-specific
+    "gte_modernbert": "Alibaba-NLP/gte-modernbert-base",  # Lightweight pool
+    "bge_m3": "BAAI/bge-m3",                       # Lightweight pool
 }
 # Note: Workstation tier (18GB+) uses 4B, Desktop tier (10-18GB) uses 0.6B
 ```
@@ -1045,8 +1047,8 @@ The VRAM Tier Management system automatically detects available GPU memory and r
 |------|------------|-------------------|------------------|
 | **Minimal** | <6GB | EmbeddingGemma-300m OR CodeRankEmbed | Single-model only, no multi-model routing, no neural reranking |
 | **Laptop** | 6-10GB | BGE-M3 OR Qwen3-0.6B | Multi-model routing ENABLED, Neural reranking ENABLED |
-| **Desktop** | 10-18GB | Qwen3-4B + BGE-M3 + CodeRankEmbed | Full 3-model pool, Neural reranking ENABLED |
-| **Workstation** | 18GB+ | Full 3-model pool + neural reranking | All features ENABLED, maximum quality |
+| **Desktop** | 10-18GB | Qwen3-4B + BGE-Code | Full 2-model pool, Neural reranking ENABLED |
+| **Workstation** | 18GB+ | Qwen3-4B (full quality) | VRAM-optimized, all features ENABLED |
 
 ### Automatic Configuration
 
@@ -1245,6 +1247,31 @@ From `tools/benchmark_models.py`:
 | Mixed queries | 0.83 MRR | 0.79 MRR | +5% |
 
 **Implementation**: `search/neural_reranker.py`, `search/reranking_engine.py`
+
+### Jina v3 Reranker (Alternative)
+
+**Model**: `jinaai/jina-reranker-v3`
+
+**Version**: v0.9.1+
+
+**Advantages over BGE reranker**:
+- **131K context window** (vs 8K for BGE) - handles larger documents
+- **Listwise reranking** - scores all documents together for better relative ranking
+- **Better on long code** - 16x larger context allows full function bodies
+
+**Configuration**:
+```python
+# Via environment variable
+set CLAUDE_RERANKER_MODEL=jinaai/jina-reranker-v3
+
+# Via code
+from search.neural_reranker import create_reranker
+reranker = create_reranker("jinaai/jina-reranker-v3")
+```
+
+**VRAM Usage**: ~1.2GB (similar to BGE)
+
+**Performance**: 100-250ms per rerank (slightly slower than BGE due to larger context)
 
 ---
 
@@ -1571,7 +1598,7 @@ print(f"Hit rate: {embedder._cache_hits / (embedder._cache_hits + embedder._cach
 
 **Cache type**: LRU (Least Recently Used) dictionary with TTL (v0.8.6+)
 
-**Thread safety**: Not thread-safe (single-threaded MCP server)
+**Thread safety**: Thread-safe via `threading.Lock` (v0.9.1+)
 
 **Persistence**: In-memory only (no disk storage)
 
