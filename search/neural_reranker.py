@@ -47,7 +47,8 @@ def _resolve_single_token_id(tokenizer, text: str) -> int:
     raise RuntimeError(
         f"Cannot resolve '{text}' to a single token. "
         f"Got {len(ids)} tokens for '{text}' and ' {text}'. "
-        f"Tokenizer: {type(tokenizer).__name__}"
+        f"Tokenizer: {type(tokenizer).__name__}. "
+        f"Verify the model supports single-token Yes/No classification."
     )
 
 
@@ -496,7 +497,8 @@ class JinaRerankerV3:
                 raise RuntimeError(
                     f"Model {self.model_name} does not support rerank(). "
                     "Ensure you have the correct model with trust_remote_code=True. "
-                    f"(transformers=={_tf.__version__})"
+                    f"(transformers=={_tf.__version__}). "
+                    "If this persists, verify model compatibility with your transformers version."
                 )
             self._logger.info(f"Jina reranker loaded on {self.device}")
         return self._model

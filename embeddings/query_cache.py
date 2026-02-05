@@ -24,6 +24,7 @@ class QueryEmbeddingCache:
 
     The cache implements a simple LRU eviction policy: when the cache is full,
     the least recently used entry is removed to make space for new entries.
+    Set max_size to 0 or negative to disable caching entirely.
 
     Example:
         >>> cache = QueryEmbeddingCache(max_size=128)
