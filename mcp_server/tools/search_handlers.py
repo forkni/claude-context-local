@@ -928,7 +928,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
             # Intent-aware synthetic chunk ordering (post-centrality reranking)
             # For non-GLOBAL queries, push module/community summary chunks to end of results
             # Research: TNO, GRACE, GraphRAG all separate summaries from code retrieval
-            if intent_decision and intent_decision.intent.value != "global":
+            if intent_decision and intent_decision.intent != QueryIntent.GLOBAL:
                 real_results = [
                     r
                     for r in formatted_results

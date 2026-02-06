@@ -821,8 +821,8 @@ class IntentClassifier:
             # Dunder methods: __init__, __enter__, __repr__
             elif re.match(r"^__[a-z]\w+__$", token):
                 boost += 0.20
-            # snake_case: embed_chunks, search_code (must have underscore + lowercase)
-            elif "_" in token and re.match(r"^[a-z][a-z0-9_]+$", token):
+            # snake_case: embed_chunks, search_code, _private_method (must have underscore + lowercase)
+            elif "_" in token and re.match(r"^_?[a-z][a-z0-9_]+$", token):
                 boost += 0.20
             # dot.notation with mixed case: module.Class, self.method
             elif "." in token and re.search(r"[A-Z]", token):

@@ -283,6 +283,9 @@ class CentralityRanker:
                 # so they always have centrality=0. Real code chunks always have centrality > 0.
                 # When a synthetic chunk has no graph connectivity, it should rank below
                 # real code. Research: TNO, GRACE, HiChunk all keep summaries separate.
+                # Combined effect with type-based demotion above: 0.90 × 0.5 = 0.45x total
+                # (entity queries: 0.85 × 0.5 = 0.425x). This is intentional — synthetics
+                # should rank well below real code chunks.
                 if (
                     chunk_type in ("module", "community")
                     and result.get("centrality", 0) == 0
