@@ -80,9 +80,9 @@ class QueryIntent(Enum):
 # Intent-driven BM25/Dense weight profiles
 INTENT_WEIGHT_PROFILES: dict[QueryIntent, tuple[float, float]] = {
     QueryIntent.LOCAL: (
-        0.6,
-        0.4,
-    ),  # (bm25, dense) - BM25-heavy for exact symbol matching
+        0.35,
+        0.65,
+    ),  # (bm25, dense) - Semantic-dominant for symbol discovery (optimal via Step 1A/1B testing)
     QueryIntent.GLOBAL: (0.3, 0.7),  # semantic understanding matters
     QueryIntent.CONTEXTUAL: (0.3, 0.7),  # similar to GLOBAL
     QueryIntent.NAVIGATIONAL: (0.5, 0.5),  # balanced for relationship tracing
@@ -760,8 +760,9 @@ class IntentClassifier:
             params["search_mode"] = "hybrid"
 
         elif intent == QueryIntent.LOCAL:
-            # Suggest smaller k for symbol lookups
-            params["k"] = 4
+            # Suggest k=5 for symbol lookups (reverted from k=4 in commit 1802322)
+            # Wider pool helps graph-isolated symbols that can't benefit from multi-hop
+            params["k"] = 5
             params["search_mode"] = "hybrid"
 
             # Existence-checking queries benefit from semantic-heavy weights.
