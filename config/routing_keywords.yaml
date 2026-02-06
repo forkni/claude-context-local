@@ -10,7 +10,7 @@
 # Full Model Pool Configuration (12GB+ VRAM GPUs)
 # ============================================================================
 # Used when multi_model_pool="full" (default)
-# Models: BGE-Code-v1, Qwen3-4B (MRL enabled)
+# Models: BGE-Code-v1, Qwen3-0.6B
 
 full_pool:
   # Confidence threshold for routing (below this, use default model)
