@@ -180,16 +180,16 @@ class TestMultiHopSearcher:
             "chunk3": SearchResult(chunk_id="chunk3", score=0.7, metadata={}),
         }
 
-        # Mock metadata store
-        def mock_get(chunk_id):
+        # Mock get_chunk_by_id (returns inner metadata dict)
+        def mock_get_chunk_by_id(chunk_id):
             metadata_map = {
-                "chunk1": {"metadata": {"file": "test.py"}},
-                "chunk2": {"metadata": {"file": "other.py"}},
-                "chunk3": {"metadata": {"file": "test.py"}},
+                "chunk1": {"file": "test.py"},
+                "chunk2": {"file": "other.py"},
+                "chunk3": {"file": "test.py"},
             }
             return metadata_map.get(chunk_id)
 
-        self.mock_dense_index.metadata_store.get.side_effect = mock_get
+        self.mock_dense_index.get_chunk_by_id.side_effect = mock_get_chunk_by_id
 
         # Mock filter matching
         def mock_matches_filters(metadata, filters):
@@ -227,7 +227,7 @@ class TestMultiHopSearcher:
 
         assert filtered == all_results
         # Verify no metadata lookups occurred
-        self.mock_dense_index.metadata_store.get.assert_not_called()
+        self.mock_dense_index.get_chunk_by_id.assert_not_called()
 
     @patch("search.multi_hop_searcher._get_config_via_service_locator")
     def test_search_single_hop(self, mock_config):
@@ -391,10 +391,10 @@ class TestMultiHopSearcher:
             "Exception",  # symbol_name node, should be filtered
         }
 
-        # Mock metadata lookup
-        self.mock_dense_index.metadata_store.get.return_value = {
-            "index_id": 5,
-            "metadata": {"file": "src/b.py", "type": "function"},
+        # Mock metadata lookup (get_chunk_by_id returns inner dict)
+        self.mock_dense_index.get_chunk_by_id.return_value = {
+            "file": "src/b.py",
+            "type": "function",
         }
 
         timings = self.searcher._graph_expand(
@@ -408,7 +408,7 @@ class TestMultiHopSearcher:
         assert "src/b.py:20-30:function:bar" in all_chunk_ids
         assert "Exception" not in all_chunk_ids  # Filtered out
         assert all_results["src/b.py:20-30:function:bar"].source == "graph_hop"
-        assert 2 in timings
+        assert "graph" in timings
 
     def test_graph_expand_no_graph_storage(self):
         """Test graph expansion gracefully handles missing graph_storage."""
@@ -468,8 +468,8 @@ class TestMultiHopSearcher:
             "src/orphan.py:1-10:function:bar",
         }
 
-        # But not in search index
-        self.mock_dense_index.metadata_store.get.return_value = None
+        # But not in search index (get_chunk_by_id returns None)
+        self.mock_dense_index.get_chunk_by_id.return_value = None
 
         self.searcher._graph_expand(
             initial_results=initial_results,

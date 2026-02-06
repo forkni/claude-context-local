@@ -113,12 +113,12 @@ def test_empty_graph_returns_unchanged(sample_results):
 
 
 def test_cache_invalidation_on_graph_change(mock_graph_query_engine, sample_results):
-    """Test that cache invalidates when graph node count changes."""
+    """Test that cache invalidates when graph node or edge count changes."""
     ranker = CentralityRanker(mock_graph_query_engine, method="pagerank", alpha=0.3)
 
     # First call populates cache
     ranker.annotate(sample_results)
-    assert ranker._cache_node_count == 3
+    assert ranker._cache_key == (3, 3)  # (node_count, edge_count)
     assert len(ranker._cache) > 0
     call_count_1 = mock_graph_query_engine.compute_centrality.call_count
 
@@ -134,7 +134,7 @@ def test_cache_invalidation_on_graph_change(mock_graph_query_engine, sample_resu
     ranker.annotate(sample_results)
     call_count_3 = mock_graph_query_engine.compute_centrality.call_count
     assert call_count_3 == call_count_1 + 1  # One additional call
-    assert ranker._cache_node_count == 4
+    assert ranker._cache_key == (4, 3)  # Node count increased
 
 
 def test_convergence_failure_returns_empty_scores():

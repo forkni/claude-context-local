@@ -114,30 +114,33 @@ class CentralityRanker:
 
         # Cache centrality scores to avoid recomputation
         self._cache: dict[str, float] = {}
-        self._cache_node_count = 0
+        self._cache_key = (0, 0)  # (node_count, edge_count)
 
     def _get_centrality_scores(self) -> dict[str, float]:
         """Compute and cache centrality scores.
 
-        Uses node count for cache invalidation (graph rebuild detection).
+        Uses node+edge count for cache invalidation (graph rebuild detection).
         Normalizes scores to [0, 1] range.
 
         Returns:
             dict mapping chunk_id -> normalized centrality score [0, 1]
         """
-        current_node_count = self.graph_query_engine.storage.graph.number_of_nodes()
+        current_key = (
+            self.graph_query_engine.storage.graph.number_of_nodes(),
+            self.graph_query_engine.storage.graph.number_of_edges(),
+        )
 
-        # Invalidate cache if node count changed
-        if current_node_count != self._cache_node_count:
+        # Invalidate cache if node or edge count changed
+        if current_key != self._cache_key:
             self._cache.clear()
-            self._cache_node_count = current_node_count
+            self._cache_key = current_key
 
         # Return cached scores if available
         if self._cache:
             return self._cache
 
         # Handle empty graph
-        if current_node_count == 0:
+        if current_key[0] == 0:
             logger.debug("[CENTRALITY] Empty graph, returning empty scores")
             return {}
 
@@ -149,7 +152,7 @@ class CentralityRanker:
                 "[CENTRALITY] PageRank failed to converge, returning empty scores"
             )
             return {}
-        except Exception as e:
+        except (nx.NetworkXError, ValueError, KeyError) as e:
             logger.error(
                 f"[CENTRALITY] Failed to compute {self.method} centrality: {e}"
             )

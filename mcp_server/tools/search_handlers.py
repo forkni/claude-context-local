@@ -924,7 +924,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
                 logger.debug(
                     f"Annotated {len(formatted_results)} results with centrality"
                 )
-        except Exception as e:
+        except (ImportError, ValueError, KeyError, RuntimeError) as e:
             logger.debug(f"Centrality ranking failed: {e}")
 
     # Cap total results to prevent token bloat (k primary + up to 3k context)
@@ -986,7 +986,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
         budget_used = 0
         truncated = []
         for r in formatted_results:
-            est_tokens = len(_json.dumps(r).split()) + 10
+            est_tokens = len(_json.dumps(r)) // 4  # ~4 chars per token approximation
             if budget_used + est_tokens <= max_context_tokens:
                 truncated.append(r)
                 budget_used += est_tokens
@@ -1154,7 +1154,7 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
     target = arguments.get("target")
     source_chunk_id = arguments.get("source_chunk_id")
     target_chunk_id = arguments.get("target_chunk_id")
-    max_hops = arguments.get("max_hops", 10)
+    max_hops = min(arguments.get("max_hops", 10), 20)
     edge_types = arguments.get("edge_types")
 
     # Validate: need at least one source and one target identifier

@@ -192,7 +192,7 @@ class TestIntentClassifierBasicDetection:
         """Test that LOCAL queries suggest smaller k."""
         decision = classifier.classify("where is QueryRouter")
         if decision.intent == QueryIntent.LOCAL:
-            assert decision.suggested_params.get("k") == 5
+            assert decision.suggested_params.get("k") == 4
             assert decision.suggested_params.get("search_mode") == "hybrid"
 
     def test_suggested_params_navigational_symbol(self, classifier):

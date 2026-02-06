@@ -1264,7 +1264,7 @@ class HybridSearcher(BaseSearcher):
                                                 return int(parts[1].split("-")[0])
                                             except (ValueError, IndexError):
                                                 pass
-                                        return float("inf")
+                                        return 2**31  # Sentinel for sort ordering
 
                                     split_blocks.sort(key=_start_line)
                                     resolved_target = split_blocks[0]

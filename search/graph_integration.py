@@ -16,6 +16,21 @@ except ImportError:
     CodeGraphStorage = None
 
 
+def is_chunk_id(node_id: str) -> bool:
+    """Check if a graph node ID is a real chunk ID (not a bare symbol name).
+
+    Real chunk IDs have format: "file.py:10-20:function:name" (3+ colons).
+    Symbol names: "Exception", "login" (0-2 colons).
+
+    Args:
+        node_id: Graph node identifier to check
+
+    Returns:
+        True if node_id is a valid chunk ID, False if it's a bare symbol
+    """
+    return node_id.count(":") >= 3
+
+
 # Semantic chunk types that can have relationships
 # Based on Codanna's approach: index ALL semantic symbols
 SEMANTIC_TYPES = (
