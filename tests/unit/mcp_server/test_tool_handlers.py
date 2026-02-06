@@ -44,19 +44,21 @@ def mock_get_project_storage_dir_global(tmp_path):
     # - search_handlers (_check_auto_reindex)
     # - index_handlers (clear_index, index_directory)
     # NOTE: status_handlers does NOT use get_project_storage_dir
-    with patch(
-        "mcp_server.tools.config_handlers.get_project_storage_dir",
-        return_value=mock_storage_dir,
-    ):
-        with patch(
+    with (
+        patch(
+            "mcp_server.tools.config_handlers.get_project_storage_dir",
+            return_value=mock_storage_dir,
+        ),
+        patch(
             "mcp_server.tools.search_handlers.get_project_storage_dir",
             return_value=mock_storage_dir,
-        ):
-            with patch(
-                "mcp_server.tools.index_handlers.get_project_storage_dir",
-                return_value=mock_storage_dir,
-            ):
-                yield mock_storage_dir
+        ),
+        patch(
+            "mcp_server.tools.index_handlers.get_project_storage_dir",
+            return_value=mock_storage_dir,
+        ),
+    ):
+        yield mock_storage_dir
 
 
 # ============================================================================
@@ -270,22 +272,24 @@ async def test_handle_get_search_config_status():
 @pytest.mark.asyncio
 async def test_handle_list_embedding_models():
     """Test list_embedding_models returns model registry."""
-    with patch(
-        "mcp_server.tools.status_handlers.MODEL_REGISTRY",
-        {
-            "model1": {"dimension": 768, "description": "Test model 1"},
-            "model2": {"dimension": 1024, "description": "Test model 2"},
-        },
+    with (
+        patch(
+            "mcp_server.tools.status_handlers.MODEL_REGISTRY",
+            {
+                "model1": {"dimension": 768, "description": "Test model 1"},
+                "model2": {"dimension": 1024, "description": "Test model 2"},
+            },
+        ),
+        patch("mcp_server.tools.status_handlers.get_config") as mock_config,
     ):
-        with patch("mcp_server.tools.status_handlers.get_config") as mock_config:
-            mock_cfg = Mock()
-            mock_cfg.embedding.model_name = "model1"
-            mock_config.return_value = mock_cfg
+        mock_cfg = Mock()
+        mock_cfg.embedding.model_name = "model1"
+        mock_config.return_value = mock_cfg
 
-            result = await tool_handlers.handle_list_embedding_models({})
+        result = await tool_handlers.handle_list_embedding_models({})
 
-            assert len(result["models"]) == 2
-            assert result["current_model"] == "model1"
+        assert len(result["models"]) == 2
+        assert result["current_model"] == "model1"
 
 
 # ============================================================================
@@ -390,25 +394,25 @@ async def test_handle_clear_index():
             (index_dir / "code.index").touch()
             (index_dir / "chunks_metadata.db").touch()
 
-        with patch(
-            "mcp_server.tools.index_handlers.get_state", return_value=mock_state
-        ):
-            with patch(
+        with (
+            patch("mcp_server.tools.index_handlers.get_state", return_value=mock_state),
+            patch(
                 "mcp_server.tools.index_handlers.get_storage_dir", return_value=base_dir
-            ):
-                result = await tool_handlers.handle_clear_index({})
+            ),
+        ):
+            result = await tool_handlers.handle_clear_index({})
 
-                assert result["success"] is True
-                assert "cleared_models" in result
-                assert len(result["cleared_models"]) == 2
+            assert result["success"] is True
+            assert "cleared_models" in result
+            assert len(result["cleared_models"]) == 2
 
-                # Verify BM25 directories deleted
-                assert not (model1_dir / "index" / "bm25").exists()
-                assert not (model2_dir / "index" / "bm25").exists()
+            # Verify BM25 directories deleted
+            assert not (model1_dir / "index" / "bm25").exists()
+            assert not (model2_dir / "index" / "bm25").exists()
 
-                # Verify dense index files deleted
-                assert not (model1_dir / "index" / "code.index").exists()
-                assert not (model2_dir / "index" / "code.index").exists()
+            # Verify dense index files deleted
+            assert not (model1_dir / "index" / "code.index").exists()
+            assert not (model2_dir / "index" / "code.index").exists()
 
 
 @pytest.mark.asyncio
@@ -447,31 +451,31 @@ async def test_handle_configure_search_mode():
 @pytest.mark.asyncio
 async def test_handle_switch_embedding_model():
     """Test switch_embedding_model changes model."""
-    with patch(
-        "mcp_server.tools.config_handlers.MODEL_REGISTRY",
-        {"new_model": {"dimension": 1024}},
+    with (
+        patch(
+            "mcp_server.tools.config_handlers.MODEL_REGISTRY",
+            {"new_model": {"dimension": 1024}},
+        ),
+        patch("mcp_server.tools.config_handlers.get_config_manager") as mock_manager,
     ):
-        with patch(
-            "mcp_server.tools.config_handlers.get_config_manager"
-        ) as mock_manager:
-            mock_cfg = Mock()
-            mock_cfg.embedding.model_name = "old_model"
-            mock_manager.return_value.load_config.return_value = mock_cfg
-            mock_manager.return_value.save_config = Mock()
+        mock_cfg = Mock()
+        mock_cfg.embedding.model_name = "old_model"
+        mock_manager.return_value.load_config.return_value = mock_cfg
+        mock_manager.return_value.save_config = Mock()
 
-            with patch("mcp_server.state.get_state") as mock_state:
-                state = mock_state.return_value
-                state.embedders = {}
-                state.index_manager = None
-                state.searcher = None
-                state.clear_embedders = Mock()
-                result = await tool_handlers.handle_switch_embedding_model(
-                    {"model_name": "new_model"}
-                )
+        with patch("mcp_server.state.get_state") as mock_state:
+            state = mock_state.return_value
+            state.embedders = {}
+            state.index_manager = None
+            state.searcher = None
+            state.clear_embedders = Mock()
+            result = await tool_handlers.handle_switch_embedding_model(
+                {"model_name": "new_model"}
+            )
 
-                assert result["success"] is True
-                assert result["new_model"] == "new_model"
-                assert result["old_model"] == "old_model"
+            assert result["success"] is True
+            assert result["new_model"] == "new_model"
+            assert result["old_model"] == "old_model"
 
 
 @pytest.mark.asyncio

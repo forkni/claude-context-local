@@ -9,7 +9,6 @@ import logging
 import shutil
 from collections.abc import Callable
 from pathlib import Path
-from typing import Optional
 
 
 class ModelCacheManager:
@@ -52,7 +51,7 @@ class ModelCacheManager:
         self._get_model_config = model_config_getter
         self._logger = logging.getLogger(__name__)
 
-    def get_model_cache_path(self) -> Optional[Path]:
+    def get_model_cache_path(self) -> Path | None:
         """Get the HuggingFace cache directory path for this model.
 
         Returns the models--{org}--{name} directory, or None if cache_dir not set.
@@ -78,7 +77,7 @@ class ModelCacheManager:
 
         return cache_root / expected_model_dir_name
 
-    def get_default_hf_cache_path(self) -> Optional[Path]:
+    def get_default_hf_cache_path(self) -> Path | None:
         """Get the default HuggingFace cache directory path for this model.
 
         This is used as a fallback when trust_remote_code models ignore cache_folder.
@@ -294,7 +293,7 @@ class ModelCacheManager:
 
             # Validate config.json is valid JSON with required keys
             try:
-                with open(config_path, "r", encoding="utf-8") as f:
+                with open(config_path, encoding="utf-8") as f:
                     config = json.load(f)
                     # Check for model_type or architectures (required by transformers)
                     if "model_type" not in config and "architectures" not in config:
@@ -324,7 +323,7 @@ class ModelCacheManager:
                     else "pytorch_model.bin.index.json"
                 )
                 try:
-                    with open(index_file, "r", encoding="utf-8") as f:
+                    with open(index_file, encoding="utf-8") as f:
                         index_data = json.load(f)
                         shard_files = set(index_data.get("weight_map", {}).values())
 
@@ -564,7 +563,7 @@ class ModelCacheManager:
         is_valid, _ = self.validate_cache()
         return is_valid
 
-    def find_local_model_dir(self) -> Optional[Path]:
+    def find_local_model_dir(self) -> Path | None:
         """Locate the cached model directory if available.
 
         Returns the path to the snapshot directory containing the model files.
@@ -612,7 +611,7 @@ class ModelCacheManager:
                         return max(custom_snapshots, key=lambda p: p.stat().st_mtime)
 
             # Helper to get latest snapshot from a cache path if validation passes
-            def get_latest_snapshot_if_valid(cache_path: Path) -> Optional[Path]:
+            def get_latest_snapshot_if_valid(cache_path: Path) -> Path | None:
                 # Check if this specific cache location is valid
                 valid, _ = self.check_cache_at_location(cache_path)
                 if not valid:

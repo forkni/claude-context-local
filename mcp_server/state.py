@@ -19,7 +19,7 @@ Usage:
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 
 if TYPE_CHECKING:
@@ -43,17 +43,17 @@ class ApplicationState:
 
     # Model management
     embedders: dict[str, Any] = field(default_factory=dict)
-    current_model_key: Optional[str] = None
-    current_index_model_key: Optional[str] = None  # Track index manager's model
+    current_model_key: str | None = None
+    current_index_model_key: str | None = None  # Track index manager's model
     model_preload_task_started: bool = False
 
     # Search components (lazy-initialized)
-    index_manager: Optional[Any] = None  # CodeIndexManager
-    searcher: Optional[Any] = None  # HybridSearcher
+    index_manager: Any | None = None  # CodeIndexManager
+    searcher: Any | None = None  # HybridSearcher
 
     # Storage and project
-    storage_dir: Optional[Path] = None
-    current_project: Optional[str] = None
+    storage_dir: Path | None = None
+    current_project: str | None = None
 
     # Configuration
     multi_model_enabled: bool = field(
@@ -136,7 +136,7 @@ class ApplicationState:
         # Searcher needs to be recreated with new model
         self.searcher = None
 
-    def get_embedder(self, model_key: Optional[str] = None) -> Optional[Any]:
+    def get_embedder(self, model_key: str | None = None) -> Any | None:
         """Get embedder for a specific model key.
 
         Args:
@@ -257,7 +257,7 @@ def reset_state() -> None:
 
 
 # Convenience functions for accessing ApplicationState
-def get_current_project() -> Optional[str]:
+def get_current_project() -> str | None:
     """Get current project path (backward compatibility)."""
     return _app_state.current_project
 

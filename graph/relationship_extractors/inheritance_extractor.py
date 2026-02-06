@@ -11,7 +11,7 @@ Complexity: Low (single-pass, straightforward extraction)
 """
 
 import ast
-from typing import Any, Optional
+from typing import Any
 
 from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
 from graph.relationship_types import RelationshipEdge, RelationshipType
@@ -155,7 +155,7 @@ class InheritanceExtractor(BaseRelationshipExtractor):
                 is_multiple=len(class_node.bases) > 1,
             )
 
-    def _get_base_class_name(self, base_node: ast.AST) -> Optional[str]:
+    def _get_base_class_name(self, base_node: ast.AST) -> str | None:
         """
         Extract base class name from AST node.
 
@@ -255,10 +255,7 @@ class InheritanceExtractor(BaseRelationshipExtractor):
             return True
 
         # Skip private/dunder classes
-        if class_name.startswith("_"):
-            return True
-
-        return False
+        return bool(class_name.startswith("_"))
 
     def _build_class_chunk_id(
         self, chunk_metadata: dict[str, Any], class_name: str, line_number: int

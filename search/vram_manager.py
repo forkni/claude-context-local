@@ -2,7 +2,6 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 
 logger = logging.getLogger(__name__)
@@ -29,8 +28,8 @@ class VRAMTier:
     recommended_model: str
     multi_model_enabled: bool
     neural_reranking_enabled: bool
-    multi_model_pool: Optional[str] = None  # "full" or "lightweight-speed"
-    reranker_model: Optional[str] = None  # "full" or "lightweight"
+    multi_model_pool: str | None = None  # "full" or "lightweight-speed"
+    reranker_model: str | None = None  # "full" or "lightweight"
 
 
 # VRAM tier definitions based on GPU capabilities
@@ -97,7 +96,7 @@ class VRAMTierManager:
 
     def __init__(self) -> None:
         """Initialize VRAMTierManager."""
-        self._detected_tier: Optional[VRAMTier] = None
+        self._detected_tier: VRAMTier | None = None
 
     def detect_tier(self) -> VRAMTier:
         """Detect VRAM tier based on available GPU memory.

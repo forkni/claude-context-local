@@ -63,7 +63,7 @@ def main():
         cfg = {}
         if os.path.exists(config_path):
             try:
-                with open(config_path, "r", encoding="utf-8") as f:
+                with open(config_path, encoding="utf-8") as f:
                     cfg = json.load(f)
             except json.JSONDecodeError as e:
                 print(f"Warning: Config parse error: {e.msg}")
@@ -130,7 +130,7 @@ def main():
 
         if sel_path.exists():
             try:
-                with open(sel_path, "r", encoding="utf-8") as f:
+                with open(sel_path, encoding="utf-8") as f:
                     sel_data = json.load(f)
                     path_str = sel_data.get("last_project_path", "")
                     if path_str:

@@ -4,9 +4,10 @@ This module provides a centralized interface for managing chunk metadata
 stored in SQLite, with support for efficient querying and chunk ID normalization.
 """
 
+import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from sqlitedict import SqliteDict
 
@@ -40,7 +41,7 @@ class MetadataStore:
             db_path: Path to SQLite database file
         """
         self.db_path = db_path
-        self._db: Optional[SqliteDict] = None
+        self._db: SqliteDict | None = None
 
         # Symbol hash cache for O(1) chunk_id lookups
         cache_path = db_path.parent / f"{db_path.stem}_symbol_cache.json"
@@ -55,7 +56,7 @@ class MetadataStore:
 
     # CRUD Operations
 
-    def get(self, chunk_id: str) -> Optional[dict[str, Any]]:
+    def get(self, chunk_id: str) -> dict[str, Any] | None:
         """Get metadata for a chunk with path variant handling.
 
         Tries multiple chunk_id variants to handle path separator differences
@@ -89,7 +90,7 @@ class MetadataStore:
 
         return None
 
-    def get_chunk_metadata(self, chunk_id: str) -> Optional[dict[str, Any]]:
+    def get_chunk_metadata(self, chunk_id: str) -> dict[str, Any] | None:
         """Get just the metadata dict for a chunk (without index_id wrapper).
 
         This is a convenience method for cases where only chunk metadata is needed,
@@ -272,7 +273,7 @@ class MetadataStore:
             try:
                 # Ensure WAL is checkpointed before close (prevents file handle leaks on Windows)
                 self._db.commit()
-            except Exception:
+            except (OSError, sqlite3.Error):
                 # Ignore errors during commit (db might already be closed or corrupted)
                 pass
             self._db.close()

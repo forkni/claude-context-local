@@ -88,12 +88,11 @@ class DataclassFieldExtractor(BaseRelationshipExtractor):
             if isinstance(decorator, ast.Name) and decorator.id == "dataclass":
                 return True
             # @dataclass(...)
-            if isinstance(decorator, ast.Call):
-                if (
-                    isinstance(decorator.func, ast.Name)
-                    and decorator.func.id == "dataclass"
-                ):
-                    return True
+            if isinstance(decorator, ast.Call) and (
+                isinstance(decorator.func, ast.Name)
+                and decorator.func.id == "dataclass"
+            ):
+                return True
             # @dataclasses.dataclass
             if isinstance(decorator, ast.Attribute) and decorator.attr == "dataclass":
                 return True

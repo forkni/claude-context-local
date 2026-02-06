@@ -8,7 +8,7 @@ Supports Python with planned support for C++/GLSL.
 import ast
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from .resolvers import AssignmentTracker, ImportResolver, TypeResolver
 
@@ -116,7 +116,7 @@ class PythonCallGraphExtractor(CallGraphExtractor):
         """
         super().__init__()
         # Class context tracking for self/super resolution
-        self._current_class: Optional[str] = None
+        self._current_class: str | None = None
         self._class_bases: dict[
             str, list[str]
         ] = {}  # class_name -> list of base classes
@@ -221,23 +221,21 @@ class PythonCallGraphExtractor(CallGraphExtractor):
                         bases.append(base.attr)
                 self._class_bases[node.name] = bases
 
-    def _detect_enclosing_class(self, tree: ast.AST) -> Optional[str]:
+    def _detect_enclosing_class(self, tree: ast.AST) -> str | None:
         """Detect if code is inside a class from AST structure."""
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
                 return node.name
         return None
 
-    def _get_parent_class(self, class_name: str) -> Optional[str]:
+    def _get_parent_class(self, class_name: str) -> str | None:
         """Get the first base class for super() resolution."""
         bases = self._class_bases.get(class_name, [])
         if bases:
             return bases[0]
         return None
 
-    def _extract_call_from_node(
-        self, node: ast.Call, chunk_id: str
-    ) -> Optional[CallEdge]:
+    def _extract_call_from_node(self, node: ast.Call, chunk_id: str) -> CallEdge | None:
         """
         Extract CallEdge from an ast.Call node.
 
@@ -267,7 +265,7 @@ class PythonCallGraphExtractor(CallGraphExtractor):
             confidence=1.0,  # Static AST analysis has high confidence
         )
 
-    def _get_call_name(self, func_node: ast.AST) -> Optional[str]:
+    def _get_call_name(self, func_node: ast.AST) -> str | None:
         """
         Extract function name from Call node's func attribute.
 

@@ -65,13 +65,12 @@ class ResourceManager:
                 if (
                     hasattr(state.searcher, "dense_index")
                     and state.searcher.dense_index is not None
+                ) and (
+                    hasattr(state.searcher.dense_index, "_metadata_store")
+                    and state.searcher.dense_index._metadata_store is not None
                 ):
-                    if (
-                        hasattr(state.searcher.dense_index, "_metadata_store")
-                        and state.searcher.dense_index._metadata_store is not None
-                    ):
-                        state.searcher.dense_index._metadata_store.close()
-                        logger.debug("Closed HybridSearcher dense_index metadata store")
+                    state.searcher.dense_index._metadata_store.close()
+                    logger.debug("Closed HybridSearcher dense_index metadata store")
                 # Then call shutdown
                 if hasattr(state.searcher, "shutdown"):
                     state.searcher.shutdown()

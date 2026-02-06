@@ -26,11 +26,11 @@ class SearchResult:
     relative_path: str
     folder_structure: list[str]
     chunk_type: str
-    name: Optional[str]
-    parent_name: Optional[str]
+    name: str | None
+    parent_name: str | None
     start_line: int
     end_line: int
-    docstring: Optional[str]
+    docstring: str | None
     tags: list[str]
     context_info: dict[str, Any]
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -76,7 +76,7 @@ class IntelligentSearcher(BaseSearcher):
         k: int = 4,
         search_mode: str = "semantic",
         context_depth: int = 1,
-        filters: Optional[dict[str, Any]] = None,
+        filters: dict[str, Any] | None = None,
     ) -> list[SearchResult]:
         """Semantic search for code understanding.
 
@@ -101,7 +101,7 @@ class IntelligentSearcher(BaseSearcher):
         query: str,
         k: int = 4,
         context_depth: int = 1,
-        filters: Optional[dict[str, Any]] = None,
+        filters: dict[str, Any] | None = None,
     ) -> list[SearchResult]:
         """Pure semantic search implementation."""
 
@@ -349,10 +349,10 @@ class IntelligentSearcher(BaseSearcher):
         return len(query_tokens) <= 2  # Short noun phrases
 
     def _calculate_name_boost(
-        self, name: Optional[str], original_query: str, query_tokens: list[str]
+        self, name: str | None, original_query: str, query_tokens: list[str]
     ) -> float:
         """Calculate boost based on name matching with robust token comparison."""
-        if not name:
+        if name is None:
             return 1.0
 
         name_tokens = self._normalize_to_tokens(name)
@@ -437,7 +437,7 @@ class IntelligentSearcher(BaseSearcher):
 
         return results
 
-    def get_by_chunk_id(self, chunk_id: str) -> Optional[SearchResult]:
+    def get_by_chunk_id(self, chunk_id: str) -> SearchResult | None:
         """
         Direct lookup by chunk_id (unambiguous, no search needed).
 

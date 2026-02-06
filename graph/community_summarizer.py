@@ -22,7 +22,7 @@ def generate_community_summaries(
         List of synthetic community CodeChunks (one per qualifying community)
     """
     # Group chunks by community_id
-    by_community: dict[int, list["CodeChunk"]] = defaultdict(list)
+    by_community: dict[int, list[CodeChunk]] = defaultdict(list)
     for chunk in chunks:
         if not chunk.chunk_id:
             continue

@@ -11,9 +11,10 @@ import logging
 import os
 import sys
 import unittest
+from collections.abc import Callable
 from contextlib import contextmanager
 from io import StringIO
-from typing import Any, Callable, Optional
+from typing import Any
 
 
 def require_torch_gpu(test_func: Callable) -> Callable:
@@ -144,8 +145,8 @@ class CaptureStdout:
 
     def __init__(self) -> None:
         """Initialize stdout capture."""
-        self._stdout: Optional[Any] = None
-        self._capture: Optional[StringIO] = None
+        self._stdout: Any | None = None
+        self._capture: StringIO | None = None
         self.out: str = ""
 
     def __enter__(self) -> "CaptureStdout":
@@ -176,8 +177,8 @@ class CaptureStderr:
 
     def __init__(self) -> None:
         """Initialize stderr capture."""
-        self._stderr: Optional[Any] = None
-        self._capture: Optional[StringIO] = None
+        self._stderr: Any | None = None
+        self._capture: StringIO | None = None
         self.out: str = ""
 
     def __enter__(self) -> "CaptureStderr":
@@ -211,10 +212,10 @@ class CaptureStd:
 
     def __init__(self) -> None:
         """Initialize stdout/stderr capture."""
-        self._stdout: Optional[Any] = None
-        self._stderr: Optional[Any] = None
-        self._capture_out: Optional[StringIO] = None
-        self._capture_err: Optional[StringIO] = None
+        self._stdout: Any | None = None
+        self._stderr: Any | None = None
+        self._capture_out: StringIO | None = None
+        self._capture_err: StringIO | None = None
         self.out: str = ""
         self.err: str = ""
 
@@ -260,9 +261,9 @@ class CaptureLogger:
         """
         self.logger_name = logger_name
         self.level = level
-        self.logger: Optional[logging.Logger] = None
-        self.handler: Optional[logging.StreamHandler] = None
-        self.original_level: Optional[int] = None
+        self.logger: logging.Logger | None = None
+        self.handler: logging.StreamHandler | None = None
+        self.original_level: int | None = None
         self.out: str = ""
 
     def __enter__(self) -> "CaptureLogger":

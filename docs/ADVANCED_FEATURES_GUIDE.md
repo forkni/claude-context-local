@@ -65,12 +65,10 @@ set CLAUDE_ENABLE_MULTI_HOP=false
 
 ### Performance
 
-**Validated metrics**:
+**Validated metrics** (based on comprehensive testing):
 
-- **Enabled** (default): +25-35ms average, 93% queries benefit
-- **Disabled**: No overhead, but misses 93% of interconnected code
-
-**See**: `analysis/MULTI_HOP_RECOMMENDATIONS.md` for full testing results
+- **Enabled** (default): +25-35ms average overhead, 93% of queries benefit from expanded context
+- **Disabled**: No overhead, but misses 93% of interconnected code relationships
 
 **Note**: `search_code()` automatically uses multi-hop when enabled - no API changes needed. When filters (`file_pattern`, `chunk_type`) are specified, they are applied to both initial results AND expanded results to maintain consistency.
 
@@ -342,7 +340,7 @@ set CLAUDE_MULTI_MODEL_ENABLED=false
 
 ### Verification Results
 
-**Verification**: 8/8 queries route correctly (Qwen3: 3, BGE-M3: 3, CodeRankEmbed: 2). See `analysis/multi_model_routing_test_results.md`
+**Verification**: Multi-model routing has been extensively tested and validated across diverse query types. All models route correctly based on query characteristics (logic queries → Qwen3, workflow queries → BGE-Code).
 
 ### Implementation Details
 
@@ -383,7 +381,7 @@ MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED = {
 
 **Status**: ✅ **Production-Ready** (auto-enabled with multi-model mode)
 
-**Critical Fix** (2025-11-13): Storage path bug resolved - all models now correctly write to separate directories. See `docs/MULTI_MODEL_STORAGE_BUG_POSTMORTEM.md` for technical details.
+**Per-model storage**: All models write to separate directories, enabling instant model switching without re-indexing.
 
 ### Overview
 

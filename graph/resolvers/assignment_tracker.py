@@ -6,7 +6,6 @@ and annotated assignments, enabling resolution of method calls on local variable
 """
 
 import ast
-from typing import Optional
 
 from .type_resolver import TypeResolver
 
@@ -23,7 +22,7 @@ class AssignmentTracker:
     - With statement assignments: with Context() as ctx:
     """
 
-    def __init__(self, imports: Optional[dict[str, str]] = None) -> None:
+    def __init__(self, imports: dict[str, str] | None = None) -> None:
         """
         Initialize the assignment tracker.
 
@@ -94,7 +93,7 @@ class AssignmentTracker:
 
         return assignments
 
-    def infer_type_from_call(self, call_node: ast.Call) -> Optional[str]:
+    def infer_type_from_call(self, call_node: ast.Call) -> str | None:
         """
         Infer type from a Call node (constructor or factory call).
 

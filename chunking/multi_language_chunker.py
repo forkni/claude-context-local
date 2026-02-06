@@ -67,9 +67,9 @@ class MultiLanguageChunker:
 
     def __init__(
         self,
-        root_path: Optional[str] = None,
-        include_dirs: Optional[list] = None,
-        exclude_dirs: Optional[list] = None,
+        root_path: str | None = None,
+        include_dirs: list | None = None,
+        exclude_dirs: list | None = None,
         enable_entity_tracking: bool = False,
         relation_filter: Optional["RepositoryRelationFilter"] = None,
     ):
@@ -183,7 +183,7 @@ class MultiLanguageChunker:
             logger.error(f"Failed to chunk file {file_path}: {e}")
             return []
 
-    def _map_node_type(self, node_type: str, parent_name: Optional[str]) -> str:
+    def _map_node_type(self, node_type: str, parent_name: str | None) -> str:
         """Map tree-sitter node type to chunk type.
 
         Args:
@@ -259,7 +259,7 @@ class MultiLanguageChunker:
         start_line: int,
         end_line: int,
         chunk_type: str,
-        qualified_name: Optional[str],
+        qualified_name: str | None,
     ) -> str:
         """Generate normalized chunk ID for relationship extraction.
 
@@ -482,7 +482,7 @@ class MultiLanguageChunker:
     def chunk_directory(
         self,
         directory_path: str,
-        extensions: Optional[list[str]] = None,
+        extensions: list[str] | None = None,
         enable_parallel: bool = True,
         max_workers: int = 4,
     ) -> list[CodeChunk]:

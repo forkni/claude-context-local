@@ -17,14 +17,34 @@ warnings.filterwarnings(
 import shutil  # noqa: E402
 import sys  # noqa: E402
 import tempfile  # noqa: E402
+from collections.abc import Generator  # noqa: E402
 from pathlib import Path  # noqa: E402
-from typing import Any, Dict, Generator, List, Optional  # noqa: E402
+from typing import Any
 
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 
 from search.filters import normalize_path  # noqa: E402
 
+
+# CRITICAL: Ensure tests run from project .venv, not system Python
+# This prevents silent failures when dependencies are missing from system install
+_venv_path = Path(__file__).parent.parent / ".venv"
+if _venv_path.exists():
+    _venv_python = _venv_path / "Scripts" / "python.exe"
+    if not _venv_python.exists():
+        _venv_python = _venv_path / "bin" / "python"  # Linux/macOS
+
+    _current_prefix = Path(sys.prefix).resolve()
+    _expected_prefix = _venv_path.resolve()
+
+    if not str(_current_prefix).startswith(str(_expected_prefix)):
+        raise RuntimeError(
+            f"Tests must run from project .venv, not system Python.\n"
+            f"Current interpreter: {sys.executable}\n"
+            f"Expected: {_venv_python}\n"
+            f"Fix: Use ./scripts/test/run_tests.sh instead of 'python -m pytest'"
+        )
 
 # Add the package to Python path for testing
 project_root = Path(__file__).parent
@@ -96,7 +116,7 @@ def pytest_unconfigure(config: Any) -> None:
     pass
 
 
-def pytest_collection_modifyitems(config: Any, items: List[Any]) -> None:
+def pytest_collection_modifyitems(config: Any, items: list[Any]) -> None:
     """Automatically mark tests based on their location."""
     for item in items:
         # Mark tests based on file path and location
@@ -284,7 +304,7 @@ def temp_project_dir() -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-def sample_codebase(temp_project_dir: Path) -> Dict[str, Path]:
+def sample_codebase(temp_project_dir: Path) -> dict[str, Path]:
     """Create a sample codebase with various Python modules."""
     if not SAMPLE_AUTH_MODULE:
         pytest.skip("Sample code not available")
@@ -359,7 +379,7 @@ def mock_storage_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture(scope="session")
-def test_config() -> Dict[str, Any]:
+def test_config() -> dict[str, Any]:
     """Test configuration settings."""
     return {
         "embedding_model": "google/embeddinggemma-300m",
@@ -372,7 +392,7 @@ def test_config() -> Dict[str, Any]:
 
 
 @pytest.fixture(scope="session")
-def ensure_model_downloaded(test_config: Dict[str, Any]) -> bool:
+def ensure_model_downloaded(test_config: dict[str, Any]) -> bool:
     """Ensure the embedding model is downloaded before running tests."""
     import os
     import subprocess
@@ -538,8 +558,8 @@ def generate_chunk_id(chunk: Any) -> str:
 
 
 def create_test_embeddings(
-    chunks: List[Any], embedder: Optional[Any] = None, embedding_dim: int = 768
-) -> List[Any]:
+    chunks: list[Any], embedder: Any | None = None, embedding_dim: int = 768
+) -> list[Any]:
     """Create embeddings from chunks for testing.
 
     Supports two modes:
@@ -658,9 +678,9 @@ def mock_embedding_result_factory():
         name: str = "test_func",
         chunk_type: str = "function",
         content: str = "def test_func(): pass",
-        file_path: Optional[str] = None,
-        calls: Optional[List[Dict]] = None,
-        relationships: Optional[List[Dict]] = None,
+        file_path: str | None = None,
+        calls: list[dict] | None = None,
+        relationships: list[dict] | None = None,
         embedding_dim: int = 768,
     ):
         if not EmbeddingResult:

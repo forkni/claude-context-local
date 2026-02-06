@@ -14,7 +14,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 
 logger = logging.getLogger(__name__)
@@ -581,7 +581,7 @@ class IntentClassifier:
     CONFIDENCE_THRESHOLD = 0.3
 
     def __init__(
-        self, confidence_threshold: Optional[float] = None, enable_logging: bool = True
+        self, confidence_threshold: float | None = None, enable_logging: bool = True
     ) -> None:
         """Initialize intent classifier.
 
@@ -598,7 +598,7 @@ class IntentClassifier:
         self.enable_logging = enable_logging
 
     def classify(
-        self, query: str, confidence_threshold: Optional[float] = None
+        self, query: str, confidence_threshold: float | None = None
     ) -> IntentDecision:
         """Classify query intent for retrieval strategy selection.
 
@@ -819,10 +819,11 @@ class IntentClassifier:
             ):
                 boost += 0.15
             # Dunder methods: __init__, __enter__, __repr__
-            elif re.match(r"^__[a-z]\w+__$", token):
-                boost += 0.20
-            # snake_case: embed_chunks, search_code, _private_method (must have underscore + lowercase)
-            elif "_" in token and re.match(r"^_?[a-z][a-z0-9_]+$", token):
+            elif (
+                re.match(r"^__[a-z]\w+__$", token)
+                or "_" in token
+                and re.match(r"^_?[a-z][a-z0-9_]+$", token)
+            ):
                 boost += 0.20
             # dot.notation with mixed case: module.Class, self.method
             elif "." in token and re.search(r"[A-Z]", token):
@@ -907,7 +908,7 @@ class IntentClassifier:
 
         return params
 
-    def _extract_symbol_from_query(self, query: str) -> Optional[str]:
+    def _extract_symbol_from_query(self, query: str) -> str | None:
         """Extract symbol name from navigational queries.
 
         Examples:
@@ -1035,9 +1036,7 @@ class IntentClassifier:
 
         return types
 
-    def _extract_path_endpoints(
-        self, query: str
-    ) -> tuple[Optional[str], Optional[str]]:
+    def _extract_path_endpoints(self, query: str) -> tuple[str | None, str | None]:
         """Extract source and target symbols from path-tracing queries.
 
         Args:
@@ -1077,7 +1076,7 @@ class IntentClassifier:
 
         return None, None
 
-    def get_intent_patterns(self, intent: QueryIntent) -> Optional[dict]:
+    def get_intent_patterns(self, intent: QueryIntent) -> dict | None:
         """Get pattern details for a specific intent type.
 
         Args:

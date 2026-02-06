@@ -64,9 +64,9 @@ def _check_file_accessibility(
 
     for fp in sample:
         try:
-            with open(fp, "r", encoding="utf-8") as f:
+            with open(fp, encoding="utf-8") as f:
                 f.read(1)  # Just read 1 byte to check access
-        except (PermissionError, IOError):
+        except (OSError, PermissionError):
             inaccessible.append(fp)
         except (UnicodeDecodeError, OSError):
             # Skip other exceptions (encoding errors, etc.)
@@ -701,7 +701,7 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
     directory_path = arguments["directory_path"]
     arguments.get("project_name")
     incremental = arguments.get("incremental", True)
-    multi_model = arguments.get("multi_model", None)  # None = auto-detect
+    multi_model = arguments.get("multi_model")  # None = auto-detect
     include_dirs = arguments.get("include_dirs")
     exclude_dirs = arguments.get("exclude_dirs")
 
@@ -804,7 +804,7 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
             from mcp_server.model_pool_manager import get_model_pool_manager
 
             pool_config = get_model_pool_manager()._get_pool_config()
-            for model_key in pool_config.keys():
+            for model_key in pool_config:
                 update_project_filters(
                     str(directory_path),
                     include_dirs,

@@ -19,7 +19,7 @@ def generate_file_summaries(chunks: list["CodeChunk"]) -> list["CodeChunk"]:
         List of synthetic module CodeChunks (one per qualifying file)
     """
     # Group chunks by file
-    by_file: dict[str, list["CodeChunk"]] = defaultdict(list)
+    by_file: dict[str, list[CodeChunk]] = defaultdict(list)
     for chunk in chunks:
         by_file[chunk.relative_path].append(chunk)
 

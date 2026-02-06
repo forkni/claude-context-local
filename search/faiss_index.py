@@ -7,12 +7,16 @@ with support for saving, loading, searching, and dimension tracking.
 import logging
 import pickle
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import psutil
 
 from search.exceptions import IndexError as SearchIndexError
+
+
+if TYPE_CHECKING:
+    from embeddings.embedder import CodeEmbedder
 
 
 try:
@@ -116,7 +120,7 @@ class FaissVectorIndex:
         >>> index.save()
     """
 
-    def __init__(self, index_path: Path, embedder=None):
+    def __init__(self, index_path: Path, embedder: "CodeEmbedder | None" = None):
         """Initialize FAISS vector index.
 
         Args:
@@ -127,19 +131,19 @@ class FaissVectorIndex:
         self.chunk_id_path = self.index_path.parent / "chunk_ids.pkl"
         self.embedder = embedder
 
-        self._index: Optional[Any] = None
+        self._index: Any | None = None
         self._chunk_ids: list = []
         self._on_gpu: bool = False
         self._logger = logging.getLogger(__name__)
 
         # Memory-mapped vector storage (auto-enabled for >10K vectors)
-        self._mmap_storage: Optional[Any] = None  # MmapVectorStorage
+        self._mmap_storage: Any | None = None  # MmapVectorStorage
         self._mmap_path = (
             self.index_path.parent / f"{self.index_path.stem}_vectors.mmap"
         )
 
     @property
-    def index(self) -> Optional[Any]:
+    def index(self) -> Any | None:
         """Get the underlying FAISS index."""
         return self._index
 
@@ -151,7 +155,7 @@ class FaissVectorIndex:
         return self._index.ntotal
 
     @property
-    def dimension(self) -> Optional[int]:
+    def dimension(self) -> int | None:
         """Get the dimension of vectors in the index."""
         if self._index is None:
             return None
@@ -163,7 +167,7 @@ class FaissVectorIndex:
         return self._on_gpu
 
     @property
-    def chunk_ids(self) -> list:
+    def chunk_ids(self) -> list[str]:
         """Get the list of chunk IDs."""
         return self._chunk_ids
 

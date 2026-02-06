@@ -114,7 +114,7 @@ class TestSearchConfigManager:
         assert os.path.exists(self.config_file)
 
         # Verify content (nested structure v0.8.0+)
-        with open(self.config_file, "r") as f:
+        with open(self.config_file) as f:
             saved_data = json.load(f)
 
         assert "search_mode" in saved_data

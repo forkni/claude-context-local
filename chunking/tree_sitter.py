@@ -20,7 +20,6 @@ import warnings
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
-from typing import Optional
 
 from tree_sitter import Language
 
@@ -152,7 +151,7 @@ def _read_file_with_timeout(file_path: Path, timeout: float = FILE_READ_TIMEOUT)
     """
 
     def read_file():
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             return f.read()
 
     with ThreadPoolExecutor(max_workers=1) as executor:
@@ -180,7 +179,7 @@ def _is_binary_file(file_path: Path, sample_size: int = 8192) -> bool:
             chunk = f.read(sample_size)
             # Null bytes are strong indicator of binary content
             return b"\x00" in chunk
-    except Exception:
+    except OSError:
         return False  # If we can't read it, let the main logic handle it
 
 
@@ -220,7 +219,7 @@ class TreeSitterChunker:
         """
         self.chunkers: dict[str, LanguageChunker] = {}
 
-    def get_chunker(self, file_path: str) -> Optional[LanguageChunker]:
+    def get_chunker(self, file_path: str) -> LanguageChunker | None:
         """Get the appropriate chunker for a file.
 
         Args:
@@ -256,7 +255,7 @@ class TreeSitterChunker:
         return self.chunkers[suffix]
 
     def chunk_file(
-        self, file_path: str, content: Optional[str] = None
+        self, file_path: str, content: str | None = None
     ) -> list[TreeSitterChunk]:
         """Chunk a file into semantic units.
 
@@ -304,7 +303,7 @@ class TreeSitterChunker:
                     f"UTF-8 decode failed for {file_path}, trying with error handling"
                 )
                 try:
-                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    with open(file_path, encoding="utf-8", errors="ignore") as f:
                         content = f.read()
                 except Exception as e:
                     logger.error(f"Failed to read file {file_path}: {e}")

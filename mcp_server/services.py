@@ -40,7 +40,7 @@ class ServiceLocator:
         >>> ServiceLocator.reset()  # Clean slate for tests
     """
 
-    _instance: "ServiceLocator" | None = None
+    _instance: ServiceLocator | None = None
 
     def __init__(self) -> None:
         """Initialize empty service registry.
@@ -51,7 +51,7 @@ class ServiceLocator:
         self._factories: dict[str, Callable[[], Any]] = {}
 
     @classmethod
-    def instance(cls) -> "ServiceLocator":
+    def instance(cls) -> ServiceLocator:
         """Get the singleton ServiceLocator instance.
 
         Returns:
@@ -131,7 +131,7 @@ class ServiceLocator:
 
     # Typed convenience methods for common services
 
-    def get_state(self) -> "ApplicationState":
+    def get_state(self) -> ApplicationState:
         """Get the ApplicationState service.
 
         Returns:
@@ -149,7 +149,7 @@ class ServiceLocator:
             self.register("state", state)
         return state
 
-    def get_config(self) -> "SearchConfig":
+    def get_config(self) -> SearchConfig:
         """Get the SearchConfig service.
 
         Returns:
@@ -169,7 +169,7 @@ class ServiceLocator:
 
 
 # Convenience wrappers for common access patterns
-def get_state() -> "ApplicationState":
+def get_state() -> ApplicationState:
     """Get ApplicationState via ServiceLocator (backward-compatible wrapper).
 
     This function maintains compatibility with existing code that calls get_state()
@@ -181,7 +181,7 @@ def get_state() -> "ApplicationState":
     return ServiceLocator.instance().get_state()
 
 
-def get_config() -> "SearchConfig":
+def get_config() -> SearchConfig:
     """Get SearchConfig via ServiceLocator (backward-compatible wrapper).
 
     Returns:

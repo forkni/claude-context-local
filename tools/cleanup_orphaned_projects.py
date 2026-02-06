@@ -38,7 +38,7 @@ def find_orphaned_projects():
 
             # Case 2: Has project_info.json but project_path doesn't exist (stale)
             try:
-                with open(info_file, "r", encoding="utf-8") as f:
+                with open(info_file, encoding="utf-8") as f:
                     project_info = json.load(f)
                     project_path = project_info.get("project_path", "")
 
@@ -86,7 +86,7 @@ def _get_full_project_id(project_dir: Path) -> str | None:
         return None
 
     try:
-        with open(info_file, "r", encoding="utf-8") as f:
+        with open(info_file, encoding="utf-8") as f:
             project_info = json.load(f)
             project_path = project_info.get("project_path", "")
             if project_path:

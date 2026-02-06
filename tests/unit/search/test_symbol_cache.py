@@ -164,7 +164,7 @@ class TestSymbolHashCachePersistence(unittest.TestCase):
         cache.add("test_chunk")
         cache.save()
 
-        with open(self.cache_path, "r") as f:
+        with open(self.cache_path) as f:
             data = json.load(f)
 
         self.assertIn("version", data)

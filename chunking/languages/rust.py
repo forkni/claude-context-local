@@ -1,6 +1,6 @@
 """Rust-specific chunker using tree-sitter."""
 
-from typing import Any, Optional
+from typing import Any
 
 from tree_sitter import Language
 
@@ -10,7 +10,7 @@ from .base import LanguageChunker
 class RustChunker(LanguageChunker):
     """Rust-specific chunker using tree-sitter."""
 
-    def __init__(self, language: Optional[Language] = None) -> None:
+    def __init__(self, language: Language | None = None) -> None:
         super().__init__("rust", language)
 
     def _load_language(self) -> Language:

@@ -7,7 +7,6 @@ structurally important code in search results.
 
 import logging
 import re
-from typing import Optional
 
 import networkx as nx
 
@@ -199,7 +198,7 @@ class CentralityRanker:
         return results
 
     def rerank(
-        self, results: list[dict], alpha: Optional[float] = None, query: str = ""
+        self, results: list[dict], alpha: float | None = None, query: str = ""
     ) -> list[dict]:
         """Rerank results by blended semantic + centrality score.
 

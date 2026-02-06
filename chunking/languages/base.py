@@ -85,10 +85,10 @@ class TreeSitterChunk:
     node_type: str
     language: str
     metadata: dict[str, Any]
-    chunk_id: Optional[str] = None  # unique identifier for evaluation
-    parent_class: Optional[str] = None  # Enclosing class name for methods
-    parent_chunk_id: Optional[str] = None  # Enclosing class chunk_id for methods
-    community_id: Optional[int] = None  # Louvain community membership ID
+    chunk_id: str | None = None  # unique identifier for evaluation
+    parent_class: str | None = None  # Enclosing class name for methods
+    parent_chunk_id: str | None = None  # Enclosing class chunk_id for methods
+    community_id: int | None = None  # Louvain community membership ID
 
     def to_dict(self) -> dict:
         """Convert to dictionary format compatible with existing system."""
@@ -105,7 +105,7 @@ class TreeSitterChunk:
 class LanguageChunker(ABC):
     """Abstract base class for language-specific chunkers."""
 
-    def __init__(self, language_name: str, language: Optional[Language] = None) -> None:
+    def __init__(self, language_name: str, language: Language | None = None) -> None:
         """Initialize language chunker.
 
         Args:
@@ -306,15 +306,11 @@ class LanguageChunker(ABC):
         result: list[TreeSitterChunk] = []
         current_group: list[TreeSitterChunk] = []
         current_size: int = 0
-        current_parent: Optional[str] = None
-        current_community: Optional[int] = (
-            None  # Current community for boundary detection
-        )
+        current_parent: str | None = None
+        current_community: int | None = None  # Current community for boundary detection
         total_size_estimated: int = 0  # Track for summary logging
 
-        current_file: Optional[str] = (
-            None  # Track file path to prevent cross-file merging
-        )
+        current_file: str | None = None  # Track file path to prevent cross-file merging
 
         for chunk in chunks:
             chunk_size = get_size(chunk.content)
@@ -621,7 +617,7 @@ class LanguageChunker(ABC):
                 break
         return "\n".join(sig_lines)
 
-    def _find_body_node(self, node: Any) -> Optional[Any]:
+    def _find_body_node(self, node: Any) -> Any | None:
         """Find the body/block child node of a function definition.
 
         Args:
@@ -644,7 +640,7 @@ class LanguageChunker(ABC):
         nodes: list[Any],
         source_bytes: bytes,
         original_node: Any,
-        parent_info: Optional[dict[str, Any]],
+        parent_info: dict[str, Any] | None,
     ) -> TreeSitterChunk:
         """Create a single split chunk with signature prefix.
 
@@ -692,7 +688,7 @@ class LanguageChunker(ABC):
         self,
         node: Any,
         source_bytes: bytes,
-        parent_info: Optional[dict[str, Any]],
+        parent_info: dict[str, Any] | None,
         max_lines: int = 100,
         split_size_method: str = "characters",
         max_chars: int = 3000,

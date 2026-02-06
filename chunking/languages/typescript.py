@@ -1,6 +1,6 @@
 """TypeScript-specific chunker using tree-sitter."""
 
-from typing import Any, Optional
+from typing import Any
 
 from tree_sitter import Language
 
@@ -10,9 +10,7 @@ from .base import LanguageChunker
 class TypeScriptChunker(LanguageChunker):
     """TypeScript-specific chunker using tree-sitter."""
 
-    def __init__(
-        self, language: Optional[Language] = None, use_tsx: bool = False
-    ) -> None:
+    def __init__(self, language: Language | None = None, use_tsx: bool = False) -> None:
         self.use_tsx = use_tsx
         language_name = "tsx" if use_tsx else "typescript"
         super().__init__(language_name, language)

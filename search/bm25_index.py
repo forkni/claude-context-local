@@ -6,7 +6,6 @@ import pickle
 import re
 import string
 from pathlib import Path
-from typing import Optional
 
 from search.filters import normalize_path
 
@@ -233,7 +232,7 @@ class BM25Index:
         self,
         documents: list[str],
         doc_ids: list[str],
-        metadata: Optional[dict[str, dict]] = None,
+        metadata: dict[str, dict] | None = None,
     ) -> None:
         """Index a list of documents with their IDs."""
         if len(documents) != len(doc_ids):
@@ -366,7 +365,7 @@ class BM25Index:
 
         return results
 
-    def get_document_by_id(self, doc_id: str) -> Optional[str]:
+    def get_document_by_id(self, doc_id: str) -> str | None:
         """Get original document by ID."""
         try:
             idx = self._doc_ids.index(doc_id)
@@ -578,14 +577,14 @@ class BM25Index:
                 self._bm25 = pickle.load(f)
 
             # Load documents
-            with open(self.docs_path, "r", encoding="utf-8") as f:
+            with open(self.docs_path, encoding="utf-8") as f:
                 docs_data = json.load(f)
                 self._documents = docs_data["documents"]
                 self._doc_ids = docs_data["doc_ids"]
                 self._tokenized_docs = docs_data["tokenized_docs"]
 
             # Load metadata and check version compatibility
-            with open(self.metadata_path, "r", encoding="utf-8") as f:
+            with open(self.metadata_path, encoding="utf-8") as f:
                 metadata = json.load(f)
                 self._metadata = metadata.get("doc_metadata", {})
 

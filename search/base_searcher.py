@@ -33,7 +33,7 @@ class BaseSearcher(ABC):
         """
         # In-memory metadata cache for multi-hop operations (find_connections)
         # Avoids repeated SQLite lookups during graph traversal
-        self._metadata_cache: dict[str, Optional["SearchResult"]] = {}
+        self._metadata_cache: dict[str, SearchResult | None] = {}
         self._cache_max_size = 1000  # Limit cache size to prevent memory bloat
         self._cache_hits = 0
         self._cache_misses = 0

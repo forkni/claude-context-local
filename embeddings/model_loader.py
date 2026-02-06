@@ -135,7 +135,7 @@ class ModelLoader:
         )
         return torch.float16
 
-    def resolve_device(self, requested: Optional[str]) -> str:
+    def resolve_device(self, requested: str | None) -> str:
         """Resolve target device string.
 
         Args:

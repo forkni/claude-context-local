@@ -1,7 +1,7 @@
 """Neural cross-encoder reranker for semantic scoring."""
 
 import logging
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import torch
 
@@ -73,7 +73,7 @@ class NeuralReranker:
     def __init__(
         self,
         model_name: str = "BAAI/bge-reranker-v2-m3",
-        device: Optional[str] = None,
+        device: str | None = None,
         batch_size: int = 16,
     ):
         """Initialize NeuralReranker with lazy loading.
@@ -218,7 +218,7 @@ class GenerativeReranker:
     def __init__(
         self,
         model_name: str = "Qwen/Qwen3-Reranker-0.6B",
-        device: Optional[str] = None,
+        device: str | None = None,
     ):
         """Initialize GenerativeReranker with lazy loading.
 
@@ -433,7 +433,7 @@ class JinaRerankerV3:
     def __init__(
         self,
         model_name: str = "jinaai/jina-reranker-v3",
-        device: Optional[str] = None,
+        device: str | None = None,
     ):
         """Initialize JinaRerankerV3 with lazy loading.
 
@@ -613,7 +613,7 @@ class JinaRerankerV3:
 
 
 def create_reranker(
-    model_name: str, device: Optional[str] = None, batch_size: int = 16
+    model_name: str, device: str | None = None, batch_size: int = 16
 ) -> "NeuralReranker | GenerativeReranker | JinaRerankerV3":
     """Factory function to create appropriate reranker based on model name.
 

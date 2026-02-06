@@ -6,8 +6,9 @@ Provides decorator and context manager for consistent operation timing.
 import functools
 import logging
 import time
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
-from typing import Callable, Generator, TypeVar
+from typing import TypeVar
 
 
 T = TypeVar("T")

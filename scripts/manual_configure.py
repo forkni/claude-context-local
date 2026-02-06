@@ -16,16 +16,16 @@ Options:
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 class ClaudeConfigManager:
     """Manages Claude Code MCP server configuration."""
 
-    def __init__(self, project_dir: Optional[Path] = None):
+    def __init__(self, project_dir: Path | None = None):
         """Initialize configuration manager."""
         self.project_dir = project_dir or Path.cwd()
-        self.config_path: Optional[Path] = None
+        self.config_path: Path | None = None
 
     def get_config_path(self, global_scope: bool = True) -> Path:
         """Get the path to the Claude configuration file."""
@@ -37,7 +37,7 @@ class ClaudeConfigManager:
             # Project-specific config
             return self.project_dir / ".claude.json"
 
-    def load_config(self, config_path: Path) -> Dict[str, Any]:
+    def load_config(self, config_path: Path) -> dict[str, Any]:
         """Load existing Claude configuration."""
         if not config_path.exists():
             print(f"[INFO] Config file not found: {config_path}")
@@ -45,7 +45,7 @@ class ClaudeConfigManager:
             return {}
 
         try:
-            with open(config_path, "r", encoding="utf-8") as f:
+            with open(config_path, encoding="utf-8") as f:
                 config = json.load(f)
             print(f"[OK] Loaded existing configuration from {config_path}")
             return config
@@ -61,7 +61,7 @@ class ClaudeConfigManager:
             print(f"[ERROR] Failed to load config: {e}")
             return {}
 
-    def save_config(self, config: Dict[str, Any], config_path: Path) -> bool:
+    def save_config(self, config: dict[str, Any], config_path: Path) -> bool:
         """Save Claude configuration to file."""
         try:
             # Ensure parent directory exists
@@ -83,8 +83,8 @@ class ClaudeConfigManager:
         url: str = None,
         command: str = None,
         args: list = None,
-        env: Dict[str, str] = None,
-    ) -> Dict[str, Any]:
+        env: dict[str, str] = None,
+    ) -> dict[str, Any]:
         """Create MCP server configuration structure.
 
         Args:
@@ -119,7 +119,7 @@ class ClaudeConfigManager:
         url: str = None,
         command: str = None,
         args: list = None,
-        env: Dict[str, str] = None,
+        env: dict[str, str] = None,
         global_scope: bool = True,
         force: bool = False,
         verbose: bool = False,
@@ -206,7 +206,7 @@ class ClaudeConfigManager:
         else:
             return False
 
-    def validate_config(self, config_path: Optional[Path] = None) -> bool:
+    def validate_config(self, config_path: Path | None = None) -> bool:
         """Validate the configuration file."""
         if config_path is None:
             config_path = self.config_path

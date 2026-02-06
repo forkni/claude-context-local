@@ -6,7 +6,6 @@ Tests all files for ASCII compatibility and emoji detection.
 
 import sys
 from pathlib import Path
-from typing import Dict
 
 
 def test_file_encoding() -> None:
@@ -15,7 +14,7 @@ def test_file_encoding() -> None:
     assert success, "Encoding validation failed for some files"
 
 
-def _test_file_encoding_detailed(file_path: Path) -> Dict:
+def _test_file_encoding_detailed(file_path: Path) -> dict:
     """Test a single file for encoding issues."""
     result = {
         "file": str(file_path),
@@ -27,7 +26,7 @@ def _test_file_encoding_detailed(file_path: Path) -> Dict:
     try:
         # Test ASCII compatibility
         try:
-            with open(file_path, "r", encoding="ascii") as f:
+            with open(file_path, encoding="ascii") as f:
                 f.read()
             result["ascii_compatible"] = True
         except UnicodeDecodeError as e:
@@ -38,7 +37,7 @@ def _test_file_encoding_detailed(file_path: Path) -> Dict:
 
         # Read as UTF-8 to check for emojis
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 text_content = f.read()
 
             # Check for common emoji ranges and specific problematic characters

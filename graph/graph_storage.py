@@ -9,7 +9,7 @@ import json
 import logging
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from search.filters import normalize_path
 
@@ -109,7 +109,7 @@ class CodeGraphStorage:
         - Persistence: JSON via nx.node_link_data/graph
     """
 
-    def __init__(self, project_id: str, storage_dir: Optional[Path] = None) -> None:
+    def __init__(self, project_id: str, storage_dir: Path | None = None) -> None:
         """
         Initialize graph storage.
 
@@ -329,10 +329,10 @@ class CodeGraphStorage:
     def get_neighbors(
         self,
         chunk_id: str,
-        relation_types: Optional[list[str]] = None,
+        relation_types: list[str] | None = None,
         max_depth: int = 1,
-        exclude_import_categories: Optional[list[str]] = None,
-        edge_weights: Optional[dict[str, float]] = None,
+        exclude_import_categories: list[str] | None = None,
+        edge_weights: dict[str, float] | None = None,
     ) -> set[str]:
         """
         Get all related chunks within max_depth hops.
@@ -579,7 +579,7 @@ class CodeGraphStorage:
 
         return False
 
-    def get_node_data(self, chunk_id: str) -> Optional[dict[str, Any]]:
+    def get_node_data(self, chunk_id: str) -> dict[str, Any] | None:
         """
         Get node metadata.
 
@@ -598,7 +598,7 @@ class CodeGraphStorage:
 
         return dict(self.graph.nodes[normalized_chunk_id])
 
-    def get_edge_data(self, caller_id: str, callee_id: str) -> Optional[dict[str, Any]]:
+    def get_edge_data(self, caller_id: str, callee_id: str) -> dict[str, Any] | None:
         """
         Get edge metadata with validation and normalization.
 
@@ -702,7 +702,7 @@ class CodeGraphStorage:
             return False
 
         try:
-            with open(self.graph_path, "r") as f:
+            with open(self.graph_path) as f:
                 data = json.load(f)
 
             # Reconstruct graph from JSON
@@ -763,7 +763,7 @@ class CodeGraphStorage:
             f"Stored {len(community_map)} community assignments to {community_path}"
         )
 
-    def load_community_map(self) -> Optional[dict[str, int]]:
+    def load_community_map(self) -> dict[str, int] | None:
         """Load stored community assignments.
 
         Returns:
@@ -771,11 +771,11 @@ class CodeGraphStorage:
         """
         community_path = self.storage_dir / f"{self.project_id}_communities.json"
         if community_path.exists():
-            with open(community_path, "r") as f:
+            with open(community_path) as f:
                 return json.load(f)
         return None
 
-    def get_community_for_chunk(self, chunk_id: str) -> Optional[int]:
+    def get_community_for_chunk(self, chunk_id: str) -> int | None:
         """Get community ID for a specific chunk.
 
         Args:

@@ -6,7 +6,7 @@ for search result quality improvement.
 
 import logging
 import time
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -40,10 +40,10 @@ class RerankingEngine:
         """
         self.embedder = embedder
         self.metadata_store = metadata_store
-        self.neural_reranker: Optional[
-            Union[NeuralReranker, GenerativeReranker, JinaRerankerV3]
-        ] = None
-        self._neural_reranking_enabled: Optional[bool] = None
+        self.neural_reranker: (
+            NeuralReranker | GenerativeReranker | JinaRerankerV3 | None
+        ) = None
+        self._neural_reranking_enabled: bool | None = None
         self._session_oom_detected: bool = False
         self._logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ class RerankingEngine:
         results: list,
         k: int,
         search_mode: str = "hybrid",
-        query_embedding: Optional[np.ndarray] = None,
+        query_embedding: np.ndarray | None = None,
     ) -> list:
         """
         Re-rank results by computing fresh relevance scores against the original query.

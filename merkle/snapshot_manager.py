@@ -3,7 +3,6 @@
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from search.filters import compute_drive_agnostic_hash, compute_legacy_hash
 
@@ -13,7 +12,7 @@ from .merkle_dag import MerkleDAG
 class SnapshotManager:
     """Manages loading and saving of Merkle DAG snapshots."""
 
-    def __init__(self, storage_dir: Optional[Path] = None) -> None:
+    def __init__(self, storage_dir: Path | None = None) -> None:
         """Initialize snapshot manager.
 
         Args:
@@ -47,7 +46,7 @@ class SnapshotManager:
         return compute_legacy_hash(project_path, length=32)
 
     def _get_model_slug_and_dimension(
-        self, dimension: Optional[int] = None
+        self, dimension: int | None = None
     ) -> tuple[str, int]:
         """Get model slug and dimension, auto-detecting from config if needed.
 
@@ -85,7 +84,7 @@ class SnapshotManager:
         return model_slug, dimension
 
     def get_snapshot_path(
-        self, project_path: str, dimension: Optional[int] = None
+        self, project_path: str, dimension: int | None = None
     ) -> Path:
         """Get the snapshot file path for a project, checking both new and legacy hashes.
 
@@ -119,7 +118,7 @@ class SnapshotManager:
         return new_path
 
     def get_metadata_path(
-        self, project_path: str, dimension: Optional[int] = None
+        self, project_path: str, dimension: int | None = None
     ) -> Path:
         """Get the metadata file path for a project, checking both new and legacy hashes.
 
@@ -152,7 +151,7 @@ class SnapshotManager:
         # Return new path for creation
         return new_path
 
-    def save_snapshot(self, dag: MerkleDAG, metadata: Optional[dict] = None) -> None:
+    def save_snapshot(self, dag: MerkleDAG, metadata: dict | None = None) -> None:
         """Save a Merkle DAG snapshot to disk.
 
         Args:
@@ -188,7 +187,7 @@ class SnapshotManager:
         with open(metadata_path, "w") as f:
             json.dump(metadata_data, f, indent=2)
 
-    def load_snapshot(self, project_path: str) -> Optional[MerkleDAG]:
+    def load_snapshot(self, project_path: str) -> MerkleDAG | None:
         """Load a Merkle DAG snapshot from disk.
 
         Args:
@@ -203,7 +202,7 @@ class SnapshotManager:
             return None
 
         try:
-            with open(snapshot_path, "r") as f:
+            with open(snapshot_path) as f:
                 snapshot_data = json.load(f)
 
             # Check version compatibility
@@ -218,7 +217,7 @@ class SnapshotManager:
             print(f"Error loading snapshot: {e}")
             return None
 
-    def load_metadata(self, project_path: str) -> Optional[dict]:
+    def load_metadata(self, project_path: str) -> dict | None:
         """Load metadata for a project.
 
         Args:
@@ -233,7 +232,7 @@ class SnapshotManager:
             return None
 
         try:
-            with open(metadata_path, "r") as f:
+            with open(metadata_path) as f:
                 return json.load(f)
         except (json.JSONDecodeError, Exception) as e:
             print(f"Error loading metadata: {e}")
@@ -373,7 +372,7 @@ class SnapshotManager:
 
         for metadata_file in self.storage_dir.glob("*_metadata.json"):
             try:
-                with open(metadata_file, "r") as f:
+                with open(metadata_file) as f:
                     metadata = json.load(f)
                     snapshots.append(metadata)
             except (OSError, json.JSONDecodeError):
@@ -410,7 +409,7 @@ class SnapshotManager:
                 if metadata_file.exists():
                     metadata_file.unlink()
 
-    def get_snapshot_age(self, project_path: str) -> Optional[float]:
+    def get_snapshot_age(self, project_path: str) -> float | None:
         """Get the age of a snapshot in seconds.
 
         Args:

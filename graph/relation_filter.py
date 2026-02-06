@@ -7,7 +7,6 @@ on project-internal code.
 
 import sys
 from pathlib import Path
-from typing import Optional
 
 
 class RepositoryRelationFilter:
@@ -18,7 +17,7 @@ class RepositoryRelationFilter:
     and third-party packages, making ego-graph neighbors more relevant.
     """
 
-    def __init__(self, project_root: Optional[Path] = None) -> None:
+    def __init__(self, project_root: Path | None = None) -> None:
         """Initialize filter with project context.
 
         Args:
@@ -27,7 +26,7 @@ class RepositoryRelationFilter:
         """
         self.project_root = Path(project_root) if project_root else None
         self.project_modules: set[str] = set()
-        self._stdlib_modules: Optional[set[str]] = None
+        self._stdlib_modules: set[str] | None = None
 
         if self.project_root:
             self._discover_project_modules()

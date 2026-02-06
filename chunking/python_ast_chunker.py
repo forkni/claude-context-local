@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 
 if TYPE_CHECKING:
@@ -24,10 +24,10 @@ class CodeChunk:
     folder_structure: list[str]  # ['src', 'utils', 'auth'] for nested folders
 
     # Code structure metadata
-    name: Optional[str] = None  # function/class name
-    parent_name: Optional[str] = None  # parent class name for methods
-    parent_chunk_id: Optional[str] = None  # parent class chunk_id for methods
-    docstring: Optional[str] = None
+    name: str | None = None  # function/class name
+    parent_name: str | None = None  # parent class name for methods
+    parent_chunk_id: str | None = None  # parent class chunk_id for methods
+    docstring: str | None = None
     decorators: list[str] = None
     imports: list[str] = None  # relevant imports for this chunk
 
@@ -36,25 +36,25 @@ class CodeChunk:
     tags: list[str] = None  # semantic tags like 'database', 'auth', 'error_handling'
 
     # Call graph metadata
-    calls: Optional[list["CallEdge"]] = None  # function calls made by this chunk
+    calls: list["CallEdge"] | None = None  # function calls made by this chunk
 
     # Relationship tracking
-    relationships: Optional[list] = (
+    relationships: list | None = (
         None  # All relationship types (RelationshipEdge objects)
     )
 
     # Evaluation framework compatibility
     language: str = "python"  # programming language
-    chunk_id: Optional[str] = None  # unique identifier for evaluation
+    chunk_id: str | None = None  # unique identifier for evaluation
 
     # Community detection metadata
-    community_id: Optional[int] = None  # Leiden community membership
+    community_id: int | None = None  # Leiden community membership
 
     # Merged symbols for secondary symbol index
-    merged_from: Optional[list[str]] = None  # All symbol names in merged chunk
+    merged_from: list[str] | None = None  # All symbol names in merged chunk
 
     # Internal metadata (for merge statistics tracking)
-    _merge_stats: Optional[tuple] = None  # (original_count, merged_count)
+    _merge_stats: tuple | None = None  # (original_count, merged_count)
 
     def __post_init__(self):
         if self.decorators is None:

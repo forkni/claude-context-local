@@ -40,7 +40,7 @@ class IncrementalIndexResult:
     chunks_removed: int
     time_taken: float
     success: bool
-    error: Optional[str] = None
+    error: str | None = None
     bm25_resynced: bool = False
     bm25_resync_count: int = 0
 
@@ -65,12 +65,12 @@ class IncrementalIndexer:
 
     def __init__(
         self,
-        indexer: Optional[Indexer] = None,
-        embedder: Optional[CodeEmbedder] = None,
-        chunker: Optional[MultiLanguageChunker] = None,
-        snapshot_manager: Optional[SnapshotManager] = None,
-        include_dirs: Optional[list] = None,
-        exclude_dirs: Optional[list] = None,
+        indexer: Indexer | None = None,
+        embedder: CodeEmbedder | None = None,
+        chunker: MultiLanguageChunker | None = None,
+        snapshot_manager: SnapshotManager | None = None,
+        include_dirs: list | None = None,
+        exclude_dirs: list | None = None,
     ):
         """Initialize incremental indexer.
 
@@ -186,15 +186,12 @@ class IncrementalIndexer:
 
         ignored_dirs = MultiLanguageChunker.DEFAULT_IGNORED_DIRS
 
-        if any(part in ignored_dirs for part in Path(file_path).parts):
-            return False
-
-        return True
+        return not any(part in ignored_dirs for part in Path(file_path).parts)
 
     def incremental_index(
         self,
         project_path: str,
-        project_name: Optional[str] = None,
+        project_name: str | None = None,
         force_full: bool = False,
     ) -> IncrementalIndexResult:
         """Perform incremental indexing of a project.
@@ -210,7 +207,7 @@ class IncrementalIndexer:
         start_time = time.time()
         project_path = str(Path(project_path).resolve())
 
-        if not project_name:
+        if project_name is None:
             project_name = Path(project_path).name
 
         try:
@@ -1013,7 +1010,7 @@ class IncrementalIndexer:
         except ImportError:
             pass
 
-    def get_indexing_stats(self, project_path: str) -> Optional[dict]:
+    def get_indexing_stats(self, project_path: str) -> dict | None:
         """Get indexing statistics for a project.
 
         Args:
@@ -1057,7 +1054,7 @@ class IncrementalIndexer:
     def auto_reindex_if_needed(
         self,
         project_path: str,
-        project_name: Optional[str] = None,
+        project_name: str | None = None,
         max_age_minutes: float = 5,
     ) -> IncrementalIndexResult:
         """Automatically reindex if the index is stale.

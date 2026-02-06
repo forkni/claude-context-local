@@ -18,7 +18,7 @@ from search.config import MODEL_REGISTRY  # noqa: E402
 
 
 # Get all configured models to test (exclude 8B model - not actively used)
-supported_models = [m for m in MODEL_REGISTRY.keys() if "8B" not in m]
+supported_models = [m for m in MODEL_REGISTRY if "8B" not in m]
 
 
 @pytest.mark.parametrize("model_name", supported_models)

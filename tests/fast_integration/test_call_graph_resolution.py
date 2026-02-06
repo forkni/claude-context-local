@@ -175,7 +175,7 @@ class DataExtractor:
 
             # Should be qualified
             qualified_calls = [
-                c for c in extract_calls if "DataExtractor.extract" == c.callee_name
+                c for c in extract_calls if c.callee_name == "DataExtractor.extract"
             ]
             assert len(qualified_calls) >= 1, (
                 f"Expected DataExtractor.extract, got {[c.callee_name for c in extract_calls]}"

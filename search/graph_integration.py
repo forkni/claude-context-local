@@ -3,7 +3,7 @@
 import logging
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 # Import graph storage for call graph
@@ -57,7 +57,7 @@ class GraphIntegration:
     providing a clean interface for graph operations.
     """
 
-    def __init__(self, project_id: Optional[str], storage_dir: Path) -> None:
+    def __init__(self, project_id: str | None, storage_dir: Path) -> None:
         """Initialize graph storage if available.
 
         Args:
@@ -341,8 +341,8 @@ class GraphIntegration:
         self,
         callee_name: str,
         name_to_chunk_ids: dict[str, list[str]],
-        caller_file: Optional[str] = None,
-    ) -> Optional[str]:
+        caller_file: str | None = None,
+    ) -> str | None:
         """Resolve a call target name to its chunk_id.
 
         Conservative approach: Only resolve if exactly ONE match exists.

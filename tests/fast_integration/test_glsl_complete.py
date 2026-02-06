@@ -88,7 +88,7 @@ def test_complete_glsl_pipeline():
             print("   [OK] GLSLChunker instantiated successfully")
 
             # Test chunking with GLSLChunker
-            with open(vertex_file, "r") as f:
+            with open(vertex_file) as f:
                 content = f.read()
 
             direct_chunks = glsl_chunker.chunk_code(content)

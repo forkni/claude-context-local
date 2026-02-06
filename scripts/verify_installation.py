@@ -10,7 +10,6 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Tuple
 
 
 class InstallationVerifier:
@@ -31,7 +30,7 @@ class InstallationVerifier:
         print(f"[INFO] Using temp directory: {self.temp_dir}")
         print()
 
-    def _run_python_test(self, code: str, description: str = "") -> Tuple[bool, str]:
+    def _run_python_test(self, code: str, description: str = "") -> tuple[bool, str]:
         """Run a Python code snippet and return success status and output."""
         try:
             result = subprocess.run(

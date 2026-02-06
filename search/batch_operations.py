@@ -2,7 +2,7 @@
 
 import logging
 from collections.abc import Callable
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -19,7 +19,7 @@ class BatchOperations:
         self,
         faiss_index: Any,  # FaissVectorIndex
         metadata_store: Any,  # MetadataStore
-        logger: Optional[logging.Logger] = None,
+        logger: logging.Logger | None = None,
     ):
         """Initialize batch operations handler.
 
@@ -36,8 +36,8 @@ class BatchOperations:
         self,
         file_paths: set[str],
         chunk_ids: list[str],
-        project_name: Optional[str] = None,
-        clear_index_callback: Optional[Callable] = None,
+        project_name: str | None = None,
+        clear_index_callback: Callable | None = None,
     ) -> int:
         """Remove chunks from multiple files in a single pass.
 
@@ -154,7 +154,7 @@ class BatchOperations:
 
     def _rebuild_index_without(
         self, positions_to_remove: set[int], chunk_ids: list[str]
-    ) -> tuple[Optional[np.ndarray], Optional[list[str]]]:
+    ) -> tuple[np.ndarray | None, list[str] | None]:
         """Rebuild FAISS index excluding specific positions.
 
         This method reconstructs the FAISS index by:

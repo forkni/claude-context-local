@@ -12,7 +12,6 @@ Use cases:
 
 import sys
 from pathlib import Path
-from typing import Dict, List, Set
 
 
 # Add project root to path
@@ -58,7 +57,7 @@ def _get_full_project_id(project_dir: Path, short_hash: str) -> str | None:
     return None
 
 
-def get_indexed_projects() -> Dict[tuple[str, str], Set[str]]:
+def get_indexed_projects() -> dict[tuple[str, str], set[str]]:
     """Get all currently indexed projects with their model/dimension combos.
 
     Returns:
@@ -107,7 +106,7 @@ def get_indexed_projects() -> Dict[tuple[str, str], Set[str]]:
     return indexed
 
 
-def find_stale_snapshots() -> Dict[str, List[Path]]:
+def find_stale_snapshots() -> dict[str, list[Path]]:
     """Find Merkle snapshots that don't have corresponding project indices.
 
     Returns:

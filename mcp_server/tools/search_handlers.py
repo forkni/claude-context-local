@@ -187,7 +187,7 @@ def _route_query_to_model(
         from mcp_server.model_pool_manager import get_model_pool_manager
 
         pool_config = get_model_pool_manager()._get_pool_config()
-        for model_key_candidate in pool_config.keys():
+        for model_key_candidate in pool_config:
             if model_key_candidate == default_model:
                 continue  # Already checked above
             project_dir = get_project_storage_dir(
