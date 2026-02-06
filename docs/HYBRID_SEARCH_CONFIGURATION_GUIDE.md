@@ -83,8 +83,8 @@ All hybrid search features have been **comprehensively tested** and validated fo
   "search_mode": {
     "default_mode": "hybrid",
     "enable_hybrid": true,
-    "bm25_weight": 0.4,
-    "dense_weight": 0.6,
+    "bm25_weight": 0.35,
+    "dense_weight": 0.65,
     "bm25_use_stemming": true
   },
   "performance": {

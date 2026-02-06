@@ -152,7 +152,7 @@ WHEN NOT TO USE:
         },
     },
     "index_directory": {
-        "description": """SETUP REQUIRED: Index a codebase for semantic search. Must run this before using search_code on a new project. Supports Python, JavaScript, TypeScript, JSX, TSX, and Svelte.
+        "description": """SETUP REQUIRED: Index a codebase for semantic search. Must run this before using search_code on a new project. Supports 9 languages: Python, JavaScript, TypeScript (including TSX), Go, Rust, C, C++, C#, and GLSL.
 
 WHEN TO USE:
 - First time analyzing a new codebase
@@ -162,7 +162,7 @@ WHEN TO USE:
 PROCESS:
 - Uses Merkle trees to detect file changes efficiently
 - Only reprocesses changed/new files (incremental mode)
-- Parses code files using AST (Python) and tree-sitter (JS/TS/JSX/TSX/Svelte)
+- Parses code files using AST (Python) and tree-sitter (JS/TS/TSX/Go/Rust/C/C++/C#/GLSL)
 - Chunks code into semantic units (functions, classes, methods)
 - Generates embeddings using configured embedding model
 - Builds FAISS vector index for fast similarity search
