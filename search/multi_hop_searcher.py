@@ -70,6 +70,9 @@ class MultiHopSearcher:
         if hops < 1:
             self._logger.warning(f"Invalid hops={hops}, using 1")
             validated_hops = 1
+        elif hops > 20:
+            self._logger.warning(f"hops={hops} exceeds maximum, capping at 20")
+            validated_hops = 20
 
         if expansion_factor < 0 or expansion_factor > 2.0:
             self._logger.warning(
@@ -299,8 +302,10 @@ class MultiHopSearcher:
 
         filtered_results = {}
         for chunk_id, result in all_results.items():
-            # Get metadata from dense index
-            metadata = self.dense_index.get_chunk_by_id(chunk_id)
+            metadata = getattr(result, "metadata", None)
+            if not metadata:
+                # Fallback to index lookup if result lacks metadata
+                metadata = self.dense_index.get_chunk_by_id(chunk_id)
             if metadata:
                 if self.dense_index._matches_filters(metadata, filters):
                     filtered_results[chunk_id] = result

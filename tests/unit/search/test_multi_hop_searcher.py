@@ -54,6 +54,12 @@ class TestMultiHopSearcher:
         assert hops == 2
         assert expansion == 0.3  # Should be corrected to default
 
+    def test_validate_params_excessive_hops(self):
+        """Test parameter validation caps excessive hops at 20."""
+        hops, expansion = self.searcher.validate_params(hops=100, expansion_factor=0.3)
+        assert hops == 20
+        assert expansion == 0.3
+
     def test_expand_from_initial_results_batched(self):
         """Test expansion using batched FAISS search."""
         # Create initial results

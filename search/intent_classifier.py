@@ -769,9 +769,8 @@ class IntentClassifier:
             # while semantic search better understands user intent for discovery queries.
             query_lower = query.lower()
             if any(
-                p in query_lower
-                for p in ("check if", "does ", "is there", "exists for")
-            ):
+                p in query_lower for p in ("check if", "is there", "exists for")
+            ) or re.search(r"^does\b.+\b(exist|have|support|contain)\b", query_lower):
                 params["bm25_weight"] = 0.35
                 params["dense_weight"] = 0.65
 

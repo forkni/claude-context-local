@@ -409,7 +409,7 @@ class GraphIntegration:
                                 return int(line_range.split("-")[0])
                             except (ValueError, IndexError):
                                 pass
-                        return float("inf")
+                        return 2**31  # Sentinel for sort ordering
 
                     split_blocks.sort(key=_start_line)
                     return split_blocks[0]
