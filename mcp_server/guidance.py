@@ -7,67 +7,18 @@ and understand next steps based on search results.
 from typing import Any
 
 
-# System message templates for different scenarios
-GUIDANCE_TEMPLATES = {
-    "search_code": {
-        "high_results": (
-            "Found {count} results. For unambiguous follow-up queries, use the chunk_id "
-            "parameter (e.g., chunk_id='{example_id}') instead of searching by name. "
-            "Use find_similar_code to discover related implementations."
-        ),
-        "medium_results": (
-            "Found {count} results. Use chunk_id from results for precise follow-up. "
-            "{graph_hint}"
-        ),
-        "low_results": (
-            "Only {count} result(s) found. Try broader query terms or check spelling. "
-            "Consider using hybrid search mode for better recall."
-        ),
-        "no_results": (
-            "No results found. Suggestions: (1) Check if project is indexed, "
-            "(2) Try broader search terms, (3) Use different search_mode (hybrid/bm25)."
-        ),
-        "with_graph": (
-            "Results include call graph data. Use get_callers/get_callees for detailed "
-            "relationship analysis."
-        ),
-    },
-    "find_similar_code": {
-        "success": (
-            "Found {count} similar chunks. These share semantic/structural patterns with '{query}'. "
-            "Use chunk_id for direct access."
-        ),
-        "no_similar": (
-            "No similar code found. This chunk may be unique in the codebase."
-        ),
-    },
-    "index_directory": {
-        "success": (
-            "Indexed {chunks} chunks from {files} files. Ready for search_code queries. "
-            "Use get_index_status to see detailed statistics."
-        ),
-        "incremental": (
-            "Incremental index updated: +{added_files} files, +{added_chunks} chunks. "
-            "Modified {modified_files} files detected."
-        ),
-        "error": ("Indexing failed. Check directory path and file permissions."),
-    },
-    "find_connections": {
-        "high_impact": (
-            "⚠️ High connectivity: {total_impacted} symbols connected across {file_count} files. "
-            "Review carefully before making changes."
-        ),
-        "medium_impact": (
-            "Found {total_impacted} connected symbols. Consider updating tests."
-        ),
-        "low_impact": (
-            "Minimal connections: {total_impacted} link found. Isolated code."
-        ),
-        "no_impact": (
-            "No connections found. This appears to be unused or entry-point code."
-        ),
-    },
-}
+# Static system message strings (no variable interpolation needed)
+_NO_RESULTS_MSG = (
+    "No results found. Suggestions: (1) Check if project is indexed, "
+    "(2) Try broader search terms, (3) Use different search_mode (hybrid/bm25)."
+)
+_WITH_GRAPH_MSG = (
+    "Results include call graph data. Use get_callers/get_callees for detailed "
+    "relationship analysis."
+)
+_NO_SIMILAR_MSG = "No similar code found. This chunk may be unique in the codebase."
+_NO_IMPACT_MSG = "No connections found. This appears to be unused or entry-point code."
+_INDEX_ERROR_MSG = "Indexing failed. Check directory path and file permissions."
 
 
 def generate_search_message(
@@ -84,7 +35,7 @@ def generate_search_message(
 
     # Query-based search
     if count == 0:
-        return GUIDANCE_TEMPLATES["search_code"]["no_results"]
+        return _NO_RESULTS_MSG
     elif count == 1:
         result = results[0]
         example_id = result.get("chunk_id", "")
@@ -92,62 +43,63 @@ def generate_search_message(
 
         msg = f"Found 1 result. Use chunk_id='{example_id}' for direct access."
         if has_graph:
-            msg = f"{msg} {GUIDANCE_TEMPLATES['search_code']['with_graph']}"
+            msg = f"{msg} {_WITH_GRAPH_MSG}"
         return msg
     elif count <= 5:
-        example_id = results[0].get("chunk_id", "")
         has_graph = any("graph" in r and r["graph"] for r in results)
-        graph_hint = (
-            GUIDANCE_TEMPLATES["search_code"]["with_graph"] if has_graph else ""
-        )
+        graph_hint = _WITH_GRAPH_MSG if has_graph else ""
 
-        return GUIDANCE_TEMPLATES["search_code"]["medium_results"].format(
-            count=count, graph_hint=graph_hint
+        return (
+            f"Found {count} results. Use chunk_id from results for precise follow-up. "
+            f"{graph_hint}"
         )
     else:
         example_id = results[0].get("chunk_id", "")
-        return GUIDANCE_TEMPLATES["search_code"]["high_results"].format(
-            count=count, example_id=example_id
+        return (
+            f"Found {count} results. For unambiguous follow-up queries, use the chunk_id "
+            f"parameter (e.g., chunk_id='{example_id}') instead of searching by name. "
+            f"Use find_similar_code to discover related implementations."
         )
 
 
 def generate_index_message(result: dict[str, Any]) -> str:
     """Generate system message for index_directory results."""
     if "error" in result:
-        return GUIDANCE_TEMPLATES["index_directory"]["error"]
+        return _INDEX_ERROR_MSG
 
     # Check if incremental
     if result.get("mode") == "incremental":
-        return GUIDANCE_TEMPLATES["index_directory"]["incremental"].format(
-            added_files=result.get("total_files_added", 0),
-            added_chunks=result.get("total_chunks_added", 0),
-            modified_files=result.get("files_modified", 0),
+        added_files = result.get("total_files_added", 0)
+        added_chunks = result.get("total_chunks_added", 0)
+        modified_files = result.get("files_modified", 0)
+        return (
+            f"Incremental index updated: +{added_files} files, +{added_chunks} chunks. "
+            f"Modified {modified_files} files detected."
         )
 
     # Full index
     chunks = result.get("total_chunks_added", result.get("chunks_indexed", 0))
     files = result.get("total_files_added", result.get("files_indexed", 0))
 
-    return GUIDANCE_TEMPLATES["index_directory"]["success"].format(
-        chunks=chunks, files=files
+    return (
+        f"Indexed {chunks} chunks from {files} files. Ready for search_code queries. "
+        f"Use get_index_status to see detailed statistics."
     )
 
 
 def generate_impact_message(total_impacted: int, file_count: int | None = None) -> str:
     """Generate system message for find_connections results."""
     if total_impacted == 0:
-        return GUIDANCE_TEMPLATES["find_connections"]["no_impact"]
+        return _NO_IMPACT_MSG
     elif total_impacted == 1:
-        return GUIDANCE_TEMPLATES["find_connections"]["low_impact"].format(
-            total_impacted=total_impacted
-        )
+        return f"Minimal connections: {total_impacted} link found. Isolated code."
     elif total_impacted <= 10:
-        return GUIDANCE_TEMPLATES["find_connections"]["medium_impact"].format(
-            total_impacted=total_impacted
-        )
+        return f"Found {total_impacted} connected symbols. Consider updating tests."
     else:
-        return GUIDANCE_TEMPLATES["find_connections"]["high_impact"].format(
-            total_impacted=total_impacted, file_count=file_count or "?"
+        fc = file_count or "?"
+        return (
+            f"\u26a0\ufe0f High connectivity: {total_impacted} symbols connected across "
+            f"{fc} files. Review carefully before making changes."
         )
 
 
@@ -158,10 +110,11 @@ def generate_similar_code_message(
     count = len(results)
 
     if count == 0:
-        return GUIDANCE_TEMPLATES["find_similar_code"]["no_similar"]
+        return _NO_SIMILAR_MSG
 
-    return GUIDANCE_TEMPLATES["find_similar_code"]["success"].format(
-        count=count, query=query_chunk_id
+    return (
+        f"Found {count} similar chunks. These share semantic/structural patterns "
+        f"with '{query_chunk_id}'. Use chunk_id for direct access."
     )
 
 

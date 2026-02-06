@@ -108,8 +108,6 @@ async def handle_list_projects(arguments: dict[str, Any]) -> dict:
     if not projects_dir.exists():
         return {
             "projects": [],
-            "total_projects": 0,
-            "total_indices": 0,
             "message": "No projects indexed yet",
         }
 
@@ -146,14 +144,17 @@ async def handle_list_projects(arguments: dict[str, Any]) -> dict:
                     relocated_to = alt_path
                     path_exists = True
 
-            projects_by_path[project_path] = {
+            project_data = {
                 "project_name": project_info["project_name"],
                 "project_path": project_path,
                 "project_hash": project_info["project_hash"],
                 "path_exists": path_exists,
-                "relocated_to": relocated_to,
                 "models_indexed": [],
             }
+            # Only include relocated_to if not None (token optimization)
+            if relocated_to is not None:
+                project_data["relocated_to"] = relocated_to
+            projects_by_path[project_path] = project_data
 
         # Prepare model info
         model_info = {
@@ -174,12 +175,9 @@ async def handle_list_projects(arguments: dict[str, Any]) -> dict:
 
     # Convert to list
     projects = list(projects_by_path.values())
-    total_indices = sum(len(p["models_indexed"]) for p in projects)
 
     return {
         "projects": projects,
-        "total_projects": len(projects),
-        "total_indices": total_indices,
         "current_project": get_state().current_project,
     }
 
@@ -290,6 +288,8 @@ async def handle_get_search_config_status(arguments: dict[str, Any]) -> dict:
         "reranker_enabled": config.reranker.enabled,
         "reranker_model": config.reranker.model_name,
         "reranker_top_k_candidates": config.reranker.top_k_candidates,
+        "default_k": config.search_mode.default_k,
+        "max_k": config.search_mode.max_k,
     }
 
 
@@ -327,6 +327,5 @@ async def handle_list_embedding_models(arguments: dict[str, Any]) -> dict:
 
     return {
         "models": models,
-        "count": len(models),
         "current_model": get_config().embedding.model_name,
     }

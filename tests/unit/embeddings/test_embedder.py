@@ -33,7 +33,7 @@ def test_model_loading_and_embedding(
     """
     # Get model config to determine expected dimension
     model_config = MODEL_REGISTRY.get(model_name, {})
-    # Use truncate_dim if available (for MRL models like Qwen3-4B), otherwise use dimension
+    # Use truncate_dim if available (for MRL models), otherwise use dimension
     # Note: Use `or` to handle truncate_dim=None (not just missing key)
     expected_dimension = model_config.get("truncate_dim") or model_config.get(
         "dimension", 768
@@ -155,7 +155,9 @@ def test_prefixing_logic(mock_sentence_transformer, mock_model_loader_st):
     embedder_bge._model = MockSentenceTransformer()
 
     embedder_bge.embed_chunk(sample_chunk)
-    assert MockSentenceTransformer.encoded_input[0] == "test content"
+    # v0.9.0: structural header prepended by default
+    expected_content = "# fake.py | function\ntest content"
+    assert MockSentenceTransformer.encoded_input[0] == expected_content
 
     # 3. Test with a model that has a query_prefix (hypothetical)
     # We need to add a temporary model to the registry for this test
@@ -584,35 +586,47 @@ def test_query_cache_with_task_instruction(
 @patch("embeddings.embedder.SentenceTransformer")
 def test_mrl_truncate_dim_support(mock_sentence_transformer, mock_model_loader_st):
     """Test that Matryoshka Representation Learning (MRL) truncate_dim is passed correctly."""
+    from search.config import MODEL_REGISTRY
+
     # Track constructor kwargs
     constructor_kwargs_list = []
 
     def mock_constructor(model_name_or_path, **kwargs):
         constructor_kwargs_list.append(kwargs)
         mock_model = MagicMock()
-        mock_model.encode.return_value = np.ones((1, 1024), dtype=np.float32) * 0.5
+        mock_model.encode.return_value = np.ones((1, 512), dtype=np.float32) * 0.5
         mock_model.device = "cpu"  # Add device attribute for ModelLoader
         return mock_model
 
     # Set side_effect on the model_loader mock (where actual loading happens)
     mock_model_loader_st.side_effect = mock_constructor
 
-    # Test Qwen3-4B with MRL enabled (truncate_dim=1024)
-    embedder = CodeEmbedder(model_name="Qwen/Qwen3-Embedding-4B")
+    # Temporarily enable MRL for Qwen3-0.6B (native dimension 1024 → 512)
+    original_truncate_dim = MODEL_REGISTRY["Qwen/Qwen3-Embedding-0.6B"]["truncate_dim"]
+    MODEL_REGISTRY["Qwen/Qwen3-Embedding-0.6B"]["truncate_dim"] = 512
 
-    # Trigger model loading by accessing the model property
-    _ = embedder.model
+    try:
+        # Test Qwen3-0.6B with MRL enabled (truncate_dim=512)
+        embedder = CodeEmbedder(model_name="Qwen/Qwen3-Embedding-0.6B")
 
-    # Verify truncate_dim was passed to constructor
-    assert len(constructor_kwargs_list) == 1
-    assert "truncate_dim" in constructor_kwargs_list[0]
-    assert constructor_kwargs_list[0]["truncate_dim"] == 1024
+        # Trigger model loading by accessing the model property
+        _ = embedder.model
 
-    # Test embedding works
-    query = "test query"
-    embedding = embedder.embed_query(query)
-    assert isinstance(embedding, np.ndarray)
-    assert embedding.shape == (1024,)  # Should match truncate_dim
+        # Verify truncate_dim was passed to constructor
+        assert len(constructor_kwargs_list) == 1
+        assert "truncate_dim" in constructor_kwargs_list[0]
+        assert constructor_kwargs_list[0]["truncate_dim"] == 512
+
+        # Test embedding works
+        query = "test query"
+        embedding = embedder.embed_query(query)
+        assert isinstance(embedding, np.ndarray)
+        assert embedding.shape == (512,)  # Should match truncate_dim
+    finally:
+        # Restore original value
+        MODEL_REGISTRY["Qwen/Qwen3-Embedding-0.6B"]["truncate_dim"] = (
+            original_truncate_dim
+        )
 
 
 @patch("embeddings.model_loader.SentenceTransformer")
@@ -750,10 +764,8 @@ class TestCheckVramStatus:
     def test_vram_below_warning_threshold(self, mock_torch):
         """Test VRAM at 50% - no warnings."""
         mock_torch.cuda.is_available.return_value = True
-        mock_torch.cuda.memory_allocated.return_value = 5 * 1024**3  # 5GB
-        mock_props = MagicMock()
-        mock_props.total_memory = 10 * 1024**3  # 10GB total
-        mock_torch.cuda.get_device_properties.return_value = mock_props
+        # mem_get_info() returns (free, total) - 5GB free / 10GB total = 50% usage
+        mock_torch.cuda.mem_get_info.return_value = (5 * 1024**3, 10 * 1024**3)
 
         from embeddings.embedder import CodeEmbedder
 
@@ -771,10 +783,8 @@ class TestCheckVramStatus:
     def test_vram_at_warning_threshold(self, mock_torch):
         """Test VRAM at 90% - should warn but not abort."""
         mock_torch.cuda.is_available.return_value = True
-        mock_torch.cuda.memory_allocated.return_value = 9 * 1024**3  # 9GB
-        mock_props = MagicMock()
-        mock_props.total_memory = 10 * 1024**3
-        mock_torch.cuda.get_device_properties.return_value = mock_props
+        # mem_get_info() returns (free, total) - 1GB free / 10GB total = 90% usage
+        mock_torch.cuda.mem_get_info.return_value = (1 * 1024**3, 10 * 1024**3)
 
         from embeddings.embedder import CodeEmbedder
 
@@ -791,10 +801,8 @@ class TestCheckVramStatus:
     def test_vram_at_abort_threshold(self, mock_torch):
         """Test VRAM at 96% - should abort."""
         mock_torch.cuda.is_available.return_value = True
-        mock_torch.cuda.memory_allocated.return_value = int(9.6 * 1024**3)  # 96%
-        mock_props = MagicMock()
-        mock_props.total_memory = 10 * 1024**3
-        mock_torch.cuda.get_device_properties.return_value = mock_props
+        # mem_get_info() returns (free, total) - 0.4GB free / 10GB total = 96% usage
+        mock_torch.cuda.mem_get_info.return_value = (int(0.4 * 1024**3), 10 * 1024**3)
 
         from embeddings.embedder import CodeEmbedder
 

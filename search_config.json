@@ -1,26 +1,27 @@
 {
   "embedding": {
-    "model_name": "nomic-ai/CodeRankEmbed",
-    "dimension": 768,
+    "model_name": "BAAI/bge-code-v1",
+    "dimension": 1536,
     "batch_size": 128,
     "query_cache_size": 128,
     "enable_import_context": true,
     "enable_class_context": true,
     "max_import_lines": 10,
-    "max_class_signature_lines": 5
+    "max_class_signature_lines": 10,
+    "enable_structural_header": true
   },
   "search_mode": {
     "default_mode": "hybrid",
     "enable_hybrid": true,
-    "bm25_weight": 0.6,
-    "dense_weight": 0.4,
+    "bm25_weight": 0.35,
+    "dense_weight": 0.65,
     "bm25_k_parameter": 100,
     "bm25_use_stopwords": true,
     "bm25_use_stemming": true,
     "min_bm25_score": 0.1,
     "rrf_k_parameter": 100,
     "enable_result_reranking": true,
-    "default_k": 5,
+    "default_k": 4,
     "max_k": 50
   },
   "performance": {
@@ -30,8 +31,7 @@
     "max_chunking_workers": 4,
     "enable_entity_tracking": true,
     "prefer_gpu": true,
-    "gpu_memory_threshold": 0.65,
-    "vram_limit_fraction": 0.9,
+    "vram_limit_fraction": 0.8,
     "allow_ram_fallback": true,
     "enable_fp16": true,
     "prefer_bf16": true,
@@ -44,25 +44,25 @@
   "multi_hop": {
     "enabled": true,
     "hop_count": 2,
-    "expansion": 0.3,
-    "initial_k_multiplier": 2.0
+    "expansion": 0.5,
+    "initial_k_multiplier": 2.0,
+    "multi_hop_mode": "hybrid"
   },
   "routing": {
     "multi_model_enabled": true,
-    "default_model": "bge_m3",
+    "default_model": "bge_code",
     "multi_model_pool": "full"
   },
   "intent": {
     "enabled": true,
-    "confidence_threshold": 0.3,
+    "confidence_threshold": 0.5,
     "default_intent": "HYBRID",
-    "enable_navigational_redirect": true,
     "log_classifications": true
   },
   "reranker": {
     "enabled": true,
-    "model_name": "BAAI/bge-reranker-v2-m3",
-    "top_k_candidates": 50,
+    "model_name": "jinaai/jina-reranker-v3",
+    "top_k_candidates": 150,
     "min_vram_gb": 6.0,
     "batch_size": 16
   },
@@ -73,14 +73,16 @@
     "min_chunk_tokens": 50,
     "max_merged_tokens": 1000,
     "enable_community_detection": true,
-    "enable_community_merge": true,
+    "enable_community_merge": false,
     "community_resolution": 1.5,
     "enable_large_node_splitting": true,
     "max_chunk_lines": 100,
     "token_estimation": "tiktoken",
     "size_method": "tokens",
     "split_size_method": "characters",
-    "max_split_chars": 3000
+    "max_split_chars": 3000,
+    "enable_file_summaries": true,
+    "enable_community_summaries": true
   },
   "ego_graph": {
     "enabled": true,
@@ -89,5 +91,14 @@
     "relation_types": null,
     "include_anchor": true,
     "deduplicate": true
+  },
+  "graph_enhanced": {
+    "centrality_method": "pagerank",
+    "centrality_alpha": 0.2,
+    "centrality_annotation": true,
+    "centrality_reranking": true,
+    "enable_size_normalization": true,
+    "size_norm_target_lines": 200,
+    "size_norm_alpha": 0.1
   }
 }

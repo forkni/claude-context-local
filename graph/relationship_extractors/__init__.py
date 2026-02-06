@@ -14,9 +14,9 @@ Priority 2 (Core):
 - InstantiationExtractor: Object creation
 
 Priority 3 (Advanced):
-- ProtocolImplementationExtractor: Protocol/ABC implementations
-- MethodOverrideExtractor: Method overriding
-- AttributeAccessExtractor: Attribute reads and writes
+- ImplementsExtractor: Protocol/ABC implementations
+- OverrideExtractor: Method overriding
+- (AttributeAccessExtractor: Attribute reads and writes - planned)
 
 Priority 4 (Entity Tracking - Definitions):
 - ConstantExtractor: Module-level constant definitions and usages
@@ -49,9 +49,11 @@ from graph.relationship_extractors.default_param_extractor import (
 )
 from graph.relationship_extractors.enum_extractor import EnumMemberExtractor
 from graph.relationship_extractors.exception_extractor import ExceptionExtractor
+from graph.relationship_extractors.implements_extractor import ImplementsExtractor
 from graph.relationship_extractors.import_extractor import ImportExtractor
 from graph.relationship_extractors.inheritance_extractor import InheritanceExtractor
 from graph.relationship_extractors.instantiation_extractor import InstantiationExtractor
+from graph.relationship_extractors.override_extractor import OverrideExtractor
 from graph.relationship_extractors.type_extractor import TypeAnnotationExtractor
 
 
@@ -65,6 +67,9 @@ __all__ = [
     "DecoratorExtractor",
     "ExceptionExtractor",
     "InstantiationExtractor",
+    # Priority 3 (Advanced)
+    "ImplementsExtractor",
+    "OverrideExtractor",
     # Priority 4 (Entity Tracking - Definitions)
     "ConstantExtractor",
     "EnumMemberExtractor",

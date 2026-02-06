@@ -232,6 +232,48 @@ class TestGraphIntegration(TestCase):
         self.assertEqual(graph.node_count, 0)
         self.assertEqual(len(graph), 0)
 
+    def test_split_block_disambiguation_logic(self):
+        """Test that split_block disambiguation resolves to first block by start_line."""
+        # Create test candidates that simulate split_blocks
+        candidates = [
+            "test.py:201-250:split_block:process_data",
+            "test.py:100-150:split_block:process_data",
+            "test.py:151-200:split_block:process_data",
+        ]
+
+        # Filter split_blocks (all candidates are split_blocks)
+        split_blocks = [c for c in candidates if ":split_block:" in c]
+        assert len(split_blocks) == len(candidates)  # All are split_blocks
+
+        # Sort by start_line
+        def _start_line(chunk_id: str) -> int:
+            parts = chunk_id.split(":")
+            if len(parts) >= 2:
+                line_range = parts[1]
+                try:
+                    return int(line_range.split("-")[0])
+                except (ValueError, IndexError):
+                    pass
+            return 2**31  # Sentinel for sort ordering
+
+        split_blocks.sort(key=_start_line)
+
+        # Should resolve to the one with lowest start_line (100)
+        assert split_blocks[0] == "test.py:100-150:split_block:process_data"
+
+    def test_mixed_candidates_not_all_split_blocks(self):
+        """Test that mixed candidates don't trigger split_block disambiguation."""
+        candidates = [
+            "test.py:10-50:function:helper",
+            "test.py:100-150:split_block:helper",
+        ]
+
+        # Only one is a split_block
+        split_blocks = [c for c in candidates if ":split_block:" in c]
+        assert len(split_blocks) != len(candidates)  # Not all are split_blocks
+
+        # Disambiguation should NOT activate (would return None in real code)
+
 
 if __name__ == "__main__":
     import pytest

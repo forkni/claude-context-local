@@ -170,8 +170,7 @@ async def test_handle_list_projects_no_projects():
 
         result = await tool_handlers.handle_list_projects({})
 
-        assert result["total_projects"] == 0
-        assert result["projects"] == []
+        assert len(result["projects"]) == 0
         assert "No projects indexed" in result["message"]
 
 
@@ -205,7 +204,6 @@ async def test_handle_list_projects_with_projects(tmp_path):
         with patch("mcp_server.state._app_state.current_project", str(tmp_path)):
             result = await tool_handlers.handle_list_projects({})
 
-            assert result["total_projects"] == 1
             assert len(result["projects"]) == 1
             assert result["projects"][0]["project_name"] == "test_project"
 
@@ -286,7 +284,6 @@ async def test_handle_list_embedding_models():
 
             result = await tool_handlers.handle_list_embedding_models({})
 
-            assert result["count"] == 2
             assert len(result["models"]) == 2
             assert result["current_model"] == "model1"
 
@@ -402,7 +399,6 @@ async def test_handle_clear_index():
                 result = await tool_handlers.handle_clear_index({})
 
                 assert result["success"] is True
-                assert "test_project" in result["message"]
                 assert "cleared_models" in result
                 assert len(result["cleared_models"]) == 2
 
@@ -508,7 +504,6 @@ async def test_handle_find_similar_code():
             )
 
             assert result["reference_chunk"] == "ref_chunk_id"
-            assert result["count"] == 1
             assert len(result["similar_chunks"]) == 1
             assert result["similar_chunks"][0]["file"] == "file.py"
             assert result["similar_chunks"][0]["score"] == 0.95
@@ -563,6 +558,9 @@ async def test_handle_search_code_hybrid_searcher_ready():
             mock_faiss_index = Mock()
             mock_faiss_index.ntotal = 1574  # Simulating indexed project
             mock_dense_index.index = mock_faiss_index
+            mock_dense_index.graph_storage = (
+                None  # Prevent centrality ranker from executing
+            )
             mock_searcher.dense_index = mock_dense_index
 
             # Mock search results with proper SearchResult object

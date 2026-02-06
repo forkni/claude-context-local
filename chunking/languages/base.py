@@ -88,7 +88,7 @@ class TreeSitterChunk:
     chunk_id: Optional[str] = None  # unique identifier for evaluation
     parent_class: Optional[str] = None  # Enclosing class name for methods
     parent_chunk_id: Optional[str] = None  # Enclosing class chunk_id for methods
-    community_id: Optional[int] = None  # Leiden community membership (Phase 0)
+    community_id: Optional[int] = None  # Louvain community membership ID
 
     def to_dict(self) -> dict:
         """Convert to dictionary format compatible with existing system."""
@@ -307,7 +307,9 @@ class LanguageChunker(ABC):
         current_group: list[TreeSitterChunk] = []
         current_size: int = 0
         current_parent: Optional[str] = None
-        current_community: Optional[int] = None  # Track community ID for Phase 1
+        current_community: Optional[int] = (
+            None  # Current community for boundary detection
+        )
         total_size_estimated: int = 0  # Track for summary logging
 
         current_file: Optional[str] = (
@@ -328,7 +330,7 @@ class LanguageChunker(ABC):
                 start_new_group = True
             # Case 1: Boundary changed (community or parent class)
             elif use_community_boundary and current_group:
-                # Phase 1: Use community_id as merge boundary
+                # Use community_id as merge boundary
                 if chunk_community != current_community:
                     start_new_group = True
             elif current_group and chunk_parent != current_parent:
@@ -360,7 +362,9 @@ class LanguageChunker(ABC):
             current_group.append(chunk)
             current_size += chunk_size
             current_parent = chunk_parent
-            current_community = chunk_community  # Track for Phase 1
+            current_community = (
+                chunk_community  # Update for community boundary detection
+            )
             current_file = chunk_file  # Track file path
 
         # Flush remaining group
@@ -426,8 +430,7 @@ class LanguageChunker(ABC):
         # Step 1: Assign community_id to chunks from map
         chunks_with_community = []
         for chunk in chunks:
-            # BUG FIX: chunk.chunk_id is None at this point, so generate lookup key
-            # from chunk attributes instead of using None as dictionary key
+            # Generate lookup key since chunk_id is not yet assigned
             chunk_id = chunk.chunk_id
 
             # Generate lookup key from chunk attributes
@@ -509,18 +512,18 @@ class LanguageChunker(ABC):
         result_chunks = []
         for ts_chunk in merged_ts_chunks:
             # Find original chunk to copy metadata (by file_path and line overlap)
-            # FIX: Correct line overlap logic and prevent cross-file metadata pollution
+            # Match merged chunk to original by file path and line range
             merged_file = ts_chunk.metadata.get("file_path")
             original = None
 
             # First pass: Find original chunk CONTAINED within merged chunk's range
             # AND matches the file_path (prevent cross-file pollution)
             for c in chunks_with_community:
-                # Must match file first (Bug #3 fix: prevent cross-file merging)
+                # Must match file first to prevent cross-file metadata pollution
                 if merged_file != c.file_path:
                     continue
                 # Original chunk should be CONTAINED within merged chunk's range
-                # Bug #2 fix: was inverted (merged >= original), now correct (original >= merged)
+                # Original chunk must be contained within merged chunk's line range
                 if (
                     c.start_line >= ts_chunk.start_line
                     and c.end_line <= ts_chunk.end_line
@@ -529,7 +532,7 @@ class LanguageChunker(ABC):
                     break
 
             # Fallback: find any chunk from same file if exact overlap fails
-            # Bug #1 fix: was dangerous fallback to [0], now same-file only
+            # Fallback: find any chunk from same file if exact containment fails
             if original is None:
                 for c in chunks_with_community:
                     if merged_file == c.file_path:
@@ -540,7 +543,7 @@ class LanguageChunker(ABC):
                         break
 
             # Last resort: skip chunk if no valid original found
-            # Bug #1 fix: was using wrong file, now skip instead
+            # Skip chunk if no valid original found (avoids cross-file contamination)
             if original is None:
                 logger.warning(
                     f"[REMERGE] No original chunk found for merged chunk at "
@@ -568,7 +571,7 @@ class LanguageChunker(ABC):
                 community_id=ts_chunk.community_id,  # Preserved!
                 merged_from=ts_chunk.metadata.get(
                     "merged_from"
-                ),  # Phase A6: Copy merged symbols
+                ),  # Preserve original symbol names before merge
                 # Preserve call graph and relationship data
                 # For non-merged chunks, copy from original; for merged chunks, use empty lists
                 calls=original.calls if ts_chunk.node_type != "merged" else [],

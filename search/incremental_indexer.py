@@ -6,7 +6,11 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
+
+
+if TYPE_CHECKING:
+    from search.symbol_cache import SymbolHashCache
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from chunking.python_ast_chunker import CodeChunk
@@ -118,7 +122,7 @@ class IncrementalIndexer:
         )
         self._bm25_sync = BM25SyncManager(indexer=self.indexer)
 
-    def _get_symbol_cache(self):
+    def _get_symbol_cache(self) -> Optional["SymbolHashCache"]:
         """Get symbol cache, handling both CodeIndexManager and HybridSearcher.
 
         Returns:
@@ -460,7 +464,7 @@ class IncrementalIndexer:
 
             # ========== Community Detection & Remerge ==========
             # Community merge flow: Chunk → Build graph → Detect communities → (Optional) Remerge → Embed
-            # FIX: Community detection can now run independently of chunk merging
+            # Community detection runs independently of chunk merging
             config = get_search_config()
             community_map = None  # Will be populated if community detection runs
 
@@ -505,6 +509,27 @@ class IncrementalIndexer:
                     )
                     community_map = None
 
+            # ========== Community Summaries (B1) — PHASE 1: Compute ==========
+            # CRITICAL: Compute BEFORE remerge (chunk_ids match community_map)
+            community_summaries = []
+            if (
+                config.chunking.enable_community_summaries
+                and community_map
+                and all_chunks
+            ):
+                try:
+                    from graph.community_summarizer import generate_community_summaries
+
+                    community_summaries = generate_community_summaries(
+                        all_chunks, community_map
+                    )
+                    logger.info(
+                        f"[COMMUNITY_SUMMARIES] Computed {len(community_summaries)} community summary chunks"
+                    )
+                except Exception as e:
+                    logger.warning(f"[COMMUNITY_SUMMARIES] Failed to compute: {e}")
+            # ========== END Community Summaries Phase 1 ==========
+
             # Step B: Community-based Remerge (Full index only)
             if config.chunking.enable_community_merge and community_map and all_chunks:
                 logger.info("[COMMUNITY_MERGE] Running community-based remerge")
@@ -542,6 +567,31 @@ class IncrementalIndexer:
                         "[COMMUNITY_MERGE] Continuing with unmerged chunks from Pass 1"
                     )
             # ========== END Community Detection & Remerge ==========
+
+            # ========== File-Level Module Summaries (A2) ==========
+            config = get_search_config()
+            if config.chunking.enable_file_summaries and all_chunks:
+                try:
+                    from chunking.file_summarizer import generate_file_summaries
+
+                    file_summaries = generate_file_summaries(all_chunks)
+                    if file_summaries:
+                        all_chunks.extend(file_summaries)
+                        logger.info(
+                            f"[FILE_SUMMARIES] Generated {len(file_summaries)} module summary chunks"
+                        )
+                except Exception as e:
+                    logger.warning(f"[FILE_SUMMARIES] Failed: {e}")
+            # ========== END File-Level Module Summaries ==========
+
+            # ========== Community Summaries (B1) — PHASE 2: Append ==========
+            # CRITICAL: Append AFTER remerge (avoid being processed by remerge)
+            if community_summaries:
+                all_chunks.extend(community_summaries)
+                logger.info(
+                    f"[COMMUNITY_SUMMARIES] Appended {len(community_summaries)} community summaries to chunk list"
+                )
+            # ========== END Community Summaries Phase 2 ==========
 
             # Embed all chunks in one batched call
             all_embedding_results = []
@@ -673,9 +723,12 @@ class IncrementalIndexer:
             else Path(tempfile.mkdtemp(prefix="temp_graph_"))
         )
 
-        # Extract project ID from storage directory name if available
+        # Extract project ID from parent directory name matching search_factory.py convention
+        # Parent dir name = "projectname_hash_modelslug_dimd", strip "_dimd" suffix
         project_id = (
-            storage_dir.name if storage_dir.exists() else "temp_community_graph"
+            storage_dir.parent.name.rsplit("_", 1)[0]
+            if storage_dir.exists()
+            else "temp_community_graph"
         )
 
         graph_integration = GraphIntegration(
@@ -755,7 +808,7 @@ class IncrementalIndexer:
                     symbol_cache.add_symbol_mapping(chunk.name, chunk_id)
 
                 # Register all merged symbol names (for merged chunks)
-                # Phase A6: Use merged_from attribute instead of metadata
+                # Use merged_from attribute instead of metadata
                 if chunk.merged_from:
                     for symbol_name in chunk.merged_from:
                         if symbol_name:  # Skip empty names
@@ -880,6 +933,29 @@ class IncrementalIndexer:
             f"[INCREMENTAL] Chunking {len(supported_files)} files (parallel={'enabled' if self.enable_parallel_chunking else 'disabled'})"
         )
         chunks_to_embed = self._chunk_files_parallel(project_path, supported_files)
+
+        # ========== Community Summaries (B1) — INCREMENTAL MODE SKIP ==========
+        # NOTE: Community summaries require community_map, which is only generated
+        # during full indexing (with community detection). Incremental mode cannot
+        # generate community summaries since it doesn't have access to the full
+        # project graph or community_map. Re-index fully to generate community summaries.
+        # ========== END Community Summaries Skip Explanation ==========
+
+        # ========== File-Level Module Summaries (A2) ==========
+        config = get_search_config()
+        if config.chunking.enable_file_summaries and chunks_to_embed:
+            try:
+                from chunking.file_summarizer import generate_file_summaries
+
+                file_summaries = generate_file_summaries(chunks_to_embed)
+                if file_summaries:
+                    chunks_to_embed.extend(file_summaries)
+                    logger.info(
+                        f"[INCREMENTAL] Generated {len(file_summaries)} module summary chunks"
+                    )
+            except Exception as e:
+                logger.warning(f"[INCREMENTAL] File summary generation failed: {e}")
+        # ========== END File-Level Module Summaries ==========
 
         all_embedding_results = []
         if chunks_to_embed:

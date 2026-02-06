@@ -73,7 +73,7 @@ class ModelLoader:
         self._logger = logging.getLogger(__name__)
         self._model_vram_usage: dict[str, float] = {}
 
-    def log_gpu_memory(self, stage: str):
+    def log_gpu_memory(self, stage: str) -> None:
         """Log GPU memory usage at specific loading stages.
 
         Args:
@@ -98,7 +98,7 @@ class ModelLoader:
         except Exception as e:
             self._logger.debug(f"GPU memory logging failed: {e}")
 
-    def get_torch_dtype(self):
+    def get_torch_dtype(self) -> Optional["torch.dtype"]:
         """Get torch dtype based on config and GPU capability.
 
         Returns:
@@ -176,6 +176,44 @@ class ModelLoader:
                 return "cpu"
         # Default fallback
         return "cpu"
+
+    def _build_constructor_kwargs(
+        self, resolved_device: str, model_kwargs_dict: dict
+    ) -> dict:
+        """Build constructor kwargs for SentenceTransformer loading.
+
+        Args:
+            resolved_device: Resolved device string ("cuda", "mps", or "cpu")
+            model_kwargs_dict: Model kwargs (e.g., dtype)
+
+        Returns:
+            Dictionary of constructor kwargs for SentenceTransformer
+        """
+        model_config = self._get_model_config()
+        trust_remote_code = model_config.get("trust_remote_code", True)
+
+        if trust_remote_code:
+            self._logger.debug(
+                "trust_remote_code=True: model may execute custom code from HuggingFace"
+            )
+
+        kwargs = {
+            "cache_folder": self.cache_dir,
+            "device": resolved_device,
+            "trust_remote_code": trust_remote_code,
+        }
+
+        truncate_dim = model_config.get("truncate_dim")
+        if truncate_dim is not None:
+            kwargs["truncate_dim"] = truncate_dim
+            self._logger.info(
+                f"Matryoshka MRL enabled: truncating output to {truncate_dim} dimensions"
+            )
+
+        if model_kwargs_dict:
+            kwargs["model_kwargs"] = model_kwargs_dict
+
+        return kwargs
 
     def load(self) -> tuple[Any, str]:
         """Load model with automatic cache corruption recovery and fallback.
@@ -347,25 +385,10 @@ class ModelLoader:
             model_kwargs_dict["dtype"] = torch_dtype
 
         try:
-            # Build constructor kwargs
-            constructor_kwargs = {
-                "cache_folder": self.cache_dir,
-                "device": resolved_device,
-                "trust_remote_code": True,  # Required for some models like Qodo
-            }
-
-            # Add Matryoshka Representation Learning (MRL) support
-            model_config = self._get_model_config()
-            truncate_dim = model_config.get("truncate_dim")
-            if truncate_dim is not None:
-                constructor_kwargs["truncate_dim"] = truncate_dim
-                self._logger.info(
-                    f"Matryoshka MRL enabled: truncating output to {truncate_dim} dimensions"
-                )
-
-            # Add model_kwargs if any options (e.g., dtype)
-            if model_kwargs_dict:
-                constructor_kwargs["model_kwargs"] = model_kwargs_dict
+            # Build constructor kwargs (deduplicated helper method)
+            constructor_kwargs = self._build_constructor_kwargs(
+                resolved_device, model_kwargs_dict
+            )
 
             # Debug: Log constructor args
             self._logger.debug(
@@ -412,22 +435,10 @@ class ModelLoader:
                 os.environ.pop("TRANSFORMERS_OFFLINE", None)
 
                 try:
-                    # Build constructor kwargs for fallback
-                    fallback_kwargs = {
-                        "cache_folder": self.cache_dir,
-                        "device": resolved_device,
-                        "trust_remote_code": True,
-                    }
-
-                    # Preserve truncate_dim for MRL support
-                    model_config = self._get_model_config()
-                    truncate_dim = model_config.get("truncate_dim")
-                    if truncate_dim is not None:
-                        fallback_kwargs["truncate_dim"] = truncate_dim
-
-                    # Preserve model_kwargs (e.g., torch_dtype)
-                    if model_kwargs_dict:
-                        fallback_kwargs["model_kwargs"] = model_kwargs_dict
+                    # Build constructor kwargs for fallback (deduplicated)
+                    fallback_kwargs = self._build_constructor_kwargs(
+                        resolved_device, model_kwargs_dict
+                    )
 
                     model = SentenceTransformer(
                         self.model_name,  # Use model name, not local path

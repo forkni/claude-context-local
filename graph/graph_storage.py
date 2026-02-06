@@ -4,8 +4,10 @@ Graph storage and persistence using NetworkX.
 Provides NetworkX-based storage for code call graphs with JSON persistence.
 """
 
+import heapq
 import json
 import logging
+from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -19,6 +21,80 @@ try:
     import networkx as nx
 except ImportError:
     nx = None
+
+
+# Edge-type weights for weighted BFS (SOG paper: data flow > control flow > effect flow)
+# Higher weight = higher priority in graph traversal
+DEFAULT_EDGE_WEIGHTS: dict[str, float] = {
+    "calls": 1.0,  # Most important for code understanding
+    "inherits": 0.9,  # Critical for class hierarchies
+    "implements": 0.9,  # Critical for interface patterns
+    "overrides": 0.85,  # Important for polymorphism
+    "uses_type": 0.7,  # Type usage
+    "instantiates": 0.7,  # Object creation
+    "decorates": 0.5,  # Moderate signal
+    "raises": 0.4,  # Exception patterns
+    "catches": 0.4,  # Exception patterns
+    "imports": 0.3,  # Low signal - most code imports many things
+    "assigns_to": 0.5,  # Assignment tracking
+    "reads_from": 0.5,  # Read tracking
+    "defines_constant": 0.4,  # Constant definitions
+    "defines_enum_member": 0.4,  # Enum members
+    "defines_class_attr": 0.5,  # Class attributes
+    "defines_field": 0.5,  # Dataclass fields
+    "uses_constant": 0.4,  # Constant usage
+    "uses_default": 0.3,  # Default parameter values
+    "uses_global": 0.3,  # Global references
+    "asserts_type": 0.4,  # Type assertions
+    "uses_context_manager": 0.4,  # Context manager usage
+}
+
+# Intent-specific edge weight profiles for graph traversal
+# Each profile adjusts weights to prioritize relationships relevant to the query intent
+INTENT_EDGE_WEIGHT_PROFILES: dict[str, dict[str, float]] = {
+    "local": {
+        # Symbol lookup: boost calls, inherits, overrides (structural relationships)
+        **DEFAULT_EDGE_WEIGHTS,
+        "calls": 1.0,
+        "inherits": 1.0,
+        "overrides": 1.0,
+        "implements": 1.0,
+        "imports": 0.1,  # Suppress noisy import edges
+    },
+    "global": {
+        # Architectural: boost imports, uses_type (module-level relationships)
+        **DEFAULT_EDGE_WEIGHTS,
+        "imports": 0.7,
+        "uses_type": 0.9,
+        "instantiates": 0.8,
+        "calls": 0.6,  # Less emphasis on individual call chains
+    },
+    "navigational": {
+        # Relationship tracing: boost calls, called_by direction
+        **DEFAULT_EDGE_WEIGHTS,
+        "calls": 1.0,
+        "inherits": 0.9,
+        "imports": 0.5,
+    },
+    "path_tracing": {
+        # Path finding: uniform-ish weights for shortest path
+        **dict.fromkeys(DEFAULT_EDGE_WEIGHTS, 0.7),
+        "calls": 1.0,
+        "inherits": 0.9,
+    },
+    "similarity": {
+        # Similar code: boost structural relationships
+        **DEFAULT_EDGE_WEIGHTS,
+        "uses_type": 0.9,
+        "decorates": 0.7,
+        "defines_class_attr": 0.7,
+    },
+    "contextual": {
+        # Context exploration: all relationships matter equally
+        **{k: max(v, 0.5) for k, v in DEFAULT_EDGE_WEIGHTS.items()},
+    },
+    "hybrid": DEFAULT_EDGE_WEIGHTS.copy(),  # Default fallback
+}
 
 
 class CodeGraphStorage:
@@ -256,6 +332,7 @@ class CodeGraphStorage:
         relation_types: Optional[list[str]] = None,
         max_depth: int = 1,
         exclude_import_categories: Optional[list[str]] = None,
+        edge_weights: Optional[dict[str, float]] = None,
     ) -> set[str]:
         """
         Get all related chunks within max_depth hops.
@@ -268,6 +345,9 @@ class CodeGraphStorage:
             max_depth: Maximum graph traversal depth
             exclude_import_categories: Categories to exclude for "imports" edges
                 (e.g., ["stdlib", "third_party"] to filter out noise)
+            edge_weights: Optional edge-type weights for weighted BFS (higher weight = higher priority).
+                When None, uses unweighted BFS (default behavior). When provided, uses priority queue
+                to expand higher-weight edges first.
 
         Returns:
             Set of related chunk IDs
@@ -285,56 +365,133 @@ class CodeGraphStorage:
 
         neighbors = set()
 
-        # BFS traversal
-        queue = [(normalized_chunk_id, 0)]
-        visited = {normalized_chunk_id}
+        # Choose BFS implementation based on edge_weights parameter
+        if edge_weights is None:
+            # Unweighted BFS (original behavior, backward compatible)
+            queue = deque([(normalized_chunk_id, 0)])
+            visited = {normalized_chunk_id}
 
-        while queue:
-            current_id, depth = queue.pop(0)
+            while queue:
+                current_id, depth = queue.popleft()
 
-            if depth >= max_depth:
-                continue
+                if depth >= max_depth:
+                    continue
 
-            # Process outgoing edges (forward relationships)
-            for _, target, edge_data in self.graph.out_edges(current_id, data=True):
-                edge_type = edge_data.get("relationship_type") or edge_data.get("type")
+                # Process outgoing edges (forward relationships)
+                for _, target, edge_data in self.graph.out_edges(current_id, data=True):
+                    edge_type = edge_data.get("relationship_type") or edge_data.get(
+                        "type"
+                    )
 
-                # Check if this edge type is requested
-                if edge_type and edge_type in relation_types:
-                    # Apply import category filtering if needed
-                    if edge_type == "imports" and exclude_import_categories:
-                        if self._should_exclude_edge(
-                            current_id, target, exclude_import_categories
-                        ):
-                            continue
+                    # Check if this edge type is requested
+                    if edge_type and edge_type in relation_types:
+                        # Apply import category filtering if needed
+                        if edge_type == "imports" and exclude_import_categories:
+                            if self._should_exclude_edge(
+                                current_id, target, exclude_import_categories
+                            ):
+                                continue
 
-                    if target not in visited:
-                        neighbors.add(target)
-                        visited.add(target)
-                        queue.append((target, depth + 1))
+                        if target not in visited:
+                            neighbors.add(target)
+                            visited.add(target)
+                            queue.append((target, depth + 1))
 
-            # Process incoming edges (reverse relationships)
-            for source, _, edge_data in self.graph.in_edges(current_id, data=True):
-                edge_type = edge_data.get("relationship_type") or edge_data.get("type")
+                # Process incoming edges (reverse relationships)
+                for source, _, edge_data in self.graph.in_edges(current_id, data=True):
+                    edge_type = edge_data.get("relationship_type") or edge_data.get(
+                        "type"
+                    )
 
-                # Convert to reverse type name (e.g., "calls" -> "called_by")
-                reverse_type = (
-                    self._get_reverse_relation_type(edge_type) if edge_type else None
-                )
+                    # Convert to reverse type name (e.g., "calls" -> "called_by")
+                    reverse_type = (
+                        self._get_reverse_relation_type(edge_type)
+                        if edge_type
+                        else None
+                    )
 
-                # Check if this reverse type is requested
-                if reverse_type and reverse_type in relation_types:
-                    # Apply import category filtering if needed
-                    if edge_type == "imports" and exclude_import_categories:
-                        if self._should_exclude_edge(
-                            source, current_id, exclude_import_categories
-                        ):
-                            continue
+                    # Check if this reverse type is requested
+                    if reverse_type and reverse_type in relation_types:
+                        # Apply import category filtering if needed
+                        if edge_type == "imports" and exclude_import_categories:
+                            if self._should_exclude_edge(
+                                source, current_id, exclude_import_categories
+                            ):
+                                continue
 
-                    if source not in visited:
-                        neighbors.add(source)
-                        visited.add(source)
-                        queue.append((source, depth + 1))
+                        if source not in visited:
+                            neighbors.add(source)
+                            visited.add(source)
+                            queue.append((source, depth + 1))
+
+        else:
+            # Weighted BFS using priority queue (higher weight = higher priority)
+            # Priority queue format: (-weight, counter, chunk_id, depth)
+            # Use negative weight so heapq min-heap becomes max-heap for weights
+            counter = 0  # Tie-breaker for equal weights
+            pq = [(0.0, counter, normalized_chunk_id, 0)]  # Start node has priority 0
+            visited = {normalized_chunk_id}
+
+            while pq:
+                neg_weight, _, current_id, depth = heapq.heappop(pq)
+
+                if depth >= max_depth:
+                    continue
+
+                # Process outgoing edges (forward relationships)
+                for _, target, edge_data in self.graph.out_edges(current_id, data=True):
+                    edge_type = edge_data.get("relationship_type") or edge_data.get(
+                        "type"
+                    )
+
+                    # Check if this edge type is requested
+                    if edge_type and edge_type in relation_types:
+                        # Apply import category filtering if needed
+                        if edge_type == "imports" and exclude_import_categories:
+                            if self._should_exclude_edge(
+                                current_id, target, exclude_import_categories
+                            ):
+                                continue
+
+                        if target not in visited:
+                            neighbors.add(target)
+                            visited.add(target)
+
+                            # Get weight for this edge type (default 0.5 if not in dict)
+                            weight = edge_weights.get(edge_type, 0.5)
+                            counter += 1
+                            heapq.heappush(pq, (-weight, counter, target, depth + 1))
+
+                # Process incoming edges (reverse relationships)
+                for source, _, edge_data in self.graph.in_edges(current_id, data=True):
+                    edge_type = edge_data.get("relationship_type") or edge_data.get(
+                        "type"
+                    )
+
+                    # Convert to reverse type name (e.g., "calls" -> "called_by")
+                    reverse_type = (
+                        self._get_reverse_relation_type(edge_type)
+                        if edge_type
+                        else None
+                    )
+
+                    # Check if this reverse type is requested
+                    if reverse_type and reverse_type in relation_types:
+                        # Apply import category filtering if needed
+                        if edge_type == "imports" and exclude_import_categories:
+                            if self._should_exclude_edge(
+                                source, current_id, exclude_import_categories
+                            ):
+                                continue
+
+                        if source not in visited:
+                            neighbors.add(source)
+                            visited.add(source)
+
+                            # Get weight for the forward edge type (not reverse)
+                            weight = edge_weights.get(edge_type, 0.5)
+                            counter += 1
+                            heapq.heappush(pq, (-weight, counter, source, depth + 1))
 
         return neighbors
 

@@ -10,6 +10,7 @@ and related code (ICLR 2025 RepoGraph paper shows 32.8% improvement).
 import logging
 
 from search.config import EgoGraphConfig
+from search.graph_integration import is_chunk_id
 
 
 logger = logging.getLogger(__name__)
@@ -71,12 +72,13 @@ class EgoGraphRetriever:
                     exclude_import_categories=(
                         exclude_categories if exclude_categories else None
                     ),
+                    edge_weights=config.edge_weights,
                 )
 
                 # Filter to keep only valid chunk_ids (format: "file:lines:type:name")
                 # Exclude symbol-only nodes like "get_searcher", "str", etc.
                 # Valid chunk_ids have at least 3 colons
-                valid_neighbors = [n for n in neighbors if n.count(":") >= 3]
+                valid_neighbors = [n for n in neighbors if is_chunk_id(n)]
 
                 if len(neighbors) != len(valid_neighbors):
                     logger.debug(

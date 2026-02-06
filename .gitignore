@@ -14,6 +14,7 @@
 # scripts/git/
 
 ignore/
+launch-local-llm.cmd
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -278,6 +279,10 @@ docs/PER_MODEL_INDICES_IMPLEMENTATION.md
 docs/RELATIONSHIP_TYPES_IMPLEMENTATION.md
 docs/PRE_COMMIT_HOOKS.md
 
+# Call graph implementation planning (tracked in repo)
+!docs/Call_Graph_Implementation/
+!docs/Call_Graph_Implementation/**
+
 # Evaluation and test results (temporary/generated files)
 custom_evaluation_results/
 evaluation_results/
@@ -295,8 +300,19 @@ tools/benchmark_models.py
 tools/update_ground_truth_merge.py
 tools/update_gt_mcp.py
 tools/run_benchmark_mcp.py
+tools/run_mcp_benchmark.py
 tools/chunking_ground_truth.json
+tools/chunking_ground_truth_verified.json
 tools/benchmark_chunking.py
+tools/benchmark_quick_test.py
+tools/benchmark_retrieval_quality.py
+tools/analyze_batch_results.py
+tools/create_corrected_ground_truth.py
+tools/verify_ground_truth_from_source.py
+tools/ground_truth_verification_report.json
+
+# Benchmark results and analysis outputs
+results/
 
 # Development-only tests (require local evaluation module, invalid imports, or gated models)
 tests/unit/test_evaluation.py
@@ -353,3 +369,7 @@ local_config.json
 *.tmp
 tmp/
 temp/
+
+.gemini/
+gemini-skills/
+gha-creds-*.json

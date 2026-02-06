@@ -3,12 +3,16 @@
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from embeddings.embedder import CodeEmbedder
 
 from .base_searcher import BaseSearcher
 from .indexer import CodeIndexManager
+
+
+if TYPE_CHECKING:
+    from graph.graph_storage import CodeGraphStorage
 
 
 @dataclass
@@ -51,7 +55,7 @@ class IntelligentSearcher(BaseSearcher):
         self._validate_dimensions(self.index_manager.index, self.embedder)
 
     @property
-    def graph_storage(self):
+    def graph_storage(self) -> Optional["CodeGraphStorage"]:
         """Access graph storage from index manager."""
         return getattr(self.index_manager, "graph_storage", None)
 
@@ -69,7 +73,7 @@ class IntelligentSearcher(BaseSearcher):
     def search(
         self,
         query: str,
-        k: int = 5,
+        k: int = 4,
         search_mode: str = "semantic",
         context_depth: int = 1,
         filters: Optional[dict[str, Any]] = None,
@@ -95,7 +99,7 @@ class IntelligentSearcher(BaseSearcher):
     def _semantic_search(
         self,
         query: str,
-        k: int = 5,
+        k: int = 4,
         context_depth: int = 1,
         filters: Optional[dict[str, Any]] = None,
     ) -> list[SearchResult]:
@@ -223,26 +227,29 @@ class IntelligentSearcher(BaseSearcher):
             if has_class_keyword:
                 # Strong preference for classes when "class" is mentioned
                 type_boosts = {
-                    "class": 1.3,
-                    "function": 1.05,
-                    "method": 1.05,
-                    "module": 0.9,
+                    "class": 1.4,
+                    "function": 1.2,
+                    "method": 1.2,
+                    "module": 0.82,  # File-level summaries (A2) - strengthened demotion
+                    "community": 0.82,  # Community-level summaries (B1) - strengthened demotion
                 }
             elif is_entity_query:
                 # Moderate preference for classes on entity-like queries
                 type_boosts = {
-                    "class": 1.15,
-                    "function": 1.1,
-                    "method": 1.1,
-                    "module": 0.92,
+                    "class": 1.35,
+                    "function": 1.15,
+                    "method": 1.15,
+                    "module": 0.85,  # File-level summaries (A2) - strengthened demotion
+                    "community": 0.85,  # Community-level summaries (B1) - strengthened demotion
                 }
             else:
                 # Default boosts for general queries
                 type_boosts = {
-                    "function": 1.1,
-                    "method": 1.1,
-                    "class": 1.05,
-                    "module": 0.95,
+                    "function": 1.2,
+                    "method": 1.2,
+                    "class": 1.35,
+                    "module": 0.90,  # File-level summaries (A2) - strengthened demotion
+                    "community": 0.90,  # Community-level summaries (B1) - strengthened demotion
                 }
 
             score *= type_boosts.get(result.chunk_type, 1.0)
@@ -256,6 +263,24 @@ class IntelligentSearcher(BaseSearcher):
             # Path/filename relevance boost
             path_boost = self._calculate_path_boost(result.relative_path, query_tokens)
             score *= path_boost
+
+            # Lifecycle method demotion (e.g., __init__, __exit__)
+            # Prevents boilerplate methods from displacing core logic unless specifically requested
+            lifecycle_methods = {
+                "__init__",
+                "__enter__",
+                "__exit__",
+                "__del__",
+                "__repr__",
+                "__str__",
+            }
+            if result.name in lifecycle_methods:
+                query_has_lifecycle_intent = any(
+                    word in original_query.lower()
+                    for word in ("init", "enter", "exit", "del", "repr", "lifecycle")
+                )
+                if not query_has_lifecycle_intent:
+                    score *= 0.85
 
             # Boost based on docstring presence (but less for module chunks on entity queries)
             if result.docstring:
@@ -383,20 +408,23 @@ class IntelligentSearcher(BaseSearcher):
         return 1.0
 
     def search_by_file_pattern(
-        self, query: str, file_patterns: list[str], k: int = 5
+        self,
+        query: str,
+        file_patterns: list[str],
+        k: int = 4,
     ) -> list[SearchResult]:
         """Search within specific file patterns."""
         filters = {"file_pattern": file_patterns}
         return self.search(query, k=k, filters=filters)
 
     def search_by_chunk_type(
-        self, query: str, chunk_type: str, k: int = 5
+        self, query: str, chunk_type: str, k: int = 4
     ) -> list[SearchResult]:
         """Search for specific types of code chunks."""
         filters = {"chunk_type": chunk_type}
         return self.search(query, k=k, filters=filters)
 
-    def find_similar_to_chunk(self, chunk_id: str, k: int = 5) -> list[SearchResult]:
+    def find_similar_to_chunk(self, chunk_id: str, k: int = 4) -> list[SearchResult]:
         """Find chunks similar to a given chunk."""
         similar_chunks = self.index_manager.get_similar_chunks(chunk_id, k)
 
@@ -409,7 +437,7 @@ class IntelligentSearcher(BaseSearcher):
 
         return results
 
-    def get_by_chunk_id(self, chunk_id: str):
+    def get_by_chunk_id(self, chunk_id: str) -> Optional[SearchResult]:
         """
         Direct lookup by chunk_id (unambiguous, no search needed).
 

@@ -6,19 +6,26 @@ for search result quality improvement.
 
 import logging
 import time
-from typing import Optional
+from typing import TYPE_CHECKING, Optional, Union
 
 import numpy as np
 
 from utils.timing import timed
 
 
+if TYPE_CHECKING:
+    from .neural_reranker import (
+        GenerativeReranker,
+        JinaRerankerV3,
+        NeuralReranker,
+    )
+
 try:
     import torch
 except ImportError:
     torch = None
 
-from .neural_reranker import NeuralReranker
+from .neural_reranker import create_reranker
 
 
 class RerankingEngine:
@@ -33,7 +40,9 @@ class RerankingEngine:
         """
         self.embedder = embedder
         self.metadata_store = metadata_store
-        self.neural_reranker: Optional[NeuralReranker] = None
+        self.neural_reranker: Optional[
+            Union[NeuralReranker, GenerativeReranker, JinaRerankerV3]
+        ] = None
         self._neural_reranking_enabled: Optional[bool] = None
         self._session_oom_detected: bool = False
         self._logger = logging.getLogger(__name__)
@@ -149,11 +158,11 @@ class RerankingEngine:
 
             # Handle state transitions
             if should_enable and self.neural_reranker is None:
-                # Initialize reranker (lazy load)
+                # Initialize reranker (lazy load, auto-detects discriminative vs generative)
                 from .config import get_search_config
 
                 config = get_search_config()
-                self.neural_reranker = NeuralReranker(
+                self.neural_reranker = create_reranker(
                     model_name=config.reranker.model_name,
                     batch_size=config.reranker.batch_size,
                 )
@@ -188,8 +197,15 @@ class RerankingEngine:
                     self._logger.warning(
                         f"[NEURAL_RERANK] Reranking failed: {e}, using embedding-based ranking"
                     )
-                    # Mark session failure to prevent subsequent attempts
-                    self._session_oom_detected = True
+                    # Only mark session OOM for actual CUDA memory errors
+                    error_str = str(e).lower()
+                    if "cuda" in error_str and (
+                        "out of memory" in error_str or "oom" in error_str
+                    ):
+                        self._session_oom_detected = True
+                        self._logger.warning(
+                            "[NEURAL_RERANK] CUDA OOM detected, disabling for session"
+                        )
 
         return sorted_results[:k]
 
@@ -224,11 +240,11 @@ class RerankingEngine:
 
         # Handle state transitions (lazy load/cleanup)
         if should_enable and self.neural_reranker is None:
-            # Initialize reranker (lazy load)
+            # Initialize reranker (lazy load, auto-detects discriminative vs generative)
             from .config import get_search_config
 
             config = get_search_config()
-            self.neural_reranker = NeuralReranker(
+            self.neural_reranker = create_reranker(
                 model_name=config.reranker.model_name,
                 batch_size=config.reranker.batch_size,
             )
@@ -265,6 +281,15 @@ class RerankingEngine:
                 self._logger.warning(
                     f"{log_prefix} Reranking failed: {e}, using original results"
                 )
+                # Only mark session OOM for actual CUDA memory errors
+                error_str = str(e).lower()
+                if "cuda" in error_str and (
+                    "out of memory" in error_str or "oom" in error_str
+                ):
+                    self._session_oom_detected = True
+                    self._logger.warning(
+                        f"{log_prefix} CUDA OOM detected, disabling for session"
+                    )
 
         return results
 

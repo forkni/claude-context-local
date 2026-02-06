@@ -1,5 +1,6 @@
 """Global pytest configuration and fixtures."""
 
+import logging
 import warnings
 
 
@@ -66,6 +67,33 @@ def pytest_configure(config: Any) -> None:
     config.addinivalue_line("markers", "embeddings: Embedding generation tests")
     config.addinivalue_line("markers", "chunking: Code chunking tests")
     config.addinivalue_line("markers", "search: Search functionality tests")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def suppress_torch_dynamo_atexit_logging():
+    """Suppress torch._dynamo atexit logging that fails during shutdown.
+
+    torch._dynamo registers atexit handlers that try to log after stderr is closed,
+    causing "I/O operation on closed file" errors. Replace handlers with no-ops.
+    """
+    yield  # Let tests run first
+
+    # After all tests, replace logger handlers with no-ops before atexit runs
+    import sys
+
+    if "torch._dynamo" in sys.modules:
+        try:
+            # Replace all handlers with NullHandler to prevent closed file errors
+            dynamo_logger = logging.getLogger("torch._dynamo")
+            dynamo_logger.handlers = [logging.NullHandler()]
+            dynamo_logger.propagate = False
+        except Exception:
+            pass  # Ignore errors during cleanup
+
+
+def pytest_unconfigure(config: Any) -> None:
+    """Pytest cleanup hook (intentionally empty - see suppress_torch_dynamo_atexit_logging)."""
+    pass
 
 
 def pytest_collection_modifyitems(config: Any, items: List[Any]) -> None:
@@ -475,19 +503,16 @@ def mock_snapshot_manager_for_unit_tests(
     mock_instance.get_snapshot_age.return_value = None
     mock_instance.save_snapshot.return_value = None
     mock_instance.delete_snapshot.return_value = None
+    mock_instance.delete_all_snapshots.return_value = 0
     mock_instance.load_snapshot.return_value = None
-    mock_instance.get_project_id.side_effect = (
-        lambda path: f"test_{hash(path) & 0xFFFFFFFF:08x}"
+    mock_instance.get_project_id.side_effect = lambda path: (
+        f"test_{hash(path) & 0xFFFFFFFF:08x}"
     )
 
-    # Patch at definition point
+    # Patch at definition point (sufficient for all imports)
     with patch("merkle.snapshot_manager.SnapshotManager") as mock_def:
         mock_def.return_value = mock_instance
-
-        # Patch at usage points (where it's already imported)
-        with patch("search.incremental_indexer.SnapshotManager") as mock_usage:
-            mock_usage.return_value = mock_instance
-            yield mock_instance
+        yield mock_instance
 
 
 # ============================================================================

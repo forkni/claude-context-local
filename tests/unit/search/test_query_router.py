@@ -38,32 +38,32 @@ class TestQueryRouterBenchmarkQueries:
             ("validate input parameters", "qwen3", "Validation logic - FIX"),
             ("raise exception when invalid", "qwen3", "Exception raising"),
             # Configuration (3 queries)
-            ("load configuration settings", "bge_m3", "Config loading"),
-            ("environment variable setup", "bge_m3", "Environment variables"),
+            ("load configuration settings", "bge_code", "Config loading"),
+            ("environment variable setup", "bge_code", "Environment variables"),
             (
                 "model registry initialization",
-                "bge_m3",
+                "bge_code",
                 "Registry init - initialization wins",
             ),
             # Search & Indexing (4 queries)
             ("semantic search implementation", "qwen3", "Search implementation"),
             ("BM25 sparse index", "qwen3", "BM25 index"),
-            ("hybrid search fusion RRF", "coderankembed", "RRF algorithm"),
-            ("incremental index update", "bge_m3", "Incremental indexing"),
+            ("hybrid search fusion RRF", "qwen3", "RRF algorithm"),
+            ("incremental index update", "bge_code", "Incremental indexing"),
             # Graph & Dependencies (3 queries)
-            ("call graph extraction", "coderankembed", "Call graph - FIX"),
-            ("find function callers", "coderankembed", "Function callers - FIX"),
-            ("dependency relationship", "coderankembed", "Dependencies - FIX"),
+            ("call graph extraction", "qwen3", "Call graph - FIX"),
+            ("find function callers", "bge_code", "Function callers - FIX"),
+            ("dependency relationship", "bge_code", "Dependencies - FIX"),
             # Embeddings (3 queries)
-            ("embedding model loading", "bge_m3", "Model loading"),
-            ("batch embedding generation", "bge_m3", "Batch generation"),
-            ("vector dimension handling", "bge_m3", "Vector dimension"),
+            ("embedding model loading", "bge_code", "Model loading"),
+            ("batch embedding generation", "bge_code", "Batch generation"),
+            ("vector dimension handling", "bge_code", "Vector dimension"),
             # MCP Server (2 queries)
             ("MCP tool handler", "qwen3", "Tool handler - FIX"),
-            ("project switching logic", "bge_m3", "Project switching"),
+            ("project switching logic", "bge_code", "Project switching"),
             # Merkle/Change Detection (2 queries)
-            ("merkle tree snapshot", "coderankembed", "Merkle tree"),
-            ("file change detection", "coderankembed", "Change detection"),
+            ("merkle tree snapshot", "bge_code", "Merkle tree"),
+            ("file change detection", "bge_code", "Change detection"),
         ],
     )
     def test_benchmark_routing_accuracy(
@@ -83,7 +83,9 @@ class TestQueryRouterBenchmarkQueries:
 
         # Low confidence case (generic query)
         decision = router.route("file operations")
-        assert decision.model_key == "bge_m3", "Generic query should use default model"
+        assert decision.model_key == "bge_code", (
+            "Generic query should use default model"
+        )
 
 
 class TestQueryRouterTieBreaking:
@@ -97,38 +99,36 @@ class TestQueryRouterTieBreaking:
     def test_precedence_order(self, router):
         """Test that precedence order is correct."""
         assert router.PRECEDENCE == [
-            "coderankembed",
             "qwen3",
-            "bge_m3",
-        ], "Precedence order should be coderankembed > qwen3 > bge_m3"
+            "bge_code",
+        ], "Precedence order should be qwen3 > bge_code (2-model pool)"
 
-    def test_tie_resolution_favors_coderankembed(self, router):
-        """Test that ties favor CodeRankEmbed over others."""
+    def test_tie_resolution_favors_qwen3(self, router):
+        """Test that ties favor qwen3 over bge_code (2-model pool)."""
         # Query with keywords matching multiple models
-        # "graph" in coderankembed, "structure" in coderankembed
         decision = router.route("graph structure dependency")
-        # Should favor coderankembed due to precedence
+        # Should favor qwen3 due to precedence in 2-model pool
         assert decision.model_key in [
-            "coderankembed",
-            "bge_m3",
-        ], "Should route to coderankembed or bge_m3 based on scores"
+            "qwen3",
+            "bge_code",
+        ], "Should route to qwen3 or bge_code based on scores"
 
     def test_resolve_tie_method(self, router):
-        """Test _resolve_tie() method directly."""
-        # Exact tie
-        scores = {"coderankembed": 0.30, "qwen3": 0.30, "bge_m3": 0.30}
+        """Test _resolve_tie() method directly for 2-model pool."""
+        # Exact tie - qwen3 favored in 2-model pool
+        scores = {"qwen3": 0.30, "bge_code": 0.30}
         best = router._resolve_tie(scores)
-        assert best == "coderankembed", "Ties should favor coderankembed"
+        assert best == "qwen3", "Ties should favor qwen3 (2-model pool)"
 
-        # Close scores (within 0.01)
-        scores = {"coderankembed": 0.299, "qwen3": 0.30, "bge_m3": 0.295}
+        # Close scores (within 0.01) - qwen3 favored by precedence
+        scores = {"qwen3": 0.299, "bge_code": 0.30}
         best = router._resolve_tie(scores)
-        assert best == "coderankembed", "Close scores should favor coderankembed"
+        assert best == "qwen3", "Close scores should favor qwen3"
 
-        # qwen3 wins with clear margin
-        scores = {"coderankembed": 0.20, "qwen3": 0.40, "bge_m3": 0.15}
+        # bge_code wins with clear margin
+        scores = {"qwen3": 0.20, "bge_code": 0.40}
         best = router._resolve_tie(scores)
-        assert best == "qwen3", "qwen3 should win with clear margin"
+        assert best == "bge_code", "bge_code should win with clear margin"
 
 
 class TestQueryRouterKeywordMatching:
@@ -155,29 +155,25 @@ class TestQueryRouterKeywordMatching:
         decision = router.route("registry pattern implementation")
         assert decision.model_key == "qwen3", "Registry pattern should route to qwen3"
 
-    def test_caller_keyword_routes_to_coderankembed(self, router):
-        """Test that 'caller' keyword routes to coderankembed."""
+    def test_caller_keyword_routes_to_bge_code(self, router):
+        """Test that 'caller' keyword routes to bge_code (2-model pool)."""
         decision = router.route("find function callers")
-        assert decision.model_key == "coderankembed", (
-            "Caller should route to coderankembed"
-        )
+        assert decision.model_key == "bge_code", "Caller should route to bge_code"
 
-    def test_dependency_keyword_routes_to_coderankembed(self, router):
-        """Test that 'dependency' keyword routes to coderankembed."""
+    def test_dependency_keyword_routes_to_bge_code(self, router):
+        """Test that 'dependency' keyword routes to bge_code (2-model pool)."""
         decision = router.route("dependency graph analysis")
-        assert decision.model_key == "coderankembed", (
-            "Dependency should route to coderankembed"
-        )
+        assert decision.model_key == "bge_code", "Dependency should route to bge_code"
 
-    def test_switch_keyword_routes_to_bge_m3(self, router):
-        """Test that 'switch' keyword routes to bge_m3."""
+    def test_switch_keyword_routes_to_bge_code(self, router):
+        """Test that 'switch' keyword routes to bge_code (2-model pool)."""
         decision = router.route("project switching logic")
-        assert decision.model_key == "bge_m3", "Switch should route to bge_m3"
+        assert decision.model_key == "bge_code", "Switch should route to bge_code"
 
-    def test_verify_keyword_routes_to_bge_m3(self, router):
-        """Test that 'verify' keyword routes to bge_m3."""
+    def test_verify_keyword_routes_to_bge_code(self, router):
+        """Test that 'verify' keyword routes to bge_code (2-model pool)."""
         decision = router.route("verify configuration settings")
-        assert decision.model_key == "bge_m3", "Verify should route to bge_m3"
+        assert decision.model_key == "bge_code", "Verify should route to bge_code"
 
 
 class TestQueryRouterEdgeCases:
@@ -191,13 +187,17 @@ class TestQueryRouterEdgeCases:
     def test_empty_query_uses_default(self, router):
         """Test that empty query uses default model."""
         decision = router.route("")
-        assert decision.model_key == "bge_m3", "Empty query should use default model"
+        assert decision.model_key == "bge_code", (
+            "Empty query should use default model (2-model pool)"
+        )
         assert decision.confidence == 0.0, "Empty query should have 0 confidence"
 
     def test_no_keyword_match_uses_default(self, router):
         """Test that query with no matching keywords uses default."""
         decision = router.route("quantum entanglement paradox")
-        assert decision.model_key == "bge_m3", "No match should use default model"
+        assert decision.model_key == "bge_code", (
+            "No match should use default model (2-model pool)"
+        )
 
     def test_low_confidence_uses_default(self, router):
         """Test that low confidence routes to default model."""
@@ -222,10 +222,9 @@ class TestQueryRouterEdgeCases:
         """Test get_available_models() returns all models."""
         models = router.get_available_models()
         assert set(models) == {
-            "coderankembed",
             "qwen3",
-            "bge_m3",
-        }, "Should return all three models"
+            "bge_code",
+        }, "Should return both models in 2-model pool"
 
 
 class TestQueryRouterConfidenceThreshold:

@@ -42,10 +42,10 @@ class ModelPoolManager:
                 )
                 return MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED
             elif pool_type == "full":
-                logger.info("Using full model pool from config (5.3GB total)")
+                logger.info("Using full model pool from config (6.8GB total)")
                 return MODEL_POOL_CONFIG
             # If None or unrecognized, fall through to env var / VRAM detection
-        except Exception as e:
+        except (ImportError, AttributeError) as e:
             logger.debug(f"Could not read pool config from file: {e}")
 
         # 2. Check environment variable override
@@ -55,7 +55,7 @@ class ModelPoolManager:
             logger.info("Using lightweight-speed model pool (1.65GB total)")
             return MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED
         elif pool_type == "full":
-            logger.info("Using full model pool (5.3GB total)")
+            logger.info("Using full model pool (6.8GB total)")
             return MODEL_POOL_CONFIG
 
         # Auto-detect based on VRAM tier
@@ -71,7 +71,7 @@ class ModelPoolManager:
                 )
                 return MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED
             elif tier.multi_model_pool == "full":
-                logger.info(f"VRAM tier '{tier.name}' → full model pool (5.3GB total)")
+                logger.info(f"VRAM tier '{tier.name}' → full model pool (6.8GB total)")
                 return MODEL_POOL_CONFIG
             else:
                 # Tier doesn't specify pool type (minimal tier, single-model)
@@ -160,28 +160,6 @@ class ModelPoolManager:
             if model_key not in state.embedders or state.embedders[model_key] is None:
                 model_name = pool_config[model_key]
 
-                # VRAM tier adaptive selection: Upgrade/downgrade based on available VRAM
-                if model_key == "qwen3" and model_name == "Qwen/Qwen3-Embedding-4B":
-                    try:
-                        from search.vram_manager import VRAMTierManager
-
-                        tier_manager = VRAMTierManager()
-                        tier = tier_manager.detect_tier()
-
-                        # Fallback to 0.6B on laptop/minimal tiers (VRAM < 10GB)
-                        # Max model is 4B (8B removed for safety and compatibility)
-                        if tier.name in ["minimal", "laptop"]:
-                            original_model = model_name
-                            model_name = "Qwen/Qwen3-Embedding-0.6B"
-                            logger.info(
-                                f"VRAM tier '{tier.name}' detected: "
-                                f"Using {model_name} instead of {original_model}"
-                            )
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to detect VRAM tier, using configured model: {e}"
-                        )
-
                 logger.info(
                     f"[OVERRIDE] Loading {model_key} ({model_name}) - explicit request"
                 )
@@ -195,14 +173,16 @@ class ModelPoolManager:
                     )
                 except Exception as e:
                     logger.error(f"✗ Failed to load {model_key}: {e}")
-                    # Fallback to bge_m3 if available
+                    # Fallback to first available model in pool
+                    pool_config = self._get_pool_config()
+                    fallback_key = next(iter(pool_config.keys()))
                     if (
-                        model_key != "bge_m3"
-                        and "bge_m3" in state.embedders
-                        and state.embedders["bge_m3"] is not None
+                        model_key != fallback_key
+                        and fallback_key in state.embedders
+                        and state.embedders[fallback_key] is not None
                     ):
-                        logger.warning("Falling back to bge_m3")
-                        return state.embedders["bge_m3"]
+                        logger.warning(f"Falling back to {fallback_key}")
+                        return state.embedders[fallback_key]
                     raise
 
             return state.embedders[model_key]
@@ -225,15 +205,19 @@ class ModelPoolManager:
                             break
 
                     if model_key is None:
+                        pool_config = self._get_pool_config()
+                        fallback_key = next(iter(pool_config.keys()))
                         logger.warning(
-                            f"Config model '{config_model_name}' not in pool, using bge_m3"
+                            f"Config model '{config_model_name}' not in pool, using {fallback_key}"
                         )
-                        model_key = "bge_m3"
-                except Exception as e:
+                        model_key = fallback_key
+                except (RuntimeError, AttributeError) as e:
+                    pool_config = self._get_pool_config()
+                    fallback_key = next(iter(pool_config.keys()))
                     logger.warning(
-                        f"Failed to load model from config: {e}, using bge_m3"
+                        f"Failed to load model from config: {e}, using {fallback_key}"
                     )
-                    model_key = "bge_m3"
+                    model_key = fallback_key
 
             # Validate model_key against current pool config
             pool_config = self._get_pool_config()
@@ -241,33 +225,13 @@ class ModelPoolManager:
                 logger.error(
                     f"Invalid model_key '{model_key}', available: {list(pool_config.keys())}"
                 )
-                model_key = "bge_m3"  # Fallback to most reliable model
+                model_key = next(
+                    iter(pool_config.keys())
+                )  # Fallback to first available model
 
             # Lazy load model if not already loaded
             if model_key not in state.embedders or state.embedders[model_key] is None:
                 model_name = pool_config[model_key]
-
-                # VRAM tier adaptive selection: Upgrade/downgrade based on available VRAM
-                if model_key == "qwen3" and model_name == "Qwen/Qwen3-Embedding-4B":
-                    try:
-                        from search.vram_manager import VRAMTierManager
-
-                        tier_manager = VRAMTierManager()
-                        tier = tier_manager.detect_tier()
-
-                        # Fallback to 0.6B on laptop/minimal tiers (VRAM < 10GB)
-                        # Max model is 4B (8B removed for safety and compatibility)
-                        if tier.name in ["minimal", "laptop"]:
-                            original_model = model_name
-                            model_name = "Qwen/Qwen3-Embedding-0.6B"
-                            logger.info(
-                                f"VRAM tier '{tier.name}' detected: "
-                                f"Using {model_name} instead of {original_model}"
-                            )
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to detect VRAM tier, using configured model: {e}"
-                        )
 
                 # Check if this is the first model being loaded (cold start)
                 is_first_load = not any(state.embedders.values())
@@ -291,14 +255,16 @@ class ModelPoolManager:
                         logger.info(f"✓ {model_key} loaded successfully")
                 except Exception as e:
                     logger.error(f"✗ Failed to load {model_key}: {e}")
-                    # Fallback to bge_m3 if available
+                    # Fallback to first available model in pool
+                    pool_config = self._get_pool_config()
+                    fallback_key = next(iter(pool_config.keys()))
                     if (
-                        model_key != "bge_m3"
-                        and "bge_m3" in state.embedders
-                        and state.embedders["bge_m3"] is not None
+                        model_key != fallback_key
+                        and fallback_key in state.embedders
+                        and state.embedders[fallback_key] is not None
                     ):
-                        logger.warning("Falling back to bge_m3")
-                        return state.embedders["bge_m3"]
+                        logger.warning(f"Falling back to {fallback_key}")
+                        return state.embedders[fallback_key]
                     raise
 
             return state.embedders[model_key]
@@ -311,7 +277,7 @@ class ModelPoolManager:
                     config = get_config()
                     model_name = config.embedding.model_name
                     logger.info(f"Using single embedding model: {model_name}")
-                except Exception as e:
+                except (RuntimeError, AttributeError) as e:
                     logger.warning(f"Failed to load model from config: {e}")
                     model_name = "google/embeddinggemma-300m"
                     logger.info(f"Falling back to default model: {model_name}")
@@ -341,7 +307,7 @@ def get_model_pool_manager() -> ModelPoolManager:
 
 # Backward-compatible module-level functions
 def initialize_model_pool(lazy_load: bool = True) -> None:
-    """Initialize multi-model pool with all 3 models.
+    """Initialize multi-model pool with all models in the pool.
 
     Backward-compatible wrapper for ModelPoolManager.initialize_pool().
     """
@@ -374,6 +340,10 @@ def get_model_key_from_name(model_name: str) -> Optional[str]:
     for key, name in pool_config.items():
         if name == model_name:
             return key
+
+    # Special case: Qwen3 variants
+    if "qwen3" in model_name.lower() or "qwen-3" in model_name.lower():
+        return "qwen3"
 
     return None
 

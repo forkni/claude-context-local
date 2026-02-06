@@ -36,6 +36,10 @@ def mock_graph():
 @pytest.fixture
 def impact_analyzer(mock_searcher, mock_graph):
     """Create an CodeRelationshipAnalyzer instance with mocked dependencies."""
+    # Configure mock to explicitly NOT have dense_index attribute
+    # This prevents symbol_cache auto-creation in CodeRelationshipAnalyzer.__init__
+    del mock_searcher.dense_index
+    del mock_searcher.symbol_cache
     analyzer = CodeRelationshipAnalyzer(searcher=mock_searcher)
     analyzer.graph = mock_graph
     return analyzer
@@ -482,7 +486,7 @@ def test_forward_inherits_with_fallback(impact_analyzer, mock_graph, mock_search
     )
     assert parent_rel["target_name"] == "Parent"
     assert "note" in parent_rel
-    assert "not implemented" in parent_rel["note"].lower()
+    assert "not in index" in parent_rel["note"].lower()
 
 
 # ============================================================================

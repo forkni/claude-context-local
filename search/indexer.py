@@ -4,9 +4,13 @@ import json
 import logging
 import sqlite3
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
+
+
+if TYPE_CHECKING:
+    from search.symbol_cache import SymbolHashCache
 
 
 try:
@@ -112,7 +116,7 @@ class CodeIndexManager:
         return self._metadata_store
 
     @property
-    def symbol_cache(self):
+    def symbol_cache(self) -> "SymbolHashCache":
         """Expose symbol cache for direct symbol lookup.
 
         Returns the SymbolHashCache instance from metadata_store,
@@ -121,7 +125,7 @@ class CodeIndexManager:
         """
         return self._metadata_store._symbol_cache
 
-    def create_index(self, embedding_dimension: int, index_type: str = "flat"):
+    def create_index(self, embedding_dimension: int, index_type: str = "flat") -> None:
         """Create a new FAISS index.
 
         Args:
@@ -823,11 +827,11 @@ class CodeIndexManager:
 
         return status
 
-    def __enter__(self):
+    def __enter__(self) -> "CodeIndexManager":
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         """Context manager exit - cleanup resources."""
         if self._metadata_store is not None:
             self._metadata_store.close()

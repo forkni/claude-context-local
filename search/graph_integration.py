@@ -16,6 +16,21 @@ except ImportError:
     CodeGraphStorage = None
 
 
+def is_chunk_id(node_id: str) -> bool:
+    """Check if a graph node ID is a real chunk ID (not a bare symbol name).
+
+    Real chunk IDs have format: "file.py:10-20:function:name" (3+ colons).
+    Symbol names: "Exception", "login" (0-2 colons).
+
+    Args:
+        node_id: Graph node identifier to check
+
+    Returns:
+        True if node_id is a valid chunk ID, False if it's a bare symbol
+    """
+    return node_id.count(":") >= 3
+
+
 # Semantic chunk types that can have relationships
 # Based on Codanna's approach: index ALL semantic symbols
 SEMANTIC_TYPES = (
@@ -30,7 +45,7 @@ SEMANTIC_TYPES = (
     "impl",
     "constant",
     "variable",
-    "merged",  # Community-merged chunks (Phase 6 community detection)
+    "merged",  # Community-merged chunks from Louvain detection
     "split_block",  # Large node split blocks (AST block splitting)
 )
 
@@ -150,12 +165,12 @@ class GraphIntegration:
                         # Add to graph storage
                         self.storage.add_relationship_edge(edge)
 
-                    except Exception as e:
+                    except (ValueError, KeyError, TypeError) as e:
                         self._logger.warning(
                             f"Failed to add relationship edge from {chunk_id}: {e}"
                         )
 
-        except Exception as e:
+        except (KeyError, TypeError) as e:
             self._logger.warning(f"Failed to add {chunk_id} to graph: {e}")
 
     def build_graph_from_chunks(self, chunks) -> None:
@@ -197,6 +212,10 @@ class GraphIntegration:
         for chunk in chunks:
             if not chunk.chunk_id:
                 continue
+            # Skip synthetic summaries — no parseable code, would be isolated nodes
+            # (module summaries from A2, community summaries from B1)
+            if chunk.chunk_type in ("module", "community"):
+                continue
 
             try:
                 # Add node (NetworkX: G.add_node)
@@ -217,7 +236,7 @@ class GraphIntegration:
                         bare_name = chunk.name.split(".")[-1]
                         name_to_chunk_ids[bare_name].append(chunk.chunk_id)
 
-                    # Phase 1.7.1: Also index by qualified name for self.method() resolution
+                    # Index qualified name (ClassName.method) for self.method() resolution
                     # Fixes intra-class method calls by indexing "ClassName.method"
                     if chunk.parent_name and chunk.name:
                         qualified_name = f"{chunk.parent_name}.{chunk.name}"
@@ -225,7 +244,7 @@ class GraphIntegration:
 
                 processed_count += 1
 
-            except Exception as e:
+            except (AttributeError, KeyError, TypeError) as e:
                 self._logger.warning(
                     f"Failed to add chunk {chunk.chunk_id} to graph: {e}"
                 )
@@ -305,7 +324,7 @@ class GraphIntegration:
                                 metadata=rel.get("metadata", {}),
                             )
                             self.storage.add_relationship_edge(edge)
-                    except Exception as e:
+                    except (ValueError, KeyError, TypeError) as e:
                         self._logger.debug(f"Failed to add relationship edge: {e}")
 
             except Exception as e:
@@ -337,7 +356,7 @@ class GraphIntegration:
         Returns:
             chunk_id if exactly one match, None otherwise (creates phantom node)
         """
-        # Phase 1.7.2: Skip builtins - they never resolve to project code
+        # Skip builtins (len, print, etc.) -- they never resolve to project code
         import builtins
 
         if hasattr(builtins, callee_name):
@@ -367,12 +386,33 @@ class GraphIntegration:
         if len(candidates) == 1:
             return candidates[0]
 
-        # Phase 1.7.3: Context-aware disambiguation for ambiguous matches
+        # Context-aware disambiguation: prefer same-file match for ambiguous calls
         if len(candidates) > 1 and caller_file:
             # Try same-file preference - overwhelmingly the intended target
             same_file = [c for c in candidates if caller_file in c]
             if len(same_file) == 1:
                 return same_file[0]
+
+            # Split block disambiguation: when all candidates are split_blocks
+            # of the same function (same file, same name), resolve to the first
+            # block (lowest start line = function entry point). This fixes graph
+            # isolation for large split functions.
+            if len(candidates) > 1:
+                split_blocks = [c for c in candidates if ":split_block:" in c]
+                if len(split_blocks) == len(candidates):
+                    # All candidates are split_blocks - pick the entry block
+                    def _start_line(chunk_id: str) -> int:
+                        parts = chunk_id.split(":")
+                        if len(parts) >= 2:
+                            line_range = parts[1]  # e.g., "793-860"
+                            try:
+                                return int(line_range.split("-")[0])
+                            except (ValueError, IndexError):
+                                pass
+                        return 2**31  # Sentinel for sort ordering
+
+                    split_blocks.sort(key=_start_line)
+                    return split_blocks[0]
 
         # No match or still ambiguous - create phantom node
         return None
@@ -393,7 +433,7 @@ class GraphIntegration:
                 )
                 self.storage.save()
                 self._logger.info("[SAVE] Successfully saved call graph")
-            except Exception as e:
+            except (OSError, RuntimeError) as e:
                 self._logger.warning(f"[SAVE] Failed to save call graph: {e}")
         else:
             skip_reason = "None" if self.storage is None else "empty (0 nodes)"
@@ -405,7 +445,7 @@ class GraphIntegration:
             try:
                 self.storage.clear()
                 self._logger.info("Call graph cleared")
-            except Exception as e:
+            except (RuntimeError, AttributeError) as e:
                 self._logger.warning(f"Failed to clear call graph: {e}")
 
     @property

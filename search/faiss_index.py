@@ -242,7 +242,7 @@ class FaissVectorIndex:
                         self._index = None
                         self._chunk_ids = []
                         return False
-                except Exception as e:
+                except (RuntimeError, AttributeError, KeyError) as e:
                     self._logger.debug(f"Could not validate index dimension: {e}")
 
             # Move to GPU if available
@@ -279,7 +279,7 @@ class FaissVectorIndex:
 
             return True
 
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             self._logger.error(f"Failed to load index: {e}")
             self._index = None
             self._chunk_ids = []
@@ -298,7 +298,7 @@ class FaissVectorIndex:
                 index_to_write = faiss.index_gpu_to_cpu(self._index)
             faiss.write_index(index_to_write, str(self.index_path))
             self._logger.info(f"Saved index to {self.index_path}")
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             self._logger.warning(
                 f"Failed to save GPU index directly, attempting CPU fallback: {e}"
             )
@@ -306,7 +306,7 @@ class FaissVectorIndex:
                 cpu_index = faiss.index_gpu_to_cpu(self._index)
                 faiss.write_index(cpu_index, str(self.index_path))
                 self._logger.info(f"Saved index to {self.index_path} (CPU fallback)")
-            except Exception as e2:
+            except (OSError, RuntimeError) as e2:
                 self._logger.error(f"Failed to save FAISS index: {e2}")
                 raise
 
@@ -334,7 +334,7 @@ class FaissVectorIndex:
                     self._logger.info(
                         f"Saved mmap storage: {self._index.ntotal} vectors to {self._mmap_path}"
                     )
-                except Exception as e:
+                except OSError as e:
                     self._logger.warning(f"Failed to save mmap vectors: {e}")
             else:
                 # Below threshold: delete mmap if it exists (from previous larger index)
@@ -522,7 +522,7 @@ class FaissVectorIndex:
             self._on_gpu = True
             self._logger.info("FAISS index moved to GPU(s)")
             return True
-        except Exception as e:
+        except RuntimeError as e:
             self._logger.warning(
                 f"Failed to move FAISS index to GPU, continuing on CPU: {e}"
             )
@@ -542,7 +542,7 @@ class FaissVectorIndex:
             self._on_gpu = False
             self._logger.info("FAISS index moved to CPU")
             return True
-        except Exception as e:
+        except RuntimeError as e:
             self._logger.warning(f"Failed to move FAISS index to CPU: {e}")
             return False
 

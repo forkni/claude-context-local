@@ -47,9 +47,7 @@ class TestIntentClassifierBasicDetection:
     def test_local_intent_short_query_penalty(self, classifier):
         """Test that long queries reduce LOCAL confidence via token penalty."""
         short_query = "where is User"  # 3 tokens
-        long_query = (
-            "where is the user authentication system implemented"  # 7 tokens > 6 max
-        )
+        long_query = "where is the user authentication system implementation located in the code"  # 11 tokens > 8 max
 
         short_decision = classifier.classify(short_query)
         long_decision = classifier.classify(long_query)
@@ -194,8 +192,8 @@ class TestIntentClassifierBasicDetection:
         """Test that LOCAL queries suggest smaller k."""
         decision = classifier.classify("where is QueryRouter")
         if decision.intent == QueryIntent.LOCAL:
-            assert decision.suggested_params.get("k") == 5
-            assert decision.suggested_params.get("search_mode") == "semantic"
+            assert decision.suggested_params.get("k") == 4
+            assert decision.suggested_params.get("search_mode") == "hybrid"
 
     def test_suggested_params_navigational_symbol(self, classifier):
         """Test that NAVIGATIONAL queries extract symbol name."""
@@ -463,3 +461,158 @@ class TestIntentClassifierRealWorldQueries:
         assert decision.intent == expected_intent, (
             f"Failed for '{query}' ({description}): expected {expected_intent.value}, got {decision.intent.value}"
         )
+
+
+class TestPathTracingIntent:
+    """Test PATH_TRACING intent detection for path-finding queries."""
+
+    @pytest.fixture
+    def classifier(self):
+        """Create IntentClassifier instance for testing."""
+        return IntentClassifier(enable_logging=False)
+
+    def test_trace_path_from_to(self, classifier):
+        """Test PATH_TRACING intent for 'trace path from X to Y' queries."""
+        decision = classifier.classify("trace path from login to database")
+        assert decision.intent == QueryIntent.PATH_TRACING
+        assert decision.confidence >= 0.3
+        assert decision.suggested_params.get("source") == "login"
+        assert decision.suggested_params.get("target") == "database"
+        assert decision.suggested_params.get("tool") == "find_path"
+
+    def test_how_does_connect(self, classifier):
+        """Test PATH_TRACING intent for 'how does X connect to Y' queries."""
+        decision = classifier.classify("how does UserModel connect to API")
+        assert decision.intent == QueryIntent.PATH_TRACING
+        assert decision.confidence >= 0.3
+        source, target = (
+            decision.suggested_params.get("source"),
+            decision.suggested_params.get("target"),
+        )
+        assert source == "UserModel" and target == "API"
+
+    def test_connection_between(self, classifier):
+        """Test PATH_TRACING intent for 'connection between X and Y' queries."""
+        decision = classifier.classify("connection between auth and database")
+        assert decision.intent == QueryIntent.PATH_TRACING
+        assert decision.confidence >= 0.3
+
+    def test_path_between(self, classifier):
+        """Test PATH_TRACING intent for 'path between X and Y' queries."""
+        decision = classifier.classify("path between QueryRouter and HybridSearcher")
+        assert decision.intent == QueryIntent.PATH_TRACING
+        assert decision.confidence >= 0.3
+
+
+class TestSimilarityIntent:
+    """Test SIMILARITY intent detection for code similarity queries."""
+
+    @pytest.fixture
+    def classifier(self):
+        """Create IntentClassifier instance for testing."""
+        return IntentClassifier(enable_logging=False)
+
+    def test_similar_to(self, classifier):
+        """Test SIMILARITY intent for 'similar to X' queries."""
+        decision = classifier.classify("find code similar to QueryRouter")
+        assert decision.intent == QueryIntent.SIMILARITY
+        assert decision.confidence >= 0.3
+        assert decision.suggested_params.get("tool") == "find_similar_code"
+        assert decision.suggested_params.get("symbol_name") == "QueryRouter"
+
+    def test_patterns_like(self, classifier):
+        """Test SIMILARITY intent for 'patterns like X' queries."""
+        decision = classifier.classify("patterns like authentication handler")
+        assert decision.intent == QueryIntent.SIMILARITY
+        assert decision.confidence >= 0.3
+
+    def test_code_like(self, classifier):
+        """Test SIMILARITY intent for 'code like X' queries."""
+        decision = classifier.classify("code like handle_search_code")
+        assert decision.intent == QueryIntent.SIMILARITY
+        assert decision.confidence >= 0.3
+
+    def test_similar_implementations(self, classifier):
+        """Test SIMILARITY intent for 'similar implementations to X' queries."""
+        decision = classifier.classify("similar implementations to CodeIndexManager")
+        assert decision.intent == QueryIntent.SIMILARITY
+        assert decision.confidence >= 0.3
+
+
+class TestContextualIntent:
+    """Test CONTEXTUAL intent detection for context exploration queries."""
+
+    @pytest.fixture
+    def classifier(self):
+        """Create IntentClassifier instance for testing."""
+        return IntentClassifier(enable_logging=False)
+
+    def test_context_around(self, classifier):
+        """Test CONTEXTUAL intent for 'context around X' queries."""
+        decision = classifier.classify("show context around handle_search_code")
+        assert decision.intent == QueryIntent.CONTEXTUAL
+        assert decision.confidence >= 0.3
+        assert decision.suggested_params.get("ego_graph_enabled") is True
+        assert decision.suggested_params.get("ego_graph_k_hops") == 2
+
+    def test_related_to(self, classifier):
+        """Test CONTEXTUAL intent for 'related to X' queries."""
+        decision = classifier.classify("code related to authentication")
+        assert decision.intent == QueryIntent.CONTEXTUAL
+        assert decision.confidence >= 0.3
+
+    def test_explore_query(self, classifier):
+        """Test CONTEXTUAL intent for 'explore X' queries."""
+        decision = classifier.classify("explore search pipeline")
+        assert decision.intent == QueryIntent.CONTEXTUAL
+        assert decision.confidence >= 0.3
+
+    def test_surrounding_code(self, classifier):
+        """Test CONTEXTUAL intent for 'surrounding code' queries."""
+        decision = classifier.classify("surrounding code for handle_find_connections")
+        assert decision.intent == QueryIntent.CONTEXTUAL
+        assert decision.confidence >= 0.3
+
+
+class TestRelationshipTypeDetection:
+    """Test relationship type detection for NAVIGATIONAL queries."""
+
+    @pytest.fixture
+    def classifier(self):
+        """Create IntentClassifier instance for testing."""
+        return IntentClassifier(enable_logging=False)
+
+    def test_inheritance_query(self, classifier):
+        """Test relationship type detection for inheritance queries."""
+        decision = classifier.classify("what classes inherit from BaseChunker")
+        assert decision.intent == QueryIntent.NAVIGATIONAL
+        rel_types = decision.suggested_params.get("relationship_types", [])
+        assert "inherits" in rel_types
+
+    def test_import_query(self, classifier):
+        """Test relationship type detection for import queries."""
+        decision = classifier.classify("what modules import QueryRouter")
+        assert decision.intent == QueryIntent.NAVIGATIONAL
+        rel_types = decision.suggested_params.get("relationship_types", [])
+        assert "imports" in rel_types
+
+    def test_decorator_query(self, classifier):
+        """Test relationship type detection for decorator queries."""
+        decision = classifier.classify("what decorates handle_search_code")
+        assert decision.intent == QueryIntent.NAVIGATIONAL
+        rel_types = decision.suggested_params.get("relationship_types", [])
+        assert "decorates" in rel_types
+
+    def test_exception_query(self, classifier):
+        """Test relationship type detection for exception queries."""
+        decision = classifier.classify("what exceptions raises IndexSynchronizer")
+        assert decision.intent == QueryIntent.NAVIGATIONAL
+        rel_types = decision.suggested_params.get("relationship_types", [])
+        assert "raises" in rel_types or "catches" in rel_types
+
+    def test_instantiation_query(self, classifier):
+        """Test relationship type detection for instantiation queries."""
+        decision = classifier.classify("what creates CodeIndexManager instances")
+        assert decision.intent == QueryIntent.NAVIGATIONAL
+        rel_types = decision.suggested_params.get("relationship_types", [])
+        assert "instantiates" in rel_types

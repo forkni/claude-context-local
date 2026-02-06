@@ -1,6 +1,6 @@
 ---
 name: mcp-search-tool
-description: MCP semantic search instructions. ON ACTIVATION: Acknowledge and wait. Apply rules to all code searches.
+description: MCP semantic search workflow. Results are ranked candidates — scan top-4, don't blindly trust rank-1. Acknowledge on load, apply to all searches.
 ---
 
 # MCP Search Tool Skill
@@ -10,20 +10,48 @@ description: MCP semantic search instructions. ON ACTIVATION: Acknowledge and wa
 **IMPORTANT**: This skill provides BEHAVIORAL INSTRUCTIONS, not information to analyze.
 
 **When this skill loads**:
-1. Acknowledge: "MCP Search skill active. Ready to use semantic search for code exploration."
+
+1. Acknowledge: "MCP Search skill active. Results are ranked candidates — I'll scan all results, not just rank-1."
 2. Wait for the user's actual task
 3. Apply the guidance below to all subsequent code search operations
 
-**DO NOT**:
-- Explore or analyze this skill document
-- Launch agents to investigate the skill
-- Treat this as a request for information about MCP tools
+**DO NOT**: Explore or analyze this skill document, launch agents to investigate the skill, or treat this as a request for information about MCP tools.
 
 ---
 
 ## Purpose
 
-This skill ensures that all MCP semantic search operations follow the correct workflow for accurate, relevant results with maximum token efficiency (40-45% savings). It enforces project context validation before searches and applies optimal search configuration.
+Ensures all MCP semantic search operations follow correct workflows for accurate, relevant results with maximum token efficiency (40-45% savings). Enforces project context validation before searches and applies optimal search configuration.
+
+## ⚠️ Critical: Search Results Are Candidates, Not Answers
+
+MCP search returns **ranked candidates**, not definitive answers. The correct result is reliably present in the top-4 results (Recall@4 = 1.00), but it is NOT always ranked first (Rank-1 accuracy ≈ 69%).
+
+**What this means for you:**
+
+1. **SCAN all returned results** (default k=4) — don't stop at rank-1
+2. **EVALUATE relevance** — read chunk names, file paths, and code snippets
+3. **The answer is IN the results** — if you need to find X, it's there, but possibly at rank 2-4
+4. **Module/summary chunks** may appear — these provide overview context but may not be the specific implementation you need
+
+**Result Interpretation Workflow:**
+
+1. Run `search_code()` with appropriate query and filters
+2. **Scan ALL k results** — read each chunk_id and code snippet
+3. **Identify the best match** based on your actual need (not just highest score)
+4. If the best match is a module/summary chunk but you need specific code, look at lower-ranked results
+5. Use `chunk_id` from the best match for follow-up tools (`find_connections`, `find_similar_code`)
+
+**When rank-1 is reliable (≈90% MRR):**
+
+- Small function discovery: "get X", "validate Y", "normalize Z"
+- Exact symbol lookup via `chunk_id` parameter
+
+**When you MUST scan all results (≈67-73% MRR):**
+
+- Class overview queries: "what does X do", "how does X work"
+- Sibling context queries: "encode and decode", "save and load"
+- Queries where module-level summaries may surface alongside implementations
 
 ## 🎯 QUICK START: Which Tool to Use?
 
@@ -56,8 +84,6 @@ What are you trying to do?
 
 ---
 
----
-
 ## ⛔ Common Mistakes (AVOID)
 
 | ❌ Wrong Approach | ✅ Correct Approach | Savings |
@@ -68,213 +94,100 @@ What are you trying to do?
 
 ---
 
-## 📚 Quick Function Index
+## 📚 MCP Tools Quick Index (19 Tools)
 
-### All 19 MCP Tools at a Glance
+**For full API reference**: See `docs/MCP_TOOLS_REFERENCE.md`
 
-| Tool | Category | Purpose | Key Parameters | Jump To |
-|------|----------|---------|----------------|---------|
-| **search_code** | 🔴 Essential | Find code with NL query or chunk_id lookup | `query`, `chunk_id`, `chunk_type`, `include_dirs`, `exclude_dirs` | [Details](#1-search_codequery-or-chunk_id-k5-search_modehybrid-model_keynone-use_routingtrue-file_patternnone-include_dirsnone-exclude_dirsnone-chunk_typenone-include_contexttrue-auto_reindextrue-max_age_minutes5) |
-| **find_connections** | 🔴 Essential | Find callers, dependencies, flow (graph analysis) | `chunk_id`, `symbol_name`, `max_depth`, `exclude_dirs`, `relationship_types` | [Details](#3-find_connectionschunk_idnone-symbol_namenone-max_depth3-exclude_dirsnone-relationship_typesnone) |
-| **find_path** | 🔴 Essential | Trace shortest path between code entities | `source`, `target`, `source_chunk_id`, `target_chunk_id`, `edge_types`, `max_hops` | [Details](#4-find_pathsourcenone-targetnone-source_chunk_idnone-target_chunk_idnone-edge_typesnone-max_hops10) |
-| **index_directory** | 🔴 Setup | Index project for search (one-time) | `directory_path`, `incremental`, `multi_model`, `include_dirs`, `exclude_dirs` | [Details](#2-index_directorydirectory_path-project_namenone-incrementaltrue-multi_modelnone-include_dirsnone-exclude_dirsnone) |
-| list_projects | Management | Show all indexed projects | *(none)* | [Details](#5-list_projects) |
-| switch_project | Management | Change active project | `project_path` | [Details](#6-switch_projectproject_path) |
-| get_index_status | Status | Check index health | *(none)* | [Details](#7-get_index_status) |
-| clear_index | Reset | Delete current index | *(none)* | [Details](#8-clear_index) |
-| delete_project | Reset | Safely delete indexed project | `project_path`, `force` | [Details](#9-delete_projectproject_path-forcefalse) |
-| configure_search_mode | Config | Set search mode & weights | `search_mode`, `bm25_weight`, `dense_weight` | [Details](#10-configure_search_modesearch_modehybrid-bm25_weight04-dense_weight06-enable_paralleltrue) |
-| get_search_config_status | Config | View current config | *(none)* | [Details](#11-get_search_config_status) |
-| configure_query_routing | Config | Multi-model routing settings | `enable_multi_model`, `default_model`, `confidence_threshold` | [Details](#12-configure_query_routingenable_multi_modelnone-default_modelnone-confidence_thresholdnone) |
-| find_similar_code | Secondary | Find functionally similar code | `chunk_id`, `k` | [Details](#13-find_similar_codechunk_id-k5) |
-| configure_reranking | Config | Neural reranking settings | `enabled`, `model_name`, `top_k_candidates` | [Details](#14-configure_rerankingenablednone-model_namenone-top_k_candidatesnone) |
-| configure_chunking | Config | Configure code chunking settings | `enable_chunk_merging`, `min_chunk_tokens`, `max_merged_tokens`, `token_estimation`, `enable_large_node_splitting`, `max_chunk_lines` | [Details](#19-configure_chunkingenable_chunk_mergingnone-min_chunk_tokensnone-max_merged_tokensnone-token_estimationnone-enable_large_node_splittingnone-max_chunk_linesnone) |
-| list_embedding_models | Model | Show available models | *(none)* | [Details](#15-list_embedding_models) |
-| switch_embedding_model | Model | Change embedding model | `model_name` | [Details](#16-switch_embedding_modelmodel_name) |
-| get_memory_status | Monitor | Check RAM/VRAM usage | *(none)* | [Details](#17-get_memory_status) |
-| cleanup_resources | Cleanup | Free memory/caches | *(none)* | [Details](#18-cleanup_resources) |
+| Tool | Purpose | Primary Use |
+|------|---------|-------------|
+| **search_code** | Find code with NL query or direct chunk lookup | All code searches |
+| **find_connections** | Find callers, dependencies, flow (graph analysis) | Relationship discovery |
+| **find_path** | Trace shortest path between entities | Flow tracing |
+| index_directory | Index project (one-time setup) | Initial setup |
+| list_projects | Show indexed projects | Project management |
+| switch_project | Change active project | Project switching |
+| get_index_status | Check index health | Status monitoring |
+| clear_index | Delete current index | Index reset |
+| delete_project | Safely delete project data | Cleanup |
+| configure_search_mode | Set search mode & weights | Search tuning |
+| get_search_config_status | View current config | Config inspection |
+| configure_query_routing | Multi-model routing settings | Model routing |
+| find_similar_code | Find functionally similar code | Similarity search |
+| configure_reranking | Neural reranking settings | Quality tuning |
+| configure_chunking | Code chunking settings | Chunking config |
+| list_embedding_models | Show available models | Model discovery |
+| switch_embedding_model | Change embedding model | Model switching |
+| get_memory_status | Check RAM/VRAM usage | Memory monitoring |
+| cleanup_resources | Free memory/caches | Resource cleanup |
 
-### Usage Patterns by Task
+---
 
-| Task Type | Primary Tool | Secondary Tool | Pattern |
-|-----------|--------------|----------------|---------|
-| **Find code by concept** | `search_code(query)` | - | Semantic search |
-| **Find callers/dependencies** | `search_code()` → `find_connections(chunk_id)` | - | 2-step workflow |
-| **Trace path between entities** | `search_code()` → `find_path(source_chunk_id, target_chunk_id)` | - | Path discovery |
-| **Filter by relationship type** | `find_connections(chunk_id, relationship_types=["inherits"])` | - | Targeted relationship analysis |
-| **Direct symbol lookup** | `search_code(chunk_id="...")` | - | O(1) lookup |
-| **Impact assessment** | `find_connections(max_depth=5)` | - | Multi-hop graph |
-| **Find similar patterns** | `search_code()` → `find_similar_code(chunk_id)` | - | Similarity search |
-| **Find code + graph neighbors** | `search_code(ego_graph_enabled=True)` | - | Graph-enhanced search |
-| **Match method, retrieve class** | `search_code(query, include_parent=True)` | - | Parent-child retrieval |
-| **Setup new project** | `index_directory(path)` | `get_index_status()` | One-time indexing |
-| **Switch projects** | `list_projects()` → `switch_project(path)` | - | Project management |
-| **Memory cleanup** | `get_memory_status()` → `cleanup_resources()` | - | Resource management |
+## 🔴 Essential Tools (Detailed Reference)
 
-## Complete MCP Tool Reference (19 Tools)
-
-### 🔴 Essential Tools (Use First)
-
-#### 1. `search_code(query OR chunk_id, k=5, search_mode="hybrid", model_key=None, use_routing=True, file_pattern=None, include_dirs=None, exclude_dirs=None, chunk_type=None, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False)`
+### 1. search_code()
 
 **Purpose**: Find code with natural language queries OR direct symbol lookup (40-45% token savings vs file reading)
 
-**Parameters**:
+**Key Parameters**:
 
-- `query` (optional): Natural language description of what you're looking for
+- `query` (optional): Natural language description
 - `chunk_id` (optional): Direct chunk ID for O(1) lookup (format: "file:lines:type:name")
-- `k` (default: 5): Number of results to return
-- `search_mode` (default: "hybrid"): Search method - "hybrid", "semantic", or "bm25"
-- `model_key` (optional): Force specific model - "qwen3", "bge_m3", or "coderankembed"
+- `k` (default: 4): Number of results
+- `search_mode` (default: "auto"): "hybrid", "semantic", "bm25", "auto"
+- `model_key` (optional): Force model ("qwen3", "bge_m3", "coderankembed", "gte_modernbert", "c2llm")
 - `use_routing` (default: True): Enable multi-model query routing
-- `file_pattern` (optional): Filter by filename/path pattern (e.g., "auth", "models")
-- `include_dirs` (optional): Only search in these directories (e.g., ["src/", "lib/"])
-- `exclude_dirs` (optional): Exclude from search (e.g., ["tests/", "vendor/"])
-- `chunk_type` (optional): Filter by code structure - "function", "class", "method", "module", "decorated_definition", "interface", "enum", "struct", "type", "merged", "split_block", or None for all
-  - `"merged"`: Community-merged chunks (multiple related code blocks merged together for better context)
-  - `"split_block"`: Large function blocks split at AST boundaries for better granularity
+- `file_pattern` (optional): Filter by filename/path (e.g., "auth", "models")
+- `include_dirs` / `exclude_dirs` (optional): Directory filters (e.g., ["src/"], ["tests/"])
+- `chunk_type` (optional): Filter by structure — "function", "class", "method", "module", "decorated_definition", "interface", "enum", "struct", "type", "merged", "split_block", "community", or None
 - `include_context` (default: True): Include similar chunks and relationships
-- `auto_reindex` (default: True): Automatically reindex if index is stale
-- `max_age_minutes` (default: 5): Maximum age of index before auto-reindex
-- `ego_graph_enabled` (default: False): Enable RepoGraph-style k-hop ego-graph expansion for graph neighbors
-- `ego_graph_k_hops` (default: 2, range: 1-5): Depth of graph traversal (higher = more neighbors)
-- **Automatic Import Filtering** (v0.8.3+): When ego-graph is enabled, stdlib and third-party imports are automatically filtered from graph traversal for cleaner, more relevant neighbors (RepoGraph Feature #5: Repository-Dependent Relation Filtering)
-- `ego_graph_max_neighbors_per_hop` (default: 10, range: 1-50): Maximum neighbors to retrieve per hop
-- `include_parent` (default: False): Enable parent-child retrieval - when a method is matched, also retrieve its enclosing class for fuller context ("Match Small, Retrieve Big")
+- `auto_reindex` (default: True): Auto-reindex if stale
+- `max_age_minutes` (default: 5): Max age before auto-reindex
+- `ego_graph_enabled` (default: False): Enable k-hop graph expansion for neighbors
+- `ego_graph_k_hops` (default: 1, range: 1-5): Graph traversal depth
+- `ego_graph_max_neighbors_per_hop` (default: 5, range: 1-50): Max neighbors per hop
+- `include_parent` (default: False): Retrieve enclosing class when matching methods
 
 **Examples**:
 
 ```bash
 # General search
-search_code("StreamDiffusionExt callback functions")
+search_code("authentication handler")
 
 # Filtered search
 search_code("OSC message handlers", file_pattern="Scripts/", chunk_type="function")
 
-# Broader search with more results
-search_code("token merging implementation", k=10)
-
-# Ego-graph expansion for richer context (graph neighbors)
-search_code("authentication handler", ego_graph_enabled=True, ego_graph_k_hops=2)
-
-# Parent-child retrieval for fuller method context
-search_code("validate user data", chunk_type="method", include_parent=True)
-
-# Search for community-merged code blocks (better context)
-search_code("GraphQueryEngine class", chunk_type="merged")
-
-# Search for large function segments split at AST boundaries
-search_code("ParallelChunker chunk_files", chunk_type="split_block")
+# Graph-enhanced search with neighbors
+search_code("token merging", ego_graph_enabled=True, ego_graph_k_hops=2)
 ```
 
-**Performance** (Empirically Validated):
+**Performance**: Hybrid 68-105ms | Semantic 62-94ms | BM25 3-8ms | Auto 52-57ms
 
-- **Hybrid mode**: 68-105ms average (recommended)
-- **Semantic mode**: 62-94ms average
-- **BM25 mode**: 3-8ms average (fastest for exact symbols)
-- **Auto mode**: 52-57ms average
+**Result Fields**: `chunk_id`, `kind`, `score`, `blended_score`, `centrality`, `source` (always) | `complexity_score`, `graph`, `reranker_score`, `summary` (optional)
 
-**Result Fields**:
+**Result Quality Expectations:**
 
-| Field | Type | Always Present | Description |
-|-------|------|----------------|-------------|
-| `chunk_id` | string | ✅ | Unique identifier (format: `"file:lines:type:name"`) |
-| `kind` | string | ✅ | Chunk type (`function`, `class`, `method`, etc.) |
-| `score` | float | ✅ | Relevance score (0.0-1.0) |
-| `complexity_score` | int | ⚠️ Optional | Cyclomatic complexity (functions/methods only, Python) |
-| `graph` | object | ⚠️ Optional | Call relationships (`calls`, `called_by` arrays) |
-| `reranker_score` | float | ⚠️ Optional | Neural reranker score (when enabled) |
+- **Recall@4 = 1.00**: The relevant result IS in the top 4 — guaranteed for well-formed queries
+- **Rank-1 accuracy ≈ 69%**: The best result is first ~70% of the time
+- **MRR ≈ 0.81**: On average, the best result is near position 1-2
+- **Action**: Always scan all k results before selecting the one to use or read
 
-**Note**: `file` and `lines` fields are present in verbose mode but omitted in compact/ultra modes since `chunk_id` contains this information.
-
-#### 2. `index_directory(directory_path, project_name=None, incremental=True, multi_model=None, include_dirs=None, exclude_dirs=None)`
-
-**Purpose**: Index a project for semantic search (one-time setup)
-
-**Parameters**:
-
-- `directory_path` (required): Absolute path to project root
-- `project_name` (optional): Name for organization (defaults to directory name)
-- `incremental` (default: True): Use incremental indexing if snapshot exists
-- `multi_model` (default: auto): Index for all models when multi-model mode enabled
-  - `null/None`: Auto-detect from `CLAUDE_MULTI_MODEL_ENABLED` environment variable
-  - `true`: Force multi-model indexing (all 3 models)
-  - `false`: Force single-model indexing (current model only)
-- `include_dirs` (optional): Only index files in these directories (e.g., `["src/", "lib/"]`)
-- `exclude_dirs` (optional): Exclude directories from indexing (e.g., `["tests/", "vendor/"]`)
-
-**Filter Persistence** (v0.5.9+):
-
-- Filters are **automatically saved** to `project_info.json` and reloaded on subsequent indexing
-- **Filter change detection**: If filters change during incremental index, automatically triggers **full reindex** to prevent stale data
-- Uses path prefix matching with normalized separators (`\` → `/`)
-
-**Progress Bar (v0.6.1+)**:
-
-- Real-time visual feedback during chunking and embedding phases
-- Shows progress: `Chunking files... 100% (21/21 files)`, `Embedding... 100% (3/3 batches)`
-
-**Drive-Agnostic Paths (v0.6.3+)**:
-
-- Automatic project discovery when drive letters change (F: → E:)
-- Dual-hash lookup for backward compatibility
-- `list_projects` shows path relocation status
-
-**Performance**:
-
-- **Full index**: ~30-60s for typical projects
-- **Incremental**: 10-50x faster (only processes changed files)
-- **Batch removal**: 600-1000x faster for large-scale deletions
-- **Multi-model**: 3x time (indexes with all 3 models sequentially)
-
-**Examples**:
-
-```bash
-# Basic indexing
-index_directory("D:\Users\alexk\FORKNI\STREAM_DIFFUSION")
-
-# Index only source directories
-index_directory("C:\Projects\MyApp", include_dirs=["src/", "lib/"])
-
-# Exclude test and vendor directories
-index_directory("C:\Projects\MyApp", exclude_dirs=["tests/", "node_modules/", "vendor/"])
-
-# Force multi-model indexing
-index_directory("C:\Projects\MyApp", multi_model=True)
-```
-
-#### 3. `find_connections(chunk_id=None, symbol_name=None, max_depth=3, exclude_dirs=None, relationship_types=None)`
+### 2. find_connections()
 
 **Purpose**: Find all code connections to a given symbol for dependency and impact analysis
 
 **⚠️ USE THIS FOR**: Caller discovery, dependency tracking, flow tracing, impact assessment
 
-**Parameters**:
+**Key Parameters**:
 
-- `chunk_id` (optional): Direct chunk_id from search results (preferred for precise lookup)
-- `symbol_name` (optional): Symbol name to find (may be ambiguous, use chunk_id when possible)
-- `max_depth` (default: 3): Maximum depth for dependency traversal (1-5, affects indirect callers)
-- `exclude_dirs` (optional): Directories to exclude from symbol resolution and caller lookup (e.g., ["tests/"])
-- `relationship_types` (optional, v0.8.4+): Filter to only include specific relationship types (e.g., `["inherits", "imports", "decorates"]`). If not provided, all relationship types are included.
+- `chunk_id` (optional): Direct chunk_id from search results (preferred)
+- `symbol_name` (optional): Symbol name to find (may be ambiguous)
+- `max_depth` (default: 3, range: 1-5): Max depth for dependency traversal
+- `exclude_dirs` (optional): Directories to exclude (e.g., ["tests/"])
+- `relationship_types` (optional): Filter to specific types (e.g., ["inherits", "imports"])
 
-  **Valid types (21 total)**: `calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`, `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`, `uses_context_manager`
+**Valid relationship types (21 total)**: `calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`, `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`, `uses_context_manager`
 
-**Returns**: Structured report with direct callers, indirect callers, similar code, and dependency graph
-
-**Call Graph Accuracy** (v0.5.15+): ~90% accuracy for Python projects with import resolution, self/super resolution, type annotation tracking, and assignment tracking
-
-**Relationship Edge Count** (v0.8.5+): 4,599 edges with 13 active relationship types in production (verified 2026-01-15)
-
-**Use When**:
-
-- Before refactoring or modifying code
-- Understanding code relationships and dependencies
-- Finding all code connected to a symbol
-- Impact assessment for breaking changes
-- **Finding function callers** (replaces Grep patterns)
-- **Tracing request flows** (replaces manual tracing)
-- **Analyzing inheritance hierarchies** (filter by `inherits`)
-- **Finding type usage** (filter by `uses_type`, `instantiates`)
+**Returns**: Direct/indirect callers, similar code, dependency graph
 
 **Examples**:
 
@@ -282,33 +195,14 @@ index_directory("C:\Projects\MyApp", multi_model=True)
 # Using chunk_id (preferred)
 find_connections(chunk_id="auth.py:10-50:function:login")
 
-# Using symbol name
-find_connections(symbol_name="User", exclude_dirs=["tests/"])
-
-# With custom depth for deep tracing
-find_connections(chunk_id="auth.py:10-50:function:login", max_depth=5)
-
-# Filter for only inheritance relationships (v0.8.4+)
+# Filter for only inheritance
 find_connections(symbol_name="PythonChunker", relationship_types=["inherits"])
-# ✅ VERIFIED: Returns parent_classes[1]: LanguageChunker
-# Returns: Only parent_classes/child_classes populated, all other relationship fields empty
 
-# Filter for only import relationships (v0.8.4+)
-find_connections(chunk_id="database.py:10-50:class:Database", relationship_types=["imports"])
-# Returns: Only imports/imported_by populated, all other relationship fields empty
-
-# Multiple relationship types (v0.8.4+)
-find_connections(symbol_name="InheritanceExtractor", relationship_types=["instantiates", "uses_type"])
-# ✅ VERIFIED: Returns uses_types[9]: RelationshipEdge, ast.AST, str, dict, list...
-# ✅ VERIFIED: Returns instantiated_by[1]: MultiLanguageChunker
-# Returns: Only type usage and instantiation relationships populated
-
-# All calls relationships (default behavior)
-find_connections(chunk_id="chunk_file:...", relationship_types=["calls"])
-# Returns: Only direct_callers/indirect_callers populated
+# Deep tracing with custom depth
+find_connections(chunk_id="auth.py:10-50:function:login", max_depth=5)
 ```
 
-**2-Step Workflow for Relationship Queries**:
+**2-Step Workflow**:
 
 ```bash
 # Step 1: Find the symbol
@@ -317,38 +211,22 @@ chunk_id = result["results"][0]["chunk_id"]
 
 # Step 2: Get all relationships
 find_connections(chunk_id=chunk_id, exclude_dirs=["tests/"])
-# Returns: Direct callers, indirect callers, similar code, impact graph
-# ALL IN ONE CALL vs 4 Grep + 3 Read calls
 ```
 
-#### 4. `find_path(source=None, target=None, source_chunk_id=None, target_chunk_id=None, edge_types=None, max_hops=10)`
+### 3. find_path()
 
-**Purpose**: Find shortest path between two code entities in the relationship graph (v0.8.4+)
+**Purpose**: Find shortest path between two code entities in the relationship graph
 
-**⚠️ USE THIS FOR**: Tracing how code element A connects to code element B, understanding dependency chains, finding call paths
+**⚠️ USE THIS FOR**: Tracing how code element A connects to B, understanding dependency chains, finding call paths
 
-**Parameters**:
+**Key Parameters**:
 
-- `source` (optional): Source symbol name (may be ambiguous, use source_chunk_id when possible)
-- `target` (optional): Target symbol name (may be ambiguous, use target_chunk_id when possible)
-- `source_chunk_id` (optional): Source chunk_id from search results (preferred for precision)
-- `target_chunk_id` (optional): Target chunk_id from search results (preferred for precision)
-- `edge_types` (optional): Filter path to only use specific relationship types (e.g., `["calls", "inherits"]`). If not provided, all relationship types are considered.
+- `source` / `target` (optional): Symbol names (may be ambiguous)
+- `source_chunk_id` / `target_chunk_id` (optional): Chunk IDs (preferred for precision)
+- `edge_types` (optional): Filter path to specific relationship types (e.g., ["calls", "inherits"])
+- `max_hops` (default: 10, range: 1-20): Maximum path length
 
-  **Valid types (21 total)**: `calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`, `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`, `uses_context_manager`
-
-- `max_hops` (default: 10, range: 1-20): Maximum path length in edges
-
-**Returns**: Path as sequence of nodes with metadata, edge types traversed, path length (number of hops)
-
-**Algorithm**: Bidirectional Breadth-First Search (BFS) for optimal performance
-
-**Use When**:
-
-- Tracing how code element A connects to code element B
-- Understanding dependency chains between modules
-- Finding call paths from entry points to specific functions
-- Analyzing inheritance or import chains
+**Returns**: Path as sequence of nodes with metadata, edge types traversed, path length. Uses bidirectional BFS for optimal performance.
 
 **Examples**:
 
@@ -358,434 +236,116 @@ find_path(
     source_chunk_id="auth.py:10-50:function:login",
     target_chunk_id="database.py:100-150:function:query"
 )
-# Returns: Path showing how login() connects to query() through calls
 
-# Using symbol names
-find_path(source="UserModel", target="DatabaseConnection")
-# Returns: Path between classes (may be ambiguous if multiple symbols exist)
-
-# Filter by edge types (only follow calls and imports)
+# Filter by edge types (only calls and imports)
 find_path(
     source_chunk_id="main.py:1-50:function:main",
     target_chunk_id="utils.py:10-50:function:helper",
     edge_types=["calls", "imports"]
 )
-# Returns: Path using only call and import relationships
-
-# Trace inheritance chain
-find_path(
-    source="ChildClass",
-    target="BaseClass",
-    edge_types=["inherits"]
-)
-# Returns: Inheritance path from child to base class
-
-# Custom max hops for deeper tracing
-find_path(
-    source_chunk_id="api.py:10-50:function:handler",
-    target_chunk_id="core.py:100-150:function:process",
-    max_hops=15
-)
-# Returns: Path up to 15 hops deep
 ```
 
-**Return Format**:
+---
 
-```json
-{
-  "path": [
-    {
-      "chunk_id": "auth.py:10-50:function:login",
-      "name": "login",
-      "file": "auth.py",
-      "lines": "10-50",
-      "kind": "function"
-    },
-    {
-      "chunk_id": "session.py:20-60:function:create_session",
-      "name": "create_session",
-      "file": "session.py",
-      "lines": "20-60",
-      "kind": "function"
-    },
-    {
-      "chunk_id": "database.py:100-150:function:query",
-      "name": "query",
-      "file": "database.py",
-      "lines": "100-150",
-      "kind": "function"
-    }
-  ],
-  "edge_types": ["calls", "calls"],
-  "path_length": 2
-}
-```
+## 🟢 Other Tools (16 Tools)
 
-**Performance**: 10/10 tests passed (verified 2026-01-15)
+**For complete parameter lists, examples, and detailed usage**: See `docs/MCP_TOOLS_REFERENCE.md`
 
-### 🟡 Project Management Tools
+**Project Management**:
 
-#### 5. `list_projects()`
+- `list_projects()` — Show all indexed projects
+- `switch_project(project_path)` — Switch active project
+- `get_index_status()` — Check index health
+- `index_directory(directory_path, incremental=True)` — Index project (one-time setup)
+- `clear_index()` — Delete entire index
+- `delete_project(project_path, force=False)` — Safely delete project data
 
-**Purpose**: Show all indexed projects with metadata
+**Search Configuration**:
 
-**Returns**: JSON with list of projects, paths, and index information
+- `configure_search_mode(search_mode="hybrid", bm25_weight=0.4, dense_weight=0.6)` — Configure search mode
+- `get_search_config_status()` — View current config
+- `configure_query_routing(enable_multi_model, default_model, confidence_threshold)` — Multi-model routing
 
-#### 6. `switch_project(project_path)`
+**Advanced Tools**:
 
-**Purpose**: Switch to a different indexed project for searching
+- `find_similar_code(chunk_id, k=4)` — Find functionally similar code
+- `configure_reranking(enabled, model_name, top_k_candidates)` — Neural reranking settings
+- `configure_chunking(enable_community_detection, community_resolution, ...)` — Chunking settings
 
-**Parameters**:
+**Model Management**:
 
-- `project_path` (required): Path to the project directory
+- `list_embedding_models()` — Show available models (BGE-M3, Qwen3-0.6B, CodeRankEmbed, GTE-ModernBERT, EmbeddingGemma-300m)
+- `switch_embedding_model(model_name)` — Change model (instant <150ms if previously used)
 
-**Example**:
+**Memory Management**:
 
-```bash
-switch_project("D:\Users\alexk\FORKNI\STREAM_DIFFUSION\STREAM_DIFFUSION_CUDA_0.2.99_CUDA_13")
-```
+- `get_memory_status()` — Check RAM/VRAM usage
+- `cleanup_resources()` — Free memory/caches
 
-#### 7. `get_index_status()`
+---
 
-**Purpose**: Check index health and statistics
+## 🚀 Advanced Features
 
-**Returns**: JSON with index statistics, chunk count, model info, memory usage
+### Multi-Hop Search (Graph-Aware)
 
-#### 8. `clear_index()`
+**Purpose**: Discover interconnected code through graph traversal + semantic similarity. Always-on with optimal settings (2 hops, 0.3 expansion, hybrid mode).
 
-**Purpose**: Delete the entire search index for the current project
+**How It Works**: (1) Find chunks matching query with k×2 results, (2) Find graph neighbors via weighted BFS (prioritizes `calls`=1.0 over `imports`=0.3), (3) Find semantically similar chunks, (4) Rerank ALL discovered chunks. Results show `source: "multi_hop"` when discovered via graph.
 
-**Warning**: Deletes ALL dimension indices (768d, 1024d) and Merkle snapshots. Requires full re-indexing afterward.
+**Benefit**: 93.3% of queries benefit. Graph traversal finds functionally necessary dependencies that semantic search misses.
 
-#### 9. `delete_project(project_path, force=False)`
+### A1: Intent-Adaptive Edge Weights
 
-**Purpose**: Safely delete an indexed project and all associated data
+**Purpose**: Automatically adjust graph traversal weights based on query intent for more relevant expansion.
 
-**Parameters**:
+**Intent Classification**: System classifies queries into 7 categories and applies optimized edge weight profiles:
 
-- `project_path` (required): Absolute path to project directory to delete
-- `force` (default: False): Force delete even if this is the current project
+| Intent | Key Adjustments | Use Case |
+|--------|----------------|----------|
+| `local` | `calls`=1.0, `inherits`=1.0, `imports`=0.1 | "where is X defined" — suppress cross-file imports |
+| `global` | `imports`=0.7, `uses_type`=0.9, `instantiates`=0.8 | "how does X work" — boost cross-file connections |
+| `navigational` | `calls`=1.0, `inherits`=0.9, `imports`=0.5 | "find callers of X" — prioritize call chains |
+| `path_tracing` | Uniform 0.7 base, `calls`=1.0, `inherits`=0.9 | "trace flow from X to Y" — balanced traversal |
+| `similarity` | `uses_type`=0.9, `decorates`=0.7, `defines_class_attr`=0.7 | "find similar code" — structural similarity |
+| `contextual` | All weights raised to min 0.5 | Broad context gathering |
+| `hybrid` | Default weights | Mixed intent queries |
 
-**Handles deletion of**: Vector indices (FAISS), metadata databases (SQLite), BM25 indices, Merkle snapshots, call graph data
+**Status**: Always-on with automatic intent detection.
 
-**Important**: Use this tool instead of manual deletion when MCP server is running. Properly closes database connections before deletion to prevent file lock errors. If files are locked, they'll be queued for automatic retry on next server startup.
+### Centrality Reranking
 
-### 🟢 Search Configuration Tools
-
-#### 10. `configure_search_mode(search_mode="hybrid", bm25_weight=0.4, dense_weight=0.6, enable_parallel=True)`
-
-**Purpose**: Configure search mode and hybrid search parameters
-
-**Parameters**:
-
-- `search_mode`: "hybrid" (default), "semantic", "bm25", or "auto"
-- `bm25_weight`: Weight for BM25 sparse search (0.0 to 1.0)
-- `dense_weight`: Weight for dense vector search (0.0 to 1.0)
-- `enable_parallel`: Enable parallel BM25 + Dense search execution
-
-**Optimal Settings** (Empirically Validated):
-
-- **General use**: hybrid mode, 0.4 BM25 / 0.6 Dense (default)
-- **Implementation queries**: hybrid mode, 0.6 BM25 / 0.4 Dense (when config ranks over code)
-- **Code structure queries**: hybrid mode, 0.3 BM25 / 0.7 Dense
-- **Error/log analysis**: hybrid mode, 0.7 BM25 / 0.3 Dense
-
-**Example**:
-
-```bash
-configure_search_mode("hybrid", 0.4, 0.6, true)
-```
-
-#### 11. `get_search_config_status()`
-
-**Purpose**: View current search configuration and available settings
-
-**Returns**: JSON with current mode, weights, features enabled
-
-#### 12. `configure_query_routing(enable_multi_model=None, default_model=None, confidence_threshold=None)`
-
-**Purpose**: Configure multi-model query routing behavior
-
-**Parameters**:
-
-- `enable_multi_model` (optional): Enable/disable multi-model mode (persisted)
-- `default_model` (optional): Set default model ("qwen3", "bge_m3", "coderankembed") (persisted)
-- `confidence_threshold` (optional): Minimum confidence for routing (0.0-1.0, default: 0.05) ⚠️ **Runtime-only, not persisted**
-
-**Example**:
-
-```bash
-configure_query_routing(enable_multi_model=True, default_model="qwen3", confidence_threshold=0.05)
-```
-
-### 🔵 Advanced Tools
-
-#### 13. `find_similar_code(chunk_id, k=5)`
-
-**Purpose**: Find code chunks functionally similar to a reference chunk
-
-**Parameters**:
-
-- `chunk_id` (required): ID from search_code results (format: "file:lines:type:name")
-- `k` (default: 5): Number of similar chunks to return
-
-**Workflow**:
-
-1. First use `search_code()` to find a reference chunk
-2. Use the `chunk_id` from results with this tool
-3. Get ranked list of functionally similar code
-
-**Example**:
-
-```bash
-# First find a reference
-search_code("authentication handler")
-# Then find similar code using the chunk_id from results
-find_similar_code("src/auth.py:10-50:function:authenticate", k=5)
-```
-
-#### 14. `configure_reranking(enabled=None, model_name=None, top_k_candidates=None)`
-
-**Purpose**: Configure neural reranking for improved search quality
-
-**Parameters**:
-
-- `enabled` (optional): Enable/disable reranking (5-15% quality improvement)
-- `model_name` (optional): Reranker model (default: "BAAI/bge-reranker-v2-m3")
-- `top_k_candidates` (optional): Candidates to rerank (default: 50)
-
-**When to enable**:
-
-- Accuracy is critical
-- Semantic queries are common
-- VRAM available (laptop tier+)
-
-**When to disable**:
-
-- Speed is critical (<100ms searches)
-- VRAM limited (minimal tier)
-
-**Example**:
-
-```bash
-configure_reranking(enabled=True, top_k_candidates=100)
-```
-
-#### 15. `list_embedding_models()`
-
-**Purpose**: List all available embedding models with specifications
-
-**Returns**: JSON with model info including dimensions, context length, descriptions
-
-**Available Models** (5 total):
-
-- **BGE-M3** ⭐: 1024d, 1-1.5GB VRAM, production baseline
-- **Qwen3-0.6B**: 1024d, 2.3GB VRAM, best value & high efficiency
-- **Qwen3-4B** 🆕: 1024d (MRL), 8-10GB VRAM, best quality with Matryoshka MRL
-- **CodeRankEmbed**: 768d, 2GB VRAM, code-specific retrieval
-- **EmbeddingGemma-300m**: 768d, 4-8GB VRAM, default model (fast)
-
-#### 16. `switch_embedding_model(model_name)`
-
-**Purpose**: Switch to a different embedding model without deleting indices
-
-**Parameters**:
-
-- `model_name` (required): Model identifier (e.g., "BAAI/bge-m3", "google/embeddinggemma-300m")
-
-**Performance**: Instant switching (<150ms) if model was previously used (per-model indices)
-
-**Example**:
-
-```bash
-# Switch to BGE-M3 for better accuracy
-switch_embedding_model("BAAI/bge-m3")
-
-# Switch back to Gemma for speed
-switch_embedding_model("google/embeddinggemma-300m")
-```
-
-### 🟣 Memory Management Tools
-
-#### 17. `get_memory_status()`
-
-**Purpose**: Get current memory usage for index and system
-
-**Returns**: JSON with RAM/VRAM usage, GPU status, available memory
-
-#### 18. `cleanup_resources()`
-
-**Purpose**: Manually cleanup all resources to free memory
-
-**Clears** (v0.8.6+):
-
-- Embedding models from GPU/VRAM
-- FAISS indices from RAM
-- **Query embedding cache** (with TTL-expired entries)
-- BM25 indices
-- Call graph data structures
-
-**Use When**:
-
-- Switching between large projects
-- Memory running low
-- GPU memory needs to be freed
-
-#### 19. `configure_chunking(enable_chunk_merging=None, min_chunk_tokens=None, max_merged_tokens=None, token_estimation=None, enable_large_node_splitting=None, max_chunk_lines=None)`
-
-**Purpose**: Configure code chunking settings at runtime
-
-**Parameters**:
-
-- `enable_chunk_merging` (optional): Enable/disable greedy chunk merging (default: True)
-- `min_chunk_tokens` (optional): Minimum tokens before merge (10-500, default: 50)
-- `max_merged_tokens` (optional): Maximum tokens for merged chunks (100-5000, default: 1000)
-- `token_estimation` (optional): Token estimation method - "whitespace" (fast) or "tiktoken" (accurate, default: "whitespace")
-- `enable_large_node_splitting` (optional): Enable AST block splitting for large functions (default: False)
-- `max_chunk_lines` (optional): Maximum lines per chunk before splitting at AST boundaries (10-1000, default: 100)
-
-**Returns**: Updated configuration + system message
-
-**Note**: Re-index project to apply changes
-
-**Example**:
-
-```bash
-# Enable greedy merging with custom token limits
-configure_chunking(enable_chunk_merging=True, min_chunk_tokens=50, max_merged_tokens=1000)
-
-# Enable large node splitting for better granularity
-configure_chunking(enable_large_node_splitting=True, max_chunk_lines=100)
-
-# View current chunking settings
-get_search_config_status()
-```
-
-## Search Modes Explained
-
-### Hybrid Mode (Recommended Default)
-
-**Best For**: General use, balanced accuracy and speed
-
-**How It Works**: Combines BM25 sparse search (exact text matches) with dense vector search (semantic similarity) using Reciprocal Rank Fusion (RRF) reranking
-
-**Performance**: 68-105ms average
-**Weights**: 0.4 BM25 / 0.6 Dense (optimal, empirically validated)
-
-### Semantic Mode
-
-**Best For**: Conceptual queries, code similarity, natural language
-
-**How It Works**: Dense vector search only using embedding similarity
-
-**Performance**: 62-94ms average
-
-**Example Queries**:
-
-- "error handling patterns"
-- "authentication implementations"
-- "database connection setup"
-
-### BM25 Mode
-
-**Best For**: Exact text matches, specific error messages, code symbols
-
-**How It Works**: Text-based sparse search with Snowball stemming
-
-**Performance**: 3-8ms average (fastest)
-
-**Example Queries**:
-
-- "StreamDiffusionExt" (exact class name)
-- "def process_frame" (exact function signature)
-- "AttributeError: 'NoneType'" (exact error message)
-
-### Auto Mode
-
-**Best For**: Mixed query types, let system decide
-
-**How It Works**: Intelligently selects optimal mode based on query characteristics
-
-**Performance**: 52-57ms average
-
-## Advanced Features (Enabled by Default)
-
-### Multi-Hop Search
-
-**Purpose**: Discover interconnected code relationships through iterative semantic search
-
-**How It Works**:
-
-1. **Hop 1**: Find chunks matching your query (hybrid search with k×2 results)
-2. **Hop 2**: For each top result, find semantically similar chunks (k×0.3 per result)
-3. **Re-ranking**: Sort all discovered chunks by query relevance
-
-**Benefits** (Empirically Validated):
-
-- **93.3% of queries benefit** from multi-hop
-- **Average 3.2 unique chunks** discovered per query
-- **40-60% top result changes** for complex queries
-- **Example**: "configuration management" → finds primary class + env vars + validation + persistence
-
-**Performance**: +25-35ms overhead (negligible for 93% benefit rate)
-
-**Status**: **Enabled by default** with optimal settings (2 hops, 0.3 expansion)
+Blends PageRank centrality with semantic similarity: `blended_score = centrality × 0.3 + semantic_score × 0.7`. Functions frequently called/imported rank higher. Always-on when graph data available.
 
 ### BM25 Snowball Stemming
 
-**Purpose**: Normalize word forms to improve recall
+Normalizes word forms for better recall (e.g., "indexing"/"indexed"/"index" all match). Benefits 93.3% of queries with 0.47ms overhead. Enabled by default.
 
-**How It Works**: Matches different variations of the same word
+### A2/B1: Synthetic Summary Chunks
 
-- "indexing", "indexed", "indexes", "index" → all match each other
-- "searching", "search", "searches", "searched" → all match
-- "authentication", "authenticator", "authenticate" → all match
+**A2 (File-Level)**: Generates `chunk_type="module"` synthetic chunks per file with 2+ chunks. Contains classes, functions, imports. ID format: `{path}:0-0:module:{name}`. Score demotion: 0.82-0.90x multiplier.
 
-**Benefits** (Empirically Validated):
+**B1 (Community-Level)**: Uses Louvain detection to generate `chunk_type="community"` synthetic chunks per community with 2+ members. Contains thematic groupings across files. ID format: `__community__/{label}:0-0:community:{label}`. Score demotion: 0.9-0.95x multiplier.
 
-- **93.3% of queries benefit**
-- **3.33 average unique discoveries** per query
-- **0.47ms overhead** (negligible)
-- **11% smaller indices** due to vocabulary consolidation
+Both enabled by default, controlled via `configure_chunking(enable_file_summaries, enable_community_summaries)`. Excluded from call graph.
 
-**Status**: **Enabled by default**
+---
 
-## Troubleshooting
+## 🔧 Troubleshooting
 
-### Issue: Search returns no results
+| Issue | Solution |
+|-------|----------|
+| **No results** | Check project context: `list_projects()`, `switch_project()` if needed. Verify index: `get_index_status()`. Re-index if stale: `index_directory(project_path)` |
+| **Bad results** | Try different search mode (hybrid → semantic → BM25). Adjust weights: `configure_search_mode("hybrid", 0.7, 0.3)` for exact matching. Use filters: `file_pattern`, `chunk_type`. Increase k: `k=10` |
+| **Wrong result at rank-1** | Scan all k results — answer is likely at rank 2-4. Module/summary chunks may outrank specific implementations. Use `chunk_type` filter to exclude module chunks if needed. |
+| **Too slow** | Use BM25 mode for exact symbols (3-8ms). Check GPU: `get_memory_status()`. Cleanup: `cleanup_resources()`. Reduce k: `k=3` |
+| **Memory issues** | Monitor: `get_memory_status()`. Cleanup: `cleanup_resources()`. Switch to smaller model: `switch_embedding_model("google/embeddinggemma-300m")` |
 
-**Solution**:
+---
 
-1. Check project context: `list_projects()` and `switch_project()` if needed
-2. Verify index exists: `get_index_status()`
-3. Re-index if stale: `index_directory(project_path)`
+## 📖 Complete Documentation
 
-### Issue: Results not relevant
+**For full API reference, all parameters, detailed examples, and advanced configuration**:
 
-**Solution**:
-
-1. Try different search mode (hybrid → semantic → BM25)
-2. Adjust weights: `configure_search_mode("hybrid", 0.7, 0.3)` for more exact matching
-3. Use filters: `file_pattern` or `chunk_type`
-4. Increase result count: `k=10` or `k=15`
-
-### Issue: Search too slow
-
-**Solution**:
-
-1. Use BM25 mode for exact symbol searches (3-8ms)
-2. Check GPU memory: `get_memory_status()`
-3. Cleanup resources: `cleanup_resources()`
-4. Reduce result count: `k=3`
-
-### Issue: Memory issues
-
-**Solution**:
-
-1. Monitor: `get_memory_status()`
-2. Cleanup: `cleanup_resources()`
-3. Switch to smaller model: `switch_embedding_model("google/embeddinggemma-300m")`
-
-### Self-Healing Index Sync (v0.5.17+)
-
-**Automatic Maintenance**: The system automatically detects and repairs BM25 index desynchronization (>10% threshold) during incremental indexing. Typical sync time: ~5 seconds for 4000+ documents. No manual intervention required.
+- `docs/MCP_TOOLS_REFERENCE.md` — Complete 19-tool API reference
+- `docs/ADVANCED_FEATURES_GUIDE.md` — Multi-hop, routing, models, graph search
+- `docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md` — Search modes, weights, optimization

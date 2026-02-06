@@ -386,8 +386,12 @@ class TestToonFormat:
         for i, field in enumerate(fields):
             assert rows[0][i] == data["items"][0][field]
 
-    def test_format_note_added_to_toon_output(self):
-        """TOON format should include interpretation hint."""
+    def test_toon_format_no_format_note(self):
+        """TOON format should not include format note (token optimization).
+
+        Format note removed to save 15-30 tokens per response.
+        TOON format is self-explanatory and documented in MCP_TOOLS_REFERENCE.md.
+        """
         data = {
             "items": [
                 {"id": "a", "score": 1.0},
@@ -397,15 +401,99 @@ class TestToonFormat:
 
         result = _to_toon_format(data)
 
-        # Should have format note
-        assert "_format_note" in result
-        assert (
-            result["_format_note"]
-            == "TOON format: header[count]{fields}: [[row1], [row2], ...]"
-        )
+        # Should NOT have format note (removed for token savings)
+        assert "_format_note" not in result
 
-        # Format note should not interfere with data
+        # Data should still be formatted correctly
         assert "items[2]{id,score}" in result
+
+    def test_sparse_column_extraction(self):
+        """Sparse columns (fill rate <25%) should be moved to separate structure."""
+        # 1 out of 5 results has graph data (20% fill rate → sparse)
+        data = {
+            "results": [
+                {"id": "a", "score": 1.0, "graph": {"calls": ["x"], "called_by": []}},
+                {"id": "b", "score": 0.9},
+                {"id": "c", "score": 0.8},
+                {"id": "d", "score": 0.7},
+                {"id": "e", "score": 0.6},
+            ]
+        }
+
+        result = _to_toon_format(data)
+
+        # Main table should NOT include graph column (only dense columns)
+        assert "results[5]{id,score}" in result
+        rows = result["results[5]{id,score}"]
+        assert len(rows) == 5
+        assert len(rows[0]) == 2  # Only id and score (no graph)
+
+        # Sparse data should be in separate structure
+        assert "results_sparse" in result
+        assert "graph" in result["results_sparse"]
+        # Only index 0 has graph data
+        assert result["results_sparse"]["graph"] == [
+            [0, {"calls": ["x"], "called_by": []}]
+        ]
+
+    def test_dense_column_retention(self):
+        """Columns with fill rate >=25% should stay in main table."""
+        # 2 out of 5 results have complexity (40% fill rate → dense)
+        data = {
+            "results": [
+                {"id": "a", "complexity": 10},
+                {"id": "b", "complexity": 20},
+                {"id": "c"},
+                {"id": "d"},
+                {"id": "e"},
+            ]
+        }
+
+        result = _to_toon_format(data)
+
+        # Main table SHOULD include complexity column (dense)
+        assert "results[5]{complexity,id}" in result
+        rows = result["results[5]{complexity,id}"]
+        assert len(rows) == 5
+        # First two rows have complexity values
+        assert rows[0][0] == 10
+        assert rows[1][0] == 20
+        # Last three rows have None for complexity
+        assert rows[2][0] is None
+        assert rows[3][0] is None
+        assert rows[4][0] is None
+
+        # Should NOT have sparse structure (all columns are dense)
+        assert "results_sparse" not in result
+
+    def test_multiple_sparse_columns(self):
+        """Multiple sparse columns should all be in sparse structure."""
+        data = {
+            "results": [
+                {
+                    "id": "a",
+                    "score": 1.0,
+                    "graph": {"calls": []},
+                    "metadata": {"extra": "data"},
+                },
+                {"id": "b", "score": 0.9},
+                {"id": "c", "score": 0.8},
+                {"id": "d", "score": 0.7},
+                {"id": "e", "score": 0.6},
+            ]
+        }
+
+        result = _to_toon_format(data)
+
+        # Main table: only dense columns
+        assert "results[5]{id,score}" in result
+
+        # Sparse structure: both graph and metadata
+        assert "results_sparse" in result
+        assert "graph" in result["results_sparse"]
+        assert "metadata" in result["results_sparse"]
+        assert len(result["results_sparse"]["graph"]) == 1
+        assert len(result["results_sparse"]["metadata"]) == 1
 
 
 class TestDataPreservation:
@@ -602,3 +690,137 @@ class TestEdgeCases:
         assert compact["float"] == 0.0
         assert compact["negative"] == -1
         assert compact["large"] == 1e10
+
+
+class TestSubgraphFormatting:
+    """Tests for SSCG subgraph formatting across all 3 output formats."""
+
+    def test_subgraph_ultra_format_toon_conversion(self):
+        """Ultra format should TOON-format subgraph_nodes and subgraph_edges arrays."""
+        data = {
+            "query": "graph storage",
+            "results": [
+                {"chunk_id": "a.py:1-10:function:foo", "score": 1.0, "kind": "function"}
+            ],
+            "subgraph_nodes": [
+                {
+                    "id": "a.py:1-10:function:foo",
+                    "name": "foo",
+                    "kind": "function",
+                    "file": "a.py",
+                },
+                {
+                    "id": "b.py:5-15:function:bar",
+                    "name": "bar",
+                    "kind": "function",
+                    "file": "b.py",
+                },
+            ],
+            "subgraph_edges": [
+                {
+                    "src": "a.py:1-10:function:foo",
+                    "tgt": "b.py:5-15:function:bar",
+                    "rel": "calls",
+                    "line": 5,
+                }
+            ],
+            "subgraph_order": ["b.py:5-15:function:bar", "a.py:1-10:function:foo"],
+        }
+
+        result = format_response(data, "ultra")
+
+        # Verify results array is TOON-formatted
+        assert "results[1]{chunk_id,kind,score}" in result
+
+        # Verify subgraph_nodes array is TOON-formatted (file is stripped since id contains path)
+        assert "subgraph_nodes[2]{id,kind,name}" in result
+        nodes_rows = result["subgraph_nodes[2]{id,kind,name}"]
+        assert len(nodes_rows) == 2
+        assert nodes_rows[0] == ["a.py:1-10:function:foo", "function", "foo"]
+
+        # Verify subgraph_edges array is TOON-formatted
+        assert "subgraph_edges[1]{line,rel,src,tgt}" in result
+        edges_rows = result["subgraph_edges[1]{line,rel,src,tgt}"]
+        assert len(edges_rows) == 1
+        assert edges_rows[0] == [
+            5,
+            "calls",
+            "a.py:1-10:function:foo",
+            "b.py:5-15:function:bar",
+        ]
+
+        # Verify subgraph_order list is preserved (list of primitives)
+        assert result["subgraph_order"] == [
+            "b.py:5-15:function:bar",
+            "a.py:1-10:function:foo",
+        ]
+
+    def test_subgraph_compact_format(self):
+        """Compact format should omit empty fields in subgraph arrays."""
+        data = {
+            "query": "test",
+            "results": [],
+            "subgraph_nodes": [
+                {
+                    "id": "a.py:1-10:function:foo",
+                    "name": "foo",
+                    "kind": "function",
+                    "file": "a.py",
+                    "community": None,  # Should be omitted
+                    "centrality": 0.0,  # Should be kept (zero is valid)
+                },
+            ],
+            "subgraph_edges": [
+                {
+                    "src": "a",
+                    "tgt": "b",
+                    "rel": "calls",
+                    "line": 0,
+                    "boundary": False,
+                }  # line=0, boundary=False should be omitted
+            ],
+        }
+
+        result = format_response(data, "compact")
+
+        # Verify empty results array is omitted
+        assert "results" not in result
+
+        # Verify subgraph_nodes has empty fields omitted
+        node = result["subgraph_nodes"][0]
+        assert "id" in node
+        assert "name" in node
+        assert "kind" in node
+        assert "file" not in node  # Stripped because id contains path
+        assert "centrality" in node  # Zero is valid
+        assert "community" not in node  # None omitted
+
+        # Verify subgraph_edges has empty/default fields omitted
+        edge = result["subgraph_edges"][0]
+        assert "src" in edge
+        assert "tgt" in edge
+        assert "rel" in edge
+        # line=0 and boundary=False are meaningful defaults, but check if omitted by _edge_dict logic
+        # Looking at SubgraphResult._edge_dict: line=0 omitted, boundary=False omitted
+
+    def test_subgraph_verbose_format(self):
+        """Verbose format should preserve all subgraph fields as-is."""
+        data = {
+            "query": "test",
+            "results": [],
+            "subgraph_nodes": [
+                {
+                    "id": "a.py:1-10:function:foo",
+                    "name": "foo",
+                    "kind": "function",
+                    "file": "a.py",
+                }
+            ],
+            "subgraph_edges": [{"src": "a", "tgt": "b", "rel": "calls"}],
+            "subgraph_order": ["a"],
+        }
+
+        result = format_response(data, "verbose")
+
+        # Verbose should return exact same data
+        assert result == data

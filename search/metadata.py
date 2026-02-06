@@ -109,7 +109,7 @@ class MetadataStore:
         entry = self.get(chunk_id)
         return entry["metadata"] if entry else None
 
-    def set(self, chunk_id: str, index_id: int, metadata: dict[str, Any]):
+    def set(self, chunk_id: str, index_id: int, metadata: dict[str, Any]) -> None:
         """Set metadata for a chunk.
 
         Args:
@@ -355,12 +355,12 @@ class MetadataStore:
 
     # Context Manager Support
 
-    def __enter__(self):
+    def __enter__(self) -> "MetadataStore":
         """Context manager entry."""
         self._ensure_open()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Context manager exit - commit and close."""
         if exc_type is None:
             self.commit()

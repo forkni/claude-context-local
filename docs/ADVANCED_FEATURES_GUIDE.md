@@ -35,11 +35,22 @@ Complete guide to advanced features in claude-context-local MCP server.
 
 **Empirically Validated**: 93.3% queries benefit (14/15), avg 3.2 unique chunks, 40-60% top result changes
 
-### How It Works
+### How It Works (3 expansion modes)
+
+**Mode Selection** (v0.9.0+): Controlled via `multi_hop_mode` parameter
+
+| Mode | Expansion Method | Use Case |
+|------|-----------------|----------|
+| `"hybrid"` (default) | Graph neighbors first, then semantic similarity | Best quality — structurally relevant + semantically similar |
+| `"graph"` | Code graph neighbors only (`calls`, `inherits`, `imports`) via **weighted BFS** | When structural dependencies matter most |
+| `"semantic"` | FAISS similarity only (legacy) | Pure semantic matching |
+
+**Hybrid Mode Flow** (recommended):
 
 1. **Hop 1**: Find chunks matching query (hybrid search, k×2 results)
-2. **Hop 2**: Find similar code to initial matches (k×0.3 per result)
-3. **Re-rank**: Sort by query relevance (cosine similarity)
+2. **Hop 2 (graph)**: For each top result, find graph neighbors via **edge-type-weighted BFS** (prioritizes `calls`=1.0 over `imports`=0.3)
+3. **Hop 2 (semantic)**: Find semantically similar chunks (skips already-seen from graph)
+4. **Re-ranking**: Sort ALL discovered chunks by query relevance through the reranker
 
 **Example**: "configuration management system" → 8 related chunks (env vars, validation, persistence, etc.)
 
@@ -163,7 +174,7 @@ Keywords: "merkle", "rrf", "reranking", "tree structure", "hybrid search", "rank
 **Improvements**:
 
 - **Lowered confidence threshold**: 0.10 → 0.05 (more sensitive routing)
-- **Added 24 single-word keyword variants** across all 3 models
+- **Added 24 single-word keyword variants** across all models in the pool
 - **Natural queries** like "error handling" now trigger routing effectively
 
 **Before vs After**:
@@ -218,15 +229,16 @@ Keywords: "merkle", "rrf", "reranking", "tree structure", "hybrid search", "rank
 
 - **VRAM at startup**: 0 MB (models load on first search)
 - **First search delay**: 5-10s one-time model loading
-- **After first search**: 5.3 GB VRAM (all 3 models loaded)
+- **After first search**: 6.3 GB VRAM (all models in the pool loaded)
 
-**Loaded State** (all 3 models in memory):
+**Loaded State** (all models in the pool in memory):
 
-- **Total VRAM**: 5.3 GB (on RTX 4090 with 25.8 GB capacity)
-- **Qwen3-0.6B**: ~2.4 GB
-- **BGE-M3**: ~2.3 GB (additional)
-- **CodeRankEmbed**: ~0.6 GB (additional)
-- **Headroom**: 20.5 GB (79.5% free)
+- **Total VRAM** (Workstation tier, 18GB+): Up to ~15 GB (on RTX 4090 with 25.8 GB capacity)
+- **Qwen3-0.6B**: ~7.5 GB (workstation tier)
+- **Qwen3-0.6B**: ~2.4 GB (desktop tier, 10-18GB)
+- **BGE-Code**: ~4 GB (additional)
+- **BGE-M3**: ~1.1 GB (additional)
+- **Headroom**: 10+ GB (40%+ free on workstation)
 
 **Minimum Requirements**:
 
@@ -254,7 +266,7 @@ Keywords: "merkle", "rrf", "reranking", "tree structure", "hybrid search", "rank
 - **Startup**: 0 MB VRAM, 3-5s server start (lazy loading)
 - **First search**: 8-15s total (5-10s model loading + 3-5s search)
 - **Subsequent searches**: 3-5s (models stay loaded)
-- **Model load time** (when needed): 5-10 seconds for all 3 models
+- **Model load time** (when needed): 5-10 seconds for all models in the pool
 
 **Expected Quality Improvements** (vs single BGE-M3):
 
@@ -344,10 +356,12 @@ set CLAUDE_MULTI_MODEL_ENABLED=false
 
 ```python
 MODEL_POOL_CONFIG = {
-    "qwen3": "Qwen/Qwen3-Embedding-0.6B",
-    "bge_m3": "BAAI/bge-m3",
-    "coderankembed": "nomic-ai/CodeRankEmbed"
+    "qwen3": "Qwen/Qwen3-Embedding-0.6B",  # Full pool
+    "bge_code": "BAAI/bge-code-v1",                # Full pool - code-specific
+    "gte_modernbert": "Alibaba-NLP/gte-modernbert-base",  # Lightweight pool
+    "bge_m3": "BAAI/bge-m3",                       # Lightweight pool
 }
+# Note: Workstation tier (18GB+) uses 4B, Desktop tier (10-18GB) uses 0.6B
 ```
 
 **Key Features**:
@@ -369,11 +383,10 @@ MODEL_POOL_CONFIG = {
 
 ### Overview
 
-When multi-model query routing is enabled (`CLAUDE_MULTI_MODEL_ENABLED=true`), project indexing automatically updates indices for **all 3 models**:
+When multi-model query routing is enabled (`CLAUDE_MULTI_MODEL_ENABLED=true`), project indexing automatically updates indices for **all models in the pool**:
 
-- **Qwen3-0.6B** (1024d) - Implementation & algorithms
-- **BGE-M3** (1024d) - Workflow & configuration
-- **CodeRankEmbed** (768d) - Specialized algorithms
+- **Qwen3-0.6B** (1024d) - Logic specialist: action-oriented queries and algorithms
+- **BGE-Code-v1** (1536d) - Semantic specialist: workflow and architectural reasoning
 
 ### How It Works
 
@@ -384,15 +397,15 @@ When multi-model query routing is enabled (`CLAUDE_MULTI_MODEL_ENABLED=true`), p
 3. Maintains per-model index isolation (fresh HybridSearcher instances per model)
 4. Restores original model after completion
 
-**Implementation**: `mcp_server/tool_handlers.py:728-759` - Creates fresh indexer instances bypassing global caches to ensure correct storage paths.
+**Implementation**: `mcp_server/tool_handlers.py` - Creates fresh indexer instances bypassing global caches to ensure correct storage paths.
 
 **Index Storage**:
 
 ```
 ~/.claude_code_search/projects/
-├── myproject_abc123_bge-m3_1024d/
+├── myproject_abc123_bge-code_1536d/
 ├── myproject_abc123_qwen3-0.6b_1024d/
-└── myproject_abc123_coderankembed_768d/
+└── ...
 ```
 
 ### Performance
@@ -407,7 +420,7 @@ When multi-model query routing is enabled (`CLAUDE_MULTI_MODEL_ENABLED=true`), p
 
 ```bash
 /index_directory "C:\Projects\MyProject"
-# Automatically indexes with all 3 models
+# Automatically indexes with all models in the pool
 ```
 
 **Explicit Control** (override behavior):
@@ -673,7 +686,7 @@ set CLAUDE_DEFAULT_PROJECT=C:\Projects\MyProject
 |-------|------|------------|------|----------|
 | **BGE-M3** ⭐ | General | 1024 | 1-1.5GB | Production baseline, hybrid search support |
 | **Qwen3-0.6B** | General | 1024 | 2.3GB | Best value, high efficiency |
-| **Qwen3-4B** | General | 1024* | 8-10GB | Best quality with MRL (4B quality @ 0.6B storage) |
+| **Qwen3-0.6B** | General | 1024* | 8-10GB | Best quality with MRL (4B quality @ 0.6B storage) |
 | **CodeRankEmbed** | Code | 768 | 2GB | Code-specific retrieval (CSN: 77.9 MRR) |
 | **EmbeddingGemma-300m** | General | 768 | 4-8GB | Default model, fast and efficient |
 
@@ -793,13 +806,13 @@ python tools/benchmark_instructions.py --model Qwen/Qwen3-Embedding-0.6B
 
 **What it does**: Reduces embedding dimension output while maintaining model quality
 
-**Status**: Enabled by default for Qwen3-4B (truncate_dim=1024)
+**Status**: Enabled by default for Qwen3-0.6B (truncate_dim=1024)
 
 **Configuration**:
 
 ```python
 # In search/config.py MODEL_REGISTRY:
-"Qwen/Qwen3-Embedding-4B": {
+"Qwen/Qwen3-Embedding-0.6B": {
     "dimension": 2560,  # Full model dimension
     "truncate_dim": 1024,  # Output dimension (50% reduction)
     "mrl_dimensions": [2560, 1024, 512, 256, 128, 64, 32],  # Supported dims
@@ -816,7 +829,7 @@ python tools/benchmark_instructions.py --model Qwen/Qwen3-Embedding-0.6B
 
 **Benefits**:
 
-- **2x storage reduction** with Qwen3-4B using truncate_dim=1024
+- **2x storage reduction** with Qwen3-0.6B using truncate_dim=1024
 - Match 0.6B storage footprint while keeping 4B model quality (36 layers vs 28)
 - Minimal quality drop (~1.47% per sentence-transformers benchmarks)
 
@@ -825,7 +838,7 @@ python tools/benchmark_instructions.py --model Qwen/Qwen3-Embedding-0.6B
 ```python
 # Sentence-transformers truncates embeddings during model instantiation
 model = SentenceTransformer(
-    "Qwen/Qwen3-Embedding-4B",
+    "Qwen/Qwen3-Embedding-0.6B",
     truncate_dim=1024  # Output 1024d instead of 2560d
 )
 
@@ -838,7 +851,7 @@ embedding = model.encode("query")
 
 - **Requires re-indexing** if changing truncate_dim
 - Different dimensions create separate index directories
-- Example: `project_abc123_qwen3-4b_1024d/` vs `project_abc123_qwen3-4b_2560d/`
+- Example: `project_abc123_qwen3-0.6b_1024d/` vs `project_abc123_qwen3-0.6b_2560d/`
 
 ### Customization
 
@@ -846,7 +859,7 @@ embedding = model.encode("query")
 
 ```python
 # Edit search/config.py
-"Qwen/Qwen3-Embedding-4B": {
+"Qwen/Qwen3-Embedding-0.6B": {
     "truncate_dim": None,  # Use full 2560 dimensions
 }
 ```
@@ -866,7 +879,7 @@ embedding = model.encode("query")
 from search.config import MODEL_REGISTRY
 
 # Temporarily change for testing
-MODEL_REGISTRY["Qwen/Qwen3-Embedding-4B"]["truncate_dim"] = 512
+MODEL_REGISTRY["Qwen/Qwen3-Embedding-0.6B"]["truncate_dim"] = 512
 MODEL_REGISTRY["Qwen/Qwen3-Embedding-0.6B"]["instruction_mode"] = "prompt_name"
 ```
 
@@ -1034,8 +1047,8 @@ The VRAM Tier Management system automatically detects available GPU memory and r
 |------|------------|-------------------|------------------|
 | **Minimal** | <6GB | EmbeddingGemma-300m OR CodeRankEmbed | Single-model only, no multi-model routing, no neural reranking |
 | **Laptop** | 6-10GB | BGE-M3 OR Qwen3-0.6B | Multi-model routing ENABLED, Neural reranking ENABLED |
-| **Desktop** | 10-18GB | Qwen3-4B + BGE-M3 + CodeRankEmbed | Full 3-model pool, Neural reranking ENABLED |
-| **Workstation** | 18GB+ | Full 3-model pool + neural reranking | All features ENABLED, maximum quality |
+| **Desktop** | 10-18GB | Qwen3-0.6B + BGE-Code | Full 2-model pool, Neural reranking ENABLED |
+| **Workstation** | 18GB+ | Qwen3-0.6B (full quality) | VRAM-optimized, all features ENABLED |
 
 ### Automatic Configuration
 
@@ -1080,7 +1093,7 @@ The system automatically:
 |-------|------------|-------|
 | **Startup** | 0 MB | Lazy loading enabled, models not loaded |
 | **First search** | 8-15s latency | 5-10s one-time model loading + 3-5s search |
-| **After first search** | ~5.3 GB | All 3 models loaded for multi-model routing |
+| **After first search** | ~6.3 GB | All 3 models loaded for multi-model routing |
 | **Subsequent searches** | 3-5s latency | Models cached in memory (fast) |
 | **After cleanup** | 0 MB | `/cleanup_resources` frees all VRAM |
 
@@ -1234,6 +1247,31 @@ From `tools/benchmark_models.py`:
 | Mixed queries | 0.83 MRR | 0.79 MRR | +5% |
 
 **Implementation**: `search/neural_reranker.py`, `search/reranking_engine.py`
+
+### Jina v3 Reranker (Alternative)
+
+**Model**: `jinaai/jina-reranker-v3`
+
+**Version**: v0.9.1+
+
+**Advantages over BGE reranker**:
+- **131K context window** (vs 8K for BGE) - handles larger documents
+- **Listwise reranking** - scores all documents together for better relative ranking
+- **Better on long code** - 16x larger context allows full function bodies
+
+**Configuration**:
+```python
+# Via environment variable
+set CLAUDE_RERANKER_MODEL=jinaai/jina-reranker-v3
+
+# Via code
+from search.neural_reranker import create_reranker
+reranker = create_reranker("jinaai/jina-reranker-v3")
+```
+
+**VRAM Usage**: ~1.2GB (similar to BGE)
+
+**Performance**: 100-250ms per rerank (slightly slower than BGE due to larger context)
 
 ---
 
@@ -1487,6 +1525,7 @@ set CLAUDE_QUERY_CACHE_SIZE=0
 ```
 
 **TTL Configuration** (v0.8.6+):
+
 - **Default**: 300s (5 minutes) - balances freshness vs performance
 - **Increase** (600-900s): Stable production, infrequent model changes
 - **Decrease** (60-120s): Development, frequent model switching
@@ -1559,7 +1598,7 @@ print(f"Hit rate: {embedder._cache_hits / (embedder._cache_hits + embedder._cach
 
 **Cache type**: LRU (Least Recently Used) dictionary with TTL (v0.8.6+)
 
-**Thread safety**: Not thread-safe (single-threaded MCP server)
+**Thread safety**: Thread-safe via `threading.Lock` (v0.9.1+)
 
 **Persistence**: In-memory only (no disk storage)
 
@@ -1671,7 +1710,7 @@ export CLAUDE_LOG_LEVEL=INFO
 
 ### Performance Baselines
 
-**Typical hybrid search timing** (k=5, with cache hit):
+**Typical hybrid search timing** (k=4, with cache hit):
 
 - **embed_query**: 0ms (cached)
 - **bm25_search**: 3-8ms
@@ -1764,7 +1803,7 @@ Symbol ID Lookups enable direct, unambiguous code retrieval without semantic sea
 **Traditional Semantic Search** (every query):
 
 1. Embed query text → vector
-2. FAISS similarity search (k=5)
+2. FAISS similarity search (k=4)
 3. BM25 keyword matching
 4. Reciprocal Rank Fusion reranking
 5. Multi-hop expansion
@@ -1969,7 +2008,7 @@ AI Guidance Messages provide intelligent, context-aware suggestions automaticall
     }
   ],
   "query": "authentication functions",
-  "k": 5,
+  "k": 4,
   "search_mode": "hybrid",
   "system_message": "💡 TIP: Use chunk_id 'auth.py:15-42:function:login' with find_connections() to analyze dependencies, or with search_code(chunk_id=...) for O(1) direct lookup."
 }
@@ -3076,10 +3115,13 @@ Ego-graph expansion automatically retrieves graph neighbors (callers, callees, r
 ### How It Works
 
 1. **Initial Search**: Multi-hop search finds top-k results (anchors)
-2. **Ego-Graph Expansion**: For each anchor, retrieve k-hop neighbors from call graph
+2. **Ego-Graph Expansion**: For each anchor, retrieve k-hop neighbors from call graph via **edge-type-weighted BFS** (v0.9.0+)
+   - **Weighted BFS**: Prioritizes `calls` edges (weight=1.0) over `imports` edges (weight=0.3)
+   - **Automatic Import Filtering**: Stdlib and third-party imports filtered for cleaner neighbors
 3. **Symbol Filtering**: Remove symbol-only nodes (e.g., "str", "int"), keep only valid chunk IDs
 4. **Deduplication**: Combine anchors + neighbors, remove duplicates
-5. **Result**: Anchors (with scores) + neighbors (score=0.0, source="ego_graph")
+5. **Post-Expansion Reranking** (v0.9.0+): Second neural reranking pass unifies scoring scale across primary results + ego-graph neighbors
+6. **Result**: Anchors (with scores) + neighbors (reranked scores, source="ego_graph")
 
 **Example**: "authentication handler" → 5 anchors + 18 neighbors = 23 total chunks (login logic + callers + session management + validators)
 
@@ -3497,6 +3539,361 @@ search_code(
 - **Sibling methods**: Include other methods from same class
 - **Auto-enable**: Automatically enable when `chunk_type="method"`
 - **Multi-language**: Enhanced support for Java, C++, C# nested classes
+
+---
+
+## SSCG Integration (v0.8.7+)
+
+### Overview
+
+The Structural-Semantic Code Graph (SSCG) is a comprehensive 5-phase integration based on 4 research papers: RepoGraph (ICLR 2025), SOG (USENIX Security '24), GRACE, and Microsoft GraphRAG. It combines structural code relationships with semantic search for superior code understanding.
+
+### Five Phases
+
+**Phase 1: Subgraph Extraction**
+
+- Induced subgraphs with typed edges (calls, inherits, imports, etc.)
+- Topological ordering for dependency-aware traversal
+- JSON Graph Format serialization
+- Boundary edge tracking
+
+**Phase 2: Full Relationship Enrichment**
+
+- All 21 relationship types in graph field output
+- Dual lookup strategy (by-file + by-qualified-name)
+- Per-type capping to prevent output explosion
+
+**Phase 3: Centrality-Informed Result Ranking**
+
+- PageRank blending with semantic scores
+- `CentralityRanker` class with annotate/rerank modes
+- See [Centrality Reranking](#centrality-reranking-v090) section below
+
+**Phase 4: Community Context Surfacing**
+
+- Community ID annotation on subgraph nodes
+- Heuristic label generation from dominant symbols
+
+**Phase 5: Ego-Graph Structure Preservation**
+
+- Structured ego-graph retrieval with edge preservation
+- `EgoGraphData` dataclass for formatted output
+- Edge-type-weighted BFS traversal
+
+### Research Papers Implemented
+
+1. **RepoGraph** (ICLR 2025): k-hop ego-graph expansion, graph-aware retrieval
+2. **SOG** (USENIX Security '24): Edge-type-weighted BFS, relation type contributions
+3. **GRACE**: Multi-level graph representations
+4. **Microsoft GraphRAG**: Community detection, hierarchical summarization
+
+### Impact
+
+- **21 relationship types** tracked in code graph
+- **~90% call graph accuracy** for Python projects
+- **4,599 relationship edges** in production indices
+- **Perfect Recall@4 (1.00)** on SSCG benchmark
+
+---
+
+## Centrality Reranking (v0.9.0+)
+
+### Overview
+
+PageRank-based centrality scoring is blended with semantic search scores to boost structurally important code in search results. Functions that are frequently called, imported, or inherited rank higher.
+
+### How It Works
+
+**Blended Scoring Formula**:
+
+```
+blended_score = centrality × alpha + semantic_score × (1 - alpha)
+```
+
+Where `alpha = 0.3` (30% centrality, 70% semantic).
+
+**PageRank Calculation**: Standard PageRank algorithm on the code graph with all 21 relationship types as edges.
+
+### Result Fields
+
+When centrality reranking is active, search results include:
+
+- `blended_score`: Final ranking score after centrality blending
+- `centrality`: Raw PageRank score for the code chunk
+
+### Effect
+
+A utility function called by 50 other functions gets a centrality boost over an isolated helper, improving ranking for queries like "core data processing functions".
+
+### Configuration
+
+Centrality reranking is **always-on** when graph data is available. No configuration needed.
+
+### Status
+
+**Production-ready**: Validated in SSCG benchmark with perfect Recall@4 (1.00).
+
+---
+
+## A1: Intent-Adaptive Edge Weight Profiles (v0.9.0+)
+
+### Overview
+
+Automatically adjusts graph traversal edge weights based on query intent classification (7 intent categories) for more relevant graph expansion. Based on SOG (USENIX Security '24) ablation study showing different relation types contribute differently to code understanding.
+
+### Query Intent Classification
+
+The system classifies queries into 7 categories:
+
+| Intent | Keyword Examples | Use Case |
+|--------|------------------|----------|
+| `local` | "where is", "which file", "find definition" | Focus on direct relationships, suppress cross-file imports |
+| `global` | "how does", "what is", "explain" | Boost cross-file connections for holistic understanding |
+| `navigational` | "find callers", "who uses" | Prioritize call chains |
+| `path_tracing` | "trace", "flow from X to Y" | Balanced traversal |
+| `similarity` | "find similar", "alternatives" | Prioritize structural similarity |
+| `contextual` | Broad context gathering | All weights raised to min 0.5 |
+| `hybrid` | Mixed intent queries | Default weights (fallback) |
+
+### Edge Weight Tables
+
+**LOCAL Intent** (suppress imports):
+
+- `calls`: 1.0
+- `inherits`: 1.0
+- `imports`: **0.1** (suppressed)
+
+**GLOBAL Intent** (boost cross-file):
+
+- `imports`: **0.7** (boosted)
+- `uses_type`: 0.9
+- `instantiates`: 0.8
+
+**NAVIGATIONAL Intent** (prioritize calls):
+
+- `calls`: 1.0
+- `inherits`: 0.9
+- `imports`: 0.5
+
+### Effect
+
+- **LOCAL queries**: "where is X defined" → suppress noisy stdlib/third-party imports (0.1x weight)
+- **GLOBAL queries**: "how does X work" → boost cross-file connections (0.7x) for comprehensive understanding
+
+### Status
+
+**Always-on** with automatic intent detection. No configuration needed.
+
+---
+
+## A2: File-Level Module Summary Chunks (v0.9.0+)
+
+### Overview
+
+Synthetic `chunk_type="module"` chunks generated per file with 2+ real chunks. These summary chunks capture each file's **role** in the system and are embedded/indexed alongside real code chunks. Improves GLOBAL query recall by providing file-level context.
+
+### How It Works
+
+**Generation**: During indexing (full or incremental), for each file with 2+ chunks:
+
+1. Aggregate metadata: classes, functions, key methods, imports
+2. Extract docstring excerpts
+3. Generate summary text with file path, module name, symbols
+4. Create synthetic CodeChunk with `chunk_type="module"`, `chunk_id` format: `{path}:0-0:module:{name}`
+
+**Content Example**:
+
+```
+# search/intent_classifier.py | module intent_classifier
+# Module containing 5 symbols in the search package
+# Classes: IntentClassifier, QueryIntent, IntentDecision
+# Key methods: IntentClassifier.classify
+# Imports: dataclasses, enum, typing
+```
+
+### Demotion Tuning (3-tier)
+
+Module chunks are demoted to prevent inappropriate displacement of real code:
+
+| Query Type | Demotion Factor | Effect |
+|------------|-----------------|--------|
+| "class" queries | **0.82x** | Strong demotion |
+| Entity queries | **0.85x** | Moderate demotion |
+| General queries | **0.90x** | Mild demotion |
+
+### Impact
+
+- **Fixed Q32 regression**: Module chunk demoted rank-1 → rank-3 (MRR 0.25 → 1.00)
+- **GLOBAL query recall**: Queries like "how does the search pipeline work" now surface all 10/10 pipeline components (was 8/10)
+
+### Configuration
+
+Toggle via `configure_chunking(enable_file_summaries=True)` (default: enabled).
+
+---
+
+## B1: Community-Level Summary Chunks (v0.9.0+)
+
+### Overview
+
+Synthetic `chunk_type="community"` chunks generated per community (via Louvain community detection) with 2+ members. These summary chunks group related code that shares thematic connections, improving GLOBAL query recall.
+
+### How It Works
+
+**Community Detection**: Louvain algorithm on the code graph groups related chunks into communities.
+
+**Generation**: For each community with 2+ members:
+
+1. Aggregate community metadata: dominant directory, classes/functions in community
+2. Identify hub function (largest chunk)
+3. Generate summary text with community ID, symbols, imports
+4. Create synthetic CodeChunk with `chunk_type="community"`, `chunk_id` format: `__community__/{label}:0-0:community:{label}`
+
+**Content Example**:
+
+```
+# Community: search_graph_analysis | 8 members
+# Dominant directory: search/
+# Classes: CentralityRanker, GraphQueryEngine
+# Functions: calculate_pagerank, extract_subgraph
+# Hub function: CentralityRanker.rerank_by_centrality
+```
+
+### Demotion Tuning (3-tier)
+
+Same demotion factors as A2 (0.82x-0.90x) to prevent inappropriate displacement.
+
+### Requires
+
+Full reindex to compute community structure (not available in incremental mode).
+
+### Configuration
+
+Toggle via `configure_chunking(enable_community_summaries=True)` (default: enabled).
+
+---
+
+## Post-Expansion Neural Reranking (v0.9.0+)
+
+### Overview
+
+A second reranking pass applied after ego-graph expansion to unify scoring scale between primary results (cross-encoder scores) and ego-graph neighbors (heuristic cosine similarity scores).
+
+### Problem Solved
+
+Ego-graph expansion adds new results with heuristic scores that may not be directly comparable to primary results' cross-encoder logits. This creates a scoring scale mismatch.
+
+### How It Works
+
+1. Primary search results get cross-encoder scores (neural reranker)
+2. Ego-graph expansion adds graph neighbors with heuristic scores
+3. **Post-expansion reranking**: Run neural reranker on ALL results (primary + ego-graph)
+4. Unified scoring scale ensures best results rank highest
+
+### Performance
+
+Minimal overhead (~50-100ms) for significantly improved ranking consistency.
+
+### Status
+
+**Always-on** when ego-graph expansion and neural reranking are both enabled.
+
+---
+
+## BM25 Snowball Stemming (Always-On)
+
+### Overview
+
+Normalizes word forms in BM25 keyword search to improve recall. "indexing", "indexed", "indexes", "index" all match each other.
+
+### How It Works
+
+**Snowball Stemmer**: English stemming algorithm applied to both document indexing and query processing.
+
+**Examples**:
+
+- "searching", "search", "searches", "searched" → all match
+- "authentication", "authenticator", "authenticate" → all match
+- "optimization", "optimize", "optimized" → all match
+
+### Benefits (Empirically Validated)
+
+- **93.3% of queries benefit** from stemming
+- **3.33 average unique discoveries** per query
+- **0.47ms overhead** (negligible)
+- **11% smaller indices** due to vocabulary consolidation
+
+### Status
+
+**Enabled by default** in BM25 index. No configuration needed.
+
+---
+
+## find_path Tool (v0.8.4+)
+
+### Overview
+
+Finds the shortest path between two code entities in the relationship graph. Useful for tracing how code element A connects to code element B, understanding dependency chains, and finding call paths from entry points to specific functions.
+
+### Parameters
+
+- `source` (optional): Source symbol name (may be ambiguous, use `source_chunk_id` when possible)
+- `target` (optional): Target symbol name (may be ambiguous, use `target_chunk_id` when possible)
+- `source_chunk_id` (optional): Source chunk_id from search results (preferred for precision)
+- `target_chunk_id` (optional): Target chunk_id from search results (preferred for precision)
+- `edge_types` (optional): Filter path to only use specific relationship types (e.g., `["calls", "inherits"]`)
+- `max_hops` (default: 10, range: 1-20): Maximum path length in edges
+
+### Algorithm
+
+**Bidirectional Breadth-First Search (BFS)** for optimal performance and shortest path guarantee.
+
+### Return Format
+
+```json
+{
+  "path": [
+    {
+      "chunk_id": "auth.py:10-50:function:login",
+      "name": "login",
+      "file": "auth.py",
+      "lines": "10-50",
+      "kind": "function"
+    },
+    {
+      "chunk_id": "session.py:20-60:function:create_session",
+      "name": "create_session",
+      "file": "session.py",
+      "lines": "20-60",
+      "kind": "function"
+    }
+  ],
+  "edge_types": ["calls"],
+  "path_length": 1
+}
+```
+
+### Use Cases
+
+- Tracing call paths from entry points to specific functions
+- Understanding dependency chains between modules
+- Analyzing inheritance or import chains
+- Finding how code element A connects to code element B
+
+### Example
+
+```bash
+# Find path from login function to database query
+find_path(
+    source_chunk_id="auth.py:10-50:function:login",
+    target_chunk_id="database.py:100-150:function:query"
+)
+# Returns: Path showing how login() connects to query() through calls
+```
+
+### Performance
+
+10/10 tests passed (verified 2026-01-15). Typical path finding: <10ms.
 
 ---
 

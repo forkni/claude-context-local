@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 def error_handler(
     action_name: str,
     error_context: Optional[Callable[[dict[str, Any]], dict[str, Any]]] = None,
-):
+) -> Callable[[Callable], Callable]:
     """Decorator for consistent error handling in MCP tool handlers.
 
     Provides unified error handling with:

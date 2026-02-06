@@ -159,7 +159,16 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
                 else str(formatted_result)
             )
 
-        return [TextContent(type="text", text=result_text)]
+        # Return both content (backward compat) and structuredContent (native JSON, no double encoding)
+        # MCP SDK 1.25.0+ supports structuredContent - clients can choose which to read
+        from mcp import types as mcp_types
+
+        return mcp_types.CallToolResult(
+            content=[TextContent(type="text", text=result_text)],
+            structuredContent=formatted_result
+            if isinstance(formatted_result, dict)
+            else None,
+        )
 
     except asyncio.CancelledError:
         # Don't catch CancelledError - let it propagate for proper cleanup
@@ -512,8 +521,9 @@ if __name__ == "__main__":
                     # Suppress noisy ASGI errors for disconnected clients
                     # (secondary errors after BrokenResourceError)
                     logging.getLogger("uvicorn.error").addFilter(
-                        lambda record: "Unexpected ASGI message"
-                        not in record.getMessage()
+                        lambda record: (
+                            "Unexpected ASGI message" not in record.getMessage()
+                        )
                     )
 
                     yield  # Application runs

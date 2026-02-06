@@ -30,12 +30,13 @@
 
 - **Hybrid Search**: BM25 + semantic fusion (44.4% precision, 100% MRR) - [benchmarks](docs/BENCHMARKS.md)
 - **Neural Reranking**: Cross-encoder model (BAAI/bge-reranker-v2-m3) improves ranking quality by 5-15% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
+- **SSCG Integration**: Structural-Semantic Code Graph with Recall@4=1.00, MRR=0.81 - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#sscg-integration)
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
 - **Multi-Model Routing**: Intelligent query routing (Qwen3, BGE-M3, CodeRankEmbed) with 100% accuracy - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md)
 - **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
-- **18 MCP Tools**: Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
+- **19 MCP Tools**: Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
 
-**Status**: ✅ Production-ready | 1,068+ passing tests | All 19 MCP tools operational | Windows 10/11
+**Status**: ✅ Production-ready | 1,557+ passing tests | All 19 MCP tools operational | Windows 10/11
 
 ## Quick Start
 
@@ -112,7 +113,7 @@ After the server starts, connect in Claude Code:
 
 This command loads the [mcp-search-tool](.claude/skills/mcp-search-tool/SKILL.md) skill, which provides Claude with:
 
-- Complete MCP tool reference (all 18 tools)
+- Complete MCP tool reference (all 19 tools)
 - Search-first protocol enforcement
 - 2-step workflow for relationship queries (search → find_connections)
 - Project context validation before searches
@@ -140,7 +141,7 @@ Claude Code will automatically use the MCP tools internally to find relevant cod
 
 > **Note**: This is an MCP server designed exclusively for Claude Code integration. It is not a standalone search tool - it requires connection via Claude Code's `/mcp` command.
 
-When connected via `/mcp` → Reconnect, Claude Code gains access to 18 semantic search tools exposed as `mcp__code-search__*` functions.
+When connected via `/mcp` → Reconnect, Claude Code gains access to 19 semantic search tools exposed as `mcp__code-search__*` functions.
 
 A [**SKILL.md**](.claude/skills/mcp-search-tool/SKILL.md) file in the repository provides Claude with workflow guidance for optimal tool usage, including project context validation and search mode selection.
 
@@ -233,12 +234,14 @@ These tools are available to Claude Code as `mcp__code-search__*` functions. You
 - `index_directory` - Index project for searching
 - `find_similar_code` - Find code similar to chunk
 - `find_connections` - Dependency & impact analysis
+- `find_path` - Shortest path between code entities
 
 ### Configuration
 
 - `configure_search_mode` - Set hybrid search parameters
 - `configure_query_routing` - Configure multi-model routing
 - `configure_reranking` - Configure neural reranking
+- `configure_chunking` - Configure code chunking settings
 - `get_search_config_status` - View current configuration
 - `list_embedding_models` - List available models
 - `switch_embedding_model` - Switch between models
@@ -330,7 +333,7 @@ Weights should sum to 1.0.
 | **BGE-M3** | 1-1.5GB | Production, hybrid search (recommended) |
 | **Qwen3-0.6B** | 2.3GB | High efficiency, excellent value |
 | **EmbeddingGemma-300m** | 4-8GB | Fast, lightweight (default) |
-| **Multi-Model Routing** | 5.3GB | Auto-routes to optimal model |
+| **Multi-Model Routing** | 6.3GB | BGE-Code-v1 + Qwen3 |
 
 **Instant switching**: <150ms with no re-indexing required.
 
@@ -377,10 +380,7 @@ For automation and CI/CD, settings can be overridden via environment variables. 
 | **EmbeddingGemma-300m** (default) | 768 | 4-8GB | Fast, efficient, smaller projects |
 | **BGE-M3** | 1024 | 8-16GB | Higher accuracy (+13.6% F1), production |
 | **Qwen3-0.6B** | 1024 | 2.3GB | Routing pool, high efficiency |
-| **Qwen3-4B** | 1024* | 8-10GB | Best quality, 4B parameters |
 | **CodeRankEmbed** | 768 | 2GB | Code-specific retrieval |
-
-*Qwen3-4B native dimension is 2560, reduced to 1024 via Matryoshka MRL for compatibility
 
 **Instant model switching**: <150ms with per-model index storage - no re-indexing needed!
 
@@ -395,11 +395,11 @@ claude-context-local/
 ├── search/            # FAISS + BM25 hybrid search
 ├── merkle/            # Incremental indexing with change detection
 ├── graph/             # Call graph extraction & analysis
-├── mcp_server/        # MCP server implementation (18 tools)
+├── mcp_server/        # MCP server implementation (19 tools)
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 1,068+ tests (unit + integration)
+└── tests/             # 1,557+ tests (unit + integration)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -477,7 +477,7 @@ The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic s
 
 ### Development
 
-- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (1,068+ passing)
+- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (1,557+ passing)
 - [Git Workflow](docs/GIT_WORKFLOW.md) - Contributing guidelines
 - [Version History](docs/VERSION_HISTORY.md) - Changelog
 
