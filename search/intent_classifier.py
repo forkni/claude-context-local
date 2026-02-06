@@ -153,9 +153,30 @@ class IntentClassifier:
                 "type",
                 "enum",
                 "struct",
+                # Implementation-focused verbs (added to fix Q19 intent classification failure)
+                # These verbs indicate concrete code implementation queries, not architectural queries
+                "encode",
+                "decode",
+                "parse",
+                "serialize",
+                "deserialize",
+                "convert",
+                "transform",
+                "validate",
+                "normalize",
+                "extract",
+                "process",
+                "handle",
+                "compute",
+                "calculate",
+                "render",
+                "format",
+                "generate",
+                "build",
             ],
             "patterns": [
-                (r"\b[A-Z][a-z]+([A-Z][a-z]+)+\b", 0.5),  # CamelCase
+                # REMOVED: Dead CamelCase pattern (ran against lowered query, never matched)
+                # Functionality moved to _detect_code_symbols() fallback
                 (r"\bwhere\s+is\b", 1.5),
                 (r"\bfind\s+(the\s+)?(implementation|definition)\b", 1.5),
                 (r"\bshow\s+me\s+(the\s+)?", 1.2),
@@ -711,6 +732,20 @@ class IntentClassifier:
         if max_score > 1.0:
             scores = {k: v / max_score for k, v in scores.items()}
 
+        # Fallback: Symbol detection when main classification produces no signal.
+        # Only activates when NO intent scored above 0.15, preventing symbol names
+        # from overwhelming verb signals in mixed queries ("how does HybridSearcher work").
+        # Research: Prevents regression on verb-signaled queries (Q31 GLOBAL=0.20,
+        # Q19 LOCAL=0.20) while fixing all-zero queries (FAISS query max=0.0).
+        if scores and max(scores.values()) < 0.15:
+            symbol_boost = self._detect_code_symbols(query)
+            if symbol_boost > 0:
+                scores["local"] = min(scores.get("local", 0.0) + symbol_boost, 1.0)
+                logger.debug(
+                    f"[INTENT] Symbol fallback: detected code symbols, "
+                    f"LOCAL boosted by {symbol_boost:.2f} → {scores['local']:.2f}"
+                )
+
         return scores
 
     def _resolve_tie(self, scores: dict[str, float]) -> str:
@@ -739,6 +774,61 @@ class IntentClassifier:
 
         # Fallback (should not reach here)
         return self.DEFAULT_INTENT.value
+
+    def _detect_code_symbols(self, query: str) -> float:
+        """Detect code symbols using Python naming conventions (case-sensitive).
+
+        Runs against ORIGINAL query (not lowercased) to detect:
+        - CamelCase/PascalCase: HybridSearcher, IndexFlatIP, HTMLParser
+        - UPPER_CASE constants: FAISS, BM25, API, MAX_RETRIES
+        - snake_case identifiers: embed_chunks, search_code
+        - Dunder methods: __init__, __enter__, __repr__
+        - dot.notation: module.Class, self.method
+
+        Per Python style guide (PYTHON_STYLE_GUIDE_QUICK.md lines 46-52):
+        CamelCase=classes, snake_case=functions, UPPER_CASE=constants,
+        dunder=special methods.
+
+        Returns:
+            LOCAL score boost (0.0-0.5), capped to prevent overwhelming
+            verb signals in mixed queries.
+
+        Examples:
+            >>> classifier = IntentClassifier()
+            >>> classifier._detect_code_symbols("HybridSearcher BM25")
+            0.40  # CamelCase +0.25, UPPER_CASE +0.15
+            >>> classifier._detect_code_symbols("how does X work")
+            0.0   # No symbols detected
+        """
+        boost = 0.0
+        tokens = re.findall(r"[\w.]+", query)  # Split preserving dots and underscores
+
+        for token in tokens:
+            # Skip common programming terms (not actual symbol names)
+            if token in _CODE_TERM_BLOCKLIST:
+                continue
+
+            # CamelCase/PascalCase: HybridSearcher, IndexFlatIP, HTMLParser
+            # Detect transition from lowercase to uppercase within token
+            if re.search(r"[a-z][A-Z]", token) or re.search(r"[A-Z][a-z]+[A-Z]", token):
+                boost += 0.25
+            # UPPER_CASE with 2+ alpha chars: FAISS, BM25, MAX_RETRIES
+            # Requires at least one alphabetic char after first to avoid single letters
+            elif re.match(r"^[A-Z][A-Z0-9_]{1,}$", token) and any(
+                c.isalpha() for c in token[1:]
+            ):
+                boost += 0.15
+            # Dunder methods: __init__, __enter__, __repr__
+            elif re.match(r"^__[a-z]\w+__$", token):
+                boost += 0.20
+            # snake_case: embed_chunks, search_code (must have underscore + lowercase)
+            elif "_" in token and re.match(r"^[a-z][a-z0-9_]+$", token):
+                boost += 0.20
+            # dot.notation with mixed case: module.Class, self.method
+            elif "." in token and re.search(r"[A-Z]", token):
+                boost += 0.25
+
+        return min(boost, 0.5)
 
     def _extract_suggested_params(
         self, query: str, intent: QueryIntent

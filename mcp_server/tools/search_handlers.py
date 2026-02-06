@@ -924,6 +924,28 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
                 logger.debug(
                     f"Annotated {len(formatted_results)} results with centrality"
                 )
+
+            # Intent-aware synthetic chunk ordering (post-centrality reranking)
+            # For non-GLOBAL queries, push module/community summary chunks to end of results
+            # Research: TNO, GRACE, GraphRAG all separate summaries from code retrieval
+            if intent_decision and intent_decision.intent.value != "global":
+                real_results = [
+                    r
+                    for r in formatted_results
+                    if r.get("kind") not in ("module", "community")
+                ]
+                synthetic_results = [
+                    r
+                    for r in formatted_results
+                    if r.get("kind") in ("module", "community")
+                ]
+                if synthetic_results:
+                    formatted_results = real_results + synthetic_results
+                    logger.debug(
+                        f"[INTENT] Moved {len(synthetic_results)} synthetic chunks "
+                        f"after {len(real_results)} real code chunks (intent: {intent_decision.intent.value})"
+                    )
+
         except (ImportError, ValueError, KeyError, RuntimeError, TypeError) as e:
             logger.debug(f"Centrality ranking failed: {e}")
 

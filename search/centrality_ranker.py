@@ -278,6 +278,21 @@ class CentralityRanker:
                     result["blended_score"] * type_boosts.get(chunk_type, 1.0), 4
                 )
 
+                # Zero-centrality demotion for synthetic summary chunks
+                # Synthetic chunks (module summaries, community summaries) are not in the call graph,
+                # so they always have centrality=0. Real code chunks always have centrality > 0.
+                # When a synthetic chunk has no graph connectivity, it should rank below
+                # real code. Research: TNO, GRACE, HiChunk all keep summaries separate.
+                if (
+                    chunk_type in ("module", "community")
+                    and result.get("centrality", 0) == 0
+                ):
+                    result["blended_score"] = round(result["blended_score"] * 0.5, 4)
+                    logger.debug(
+                        f"[CENTRALITY] Zero-centrality synthetic chunk demotion: "
+                        f"{chunk_id} ({chunk_type}) → 0.5x multiplier"
+                    )
+
                 # Core Logic Boost: Prioritize engine internals over glue code/tools
                 chunk_id = result.get("chunk_id", "")
                 core_dirs = ("embeddings/", "search/", "graph/", "chunking/", "merkle/")
