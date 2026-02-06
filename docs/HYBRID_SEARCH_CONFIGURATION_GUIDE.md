@@ -61,7 +61,7 @@ All hybrid search features have been **comprehensively tested** and validated fo
 ✅ **Hybrid Search (BM25 + Dense)**
 
 - RRF reranking: Fully operational
-- Optimal weights: 0.4 BM25 / 0.6 Dense (validated)
+- Optimal weights: 0.35 BM25 / 0.65 Dense (benchmark-verified)
 - Parallel execution: Working correctly
 - Result consistency: 5 results per query maintained
 - **Status**: Production ready with empirically validated settings
@@ -447,7 +447,7 @@ This shows your current configuration and available options.
 #### Configure Search Mode
 
 ```bash
-/configure_search_mode "hybrid" 0.4 0.6 true
+/configure_search_mode "hybrid" 0.35 0.65 true
 ```
 
 Parameters:
@@ -613,8 +613,8 @@ Set environment variables before starting the MCP server:
 # Windows (PowerShell)
 $env:CLAUDE_SEARCH_MODE="hybrid"
 $env:CLAUDE_ENABLE_HYBRID="true"
-$env:CLAUDE_BM25_WEIGHT="0.4"
-$env:CLAUDE_DENSE_WEIGHT="0.6"
+$env:CLAUDE_BM25_WEIGHT="0.35"
+$env:CLAUDE_DENSE_WEIGHT="0.65"
 $env:CLAUDE_BM25_USE_STEMMING="true"
 $env:CLAUDE_USE_PARALLEL="true"
 ```
@@ -672,7 +672,7 @@ Create a `search_config.json` file in your project root:
 #### Balanced General Use
 
 ```bash
-/configure_search_mode "hybrid" 0.4 0.6 true
+/configure_search_mode "hybrid" 0.35 0.65 true
 ```
 
 - Default balanced approach
@@ -954,7 +954,7 @@ print(f"Took {t['elapsed_ms']:.2f}ms")
 /index_directory "C:\your\project\path"
 
 # 2. Configure for your use case
-/configure_search_mode "hybrid" 0.4 0.6 true
+/configure_search_mode "hybrid" 0.35 0.65 true
 
 # 3. Search naturally
 /search_code "database connection pooling"
@@ -968,8 +968,8 @@ print(f"Took {t['elapsed_ms']:.2f}ms")
 ```powershell
 # Windows batch setup
 $env:CLAUDE_SEARCH_MODE="hybrid"
-$env:CLAUDE_BM25_WEIGHT="0.4"
-$env:CLAUDE_DENSE_WEIGHT="0.6"
+$env:CLAUDE_BM25_WEIGHT="0.35"
+$env:CLAUDE_DENSE_WEIGHT="0.65"
 
 # Start server with configuration
 start_mcp_server.bat

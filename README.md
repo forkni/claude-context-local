@@ -204,7 +204,7 @@ To analyze dependencies:
 
 Ask Claude Code to adjust settings:
 
-- "Configure search mode to hybrid with 0.4 BM25 and 0.6 dense weights"
+- "Configure search mode to hybrid with 0.35 BM25 and 0.65 dense weights"
 - "Show me the current search configuration"
 - "Switch the embedding model to BGE-M3"
 
@@ -399,7 +399,7 @@ claude-context-local/
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 1,557+ tests (unit + integration)
+└── tests/             # 1,635+ tests (unit + integration)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -477,7 +477,7 @@ The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic s
 
 ### Development
 
-- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (1,557+ passing)
+- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (1,635+ passing)
 - [Git Workflow](docs/GIT_WORKFLOW.md) - Contributing guidelines
 - [Version History](docs/VERSION_HISTORY.md) - Changelog
 
