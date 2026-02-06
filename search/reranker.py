@@ -3,7 +3,7 @@
 import logging
 import math
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -35,7 +35,7 @@ class RRFReranker:
     def rerank(
         self,
         results_lists: list[list[SearchResult]],
-        weights: Optional[list[float]] = None,
+        weights: list[float] | None = None,
         max_results: int = 10,
     ) -> list[SearchResult]:
         """
@@ -140,8 +140,8 @@ class RRFReranker:
         bm25_results: list[tuple[str, float, dict]],
         dense_results: list[tuple[str, float, dict]],
         max_results: int = 10,
-        bm25_weight: float = 0.4,
-        dense_weight: float = 0.6,
+        bm25_weight: float = 0.35,
+        dense_weight: float = 0.65,
     ) -> list[SearchResult]:
         """
         Simple reranking for BM25 + dense vector results.
@@ -255,7 +255,7 @@ class RRFReranker:
     def tune_parameters(
         self,
         results_lists: list[list[SearchResult]],
-        ground_truth: Optional[list[str]] = None,
+        ground_truth: list[str] | None = None,
         k_values: list[int] = None,
         weight_combinations: list[list[float]] = None,
     ) -> dict[str, Any]:

@@ -49,13 +49,13 @@ class HybridSearcher(BaseSearcher):
         self,
         storage_dir: str,
         embedder: Optional["CodeEmbedder"] = None,
-        bm25_weight: float = 0.4,
-        dense_weight: float = 0.6,
+        bm25_weight: float = 0.35,
+        dense_weight: float = 0.65,
         rrf_k: int = 60,
         max_workers: int = 2,
         bm25_use_stopwords: bool = True,
         bm25_use_stemming: bool = True,
-        project_id: Optional[str] = None,
+        project_id: str | None = None,
         config: Optional["SearchConfig"] = None,
     ):
         """
@@ -181,7 +181,7 @@ class HybridSearcher(BaseSearcher):
         max_workers: int,
         bm25_use_stopwords: bool,
         bm25_use_stemming: bool,
-        project_id: Optional[str],
+        project_id: str | None,
     ) -> None:
         """Initialize search execution components.
 
@@ -242,7 +242,7 @@ class HybridSearcher(BaseSearcher):
             logger=self._logger,
         )
 
-    def _init_graph_components(self, project_id: Optional[str]) -> None:
+    def _init_graph_components(self, project_id: str | None) -> None:
         """Initialize graph storage and ego-graph retrieval components.
 
         Creates CodeGraphStorage and EgoGraphRetriever if project_id is provided.
@@ -340,12 +340,13 @@ class HybridSearcher(BaseSearcher):
 
     def close_metadata_connections(self) -> None:
         """Close all metadata store connections to release file locks."""
-        if self.dense_index is not None and hasattr(
-            self.dense_index, "_metadata_store"
+        if (
+            self.dense_index is not None
+            and hasattr(self.dense_index, "_metadata_store")
+            and self.dense_index._metadata_store is not None
         ):
-            if self.dense_index._metadata_store is not None:
-                self.dense_index._metadata_store.close()
-                self._logger.debug("Closed dense_index metadata store")
+            self.dense_index._metadata_store.close()
+            self._logger.debug("Closed dense_index metadata store")
 
     def shutdown(self) -> None:
         """Shutdown the thread pool and cleanup resources."""
@@ -381,7 +382,7 @@ class HybridSearcher(BaseSearcher):
         return is_ready
 
     @property
-    def graph_storage(self) -> Optional[CodeGraphStorage]:
+    def graph_storage(self) -> CodeGraphStorage | None:
         """Access graph storage for relationship queries.
 
         Returns:
@@ -390,7 +391,7 @@ class HybridSearcher(BaseSearcher):
         return self._graph_storage
 
     @graph_storage.setter
-    def graph_storage(self, value: Optional[CodeGraphStorage]) -> None:
+    def graph_storage(self, value: CodeGraphStorage | None) -> None:
         """Set graph storage (primarily for testing).
 
         Args:
@@ -444,7 +445,7 @@ class HybridSearcher(BaseSearcher):
         self.dense_weight = dense_weight
 
     @property
-    def neural_reranker(self) -> Optional[NeuralReranker]:
+    def neural_reranker(self) -> NeuralReranker | None:
         """Access the neural reranker instance (backward compatibility).
 
         Returns:
@@ -478,7 +479,7 @@ class HybridSearcher(BaseSearcher):
         dense_count = self.dense_index.index.ntotal if self.dense_index.index else 0
         return max(bm25_count, dense_count)  # Return the higher count
 
-    def get_by_chunk_id(self, chunk_id: str) -> Optional[SearchResult]:
+    def get_by_chunk_id(self, chunk_id: str) -> SearchResult | None:
         """
         Direct lookup by chunk_id (unambiguous, no search needed).
 
@@ -519,7 +520,7 @@ class HybridSearcher(BaseSearcher):
         documents: list[str],
         doc_ids: list[str],
         embeddings: list[list[float]],
-        metadata: Optional[dict[str, dict]] = None,
+        metadata: dict[str, dict] | None = None,
     ) -> None:
         """Index documents in both BM25 and dense indices."""
         if len(documents) != len(doc_ids) or len(documents) != len(embeddings):
@@ -587,7 +588,7 @@ class HybridSearcher(BaseSearcher):
         search_mode: str = "hybrid",
         use_parallel: bool = True,
         min_bm25_score: float = 0.0,
-        filters: Optional[dict[str, Any]] = None,
+        filters: dict[str, Any] | None = None,
         config: Optional["SearchConfig"] = None,
     ) -> list[SearchResult]:
         """
@@ -695,8 +696,8 @@ class HybridSearcher(BaseSearcher):
         search_mode: str = "hybrid",
         use_parallel: bool = True,
         min_bm25_score: float = 0.0,
-        filters: Optional[dict[str, Any]] = None,
-        query_embedding: Optional[np.ndarray] = None,
+        filters: dict[str, Any] | None = None,
+        query_embedding: np.ndarray | None = None,
     ) -> list[SearchResult]:
         """
         Internal single-hop search implementation (direct query matching).
@@ -1061,7 +1062,7 @@ class HybridSearcher(BaseSearcher):
         }
 
     def optimize_weights(
-        self, test_queries: list[str], ground_truth: Optional[list[list[str]]] = None
+        self, test_queries: list[str], ground_truth: list[list[str]] | None = None
     ) -> dict[str, float]:
         """
         Optimize BM25/dense weights based on test queries.

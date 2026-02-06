@@ -1,6 +1,6 @@
 """Tool registry for low-level MCP server.
 
-Contains JSON schemas for all 18 tools following MCP specification.
+Contains JSON schemas for all 19 tools following MCP specification.
 """
 
 from typing import Any
@@ -360,7 +360,7 @@ Shows available RAM/VRAM, current index memory usage, and whether GPU accelerati
 Args:
     enable_multi_model: Enable/disable multi-model mode (default: True via env var)
     default_model: Set default model key ("qwen3", "bge_m3", "coderankembed")
-    confidence_threshold: Minimum confidence for routing (0.0-1.0, default: 0.05)""",
+    confidence_threshold: Minimum confidence for routing (0.0-1.0, default: 0.35)""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -373,17 +373,18 @@ Args:
                     "enum": [
                         "qwen3",
                         "bge_m3",
+                        "bge_code",
                         "coderankembed",
                         "gte_modernbert",
                         "c2llm",
                     ],
-                    "description": 'Set default model key. Full pool: "qwen3", "bge_m3", "coderankembed". Lightweight: "gte_modernbert", "c2llm".',
+                    "description": 'Set default model key. Full pool: "qwen3", "bge_code", "coderankembed". Lightweight: "gte_modernbert", "bge_m3", "c2llm".',
                 },
                 "confidence_threshold": {
                     "type": "number",
                     "minimum": 0.0,
                     "maximum": 1.0,
-                    "description": "Minimum confidence for routing (0.0-1.0, default: 0.05)",
+                    "description": "Minimum confidence for routing (0.0-1.0, default: 0.35)",
                 },
                 "output_format": {
                     "type": "string",
@@ -431,14 +432,14 @@ Args:
                 },
                 "bm25_weight": {
                     "type": "number",
-                    "default": 0.4,
+                    "default": 0.35,
                     "minimum": 0.0,
                     "maximum": 1.0,
                     "description": "Weight for BM25 sparse search (0.0 to 1.0)",
                 },
                 "dense_weight": {
                     "type": "number",
-                    "default": 0.6,
+                    "default": 0.65,
                     "minimum": 0.0,
                     "maximum": 1.0,
                     "description": "Weight for dense vector search (0.0 to 1.0)",

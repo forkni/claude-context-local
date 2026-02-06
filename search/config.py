@@ -4,7 +4,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 # Import DEFAULT_EDGE_WEIGHTS for ego-graph weighted BFS
 from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
@@ -240,7 +240,7 @@ class MultiHopConfig:
     expansion: float = 0.3  # Expansion factor per hop
     initial_k_multiplier: float = 2.0  # Multiplier for initial results (k * multiplier)
     multi_hop_mode: str = "hybrid"  # "semantic" | "graph" | "hybrid"
-    edge_weights: Optional[dict[str, float]] = (
+    edge_weights: dict[str, float] | None = (
         None  # Intent-specific weights (None = DEFAULT_EDGE_WEIGHTS)
     )
 
@@ -250,8 +250,8 @@ class RoutingConfig:
     """Multi-model routing settings (3 fields)."""
 
     multi_model_enabled: bool = True  # Enable intelligent query routing across models
-    default_model: str = "bge_code"  # Default model key for routing (most balanced)
-    multi_model_pool: Optional[str] = (
+    default_model: str = "qwen3"  # Default model key for routing (best quality)
+    multi_model_pool: str | None = (
         None  # Pool type: "full", "lightweight-speed", or "lightweight-accuracy"
     )
 
@@ -261,7 +261,7 @@ class IntentConfig:
     """Intent classification settings (5 fields)."""
 
     enabled: bool = True  # Enable intent classification for query routing
-    confidence_threshold: float = 0.3  # Minimum confidence for intent-specific routing
+    confidence_threshold: float = 0.35  # Minimum confidence for intent-specific routing
     default_intent: str = "HYBRID"  # Default intent when confidence is low
     log_classifications: bool = True  # Log intent classification decisions
 
@@ -335,14 +335,14 @@ class EgoGraphConfig:
     max_neighbors_per_hop: int = (
         5  # Max neighbors per hop (reduced from 10 to limit noise)
     )
-    relation_types: Optional[list] = None  # Filter to specific relations (None = all)
+    relation_types: list | None = None  # Filter to specific relations (None = all)
     include_anchor: bool = True  # Include original anchor nodes in results
     deduplicate: bool = True  # Remove duplicate chunk_ids
     # RepoGraph relation filtering (Feature #5)
     exclude_stdlib_imports: bool = True  # Filter stdlib from graph traversal
     exclude_third_party_imports: bool = True  # Filter third-party from traversal
     # Weighted graph traversal
-    edge_weights: Optional[dict[str, float]] = field(
+    edge_weights: dict[str, float] | None = field(
         default_factory=lambda: DEFAULT_EDGE_WEIGHTS.copy()
     )  # Use weighted BFS by default (calls > imports priority)
 
@@ -383,18 +383,18 @@ class SearchConfig:
 
     def __init__(
         self,
-        embedding: Optional[EmbeddingConfig] = None,
-        search_mode: Optional[SearchModeConfig] = None,
-        performance: Optional[PerformanceConfig] = None,
-        multi_hop: Optional[MultiHopConfig] = None,
-        routing: Optional[RoutingConfig] = None,
-        intent: Optional[IntentConfig] = None,
-        reranker: Optional[RerankerConfig] = None,
-        output: Optional[OutputConfig] = None,
-        chunking: Optional[ChunkingConfig] = None,
-        ego_graph: Optional[EgoGraphConfig] = None,
-        parent_retrieval: Optional[ParentRetrievalConfig] = None,
-        graph_enhanced: Optional[GraphEnhancedConfig] = None,
+        embedding: EmbeddingConfig | None = None,
+        search_mode: SearchModeConfig | None = None,
+        performance: PerformanceConfig | None = None,
+        multi_hop: MultiHopConfig | None = None,
+        routing: RoutingConfig | None = None,
+        intent: IntentConfig | None = None,
+        reranker: RerankerConfig | None = None,
+        output: OutputConfig | None = None,
+        chunking: ChunkingConfig | None = None,
+        ego_graph: EgoGraphConfig | None = None,
+        parent_retrieval: ParentRetrievalConfig | None = None,
+        graph_enhanced: GraphEnhancedConfig | None = None,
     ):
         """Initialize SearchConfig with nested sub-configs.
 
@@ -812,7 +812,7 @@ class SearchConfig:
             routing = RoutingConfig(
                 multi_model_enabled=data.get("multi_model_enabled", True),
                 default_model=data.get("routing_default_model", "bge_code"),
-                multi_model_pool=data.get("routing_multi_model_pool", None),
+                multi_model_pool=data.get("routing_multi_model_pool"),
             )
 
             intent = IntentConfig(
@@ -887,11 +887,11 @@ class SearchConfig:
 class SearchConfigManager:
     """Manages search configuration from environment variables and config files."""
 
-    def __init__(self, config_file: Optional[str] = None):
+    def __init__(self, config_file: str | None = None):
         self.logger = logging.getLogger(__name__)
         self.config_file = config_file or self._get_default_config_path()
         self._config = None
-        self._config_mtime: Optional[float] = None  # Track file modification time
+        self._config_mtime: float | None = None  # Track file modification time
 
     def _get_default_config_path(self) -> str:
         """Get default config file path."""
@@ -926,7 +926,7 @@ class SearchConfigManager:
         # Load from file if exists
         if os.path.exists(self.config_file):
             try:
-                with open(self.config_file, "r") as f:
+                with open(self.config_file) as f:
                     config_dict = json.load(f)
                 self.logger.info(f"Loaded search config from {self.config_file}")
             except Exception as e:
@@ -1049,7 +1049,7 @@ class SearchConfigManager:
                 json.dump(config_dict, f, indent=2)
 
             # Validate temp file before replacing original
-            with open(temp_file, "r") as f:
+            with open(temp_file) as f:
                 json.load(f)  # Verify valid JSON was written
 
             # Atomic rename (safe on same filesystem)
@@ -1067,7 +1067,7 @@ class SearchConfigManager:
             raise  # Re-raise so caller knows save failed
 
     def get_search_mode_for_query(
-        self, query: str, explicit_mode: Optional[str] = None
+        self, query: str, explicit_mode: str | None = None
     ) -> str:
         """Determine best search mode for a query."""
         config = self.load_config()
@@ -1101,10 +1101,10 @@ class SearchConfigManager:
 
 
 # Global configuration manager instance
-_config_manager: Optional[SearchConfigManager] = None
+_config_manager: SearchConfigManager | None = None
 
 
-def get_config_manager(config_file: Optional[str] = None) -> SearchConfigManager:
+def get_config_manager(config_file: str | None = None) -> SearchConfigManager:
     """Get or create global configuration manager."""
     global _config_manager
     if _config_manager is None:
@@ -1134,7 +1134,7 @@ def get_model_registry() -> dict[str, dict[str, Any]]:
     return MODEL_REGISTRY
 
 
-def get_model_config(model_name: str) -> Optional[dict[str, Any]]:
+def get_model_config(model_name: str) -> dict[str, Any] | None:
     """Get configuration for a specific model."""
     return MODEL_REGISTRY.get(model_name)
 
