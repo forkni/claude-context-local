@@ -234,8 +234,8 @@ class TestQueryRouterConfidenceThreshold:
         return QueryRouter(enable_logging=False)
 
     def test_default_threshold(self, router):
-        """Test that default confidence threshold is 0.05."""
-        assert router.CONFIDENCE_THRESHOLD == 0.05, "Default threshold should be 0.05"
+        """Test that default confidence threshold is 0.35."""
+        assert router.CONFIDENCE_THRESHOLD == 0.35, "Default threshold should be 0.35"
 
     def test_custom_threshold_parameter(self, router):
         """Test that custom threshold can be passed to route()."""

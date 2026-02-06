@@ -138,8 +138,7 @@ class HybridSearcher(BaseSearcher):
         )
 
         # Check for index mismatch (early warning system)
-        if isinstance(total_bm25, int) and isinstance(dense_count, int):
-            if abs(total_bm25 - dense_count) > 10:
+        if isinstance(total_bm25, int) and isinstance(dense_count, int) and abs(total_bm25 - dense_count) > 10:
                 self._logger.warning(
                     f"[INIT] INDEX MISMATCH DETECTED: BM25={total_bm25}, Dense={dense_count}. "
                     f"Consider re-indexing to synchronize indices."
@@ -559,8 +558,6 @@ class HybridSearcher(BaseSearcher):
         # Index in dense (potentially GPU)
         start_time = time.time()
         # Convert embeddings to EmbeddingResult format
-        import numpy as np
-
         from embeddings.embedder import EmbeddingResult
 
         embedding_results = []
@@ -1338,11 +1335,12 @@ class HybridSearcher(BaseSearcher):
         # The reranking_engine holds a reference to the same MetadataStore object.
         # If we don't close it, any access to reranking_engine.metadata_store.get()
         # will trigger _ensure_open() and REOPEN the database, preventing file deletion.
-        if hasattr(self, "reranking_engine") and self.reranking_engine is not None:
-            if (
-                hasattr(self.reranking_engine, "metadata_store")
-                and self.reranking_engine.metadata_store is not None
-            ):
+        if (
+            hasattr(self, "reranking_engine")
+            and self.reranking_engine is not None
+            and hasattr(self.reranking_engine, "metadata_store")
+            and self.reranking_engine.metadata_store is not None
+        ):
                 self.reranking_engine.metadata_store.close()
                 self._logger.debug(
                     "Closed reranking_engine metadata store before clear"

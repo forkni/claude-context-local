@@ -500,7 +500,7 @@ class QueryRouter:
 
         return scores
 
-    def _resolve_tie(self, scores: dict[str, float], precedence: list = None) -> str:
+    def _resolve_tie(self, scores: dict[str, float], precedence: list[str] | None = None) -> str:
         """Resolve ties using explicit precedence order.
 
         When multiple models have scores within 0.01 margin, select based on

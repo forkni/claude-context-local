@@ -45,7 +45,7 @@ def timed(name: str | None = None) -> Callable[[Callable[..., T]], Callable[...,
 
 
 @contextmanager
-def Timer(name: str) -> Generator[dict[str, float], None, None]:
+def timer(name: str) -> Generator[dict[str, float], None, None]:
     """Context manager for timing code blocks.
 
     Args:

@@ -172,8 +172,6 @@ class MultiLanguageChunker:
             logger.debug(f"File type not supported: {file_path}")
             return []
 
-        Path(file_path).suffix.lower()
-
         # Use tree-sitter for all  languages
         try:
             tree_chunks = self.tree_sitter_chunker.chunk_file(file_path)

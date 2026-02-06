@@ -47,8 +47,8 @@ class TestHybridSearcher:
         mock_dense.return_value.index = None
         searcher = HybridSearcher(self.temp_dir)
 
-        assert searcher.bm25_weight == 0.4
-        assert searcher.dense_weight == 0.6
+        assert searcher.bm25_weight == 0.35
+        assert searcher.dense_weight == 0.65
         assert searcher.max_workers == 2
         assert not searcher._is_shutdown
 

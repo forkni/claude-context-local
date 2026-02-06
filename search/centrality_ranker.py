@@ -6,9 +6,16 @@ structurally important code in search results.
 """
 
 import logging
+import math
 import re
+from typing import TYPE_CHECKING
 
 import networkx as nx
+
+
+if TYPE_CHECKING:
+    from graph.graph_queries import GraphQueryEngine
+    from search.config import GraphEnhancedConfig
 
 
 logger = logging.getLogger(__name__)
@@ -93,10 +100,10 @@ class CentralityRanker:
 
     def __init__(
         self,
-        graph_query_engine,
+        graph_query_engine: "GraphQueryEngine",
         method: str = "pagerank",
         alpha: float = 0.3,
-        config=None,
+        config: "GraphEnhancedConfig | None" = None,
     ):
         """Initialize centrality ranker.
 
@@ -231,8 +238,6 @@ class CentralityRanker:
                 chunk_id = result.get("chunk_id", "")
                 chunk_lines = _extract_chunk_lines(chunk_id)
                 if chunk_lines > self.config.size_norm_target_lines:
-                    import math
-
                     size_factor = 1.0 / (
                         1.0
                         + self.config.size_norm_alpha

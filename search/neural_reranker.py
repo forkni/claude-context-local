@@ -27,7 +27,7 @@ GENERATIVE_RERANKERS = {"Qwen/Qwen3-Reranker-0.6B", "Qwen/Qwen3-Reranker-4B"}
 JINA_V3_RERANKERS = {"jinaai/jina-reranker-v3"}
 
 
-def _resolve_single_token_id(tokenizer, text: str) -> int:
+def _resolve_single_token_id(tokenizer: "AutoModel", text: str) -> int:
     """Resolve a text string to a single token ID, trying variants.
 
     Args:

@@ -6,6 +6,7 @@ import pickle
 import re
 import string
 from pathlib import Path
+from typing import Any
 
 from search.filters import normalize_path
 
@@ -627,7 +628,7 @@ class BM25Index:
             self._metadata = {}
             return False
 
-    def get_stats(self) -> dict:
+    def get_stats(self) -> dict[str, Any]:
         """Get index statistics."""
         return {
             "total_documents": self.size,

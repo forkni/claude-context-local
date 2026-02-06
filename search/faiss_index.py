@@ -30,6 +30,10 @@ except ImportError:
     torch = None
 
 
+# Mmap auto-threshold: Only use mmap for indices >10K vectors (performance benefit)
+MMAP_THRESHOLD = 10000
+
+
 def get_available_memory() -> dict[str, int]:
     """Get available system and GPU memory in bytes.
 
@@ -320,7 +324,6 @@ class FaissVectorIndex:
 
         # Auto-threshold: Only use mmap for indices >10K vectors (performance benefit)
         # Fully automatic - no config needed
-        MMAP_THRESHOLD = 10000
         if self._index is not None:
             vector_count = self._index.ntotal
             if vector_count >= MMAP_THRESHOLD:

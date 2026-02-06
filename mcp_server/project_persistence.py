@@ -115,7 +115,7 @@ def get_project_display_name(project_path: str) -> str:
     Returns:
         Project directory name (e.g., 'claude-context-local')
     """
-    if project_path is None:
+    if project_path is None or project_path == "":
         return "None"
     return Path(project_path).name
 

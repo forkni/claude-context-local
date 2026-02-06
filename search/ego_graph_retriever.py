@@ -8,9 +8,14 @@ and related code (ICLR 2025 RepoGraph paper shows 32.8% improvement).
 """
 
 import logging
+from typing import TYPE_CHECKING
 
 from search.config import EgoGraphConfig
 from search.graph_integration import is_chunk_id
+
+
+if TYPE_CHECKING:
+    from graph.graph_storage import CodeGraphStorage
 
 
 logger = logging.getLogger(__name__)
@@ -28,7 +33,7 @@ class EgoGraphRetriever:
     - Import dependencies
     """
 
-    def __init__(self, graph_storage) -> None:
+    def __init__(self, graph_storage: "CodeGraphStorage") -> None:
         """Initialize ego-graph retriever.
 
         Args:

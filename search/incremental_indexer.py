@@ -4,6 +4,7 @@ import gc
 import logging
 import tempfile
 import time
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -44,7 +45,7 @@ class IncrementalIndexResult:
     bm25_resynced: bool = False
     bm25_resync_count: int = 0
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "files_added": self.files_added,
@@ -329,8 +330,6 @@ class IncrementalIndexer:
 
         except Exception as e:
             logger.error(f"Incremental indexing failed: {e}")
-            import traceback
-
             logger.error(traceback.format_exc())
 
             return self._attempt_recovery(
@@ -364,8 +363,6 @@ class IncrementalIndexer:
             return self._full_index(project_path, project_name, start_time)
         except Exception as recovery_error:
             logger.error(f"Recovery failed: {recovery_error}")
-            import traceback
-
             logger.error(traceback.format_exc())
             return IncrementalIndexResult(
                 files_added=0,
@@ -498,8 +495,6 @@ class IncrementalIndexer:
 
                 except Exception as e:
                     logger.error(f"[COMMUNITY_DETECT] Failed: {e}")
-                    import traceback
-
                     logger.error(traceback.format_exc())
                     logger.warning(
                         "[COMMUNITY_DETECT] Continuing without community data"
@@ -557,8 +552,6 @@ class IncrementalIndexer:
 
                 except Exception as e:
                     logger.error(f"[COMMUNITY_MERGE] Failed: {e}")
-                    import traceback
-
                     logger.error(traceback.format_exc())
                     logger.warning(
                         "[COMMUNITY_MERGE] Continuing with unmerged chunks from Pass 1"
@@ -607,8 +600,6 @@ class IncrementalIndexer:
                         embedding_result.metadata["content"] = chunk.content
                 except Exception as e:
                     logger.error(f"Embedding failed: {e}")
-                    import traceback
-
                     logger.error(traceback.format_exc())
 
             # Add all embeddings to index at once
