@@ -558,6 +558,9 @@ async def test_handle_search_code_hybrid_searcher_ready():
             mock_faiss_index = Mock()
             mock_faiss_index.ntotal = 1574  # Simulating indexed project
             mock_dense_index.index = mock_faiss_index
+            mock_dense_index.graph_storage = (
+                None  # Prevent centrality ranker from executing
+            )
             mock_searcher.dense_index = mock_dense_index
 
             # Mock search results with proper SearchResult object

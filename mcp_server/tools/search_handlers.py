@@ -924,7 +924,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
                 logger.debug(
                     f"Annotated {len(formatted_results)} results with centrality"
                 )
-        except (ImportError, ValueError, KeyError, RuntimeError) as e:
+        except (ImportError, ValueError, KeyError, RuntimeError, TypeError) as e:
             logger.debug(f"Centrality ranking failed: {e}")
 
     # Cap total results to prevent token bloat (k primary + up to 3k context)
