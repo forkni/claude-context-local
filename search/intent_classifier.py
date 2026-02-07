@@ -173,6 +173,14 @@ class IntentClassifier:
                 "format",
                 "generate",
                 "build",
+                # I/O and persistence verbs (added to fix Q16 zero-intent classification)
+                # These are function-level I/O operations (LOCAL), not architectural concepts (GLOBAL)
+                "save",
+                "load",
+                "store",
+                "persist",
+                "read",
+                "write",
             ],
             "patterns": [
                 # REMOVED: Dead CamelCase pattern (ran against lowered query, never matched)

@@ -1,6 +1,6 @@
 """Utility modules for claude-context-local."""
 
-from utils.timing import timer, timed
+from utils.timing import timed, timer
 
 
 __all__ = ["timed", "timer"]

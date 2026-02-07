@@ -56,6 +56,18 @@ class TestIntentClassifierBasicDetection:
         # Check confidence (after penalty applied), not raw score
         assert short_decision.confidence > long_decision.confidence
 
+    def test_local_intent_io_verbs(self, classifier):
+        """Test LOCAL intent for I/O and persistence verbs (save, load, read, write)."""
+        # "save" and "load" should each add +0.10 to LOCAL score
+        decision = classifier.classify("save and load search configuration")
+        assert decision.scores["local"] >= 0.20  # save +0.10, load +0.10
+        # Should classify as hybrid (LOCAL=0.20, below LOCAL-only threshold)
+        # but LOCAL should be highest or tied with others
+        assert (
+            decision.intent == QueryIntent.HYBRID
+            or decision.intent == QueryIntent.LOCAL
+        )
+
     # ===== GLOBAL Intent Tests =====
 
     def test_global_intent_how_does_work(self, classifier):

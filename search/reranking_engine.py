@@ -10,8 +10,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .config import get_search_config
 from utils.timing import timed
+
+from .config import get_search_config
 
 
 if TYPE_CHECKING:

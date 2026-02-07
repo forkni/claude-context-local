@@ -138,11 +138,15 @@ class HybridSearcher(BaseSearcher):
         )
 
         # Check for index mismatch (early warning system)
-        if isinstance(total_bm25, int) and isinstance(dense_count, int) and abs(total_bm25 - dense_count) > 10:
-                self._logger.warning(
-                    f"[INIT] INDEX MISMATCH DETECTED: BM25={total_bm25}, Dense={dense_count}. "
-                    f"Consider re-indexing to synchronize indices."
-                )
+        if (
+            isinstance(total_bm25, int)
+            and isinstance(dense_count, int)
+            and abs(total_bm25 - dense_count) > 10
+        ):
+            self._logger.warning(
+                f"[INIT] INDEX MISMATCH DETECTED: BM25={total_bm25}, Dense={dense_count}. "
+                f"Consider re-indexing to synchronize indices."
+            )
 
         # Initialize search components (reranker, search executor, multi-hop)
         self._init_search_components(
@@ -1341,10 +1345,8 @@ class HybridSearcher(BaseSearcher):
             and hasattr(self.reranking_engine, "metadata_store")
             and self.reranking_engine.metadata_store is not None
         ):
-                self.reranking_engine.metadata_store.close()
-                self._logger.debug(
-                    "Closed reranking_engine metadata store before clear"
-                )
+            self.reranking_engine.metadata_store.close()
+            self._logger.debug("Closed reranking_engine metadata store before clear")
 
         # Now safe to clear
         self.index_sync.clear_index()
