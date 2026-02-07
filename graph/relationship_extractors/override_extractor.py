@@ -270,15 +270,16 @@ class OverrideExtractor(BaseRelationshipExtractor):
                 continue
 
             # Check if call is super().method_name()
-            if isinstance(node.func, ast.Attribute):
-                # Check if the value is a super() call
-                if isinstance(node.func.value, ast.Call):
-                    if isinstance(node.func.value.func, ast.Name):
-                        if node.func.value.func.id == "super":
-                            # Found super().method_name()
-                            method_name = node.func.attr
-                            line_number = node.lineno
-                            super_calls.append((method_name, line_number))
+            if (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Call)
+                and isinstance(node.func.value.func, ast.Name)
+                and node.func.value.func.id == "super"
+            ):
+                # Found super().method_name()
+                method_name = node.func.attr
+                line_number = node.lineno
+                super_calls.append((method_name, line_number))
 
         return super_calls
 

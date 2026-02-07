@@ -214,11 +214,9 @@ class CodeIndexManager:
         self._logger.info(f"Added {len(embedding_results)} embeddings to index")
 
         # Commit metadata in a single transaction for performance
-        try:
+        # If commit is unavailable for some reason, continue without failing
+        with contextlib.suppress(sqlite3.Error):
             self.metadata_store.commit()
-        except sqlite3.Error:
-            # If commit is unavailable for some reason, continue without failing
-            pass
 
         # Save call graph if populated
         graph_status = "not None" if self.graph_storage is not None else "None"

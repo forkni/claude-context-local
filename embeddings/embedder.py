@@ -5,6 +5,7 @@ Supports multiple embedding models including:
 - BGE-M3 (BAAI/bge-m3)
 """
 
+import contextlib
 import gc
 import logging
 import os
@@ -503,8 +504,8 @@ class CodeEmbedder:
             - should_warn: True if usage > 85%
             - should_abort: True if usage > 95%
         """
-        VRAM_WARNING_THRESHOLD = 0.85  # 85% usage
-        VRAM_ABORT_THRESHOLD = 0.95  # 95% usage
+        vram_warning_threshold = 0.85  # 85% usage
+        vram_abort_threshold = 0.95  # 95% usage
 
         if not torch or not torch.cuda.is_available():
             return 0.0, False, False
@@ -514,8 +515,8 @@ class CodeEmbedder:
             free_memory, total_memory = torch.cuda.mem_get_info(0)
             usage_pct = 1.0 - (free_memory / total_memory) if total_memory > 0 else 0.0
 
-            should_warn = usage_pct > VRAM_WARNING_THRESHOLD
-            should_abort = usage_pct > VRAM_ABORT_THRESHOLD
+            should_warn = usage_pct > vram_warning_threshold
+            should_abort = usage_pct > vram_abort_threshold
 
             return usage_pct, should_warn, should_abort
         except RuntimeError as e:
@@ -1339,12 +1340,10 @@ class CodeEmbedder:
 
     def __del__(self):
         """Ensure cleanup when object is destroyed."""
-        try:
+        # Intentional: cleanup during interpreter shutdown may fail
+        # Logging is unreliable in __del__, so suppress is acceptable
+        with contextlib.suppress(Exception):
             self.cleanup()
-        except Exception:
-            # Intentional: cleanup during interpreter shutdown may fail
-            # Logging is unreliable in __del__, so suppress is acceptable
-            pass
 
     # ===== Cache Management Methods (delegated to ModelCacheManager) =====
 

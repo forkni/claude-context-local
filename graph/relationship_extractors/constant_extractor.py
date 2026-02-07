@@ -107,19 +107,20 @@ class ConstantExtractor(BaseRelationshipExtractor):
         for node in ast.iter_child_nodes(tree):
             if isinstance(node, ast.Assign):
                 for target in node.targets:
-                    if isinstance(target, ast.Name) and self._is_constant_name(
-                        target.id
+                    if (
+                        isinstance(target, ast.Name)
+                        and self._is_constant_name(target.id)
+                        and not self._is_trivial_value(node.value)
                     ):
                         # Check if value is trivial (skip all-numeric constants)
-                        if not self._is_trivial_value(node.value):
-                            self.relationship_type = RelationshipType.DEFINES_CONSTANT
-                            self._add_edge(
-                                source_id=chunk_metadata["chunk_id"],
-                                target_name=target.id,
-                                line_number=node.lineno,
-                                definition=True,
-                            )
-                            self.known_constants.add(target.id)
+                        self.relationship_type = RelationshipType.DEFINES_CONSTANT
+                        self._add_edge(
+                            source_id=chunk_metadata["chunk_id"],
+                            target_name=target.id,
+                            line_number=node.lineno,
+                            definition=True,
+                        )
+                        self.known_constants.add(target.id)
 
     def _extract_constant_usages(self, tree: ast.AST, chunk_metadata: dict[str, Any]):
         """
@@ -135,17 +136,19 @@ class ConstantExtractor(BaseRelationshipExtractor):
             chunk_metadata: Chunk metadata
         """
         for node in ast.walk(tree):
-            if isinstance(node, ast.Name) and self._is_constant_name(node.id):
-                # Skip if this is an assignment target
-                if not self._is_assignment_target(node, tree):
-                    # Skip builtins (e.g., True, False, None)
-                    if not self._is_builtin(node.id):
-                        self.relationship_type = RelationshipType.USES_CONSTANT
-                        self._add_edge(
-                            source_id=chunk_metadata["chunk_id"],
-                            target_name=node.id,
-                            line_number=node.lineno,
-                        )
+            # Skip if this is an assignment target or builtin
+            if (
+                isinstance(node, ast.Name)
+                and self._is_constant_name(node.id)
+                and not self._is_assignment_target(node, tree)
+                and not self._is_builtin(node.id)
+            ):
+                self.relationship_type = RelationshipType.USES_CONSTANT
+                self._add_edge(
+                    source_id=chunk_metadata["chunk_id"],
+                    target_name=node.id,
+                    line_number=node.lineno,
+                )
 
     @staticmethod
     def _is_constant_name(name: str) -> bool:

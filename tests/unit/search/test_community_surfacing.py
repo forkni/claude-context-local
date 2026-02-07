@@ -24,22 +24,22 @@ def mock_storage_with_communities():
     chunk_b = "graph/utils.py:30-40:function:func_b"
     chunk_c = "search/handler.py:50-60:function:func_c"
 
-    G = nx.DiGraph()
+    g = nx.DiGraph()
 
     # Add nodes with metadata (stored IN the graph)
-    G.add_node(
+    g.add_node(
         chunk_a,
         name="func_a",
         type="function",
         file="graph/module.py",
     )
-    G.add_node(
+    g.add_node(
         chunk_b,
         name="func_b",
         type="function",
         file="graph/utils.py",
     )
-    G.add_node(
+    g.add_node(
         chunk_c,
         name="func_c",
         type="function",
@@ -47,10 +47,10 @@ def mock_storage_with_communities():
     )
 
     # Add edges
-    G.add_edge(chunk_a, chunk_b, type="calls", line=10)
-    G.add_edge(chunk_b, chunk_c, type="calls", line=20)
+    g.add_edge(chunk_a, chunk_b, type="calls", line=10)
+    g.add_edge(chunk_b, chunk_c, type="calls", line=20)
 
-    storage.graph = G
+    storage.graph = g
     storage.project_root = None
 
     # Mock community map using proper chunk_ids
@@ -116,11 +116,11 @@ def test_empty_community_map():
     storage = MagicMock()
 
     # Simple graph
-    G = nx.DiGraph()
-    G.add_node("chunk_a", name="func_a", type="function", file="module.py")
-    G.add_node("chunk_b", name="func_b", type="function", file="utils.py")
-    G.add_edge("chunk_a", "chunk_b", type="calls", line=10)
-    storage.graph = G
+    g = nx.DiGraph()
+    g.add_node("chunk_a", name="func_a", type="function", file="module.py")
+    g.add_node("chunk_b", name="func_b", type="function", file="utils.py")
+    g.add_edge("chunk_a", "chunk_b", type="calls", line=10)
+    storage.graph = g
     storage.project_root = None
 
     # No community map
@@ -142,13 +142,13 @@ def test_partial_community_map():
     storage = MagicMock()
 
     # Graph with 3 nodes
-    G = nx.DiGraph()
-    G.add_node("chunk_a", name="func_a", type="function", file="graph/module.py")
-    G.add_node("chunk_b", name="func_b", type="function", file="graph/utils.py")
-    G.add_node("chunk_c", name="func_c", type="function", file="search/handler.py")
-    G.add_edge("chunk_a", "chunk_b", type="calls", line=10)
-    G.add_edge("chunk_b", "chunk_c", type="calls", line=20)
-    storage.graph = G
+    g = nx.DiGraph()
+    g.add_node("chunk_a", name="func_a", type="function", file="graph/module.py")
+    g.add_node("chunk_b", name="func_b", type="function", file="graph/utils.py")
+    g.add_node("chunk_c", name="func_c", type="function", file="search/handler.py")
+    g.add_edge("chunk_a", "chunk_b", type="calls", line=10)
+    g.add_edge("chunk_b", "chunk_c", type="calls", line=20)
+    storage.graph = g
     storage.project_root = None
 
     # Community map only covers chunk_a and chunk_b
@@ -211,18 +211,18 @@ def test_community_with_ego_neighbors():
 
     # Graph: chunk_a -> chunk_b -> chunk_neighbor
     # chunk_neighbor is an ego neighbor, not a search result
-    G = nx.DiGraph()
-    G.add_node("chunk_a", name="func_a", type="function", file="graph/module.py")
-    G.add_node("chunk_b", name="func_b", type="function", file="graph/utils.py")
-    G.add_node(
+    g = nx.DiGraph()
+    g.add_node("chunk_a", name="func_a", type="function", file="graph/module.py")
+    g.add_node("chunk_b", name="func_b", type="function", file="graph/utils.py")
+    g.add_node(
         "chunk_neighbor",
         name="func_neighbor",
         type="function",
         file="graph/neighbor.py",
     )
-    G.add_edge("chunk_a", "chunk_b", type="calls", line=10)
-    G.add_edge("chunk_b", "chunk_neighbor", type="calls", line=20)
-    storage.graph = G
+    g.add_edge("chunk_a", "chunk_b", type="calls", line=10)
+    g.add_edge("chunk_b", "chunk_neighbor", type="calls", line=20)
+    storage.graph = g
     storage.project_root = None
 
     # Community map covers all nodes including ego neighbor

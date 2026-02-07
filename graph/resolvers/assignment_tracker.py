@@ -59,13 +59,15 @@ class AssignmentTracker:
                             if isinstance(target, ast.Name):
                                 # Simple variable: x = MyClass()
                                 assignments[target.id] = type_name
-                            elif isinstance(target, ast.Attribute):
+                            elif (
+                                isinstance(target, ast.Attribute)
+                                and isinstance(target.value, ast.Name)
+                                and target.value.id in ("self", "cls")
+                            ):
                                 # Attribute assignment: self.handler = Handler()
                                 # Only track self.attr and cls.attr
-                                if isinstance(target.value, ast.Name):
-                                    if target.value.id in ("self", "cls"):
-                                        attr_key = f"{target.value.id}.{target.attr}"
-                                        assignments[attr_key] = type_name
+                                attr_key = f"{target.value.id}.{target.attr}"
+                                assignments[attr_key] = type_name
 
             # Handle annotated assignments: x: MyClass = value
             elif isinstance(node, ast.AnnAssign):

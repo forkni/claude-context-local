@@ -386,11 +386,14 @@ class CodeGraphStorage:
                     # Check if this edge type is requested
                     if edge_type and edge_type in relation_types:
                         # Apply import category filtering if needed
-                        if edge_type == "imports" and exclude_import_categories:
-                            if self._should_exclude_edge(
+                        if (
+                            edge_type == "imports"
+                            and exclude_import_categories
+                            and self._should_exclude_edge(
                                 current_id, target, exclude_import_categories
-                            ):
-                                continue
+                            )
+                        ):
+                            continue
 
                         if target not in visited:
                             neighbors.add(target)
@@ -413,11 +416,14 @@ class CodeGraphStorage:
                     # Check if this reverse type is requested
                     if reverse_type and reverse_type in relation_types:
                         # Apply import category filtering if needed
-                        if edge_type == "imports" and exclude_import_categories:
-                            if self._should_exclude_edge(
+                        if (
+                            edge_type == "imports"
+                            and exclude_import_categories
+                            and self._should_exclude_edge(
                                 source, current_id, exclude_import_categories
-                            ):
-                                continue
+                            )
+                        ):
+                            continue
 
                         if source not in visited:
                             neighbors.add(source)
@@ -447,11 +453,14 @@ class CodeGraphStorage:
                     # Check if this edge type is requested
                     if edge_type and edge_type in relation_types:
                         # Apply import category filtering if needed
-                        if edge_type == "imports" and exclude_import_categories:
-                            if self._should_exclude_edge(
+                        if (
+                            edge_type == "imports"
+                            and exclude_import_categories
+                            and self._should_exclude_edge(
                                 current_id, target, exclude_import_categories
-                            ):
-                                continue
+                            )
+                        ):
+                            continue
 
                         if target not in visited:
                             neighbors.add(target)
@@ -478,11 +487,14 @@ class CodeGraphStorage:
                     # Check if this reverse type is requested
                     if reverse_type and reverse_type in relation_types:
                         # Apply import category filtering if needed
-                        if edge_type == "imports" and exclude_import_categories:
-                            if self._should_exclude_edge(
+                        if (
+                            edge_type == "imports"
+                            and exclude_import_categories
+                            and self._should_exclude_edge(
                                 source, current_id, exclude_import_categories
-                            ):
-                                continue
+                            )
+                        ):
+                            continue
 
                         if source not in visited:
                             neighbors.add(source)
@@ -635,11 +647,7 @@ class CodeGraphStorage:
 
         # 2. Normalize line_number
         if "line_number" not in edge_data:
-            if "line" in edge_data:
-                edge_data["line_number"] = edge_data["line"]
-            else:
-                # No line number available - use 0 as sentinel
-                edge_data["line_number"] = 0
+            edge_data["line_number"] = edge_data.get("line", 0)
 
         # 3. Ensure confidence exists (optional but useful)
         if "confidence" not in edge_data:

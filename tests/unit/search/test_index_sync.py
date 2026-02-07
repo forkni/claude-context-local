@@ -200,34 +200,38 @@ class TestIndexSynchronizer:
     def test_clear_index_success(self):
         """Test clearing both indices."""
         # clear_index recreates indices using constructors
-        with patch("search.index_sync.BM25Index") as mock_bm25_class:
-            with patch("search.index_sync.CodeIndexManager") as mock_dense_class:
-                with patch("search.index_sync.shutil.rmtree"):
-                    with patch("search.index_sync.Path.exists", return_value=True):
-                        self.mock_dense_index.clear_index = MagicMock()
+        with (
+            patch("search.index_sync.BM25Index") as mock_bm25_class,
+            patch("search.index_sync.CodeIndexManager") as mock_dense_class,
+            patch("search.index_sync.shutil.rmtree"),
+            patch("search.index_sync.Path.exists", return_value=True),
+        ):
+            self.mock_dense_index.clear_index = MagicMock()
 
-                        # Execute clear
-                        self.synchronizer.clear_index()
+            # Execute clear
+            self.synchronizer.clear_index()
 
-                        # Verify dense clear_index was called
-                        self.mock_dense_index.clear_index.assert_called_once()
-                        # Verify new instances were created
-                        mock_bm25_class.assert_called_once()
-                        mock_dense_class.assert_called_once()
+            # Verify dense clear_index was called
+            self.mock_dense_index.clear_index.assert_called_once()
+            # Verify new instances were created
+            mock_bm25_class.assert_called_once()
+            mock_dense_class.assert_called_once()
 
     def test_clear_index_with_storage_cleanup(self):
         """Test clearing with storage directory cleanup."""
         # Mock Path.exists and shutil.rmtree
-        with patch("search.index_sync.Path.exists", return_value=True):
-            with patch("search.index_sync.shutil.rmtree") as mock_rmtree:
-                self.mock_bm25_index.clear = MagicMock()
-                self.mock_dense_index.clear = MagicMock()
+        with (
+            patch("search.index_sync.Path.exists", return_value=True),
+            patch("search.index_sync.shutil.rmtree") as mock_rmtree,
+        ):
+            self.mock_bm25_index.clear = MagicMock()
+            self.mock_dense_index.clear = MagicMock()
 
-                # Execute clear
-                self.synchronizer.clear_index()
+            # Execute clear
+            self.synchronizer.clear_index()
 
-                # Verify rmtree was called
-                assert mock_rmtree.call_count >= 0  # May or may not cleanup
+            # Verify rmtree was called
+            assert mock_rmtree.call_count >= 0  # May or may not cleanup
 
     def test_remove_file_chunks_success(self):
         """Test removing chunks for specific file."""
@@ -343,20 +347,22 @@ class TestIndexSynchronizer:
         assert synchronizer_with_embedder.embedder == mock_embedder
 
         # clear_index recreates indices with embedder
-        with patch("search.index_sync.BM25Index"):
-            with patch("search.index_sync.CodeIndexManager") as mock_dense_class:
-                with patch("search.index_sync.shutil.rmtree"):
-                    with patch("search.index_sync.Path.exists", return_value=True):
-                        self.mock_dense_index.clear_index = MagicMock()
+        with (
+            patch("search.index_sync.BM25Index"),
+            patch("search.index_sync.CodeIndexManager") as mock_dense_class,
+            patch("search.index_sync.shutil.rmtree"),
+            patch("search.index_sync.Path.exists", return_value=True),
+        ):
+            self.mock_dense_index.clear_index = MagicMock()
 
-                        # Execute clear
-                        synchronizer_with_embedder.clear_index()
+            # Execute clear
+            synchronizer_with_embedder.clear_index()
 
-                        # Verify CodeIndexManager was called with embedder
-                        mock_dense_class.assert_called_once()
-                        call_kwargs = mock_dense_class.call_args[1]
-                        assert "embedder" in call_kwargs
-                        assert call_kwargs["embedder"] == mock_embedder
+            # Verify CodeIndexManager was called with embedder
+            mock_dense_class.assert_called_once()
+            call_kwargs = mock_dense_class.call_args[1]
+            assert "embedder" in call_kwargs
+            assert call_kwargs["embedder"] == mock_embedder
 
     def test_embedder_none_allowed(self):
         """Test that IndexSynchronizer works with embedder=None for backward compatibility."""
@@ -375,17 +381,19 @@ class TestIndexSynchronizer:
         assert synchronizer_no_embedder.embedder is None
 
         # clear_index should still work (passes None to CodeIndexManager)
-        with patch("search.index_sync.BM25Index"):
-            with patch("search.index_sync.CodeIndexManager") as mock_dense_class:
-                with patch("search.index_sync.shutil.rmtree"):
-                    with patch("search.index_sync.Path.exists", return_value=True):
-                        self.mock_dense_index.clear_index = MagicMock()
+        with (
+            patch("search.index_sync.BM25Index"),
+            patch("search.index_sync.CodeIndexManager") as mock_dense_class,
+            patch("search.index_sync.shutil.rmtree"),
+            patch("search.index_sync.Path.exists", return_value=True),
+        ):
+            self.mock_dense_index.clear_index = MagicMock()
 
-                        # Execute clear
-                        synchronizer_no_embedder.clear_index()
+            # Execute clear
+            synchronizer_no_embedder.clear_index()
 
-                        # Verify CodeIndexManager was called with embedder=None
-                        mock_dense_class.assert_called_once()
-                        call_kwargs = mock_dense_class.call_args[1]
-                        assert "embedder" in call_kwargs
-                        assert call_kwargs["embedder"] is None
+            # Verify CodeIndexManager was called with embedder=None
+            mock_dense_class.assert_called_once()
+            call_kwargs = mock_dense_class.call_args[1]
+            assert "embedder" in call_kwargs
+            assert call_kwargs["embedder"] is None

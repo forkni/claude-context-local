@@ -217,7 +217,7 @@ class SubgraphExtractor:
 
         # Extract edges between all nodes (search results + ego neighbors)
         # Cap boundary edges to avoid token explosion (max 3 per source node)
-        MAX_BOUNDARY_PER_NODE = 3
+        max_boundary_per_node = 3
         boundary_counts: dict[str, int] = {}
 
         # Convert ego_neighbor_ids to set for fast lookup
@@ -240,7 +240,7 @@ class SubgraphExtractor:
                 # Cap boundary edges per source node
                 if is_boundary:
                     boundary_counts[chunk_id] = boundary_counts.get(chunk_id, 0) + 1
-                    if boundary_counts[chunk_id] > MAX_BOUNDARY_PER_NODE:
+                    if boundary_counts[chunk_id] > max_boundary_per_node:
                         continue
 
                 if not is_boundary or include_boundary_edges:

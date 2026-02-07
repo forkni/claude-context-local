@@ -128,7 +128,7 @@ def _to_toon_format(data: dict[str, Any]) -> dict[str, Any]:
         TOON-formatted dict with tabular arrays and sparse column optimization
     """
     result = {}
-    SPARSE_THRESHOLD = 0.25  # If <25% of rows have values, move to sparse
+    sparse_threshold = 0.25  # If <25% of rows have values, move to sparse
 
     for key, value in data.items():
         # Skip empty values
@@ -168,7 +168,7 @@ def _to_toon_format(data: dict[str, Any]) -> dict[str, Any]:
                     )
                     fill_ratio = non_empty_count / len(value)
 
-                    if fill_ratio >= SPARSE_THRESHOLD:
+                    if fill_ratio >= sparse_threshold:
                         dense_fields.append(field_name)
                     else:
                         sparse_fields.append(field_name)

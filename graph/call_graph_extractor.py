@@ -302,16 +302,19 @@ class PythonCallGraphExtractor(CallGraphExtractor):
                 return method_name
 
             # Check for super() call - resolve to parent class
-            if isinstance(receiver, ast.Call):
-                if isinstance(receiver.func, ast.Name) and receiver.func.id == "super":
-                    if self._current_class:
-                        parent_class = self._get_parent_class(self._current_class)
-                        if parent_class:
-                            return f"{parent_class}.{method_name}"
-                        # No parent class found, but we know it's a super call
-                        # Return with indicator for documentation
-                        return f"super.{method_name}"
-                    return method_name
+            if (
+                isinstance(receiver, ast.Call)
+                and isinstance(receiver.func, ast.Name)
+                and receiver.func.id == "super"
+            ):
+                if self._current_class:
+                    parent_class = self._get_parent_class(self._current_class)
+                    if parent_class:
+                        return f"{parent_class}.{method_name}"
+                    # No parent class found, but we know it's a super call
+                    # Return with indicator for documentation
+                    return f"super.{method_name}"
+                return method_name
 
             # Check for type-annotated parameter or local assignment
             if isinstance(receiver, ast.Name):
@@ -332,13 +335,15 @@ class PythonCallGraphExtractor(CallGraphExtractor):
 
             # Check for self.attr.method() pattern
             # e.g., self.handler.handle() where self.handler = Handler()
-            if isinstance(receiver, ast.Attribute):
-                if isinstance(receiver.value, ast.Name):
-                    if receiver.value.id in ("self", "cls"):
-                        attr_key = f"{receiver.value.id}.{receiver.attr}"
-                        if attr_key in self._type_annotations:
-                            type_name = self._type_annotations[attr_key]
-                            return f"{type_name}.{method_name}"
+            if (
+                isinstance(receiver, ast.Attribute)
+                and isinstance(receiver.value, ast.Name)
+                and receiver.value.id in ("self", "cls")
+            ):
+                attr_key = f"{receiver.value.id}.{receiver.attr}"
+                if attr_key in self._type_annotations:
+                    type_name = self._type_annotations[attr_key]
+                    return f"{type_name}.{method_name}"
 
             # Regular method call - return bare method name
             return method_name

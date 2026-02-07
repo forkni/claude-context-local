@@ -7,6 +7,7 @@ Removes two types of projects:
 2. Stale: Projects with project_info.json where the project_path no longer exists
 """
 
+import contextlib
 import gc
 import json
 import shutil
@@ -122,10 +123,9 @@ def cleanup_project(project_dir):
             if merkle_dir.exists():
                 # Match files like: {project_id}_{model}_{dim}d_snapshot.json
                 for merkle_file in merkle_dir.glob(f"{full_project_id}_*"):
-                    try:
+                    # Ignore errors removing merkle files
+                    with contextlib.suppress(OSError):
                         merkle_file.unlink()
-                    except OSError:
-                        pass  # Ignore errors removing merkle files
 
         # Remove directory
         shutil.rmtree(project_dir, ignore_errors=False)

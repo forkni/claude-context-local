@@ -165,7 +165,7 @@ class MmapVectorStorage:
             return False
 
         try:
-            self._file = open(self._path, "rb")
+            self._file = open(self._path, "rb")  # noqa: SIM115 - file handle stored for mmap
             self._mmap = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
 
             # Validate header

@@ -19,7 +19,7 @@ import sys  # noqa: E402
 import tempfile  # noqa: E402
 from collections.abc import Generator  # noqa: E402
 from pathlib import Path  # noqa: E402
-from typing import Any
+from typing import Any  # noqa: E402
 
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402

@@ -95,13 +95,15 @@ class MerkleDAG:
             try:
                 relative_path = str(path.relative_to(self.root_path))
                 # Root directory should never be filtered - only its contents
-                if relative_path != ".":
-                    # Use traversal mode to allow parent directories of include targets to pass through
-                    # This enables traversal to reach nested include_dirs like "Scripts/StreamDiffusionTD"
-                    if not self.directory_filter.matches_for_traversal(
+                # Use traversal mode to allow parent directories of include targets to pass through
+                # This enables traversal to reach nested include_dirs like "Scripts/StreamDiffusionTD"
+                if (
+                    relative_path != "."
+                    and not self.directory_filter.matches_for_traversal(
                         relative_path + "/"
-                    ):
-                        return True
+                    )
+                ):
+                    return True
             except ValueError:
                 # Path not under root, ignore it
                 return True

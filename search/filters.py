@@ -487,9 +487,11 @@ class FilterEngine:
             return False
 
         # 3. Chunk type (exact match)
-        if self.criteria.chunk_type:
-            if metadata.get("chunk_type") != self.criteria.chunk_type:
-                return False
+        if (
+            self.criteria.chunk_type
+            and metadata.get("chunk_type") != self.criteria.chunk_type
+        ):
+            return False
 
         # 4. Tags (set intersection)
         if self.criteria.tags:
