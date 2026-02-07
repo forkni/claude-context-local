@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "claude-context-local": {
-      "url": "http://localhost:8765/sse",
-      "type": "sse"
-    }
-  }
-}
