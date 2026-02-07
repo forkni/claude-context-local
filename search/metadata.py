@@ -4,6 +4,8 @@ This module provides a centralized interface for managing chunk metadata
 stored in SQLite, with support for efficient querying and chunk ID normalization.
 """
 
+import contextlib
+import json
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -48,10 +50,18 @@ class MetadataStore:
         self._symbol_cache = SymbolHashCache(cache_path)
 
     def _ensure_open(self):
-        """Lazy-load database connection."""
+        """Lazy-load database connection.
+
+        Uses JSON serialization instead of pickle to mitigate CVE-2024-35515
+        (insecure deserialization vulnerability in sqlitedict).
+        """
         if self._db is None:
             self._db = SqliteDict(
-                str(self.db_path), autocommit=False, journal_mode="WAL"
+                str(self.db_path),
+                autocommit=False,
+                journal_mode="WAL",
+                encode=json.dumps,
+                decode=json.loads,
             )
 
     # CRUD Operations
@@ -270,12 +280,10 @@ class MetadataStore:
         Should be called when done with the store to release resources.
         """
         if self._db is not None:
-            try:
-                # Ensure WAL is checkpointed before close (prevents file handle leaks on Windows)
-                self._db.commit()
-            except (OSError, sqlite3.Error):
+            # Ensure WAL is checkpointed before close (prevents file handle leaks on Windows)
+            with contextlib.suppress(OSError, sqlite3.Error):
                 # Ignore errors during commit (db might already be closed or corrupted)
-                pass
+                self._db.commit()
             self._db.close()
             self._db = None
 
