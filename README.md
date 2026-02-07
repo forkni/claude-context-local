@@ -30,7 +30,7 @@
 
 - **Hybrid Search**: BM25 + semantic fusion (44.4% precision, 100% MRR) - [benchmarks](docs/BENCHMARKS.md)
 - **Neural Reranking**: Cross-encoder models (BGE-reranker-v2-m3 OR Jina-reranker-v2) improve ranking quality by 5-15% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
-- **SSCG Integration**: Structural-Semantic Code Graph with Recall@4=1.00, MRR=0.81 - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#sscg-integration)
+- **SSCG Integration**: Structural-Semantic Code Graph with MRR=0.94, Recall@4=92.3% (12/13 queries) - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#sscg-integration)
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
 - **Multi-Model Routing**: Intelligent query routing (Qwen3, BGE-M3, CodeRankEmbed) with 100% accuracy - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md)
 - **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
@@ -410,6 +410,21 @@ claude-context-local/
 
 **Complete architecture**: [Architecture Documentation](docs/ADVANCED_FEATURES_GUIDE.md)
 
+## Benchmark Results
+
+### SSCG Evaluation (v0.9.2)
+
+Evaluated against 13 queries across 3 categories on the project's own codebase:
+
+| Category | Queries | Pass Rate | Description |
+|----------|---------|-----------|-------------|
+| **A: Small Function Discovery** | 5 | 4/5 (80%) | Find specific functions by description |
+| **B: Sibling Context** | 3 | 3/3 (100%) | Find related encode/decode, save/load pairs |
+| **C: Class Overview** | 5 | 5/5 (100%) | Understand class responsibilities |
+| **Overall** | **13** | **12/13 (92.3%)** | MRR: 0.94, Recall@4: 0.89 |
+
+See [benchmarks](docs/BENCHMARKS.md) for token efficiency results (63% reduction).
+
 ## Troubleshooting
 
 ### Quick Diagnostics
@@ -498,6 +513,16 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 ## License
 
 Licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE) file for details.
+
+## Research References
+
+This project's architecture is informed by the following research:
+
+| Paper | Venue | Key Contribution |
+|-------|-------|------------------|
+| **LogicLens: Leveraging Semantic Code Graph for Multi-Repository Exploration** | arXiv 2601.10773, 2026 | Three-phase graph construction (structural + semantic + entity); ReAct agent with specialized tools |
+| **HermesSim: Semantics-Oriented Graphs** (He et al.) | USENIX Security 2024 | Three-subgraph decomposition (data/control/effect) with multi-head fusion; foundation for intent-adaptive graph weights |
+| **Orchestrating Graph and Semantic Searches for Code Analysis** (Prast et al.) | TNO 2025 | BOLAA orchestration; validates separate graph/vector DB architecture and summary-first retrieval |
 
 ## Inspiration & Acknowledgments
 
