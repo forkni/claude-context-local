@@ -5,12 +5,13 @@ Supports multiple embedding models including:
 - BGE-M3 (BAAI/bge-m3)
 """
 
+import contextlib
 import gc
 import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 from rich.console import Console
@@ -180,7 +181,7 @@ def calculate_optimal_batch_size(
     max_batch: int = 256,  # Conservative cap to prevent spillover
     memory_fraction: float = 0.8,  # Target 80% VRAM utilization (20% headroom)
     model_vram_gb: float = 0.0,
-    model_name: Optional[str] = None,
+    model_name: str | None = None,
 ) -> int:
     """Calculate optimal batch size using model-aware activation memory estimation.
 
@@ -370,7 +371,7 @@ class CodeEmbedder:
     def __init__(
         self,
         model_name: str = "google/embeddinggemma-300m",
-        cache_dir: Optional[str] = None,
+        cache_dir: str | None = None,
         device: str = "auto",
     ) -> None:
         self.model_name = model_name
@@ -503,8 +504,8 @@ class CodeEmbedder:
             - should_warn: True if usage > 85%
             - should_abort: True if usage > 95%
         """
-        VRAM_WARNING_THRESHOLD = 0.85  # 85% usage
-        VRAM_ABORT_THRESHOLD = 0.95  # 95% usage
+        vram_warning_threshold = 0.85  # 85% usage
+        vram_abort_threshold = 0.95  # 95% usage
 
         if not torch or not torch.cuda.is_available():
             return 0.0, False, False
@@ -514,8 +515,8 @@ class CodeEmbedder:
             free_memory, total_memory = torch.cuda.mem_get_info(0)
             usage_pct = 1.0 - (free_memory / total_memory) if total_memory > 0 else 0.0
 
-            should_warn = usage_pct > VRAM_WARNING_THRESHOLD
-            should_abort = usage_pct > VRAM_ABORT_THRESHOLD
+            should_warn = usage_pct > vram_warning_threshold
+            should_abort = usage_pct > vram_abort_threshold
 
             return usage_pct, should_warn, should_abort
         except RuntimeError as e:
@@ -523,7 +524,7 @@ class CodeEmbedder:
             return 0.0, False, False
 
     @property
-    def model(self) -> Optional[SentenceTransformer]:
+    def model(self) -> SentenceTransformer | None:
         """Lazy loading of the model."""
         if self._model is None:
             self._load_model()
@@ -546,7 +547,7 @@ class CodeEmbedder:
             String containing import statements, or empty string if none found
         """
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 lines = []
                 for line in f:
                     stripped = line.strip()
@@ -588,7 +589,7 @@ class CodeEmbedder:
             return ""
 
         try:
-            with open(chunk.file_path, "r", encoding="utf-8") as f:
+            with open(chunk.file_path, encoding="utf-8") as f:
                 content = f.read()
 
             # Find class definition containing this method
@@ -777,10 +778,7 @@ class CodeEmbedder:
         passage_prefix = model_config.get("passage_prefix", "")
 
         # Prepend passage prefix if it exists
-        if passage_prefix:
-            content_to_embed = passage_prefix + content
-        else:
-            content_to_embed = content
+        content_to_embed = passage_prefix + content if passage_prefix else content
 
         # Use convert_to_tensor for GPU to avoid CPU<->GPU transfers
         use_tensor = self._is_gpu_device()
@@ -848,7 +846,7 @@ class CodeEmbedder:
         )
 
     def embed_chunks(
-        self, chunks: list[CodeChunk], batch_size: Optional[int] = None
+        self, chunks: list[CodeChunk], batch_size: int | None = None
     ) -> list[EmbeddingResult]:
         """Generate embeddings for multiple chunks with batching."""
         results = []
@@ -1342,20 +1340,18 @@ class CodeEmbedder:
 
     def __del__(self):
         """Ensure cleanup when object is destroyed."""
-        try:
+        # Intentional: cleanup during interpreter shutdown may fail
+        # Logging is unreliable in __del__, so suppress is acceptable
+        with contextlib.suppress(Exception):
             self.cleanup()
-        except Exception:
-            # Intentional: cleanup during interpreter shutdown may fail
-            # Logging is unreliable in __del__, so suppress is acceptable
-            pass
 
     # ===== Cache Management Methods (delegated to ModelCacheManager) =====
 
-    def _get_model_cache_path(self) -> Optional[Path]:
+    def _get_model_cache_path(self) -> Path | None:
         """Delegate to ModelCacheManager.get_model_cache_path()."""
         return self._cache_manager.get_model_cache_path()
 
-    def _get_default_hf_cache_path(self) -> Optional[Path]:
+    def _get_default_hf_cache_path(self) -> Path | None:
         """Delegate to ModelCacheManager.get_default_hf_cache_path()."""
         return self._cache_manager.get_default_hf_cache_path()
 
@@ -1391,10 +1387,10 @@ class CodeEmbedder:
         """Delegate to ModelCacheManager.is_cached()."""
         return self._cache_manager.is_cached()
 
-    def _find_local_model_dir(self) -> Optional[Path]:
+    def _find_local_model_dir(self) -> Path | None:
         """Delegate to ModelCacheManager.find_local_model_dir()."""
         return self._cache_manager.find_local_model_dir()
 
-    def _resolve_device(self, requested: Optional[str]) -> str:
+    def _resolve_device(self, requested: str | None) -> str:
         """Delegate to ModelLoader.resolve_device()."""
         return self._model_loader.resolve_device(requested)

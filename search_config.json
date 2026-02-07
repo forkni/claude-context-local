@@ -6,8 +6,8 @@
     "query_cache_size": 128,
     "enable_import_context": true,
     "enable_class_context": true,
-    "max_import_lines": 10,
-    "max_class_signature_lines": 10,
+    "max_import_lines": 25,
+    "max_class_signature_lines": 20,
     "enable_structural_header": true
   },
   "search_mode": {
@@ -50,7 +50,7 @@
   },
   "routing": {
     "multi_model_enabled": true,
-    "default_model": "bge_code",
+    "default_model": "qwen3",
     "multi_model_pool": "full"
   },
   "intent": {
@@ -62,7 +62,7 @@
   "reranker": {
     "enabled": true,
     "model_name": "jinaai/jina-reranker-v3",
-    "top_k_candidates": 150,
+    "top_k_candidates": 50,
     "min_vram_gb": 6.0,
     "batch_size": 16
   },

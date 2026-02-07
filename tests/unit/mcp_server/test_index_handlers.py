@@ -49,7 +49,7 @@ class TestCheckFileAccessibility:
         test_file = tmp_path / "broken.py"
         test_file.write_text("pass")
 
-        with patch("builtins.open", side_effect=IOError("Read error")):
+        with patch("builtins.open", side_effect=OSError("Read error")):
             inaccessible = _check_file_accessibility([test_file], sample_size=1)
 
         assert len(inaccessible) == 1

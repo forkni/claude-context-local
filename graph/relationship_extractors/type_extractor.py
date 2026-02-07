@@ -11,7 +11,7 @@ Complexity: Medium (recursive type extraction from complex annotations)
 """
 
 import ast
-from typing import Any, Optional
+from typing import Any
 
 from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
 from graph.relationship_types import RelationshipEdge, RelationshipType
@@ -52,8 +52,8 @@ class TypeAnnotationExtractor(BaseRelationshipExtractor):
         """Initialize the type annotation extractor."""
         super().__init__()
         self.relationship_type = RelationshipType.USES_TYPE
-        self.current_function_id: Optional[str] = None
-        self.current_class_id: Optional[str] = None
+        self.current_function_id: str | None = None
+        self.current_class_id: str | None = None
 
     def extract(
         self, code: str, chunk_metadata: dict[str, Any]
@@ -310,7 +310,7 @@ class TypeAnnotationExtractor(BaseRelationshipExtractor):
 
         return type_names
 
-    def _get_full_attribute_name(self, attr_node: ast.Attribute) -> Optional[str]:
+    def _get_full_attribute_name(self, attr_node: ast.Attribute) -> str | None:
         """
         Recursively extract full attribute path.
 

@@ -15,6 +15,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.2] - 2026-02-06
+
+### Added
+
+- **Intent Classifier Symbol Detection** - Fallback for noun-only queries (CamelCase, UPPER_CASE, snake_case, dunder methods, dot.notation)
+- **CI Agent Review Improvements** - Type-safe enum comparison, documented double-demotion, snake_case regex fix, zero-centrality test coverage
+
+### Changed
+
+- **Documentation-Codebase Alignment** - Fixed 34 discrepancies across 20 files
+  - Config defaults aligned: 0.35/0.65 weights (was 0.4/0.6 in 5 code files)
+  - Query routing defaults: default_model="qwen3", confidence_threshold=0.35
+  - Version bumped: pyproject.toml (0.8.5→0.9.2), all docs updated
+  - Removed stale Qwen3-4B references (model replaced with Qwen3-0.6B)
+  - Fixed EmbeddingGemma "default" label (still valid for low-VRAM systems)
+  - Removed 7 broken analysis/ directory references
+  - Updated test count (1,557→1,635+), tool count (18→19 in docstring)
+  - Fixed MODEL_POOL_CONFIG docs (show 2 separate pools)
+- **Search Quality Regression Fix** - Routing + intent weight fixes (commit b00a366)
+- **Query Router Test Updates** - Aligned with new default_model (qwen3) and threshold (0.35)
+
+### Fixed
+
+- Type-safe enum comparison (QueryIntent.GLOBAL vs string comparison)
+- Snake_case underscore prefix support in intent classifier regex
+- Zero-centrality synthetic chunk demotion (0.5x multiplier) with test coverage
+- MCP tool registry docstring (18→19 tools)
+- index_directory description (removed false JSX/Svelte support claim)
+
+---
+
+## [0.9.1] - 2026-02-04
+
+### Added
+
+- **Jina v3 Reranker Integration** - 131K context window listwise reranker (jinaai/jina-reranker-v3)
+- **QueryEmbeddingCache Thread Safety** - O(1) LRU cache with threading.Lock protection
+
+### Changed
+
+- **Model Pool Optimization** - 2-model configuration
+  - Full pool: Qwen3-0.6B (2.3GB) + BGE-Code-v1 (4GB) = ~6.3GB total
+  - Lightweight pool: GTE-ModernBERT + BGE-M3
+  - Removed Qwen3-4B (7.5GB) in favor of Qwen3-0.6B for better VRAM efficiency
+- **VRAM Tier Optimization** - Workstation tier (18GB+) now uses Qwen3-0.6B instead of 4B variant
+
+### Performance
+
+- Query cache O(1) operations with OrderedDict (was O(n) list operations)
+- Thread-safe cache operations (get, put, clear, get_stats, size)
+- Reranker factory supports both BGE and Jina models
+
+---
+
 ## [0.9.0] - 2026-02-01
 
 ### Added

@@ -5,7 +5,6 @@ Manages embedding model lifecycle, lazy loading, and memory optimization.
 
 import logging
 import os
-from typing import Optional
 
 from embeddings.embedder import CodeEmbedder
 from mcp_server.services import get_config, get_state
@@ -103,7 +102,7 @@ class ModelPoolManager:
 
         if lazy_load:
             # Initialize empty slots - models will load on first get_embedder() call
-            for model_key in pool_config.keys():
+            for model_key in pool_config:
                 if model_key not in state.embedders:
                     state.embedders[model_key] = None
             logger.info(
@@ -129,7 +128,7 @@ class ModelPoolManager:
                 f"Model pool loaded: {loaded_count}/{len(pool_config)} models ready"
             )
 
-    def get_embedder(self, model_key: Optional[str] = None) -> CodeEmbedder:
+    def get_embedder(self, model_key: str | None = None) -> CodeEmbedder:
         """Get embedder from multi-model pool or single-model fallback.
 
         Args:
@@ -290,7 +289,7 @@ class ModelPoolManager:
 
 
 # Module-level singleton for backward compatibility
-_model_pool_manager: Optional[ModelPoolManager] = None
+_model_pool_manager: ModelPoolManager | None = None
 
 
 def get_model_pool_manager() -> ModelPoolManager:
@@ -314,7 +313,7 @@ def initialize_model_pool(lazy_load: bool = True) -> None:
     return get_model_pool_manager().initialize_pool(lazy_load)
 
 
-def get_embedder(model_key: Optional[str] = None) -> CodeEmbedder:
+def get_embedder(model_key: str | None = None) -> CodeEmbedder:
     """Get embedder from multi-model pool or single-model fallback.
 
     Backward-compatible wrapper for ModelPoolManager.get_embedder().
@@ -322,7 +321,7 @@ def get_embedder(model_key: Optional[str] = None) -> CodeEmbedder:
     return get_model_pool_manager().get_embedder(model_key)
 
 
-def get_model_key_from_name(model_name: str) -> Optional[str]:
+def get_model_key_from_name(model_name: str) -> str | None:
     """Get model_key from model name by reverse lookup in pool config.
 
     This is used to ensure incremental indexing uses the same model that

@@ -187,7 +187,7 @@ def _route_query_to_model(
         from mcp_server.model_pool_manager import get_model_pool_manager
 
         pool_config = get_model_pool_manager()._get_pool_config()
-        for model_key_candidate in pool_config.keys():
+        for model_key_candidate in pool_config:
             if model_key_candidate == default_model:
                 continue  # Already checked above
             project_dir = get_project_storage_dir(
@@ -643,16 +643,18 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
                     )
 
         # Apply ego_graph for CONTEXTUAL queries (don't redirect, enhance search)
-        if intent_decision.intent == QueryIntent.CONTEXTUAL:
-            if intent_decision.suggested_params.get("ego_graph_enabled"):
-                ego_graph_enabled = True
-                ego_graph_k_hops = intent_decision.suggested_params.get(
-                    "ego_graph_k_hops", 2
-                )
-                logger.info(
-                    f"[INTENT] Enabling ego_graph for CONTEXTUAL query "
-                    f"(k_hops={ego_graph_k_hops})"
-                )
+        if (
+            intent_decision.intent == QueryIntent.CONTEXTUAL
+            and intent_decision.suggested_params.get("ego_graph_enabled")
+        ):
+            ego_graph_enabled = True
+            ego_graph_k_hops = intent_decision.suggested_params.get(
+                "ego_graph_k_hops", 2
+            )
+            logger.info(
+                f"[INTENT] Enabling ego_graph for CONTEXTUAL query "
+                f"(k_hops={ego_graph_k_hops})"
+            )
 
         # Adjust k parameter for GLOBAL queries
         if intent_decision.intent == QueryIntent.GLOBAL:
@@ -761,9 +763,13 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     # Option 1: HybridSearcher (has is_ready property and dense_index)
     if hasattr(searcher, "is_ready"):
         is_ready = searcher.is_ready
-        if hasattr(searcher, "dense_index") and searcher.dense_index:
-            if hasattr(searcher.dense_index, "index") and searcher.dense_index.index:
-                total_chunks = searcher.dense_index.index.ntotal
+        if (
+            hasattr(searcher, "dense_index")
+            and searcher.dense_index
+            and hasattr(searcher.dense_index, "index")
+            and searcher.dense_index.index
+        ):
+            total_chunks = searcher.dense_index.index.ntotal
     # Option 2: IntelligentSearcher (has index_manager)
     elif hasattr(searcher, "index_manager") and searcher.index_manager:
         stats = searcher.index_manager.get_stats()
@@ -924,6 +930,28 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
                 logger.debug(
                     f"Annotated {len(formatted_results)} results with centrality"
                 )
+
+            # Intent-aware synthetic chunk ordering (post-centrality reranking)
+            # For non-GLOBAL queries, push module/community summary chunks to end of results
+            # Research: TNO, GRACE, GraphRAG all separate summaries from code retrieval
+            if intent_decision and intent_decision.intent != QueryIntent.GLOBAL:
+                real_results = [
+                    r
+                    for r in formatted_results
+                    if r.get("kind") not in ("module", "community")
+                ]
+                synthetic_results = [
+                    r
+                    for r in formatted_results
+                    if r.get("kind") in ("module", "community")
+                ]
+                if synthetic_results:
+                    formatted_results = real_results + synthetic_results
+                    logger.debug(
+                        f"[INTENT] Moved {len(synthetic_results)} synthetic chunks "
+                        f"after {len(real_results)} real code chunks (intent: {intent_decision.intent.value})"
+                    )
+
         except (ImportError, ValueError, KeyError, RuntimeError, TypeError) as e:
             logger.debug(f"Centrality ranking failed: {e}")
 
@@ -953,9 +981,9 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
             ]
 
             # Cap ego-graph neighbors in subgraph to limit output size (defensive)
-            MAX_EGO_IN_SUBGRAPH = 10
-            if ego_neighbor_ids and len(ego_neighbor_ids) > MAX_EGO_IN_SUBGRAPH:
-                ego_neighbor_ids = ego_neighbor_ids[:MAX_EGO_IN_SUBGRAPH]
+            max_ego_in_subgraph = 10
+            if ego_neighbor_ids and len(ego_neighbor_ids) > max_ego_in_subgraph:
+                ego_neighbor_ids = ego_neighbor_ids[:max_ego_in_subgraph]
 
             if result_chunk_ids:
                 subgraph = extractor.extract_subgraph(

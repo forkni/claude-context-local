@@ -10,7 +10,7 @@ import logging
 import threading
 import time
 from collections import OrderedDict
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -86,7 +86,7 @@ class QueryEmbeddingCache:
         model_name: str,
         task_instruction: str = "",
         query_prefix: str = "",
-    ) -> Optional[np.ndarray]:
+    ) -> np.ndarray | None:
         """Retrieve cached embedding for a query (thread-safe).
 
         Args:

@@ -13,7 +13,6 @@ Based on research:
 import logging
 from collections import Counter
 from dataclasses import dataclass
-from typing import Optional
 
 import networkx as nx
 
@@ -29,8 +28,8 @@ class SubgraphNode:
     name: str
     kind: str  # function, class, method, module...
     file: str
-    community_id: Optional[int] = None
-    centrality: Optional[float] = None
+    community_id: int | None = None
+    centrality: float | None = None
     is_search_result: bool = True  # False for ego-graph neighbors
 
 
@@ -52,7 +51,7 @@ class SubgraphResult:
     nodes: list[SubgraphNode]
     edges: list[SubgraphEdge]
     topology_order: list[str]
-    communities: Optional[dict[int, dict]] = None
+    communities: dict[int, dict] | None = None
 
     def to_dict(self) -> dict:
         """Compact JSON serialization (JSON Graph Format inspired).
@@ -112,8 +111,8 @@ class SubgraphExtractor:
         chunk_ids: list[str],
         include_boundary_edges: bool = False,
         max_boundary_depth: int = 1,
-        centrality_scores: Optional[dict[str, float]] = None,
-        ego_neighbor_ids: Optional[list[str]] = None,
+        centrality_scores: dict[str, float] | None = None,
+        ego_neighbor_ids: list[str] | None = None,
     ) -> SubgraphResult:
         """Extract the induced subgraph over the given chunk_ids.
 
@@ -218,7 +217,7 @@ class SubgraphExtractor:
 
         # Extract edges between all nodes (search results + ego neighbors)
         # Cap boundary edges to avoid token explosion (max 3 per source node)
-        MAX_BOUNDARY_PER_NODE = 3
+        max_boundary_per_node = 3
         boundary_counts: dict[str, int] = {}
 
         # Convert ego_neighbor_ids to set for fast lookup
@@ -241,7 +240,7 @@ class SubgraphExtractor:
                 # Cap boundary edges per source node
                 if is_boundary:
                     boundary_counts[chunk_id] = boundary_counts.get(chunk_id, 0) + 1
-                    if boundary_counts[chunk_id] > MAX_BOUNDARY_PER_NODE:
+                    if boundary_counts[chunk_id] > max_boundary_per_node:
                         continue
 
                 if not is_boundary or include_boundary_edges:

@@ -262,9 +262,9 @@ find_path(
 
 **Search Configuration**:
 
-- `configure_search_mode(search_mode="hybrid", bm25_weight=0.4, dense_weight=0.6)` — Configure search mode
+- `configure_search_mode(search_mode="hybrid", bm25_weight=0.35, dense_weight=0.65)` — Configure search mode
 - `get_search_config_status()` — View current config
-- `configure_query_routing(enable_multi_model, default_model, confidence_threshold)` — Multi-model routing
+- `configure_query_routing(enable_multi_model=True, default_model="qwen3", confidence_threshold=0.35)` — Multi-model routing
 
 **Advanced Tools**:
 

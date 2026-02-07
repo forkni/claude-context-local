@@ -6,10 +6,10 @@ Based on empirical verification results comparing Qwen3, BGE-M3, and CodeRankEmb
 Note: Qwen3 uses Qwen3-0.6B across all VRAM tiers for safety and compatibility.
 """
 
+import contextlib
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import yaml
 
@@ -26,7 +26,7 @@ def _load_routing_config() -> dict | None:
     config_path = Path(__file__).parent.parent / "config" / "routing_keywords.yaml"
     try:
         if config_path.exists():
-            with open(config_path, "r", encoding="utf-8") as f:
+            with open(config_path, encoding="utf-8") as f:
                 config = yaml.safe_load(f)
                 logger.info(f"Loaded routing config from {config_path}")
                 return config
@@ -173,10 +173,10 @@ class QueryRouter:
     DEFAULT_MODEL = "bge_code"
 
     # Confidence threshold for routing (below this, use default)
-    # Lowered from 0.3 → 0.15 → 0.10 → 0.05 based on empirical testing
-    # Enhanced routing with single-word keywords enables lower threshold
-    # Natural queries now trigger routing with 2-3 keyword matches
-    CONFIDENCE_THRESHOLD = 0.05
+    # Updated to 0.35 to align with config/routing_keywords.yaml (2026-02-06)
+    # Runtime uses YAML config first, this is fallback only
+    # Benchmark-verified optimal threshold for query routing accuracy
+    CONFIDENCE_THRESHOLD = 0.35
 
     # Lightweight routing rules for 2-model pools (8GB VRAM GPUs)
     # Used when multi_model_pool="lightweight-speed"
@@ -381,7 +381,7 @@ class QueryRouter:
         return model_key  # Fallback (shouldn't happen)
 
     def route(
-        self, query: str, confidence_threshold: Optional[float] = None
+        self, query: str, confidence_threshold: float | None = None
     ) -> RoutingDecision:
         """Route query to optimal model based on characteristics.
 
@@ -402,12 +402,10 @@ class QueryRouter:
                     if pool_type == "lightweight-speed"
                     else "full_pool"
                 )
-                try:
+                with contextlib.suppress(KeyError, TypeError, AttributeError):
                     confidence_threshold = _ROUTING_CONFIG[pool_key].get(
                         "confidence_threshold"
                     )
-                except (KeyError, TypeError, AttributeError):
-                    pass
             # Fallback to hardcoded constant
             if confidence_threshold is None:
                 confidence_threshold = self.CONFIDENCE_THRESHOLD
@@ -502,7 +500,9 @@ class QueryRouter:
 
         return scores
 
-    def _resolve_tie(self, scores: dict[str, float], precedence: list = None) -> str:
+    def _resolve_tie(
+        self, scores: dict[str, float], precedence: list[str] | None = None
+    ) -> str:
         """Resolve ties using explicit precedence order.
 
         When multiple models have scores within 0.01 margin, select based on
@@ -537,7 +537,7 @@ class QueryRouter:
         # Fallback (should not reach here)
         return default_model
 
-    def get_model_strengths(self, model_key: str) -> Optional[dict]:
+    def get_model_strengths(self, model_key: str) -> dict | None:
         """Get routing rule details for a specific model.
 
         Args:

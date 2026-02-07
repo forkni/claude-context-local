@@ -303,10 +303,7 @@ class BaseRelationshipExtractor(ABC):
             return True
 
         # Skip private/dunder names
-        if target_name.startswith("_"):
-            return True
-
-        return False
+        return bool(target_name.startswith("_"))
 
 
 class MultiPassExtractor(BaseRelationshipExtractor):

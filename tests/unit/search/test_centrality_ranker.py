@@ -214,3 +214,77 @@ def test_split_block_entity_query_boost():
     # Blended = 0.7 * 0.8 + 0.3 * 1.0 = 0.86
     # With 1.1× boost: 0.86 * 1.1 = 0.946
     assert reranked[0]["blended_score"] == pytest.approx(0.946, abs=0.01)
+
+
+def test_zero_centrality_synthetic_demotion():
+    """Test that module/community chunks with centrality=0 get 0.5× demotion."""
+    # Create graph with only function node (module not in graph → centrality=0)
+    graph = nx.DiGraph()
+    graph.add_node("func.py:10-20:function:foo")
+
+    engine = MagicMock()
+    engine.storage = MagicMock()
+    engine.storage.graph = graph
+    engine.compute_centrality = MagicMock(
+        return_value={"func.py:10-20:function:foo": 0.5}
+    )
+
+    results = [
+        {"chunk_id": "func.py:10-20:function:foo", "score": 0.8, "kind": "function"},
+        {
+            "chunk_id": "module.py:0-0:module:module",
+            "score": 0.8,
+            "kind": "module",
+        },  # Not in graph
+    ]
+
+    ranker = CentralityRanker(engine, method="pagerank", alpha=0.3)
+    reranked = ranker.rerank(results, query="test query")
+
+    # Function chunk (in graph, centrality=1.0 normalized):
+    # Blended = 0.7 * 0.8 + 0.3 * 1.0 = 0.86
+    # Type boost: 0.86 * 1.2 = 1.032
+    assert reranked[0]["blended_score"] == pytest.approx(1.032, abs=0.02)
+
+    # Module chunk (not in graph, centrality=0):
+    # Blended = 0.7 * 0.8 + 0.3 * 0.0 = 0.56
+    # Type demotion: 0.56 * 0.90 = 0.504
+    # Zero-centrality demotion: 0.504 * 0.5 = 0.252
+    assert reranked[1]["blended_score"] == pytest.approx(0.252, abs=0.02)
+
+
+def test_zero_centrality_does_not_affect_real_code():
+    """Test that zero-centrality demotion only affects module/community, not real code."""
+    # Empty graph - all chunks get centrality=0
+    graph = nx.DiGraph()
+
+    engine = MagicMock()
+    engine.storage = MagicMock()
+    engine.storage.graph = graph
+    engine.compute_centrality = MagicMock(return_value={})
+
+    results = [
+        {"chunk_id": "func.py:10-20:function:foo", "score": 0.8, "kind": "function"},
+        {"chunk_id": "cls.py:10-50:class:Bar", "score": 0.8, "kind": "class"},
+        {
+            "chunk_id": "module.py:0-0:module:module",
+            "score": 0.8,
+            "kind": "module",
+        },
+    ]
+
+    ranker = CentralityRanker(engine, method="pagerank", alpha=0.3)
+    reranked = ranker.rerank(results, query="test query")
+
+    # Function and class chunks: centrality=0 but NO zero-centrality demotion
+    # Blended = 0.7 * 0.8 + 0.3 * 0.0 = 0.56
+    # Function type boost: 0.56 * 1.2 = 0.672
+    # Class type boost: 0.56 * 1.35 = 0.756
+    assert reranked[0]["blended_score"] == pytest.approx(0.756, abs=0.02)  # class
+    assert reranked[1]["blended_score"] == pytest.approx(0.672, abs=0.02)  # function
+
+    # Module chunk: centrality=0 AND gets zero-centrality demotion
+    # Blended = 0.56
+    # Type demotion: 0.56 * 0.90 = 0.504
+    # Zero-centrality demotion: 0.504 * 0.5 = 0.252
+    assert reranked[2]["blended_score"] == pytest.approx(0.252, abs=0.02)  # module

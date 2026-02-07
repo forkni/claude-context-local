@@ -6,10 +6,16 @@ structurally important code in search results.
 """
 
 import logging
+import math
 import re
-from typing import Optional
+from typing import TYPE_CHECKING
 
 import networkx as nx
+
+
+if TYPE_CHECKING:
+    from graph.graph_queries import GraphQueryEngine
+    from search.config import GraphEnhancedConfig
 
 
 logger = logging.getLogger(__name__)
@@ -94,10 +100,10 @@ class CentralityRanker:
 
     def __init__(
         self,
-        graph_query_engine,
+        graph_query_engine: "GraphQueryEngine",
         method: str = "pagerank",
         alpha: float = 0.3,
-        config=None,
+        config: "GraphEnhancedConfig | None" = None,
     ):
         """Initialize centrality ranker.
 
@@ -199,7 +205,7 @@ class CentralityRanker:
         return results
 
     def rerank(
-        self, results: list[dict], alpha: Optional[float] = None, query: str = ""
+        self, results: list[dict], alpha: float | None = None, query: str = ""
     ) -> list[dict]:
         """Rerank results by blended semantic + centrality score.
 
@@ -232,8 +238,6 @@ class CentralityRanker:
                 chunk_id = result.get("chunk_id", "")
                 chunk_lines = _extract_chunk_lines(chunk_id)
                 if chunk_lines > self.config.size_norm_target_lines:
-                    import math
-
                     size_factor = 1.0 / (
                         1.0
                         + self.config.size_norm_alpha
@@ -277,6 +281,24 @@ class CentralityRanker:
                 result["blended_score"] = round(
                     result["blended_score"] * type_boosts.get(chunk_type, 1.0), 4
                 )
+
+                # Zero-centrality demotion for synthetic summary chunks
+                # Synthetic chunks (module summaries, community summaries) are not in the call graph,
+                # so they always have centrality=0. Real code chunks always have centrality > 0.
+                # When a synthetic chunk has no graph connectivity, it should rank below
+                # real code. Research: TNO, GRACE, HiChunk all keep summaries separate.
+                # Combined effect with type-based demotion above: 0.90 × 0.5 = 0.45x total
+                # (entity queries: 0.85 × 0.5 = 0.425x). This is intentional — synthetics
+                # should rank well below real code chunks.
+                if (
+                    chunk_type in ("module", "community")
+                    and result.get("centrality", 0) == 0
+                ):
+                    result["blended_score"] = round(result["blended_score"] * 0.5, 4)
+                    logger.debug(
+                        f"[CENTRALITY] Zero-centrality synthetic chunk demotion: "
+                        f"{chunk_id} ({chunk_type}) → 0.5x multiplier"
+                    )
 
                 # Core Logic Boost: Prioritize engine internals over glue code/tools
                 chunk_id = result.get("chunk_id", "")

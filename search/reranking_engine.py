@@ -6,11 +6,13 @@ for search result quality improvement.
 
 import logging
 import time
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from utils.timing import timed
+
+from .config import get_search_config
 
 
 if TYPE_CHECKING:
@@ -40,10 +42,10 @@ class RerankingEngine:
         """
         self.embedder = embedder
         self.metadata_store = metadata_store
-        self.neural_reranker: Optional[
-            Union[NeuralReranker, GenerativeReranker, JinaRerankerV3]
-        ] = None
-        self._neural_reranking_enabled: Optional[bool] = None
+        self.neural_reranker: (
+            NeuralReranker | GenerativeReranker | JinaRerankerV3 | None
+        ) = None
+        self._neural_reranking_enabled: bool | None = None
         self._session_oom_detected: bool = False
         self._logger = logging.getLogger(__name__)
 
@@ -61,8 +63,6 @@ class RerankingEngine:
             return False
 
         try:
-            from .config import get_search_config
-
             config = get_search_config()
             if not hasattr(config, "reranker") or not config.reranker.enabled:
                 return False
@@ -103,7 +103,7 @@ class RerankingEngine:
         results: list,
         k: int,
         search_mode: str = "hybrid",
-        query_embedding: Optional[np.ndarray] = None,
+        query_embedding: np.ndarray | None = None,
     ) -> list:
         """
         Re-rank results by computing fresh relevance scores against the original query.
@@ -159,8 +159,6 @@ class RerankingEngine:
             # Handle state transitions
             if should_enable and self.neural_reranker is None:
                 # Initialize reranker (lazy load, auto-detects discriminative vs generative)
-                from .config import get_search_config
-
                 config = get_search_config()
                 self.neural_reranker = create_reranker(
                     model_name=config.reranker.model_name,
@@ -178,8 +176,6 @@ class RerankingEngine:
             # Proceed with reranking if enabled
             if self._neural_reranking_enabled and self.neural_reranker:
                 neural_start = time.time()
-                from .config import get_search_config
-
                 config = get_search_config()
                 rerank_count = min(
                     config.reranker.top_k_candidates, len(sorted_results)

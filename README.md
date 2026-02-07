@@ -29,14 +29,14 @@
 ## Highlights
 
 - **Hybrid Search**: BM25 + semantic fusion (44.4% precision, 100% MRR) - [benchmarks](docs/BENCHMARKS.md)
-- **Neural Reranking**: Cross-encoder model (BAAI/bge-reranker-v2-m3) improves ranking quality by 5-15% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
+- **Neural Reranking**: Cross-encoder models (BGE-reranker-v2-m3 OR Jina-reranker-v2) improve ranking quality by 5-15% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
 - **SSCG Integration**: Structural-Semantic Code Graph with Recall@4=1.00, MRR=0.81 - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#sscg-integration)
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
 - **Multi-Model Routing**: Intelligent query routing (Qwen3, BGE-M3, CodeRankEmbed) with 100% accuracy - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md)
 - **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
 - **19 MCP Tools**: Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
 
-**Status**: ✅ Production-ready | 1,557+ passing tests | All 19 MCP tools operational | Windows 10/11
+**Status**: ✅ Production-ready | 1,635+ passing tests | All 19 MCP tools operational | Windows 10/11
 
 ## Quick Start
 
@@ -204,7 +204,7 @@ To analyze dependencies:
 
 Ask Claude Code to adjust settings:
 
-- "Configure search mode to hybrid with 0.4 BM25 and 0.6 dense weights"
+- "Configure search mode to hybrid with 0.35 BM25 and 0.65 dense weights"
 - "Show me the current search configuration"
 - "Switch the embedding model to BGE-M3"
 
@@ -321,8 +321,8 @@ Displays all current settings including model, search mode, weights, GPU status,
 
 Adjust the balance between text matching and semantic understanding:
 
-- **BM25 Weight**: 0.0-1.0 (default: 0.4) - keyword/text matching strength
-- **Dense Weight**: 0.0-1.0 (default: 0.6) - semantic understanding strength
+- **BM25 Weight**: 0.0-1.0 (default: 0.35) - keyword/text matching strength
+- **Dense Weight**: 0.0-1.0 (default: 0.65) - semantic understanding strength
 
 Weights should sum to 1.0.
 
@@ -332,7 +332,7 @@ Weights should sum to 1.0.
 |-------|------|----------|
 | **BGE-M3** | 1-1.5GB | Production, hybrid search (recommended) |
 | **Qwen3-0.6B** | 2.3GB | High efficiency, excellent value |
-| **EmbeddingGemma-300m** | 4-8GB | Fast, lightweight (default) |
+| **EmbeddingGemma-300m** | 4-8GB | Fast, lightweight (low-VRAM option) |
 | **Multi-Model Routing** | 6.3GB | BGE-Code-v1 + Qwen3 |
 
 **Instant switching**: <150ms with no re-indexing required.
@@ -360,7 +360,7 @@ Extract additional code relationships during indexing:
 
 #### 8. Reset to Defaults
 
-Resets all settings to: hybrid mode, 0.4/0.6 weights, multi-model enabled, GPU auto-detect.
+Resets all settings to: hybrid mode, 0.35/0.65 weights, multi-model enabled, GPU auto-detect.
 
 ### Quick Access Options
 
@@ -377,7 +377,7 @@ For automation and CI/CD, settings can be overridden via environment variables. 
 
 | Model | Dimensions | VRAM | Best For |
 |-------|------------|------|----------|
-| **EmbeddingGemma-300m** (default) | 768 | 4-8GB | Fast, efficient, smaller projects |
+| **EmbeddingGemma-300m** | 768 | 4-8GB | Fast, efficient, low-VRAM systems |
 | **BGE-M3** | 1024 | 8-16GB | Higher accuracy (+13.6% F1), production |
 | **Qwen3-0.6B** | 1024 | 2.3GB | Routing pool, high efficiency |
 | **CodeRankEmbed** | 768 | 2GB | Code-specific retrieval |
@@ -399,7 +399,7 @@ claude-context-local/
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 1,557+ tests (unit + integration)
+└── tests/             # 1,635+ tests (unit + integration)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -477,7 +477,7 @@ The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic s
 
 ### Development
 
-- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (1,557+ passing)
+- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (1,635+ passing)
 - [Git Workflow](docs/GIT_WORKFLOW.md) - Contributing guidelines
 - [Version History](docs/VERSION_HISTORY.md) - Changelog
 

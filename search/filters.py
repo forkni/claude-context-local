@@ -12,7 +12,7 @@ import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 def normalize_path(path: str) -> str:
@@ -99,7 +99,7 @@ def compute_legacy_hash(path: str, length: int = 8) -> str:
     return hashlib.md5(resolved.encode()).hexdigest()[:length]
 
 
-def find_project_at_different_drive(original_path: str) -> Optional[str]:
+def find_project_at_different_drive(original_path: str) -> str | None:
     """Find project at a different drive letter.
 
     Scans common removable drive letters to locate a project that may have
@@ -171,8 +171,8 @@ def unescape_mcp_path(path: str) -> str:
 
 def matches_directory_filter(
     relative_path: str,
-    include_dirs: Optional[list[str]] = None,
-    exclude_dirs: Optional[list[str]] = None,
+    include_dirs: list[str] | None = None,
+    exclude_dirs: list[str] | None = None,
     is_traversal: bool = False,
 ) -> bool:
     """Check if a file path matches directory filters.
@@ -257,8 +257,8 @@ class DirectoryFilter:
 
     def __init__(
         self,
-        include_dirs: Optional[list[str]] = None,
-        exclude_dirs: Optional[list[str]] = None,
+        include_dirs: list[str] | None = None,
+        exclude_dirs: list[str] | None = None,
     ):
         """Initialize the directory filter.
 
@@ -353,13 +353,13 @@ class FilterCriteria:
         extra_filters: Generic key-value filters for metadata comparison
     """
 
-    include_dirs: Optional[list[str]] = None
-    exclude_dirs: Optional[list[str]] = None
-    file_pattern: Optional[list[str]] = None  # Normalized to list
-    chunk_type: Optional[str] = None
-    tags: Optional[set[str]] = None
-    folder_structure: Optional[set[str]] = None
-    extra_filters: Optional[dict[str, Any]] = None
+    include_dirs: list[str] | None = None
+    exclude_dirs: list[str] | None = None
+    file_pattern: list[str] | None = None  # Normalized to list
+    chunk_type: str | None = None
+    tags: set[str] | None = None
+    folder_structure: set[str] | None = None
+    extra_filters: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, filters: dict[str, Any]) -> "FilterCriteria":
@@ -481,16 +481,17 @@ class FilterEngine:
             return False
 
         # 2. File pattern (substring matching)
-        if self.criteria.file_pattern:
-            if not any(
-                pattern in relative_path for pattern in self.criteria.file_pattern
-            ):
-                return False
+        if self.criteria.file_pattern and not any(
+            pattern in relative_path for pattern in self.criteria.file_pattern
+        ):
+            return False
 
         # 3. Chunk type (exact match)
-        if self.criteria.chunk_type:
-            if metadata.get("chunk_type") != self.criteria.chunk_type:
-                return False
+        if (
+            self.criteria.chunk_type
+            and metadata.get("chunk_type") != self.criteria.chunk_type
+        ):
+            return False
 
         # 4. Tags (set intersection)
         if self.criteria.tags:

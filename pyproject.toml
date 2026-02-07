@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-context-local"
-version = "0.8.5"
-description = "Local semantic code search for Claude Code (MCP) using EmbeddingGemma, FAISS, and AST/tree-sitter chunking. 100% local embeddings and indexing."
+version = "0.9.2"
+description = "Local semantic code search for Claude Code (MCP) using multi-model routing (Qwen3, BGE-M3, CodeRankEmbed), FAISS, and AST/tree-sitter chunking. 100% local embeddings and indexing."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -185,12 +185,15 @@ exclude = [
 
 [tool.ruff.lint]
 select = [
-    "E",  # pycodestyle errors
-    "W",  # pycodestyle warnings
-    "F",  # pyflakes
-    "I",  # isort (replaces standalone isort)
-    "B",  # flake8-bugbear
-    "C4", # flake8-comprehensions
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort (replaces standalone isort)
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "N",   # pep8-naming (catches PascalCase functions, snake_case classes)
+    "UP",  # pyupgrade (auto-fixes Optional->|None, Dict->dict)
+    "SIM", # flake8-simplify (catches simplifiable patterns)
 ]
 ignore = [
     "C901",  # McCabe complexity - skip for faster checks (diffusers pattern)

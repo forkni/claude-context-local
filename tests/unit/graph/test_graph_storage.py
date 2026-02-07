@@ -419,7 +419,7 @@ class TestCodeGraphStorage:
         graph_storage.save()
 
         # Read and verify JSON structure
-        with open(graph_storage.graph_path, "r") as f:
+        with open(graph_storage.graph_path) as f:
             data = json.load(f)
 
         assert "nodes" in data

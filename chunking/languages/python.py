@@ -5,7 +5,7 @@ other languages. The main Python chunker used by the system is the AST-based
 one in chunking/python_chunker.py which provides better Python-specific analysis.
 """
 
-from typing import Any, Optional
+from typing import Any
 
 from tree_sitter import Language
 
@@ -15,7 +15,7 @@ from .base import LanguageChunker
 class PythonChunker(LanguageChunker):
     """Python-specific chunker using tree-sitter."""
 
-    def __init__(self, language: Optional[Language] = None) -> None:
+    def __init__(self, language: Language | None = None) -> None:
         super().__init__("python", language)
 
     def _load_language(self) -> Language:
@@ -148,7 +148,7 @@ class PythonChunker(LanguageChunker):
 
         return metadata
 
-    def _extract_docstring(self, node: Any, source: bytes) -> Optional[str]:
+    def _extract_docstring(self, node: Any, source: bytes) -> str | None:
         """Extract docstring from function or class definition."""
         # Find the body/block of the function or class
         body_node = None

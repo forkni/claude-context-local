@@ -6,7 +6,6 @@ to enable accurate method call resolution (e.g., param.method() -> Type.method).
 """
 
 import ast
-from typing import Optional
 
 
 class TypeResolver:
@@ -67,7 +66,7 @@ class TypeResolver:
 
         return annotations
 
-    def annotation_to_string(self, annotation: ast.AST) -> Optional[str]:
+    def annotation_to_string(self, annotation: ast.AST) -> str | None:
         """
         Convert an AST annotation node to a string type name.
 

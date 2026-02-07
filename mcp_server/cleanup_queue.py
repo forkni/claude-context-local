@@ -38,7 +38,7 @@ class CleanupQueue:
                 with open(self.queue_file, encoding="utf-8") as f:
                     self._queue = json.load(f)
                 logger.debug(f"Loaded {len(self._queue)} pending cleanup tasks")
-            except (json.JSONDecodeError, IOError) as e:
+            except (OSError, json.JSONDecodeError) as e:
                 logger.warning(f"Failed to load cleanup queue: {e}")
                 self._queue = []
 
@@ -47,7 +47,7 @@ class CleanupQueue:
         try:
             with open(self.queue_file, "w", encoding="utf-8") as f:
                 json.dump(self._queue, f, indent=2)
-        except IOError as e:
+        except OSError as e:
             logger.error(f"Failed to save cleanup queue: {e}")
 
     def add(self, project_dir: str, reason: str) -> None:

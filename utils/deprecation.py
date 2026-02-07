@@ -13,11 +13,11 @@ Usage:
 
 import functools
 import warnings
-from typing import Callable, Optional
+from collections.abc import Callable
 
 
 def deprecated(
-    replacement: Optional[str] = None,
+    replacement: str | None = None,
     version: str = "0.7.0",
     removal_version: str = "0.8.0",
 ) -> Callable:

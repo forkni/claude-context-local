@@ -45,34 +45,36 @@ async def test_parallel_tool_calls_dont_cause_race_condition():
 
     test_project = str(Path.cwd())
 
-    with patch.dict(os.environ, {"CLAUDE_DEFAULT_PROJECT": test_project}):
-        with patch("mcp_server.tools.status_handlers.get_storage_dir") as mock_storage:
-            mock_storage.return_value = Path("/tmp/test")
+    with (
+        patch.dict(os.environ, {"CLAUDE_DEFAULT_PROJECT": test_project}),
+        patch("mcp_server.tools.status_handlers.get_storage_dir") as mock_storage,
+    ):
+        mock_storage.return_value = Path("/tmp/test")
 
-            with patch("search.config.get_search_config") as mock_config:
-                mock_cfg = Mock()
-                mock_cfg.search_mode.enable_hybrid = True
-                mock_cfg.search_mode.bm25_weight = 0.4
-                mock_cfg.search_mode.dense_weight = 0.6
-                mock_cfg.search_mode.rrf_k_parameter = 60
-                mock_cfg.performance.use_parallel_search = True
-                mock_cfg.embedding.model_name = "test"
-                mock_config.return_value = mock_cfg
+        with patch("search.config.get_search_config") as mock_config:
+            mock_cfg = Mock()
+            mock_cfg.search_mode.enable_hybrid = True
+            mock_cfg.search_mode.bm25_weight = 0.4
+            mock_cfg.search_mode.dense_weight = 0.6
+            mock_cfg.search_mode.rrf_k_parameter = 60
+            mock_cfg.performance.use_parallel_search = True
+            mock_cfg.embedding.model_name = "test"
+            mock_config.return_value = mock_cfg
 
-                # Call multiple tools in parallel
-                results = await asyncio.gather(
-                    tool_handlers.handle_get_search_config_status({}),
-                    tool_handlers.handle_list_projects({}),
-                    tool_handlers.handle_list_embedding_models({}),
-                    return_exceptions=True,
+            # Call multiple tools in parallel
+            results = await asyncio.gather(
+                tool_handlers.handle_get_search_config_status({}),
+                tool_handlers.handle_list_projects({}),
+                tool_handlers.handle_list_embedding_models({}),
+                return_exceptions=True,
+            )
+
+            # All should succeed (no race condition errors)
+            for result in results:
+                assert not isinstance(result, Exception)
+                assert "error" not in result or "project_id" not in str(
+                    result.get("error", "")
                 )
-
-                # All should succeed (no race condition errors)
-                for result in results:
-                    assert not isinstance(result, Exception)
-                    assert "error" not in result or "project_id" not in str(
-                        result.get("error", "")
-                    )
 
 
 # REMOVED (2025-11-13): test_cleanup_called_on_shutdown

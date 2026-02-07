@@ -41,7 +41,6 @@ import logging
 import mmap
 import struct
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -78,7 +77,7 @@ class MmapVectorStorage:
         """
         self._path = path
         self._dimension = dimension
-        self._mmap: Optional[mmap.mmap] = None
+        self._mmap: mmap.mmap | None = None
         self._file = None
         self._count = 0
         self._entry_size = 12 + dimension * 4  # idx(4) + hash(8) + vector(dim*4)
@@ -102,7 +101,7 @@ class MmapVectorStorage:
         self,
         embeddings: np.ndarray,
         chunk_ids: list[str],
-        indices: Optional[list[int]] = None,
+        indices: list[int] | None = None,
     ) -> None:
         """Save embeddings in mmap-compatible binary format.
 
@@ -166,7 +165,7 @@ class MmapVectorStorage:
             return False
 
         try:
-            self._file = open(self._path, "rb")
+            self._file = open(self._path, "rb")  # noqa: SIM115 - file handle stored for mmap
             self._mmap = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
 
             # Validate header
@@ -207,7 +206,7 @@ class MmapVectorStorage:
             self.close()
             return False
 
-    def get_vector(self, index: int) -> Optional[np.ndarray]:
+    def get_vector(self, index: int) -> np.ndarray | None:
         """Get vector by FAISS index position (<1μs after cache warm).
 
         Args:
@@ -251,6 +250,29 @@ class MmapVectorStorage:
             self._file.close()
             self._file = None
         self._count = 0
+
+    def __enter__(self) -> "MmapVectorStorage":
+        """Context manager entry - returns self for use in with statement.
+
+        Returns:
+            Self for use in with statement
+
+        Example:
+            with MmapVectorStorage(path, dimension=1024) as storage:
+                if storage.load():
+                    vector = storage.get_vector(0)
+        """
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Context manager exit - ensures resources are cleaned up.
+
+        Args:
+            exc_type: Exception type if an exception occurred
+            exc_val: Exception value if an exception occurred
+            exc_tb: Exception traceback if an exception occurred
+        """
+        self.close()
 
     def __del__(self):
         """Ensure resources are cleaned up on deletion."""

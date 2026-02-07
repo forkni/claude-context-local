@@ -27,7 +27,7 @@ class TestRerankingEngine:
         """Test neural reranking disabled when no GPU available."""
         mock_torch.cuda.is_available.return_value = False
 
-        with patch("search.config.get_search_config") as mock_config:
+        with patch("search.reranking_engine.get_search_config") as mock_config:
             config = MagicMock()
             config.reranker.enabled = True
             mock_config.return_value = config
@@ -44,7 +44,7 @@ class TestRerankingEngine:
         mock_torch.cuda.get_device_properties.return_value = mock_device
         mock_torch.cuda.memory_allocated.return_value = 0
 
-        with patch("search.config.get_search_config") as mock_config:
+        with patch("search.reranking_engine.get_search_config") as mock_config:
             config = MagicMock()
             config.reranker.enabled = True
             config.reranker.min_vram_gb = 4  # Requires 4GB
@@ -64,7 +64,7 @@ class TestRerankingEngine:
             8 * 1024**3,  # 8GB total
         )
 
-        with patch("search.config.get_search_config") as mock_config:
+        with patch("search.reranking_engine.get_search_config") as mock_config:
             config = MagicMock()
             config.reranker.enabled = True
             config.reranker.min_vram_gb = 4  # Requires 4GB
@@ -224,7 +224,7 @@ class TestRerankingEngine:
         ]
 
         # Phase 1: Enable neural reranking
-        with patch("search.config.get_search_config") as mock_config:
+        with patch("search.reranking_engine.get_search_config") as mock_config:
             config = MagicMock()
             config.reranker.enabled = True
             config.reranker.min_vram_gb = 4
@@ -241,7 +241,7 @@ class TestRerankingEngine:
             assert mock_neural_reranker_class.call_count == 1
 
         # Phase 2: Disable neural reranking
-        with patch("search.config.get_search_config") as mock_config:
+        with patch("search.reranking_engine.get_search_config") as mock_config:
             config = MagicMock()
             config.reranker.enabled = False  # Disabled
             mock_config.return_value = config
@@ -253,7 +253,7 @@ class TestRerankingEngine:
             assert self.engine.neural_reranker is None
 
         # Phase 3: Re-enable neural reranking (THIS WAS BROKEN BEFORE FIX)
-        with patch("search.config.get_search_config") as mock_config:
+        with patch("search.reranking_engine.get_search_config") as mock_config:
             config = MagicMock()
             config.reranker.enabled = True  # Re-enabled
             config.reranker.min_vram_gb = 4

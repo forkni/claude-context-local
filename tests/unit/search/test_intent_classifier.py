@@ -56,6 +56,18 @@ class TestIntentClassifierBasicDetection:
         # Check confidence (after penalty applied), not raw score
         assert short_decision.confidence > long_decision.confidence
 
+    def test_local_intent_io_verbs(self, classifier):
+        """Test LOCAL intent for I/O and persistence verbs (save, load, read, write)."""
+        # "save" and "load" should each add +0.10 to LOCAL score
+        decision = classifier.classify("save and load search configuration")
+        assert decision.scores["local"] >= 0.20  # save +0.10, load +0.10
+        # Should classify as hybrid (LOCAL=0.20, below LOCAL-only threshold)
+        # but LOCAL should be highest or tied with others
+        assert (
+            decision.intent == QueryIntent.HYBRID
+            or decision.intent == QueryIntent.LOCAL
+        )
+
     # ===== GLOBAL Intent Tests =====
 
     def test_global_intent_how_does_work(self, classifier):
@@ -189,10 +201,11 @@ class TestIntentClassifierBasicDetection:
             assert decision.suggested_params.get("search_mode") == "hybrid"
 
     def test_suggested_params_local_k(self, classifier):
-        """Test that LOCAL queries suggest smaller k."""
+        """Test that LOCAL queries suggest k=5 for symbol lookups."""
         decision = classifier.classify("where is QueryRouter")
         if decision.intent == QueryIntent.LOCAL:
-            assert decision.suggested_params.get("k") == 4
+            # k=5 per intent_classifier.py line 783 (wider pool for graph-isolated symbols)
+            assert decision.suggested_params.get("k") == 5
             assert decision.suggested_params.get("search_mode") == "hybrid"
 
     def test_suggested_params_navigational_symbol(self, classifier):
@@ -616,3 +629,81 @@ class TestRelationshipTypeDetection:
         assert decision.intent == QueryIntent.NAVIGATIONAL
         rel_types = decision.suggested_params.get("relationship_types", [])
         assert "instantiates" in rel_types
+
+
+class TestSymbolDetection:
+    """Test code symbol detection in queries (fallback for noun-only queries)."""
+
+    @pytest.fixture
+    def classifier(self):
+        """Create IntentClassifier instance for testing."""
+        return IntentClassifier(enable_logging=False)
+
+    def test_camelcase_detected(self, classifier):
+        """CamelCase symbols should boost LOCAL score via fallback."""
+        decision = classifier.classify("HybridSearcher BM25")
+        # CamelCase +0.25, UPPER_CASE +0.15 = 0.40
+        assert decision.scores["local"] >= 0.35
+        assert (
+            decision.intent == QueryIntent.LOCAL
+            or decision.intent == QueryIntent.HYBRID
+        )
+
+    def test_upper_case_detected(self, classifier):
+        """UPPER_CASE constants should boost LOCAL score via fallback."""
+        decision = classifier.classify("FAISS IndexFlatIP")
+        # UPPER +0.15, CamelCase +0.25 = 0.40
+        assert decision.scores["local"] >= 0.35
+
+    def test_snake_case_detected(self, classifier):
+        """snake_case identifiers should boost LOCAL score via fallback."""
+        decision = classifier.classify("embed_chunks batch")
+        # snake_case +0.20
+        assert decision.scores["local"] >= 0.15
+
+    def test_dunder_method_detected(self, classifier):
+        """Dunder methods should boost LOCAL score via fallback."""
+        decision = classifier.classify("__init__ constructor")
+        # dunder +0.20
+        assert decision.scores["local"] >= 0.15
+
+    def test_dot_notation_detected(self, classifier):
+        """dot.notation should boost LOCAL score via fallback."""
+        decision = classifier.classify("Module.ClassName usage")
+        # dot notation +0.25
+        assert decision.scores["local"] >= 0.20
+
+    def test_no_interference_with_verb_queries(self, classifier):
+        """Symbol fallback should NOT activate when verbs provide signal."""
+        decision = classifier.classify(
+            "how does HybridSearcher combine BM25 and semantic search"
+        )
+        # GLOBAL should still be highest (verb signals dominate)
+        # Fallback skipped because GLOBAL=0.20 > 0.15 threshold
+        assert decision.scores["global"] >= decision.scores.get("local", 0)
+        # LOCAL should be low (just from "does" substring match)
+        assert decision.scores.get("local", 0) < 0.15
+
+    def test_blocklist_terms_ignored(self, classifier):
+        """Common terms like 'function', 'class' should not trigger symbol detection."""
+        # Pure blocklist terms — should not get symbol boost
+        decision = classifier.classify("function class method")
+        # These match as LOCAL keywords, not as symbols
+        # LOCAL score should come from keyword matches, not symbol detection
+        assert decision.scores["local"] > 0
+
+    def test_all_zero_query_gets_symbol_boost(self, classifier):
+        """Pure noun queries with no verb matches should get symbol fallback."""
+        decision = classifier.classify(
+            "FAISS IndexFlatIP cosine similarity vector search"
+        )
+        # Should trigger fallback (no verbs = max score ~0.0)
+        assert decision.scores["local"] > 0
+        # Should be substantial boost from FAISS and IndexFlatIP
+        assert decision.scores["local"] >= 0.35
+
+    def test_mixed_symbols(self, classifier):
+        """Multiple symbol types should accumulate (capped at 0.5)."""
+        decision = classifier.classify("HybridSearcher embed_chunks FAISS __init__")
+        # CamelCase +0.25, snake +0.20, UPPER +0.15, dunder +0.20 = 0.80, capped at 0.5
+        assert decision.scores["local"] == 0.5

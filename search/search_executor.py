@@ -8,7 +8,7 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -33,10 +33,10 @@ class SearchExecutor:
         reranker,  # RRFReranker
         reranking_engine,  # RerankingEngine
         gpu_monitor,  # GPUMemoryMonitor
-        bm25_weight: float = 0.4,
-        dense_weight: float = 0.6,
+        bm25_weight: float = 0.35,
+        dense_weight: float = 0.65,
         max_workers: int = 2,
-        logger: Optional[logging.Logger] = None,
+        logger: logging.Logger | None = None,
     ):
         """
         Initialize search executor.
@@ -87,8 +87,8 @@ class SearchExecutor:
         search_mode: str = "hybrid",
         use_parallel: bool = True,
         min_bm25_score: float = 0.0,
-        filters: Optional[dict[str, Any]] = None,
-        query_embedding: Optional[np.ndarray] = None,
+        filters: dict[str, Any] | None = None,
+        query_embedding: np.ndarray | None = None,
     ) -> list[SearchResult]:
         """
         Execute single-hop search (direct query matching).
@@ -183,8 +183,8 @@ class SearchExecutor:
         query: str,
         k: int,
         min_bm25_score: float,
-        filters: Optional[dict[str, Any]],
-        query_embedding: Optional[np.ndarray] = None,
+        filters: dict[str, Any] | None,
+        query_embedding: np.ndarray | None = None,
     ) -> tuple[list[tuple], list[tuple]]:
         """Execute BM25 and dense search in parallel using shared thread pool."""
         try:
@@ -216,8 +216,8 @@ class SearchExecutor:
         query: str,
         k: int,
         min_bm25_score: float,
-        filters: Optional[dict[str, Any]],
-        query_embedding: Optional[np.ndarray] = None,
+        filters: dict[str, Any] | None,
+        query_embedding: np.ndarray | None = None,
     ) -> tuple[list[tuple], list[tuple]]:
         """Execute BM25 and dense search sequentially."""
         bm25_results = self.search_bm25(query, k, min_bm25_score, filters)
@@ -226,7 +226,7 @@ class SearchExecutor:
 
     @timed("bm25_search")
     def search_bm25(
-        self, query: str, k: int, min_score: float, filters: Optional[dict] = None
+        self, query: str, k: int, min_score: float, filters: dict | None = None
     ) -> list[tuple]:
         """Search using BM25 index with optional filtering."""
         start_time = time.time()
@@ -279,8 +279,8 @@ class SearchExecutor:
         self,
         query: str,
         k: int,
-        filters: Optional[dict],
-        query_embedding: Optional[np.ndarray] = None,
+        filters: dict | None,
+        query_embedding: np.ndarray | None = None,
     ) -> list[tuple]:
         """Search using dense vector index."""
         start_time = time.time()

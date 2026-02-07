@@ -44,19 +44,21 @@ def mock_get_project_storage_dir_global(tmp_path):
     # - search_handlers (_check_auto_reindex)
     # - index_handlers (clear_index, index_directory)
     # NOTE: status_handlers does NOT use get_project_storage_dir
-    with patch(
-        "mcp_server.tools.config_handlers.get_project_storage_dir",
-        return_value=mock_storage_dir,
-    ):
-        with patch(
+    with (
+        patch(
+            "mcp_server.tools.config_handlers.get_project_storage_dir",
+            return_value=mock_storage_dir,
+        ),
+        patch(
             "mcp_server.tools.search_handlers.get_project_storage_dir",
             return_value=mock_storage_dir,
-        ):
-            with patch(
-                "mcp_server.tools.index_handlers.get_project_storage_dir",
-                return_value=mock_storage_dir,
-            ):
-                yield mock_storage_dir
+        ),
+        patch(
+            "mcp_server.tools.index_handlers.get_project_storage_dir",
+            return_value=mock_storage_dir,
+        ),
+    ):
+        yield mock_storage_dir
 
 
 # ============================================================================
@@ -270,22 +272,24 @@ async def test_handle_get_search_config_status():
 @pytest.mark.asyncio
 async def test_handle_list_embedding_models():
     """Test list_embedding_models returns model registry."""
-    with patch(
-        "mcp_server.tools.status_handlers.MODEL_REGISTRY",
-        {
-            "model1": {"dimension": 768, "description": "Test model 1"},
-            "model2": {"dimension": 1024, "description": "Test model 2"},
-        },
+    with (
+        patch(
+            "mcp_server.tools.status_handlers.MODEL_REGISTRY",
+            {
+                "model1": {"dimension": 768, "description": "Test model 1"},
+                "model2": {"dimension": 1024, "description": "Test model 2"},
+            },
+        ),
+        patch("mcp_server.tools.status_handlers.get_config") as mock_config,
     ):
-        with patch("mcp_server.tools.status_handlers.get_config") as mock_config:
-            mock_cfg = Mock()
-            mock_cfg.embedding.model_name = "model1"
-            mock_config.return_value = mock_cfg
+        mock_cfg = Mock()
+        mock_cfg.embedding.model_name = "model1"
+        mock_config.return_value = mock_cfg
 
-            result = await tool_handlers.handle_list_embedding_models({})
+        result = await tool_handlers.handle_list_embedding_models({})
 
-            assert len(result["models"]) == 2
-            assert result["current_model"] == "model1"
+        assert len(result["models"]) == 2
+        assert result["current_model"] == "model1"
 
 
 # ============================================================================
@@ -310,15 +314,17 @@ async def test_handle_switch_project_success(tmp_path):
         (index_dir / "code.index").touch()
         mock_storage.return_value = mock_project_dir
 
-        with patch("mcp_server.tools.config_handlers._cleanup_previous_resources"):
-            with patch("mcp_server.state._app_state.current_project", None):
-                result = await tool_handlers.handle_switch_project(
-                    {"project_path": str(project_path)}
-                )
+        with (
+            patch("mcp_server.tools.config_handlers._cleanup_previous_resources"),
+            patch("mcp_server.state._app_state.current_project", None),
+        ):
+            result = await tool_handlers.handle_switch_project(
+                {"project_path": str(project_path)}
+            )
 
-                assert result["success"] is True
-                assert result["indexed"] is True
-                assert "Switched to project" in result["message"]
+            assert result["success"] is True
+            assert result["indexed"] is True
+            assert "Switched to project" in result["message"]
 
 
 @pytest.mark.asyncio
@@ -390,25 +396,25 @@ async def test_handle_clear_index():
             (index_dir / "code.index").touch()
             (index_dir / "chunks_metadata.db").touch()
 
-        with patch(
-            "mcp_server.tools.index_handlers.get_state", return_value=mock_state
-        ):
-            with patch(
+        with (
+            patch("mcp_server.tools.index_handlers.get_state", return_value=mock_state),
+            patch(
                 "mcp_server.tools.index_handlers.get_storage_dir", return_value=base_dir
-            ):
-                result = await tool_handlers.handle_clear_index({})
+            ),
+        ):
+            result = await tool_handlers.handle_clear_index({})
 
-                assert result["success"] is True
-                assert "cleared_models" in result
-                assert len(result["cleared_models"]) == 2
+            assert result["success"] is True
+            assert "cleared_models" in result
+            assert len(result["cleared_models"]) == 2
 
-                # Verify BM25 directories deleted
-                assert not (model1_dir / "index" / "bm25").exists()
-                assert not (model2_dir / "index" / "bm25").exists()
+            # Verify BM25 directories deleted
+            assert not (model1_dir / "index" / "bm25").exists()
+            assert not (model2_dir / "index" / "bm25").exists()
 
-                # Verify dense index files deleted
-                assert not (model1_dir / "index" / "code.index").exists()
-                assert not (model2_dir / "index" / "code.index").exists()
+            # Verify dense index files deleted
+            assert not (model1_dir / "index" / "code.index").exists()
+            assert not (model2_dir / "index" / "code.index").exists()
 
 
 @pytest.mark.asyncio
@@ -447,66 +453,68 @@ async def test_handle_configure_search_mode():
 @pytest.mark.asyncio
 async def test_handle_switch_embedding_model():
     """Test switch_embedding_model changes model."""
-    with patch(
-        "mcp_server.tools.config_handlers.MODEL_REGISTRY",
-        {"new_model": {"dimension": 1024}},
+    with (
+        patch(
+            "mcp_server.tools.config_handlers.MODEL_REGISTRY",
+            {"new_model": {"dimension": 1024}},
+        ),
+        patch("mcp_server.tools.config_handlers.get_config_manager") as mock_manager,
     ):
-        with patch(
-            "mcp_server.tools.config_handlers.get_config_manager"
-        ) as mock_manager:
-            mock_cfg = Mock()
-            mock_cfg.embedding.model_name = "old_model"
-            mock_manager.return_value.load_config.return_value = mock_cfg
-            mock_manager.return_value.save_config = Mock()
+        mock_cfg = Mock()
+        mock_cfg.embedding.model_name = "old_model"
+        mock_manager.return_value.load_config.return_value = mock_cfg
+        mock_manager.return_value.save_config = Mock()
 
-            with patch("mcp_server.state.get_state") as mock_state:
-                state = mock_state.return_value
-                state.embedders = {}
-                state.index_manager = None
-                state.searcher = None
-                state.clear_embedders = Mock()
-                result = await tool_handlers.handle_switch_embedding_model(
-                    {"model_name": "new_model"}
-                )
+        with patch("mcp_server.state.get_state") as mock_state:
+            state = mock_state.return_value
+            state.embedders = {}
+            state.index_manager = None
+            state.searcher = None
+            state.clear_embedders = Mock()
+            result = await tool_handlers.handle_switch_embedding_model(
+                {"model_name": "new_model"}
+            )
 
-                assert result["success"] is True
-                assert result["new_model"] == "new_model"
-                assert result["old_model"] == "old_model"
+            assert result["success"] is True
+            assert result["new_model"] == "new_model"
+            assert result["old_model"] == "old_model"
 
 
 @pytest.mark.asyncio
 async def test_handle_find_similar_code():
     """Test find_similar_code returns similar chunks."""
-    with patch("mcp_server.tools.search_handlers.get_searcher") as mock_searcher:
-        with patch("mcp_server.tools.search_handlers.get_state") as mock_get_state:
-            # Mock state with current_project set
-            mock_state = Mock()
-            mock_state.current_project = "/test/project"
-            mock_get_state.return_value = mock_state
+    with (
+        patch("mcp_server.tools.search_handlers.get_searcher") as mock_searcher,
+        patch("mcp_server.tools.search_handlers.get_state") as mock_get_state,
+    ):
+        # Mock state with current_project set
+        mock_state = Mock()
+        mock_state.current_project = "/test/project"
+        mock_get_state.return_value = mock_state
 
-            # Mock search results
-            mock_result = Mock()
-            mock_result.chunk_id = "file.py:10-20:function:test_func"
-            mock_result.relative_path = "file.py"
-            mock_result.start_line = 10
-            mock_result.end_line = 20
-            mock_result.chunk_type = "function"
-            mock_result.similarity_score = 0.95
-            mock_result.name = "test_func"
+        # Mock search results
+        mock_result = Mock()
+        mock_result.chunk_id = "file.py:10-20:function:test_func"
+        mock_result.relative_path = "file.py"
+        mock_result.start_line = 10
+        mock_result.end_line = 20
+        mock_result.chunk_type = "function"
+        mock_result.similarity_score = 0.95
+        mock_result.name = "test_func"
 
-            # Create mock searcher instance
-            mock_searcher_instance = Mock()
-            mock_searcher_instance.find_similar_to_chunk.return_value = [mock_result]
-            mock_searcher.return_value = mock_searcher_instance
+        # Create mock searcher instance
+        mock_searcher_instance = Mock()
+        mock_searcher_instance.find_similar_to_chunk.return_value = [mock_result]
+        mock_searcher.return_value = mock_searcher_instance
 
-            result = await tool_handlers.handle_find_similar_code(
-                {"chunk_id": "ref_chunk_id", "k": 5}
-            )
+        result = await tool_handlers.handle_find_similar_code(
+            {"chunk_id": "ref_chunk_id", "k": 5}
+        )
 
-            assert result["reference_chunk"] == "ref_chunk_id"
-            assert len(result["similar_chunks"]) == 1
-            assert result["similar_chunks"][0]["file"] == "file.py"
-            assert result["similar_chunks"][0]["score"] == 0.95
+        assert result["reference_chunk"] == "ref_chunk_id"
+        assert len(result["similar_chunks"]) == 1
+        assert result["similar_chunks"][0]["file"] == "file.py"
+        assert result["similar_chunks"][0]["score"] == 0.95
 
 
 # ============================================================================
@@ -517,23 +525,23 @@ async def test_handle_find_similar_code():
 @pytest.mark.asyncio
 async def test_handle_search_code_no_index():
     """Test search_code fails gracefully when no index exists (backward compatibility)."""
-    with patch("mcp_server.tools.search_handlers.get_searcher") as mock_searcher:
-        with patch("mcp_server.tools.search_handlers.get_state") as mock_get_state:
-            mock_state = Mock()
-            mock_state.current_project = "/test/project"
-            mock_get_state.return_value = mock_state
+    with (
+        patch("mcp_server.tools.search_handlers.get_searcher") as mock_searcher,
+        patch("mcp_server.tools.search_handlers.get_state") as mock_get_state,
+    ):
+        mock_state = Mock()
+        mock_state.current_project = "/test/project"
+        mock_get_state.return_value = mock_state
 
-            # Mock searcher without is_ready (legacy IntelligentSearcher)
-            mock_searcher_obj = Mock(spec=["index_manager"])
-            mock_searcher_obj.index_manager.get_stats.return_value = {"total_chunks": 0}
-            mock_searcher.return_value = mock_searcher_obj
+        # Mock searcher without is_ready (legacy IntelligentSearcher)
+        mock_searcher_obj = Mock(spec=["index_manager"])
+        mock_searcher_obj.index_manager.get_stats.return_value = {"total_chunks": 0}
+        mock_searcher.return_value = mock_searcher_obj
 
-            result = await tool_handlers.handle_search_code(
-                {"query": "test query", "k": 5}
-            )
+        result = await tool_handlers.handle_search_code({"query": "test query", "k": 5})
 
-            assert "error" in result
-            assert "no indexed project" in result["error"].lower()
+        assert "error" in result
+        assert "no indexed project" in result["error"].lower()
 
 
 @pytest.mark.asyncio
@@ -543,81 +551,81 @@ async def test_handle_search_code_hybrid_searcher_ready():
     This test verifies the bug fix for 'No indexed project found' error
     that occurred when HybridSearcher was used with model routing.
     """
-    with patch("mcp_server.tools.search_handlers.get_searcher") as mock_get_searcher:
-        with patch("mcp_server.tools.search_handlers.get_state") as mock_get_state:
-            mock_state = Mock()
-            mock_state.current_project = "/test/project"
-            mock_get_state.return_value = mock_state
+    with (
+        patch("mcp_server.tools.search_handlers.get_searcher") as mock_get_searcher,
+        patch("mcp_server.tools.search_handlers.get_state") as mock_get_state,
+    ):
+        mock_state = Mock()
+        mock_state.current_project = "/test/project"
+        mock_get_state.return_value = mock_state
 
-            # Mock HybridSearcher with is_ready property and dense_index
-            mock_searcher = Mock()
-            mock_searcher.is_ready = True
+        # Mock HybridSearcher with is_ready property and dense_index
+        mock_searcher = Mock()
+        mock_searcher.is_ready = True
 
-            # Mock dense_index with FAISS index containing vectors
-            mock_dense_index = Mock()
-            mock_faiss_index = Mock()
-            mock_faiss_index.ntotal = 1574  # Simulating indexed project
-            mock_dense_index.index = mock_faiss_index
-            mock_dense_index.graph_storage = (
-                None  # Prevent centrality ranker from executing
-            )
-            mock_searcher.dense_index = mock_dense_index
+        # Mock dense_index with FAISS index containing vectors
+        mock_dense_index = Mock()
+        mock_faiss_index = Mock()
+        mock_faiss_index.ntotal = 1574  # Simulating indexed project
+        mock_dense_index.index = mock_faiss_index
+        mock_dense_index.graph_storage = (
+            None  # Prevent centrality ranker from executing
+        )
+        mock_searcher.dense_index = mock_dense_index
 
-            # Mock search results with proper SearchResult object
-            mock_result = Mock()
-            mock_result.chunk_id = "test.py:1-10:function:test"
-            mock_result.score = 0.9
-            mock_result.similarity_score = 0.9  # Needed for round() operation
-            mock_result.metadata = {
-                "relative_path": "test.py",
-                "start_line": 1,
-                "end_line": 10,
-                "chunk_type": "function",
-            }
-            mock_searcher.search.return_value = [mock_result]
+        # Mock search results with proper SearchResult object
+        mock_result = Mock()
+        mock_result.chunk_id = "test.py:1-10:function:test"
+        mock_result.score = 0.9
+        mock_result.similarity_score = 0.9  # Needed for round() operation
+        mock_result.metadata = {
+            "relative_path": "test.py",
+            "start_line": 1,
+            "end_line": 10,
+            "chunk_type": "function",
+        }
+        mock_searcher.search.return_value = [mock_result]
 
-            mock_get_searcher.return_value = mock_searcher
+        mock_get_searcher.return_value = mock_searcher
 
-            # Execute search
-            result = await tool_handlers.handle_search_code(
-                {"query": "test query", "k": 5}
-            )
+        # Execute search
+        result = await tool_handlers.handle_search_code({"query": "test query", "k": 5})
 
-            # Should succeed without "No indexed project found" error
-            assert "error" not in result
-            assert "results" in result or "chunks" in result or isinstance(result, list)
+        # Should succeed without "No indexed project found" error
+        assert "error" not in result
+        assert "results" in result or "chunks" in result or isinstance(result, list)
 
 
 @pytest.mark.asyncio
 async def test_handle_search_code_hybrid_searcher_not_ready():
     """Test search_code with HybridSearcher correctly detects empty index."""
-    with patch("mcp_server.tools.search_handlers.get_searcher") as mock_get_searcher:
-        with patch("mcp_server.tools.search_handlers.get_state") as mock_get_state:
-            mock_state = Mock()
-            mock_state.current_project = "/test/project"
-            mock_get_state.return_value = mock_state
+    with (
+        patch("mcp_server.tools.search_handlers.get_searcher") as mock_get_searcher,
+        patch("mcp_server.tools.search_handlers.get_state") as mock_get_state,
+    ):
+        mock_state = Mock()
+        mock_state.current_project = "/test/project"
+        mock_get_state.return_value = mock_state
 
-            # Mock HybridSearcher with is_ready = False
-            mock_searcher = Mock()
-            mock_searcher.is_ready = False
+        # Mock HybridSearcher with is_ready = False
+        mock_searcher = Mock()
+        mock_searcher.is_ready = False
 
-            # Mock dense_index with empty FAISS index
-            mock_dense_index = Mock()
-            mock_faiss_index = Mock()
-            mock_faiss_index.ntotal = 0
-            mock_dense_index.index = mock_faiss_index
-            mock_searcher.dense_index = mock_dense_index
+        # Mock dense_index with empty FAISS index
+        mock_dense_index = Mock()
+        mock_faiss_index = Mock()
+        mock_faiss_index.ntotal = 0
+        mock_dense_index.index = mock_faiss_index
+        mock_searcher.dense_index = mock_dense_index
 
-            mock_get_searcher.return_value = mock_searcher
+        mock_get_searcher.return_value = mock_searcher
 
-            # Execute search
-            result = await tool_handlers.handle_search_code(
-                {"query": "test query", "k": 5}
-            )
+        # Execute search
+        result = await tool_handlers.handle_search_code({"query": "test query", "k": 5})
 
-            # Should return error
-            assert "error" in result
-            assert "no indexed project" in result["error"].lower()
+        # Should return error
+        assert "error" in result
+        assert "no indexed project" in result["error"].lower()
 
 
 @pytest.mark.asyncio
@@ -700,17 +708,17 @@ async def test_handle_delete_project_success(tmp_path):
     mock_state = Mock()
     mock_state.current_project = None  # Not current project
 
-    with patch("mcp_server.tools.index_handlers.get_state", return_value=mock_state):
-        with patch(
-            "mcp_server.tools.index_handlers.get_storage_dir", return_value=base_dir
-        ):
-            with patch("mcp_server.server.close_project_resources"):
-                with patch("merkle.snapshot_manager.SnapshotManager") as mock_sm:
-                    mock_sm.return_value.delete_all_snapshots.return_value = 2
+    with (
+        patch("mcp_server.tools.index_handlers.get_state", return_value=mock_state),
+        patch("mcp_server.tools.index_handlers.get_storage_dir", return_value=base_dir),
+        patch("mcp_server.server.close_project_resources"),
+        patch("merkle.snapshot_manager.SnapshotManager") as mock_sm,
+    ):
+        mock_sm.return_value.delete_all_snapshots.return_value = 2
 
-                    result = await tool_handlers.handle_delete_project(
-                        {"project_path": str(project_path)}
-                    )
+        result = await tool_handlers.handle_delete_project(
+            {"project_path": str(project_path)}
+        )
 
     assert result["success"] is True
     assert len(result["deleted_directories"]) == 1
@@ -762,17 +770,17 @@ async def test_handle_delete_project_current_project_with_force(tmp_path):
     mock_state = Mock()
     mock_state.current_project = str(project_path_resolved)  # IS current project
 
-    with patch("mcp_server.tools.index_handlers.get_state", return_value=mock_state):
-        with patch(
-            "mcp_server.tools.index_handlers.get_storage_dir", return_value=base_dir
-        ):
-            with patch("mcp_server.server.close_project_resources"):
-                with patch("merkle.snapshot_manager.SnapshotManager") as mock_sm:
-                    mock_sm.return_value.delete_all_snapshots.return_value = 1
+    with (
+        patch("mcp_server.tools.index_handlers.get_state", return_value=mock_state),
+        patch("mcp_server.tools.index_handlers.get_storage_dir", return_value=base_dir),
+        patch("mcp_server.server.close_project_resources"),
+        patch("merkle.snapshot_manager.SnapshotManager") as mock_sm,
+    ):
+        mock_sm.return_value.delete_all_snapshots.return_value = 1
 
-                    result = await tool_handlers.handle_delete_project(
-                        {"project_path": str(project_path), "force": True}
-                    )
+        result = await tool_handlers.handle_delete_project(
+            {"project_path": str(project_path), "force": True}
+        )
 
     assert result["success"] is True
     assert len(result["deleted_directories"]) == 1
@@ -821,29 +829,27 @@ async def test_handle_delete_project_adds_to_cleanup_queue(tmp_path):
     mock_state.current_project = None
 
     # Mock shutil.rmtree to raise PermissionError
-    with patch("mcp_server.tools.index_handlers.get_state", return_value=mock_state):
-        with patch(
-            "mcp_server.tools.index_handlers.get_storage_dir", return_value=base_dir
-        ):
-            with patch("mcp_server.server.close_project_resources"):
-                with patch("merkle.snapshot_manager.SnapshotManager") as mock_sm:
-                    mock_sm.return_value.delete_all_snapshots.return_value = 0
+    with (
+        patch("mcp_server.tools.index_handlers.get_state", return_value=mock_state),
+        patch("mcp_server.tools.index_handlers.get_storage_dir", return_value=base_dir),
+        patch("mcp_server.server.close_project_resources"),
+        patch("merkle.snapshot_manager.SnapshotManager") as mock_sm,
+    ):
+        mock_sm.return_value.delete_all_snapshots.return_value = 0
 
-                    with patch("shutil.rmtree") as mock_rmtree:
-                        mock_rmtree.side_effect = PermissionError("File is locked")
+        with patch("shutil.rmtree") as mock_rmtree:
+            mock_rmtree.side_effect = PermissionError("File is locked")
 
-                        with patch(
-                            "mcp_server.cleanup_queue.CleanupQueue"
-                        ) as mock_queue_cls:
-                            mock_queue = Mock()
-                            mock_queue_cls.return_value = mock_queue
+            with patch("mcp_server.cleanup_queue.CleanupQueue") as mock_queue_cls:
+                mock_queue = Mock()
+                mock_queue_cls.return_value = mock_queue
 
-                            result = await tool_handlers.handle_delete_project(
-                                {"project_path": str(project_path)}
-                            )
+                result = await tool_handlers.handle_delete_project(
+                    {"project_path": str(project_path)}
+                )
 
-                            # Verify cleanup queue was used
-                            mock_queue.add.assert_called_once()
+                # Verify cleanup queue was used
+                mock_queue.add.assert_called_once()
 
     assert result["success"] is False
     assert len(result.get("errors", [])) == 1

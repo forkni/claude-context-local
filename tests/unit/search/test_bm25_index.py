@@ -433,7 +433,7 @@ class TestBM25Index:
         # Check that metadata file contains version info
         import json
 
-        with open(self.index.metadata_path, "r") as f:
+        with open(self.index.metadata_path) as f:
             metadata = json.load(f)
 
         assert "index_version" in metadata, "Metadata should contain index_version"

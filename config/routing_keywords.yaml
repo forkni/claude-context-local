@@ -10,17 +10,17 @@
 # Full Model Pool Configuration (12GB+ VRAM GPUs)
 # ============================================================================
 # Used when multi_model_pool="full" (default)
-# Models: BGE-Code-v1, Qwen3-4B (MRL enabled)
+# Models: BGE-Code-v1, Qwen3-0.6B
 
 full_pool:
   # Confidence threshold for routing (below this, use default model)
-  # Lowered from 0.3 → 0.15 → 0.10 → 0.05 based on empirical testing
-  # Enhanced routing with single-word keywords enables lower threshold
-  # Natural queries now trigger routing with 2-3 keyword matches
-  confidence_threshold: 0.02
+  # Raised to 0.35 to require 4+ keyword matches before routing away from default
+  # Prevents weak matches (e.g., "tree"/"index"=0.10, "embedding"+"config"=0.30)
+  # from overriding qwen3, which excels at semantic code discovery
+  confidence_threshold: 0.35
 
-  # Default fallback model (most balanced)
-  default_model: bge_code
+  # Default fallback model (qwen3 excels at semantic code discovery)
+  default_model: qwen3
 
   # Explicit precedence for tie-breaking
   # When scores are within 0.01 margin, use this order:

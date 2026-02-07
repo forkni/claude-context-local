@@ -6,7 +6,7 @@ to discover related code across multiple hops.
 
 import logging
 import time
-from typing import Any, Optional
+from typing import Any
 
 from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
 from mcp_server.utils.config_helpers import (
@@ -34,7 +34,7 @@ class MultiHopSearcher:
         single_hop_callback,  # Callable for _single_hop_search
         reranking_engine,  # RerankingEngine instance
         graph_storage=None,  # CodeGraphStorage instance for graph-based expansion
-        logger: Optional[logging.Logger] = None,
+        logger: logging.Logger | None = None,
     ):
         """
         Initialize multi-hop searcher.
@@ -167,7 +167,7 @@ class MultiHopSearcher:
         all_results: dict,
         expansion_k: int,
         k: int,
-        edge_weights: Optional[dict[str, float]] = None,
+        edge_weights: dict[str, float] | None = None,
     ) -> dict[int | str, float]:
         """Expand results via graph neighbor traversal (weighted BFS).
 
@@ -242,7 +242,7 @@ class MultiHopSearcher:
         expansion_k: int,
         hops: int,
         k: int,
-        edge_weights: Optional[dict[str, float]] = None,
+        edge_weights: dict[str, float] | None = None,
     ) -> dict[int | str, float]:
         """Expand using graph neighbors first, then semantic similarity.
 
@@ -284,7 +284,7 @@ class MultiHopSearcher:
         self,
         all_results: dict,
         initial_results_count: int,
-        filters: Optional[dict[str, Any]],
+        filters: dict[str, Any] | None,
     ) -> dict:
         """
         Apply filters to expanded results.
@@ -331,8 +331,8 @@ class MultiHopSearcher:
         expansion_factor: float = 0.3,
         use_parallel: bool = True,
         min_bm25_score: float = 0.0,
-        filters: Optional[dict[str, Any]] = None,
-        edge_weights: Optional[dict[str, float]] = None,
+        filters: dict[str, Any] | None = None,
+        edge_weights: dict[str, float] | None = None,
     ) -> list:
         """
         Internal multi-hop search implementation.

@@ -27,8 +27,7 @@ This guide covers the complete installation process for the Claude Context MCP s
 - **Disk Space**: 4-6 GB free space
   - EmbeddingGemma model: ~1.3 GB
   - BGE-M3 model: ~1.1 GB
-  - Qwen3-0.6B model: ~2.4 GB (desktop tier, 10-18GB VRAM)
-  - Qwen3-4B model: ~7.5 GB (workstation tier, 18GB+ VRAM)
+  - Qwen3-0.6B model: ~2.4 GB (desktop/workstation tier, 10GB+ VRAM)
   - BGE-Code model: ~4 GB (code-specific)
   - CodeRankEmbed model: ~0.6 GB (code-specific)
   - PyTorch with CUDA: ~2.4 GB

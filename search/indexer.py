@@ -10,6 +10,8 @@ import numpy as np
 
 
 if TYPE_CHECKING:
+    from embeddings.embedder import CodeEmbedder
+    from search.config import SearchConfig
     from search.symbol_cache import SymbolHashCache
 
 
@@ -22,6 +24,8 @@ try:
     from sqlitedict import SqliteDict
 except ImportError:
     SqliteDict = None
+
+import contextlib
 
 from embeddings.embedder import EmbeddingResult
 from search.batch_operations import BatchOperations
@@ -37,9 +41,9 @@ class CodeIndexManager:
     def __init__(
         self,
         storage_dir: str,
-        embedder=None,
+        embedder: "CodeEmbedder | None" = None,
         project_id: str | None = None,
-        config=None,
+        config: "SearchConfig | None" = None,
     ):
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
@@ -210,11 +214,9 @@ class CodeIndexManager:
         self._logger.info(f"Added {len(embedding_results)} embeddings to index")
 
         # Commit metadata in a single transaction for performance
-        try:
+        # If commit is unavailable for some reason, continue without failing
+        with contextlib.suppress(sqlite3.Error):
             self.metadata_store.commit()
-        except sqlite3.Error:
-            # If commit is unavailable for some reason, continue without failing
-            pass
 
         # Save call graph if populated
         graph_status = "not None" if self.graph_storage is not None else "None"
@@ -244,7 +246,7 @@ class CodeIndexManager:
         self,
         query_embedding: np.ndarray,
         k: int = 5,
-        filters: Optional[dict[str, Any]] = None,
+        filters: dict[str, Any] | None = None,
     ) -> list[tuple[str, float, dict[str, Any]]]:
         """Search for similar code chunks."""
         self._logger.info(f"Index manager search called with k={k}, filters={filters}")
@@ -300,7 +302,7 @@ class CodeIndexManager:
         """
         return FilterEngine.from_dict(filters).matches(metadata)
 
-    def get_chunk_by_id(self, chunk_id: str) -> Optional[dict[str, Any]]:
+    def get_chunk_by_id(self, chunk_id: str) -> dict[str, Any] | None:
         """Retrieve chunk metadata by ID with path normalization.
 
         Handles Windows backslash escaping issues in MCP transport by trying
@@ -451,7 +453,7 @@ class CodeIndexManager:
         return results_dict
 
     def remove_file_chunks(
-        self, file_path: str, project_name: Optional[str] = None
+        self, file_path: str, project_name: str | None = None
     ) -> int:
         """Remove all chunks from a specific file.
 
@@ -494,14 +496,12 @@ class CodeIndexManager:
         self._logger.info(f"Removed {len(chunks_to_remove)} chunks from {file_path}")
 
         # Commit removals in batch
-        try:
+        with contextlib.suppress(sqlite3.Error):
             self.metadata_store.commit()
-        except sqlite3.Error:
-            pass
         return len(chunks_to_remove)
 
     def remove_multiple_files(
-        self, file_paths: set, project_name: Optional[str] = None
+        self, file_paths: set, project_name: str | None = None
     ) -> int:
         """Remove chunks from multiple files in a single pass.
 
@@ -606,7 +606,7 @@ class CodeIndexManager:
         """
         self._graph.add_chunk(chunk_id, metadata)
 
-    def _update_stats(self):
+    def _update_stats(self) -> None:
         """Update index statistics."""
         stats = {
             "total_chunks": len(self.chunk_ids),
@@ -664,7 +664,7 @@ class CodeIndexManager:
     def get_stats(self) -> dict[str, Any]:
         """Get index statistics."""
         if self.stats_path.exists():
-            with open(self.stats_path, "r") as f:
+            with open(self.stats_path) as f:
                 return json.load(f)
         else:
             return {
@@ -831,13 +831,18 @@ class CodeIndexManager:
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> bool:
         """Context manager exit - cleanup resources."""
         if self._metadata_store is not None:
             self._metadata_store.close()
         return False  # Don't suppress exceptions
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Cleanup when object is destroyed."""
         if hasattr(self, "_metadata_store") and self._metadata_store is not None:
             self._metadata_store.close()

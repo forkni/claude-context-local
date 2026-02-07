@@ -7,7 +7,7 @@ of both BM25 and dense FAISS indices.
 import logging
 import shutil
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from .bm25_index import BM25Index
 from .indexer import CodeIndexManager
@@ -23,7 +23,7 @@ class IndexSynchronizer:
         dense_index: CodeIndexManager,
         bm25_use_stopwords: bool = True,
         bm25_use_stemming: bool = True,
-        project_id: Optional[str] = None,
+        project_id: str | None = None,
         config=None,
         embedder=None,
     ):

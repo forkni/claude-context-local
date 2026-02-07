@@ -2,16 +2,129 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-02-04)
+## Current Status: All Features Operational (2026-02-06)
 
-- **Version**: 0.9.1
+- **Version**: 0.9.2
 - **Status**: Production-ready
-- **Test Coverage**: 1,557 unit tests + 8 integration tests (100% pass rate)
+- **Test Coverage**: 1,635+ unit tests + 8 integration tests (100% pass rate)
 - **Dependencies**: 125 packages (38% reduction from 201)
 - **Index Quality**: 109 active files, 789 chunks (34% reduction via greedy merge, BGE-M3 1024d, ~16 MB)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
 - **SSCG Benchmark**: Recall@4=1.00 (perfect), MRR=0.81
-- **Recent Features**: SSCG Phase 1-5 integration, A1 (Intent-Adaptive Edge Weight Profiles), A2 (File-Level Module Summary Chunks), B1 (Community-Level Summary Chunks), k=4 standardization
+- **Recent Features**: Documentation-codebase alignment (34 fixes), intent classifier symbol detection, search quality fixes, config defaults aligned (0.35/0.65, qwen3, 0.35)
+
+---
+
+## v0.9.2 - Documentation Alignment & Config Fixes (2026-02-06)
+
+### Status: PATCH RELEASE ✅
+
+Documentation-codebase alignment and configuration standardization after v0.9.1 model pool changes.
+
+### Highlights
+
+- **34 Documentation Fixes**: Aligned docs with actual codebase state
+- **Config Defaults Standardized**: 0.35/0.65 weights, qwen3 default_model, 0.35 threshold across all layers
+- **Intent Classifier Enhancement**: Symbol detection fallback for noun-only queries
+- **Search Quality Fix**: Routing + intent weight fixes (commit b00a366)
+
+### 🚀 New Features
+
+#### Intent Classifier Symbol Detection Fallback
+
+**Purpose**: Handle noun-only queries that lack verb signals (library names, API classes, technical terms)
+
+**Detection Patterns**:
+
+- CamelCase/PascalCase (HybridSearcher, IndexFlatIP): +0.25
+- UPPER_CASE constants (FAISS, BM25, API): +0.15
+- snake_case identifiers (embed_chunks, search_code): +0.20
+- Dunder methods (\_\_init\_\_, \_\_enter\_\_): +0.20
+- dot.notation (module.Class, self.method): +0.25
+
+**Activation**: Fallback triggers when max(scores.values()) < 0.15
+
+**Commits**: `c397494`
+
+### 🔧 Configuration Standardization
+
+#### Search Weight Defaults (0.4/0.6 → 0.35/0.65)
+
+**Files Updated** (6 code files, 3 docs):
+
+- `search/hybrid_searcher.py:52-53`
+- `search/reranker.py:143-144`
+- `search/search_executor.py:36-37`
+- `mcp_server/tool_registry.py:434,441`
+- `mcp_server/tools/config_handlers.py:154-155`
+- `README.md`, `docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md`
+
+**Rationale**: Benchmark-verified optimal weights from commit b00a366
+
+#### Query Routing Defaults Alignment
+
+**Code Changes**:
+
+- `search/config.py:253` — default_model: "bge_code" → "qwen3"
+- `search/config.py:264` — confidence_threshold: 0.3 → 0.35
+- `search/query_router.py:179` — CONFIDENCE_THRESHOLD: 0.05 → 0.35
+- `mcp_server/tool_registry.py` — Added "bge_code" to enum, updated descriptions
+
+**Alignment**: Runtime config (config/routing_keywords.yaml) now matches code defaults
+
+### 📝 Documentation Fixes (20 files)
+
+#### Version Bumps
+
+- `pyproject.toml` — 0.8.5 → 0.9.2 (8 versions behind)
+- Description updated (EmbeddingGemma → multi-model routing)
+- All user-facing docs updated to v0.9.2
+
+#### Stale References Removed
+
+- Qwen3-4B → Qwen3-0.6B (4 files)
+- EmbeddingGemma "default" labels removed (still valid for low-VRAM)
+- 7 broken `analysis/` directory links removed
+
+#### Accuracy Fixes
+
+- Test count: 1,557 → 1,635+
+- Tool count: 18 → 19 (docstring)
+- MODEL_POOL_CONFIG: Show 2 separate pools (full vs lightweight)
+- index_directory: Removed false JSX/Svelte support claim
+
+### 🧪 CI Agent Review Improvements
+
+**Commits**: `4226e5c`, `a98b9c2`
+
+- Type-safe enum comparison (QueryIntent.GLOBAL vs string)
+- Documented double-demotion interaction (0.90x type × 0.5x centrality = 0.45x)
+- Snake_case underscore prefix support (`_private_method`)
+- Zero-centrality synthetic chunk demotion test coverage
+
+### 📁 Files Changed (20 files)
+
+**Code (8)**:
+
+- `pyproject.toml`, `search/hybrid_searcher.py`, `search/reranker.py`, `search/search_executor.py`
+- `search/config.py`, `search/query_router.py`, `mcp_server/tool_registry.py`, `mcp_server/tools/config_handlers.py`
+
+**Documentation (10)**:
+
+- `CHANGELOG.md`, `README.md`, `CLAUDE.md`, `docs/VERSION_HISTORY.md`
+- `docs/ADVANCED_FEATURES_GUIDE.md`, `docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md`
+- `docs/MCP_TOOLS_REFERENCE.md`, `docs/DOCUMENTATION_INDEX.md`
+- `docs/INSTALLATION_GUIDE.md`, `docs/BENCHMARKS.md`
+
+**Config (2)**:
+
+- `config/routing_keywords.yaml`, `.claude/skills/mcp-search-tool/SKILL.md`
+
+### 📊 Testing
+
+- Unit tests: 1,635+/1,635+ passed (78 new tests since v0.9.1)
+- Integration tests: 8/8 passed
+- All config default changes verified with grep checks
 
 ---
 
@@ -33,10 +146,12 @@ Performance optimizations and thread safety improvements.
 #### Model Pool Triad Optimization
 
 **Full Pool**: Qwen3-4B + BGE-Code
+
 - Qwen3-4B: Best quality embeddings with MRL (4B quality @ 1024d storage)
 - BGE-Code: Code-specific embeddings (1536d)
 
 **Lightweight Pool**: GTE-ModernBERT + BGE-M3
+
 - GTE-ModernBERT: Fast inference for code queries
 - BGE-M3: Multilingual support
 

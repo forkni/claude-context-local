@@ -5,7 +5,7 @@ Provides high-level query operations on code graphs.
 """
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 
 try:
@@ -41,7 +41,7 @@ class GraphQueryEngine:
 
     def find_call_chain(
         self, start_chunk_id: str, end_chunk_id: str, max_depth: int = 10
-    ) -> Optional[list[str]]:
+    ) -> list[str] | None:
         """
         Find shortest call chain from start to end function.
 
@@ -84,8 +84,8 @@ class GraphQueryEngine:
         source_id: str,
         target_id: str,
         max_hops: int = 10,
-        edge_types: Optional[list[str]] = None,
-    ) -> Optional[dict[str, Any]]:
+        edge_types: list[str] | None = None,
+    ) -> dict[str, Any] | None:
         """
         Find shortest path between two nodes with optional edge type filtering.
 
@@ -225,7 +225,7 @@ class GraphQueryEngine:
         return self.storage.graph.edge_subgraph(filtered_edges)
 
     def _build_path_result(
-        self, path_nodes: list[str], edge_types_filter: Optional[list[str]]
+        self, path_nodes: list[str], edge_types_filter: list[str] | None
     ) -> dict[str, Any]:
         """
         Build detailed path result with node and edge metadata.

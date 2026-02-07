@@ -4,9 +4,6 @@ Mock data and fixtures for installation testing.
 Provides consistent test environments for different hardware configurations.
 """
 
-from typing import Dict, List, Optional
-
-
 # Mock CUDA versions for testing
 CUDA_VERSIONS = {
     "12.1": {
@@ -137,7 +134,7 @@ class MockInstallationEnvironment:
         has_python: bool = True,
         python_version: str = "3.11.1",
         has_cuda: bool = False,
-        cuda_version: Optional[str] = None,
+        cuda_version: str | None = None,
         gpu_name: str = "NVIDIA GeForce RTX 4090",
         has_network: bool = True,
         disk_space_gb: float = 50.0,
@@ -150,10 +147,10 @@ class MockInstallationEnvironment:
         self.has_network = has_network
         self.disk_space_gb = disk_space_gb
 
-        self.install_history: List[str] = []
-        self.failed_commands: List[str] = []
+        self.install_history: list[str] = []
+        self.failed_commands: list[str] = []
 
-    def simulate_python_check(self) -> Dict:
+    def simulate_python_check(self) -> dict:
         """Simulate python --version check."""
         if not self.has_python:
             return {"success": False, "error": ERROR_SCENARIOS["python_not_found"]}
@@ -164,7 +161,7 @@ class MockInstallationEnvironment:
             "output": f"Python {self.python_version}",
         }
 
-    def simulate_cuda_detection(self) -> Dict:
+    def simulate_cuda_detection(self) -> dict:
         """Simulate CUDA detection via nvidia-smi."""
         if not self.has_cuda:
             return {
@@ -186,7 +183,7 @@ class MockInstallationEnvironment:
             "warning": cuda_info.get("warning"),
         }
 
-    def simulate_venv_creation(self) -> Dict:
+    def simulate_venv_creation(self) -> dict:
         """Simulate virtual environment creation."""
         if self.disk_space_gb <= 1.0:
             return {"success": False, "error": ERROR_SCENARIOS["insufficient_space"]}
@@ -198,7 +195,7 @@ class MockInstallationEnvironment:
             "python_executable": ".venv/Scripts/python.exe",
         }
 
-    def simulate_uv_installation(self) -> Dict:
+    def simulate_uv_installation(self) -> dict:
         """Simulate UV package manager installation."""
         if not self.has_network:
             return {"success": False, "error": ERROR_SCENARIOS["network_error"]}
@@ -206,7 +203,7 @@ class MockInstallationEnvironment:
         self.install_history.append("uv_installed")
         return {"success": True, "version": "0.1.0"}
 
-    def simulate_pytorch_installation(self, index_url: str) -> Dict:
+    def simulate_pytorch_installation(self, index_url: str) -> dict:
         """Simulate PyTorch installation."""
         if not self.has_network:
             return {"success": False, "error": ERROR_SCENARIOS["network_error"]}
@@ -232,7 +229,7 @@ class MockInstallationEnvironment:
             "index_url": index_url,
         }
 
-    def simulate_dependency_installation(self, packages: List[str]) -> Dict:
+    def simulate_dependency_installation(self, packages: list[str]) -> dict:
         """Simulate installation of additional dependencies."""
         if not self.has_network:
             return {"success": False, "error": ERROR_SCENARIOS["network_error"]}
@@ -245,7 +242,7 @@ class MockInstallationEnvironment:
 
         return {"success": True, "packages": installed_packages}
 
-    def simulate_auto_install(self) -> Dict:
+    def simulate_auto_install(self) -> dict:
         """Simulate auto-installation choice."""
         cuda_info = self.simulate_cuda_detection()
 
@@ -264,7 +261,7 @@ class MockInstallationEnvironment:
                 "choice": "auto_cpu",
             }
 
-    def simulate_manual_cuda_selection(self, selected_version: str) -> Dict:
+    def simulate_manual_cuda_selection(self, selected_version: str) -> dict:
         """Simulate manual CUDA version selection."""
         cuda_info = CUDA_VERSIONS.get(selected_version, {})
 
@@ -276,7 +273,7 @@ class MockInstallationEnvironment:
             "supported": cuda_info.get("supported", False),
         }
 
-    def simulate_cpu_only_install(self) -> Dict:
+    def simulate_cpu_only_install(self) -> dict:
         """Simulate forced CPU-only installation."""
         return {
             "mode": "cpu",
@@ -285,7 +282,7 @@ class MockInstallationEnvironment:
             "cuda_available": self.has_cuda,  # Still show CUDA was available
         }
 
-    def simulate_verification_tests(self) -> Dict:
+    def simulate_verification_tests(self) -> dict:
         """Simulate post-installation verification."""
         results = {
             "python_venv": "installed" in " ".join(self.install_history),
@@ -308,7 +305,7 @@ class MockInstallationEnvironment:
 
         return results
 
-    def get_install_summary(self) -> Dict:
+    def get_install_summary(self) -> dict:
         """Get summary of installation attempts."""
         return {
             "environment": {

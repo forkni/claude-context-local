@@ -14,8 +14,9 @@ import json
 import logging
 import os
 import sys
+from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import Any, AsyncGenerator
+from typing import Any
 
 import anyio
 

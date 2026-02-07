@@ -56,7 +56,7 @@ class Processor:
             )
 
         # Read and chunk the file
-        with open(test_file, "r") as f:
+        with open(test_file) as f:
             f.read()
 
         chunks = self.chunker.chunk_file(test_file)
@@ -108,7 +108,7 @@ def process():
 """
             )
 
-        with open(test_file, "r") as f:
+        with open(test_file) as f:
             f.read()
 
         chunks = self.chunker.chunk_file(test_file)
@@ -160,7 +160,7 @@ class Handler2(BaseHandler):
 
         # Process both modules
         for module_file in [module1, module2]:
-            with open(module_file, "r") as f:
+            with open(module_file) as f:
                 f.read()
 
             chunks = self.chunker.chunk_file(module_file)
@@ -389,7 +389,7 @@ def process_data():
 """
             )
 
-        with open(test_file, "r") as f:
+        with open(test_file) as f:
             f.read()
 
         chunker = MultiLanguageChunker()

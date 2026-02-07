@@ -75,7 +75,7 @@ class TestSaveProjectSelection:
 
         # Verify content
         selection_file = get_selection_file_path()
-        with open(selection_file, "r") as f:
+        with open(selection_file) as f:
             data = json.load(f)
 
         assert data["last_model_key"] == "bge_m3"
@@ -109,7 +109,7 @@ class TestSaveProjectSelection:
         save_project_selection(project_path, model_key="qwen3")
 
         selection_file = get_selection_file_path()
-        with open(selection_file, "r") as f:
+        with open(selection_file) as f:
             data = json.load(f)
 
         # Verify all required fields

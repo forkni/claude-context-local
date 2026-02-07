@@ -9,6 +9,7 @@ NetworkX Reference: https://networkx.org/documentation/stable/reference/algorith
 
 import logging
 from collections import Counter
+from typing import Any
 
 from networkx.algorithms.community import louvain_communities, modularity
 
@@ -180,7 +181,7 @@ class CommunityDetector:
 
         return community_map
 
-    def get_community_stats(self, communities: dict[str, int]) -> dict:
+    def get_community_stats(self, communities: dict[str, int]) -> dict[str, Any]:
         """Get statistics about detected communities.
 
         Args:

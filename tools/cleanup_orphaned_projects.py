@@ -7,6 +7,7 @@ Removes two types of projects:
 2. Stale: Projects with project_info.json where the project_path no longer exists
 """
 
+import contextlib
 import gc
 import json
 import shutil
@@ -38,7 +39,7 @@ def find_orphaned_projects():
 
             # Case 2: Has project_info.json but project_path doesn't exist (stale)
             try:
-                with open(info_file, "r", encoding="utf-8") as f:
+                with open(info_file, encoding="utf-8") as f:
                     project_info = json.load(f)
                     project_path = project_info.get("project_path", "")
 
@@ -86,7 +87,7 @@ def _get_full_project_id(project_dir: Path) -> str | None:
         return None
 
     try:
-        with open(info_file, "r", encoding="utf-8") as f:
+        with open(info_file, encoding="utf-8") as f:
             project_info = json.load(f)
             project_path = project_info.get("project_path", "")
             if project_path:
@@ -122,10 +123,9 @@ def cleanup_project(project_dir):
             if merkle_dir.exists():
                 # Match files like: {project_id}_{model}_{dim}d_snapshot.json
                 for merkle_file in merkle_dir.glob(f"{full_project_id}_*"):
-                    try:
+                    # Ignore errors removing merkle files
+                    with contextlib.suppress(OSError):
                         merkle_file.unlink()
-                    except OSError:
-                        pass  # Ignore errors removing merkle files
 
         # Remove directory
         shutil.rmtree(project_dir, ignore_errors=False)

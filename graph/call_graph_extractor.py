@@ -8,7 +8,7 @@ Supports Python with planned support for C++/GLSL.
 import ast
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from .resolvers import AssignmentTracker, ImportResolver, TypeResolver
 
@@ -116,7 +116,7 @@ class PythonCallGraphExtractor(CallGraphExtractor):
         """
         super().__init__()
         # Class context tracking for self/super resolution
-        self._current_class: Optional[str] = None
+        self._current_class: str | None = None
         self._class_bases: dict[
             str, list[str]
         ] = {}  # class_name -> list of base classes
@@ -221,23 +221,21 @@ class PythonCallGraphExtractor(CallGraphExtractor):
                         bases.append(base.attr)
                 self._class_bases[node.name] = bases
 
-    def _detect_enclosing_class(self, tree: ast.AST) -> Optional[str]:
+    def _detect_enclosing_class(self, tree: ast.AST) -> str | None:
         """Detect if code is inside a class from AST structure."""
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
                 return node.name
         return None
 
-    def _get_parent_class(self, class_name: str) -> Optional[str]:
+    def _get_parent_class(self, class_name: str) -> str | None:
         """Get the first base class for super() resolution."""
         bases = self._class_bases.get(class_name, [])
         if bases:
             return bases[0]
         return None
 
-    def _extract_call_from_node(
-        self, node: ast.Call, chunk_id: str
-    ) -> Optional[CallEdge]:
+    def _extract_call_from_node(self, node: ast.Call, chunk_id: str) -> CallEdge | None:
         """
         Extract CallEdge from an ast.Call node.
 
@@ -267,7 +265,7 @@ class PythonCallGraphExtractor(CallGraphExtractor):
             confidence=1.0,  # Static AST analysis has high confidence
         )
 
-    def _get_call_name(self, func_node: ast.AST) -> Optional[str]:
+    def _get_call_name(self, func_node: ast.AST) -> str | None:
         """
         Extract function name from Call node's func attribute.
 
@@ -304,16 +302,19 @@ class PythonCallGraphExtractor(CallGraphExtractor):
                 return method_name
 
             # Check for super() call - resolve to parent class
-            if isinstance(receiver, ast.Call):
-                if isinstance(receiver.func, ast.Name) and receiver.func.id == "super":
-                    if self._current_class:
-                        parent_class = self._get_parent_class(self._current_class)
-                        if parent_class:
-                            return f"{parent_class}.{method_name}"
-                        # No parent class found, but we know it's a super call
-                        # Return with indicator for documentation
-                        return f"super.{method_name}"
-                    return method_name
+            if (
+                isinstance(receiver, ast.Call)
+                and isinstance(receiver.func, ast.Name)
+                and receiver.func.id == "super"
+            ):
+                if self._current_class:
+                    parent_class = self._get_parent_class(self._current_class)
+                    if parent_class:
+                        return f"{parent_class}.{method_name}"
+                    # No parent class found, but we know it's a super call
+                    # Return with indicator for documentation
+                    return f"super.{method_name}"
+                return method_name
 
             # Check for type-annotated parameter or local assignment
             if isinstance(receiver, ast.Name):
@@ -334,13 +335,15 @@ class PythonCallGraphExtractor(CallGraphExtractor):
 
             # Check for self.attr.method() pattern
             # e.g., self.handler.handle() where self.handler = Handler()
-            if isinstance(receiver, ast.Attribute):
-                if isinstance(receiver.value, ast.Name):
-                    if receiver.value.id in ("self", "cls"):
-                        attr_key = f"{receiver.value.id}.{receiver.attr}"
-                        if attr_key in self._type_annotations:
-                            type_name = self._type_annotations[attr_key]
-                            return f"{type_name}.{method_name}"
+            if (
+                isinstance(receiver, ast.Attribute)
+                and isinstance(receiver.value, ast.Name)
+                and receiver.value.id in ("self", "cls")
+            ):
+                attr_key = f"{receiver.value.id}.{receiver.attr}"
+                if attr_key in self._type_annotations:
+                    type_name = self._type_annotations[attr_key]
+                    return f"{type_name}.{method_name}"
 
             # Regular method call - return bare method name
             return method_name

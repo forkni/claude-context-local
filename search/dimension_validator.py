@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def read_index_metadata(storage_dir: Path) -> Optional[dict]:
+def read_index_metadata(storage_dir: Path) -> dict | None:
     """Read index metadata from project_info.json.
 
     Args:
@@ -49,7 +49,7 @@ def validate_embedder_index_compatibility(
     embedder: Optional["CodeEmbedder"],
     storage_dir: Path,
     raise_on_mismatch: bool = True,
-) -> tuple[bool, Optional[str]]:
+) -> tuple[bool, str | None]:
     """Validate that embedder dimension matches stored index dimension.
 
     Call BEFORE creating HybridSearcher or loading indices.

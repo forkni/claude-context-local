@@ -8,7 +8,6 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from mcp_server.services import get_state
 from search.config import (
@@ -72,7 +71,7 @@ class StorageManager:
         legacy_hash: str,
         model_slug: str,
         dimension: int,
-    ) -> Optional[Path]:
+    ) -> Path | None:
         """Find existing project directory by hash (new or legacy).
 
         Args:
@@ -115,7 +114,7 @@ class StorageManager:
             return
 
         try:
-            with open(info_file, "r") as f:
+            with open(info_file) as f:
                 info = json.load(f)
 
             stored = info.get("project_path", "")
@@ -134,9 +133,9 @@ class StorageManager:
     def get_project_storage_dir(
         self,
         project_path: str,
-        model_key: Optional[str] = None,
-        include_dirs: Optional[list] = None,
-        exclude_dirs: Optional[list] = None,
+        model_key: str | None = None,
+        include_dirs: list | None = None,
+        exclude_dirs: list | None = None,
     ) -> Path:
         """Get or create project-specific storage directory with per-model dimension suffix.
 
@@ -261,9 +260,9 @@ class StorageManager:
     def update_project_filters(
         self,
         project_path: str,
-        include_dirs: Optional[list] = None,
-        exclude_dirs: Optional[list] = None,
-        model_key: Optional[str] = None,
+        include_dirs: list | None = None,
+        exclude_dirs: list | None = None,
+        model_key: str | None = None,
     ) -> None:
         """Update filters in project_info.json after filter change with full reindex.
 
@@ -315,7 +314,7 @@ class StorageManager:
 
 
 # Module-level singleton for backward compatibility
-_storage_manager: Optional[StorageManager] = None
+_storage_manager: StorageManager | None = None
 
 
 def get_storage_manager() -> StorageManager:
@@ -349,9 +348,9 @@ def set_current_project(project_path: str) -> None:
 
 def get_project_storage_dir(
     project_path: str,
-    model_key: Optional[str] = None,
-    include_dirs: Optional[list] = None,
-    exclude_dirs: Optional[list] = None,
+    model_key: str | None = None,
+    include_dirs: list | None = None,
+    exclude_dirs: list | None = None,
 ) -> Path:
     """Get or create project-specific storage directory.
 
@@ -364,9 +363,9 @@ def get_project_storage_dir(
 
 def update_project_filters(
     project_path: str,
-    include_dirs: Optional[list] = None,
-    exclude_dirs: Optional[list] = None,
-    model_key: Optional[str] = None,
+    include_dirs: list | None = None,
+    exclude_dirs: list | None = None,
+    model_key: str | None = None,
 ) -> None:
     """Update filters in project_info.json.
 

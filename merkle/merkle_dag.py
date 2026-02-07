@@ -3,7 +3,6 @@
 import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass
@@ -52,7 +51,7 @@ class MerkleDAG:
         """
         self.root_path = Path(root_path).resolve()
         self.nodes: dict[str, MerkleNode] = {}
-        self.root_node: Optional[MerkleNode] = None
+        self.root_node: MerkleNode | None = None
 
         # Initialize directory filter for custom include/exclude dirs
         from search.filters import DirectoryFilter
@@ -96,13 +95,15 @@ class MerkleDAG:
             try:
                 relative_path = str(path.relative_to(self.root_path))
                 # Root directory should never be filtered - only its contents
-                if relative_path != ".":
-                    # Use traversal mode to allow parent directories of include targets to pass through
-                    # This enables traversal to reach nested include_dirs like "Scripts/StreamDiffusionTD"
-                    if not self.directory_filter.matches_for_traversal(
+                # Use traversal mode to allow parent directories of include targets to pass through
+                # This enables traversal to reach nested include_dirs like "Scripts/StreamDiffusionTD"
+                if (
+                    relative_path != "."
+                    and not self.directory_filter.matches_for_traversal(
                         relative_path + "/"
-                    ):
-                        return True
+                    )
+                ):
+                    return True
             except ValueError:
                 # Path not under root, ignore it
                 return True
@@ -126,7 +127,7 @@ class MerkleDAG:
                 while chunk := f.read(8192):
                     sha256.update(chunk)
                     size += len(chunk)
-        except (IOError, OSError):
+        except OSError:
             # Handle permission errors or broken symlinks
             sha256.update(str(file_path).encode())
 
@@ -154,8 +155,8 @@ class MerkleDAG:
         return sha256.hexdigest()
 
     def build_node(
-        self, path: Path, base_path: Optional[Path] = None
-    ) -> Optional[MerkleNode]:
+        self, path: Path, base_path: Path | None = None
+    ) -> MerkleNode | None:
         """Recursively build a Merkle node for a path.
 
         Args:
@@ -281,7 +282,7 @@ class MerkleDAG:
 
         return dag
 
-    def get_root_hash(self) -> Optional[str]:
+    def get_root_hash(self) -> str | None:
         """Get the hash of the root node.
 
         Returns:
@@ -289,7 +290,7 @@ class MerkleDAG:
         """
         return self.root_node.hash if self.root_node else None
 
-    def find_node(self, path: str) -> Optional[MerkleNode]:
+    def find_node(self, path: str) -> MerkleNode | None:
         """Find a node by path.
 
         Args:

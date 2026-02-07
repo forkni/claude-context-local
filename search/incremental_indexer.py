@@ -4,6 +4,7 @@ import gc
 import logging
 import tempfile
 import time
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -40,11 +41,11 @@ class IncrementalIndexResult:
     chunks_removed: int
     time_taken: float
     success: bool
-    error: Optional[str] = None
+    error: str | None = None
     bm25_resynced: bool = False
     bm25_resync_count: int = 0
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "files_added": self.files_added,
@@ -65,12 +66,12 @@ class IncrementalIndexer:
 
     def __init__(
         self,
-        indexer: Optional[Indexer] = None,
-        embedder: Optional[CodeEmbedder] = None,
-        chunker: Optional[MultiLanguageChunker] = None,
-        snapshot_manager: Optional[SnapshotManager] = None,
-        include_dirs: Optional[list] = None,
-        exclude_dirs: Optional[list] = None,
+        indexer: Indexer | None = None,
+        embedder: CodeEmbedder | None = None,
+        chunker: MultiLanguageChunker | None = None,
+        snapshot_manager: SnapshotManager | None = None,
+        include_dirs: list | None = None,
+        exclude_dirs: list | None = None,
     ):
         """Initialize incremental indexer.
 
@@ -186,15 +187,12 @@ class IncrementalIndexer:
 
         ignored_dirs = MultiLanguageChunker.DEFAULT_IGNORED_DIRS
 
-        if any(part in ignored_dirs for part in Path(file_path).parts):
-            return False
-
-        return True
+        return not any(part in ignored_dirs for part in Path(file_path).parts)
 
     def incremental_index(
         self,
         project_path: str,
-        project_name: Optional[str] = None,
+        project_name: str | None = None,
         force_full: bool = False,
     ) -> IncrementalIndexResult:
         """Perform incremental indexing of a project.
@@ -210,7 +208,7 @@ class IncrementalIndexer:
         start_time = time.time()
         project_path = str(Path(project_path).resolve())
 
-        if not project_name:
+        if project_name is None:
             project_name = Path(project_path).name
 
         try:
@@ -332,8 +330,6 @@ class IncrementalIndexer:
 
         except Exception as e:
             logger.error(f"Incremental indexing failed: {e}")
-            import traceback
-
             logger.error(traceback.format_exc())
 
             return self._attempt_recovery(
@@ -367,8 +363,6 @@ class IncrementalIndexer:
             return self._full_index(project_path, project_name, start_time)
         except Exception as recovery_error:
             logger.error(f"Recovery failed: {recovery_error}")
-            import traceback
-
             logger.error(traceback.format_exc())
             return IncrementalIndexResult(
                 files_added=0,
@@ -501,8 +495,6 @@ class IncrementalIndexer:
 
                 except Exception as e:
                     logger.error(f"[COMMUNITY_DETECT] Failed: {e}")
-                    import traceback
-
                     logger.error(traceback.format_exc())
                     logger.warning(
                         "[COMMUNITY_DETECT] Continuing without community data"
@@ -560,8 +552,6 @@ class IncrementalIndexer:
 
                 except Exception as e:
                     logger.error(f"[COMMUNITY_MERGE] Failed: {e}")
-                    import traceback
-
                     logger.error(traceback.format_exc())
                     logger.warning(
                         "[COMMUNITY_MERGE] Continuing with unmerged chunks from Pass 1"
@@ -610,8 +600,6 @@ class IncrementalIndexer:
                         embedding_result.metadata["content"] = chunk.content
                 except Exception as e:
                     logger.error(f"Embedding failed: {e}")
-                    import traceback
-
                     logger.error(traceback.format_exc())
 
             # Add all embeddings to index at once
@@ -1013,7 +1001,7 @@ class IncrementalIndexer:
         except ImportError:
             pass
 
-    def get_indexing_stats(self, project_path: str) -> Optional[dict]:
+    def get_indexing_stats(self, project_path: str) -> dict | None:
         """Get indexing statistics for a project.
 
         Args:
@@ -1057,7 +1045,7 @@ class IncrementalIndexer:
     def auto_reindex_if_needed(
         self,
         project_path: str,
-        project_name: Optional[str] = None,
+        project_name: str | None = None,
         max_age_minutes: float = 5,
     ) -> IncrementalIndexResult:
         """Automatically reindex if the index is stale.

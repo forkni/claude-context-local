@@ -1,5 +1,6 @@
 """Tests for ModelLoader."""
 
+import contextlib
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -185,10 +186,8 @@ class TestModelLoader:
         """Test device resolution auto selects CPU."""
         mock_torch.cuda.is_available.return_value = False
         # Mock MPS not available
-        try:
+        with contextlib.suppress(AttributeError):
             mock_torch.backends.mps.is_available.return_value = False
-        except AttributeError:
-            pass
         device = model_loader.resolve_device("auto")
         assert device == "cpu"
 
@@ -217,10 +216,8 @@ class TestModelLoader:
     def test_resolve_device_explicit_mps_unavailable(self, mock_torch, model_loader):
         """Test explicit MPS device falls back to CPU when unavailable."""
         # Mock MPS not available
-        try:
+        with contextlib.suppress(AttributeError):
             mock_torch.backends.mps.is_available.return_value = False
-        except AttributeError:
-            pass
         device = model_loader.resolve_device("mps")
         assert device == "cpu"
 
@@ -269,10 +266,8 @@ class TestModelLoader:
         # Mock torch - disable CUDA and MPS for consistent device resolution
         mock_torch.cuda.is_available.return_value = False
         # Mock MPS not available
-        try:
+        with contextlib.suppress(AttributeError):
             mock_torch.backends.mps.is_available.return_value = False
-        except AttributeError:
-            pass
 
         # Mock SentenceTransformer
         mock_model = Mock()
@@ -310,10 +305,8 @@ class TestModelLoader:
         # Mock torch - disable CUDA and MPS for consistent device resolution
         mock_torch.cuda.is_available.return_value = False
         # Mock MPS not available
-        try:
+        with contextlib.suppress(AttributeError):
             mock_torch.backends.mps.is_available.return_value = False
-        except AttributeError:
-            pass
 
         # Mock SentenceTransformer
         mock_model = Mock()
@@ -351,10 +344,8 @@ class TestModelLoader:
         # Mock torch - disable CUDA and MPS for consistent device resolution
         mock_torch.cuda.is_available.return_value = False
         # Mock MPS not available
-        try:
+        with contextlib.suppress(AttributeError):
             mock_torch.backends.mps.is_available.return_value = False
-        except AttributeError:
-            pass
 
         # Mock SentenceTransformer
         mock_model = Mock()
@@ -392,10 +383,8 @@ class TestModelLoader:
         # Mock torch - disable CUDA and MPS for consistent device resolution
         mock_torch.cuda.is_available.return_value = False
         # Mock MPS not available
-        try:
+        with contextlib.suppress(AttributeError):
             mock_torch.backends.mps.is_available.return_value = False
-        except AttributeError:
-            pass
 
         # Mock SentenceTransformer
         mock_model = Mock()
@@ -436,10 +425,8 @@ class TestModelLoader:
         # Mock torch - disable CUDA and MPS for consistent device resolution
         mock_torch.cuda.is_available.return_value = False
         # Mock MPS not available
-        try:
+        with contextlib.suppress(AttributeError):
             mock_torch.backends.mps.is_available.return_value = False
-        except AttributeError:
-            pass
 
         # Mock SentenceTransformer to fail on first call, succeed on second
         mock_model = Mock()

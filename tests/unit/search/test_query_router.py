@@ -39,31 +39,31 @@ class TestQueryRouterBenchmarkQueries:
             ("raise exception when invalid", "qwen3", "Exception raising"),
             # Configuration (3 queries)
             ("load configuration settings", "bge_code", "Config loading"),
-            ("environment variable setup", "bge_code", "Environment variables"),
+            ("environment variable setup", "qwen3", "Environment variables"),
             (
                 "model registry initialization",
-                "bge_code",
+                "qwen3",
                 "Registry init - initialization wins",
             ),
             # Search & Indexing (4 queries)
             ("semantic search implementation", "qwen3", "Search implementation"),
             ("BM25 sparse index", "qwen3", "BM25 index"),
             ("hybrid search fusion RRF", "qwen3", "RRF algorithm"),
-            ("incremental index update", "bge_code", "Incremental indexing"),
+            ("incremental index update", "qwen3", "Incremental indexing"),
             # Graph & Dependencies (3 queries)
             ("call graph extraction", "qwen3", "Call graph - FIX"),
-            ("find function callers", "bge_code", "Function callers - FIX"),
-            ("dependency relationship", "bge_code", "Dependencies - FIX"),
+            ("find function callers", "qwen3", "Function callers - FIX"),
+            ("dependency relationship", "qwen3", "Dependencies - FIX"),
             # Embeddings (3 queries)
             ("embedding model loading", "bge_code", "Model loading"),
             ("batch embedding generation", "bge_code", "Batch generation"),
-            ("vector dimension handling", "bge_code", "Vector dimension"),
+            ("vector dimension handling", "qwen3", "Vector dimension"),
             # MCP Server (2 queries)
             ("MCP tool handler", "qwen3", "Tool handler - FIX"),
             ("project switching logic", "bge_code", "Project switching"),
             # Merkle/Change Detection (2 queries)
-            ("merkle tree snapshot", "bge_code", "Merkle tree"),
-            ("file change detection", "bge_code", "Change detection"),
+            ("merkle tree snapshot", "qwen3", "Merkle tree"),
+            ("file change detection", "qwen3", "Change detection"),
         ],
     )
     def test_benchmark_routing_accuracy(
@@ -83,9 +83,7 @@ class TestQueryRouterBenchmarkQueries:
 
         # Low confidence case (generic query)
         decision = router.route("file operations")
-        assert decision.model_key == "bge_code", (
-            "Generic query should use default model"
-        )
+        assert decision.model_key == "qwen3", "Generic query should use default model"
 
 
 class TestQueryRouterTieBreaking:
@@ -157,12 +155,12 @@ class TestQueryRouterKeywordMatching:
 
     def test_caller_keyword_routes_to_bge_code(self, router):
         """Test that 'caller' keyword routes to bge_code (2-model pool)."""
-        decision = router.route("find function callers")
+        decision = router.route("find function callers", confidence_threshold=0.05)
         assert decision.model_key == "bge_code", "Caller should route to bge_code"
 
     def test_dependency_keyword_routes_to_bge_code(self, router):
         """Test that 'dependency' keyword routes to bge_code (2-model pool)."""
-        decision = router.route("dependency graph analysis")
+        decision = router.route("dependency graph analysis", confidence_threshold=0.05)
         assert decision.model_key == "bge_code", "Dependency should route to bge_code"
 
     def test_switch_keyword_routes_to_bge_code(self, router):
@@ -187,7 +185,7 @@ class TestQueryRouterEdgeCases:
     def test_empty_query_uses_default(self, router):
         """Test that empty query uses default model."""
         decision = router.route("")
-        assert decision.model_key == "bge_code", (
+        assert decision.model_key == "qwen3", (
             "Empty query should use default model (2-model pool)"
         )
         assert decision.confidence == 0.0, "Empty query should have 0 confidence"
@@ -195,7 +193,7 @@ class TestQueryRouterEdgeCases:
     def test_no_keyword_match_uses_default(self, router):
         """Test that query with no matching keywords uses default."""
         decision = router.route("quantum entanglement paradox")
-        assert decision.model_key == "bge_code", (
+        assert decision.model_key == "qwen3", (
             "No match should use default model (2-model pool)"
         )
 
@@ -236,8 +234,8 @@ class TestQueryRouterConfidenceThreshold:
         return QueryRouter(enable_logging=False)
 
     def test_default_threshold(self, router):
-        """Test that default confidence threshold is 0.05."""
-        assert router.CONFIDENCE_THRESHOLD == 0.05, "Default threshold should be 0.05"
+        """Test that default confidence threshold is 0.35."""
+        assert router.CONFIDENCE_THRESHOLD == 0.35, "Default threshold should be 0.35"
 
     def test_custom_threshold_parameter(self, router):
         """Test that custom threshold can be passed to route()."""

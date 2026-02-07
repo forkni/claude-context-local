@@ -18,7 +18,7 @@ Complexity: Low (similar to inheritance extraction with filtering)
 """
 
 import ast
-from typing import Any, Optional
+from typing import Any
 
 from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
 from graph.relationship_types import RelationshipEdge, RelationshipType
@@ -219,7 +219,7 @@ class ImplementsExtractor(BaseRelationshipExtractor):
                     is_abc=self._is_abc_marker(protocol_name),
                 )
 
-    def _get_base_class_name(self, base_node: ast.AST) -> Optional[str]:
+    def _get_base_class_name(self, base_node: ast.AST) -> str | None:
         """
         Extract base class name from AST node.
 

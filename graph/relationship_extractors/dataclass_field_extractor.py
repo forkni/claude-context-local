@@ -66,9 +66,8 @@ class DataclassFieldExtractor(BaseRelationshipExtractor):
 
         # Walk the tree to find class definitions
         for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef):
-                if self._has_dataclass_decorator(node):
-                    self._extract_dataclass_fields(node, chunk_metadata)
+            if isinstance(node, ast.ClassDef) and self._has_dataclass_decorator(node):
+                self._extract_dataclass_fields(node, chunk_metadata)
 
         self._log_extraction_result(chunk_metadata)
         return self.edges
@@ -88,12 +87,11 @@ class DataclassFieldExtractor(BaseRelationshipExtractor):
             if isinstance(decorator, ast.Name) and decorator.id == "dataclass":
                 return True
             # @dataclass(...)
-            if isinstance(decorator, ast.Call):
-                if (
-                    isinstance(decorator.func, ast.Name)
-                    and decorator.func.id == "dataclass"
-                ):
-                    return True
+            if isinstance(decorator, ast.Call) and (
+                isinstance(decorator.func, ast.Name)
+                and decorator.func.id == "dataclass"
+            ):
+                return True
             # @dataclasses.dataclass
             if isinstance(decorator, ast.Attribute) and decorator.attr == "dataclass":
                 return True

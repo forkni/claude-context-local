@@ -8,7 +8,6 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from search.filters import find_project_at_different_drive
 
@@ -28,7 +27,7 @@ def get_selection_file_path() -> Path:
     return Path(storage_path) / _SELECTION_FILE
 
 
-def save_project_selection(project_path: str, model_key: Optional[str] = None) -> bool:
+def save_project_selection(project_path: str, model_key: str | None = None) -> bool:
     """Save the current project selection for persistence.
 
     Args:
@@ -59,7 +58,7 @@ def save_project_selection(project_path: str, model_key: Optional[str] = None) -
         return False
 
 
-def load_project_selection() -> Optional[dict]:
+def load_project_selection() -> dict | None:
     """Load the last project selection from disk.
 
     Returns:
@@ -73,7 +72,7 @@ def load_project_selection() -> Optional[dict]:
             logger.debug("No project selection file found")
             return None
 
-        with open(selection_file, "r", encoding="utf-8") as f:
+        with open(selection_file, encoding="utf-8") as f:
             data = json.load(f)
 
         # Validate required fields
@@ -116,7 +115,7 @@ def get_project_display_name(project_path: str) -> str:
     Returns:
         Project directory name (e.g., 'claude-context-local')
     """
-    if not project_path:
+    if project_path is None or project_path == "":
         return "None"
     return Path(project_path).name
 

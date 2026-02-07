@@ -18,7 +18,7 @@ import json
 import logging
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 logger = logging.getLogger(__name__)
@@ -109,7 +109,7 @@ class SymbolHashCache:
 
         return hash_val
 
-    def get(self, hash_val: int) -> Optional[str]:
+    def get(self, hash_val: int) -> str | None:
         """Get chunk_id by hash (O(1) amortized).
 
         Args:
@@ -121,7 +121,7 @@ class SymbolHashCache:
         bucket_idx = hash_val % self.BUCKET_COUNT
         return self._buckets[bucket_idx].get(hash_val)
 
-    def get_by_chunk_id(self, chunk_id: str) -> Optional[str]:
+    def get_by_chunk_id(self, chunk_id: str) -> str | None:
         """Get chunk_id by computing its hash (convenience method).
 
         This is useful for verification or when you have the chunk_id
@@ -154,7 +154,7 @@ class SymbolHashCache:
         self._dirty = True
         self._total_symbol_mappings += 1
 
-    def get_by_symbol_name(self, symbol_name: str) -> Optional[str]:
+    def get_by_symbol_name(self, symbol_name: str) -> str | None:
         """Get chunk_id by symbol name (O(1) amortized).
 
         This method enables direct symbol lookup for find_path and other
@@ -285,7 +285,7 @@ class SymbolHashCache:
         if not self._cache_path.exists():
             raise FileNotFoundError(f"Cache file not found: {self._cache_path}")
 
-        with open(self._cache_path, "r", encoding="utf-8") as f:
+        with open(self._cache_path, encoding="utf-8") as f:
             cache_data = json.load(f)
 
         # Validate version

@@ -474,7 +474,7 @@ Complete benchmark results available at:
 ### Test Environment
 
 - **Platform**: Windows, Claude Code CLI
-- **MCP Server**: Multi-model mode (BGE-M3, Qwen3-4B, CodeRankEmbed)
+- **MCP Server**: Multi-model mode (Qwen3-0.6B, BGE-Code)
 - **Project**: claude-context-local (semantic code search MCP server)
 - **Index**: 109 active files, 1,199 chunks, ~24 MB
 - **Date**: December 21, 2025

@@ -80,9 +80,8 @@ class EnumMemberExtractor(BaseRelationshipExtractor):
             return []
 
         for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef):
-                if self._is_enum_class(node):
-                    self._extract_enum_members(node, chunk_metadata)
+            if isinstance(node, ast.ClassDef) and self._is_enum_class(node):
+                self._extract_enum_members(node, chunk_metadata)
 
         self._log_extraction_result(chunk_metadata)
         return self.edges

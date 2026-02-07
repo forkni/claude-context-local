@@ -4,8 +4,9 @@ Provides utilities for accessing configuration without circular dependencies.
 """
 
 import logging
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any, Generator
+from typing import Any
 
 
 def get_config_via_service_locator(key: str | None = None, default: Any = None) -> Any:

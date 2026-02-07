@@ -6,13 +6,12 @@ ensuring clear error messages when versions don't meet requirements.
 
 import logging
 from importlib.metadata import PackageNotFoundError, version
-from typing import Dict, List, Tuple
 
 
 logger = logging.getLogger(__name__)
 
 # Critical dependencies with minimum versions
-CRITICAL_DEPS: Dict[str, str] = {
+CRITICAL_DEPS: dict[str, str] = {
     "torch": ">=2.8.0",
     "transformers": ">=4.30.0",
     "sentence-transformers": ">=2.2.0",
@@ -21,7 +20,7 @@ CRITICAL_DEPS: Dict[str, str] = {
 }
 
 
-def parse_version_tuple(version_str: str) -> Tuple[int, ...]:
+def parse_version_tuple(version_str: str) -> tuple[int, ...]:
     """Parse version string to tuple for comparison.
 
     Args:
@@ -38,7 +37,7 @@ def parse_version_tuple(version_str: str) -> Tuple[int, ...]:
     return tuple(int(x) for x in version_str.split(".") if x.isdigit())
 
 
-def check_dependency(package: str, requirement: str) -> Tuple[bool, str]:
+def check_dependency(package: str, requirement: str) -> tuple[bool, str]:
     """Check if dependency meets requirement.
 
     Args:
@@ -76,7 +75,7 @@ def check_dependency(package: str, requirement: str) -> Tuple[bool, str]:
     return True, f"[OK] {package}=={installed}"
 
 
-def validate_critical_dependencies() -> Tuple[bool, List[str]]:
+def validate_critical_dependencies() -> tuple[bool, list[str]]:
     """Validate all critical dependencies at startup.
 
     Returns:

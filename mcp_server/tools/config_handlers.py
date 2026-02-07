@@ -36,7 +36,7 @@ def _detect_indexed_model(project_path: str) -> str | None:
     from mcp_server.model_pool_manager import get_model_pool_manager
 
     pool_config = get_model_pool_manager()._get_pool_config()
-    for model_key in pool_config.keys():
+    for model_key in pool_config:
         project_dir = get_project_storage_dir(project_path, model_key=model_key)
         code_index_file = project_dir / "index" / "code.index"
         if code_index_file.exists():
@@ -151,8 +151,8 @@ async def handle_configure_query_routing(arguments: dict[str, Any]) -> dict:
 async def handle_configure_search_mode(arguments: dict[str, Any]) -> dict:
     """Configure search mode and parameters."""
     search_mode = arguments.get("search_mode", "hybrid")
-    bm25_weight = arguments.get("bm25_weight", 0.4)
-    dense_weight = arguments.get("dense_weight", 0.6)
+    bm25_weight = arguments.get("bm25_weight", 0.35)
+    dense_weight = arguments.get("dense_weight", 0.65)
     enable_parallel = arguments.get("enable_parallel", True)
 
     config_manager = get_config_manager()

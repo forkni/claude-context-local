@@ -81,11 +81,8 @@ def main():
     multi_model_config = config.routing.multi_model_enabled  # From search_config.json
 
     # CLI flag overrides, then config, then env var fallback
-    if args.multi_model:
-        multi_model = True  # Explicit --multi-model flag
-    else:
-        # Use config file setting (user's menu selection)
-        multi_model = multi_model_config
+    # Explicit --multi-model flag or use config file setting (user's menu selection)
+    multi_model = True if args.multi_model else multi_model_config
 
     # Parse directory filters
     include_dirs = None
