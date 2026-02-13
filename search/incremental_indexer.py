@@ -377,6 +377,116 @@ class IncrementalIndexer:
                 bm25_resync_count=0,
             )
 
+    def _release_and_verify_resources(self) -> None:
+        """Mandatory resource release and verification before full reindex.
+
+        Ensures all previous resources (index managers, searchers, embedders, GPU memory)
+        are properly released before starting a full reindex operation. This prevents
+        VRAM/memory pressure that could cause reindexing to fail.
+
+        Performs:
+        1. Release via ResourceManager.cleanup_previous_resources() (same as UI command)
+        2. Verification of cleanup completeness
+        3. Refresh embedder with fresh instance (lazy model loading)
+
+        This method is idempotent - safe to call even if cleanup was already performed.
+        """
+        logger.info("[FULL_INDEX] Mandatory pre-reindex resource release starting...")
+
+        # Step 1: Release resources (same operation as UI "Release Resources" command)
+        from mcp_server.resource_manager import ResourceManager
+
+        resource_manager = ResourceManager()
+        resource_manager.cleanup_previous_resources()
+        logger.info("[FULL_INDEX] Resource release completed")
+
+        # Step 2: Verify cleanup completeness
+        from mcp_server.services import get_state
+
+        state = get_state()
+        verification_passed = True
+        warnings = []
+
+        # Check embedder pool cleared
+        if state.embedders:
+            warnings.append(
+                f"Embedder pool not fully cleared: {list(state.embedders.keys())}"
+            )
+            verification_passed = False
+
+        # Check index_manager released
+        if state.index_manager is not None:
+            warnings.append("state.index_manager not None after cleanup")
+            verification_passed = False
+
+        # Check searcher released
+        if state.searcher is not None:
+            warnings.append("state.searcher not None after cleanup")
+            verification_passed = False
+
+        # Check GPU memory (if CUDA available)
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                allocated_mb = torch.cuda.memory_allocated() / (1024**2)
+                if allocated_mb > 100:  # More than 100MB still allocated
+                    warnings.append(
+                        f"GPU memory still allocated: {allocated_mb:.1f} MB"
+                    )
+                    verification_passed = False
+        except ImportError:
+            pass
+
+        # If verification failed, attempt secondary cleanup and re-verify
+        if not verification_passed:
+            logger.warning(
+                f"[FULL_INDEX] Initial verification failed: {warnings}. "
+                "Attempting secondary cleanup..."
+            )
+            import gc
+
+            gc.collect()
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except ImportError:
+                pass
+
+            # Re-verify
+            state = get_state()
+            recheck_warnings = []
+            if state.embedders:
+                recheck_warnings.append(
+                    f"Embedder pool still not cleared: {list(state.embedders.keys())}"
+                )
+            if state.index_manager is not None:
+                recheck_warnings.append("state.index_manager still not None")
+            if state.searcher is not None:
+                recheck_warnings.append("state.searcher still not None")
+
+            if recheck_warnings:
+                logger.warning(
+                    f"[FULL_INDEX] Re-verification still shows issues: {recheck_warnings}. "
+                    "Proceeding with reindex anyway."
+                )
+            else:
+                logger.info(
+                    "[FULL_INDEX] Secondary cleanup successful - verification passed"
+                )
+        else:
+            logger.info(
+                "[FULL_INDEX] Resource verification passed — all resources released"
+            )
+
+        # Step 3: Refresh embedder (required since cleanup cleared it)
+        from mcp_server.model_pool_manager import get_embedder
+
+        self.embedder = get_embedder()  # Fresh instance with lazy model loading
+        logger.info("[FULL_INDEX] Fresh embedder acquired for reindex")
+
     def _full_index(
         self, project_path: str, project_name: str, start_time: float
     ) -> IncrementalIndexResult:
@@ -391,6 +501,8 @@ class IncrementalIndexer:
             IncrementalIndexResult
         """
         try:
+            # === MANDATORY: Release resources before full reindex ===
+            self._release_and_verify_resources()
             # Defense in depth: Load filters from snapshot before deleting it
             # This handles cases where filters weren't passed during IncrementalIndexer creation
             if self.include_dirs is None or self.exclude_dirs is None:
