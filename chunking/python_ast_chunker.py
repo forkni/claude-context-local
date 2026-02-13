@@ -28,12 +28,14 @@ class CodeChunk:
     parent_name: str | None = None  # parent class name for methods
     parent_chunk_id: str | None = None  # parent class chunk_id for methods
     docstring: str | None = None
-    decorators: list[str] = None
-    imports: list[str] = None  # relevant imports for this chunk
+    decorators: list[str] | None = None
+    imports: list[str] | None = None  # relevant imports for this chunk
 
     # Context metadata
     complexity_score: int = 0  # estimated complexity
-    tags: list[str] = None  # semantic tags like 'database', 'auth', 'error_handling'
+    tags: list[str] | None = (
+        None  # semantic tags like 'database', 'auth', 'error_handling'
+    )
 
     # Call graph metadata
     calls: list["CallEdge"] | None = None  # function calls made by this chunk
