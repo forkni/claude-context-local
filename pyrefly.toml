@@ -1,0 +1,34 @@
+# Pyrefly type checker configuration
+# Docs: https://pyrefly.org/en/docs/configuration/
+
+# Source files to check (project packages only)
+project-includes = [
+    "chunking/**/*.py",
+    "embeddings/**/*.py",
+    "mcp_server/**/*.py",
+    "search/**/*.py",
+    "merkle/**/*.py",
+    "tools/**/*.py",
+    "scripts/**/*.py",
+]
+
+# Exclude patterns (appended to defaults: node_modules, __pycache__, venv, dotdirs)
+project-excludes = [
+    "**/tests/**",
+    "**/test_data/**",
+    "**/_archive/**",
+]
+
+# Import resolution
+search-path = ["."]
+
+# Python environment
+python-version = "3.11"
+python-interpreter-path = ".venv/Scripts/python.exe"
+
+# Type checking behavior (strictest — checks all functions, infers return types)
+untyped-def-behavior = "check-and-infer-return-type"
+
+# Compatibility: respect existing # type: ignore comments
+permissive-ignores = true
+# Test comment

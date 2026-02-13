@@ -75,6 +75,7 @@ test = [
     "pytest-repeat>=0.9.3",
 ]
 dev = [
+    "pyrefly>=0.52.0",      # Type checking (replaces mypy)
     "ruff>=0.14.10",
     "pip-audit>=2.10.0",
     "pip-licenses>=5.5.0",

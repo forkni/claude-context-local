@@ -31,3 +31,12 @@ repos:
       - id: markdownlint
         args: [--fix, --disable, MD013, MD033]
         exclude: ^(CLAUDE\.md|MEMORY\.md|_archive/)
+
+  # Pyrefly - Type checking
+  - repo: https://github.com/facebook/pyrefly-pre-commit
+    rev: 0.52.0
+    hooks:
+      - id: pyrefly-check
+        name: Pyrefly (type checking)
+        pass_filenames: false
+        language: system

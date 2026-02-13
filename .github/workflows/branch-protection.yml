@@ -139,3 +139,10 @@ jobs:
       - name: Check formatting (ruff format)
         run: ruff format --check .
         continue-on-error: true
+
+      - name: Install type checker
+        run: pip install pyrefly
+
+      - name: Run type checking (pyrefly)
+        run: pyrefly check --output-format=github
+        continue-on-error: true
