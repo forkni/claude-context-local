@@ -377,7 +377,7 @@ class IncrementalIndexer:
                 bm25_resync_count=0,
             )
 
-    def _release_and_verify_resources(self) -> None:
+    def _release_and_verify_resources(self, project_path: str) -> None:
         """Mandatory resource release and verification before full reindex.
 
         Ensures all previous resources (index managers, searchers, embedders, GPU memory)
@@ -385,13 +385,25 @@ class IncrementalIndexer:
         VRAM/memory pressure that could cause reindexing to fail.
 
         Performs:
-        1. Release via ResourceManager.cleanup_previous_resources() (same as UI command)
-        2. Verification of cleanup completeness
-        3. Refresh embedder with fresh instance (lazy model loading)
+        1. Save current model key before cleanup
+        2. Release via ResourceManager.cleanup_previous_resources() (same as UI command)
+        3. Verification of cleanup completeness
+        4. Refresh embedder with fresh instance (preserving model key)
+        5. Refresh indexer/searcher (required since cleanup shut it down)
+
+        Args:
+            project_path: Path to the project being indexed (needed to recreate searcher)
 
         This method is idempotent - safe to call even if cleanup was already performed.
         """
         logger.info("[FULL_INDEX] Mandatory pre-reindex resource release starting...")
+
+        # Step 0: Save model key before cleanup destroys embedder
+        model_key = None
+        if self.embedder is not None:
+            model_key = getattr(self.embedder, "_model_key", None)
+            if model_key:
+                logger.info(f"[FULL_INDEX] Preserving model key: {model_key}")
 
         # Step 1: Release resources (same operation as UI "Release Resources" command)
         from mcp_server.resource_manager import ResourceManager
@@ -484,8 +496,22 @@ class IncrementalIndexer:
         # Step 3: Refresh embedder (required since cleanup cleared it)
         from mcp_server.model_pool_manager import get_embedder
 
-        self.embedder = get_embedder()  # Fresh instance with lazy model loading
-        logger.info("[FULL_INDEX] Fresh embedder acquired for reindex")
+        self.embedder = get_embedder(model_key)  # Fresh instance with correct model
+        logger.info(
+            f"[FULL_INDEX] Fresh embedder acquired for reindex (model_key={model_key})"
+        )
+
+        # Step 4: Refresh indexer/searcher (required since cleanup shut it down)
+        # Only refresh if the indexer was actually shut down (has _is_shutdown flag set to True)
+        if hasattr(self.indexer, "_is_shutdown") and self.indexer._is_shutdown:
+            from mcp_server.search_factory import get_searcher
+
+            self.indexer = get_searcher(project_path)
+            logger.info("[FULL_INDEX] Fresh indexer/searcher acquired for reindex")
+        else:
+            logger.debug(
+                "[FULL_INDEX] Indexer not shut down or doesn't need refresh (test mock)"
+            )
 
     def _full_index(
         self, project_path: str, project_name: str, start_time: float
@@ -502,7 +528,7 @@ class IncrementalIndexer:
         """
         try:
             # === MANDATORY: Release resources before full reindex ===
-            self._release_and_verify_resources()
+            self._release_and_verify_resources(project_path)
             # Defense in depth: Load filters from snapshot before deleting it
             # This handles cases where filters weren't passed during IncrementalIndexer creation
             if self.include_dirs is None or self.exclude_dirs is None:

@@ -695,6 +695,15 @@ if defined exclude_filter if not "!exclude_filter!"=="" (
     echo [INFO] Exclude dirs: !exclude_filter!
 )
 echo.
+
+REM Release resources from running MCP server (if any) BEFORE indexing
+netstat -an 2>nul | findstr ":8765" | findstr "LISTENING" >nul 2>&1
+if not errorlevel 1 (
+    echo [INFO] MCP Server detected on port 8765 - releasing resources first...
+    powershell -Command "try { $r = Invoke-WebRequest -Uri 'http://localhost:8765/cleanup' -Method POST -TimeoutSec 10 -UseBasicParsing; Write-Host '[OK] Server resources released' } catch { Write-Host '[WARNING] Could not release server resources:' $_.Exception.Message }"
+    echo.
+)
+
 echo [INFO] Loading Python modules...
 
 ".\.venv\Scripts\python.exe" tools\batch_index.py --path "!new_project_path!" --mode new !filter_args!
@@ -725,6 +734,15 @@ echo [INFO] Re-indexing: %SELECTED_PROJECT_NAME%
 echo [INFO] Path: %SELECTED_PROJECT_PATH%
 echo [INFO] Mode: Incremental (detects changes only, uses batch removal)
 echo.
+
+REM Release resources from running MCP server (if any) BEFORE indexing
+netstat -an 2>nul | findstr ":8765" | findstr "LISTENING" >nul 2>&1
+if not errorlevel 1 (
+    echo [INFO] MCP Server detected on port 8765 - releasing resources first...
+    powershell -Command "try { $r = Invoke-WebRequest -Uri 'http://localhost:8765/cleanup' -Method POST -TimeoutSec 10 -UseBasicParsing; Write-Host '[OK] Server resources released' } catch { Write-Host '[WARNING] Could not release server resources:' $_.Exception.Message }"
+    echo.
+)
+
 echo [INFO] Loading Python modules...
 
 ".\.venv\Scripts\python.exe" tools\batch_index.py --path "%SELECTED_PROJECT_PATH%" --mode incremental
@@ -755,6 +773,15 @@ echo [INFO] Force reindexing: %SELECTED_PROJECT_NAME%
 echo [INFO] Path: %SELECTED_PROJECT_PATH%
 echo [INFO] Mode: Full (bypasses snapshot, indexes everything)
 echo.
+
+REM Release resources from running MCP server (if any) BEFORE indexing
+netstat -an 2>nul | findstr ":8765" | findstr "LISTENING" >nul 2>&1
+if not errorlevel 1 (
+    echo [INFO] MCP Server detected on port 8765 - releasing resources first...
+    powershell -Command "try { $r = Invoke-WebRequest -Uri 'http://localhost:8765/cleanup' -Method POST -TimeoutSec 10 -UseBasicParsing; Write-Host '[OK] Server resources released' } catch { Write-Host '[WARNING] Could not release server resources:' $_.Exception.Message }"
+    echo.
+)
+
 echo [INFO] Loading Python modules...
 
 ".\.venv\Scripts\python.exe" tools\batch_index.py --path "%SELECTED_PROJECT_PATH%" --mode force
