@@ -278,6 +278,33 @@ def _check_auto_reindex(
                 f"falling back to routing selection: {selected_model_key}"
             )
 
+    # Phase 1: Lightweight freshness check (no HybridSearcher/embedder needed)
+    from merkle.change_detector import ChangeDetector
+    from merkle.snapshot_manager import SnapshotManager
+
+    snapshot_mgr = SnapshotManager()
+    change_detector = ChangeDetector(snapshot_mgr, include_dirs, exclude_dirs)
+
+    # Check if snapshot exists and is fresh
+    if snapshot_mgr.has_snapshot(project_path):
+        age = snapshot_mgr.get_snapshot_age(project_path)
+        # Index is fresh by age — do quick change detection
+        if (
+            age
+            and age <= max_age_minutes * 60
+            and not change_detector.quick_check(project_path)
+        ):
+            logger.debug(
+                f"[AUTO_REINDEX] Index for {project_path} is fresh (age: {age:.1f}s, "
+                f"max: {max_age_minutes * 60}s), skipping reindex"
+            )
+            return False, model_key_for_embedder
+
+    # Phase 2: Index is stale — create full machinery and reindex
+    logger.debug(
+        "[AUTO_REINDEX] Index is stale or missing, proceeding with full reindex check"
+    )
+
     # Validate dimension compatibility BEFORE creating searcher
     from search.dimension_validator import validate_embedder_index_compatibility
 

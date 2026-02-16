@@ -1,7 +1,7 @@
 {
   "embedding": {
-    "model_name": "Alibaba-NLP/gte-modernbert-base",
-    "dimension": 768,
+    "model_name": "Qwen/Qwen3-Embedding-0.6B",
+    "dimension": 1024,
     "batch_size": 128,
     "query_cache_size": 128,
     "enable_import_context": true,
