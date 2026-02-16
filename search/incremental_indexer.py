@@ -399,9 +399,16 @@ class IncrementalIndexer:
         logger.info("[FULL_INDEX] Mandatory pre-reindex resource release starting...")
 
         # Step 0: Save model key before cleanup destroys embedder
+        # CodeEmbedder doesn't have _model_key attribute - look it up from state.embedders dict
         model_key = None
         if self.embedder is not None:
-            model_key = getattr(self.embedder, "_model_key", None)
+            from mcp_server.services import get_state
+
+            state = get_state()
+            for key, emb in state.embedders.items():
+                if emb is self.embedder:
+                    model_key = key
+                    break
             if model_key:
                 logger.info(f"[FULL_INDEX] Preserving model key: {model_key}")
 
