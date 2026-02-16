@@ -168,7 +168,8 @@ class TestIncrementalIndexer:
             str(self.project_path)
         )
 
-    def test_full_index_no_snapshot(self):
+    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
+    def test_full_index_no_snapshot(self, mock_release):
         """Test full indexing when no snapshot exists."""
         indexer = IncrementalIndexer(
             indexer=self.mock_indexer,
@@ -308,7 +309,8 @@ class TestIncrementalIndexer:
         assert result.chunks_removed == 10  # 2 files * 5 chunks each
         assert result.chunks_added == 2
 
-    def test_error_handling_full_index(self):
+    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
+    def test_error_handling_full_index(self, mock_release):
         """Test error handling during full index."""
         indexer = IncrementalIndexer(
             indexer=self.mock_indexer,
@@ -501,7 +503,8 @@ class TestIncrementalIndexer:
         assert result.chunks_added == 0
         indexer.needs_reindex.assert_called_once()
 
-    def test_force_full_reindex(self):
+    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
+    def test_force_full_reindex(self, mock_release):
         """Test force full reindex functionality."""
         indexer = IncrementalIndexer(
             indexer=self.mock_indexer,
@@ -532,7 +535,8 @@ class TestIncrementalIndexer:
             assert result.success is True
             self.mock_indexer.clear_index.assert_called_once()
 
-    def test_chunking_error_handling(self):
+    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
+    def test_chunking_error_handling(self, mock_release):
         """Test handling of chunking errors."""
         indexer = IncrementalIndexer(
             indexer=self.mock_indexer,
@@ -571,7 +575,8 @@ class TestIncrementalIndexer:
             assert result.success is True
             assert result.chunks_added == 1  # Only one file succeeded
 
-    def test_embedding_error_handling(self):
+    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
+    def test_embedding_error_handling(self, mock_release):
         """Test handling of embedding errors."""
         indexer = IncrementalIndexer(
             indexer=self.mock_indexer,
@@ -647,7 +652,8 @@ class TestIncrementalIndexer:
         # Verify validation was called
         self.mock_indexer.validate_index_consistency.assert_called_once()
 
-    def test_batch_removal_validation_failure_triggers_full_reindex(self):
+    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
+    def test_batch_removal_validation_failure_triggers_full_reindex(self, mock_release):
         """Test that validation failure triggers full re-index recovery."""
         indexer = IncrementalIndexer(
             indexer=self.mock_indexer,
@@ -705,7 +711,8 @@ class TestIncrementalIndexer:
             # Verify validation was attempted
             self.mock_indexer.validate_index_consistency.assert_called_once()
 
-    def test_error_recovery_via_full_reindex(self):
+    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
+    def test_error_recovery_via_full_reindex(self, mock_release):
         """Test that errors during incremental indexing trigger full re-index recovery."""
         indexer = IncrementalIndexer(
             indexer=self.mock_indexer,
@@ -933,7 +940,8 @@ class TestIncrementalIndexer:
         assert result.bm25_resync_count == 0
         self.mock_indexer.resync_bm25_from_dense.assert_not_called()
 
-    def test_filter_persistence_in_full_index(self):
+    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
+    def test_filter_persistence_in_full_index(self, mock_release):
         """Test that filters are preserved when _full_index is triggered."""
         # Create indexer WITH filters
         include_dirs = ["src/", "lib/"]
@@ -975,7 +983,8 @@ class TestIncrementalIndexer:
         assert saved_dag.directory_filter.include_dirs == include_dirs
         assert saved_dag.directory_filter.exclude_dirs == exclude_dirs
 
-    def test_filter_recovery_from_snapshot_in_full_index(self):
+    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
+    def test_filter_recovery_from_snapshot_in_full_index(self, mock_release):
         """Test that filters are recovered from snapshot if not passed to indexer."""
         from search.filters import DirectoryFilter
 
