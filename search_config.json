@@ -51,7 +51,7 @@
   "routing": {
     "multi_model_enabled": true,
     "default_model": "qwen3",
-    "multi_model_pool": "lightweight-speed"
+    "multi_model_pool": "full"
   },
   "intent": {
     "enabled": true,
@@ -61,7 +61,7 @@
   },
   "reranker": {
     "enabled": true,
-    "model_name": "Alibaba-NLP/gte-reranker-modernbert-base",
+    "model_name": "jinaai/jina-reranker-v3",
     "top_k_candidates": 50,
     "min_vram_gb": 6.0,
     "batch_size": 16

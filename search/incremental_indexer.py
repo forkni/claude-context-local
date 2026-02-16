@@ -711,9 +711,12 @@ class IncrementalIndexer:
 
                     file_summaries = generate_file_summaries(all_chunks)
                     if file_summaries:
-                        all_chunks.extend(file_summaries)
                         logger.info(
                             f"[FILE_SUMMARIES] Generated {len(file_summaries)} module summary chunks"
+                        )
+                        all_chunks.extend(file_summaries)
+                        logger.info(
+                            f"[FILE_SUMMARIES] Appended {len(file_summaries)} module summaries to chunk list"
                         )
                 except Exception as e:
                     logger.warning(f"[FILE_SUMMARIES] Failed: {e}")

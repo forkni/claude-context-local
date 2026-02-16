@@ -440,9 +440,20 @@ def _index_with_all_models(
             logger.info(f"Completed indexing with {model_name} in {elapsed:.2f}s")
 
     finally:
-        # Restore original model
+        # Restore to a valid model in the current pool
         config_mgr = SearchConfigManager()
         config = config_mgr.load_config()
+
+        # Validate original_model is in active pool; if not, use first pool model
+        pool_models = set(pool_config.values())
+        if original_model not in pool_models:
+            fallback_model = next(iter(pool_config.values()))
+            logger.warning(
+                f"Original model '{original_model}' not in active pool "
+                f"{list(pool_config.keys())}, using '{fallback_model}'"
+            )
+            original_model = fallback_model
+
         config.embedding.model_name = original_model
         config_mgr.save_config(config)
 
