@@ -29,6 +29,10 @@ from .parallel_chunker import ParallelChunker
 
 logger = logging.getLogger(__name__)
 
+# Minimum GPU memory (MB) considered "still allocated" after cleanup.
+# Below this threshold, residual allocations are expected (PyTorch runtime overhead ~50MB).
+GPU_CLEANUP_THRESHOLD_MB = 100
+
 
 @dataclass
 class IncrementalIndexResult:
@@ -412,6 +416,24 @@ class IncrementalIndexer:
             if model_key:
                 logger.info(f"[FULL_INDEX] Preserving model key: {model_key}")
 
+        if model_key is None:
+            # Embedder not found in state pool — derive from config as fallback
+            from mcp_server.model_pool_manager import get_model_key_from_name
+
+            config = get_search_config()
+            model_key = get_model_key_from_name(config.embedding.model_name)
+            if model_key:
+                logger.warning(
+                    f"[FULL_INDEX] Embedder not in state pool, "
+                    f"derived model_key from config: {model_key}"
+                )
+            else:
+                logger.warning(
+                    "[FULL_INDEX] Could not determine model_key — "
+                    "get_embedder(None) will use default model; "
+                    "verify embedding dimension compatibility"
+                )
+
         # Step 1: Release resources (same operation as UI "Release Resources" command)
         from mcp_server.resource_manager import ResourceManager
 
@@ -449,7 +471,7 @@ class IncrementalIndexer:
 
             if torch.cuda.is_available():
                 allocated_mb = torch.cuda.memory_allocated() / (1024**2)
-                if allocated_mb > 100:  # More than 100MB still allocated
+                if allocated_mb > GPU_CLEANUP_THRESHOLD_MB:
                     warnings.append(
                         f"GPU memory still allocated: {allocated_mb:.1f} MB"
                     )

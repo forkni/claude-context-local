@@ -24,7 +24,6 @@ search-path = ["."]
 
 # Python environment
 python-version = "3.11"
-python-interpreter-path = ".venv/Scripts/python.exe"
 
 # Type checking behavior (strictest — checks all functions, infers return types)
 untyped-def-behavior = "check-and-infer-return-type"
