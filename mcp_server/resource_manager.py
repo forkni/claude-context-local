@@ -64,7 +64,7 @@ class ResourceManager:
                     state.index_manager._metadata_store.close()
                 state.index_manager = None
                 logger.info("Previous index manager cleaned up")
-        except (AttributeError, TypeError) as e:
+        except Exception as e:
             logger.warning(f"Error cleaning index_manager: {e}")
 
         # Component 2: Searcher cleanup
@@ -88,7 +88,7 @@ class ResourceManager:
                     )
                 state.searcher = None
                 logger.info("Previous searcher cleaned up")
-        except (AttributeError, TypeError) as e:
+        except Exception as e:
             logger.warning(f"Error cleaning searcher: {e}")
 
         # Component 3: Embedder pool cleanup (always try even if above failed)
@@ -100,7 +100,7 @@ class ResourceManager:
                 )
                 state.clear_embedders()
                 logger.info("Embedder pool cleared - VRAM released")
-        except (AttributeError, TypeError) as e:
+        except Exception as e:
             logger.warning(f"Error cleaning embedders: {e}")
 
         # Component 4: ModelPoolManager reset (always try)
@@ -113,8 +113,11 @@ class ResourceManager:
             logger.warning(f"Error resetting pool manager: {e}")
 
         # Component 5: Garbage collection (always try)
-        gc.collect()
-        logger.info("Garbage collection completed")
+        try:
+            gc.collect()
+            logger.info("Garbage collection completed")
+        except Exception as e:
+            logger.warning(f"Error during garbage collection: {e}")
 
         # Component 6: GPU cache cleanup (always try)
         try:
