@@ -35,7 +35,7 @@ def _detect_indexed_model(project_path: str) -> str | None:
     """
     from mcp_server.model_pool_manager import get_model_pool_manager
 
-    pool_config = get_model_pool_manager()._get_pool_config()
+    pool_config = get_model_pool_manager().get_pool_config()
     for model_key in pool_config:
         project_dir = get_project_storage_dir(project_path, model_key=model_key)
         code_index_file = project_dir / "index" / "code.index"
@@ -122,7 +122,7 @@ async def handle_configure_query_routing(arguments: dict[str, Any]) -> dict:
     if default_model is not None:
         from mcp_server.model_pool_manager import get_model_pool_manager
 
-        pool_config = get_model_pool_manager()._get_pool_config()
+        pool_config = get_model_pool_manager().get_pool_config()
         if default_model in pool_config:
             # Persist to config file
             config.routing.default_model = default_model

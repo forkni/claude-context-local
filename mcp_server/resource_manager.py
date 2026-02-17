@@ -216,7 +216,7 @@ def initialize_server_state() -> None:
     logger.info("[INIT] Model loading deferred until first use (lazy mode)")
     from mcp_server.model_pool_manager import get_model_pool_manager
 
-    pool_config = get_model_pool_manager()._get_pool_config()
+    pool_config = get_model_pool_manager().get_pool_config()
     logger.info(f"[INIT] Available models: {list(pool_config.keys())}")
 
     # 3.5. VRAM tier detection - DEFERRED to first model load

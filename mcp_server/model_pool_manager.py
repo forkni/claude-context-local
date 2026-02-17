@@ -22,7 +22,7 @@ class ModelPoolManager:
         """Initialize ModelPoolManager."""
         self._cached_pool_config: dict[str, str] | None = None
 
-    def _get_pool_config(self) -> dict[str, str]:
+    def get_pool_config(self) -> dict[str, str]:
         """Get appropriate model pool configuration based on VRAM tier or environment.
 
         Returns:
@@ -30,7 +30,7 @@ class ModelPoolManager:
         """
         # Return cached result if available (reduces log spam)
         if self._cached_pool_config is not None:
-            return self._cached_pool_config
+            return dict(self._cached_pool_config)
 
         # 1. Check config file setting FIRST (user's explicit choice via menu)
         try:
@@ -44,11 +44,11 @@ class ModelPoolManager:
                     "Using lightweight-speed model pool from config (1.65GB total)"
                 )
                 self._cached_pool_config = MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED
-                return self._cached_pool_config
+                return dict(self._cached_pool_config)
             elif pool_type == "full":
                 logger.info("Using full model pool from config (6.8GB total)")
                 self._cached_pool_config = MODEL_POOL_CONFIG
-                return self._cached_pool_config
+                return dict(self._cached_pool_config)
             # If None or unrecognized, fall through to env var / VRAM detection
         except (ImportError, AttributeError) as e:
             logger.debug(f"Could not read pool config from file: {e}")
@@ -77,16 +77,16 @@ class ModelPoolManager:
                     f"VRAM tier '{tier.name}' → lightweight-speed pool (1.65GB total)"
                 )
                 self._cached_pool_config = MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED
-                return self._cached_pool_config
+                return dict(self._cached_pool_config)
             elif tier.multi_model_pool == "full":
                 logger.info(f"VRAM tier '{tier.name}' → full model pool (6.8GB total)")
                 self._cached_pool_config = MODEL_POOL_CONFIG
-                return self._cached_pool_config
+                return dict(self._cached_pool_config)
             else:
                 # Tier doesn't specify pool type (minimal tier, single-model)
                 logger.info("Using full model pool (default)")
                 self._cached_pool_config = MODEL_POOL_CONFIG
-                return self._cached_pool_config
+                return dict(self._cached_pool_config)
 
         except Exception as e:
             logger.warning(f"Failed to detect VRAM tier, using full model pool: {e}")
@@ -110,7 +110,7 @@ class ModelPoolManager:
         cache_dir.mkdir(exist_ok=True)
 
         # Get pool configuration (full or lightweight-speed)
-        pool_config = self._get_pool_config()
+        pool_config = self.get_pool_config()
 
         if lazy_load:
             # Initialize empty slots - models will load on first get_embedder() call
@@ -160,7 +160,7 @@ class ModelPoolManager:
         cache_dir.mkdir(exist_ok=True)
 
         # Get pool configuration (full or lightweight-speed)
-        pool_config = self._get_pool_config()
+        pool_config = self.get_pool_config()
 
         # PRIORITY: Explicit model_key override takes precedence over multi_model_enabled setting
         # This ensures model_key parameter works even when multi-model mode is disabled
@@ -185,7 +185,7 @@ class ModelPoolManager:
                 except Exception as e:
                     logger.error(f"✗ Failed to load {model_key}: {e}")
                     # Fallback to first available model in pool
-                    pool_config = self._get_pool_config()
+                    pool_config = self.get_pool_config()
                     fallback_key = next(iter(pool_config.keys()))
                     if (
                         model_key != fallback_key
@@ -208,7 +208,7 @@ class ModelPoolManager:
                     config_model_name = config.embedding.model_name
 
                     # Map config model name to model_key
-                    pool_config = self._get_pool_config()
+                    pool_config = self.get_pool_config()
                     model_key = None
                     for key, name in pool_config.items():
                         if name == config_model_name:
@@ -216,14 +216,14 @@ class ModelPoolManager:
                             break
 
                     if model_key is None:
-                        pool_config = self._get_pool_config()
+                        pool_config = self.get_pool_config()
                         fallback_key = next(iter(pool_config.keys()))
                         logger.warning(
                             f"Config model '{config_model_name}' not in pool, using {fallback_key}"
                         )
                         model_key = fallback_key
                 except (RuntimeError, AttributeError) as e:
-                    pool_config = self._get_pool_config()
+                    pool_config = self.get_pool_config()
                     fallback_key = next(iter(pool_config.keys()))
                     logger.warning(
                         f"Failed to load model from config: {e}, using {fallback_key}"
@@ -231,7 +231,7 @@ class ModelPoolManager:
                     model_key = fallback_key
 
             # Validate model_key against current pool config
-            pool_config = self._get_pool_config()
+            pool_config = self.get_pool_config()
             if model_key not in pool_config:
                 logger.error(
                     f"Invalid model_key '{model_key}', available: {list(pool_config.keys())}"
@@ -267,7 +267,7 @@ class ModelPoolManager:
                 except Exception as e:
                     logger.error(f"✗ Failed to load {model_key}: {e}")
                     # Fallback to first available model in pool
-                    pool_config = self._get_pool_config()
+                    pool_config = self.get_pool_config()
                     fallback_key = next(iter(pool_config.keys()))
                     if (
                         model_key != fallback_key
@@ -345,7 +345,7 @@ def get_model_key_from_name(model_name: str) -> str | None:
     Returns:
         Model key (e.g., "gte_modernbert") or None if not found
     """
-    pool_config = get_model_pool_manager()._get_pool_config()
+    pool_config = get_model_pool_manager().get_pool_config()
 
     # Reverse lookup: model_name -> model_key
     for key, name in pool_config.items():

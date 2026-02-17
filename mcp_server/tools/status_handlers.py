@@ -302,7 +302,7 @@ async def handle_list_embedding_models(arguments: dict[str, Any]) -> dict:
     state = get_state()
 
     # Build reverse mapping: model_name -> model_key
-    pool_config = get_model_pool_manager()._get_pool_config()
+    pool_config = get_model_pool_manager().get_pool_config()
     name_to_key = {v: k for k, v in pool_config.items()}
 
     models = []

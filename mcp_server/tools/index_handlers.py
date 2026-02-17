@@ -303,7 +303,7 @@ def _index_with_all_models(
         # Use pool from manager (respects config file setting)
         from mcp_server.model_pool_manager import get_model_pool_manager
 
-        pool_config = get_model_pool_manager()._get_pool_config()
+        pool_config = get_model_pool_manager().get_pool_config()
         for model_key, model_name in pool_config.items():
             # Apply VRAM tier selection for qwen3 (selects 0.6B/4B/8B based on available VRAM)
             if model_key == "qwen3":
@@ -814,7 +814,7 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
             # Update each model's project_info.json
             from mcp_server.model_pool_manager import get_model_pool_manager
 
-            pool_config = get_model_pool_manager()._get_pool_config()
+            pool_config = get_model_pool_manager().get_pool_config()
             for model_key in pool_config:
                 update_project_filters(
                     str(directory_path),

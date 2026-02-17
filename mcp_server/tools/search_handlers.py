@@ -173,7 +173,7 @@ def _route_query_to_model(
         # Validate default_model against active pool before trying it
         from mcp_server.model_pool_manager import get_model_pool_manager
 
-        pool_config = get_model_pool_manager()._get_pool_config()
+        pool_config = get_model_pool_manager().get_pool_config()
 
         if default_model in pool_config:
             # Try default model first
