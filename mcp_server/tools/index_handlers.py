@@ -450,7 +450,7 @@ def _index_with_all_models(
             fallback_model = next(iter(pool_config.values()))
             logger.warning(
                 f"Original model '{original_model}' not in active pool "
-                f"{list(pool_config.keys())}, using '{fallback_model}'"
+                f"{list(pool_config.values())}, using '{fallback_model}'"
             )
             original_model = fallback_model
 

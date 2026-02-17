@@ -290,7 +290,7 @@ def _check_auto_reindex(
         age = snapshot_mgr.get_snapshot_age(project_path)
         # Index is fresh by age — do quick change detection
         if (
-            age
+            age is not None
             and age <= max_age_minutes * 60
             and not change_detector.quick_check(project_path)
         ):
