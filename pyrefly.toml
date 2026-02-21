@@ -30,4 +30,3 @@ untyped-def-behavior = "check-and-infer-return-type"
 
 # Compatibility: respect existing # type: ignore comments
 permissive-ignores = true
-# Test comment

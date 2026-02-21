@@ -25,8 +25,10 @@ class ModelPoolManager:
     def get_pool_config(self) -> dict[str, str]:
         """Get appropriate model pool configuration based on VRAM tier or environment.
 
+        Result is cached for the server lifecycle. Call reset_pool_manager() to clear.
+
         Returns:
-            Dict mapping model keys to model names (from MODEL_POOL_CONFIG variants)
+            Dict mapping model keys to model names (defensive copy, safe to modify)
         """
         # Return cached result if available (reduces log spam)
         if self._cached_pool_config is not None:
@@ -59,11 +61,11 @@ class ModelPoolManager:
         if pool_type in ["lightweight-speed", "lightweight_speed"]:
             logger.info("Using lightweight-speed model pool (1.65GB total)")
             self._cached_pool_config = MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED
-            return self._cached_pool_config
+            return dict(self._cached_pool_config)
         elif pool_type == "full":
             logger.info("Using full model pool (6.8GB total)")
             self._cached_pool_config = MODEL_POOL_CONFIG
-            return self._cached_pool_config
+            return dict(self._cached_pool_config)
 
         # Auto-detect based on VRAM tier
         try:
@@ -91,7 +93,7 @@ class ModelPoolManager:
         except Exception as e:
             logger.warning(f"Failed to detect VRAM tier, using full model pool: {e}")
             self._cached_pool_config = MODEL_POOL_CONFIG
-            return self._cached_pool_config
+            return dict(self._cached_pool_config)
 
     def initialize_pool(self, lazy_load: bool = True) -> None:
         """Initialize multi-model pool with appropriate models (2 or 3 models).
