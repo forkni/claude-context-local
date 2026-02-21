@@ -2,16 +2,56 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-02-06)
+## Current Status: All Features Operational (2026-02-21)
 
-- **Version**: 0.9.2
+- **Version**: 0.9.3
 - **Status**: Production-ready
 - **Test Coverage**: 1,635+ unit tests + 8 integration tests (100% pass rate)
 - **Dependencies**: 125 packages (38% reduction from 201)
 - **Index Quality**: 109 active files, 789 chunks (34% reduction via greedy merge, BGE-M3 1024d, ~16 MB)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
 - **SSCG Benchmark**: Recall@4=1.00 (perfect), MRR=0.81
-- **Recent Features**: Documentation-codebase alignment (34 fixes), intent classifier symbol detection, search quality fixes, config defaults aligned (0.35/0.65, qwen3, 0.35)
+- **Recent Features**: Resource lifecycle stabilization, RAM fallback, resource cleanup fixes, search pipeline optimization
+
+---
+
+## v0.9.3 - Resource Lifecycle Stabilization & Bug Fixes (2026-02-21)
+
+### Status: PATCH RELEASE ✅
+
+Stability and correctness improvements for the indexer resource lifecycle. Ensures embedding model resources are properly released before reindexing, adds RAM fallback for VRAM-constrained systems, and fixes multiple edge-case bugs in the search pipeline.
+
+### Highlights
+
+- **Mandatory Resource Release**: Resources explicitly released before full reindex (prevents VRAM leaks)
+- **RAM Fallback Enabled**: Graceful degradation when GPU VRAM insufficient (`allow_ram_fallback: true`)
+- **Public Pool Config API**: `_get_pool_config` renamed to public API with defensive copy
+- **Search Pipeline Optimization**: Eliminated double HybridSearcher creation and config log spam
+
+### 🔧 Bug Fixes
+
+- Resource cleanup failures at start of full reindex (`3b95619`, `3ca8b18`)
+- Broadened exception handling in resource_manager cleanup components (`871ddb6`)
+- Falsy float check corrected (was incorrectly treating `0.0` as falsy) (`6569c15`)
+- Misleading log messages and dead code removed (`6569c15`)
+- Restored model now validated against active pool before use (`68ed1da`)
+- Auto-reindex graph persistence: model_key and routing config preserved (`db77bff`)
+- `model_key=None` guard preventing AttributeError (`6f8dd8f`)
+- GPU threshold moved to named constant (`6f8dd8f`)
+- pyrefly cross-platform compatibility fix (`6f8dd8f`)
+
+### ⚡ Performance
+
+- Eliminated double HybridSearcher creation in search pipeline (`3039787`)
+- Removed pool config log spam on repeated searches (`3039787`)
+
+### 🧪 Tests
+
+- Fixed incremental_indexer tests broken by `_release_and_verify_resources` refactor (`15b2b29`)
+
+### Configuration
+
+- `search_config.json`: `allow_ram_fallback` changed from `false` → `true`
 
 ---
 
