@@ -50,9 +50,9 @@ class ChangeDetector:
 
     def __init__(
         self,
-        snapshot_manager: SnapshotManager = None,
-        include_dirs: list[str] = None,
-        exclude_dirs: list[str] = None,
+        snapshot_manager: SnapshotManager | None = None,
+        include_dirs: list[str] | None = None,
+        exclude_dirs: list[str] | None = None,
     ):
         """Initialize change detector.
 

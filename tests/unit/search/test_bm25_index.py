@@ -342,11 +342,27 @@ class TestBM25Index:
         # All searches should return same number of results
         assert len(set(results_list)) <= 2  # Allow some variation
 
-    @patch("search.bm25_index.BM25Okapi", None)
     def test_missing_dependencies(self):
-        """Test handling of missing dependencies."""
-        with pytest.raises(ImportError, match="rank-bm25 not found"):
-            BM25Index(self.temp_dir)
+        """Test that importing bm25_index raises ImportError when rank_bm25 is unavailable."""
+        import importlib
+        import sys
+
+        # Temporarily hide rank_bm25 to simulate missing dependency
+        original = sys.modules.pop("rank_bm25", None)
+        sys.modules["rank_bm25"] = None  # type: ignore[assignment]
+        try:
+            # Force re-import of bm25_index module (removing cached version)
+            sys.modules.pop("search.bm25_index", None)
+            with pytest.raises(ImportError, match="rank_bm25 package is required"):
+                importlib.import_module("search.bm25_index")
+        finally:
+            # Restore original state
+            if original is not None:
+                sys.modules["rank_bm25"] = original
+            else:
+                sys.modules.pop("rank_bm25", None)
+            sys.modules.pop("search.bm25_index", None)
+            importlib.import_module("search.bm25_index")  # Re-cache with real module
 
     def test_large_document_handling(self):
         """Test handling of large documents."""

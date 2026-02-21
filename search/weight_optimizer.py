@@ -123,7 +123,7 @@ class WeightOptimizer:
             total_score = 0.0
             for query in test_queries:
                 # Run search with current weights
-                results = self.search_callback(query, k=10)
+                results = self.search_callback(query, 10)
 
                 # Score based on result quality metrics
                 if results:

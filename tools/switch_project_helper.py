@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import sys
 from pathlib import Path
+from typing import Any
 
 
 # Add project root to path
@@ -62,6 +63,7 @@ def main():
 
         # Try HTTP endpoint first (for running SSE server)
         http_success = False
+        result: dict[str, Any] = {}  # Initialize to satisfy type checker
         if REQUESTS_AVAILABLE:
             try:
                 print("[INFO] Checking for running MCP server (SSE mode)...")

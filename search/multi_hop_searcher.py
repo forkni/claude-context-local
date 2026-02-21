@@ -365,9 +365,9 @@ class MultiHopSearcher:
         # Initialize timing tracker
         timings = {
             "total": time.time(),
-            "hop_1": 0,
+            "hop_1": 0.0,
             "expansion": {},
-            "rerank": 0,
+            "rerank": 0.0,
         }
 
         self._logger.info(

@@ -15,6 +15,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.3] - 2026-02-21
+
+### Added
+
+- **Mandatory Resource Release Before Reindexing** - Ensures all embedding model resources (GPU memory, thread pools) are explicitly released before full reindex starts, preventing VRAM leaks and corruption
+
+### Changed
+
+- **RAM Fallback Enabled** - `allow_ram_fallback: true` in search_config.json for graceful degradation when GPU VRAM is insufficient
+- **Public Pool Config API** - Renamed `_get_pool_config` to public API with defensive copy for safer consumption
+
+### Fixed
+
+- Resource cleanup failures at start of full reindex
+- Model validation: restored model now verified against active pool before use
+- Auto-reindex graph persistence: model_key and routing config preserved across reindex cycles
+- Falsy float check in resource manager (was incorrectly treating 0.0 as falsy)
+- Misleading log messages and dead code removed from cleanup components
+- Broadened exception handling in resource_manager cleanup (was too narrow)
+- `model_key=None` guard preventing AttributeError on unset model key
+- GPU threshold moved to named constant for maintainability
+- pyrefly cross-platform compatibility fix
+- Search pipeline optimization: eliminated double HybridSearcher creation and pool config log spam
+
+---
+
 ## [0.9.2] - 2026-02-06
 
 ### Added

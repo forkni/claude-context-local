@@ -46,10 +46,15 @@ class ResourceManager:
 
         This method should be called before switching projects or
         when explicitly requested by the user to free memory.
+
+        Each component cleanup is isolated so that failures in one component
+        don't prevent cleanup of other components.
         """
         from mcp_server.services import get_state
 
         state = get_state()
+
+        # Component 1: Index manager cleanup
         try:
             if state.index_manager is not None:
                 if (
@@ -59,7 +64,11 @@ class ResourceManager:
                     state.index_manager._metadata_store.close()
                 state.index_manager = None
                 logger.info("Previous index manager cleaned up")
+        except Exception as e:
+            logger.warning(f"Error cleaning index_manager: {e}")
 
+        # Component 2: Searcher cleanup
+        try:
             if state.searcher is not None:
                 # Close dense_index metadata store FIRST
                 if (
@@ -79,8 +88,11 @@ class ResourceManager:
                     )
                 state.searcher = None
                 logger.info("Previous searcher cleaned up")
+        except Exception as e:
+            logger.warning(f"Error cleaning searcher: {e}")
 
-            # Clear embedder pool to free GPU memory (explicit user request)
+        # Component 3: Embedder pool cleanup (always try even if above failed)
+        try:
             if state.embedders:
                 embedder_count = len(state.embedders)
                 logger.info(
@@ -88,27 +100,36 @@ class ResourceManager:
                 )
                 state.clear_embedders()
                 logger.info("Embedder pool cleared - VRAM released")
+        except Exception as e:
+            logger.warning(f"Error cleaning embedders: {e}")
 
-            # Reset ModelPoolManager singleton to release all model references
+        # Component 4: ModelPoolManager reset (always try)
+        try:
             from mcp_server.model_pool_manager import reset_pool_manager
 
             reset_pool_manager()
             logger.info("ModelPoolManager singleton reset")
+        except Exception as e:
+            logger.warning(f"Error resetting pool manager: {e}")
 
-            # Force garbage collection to immediately free GPU memory
+        # Component 5: Garbage collection (always try)
+        try:
             gc.collect()
             logger.info("Garbage collection completed")
+        except Exception as e:
+            logger.warning(f"Error during garbage collection: {e}")
 
-            try:
-                import torch
+        # Component 6: GPU cache cleanup (always try)
+        try:
+            import torch
 
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    logger.info("GPU cache cleared")
-            except ImportError as e:
-                logger.debug(f"GPU cache cleanup skipped: {e}")
-        except (AttributeError, TypeError) as e:
-            logger.warning(f"Error during resource cleanup: {e}")
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                logger.info("GPU cache cleared")
+        except ImportError as e:
+            logger.debug(f"GPU cache cleanup skipped: {e}")
+        except Exception as e:
+            logger.warning(f"Error during GPU cache cleanup: {e}")
 
     def close_project_resources(self, project_path: str) -> bool:
         """Close all resources associated with a specific project.
@@ -195,7 +216,7 @@ def initialize_server_state() -> None:
     logger.info("[INIT] Model loading deferred until first use (lazy mode)")
     from mcp_server.model_pool_manager import get_model_pool_manager
 
-    pool_config = get_model_pool_manager()._get_pool_config()
+    pool_config = get_model_pool_manager().get_pool_config()
     logger.info(f"[INIT] Available models: {list(pool_config.keys())}")
 
     # 3.5. VRAM tier detection - DEFERRED to first model load

@@ -163,7 +163,7 @@ class StorageManager:
         # Get configured pool (respects user's multi_model_pool setting)
         from mcp_server.model_pool_manager import get_model_pool_manager
 
-        pool_config = get_model_pool_manager()._get_pool_config()
+        pool_config = get_model_pool_manager().get_pool_config()
 
         # Determine which model to use
         if model_key:

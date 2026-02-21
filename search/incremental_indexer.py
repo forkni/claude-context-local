@@ -29,6 +29,10 @@ from .parallel_chunker import ParallelChunker
 
 logger = logging.getLogger(__name__)
 
+# Minimum GPU memory (MB) considered "still allocated" after cleanup.
+# Below this threshold, residual allocations are expected (PyTorch runtime overhead ~50MB).
+GPU_CLEANUP_THRESHOLD_MB = 100
+
 
 @dataclass
 class IncrementalIndexResult:
@@ -377,6 +381,167 @@ class IncrementalIndexer:
                 bm25_resync_count=0,
             )
 
+    def _release_and_verify_resources(self, project_path: str) -> None:
+        """Mandatory resource release and verification before full reindex.
+
+        Ensures all previous resources (index managers, searchers, embedders, GPU memory)
+        are properly released before starting a full reindex operation. This prevents
+        VRAM/memory pressure that could cause reindexing to fail.
+
+        Performs:
+        1. Save current model key before cleanup
+        2. Release via ResourceManager.cleanup_previous_resources() (same as UI command)
+        3. Verification of cleanup completeness
+        4. Refresh embedder with fresh instance (preserving model key)
+        5. Refresh indexer/searcher (required since cleanup shut it down)
+
+        Args:
+            project_path: Path to the project being indexed (needed to recreate searcher)
+
+        This method is idempotent - safe to call even if cleanup was already performed.
+        """
+        logger.info("[FULL_INDEX] Mandatory pre-reindex resource release starting...")
+
+        # Step 0: Save model key before cleanup destroys embedder
+        # CodeEmbedder doesn't have _model_key attribute - look it up from state.embedders dict
+        model_key = None
+        if self.embedder is not None:
+            from mcp_server.services import get_state
+
+            state = get_state()
+            for key, emb in state.embedders.items():
+                if emb is self.embedder:
+                    model_key = key
+                    break
+            if model_key:
+                logger.info(f"[FULL_INDEX] Preserving model key: {model_key}")
+
+        if model_key is None:
+            # Embedder not found in state pool — derive from config as fallback
+            from mcp_server.model_pool_manager import get_model_key_from_name
+
+            config = get_search_config()
+            model_key = get_model_key_from_name(config.embedding.model_name)
+            if model_key:
+                logger.warning(
+                    f"[FULL_INDEX] Embedder not in state pool, "
+                    f"derived model_key from config: {model_key}"
+                )
+            else:
+                logger.warning(
+                    "[FULL_INDEX] Could not determine model_key — "
+                    "get_embedder(None) will use default model; "
+                    "verify embedding dimension compatibility"
+                )
+
+        # Step 1: Release resources (same operation as UI "Release Resources" command)
+        from mcp_server.resource_manager import ResourceManager
+
+        resource_manager = ResourceManager()
+        resource_manager.cleanup_previous_resources()
+        logger.info("[FULL_INDEX] Resource release completed")
+
+        # Step 2: Verify cleanup completeness
+        from mcp_server.services import get_state
+
+        state = get_state()
+        verification_passed = True
+        warnings = []
+
+        # Check embedder pool cleared
+        if state.embedders:
+            warnings.append(
+                f"Embedder pool not fully cleared: {list(state.embedders.keys())}"
+            )
+            verification_passed = False
+
+        # Check index_manager released
+        if state.index_manager is not None:
+            warnings.append("state.index_manager not None after cleanup")
+            verification_passed = False
+
+        # Check searcher released
+        if state.searcher is not None:
+            warnings.append("state.searcher not None after cleanup")
+            verification_passed = False
+
+        # Check GPU memory (if CUDA available)
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                allocated_mb = torch.cuda.memory_allocated() / (1024**2)
+                if allocated_mb > GPU_CLEANUP_THRESHOLD_MB:
+                    warnings.append(
+                        f"GPU memory still allocated: {allocated_mb:.1f} MB"
+                    )
+                    verification_passed = False
+        except ImportError:
+            pass
+
+        # If verification failed, attempt secondary cleanup and re-verify
+        if not verification_passed:
+            logger.warning(
+                f"[FULL_INDEX] Initial verification failed: {warnings}. "
+                "Attempting secondary cleanup..."
+            )
+            import gc
+
+            gc.collect()
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except ImportError:
+                pass
+
+            # Re-verify
+            state = get_state()
+            recheck_warnings = []
+            if state.embedders:
+                recheck_warnings.append(
+                    f"Embedder pool still not cleared: {list(state.embedders.keys())}"
+                )
+            if state.index_manager is not None:
+                recheck_warnings.append("state.index_manager still not None")
+            if state.searcher is not None:
+                recheck_warnings.append("state.searcher still not None")
+
+            if recheck_warnings:
+                logger.warning(
+                    f"[FULL_INDEX] Re-verification still shows issues: {recheck_warnings}. "
+                    "Proceeding with reindex anyway."
+                )
+            else:
+                logger.info(
+                    "[FULL_INDEX] Secondary cleanup successful - verification passed"
+                )
+        else:
+            logger.info(
+                "[FULL_INDEX] Resource verification passed — all resources released"
+            )
+
+        # Step 3: Refresh embedder (required since cleanup cleared it)
+        from mcp_server.model_pool_manager import get_embedder
+
+        self.embedder = get_embedder(model_key)  # Fresh instance with correct model
+        logger.info(
+            f"[FULL_INDEX] Fresh embedder acquired for reindex (model_key={model_key})"
+        )
+
+        # Step 4: Refresh indexer/searcher (required since cleanup shut it down)
+        # Only refresh if the indexer was actually shut down (has _is_shutdown flag set to True)
+        if hasattr(self.indexer, "_is_shutdown") and self.indexer._is_shutdown:
+            from mcp_server.search_factory import get_searcher
+
+            self.indexer = get_searcher(project_path)
+            logger.info("[FULL_INDEX] Fresh indexer/searcher acquired for reindex")
+        else:
+            logger.debug(
+                "[FULL_INDEX] Indexer not shut down or doesn't need refresh (test mock)"
+            )
+
     def _full_index(
         self, project_path: str, project_name: str, start_time: float
     ) -> IncrementalIndexResult:
@@ -391,6 +556,8 @@ class IncrementalIndexer:
             IncrementalIndexResult
         """
         try:
+            # === MANDATORY: Release resources before full reindex ===
+            self._release_and_verify_resources(project_path)
             # Defense in depth: Load filters from snapshot before deleting it
             # This handles cases where filters weren't passed during IncrementalIndexer creation
             if self.include_dirs is None or self.exclude_dirs is None:
@@ -566,9 +733,12 @@ class IncrementalIndexer:
 
                     file_summaries = generate_file_summaries(all_chunks)
                     if file_summaries:
-                        all_chunks.extend(file_summaries)
                         logger.info(
                             f"[FILE_SUMMARIES] Generated {len(file_summaries)} module summary chunks"
+                        )
+                        all_chunks.extend(file_summaries)
+                        logger.info(
+                            f"[FILE_SUMMARIES] Appended {len(file_summaries)} module summaries to chunk list"
                         )
                 except Exception as e:
                     logger.warning(f"[FILE_SUMMARIES] Failed: {e}")

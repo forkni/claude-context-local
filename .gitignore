@@ -184,10 +184,11 @@ venv.bak/
 # mkdocs documentation
 /site
 
-# mypy
+# Type checker caches
 .mypy_cache/
 .dmypy.json
 dmypy.json
+# pyrefly (no known cache directory, but keep section for future)
 
 # Pyre type checker
 .pyre/

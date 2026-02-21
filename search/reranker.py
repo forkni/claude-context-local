@@ -256,8 +256,8 @@ class RRFReranker:
         self,
         results_lists: list[list[SearchResult]],
         ground_truth: list[str] | None = None,
-        k_values: list[int] = None,
-        weight_combinations: list[list[float]] = None,
+        k_values: list[int] | None = None,
+        weight_combinations: list[list[float]] | None = None,
     ) -> dict[str, Any]:
         """
         Tune RRF parameters for optimal performance.

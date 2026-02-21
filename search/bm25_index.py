@@ -13,8 +13,11 @@ from search.filters import normalize_path
 
 try:
     from rank_bm25 import BM25Okapi
-except ImportError:
-    BM25Okapi = None
+except ImportError as e:
+    raise ImportError(
+        "rank_bm25 package is required for BM25 search. "
+        "Install with: pip install rank_bm25"
+    ) from e
 
 try:
     import nltk
@@ -208,11 +211,6 @@ class BM25Index:
         Raises:
             ImportError: If rank-bm25 is not installed.
         """
-        if BM25Okapi is None:
-            raise ImportError(
-                "rank-bm25 not found. Install with: pip install rank-bm25"
-            )
-
         if nltk is None:
             self._logger.warning(
                 "NLTK not found. Using basic tokenization. "

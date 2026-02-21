@@ -168,25 +168,35 @@ def _route_query_to_model(
         from search.config import get_search_config
 
         config = get_search_config()
-        default_model = config.routing.default_model  # "bge_m3"
+        default_model = config.routing.default_model
 
-        # Try default model first
-        logger.info(f"Trying configured default model: {default_model}")
-        project_dir = get_project_storage_dir(current_project, model_key=default_model)
-        code_index_file = project_dir / "index" / "code.index"
-        if code_index_file.exists():
-            logger.info(f"Using configured default model: {default_model}")
-            return default_model, {
-                "model_selected": default_model,
-                "confidence": 0.0,
-                "reason": f"Fallback to configured default ({default_model}), routed '{decision.model_key}' not indexed",
-                "routed_model": decision.model_key,
-            }
-
-        # Then scan remaining models (excluding default since we already checked it)
+        # Validate default_model against active pool before trying it
         from mcp_server.model_pool_manager import get_model_pool_manager
 
-        pool_config = get_model_pool_manager()._get_pool_config()
+        pool_config = get_model_pool_manager().get_pool_config()
+
+        if default_model in pool_config:
+            # Try default model first
+            logger.info(f"Trying configured default model: {default_model}")
+            project_dir = get_project_storage_dir(
+                current_project, model_key=default_model
+            )
+            code_index_file = project_dir / "index" / "code.index"
+            if code_index_file.exists():
+                logger.info(f"Using configured default model: {default_model}")
+                return default_model, {
+                    "model_selected": default_model,
+                    "confidence": 0.0,
+                    "reason": f"Fallback to configured default ({default_model}), routed '{decision.model_key}' not indexed",
+                    "routed_model": decision.model_key,
+                }
+        else:
+            logger.info(
+                f"Configured default '{default_model}' not in active pool "
+                f"{list(pool_config.keys())}, scanning pool models"
+            )
+
+        # Then scan remaining models (excluding default since we already checked it)
         for model_key_candidate in pool_config:
             if model_key_candidate == default_model:
                 continue  # Already checked above
@@ -268,6 +278,33 @@ def _check_auto_reindex(
                 f"falling back to routing selection: {selected_model_key}"
             )
 
+    # Phase 1: Lightweight freshness check (no HybridSearcher/embedder needed)
+    from merkle.change_detector import ChangeDetector
+    from merkle.snapshot_manager import SnapshotManager
+
+    snapshot_mgr = SnapshotManager()
+    change_detector = ChangeDetector(snapshot_mgr, include_dirs, exclude_dirs)
+
+    # Check if snapshot exists and is fresh
+    if snapshot_mgr.has_snapshot(project_path):
+        age = snapshot_mgr.get_snapshot_age(project_path)
+        # Index is fresh by age — do quick change detection
+        if (
+            age is not None
+            and age <= max_age_minutes * 60
+            and not change_detector.quick_check(project_path)
+        ):
+            logger.debug(
+                f"[AUTO_REINDEX] Index for {project_path} is fresh (age: {age:.1f}s, "
+                f"max: {max_age_minutes * 60}s), skipping reindex"
+            )
+            return False, model_key_for_embedder
+
+    # Phase 2: Index is stale — create full machinery and reindex
+    logger.debug(
+        "[AUTO_REINDEX] Index is stale or missing, proceeding with full reindex check"
+    )
+
     # Validate dimension compatibility BEFORE creating searcher
     from search.dimension_validator import validate_embedder_index_compatibility
 
@@ -284,11 +321,14 @@ def _check_auto_reindex(
     config = get_config()
     if config.search_mode.enable_hybrid:
         storage_dir = project_storage / "index"
+        # Extract project_id from storage directory name (same pattern as search_factory.py:175)
+        project_id = project_storage.name.rsplit("_", 1)[0]  # Remove dimension suffix
         indexer = HybridSearcher(
             storage_dir=str(storage_dir),
             embedder=embedder,
             bm25_weight=config.search_mode.bm25_weight,
             dense_weight=config.search_mode.dense_weight,
+            project_id=project_id,
         )
     else:
         indexer = get_index_manager(project_path, model_key=selected_model_key)
