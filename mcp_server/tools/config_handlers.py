@@ -276,6 +276,10 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
             - split_size_method: Size method for splitting ("lines" or "characters")
             - max_split_chars: Maximum characters per split chunk (1000-10000)
             - enable_file_summaries: Enable/disable file-level module summaries (A2 feature)
+            - sizing_mode: Chunk sizing algorithm ("fixed" or "adaptive")
+            - adaptive_multiplier_max: T_max multiplier for low-complexity functions (1.0-2.0)
+            - adaptive_multiplier_min: T_min multiplier for high-complexity functions (0.1-1.0)
+            - max_complexity_cap: Cyclomatic complexity ceiling for Cv normalization (5-100)
 
     Returns:
         Dict with success status and updated config
@@ -297,6 +301,10 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
     max_split_chars = arguments.get("max_split_chars")
     enable_file_summaries = arguments.get("enable_file_summaries")
     enable_community_summaries = arguments.get("enable_community_summaries")
+    sizing_mode = arguments.get("sizing_mode")
+    adaptive_multiplier_max = arguments.get("adaptive_multiplier_max")
+    adaptive_multiplier_min = arguments.get("adaptive_multiplier_min")
+    max_complexity_cap = arguments.get("max_complexity_cap")
 
     if enable_community_detection is not None:
         config.chunking.enable_community_detection = enable_community_detection
@@ -336,6 +344,34 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
         config.chunking.enable_file_summaries = enable_file_summaries
     if enable_community_summaries is not None:
         config.chunking.enable_community_summaries = enable_community_summaries
+    if sizing_mode is not None:
+        if sizing_mode in ["fixed", "adaptive"]:
+            config.chunking.sizing_mode = sizing_mode
+        else:
+            return {
+                "error": f"Invalid sizing_mode: {sizing_mode}. Must be 'fixed' or 'adaptive'"
+            }
+    if adaptive_multiplier_max is not None:
+        if 1.0 <= adaptive_multiplier_max <= 2.0:
+            config.chunking.adaptive_multiplier_max = adaptive_multiplier_max
+        else:
+            return {
+                "error": f"Invalid adaptive_multiplier_max: {adaptive_multiplier_max}. Must be between 1.0 and 2.0"
+            }
+    if adaptive_multiplier_min is not None:
+        if 0.1 <= adaptive_multiplier_min <= 1.0:
+            config.chunking.adaptive_multiplier_min = adaptive_multiplier_min
+        else:
+            return {
+                "error": f"Invalid adaptive_multiplier_min: {adaptive_multiplier_min}. Must be between 0.1 and 1.0"
+            }
+    if max_complexity_cap is not None:
+        if 5 <= max_complexity_cap <= 100:
+            config.chunking.max_complexity_cap = max_complexity_cap
+        else:
+            return {
+                "error": f"Invalid max_complexity_cap: {max_complexity_cap}. Must be between 5 and 100"
+            }
 
     config_manager.save_config(config)
 
@@ -352,6 +388,10 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
             "max_split_chars": config.chunking.max_split_chars,
             "enable_file_summaries": config.chunking.enable_file_summaries,
             "enable_community_summaries": config.chunking.enable_community_summaries,
+            "sizing_mode": config.chunking.sizing_mode,
+            "adaptive_multiplier_max": config.chunking.adaptive_multiplier_max,
+            "adaptive_multiplier_min": config.chunking.adaptive_multiplier_min,
+            "max_complexity_cap": config.chunking.max_complexity_cap,
         },
         "system_message": "Chunking configuration updated. Re-index project to apply changes.",
     }

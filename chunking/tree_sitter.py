@@ -216,8 +216,11 @@ class TreeSitterChunker:
         Attributes:
             chunkers: Dictionary mapping file suffixes to initialized LanguageChunker
                 instances. Lazily populated as files are processed.
+            repo_profile: Optional RepoProfile for adaptive chunk sizing.
+                Set by the indexer before chunking begins (full index only).
         """
         self.chunkers: dict[str, LanguageChunker] = {}
+        self.repo_profile: object | None = None  # chunking.repo_profiler.RepoProfile
 
     def get_chunker(self, file_path: str) -> LanguageChunker | None:
         """Get the appropriate chunker for a file.
@@ -315,7 +318,9 @@ class TreeSitterChunker:
         try:
             # Get config for merge settings
             config = self._get_chunking_config()
-            return chunker.chunk_code(content, config=config)
+            return chunker.chunk_code(
+                content, config=config, repo_profile=self.repo_profile
+            )
         except Exception as e:
             logger.warning(f"Tree-sitter parsing failed for {file_path}: {e}")
             return []

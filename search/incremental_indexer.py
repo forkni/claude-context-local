@@ -76,6 +76,7 @@ class IncrementalIndexer:
         snapshot_manager: SnapshotManager | None = None,
         include_dirs: list | None = None,
         exclude_dirs: list | None = None,
+        precomputed_repo_profile: object | None = None,
     ):
         """Initialize incremental indexer.
 
@@ -86,6 +87,8 @@ class IncrementalIndexer:
             snapshot_manager: Snapshot manager instance
             include_dirs: Optional list of directories to include
             exclude_dirs: Optional list of directories to exclude
+            precomputed_repo_profile: Optional pre-computed RepoProfile to skip
+                profiling (used in multi-model indexing to avoid redundant AST scans)
         """
         if indexer is None:
             # Create indexer with temporary storage directory for testing
@@ -126,6 +129,10 @@ class IncrementalIndexer:
             max_workers=self.max_chunking_workers,
         )
         self._bm25_sync = BM25SyncManager(indexer=self.indexer)
+        self.precomputed_repo_profile = precomputed_repo_profile
+        self.repo_profile: object | None = (
+            None  # Set after full index for caller capture
+        )
 
     def _get_symbol_cache(self) -> Optional["SymbolHashCache"]:
         """Get symbol cache, handling both CodeIndexManager and HybridSearcher.
@@ -273,6 +280,33 @@ class IncrementalIndexer:
 
             # Process changes
             chunks_removed = self._remove_old_chunks(changes, project_name)
+
+            # Load cached repo profile for adaptive chunk sizing (set by previous full index)
+            _incr_config = get_search_config()
+            if _incr_config.chunking.sizing_mode == "adaptive":
+                _cached_meta = self.snapshot_manager.load_metadata(project_path)
+                if isinstance(_cached_meta, dict) and "repo_profile" in _cached_meta:
+                    from chunking.repo_profiler import RepoProfile
+
+                    _rp = _cached_meta["repo_profile"]
+                    _cached_profile = RepoProfile(
+                        function_count=_rp.get("function_count", 0),
+                        p25_chars=_rp.get("p25_chars", 0),
+                        p50_chars=_rp.get("p50_chars", 0),
+                        p75_chars=_rp.get("p75_chars", 0),
+                        p90_chars=_rp.get("p90_chars", 0),
+                        mean_chars=_rp.get("mean_chars", 0),
+                        max_complexity=_rp.get("max_complexity", 0),
+                    )
+                    self._parallel_chunker.chunker.tree_sitter_chunker.repo_profile = (
+                        _cached_profile
+                    )
+                    logger.info(
+                        f"[REPO_PROFILE] Loaded cached profile for incremental update: "
+                        f"P75={_cached_profile.p75_chars} chars, "
+                        f"max_cc={_cached_profile.max_complexity}"
+                    )
+
             chunks_added = self._add_new_chunks(changes, project_path, project_name)
 
             # Validate index consistency after operations
@@ -603,6 +637,39 @@ class IncrementalIndexer:
             for sf in supported_files:
                 logger.info(f"  Supported: {sf}")
 
+            # ========== Repository Profiling (Adaptive Sizing) ==========
+            repo_profile = None
+            _profile_config = get_search_config()
+            if _profile_config.chunking.sizing_mode == "adaptive" and supported_files:
+                if self.precomputed_repo_profile is not None:
+                    # Reuse profile from an earlier model pass (multi-model indexing)
+                    repo_profile = self.precomputed_repo_profile
+                    logger.info(
+                        f"[REPO_PROFILE] Reusing precomputed profile: "
+                        f"{repo_profile.function_count} functions, "  # type: ignore[attr-defined]
+                        f"P75={repo_profile.p75_chars} chars"  # type: ignore[attr-defined]
+                    )
+                else:
+                    from chunking.repo_profiler import profile_repository
+
+                    repo_profile = profile_repository(project_path, supported_files)
+                    if repo_profile:
+                        logger.info(
+                            f"[REPO_PROFILE] {repo_profile.function_count} functions analyzed: "
+                            f"P75={repo_profile.p75_chars} chars, "
+                            f"P90={repo_profile.p90_chars} chars, "
+                            f"max_cc={repo_profile.max_complexity}"
+                        )
+                    else:
+                        logger.info(
+                            "[REPO_PROFILE] Too few functions for profiling, using static defaults"
+                        )
+                self._parallel_chunker.chunker.tree_sitter_chunker.repo_profile = (
+                    repo_profile
+                )
+            self.repo_profile = repo_profile  # Expose for multi-model capture
+            # ========== END Repository Profiling ==========
+
             # Collect all chunks first, then embed in a single pass for efficiency
             # Use parallel chunking for improved performance
             logger.info(
@@ -789,6 +856,7 @@ class IncrementalIndexer:
                 supported_files=supported_files,
                 total_chunks=chunks_added,
                 is_full=True,
+                repo_profile=repo_profile,
             )
             self.snapshot_manager.save_snapshot(dag, metadata)
 
@@ -983,6 +1051,7 @@ class IncrementalIndexer:
         supported_files: list,
         total_chunks: int,
         is_full: bool = False,
+        repo_profile: object | None = None,
         **changes,
     ) -> dict[str, Any]:
         """Build metadata dictionary for snapshot storage.
@@ -993,6 +1062,7 @@ class IncrementalIndexer:
             supported_files: List of supported files
             total_chunks: Total number of indexed chunks
             is_full: Whether this is a full index (vs incremental)
+            repo_profile: Optional RepoProfile for adaptive sizing (cached for incremental reuse)
             **changes: Optional file change counts (files_added, files_removed, files_modified, etc.)
 
         Returns:
@@ -1013,6 +1083,18 @@ class IncrementalIndexer:
         metadata.setdefault("files_added", 0)
         metadata.setdefault("files_removed", 0)
         metadata.setdefault("files_modified", 0)
+
+        # Cache repo profile for incremental indexing reuse
+        if repo_profile is not None:
+            metadata["repo_profile"] = {
+                "function_count": repo_profile.function_count,
+                "p25_chars": repo_profile.p25_chars,
+                "p50_chars": repo_profile.p50_chars,
+                "p75_chars": repo_profile.p75_chars,
+                "p90_chars": repo_profile.p90_chars,
+                "mean_chars": repo_profile.mean_chars,
+                "max_complexity": repo_profile.max_complexity,
+            }
 
         return metadata
 

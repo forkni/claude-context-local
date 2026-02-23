@@ -671,6 +671,10 @@ Args:
     max_split_chars: Maximum characters per split chunk (1000-10000, default: 3000)
     enable_file_summaries: Enable/disable file-level module summary chunks (A2 feature, default: True)
     enable_community_summaries: Enable/disable community-level summary chunks (B1 feature, default: True)
+    sizing_mode: Chunk sizing algorithm - "fixed" (static thresholds) or "adaptive" (repo-profiled P75 baseline + complexity modulation) (default: "fixed")
+    adaptive_multiplier_max: T_max multiplier applied to P75 baseline for low-complexity functions (1.0-2.0, default: 1.3)
+    adaptive_multiplier_min: T_min multiplier applied to P75 baseline for high-complexity functions (0.1-1.0, default: 0.5)
+    max_complexity_cap: Cyclomatic complexity ceiling for Cv normalization — functions above this are capped (5-100, default: 30)
 
 Note: min_chunk_tokens (50) and max_merged_tokens (1000) are optimal defaults and not exposed for configuration.""",
         "input_schema": {
@@ -723,6 +727,29 @@ Note: min_chunk_tokens (50) and max_merged_tokens (1000) are optimal defaults an
                 "enable_community_summaries": {
                     "type": "boolean",
                     "description": "Enable/disable community-level summary chunks (B1 feature)",
+                },
+                "sizing_mode": {
+                    "type": "string",
+                    "enum": ["fixed", "adaptive"],
+                    "description": "Chunk sizing algorithm: 'fixed' uses static thresholds, 'adaptive' profiles the repo (P75 baseline) and modulates per-function complexity",
+                },
+                "adaptive_multiplier_max": {
+                    "type": "number",
+                    "description": "T_max multiplier: P75_baseline × this gives the chunk size for low-complexity functions",
+                    "minimum": 1.0,
+                    "maximum": 2.0,
+                },
+                "adaptive_multiplier_min": {
+                    "type": "number",
+                    "description": "T_min multiplier: P75_baseline × this gives the chunk size for high-complexity functions",
+                    "minimum": 0.1,
+                    "maximum": 1.0,
+                },
+                "max_complexity_cap": {
+                    "type": "integer",
+                    "description": "Cyclomatic complexity ceiling for Cv normalization — functions above this are treated as maximally complex",
+                    "minimum": 5,
+                    "maximum": 100,
                 },
                 "output_format": {
                     "type": "string",

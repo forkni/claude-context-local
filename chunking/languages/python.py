@@ -55,6 +55,22 @@ class PythonChunker(LanguageChunker):
             "match_statement",  # match/case (Python 3.10+)
         }
 
+    def get_node_complexity(self, node: Any) -> int:
+        """Get cyclomatic complexity for a Python function node.
+
+        Overrides the base class default (returns 1) by calling the existing
+        _calculate_complexity() implementation.
+
+        Args:
+            node: Tree-sitter node (function_definition or decorated_definition)
+
+        Returns:
+            Cyclomatic complexity (minimum 1)
+        """
+        if node.type in ("function_definition", "decorated_definition"):
+            return self._calculate_complexity(node)
+        return 1
+
     def _extract_signature(self, node: Any, source_bytes: bytes) -> str:
         """Extract Python function signature including decorators.
 

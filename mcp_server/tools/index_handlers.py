@@ -298,6 +298,9 @@ def _index_with_all_models(
     results = []
     original_config = get_config()
     original_model = original_config.embedding.model_name
+    cached_repo_profile = (
+        None  # Captured after first model; reused by subsequent models
+    )
 
     try:
         # Use pool from manager (respects config file setting)
@@ -318,17 +321,29 @@ def _index_with_all_models(
             # Switch to this model temporarily
             config_mgr = SearchConfigManager()
             config = config_mgr.load_config()
-            config.embedding.model_name = model_name
+            new_model_name = model_name
+            new_dimension = config.embedding.dimension
 
             # Update dimension from registry
             if model_name in MODEL_REGISTRY:
                 model_cfg = MODEL_REGISTRY[model_name]
                 # Use truncate_dim if MRL is enabled, otherwise use native dimension
-                config.embedding.dimension = (
-                    model_cfg.get("truncate_dim") or model_cfg["dimension"]
-                )
+                new_dimension = model_cfg.get("truncate_dim") or model_cfg["dimension"]
 
-            config_mgr.save_config(config)
+            # Only write to disk if something actually changed
+            if (
+                config.embedding.model_name != new_model_name
+                or config.embedding.dimension != new_dimension
+            ):
+                config.embedding.model_name = new_model_name
+                config.embedding.dimension = new_dimension
+                config_mgr.save_config(config)
+            else:
+                logger.info(
+                    f"Config already set to {new_model_name} ({new_dimension}d), skipping save"
+                )
+                config.embedding.model_name = new_model_name
+                config.embedding.dimension = new_dimension
 
             # Invalidate global config cache to force reload from disk
             from search import config as config_module
@@ -414,6 +429,7 @@ def _index_with_all_models(
                 chunker=chunker,
                 include_dirs=include_dirs,
                 exclude_dirs=exclude_dirs,
+                precomputed_repo_profile=cached_repo_profile,
             )
 
             start_time = datetime.now()
@@ -424,6 +440,10 @@ def _index_with_all_models(
                     str(directory_path), force_full=True
                 )
             elapsed = (datetime.now() - start_time).total_seconds()
+
+            # Capture repo profile after first model pass to reuse for subsequent models
+            if cached_repo_profile is None:
+                cached_repo_profile = incremental_indexer.repo_profile
 
             results.append(
                 {

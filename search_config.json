@@ -82,7 +82,11 @@
     "split_size_method": "characters",
     "max_split_chars": 3000,
     "enable_file_summaries": true,
-    "enable_community_summaries": true
+    "enable_community_summaries": true,
+    "sizing_mode": "adaptive",
+    "adaptive_multiplier_max": 1.3,
+    "adaptive_multiplier_min": 0.5,
+    "max_complexity_cap": 30
   },
   "ego_graph": {
     "enabled": true,

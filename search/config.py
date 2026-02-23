@@ -325,6 +325,14 @@ class ChunkingConfig:
     # Community-level summaries (B1: thematic grouping via Louvain communities)
     enable_community_summaries: bool = True  # Generate community-summary chunks
 
+    # Adaptive chunk sizing (research: P75 baseline + complexity modulation)
+    sizing_mode: str = "fixed"  # "fixed" (static) or "adaptive" (repo-profiled)
+    adaptive_multiplier_max: float = 1.3  # T_max = P75_baseline × this (low-complexity)
+    adaptive_multiplier_min: float = (
+        0.5  # T_min = P75_baseline × this (high-complexity)
+    )
+    max_complexity_cap: int = 30  # Cv normalization ceiling (CC >= cap → Cv = 1.0)
+
 
 @dataclass
 class EgoGraphConfig:
@@ -527,6 +535,10 @@ class SearchConfig:
                 "max_split_chars": self.chunking.max_split_chars,
                 "enable_file_summaries": self.chunking.enable_file_summaries,
                 "enable_community_summaries": self.chunking.enable_community_summaries,
+                "sizing_mode": self.chunking.sizing_mode,
+                "adaptive_multiplier_max": self.chunking.adaptive_multiplier_max,
+                "adaptive_multiplier_min": self.chunking.adaptive_multiplier_min,
+                "max_complexity_cap": self.chunking.max_complexity_cap,
             },
             "ego_graph": {
                 "enabled": self.ego_graph.enabled,
@@ -711,6 +723,14 @@ class SearchConfig:
                 enable_community_summaries=chunking_data.get(
                     "enable_community_summaries", True
                 ),
+                sizing_mode=chunking_data.get("sizing_mode", "fixed"),
+                adaptive_multiplier_max=chunking_data.get(
+                    "adaptive_multiplier_max", 1.3
+                ),
+                adaptive_multiplier_min=chunking_data.get(
+                    "adaptive_multiplier_min", 0.5
+                ),
+                max_complexity_cap=chunking_data.get("max_complexity_cap", 30),
             )
 
             ego_graph = EgoGraphConfig(

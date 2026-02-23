@@ -19,6 +19,46 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def compute_adaptive_threshold(
+    complexity: int,
+    base_threshold: int,
+    max_complexity: int = 30,
+    multiplier_max: float = 1.3,
+    multiplier_min: float = 0.5,
+    hard_cap: int = 8000,
+) -> int:
+    """Compute complexity-modulated chunk size threshold.
+
+    Implements the research formula for adaptive chunk sizing:
+      Cv = min(complexity / max_complexity, 1.0)   # normalize: 0=linear, 1=max
+      T(Cv) = T_max - (T_max - T_min) × Cv         # high CC → smaller chunks
+
+    Args:
+        complexity: Cyclomatic complexity of the function (raw integer, min 1)
+        base_threshold: Project baseline (P75 of function sizes) in non-whitespace chars
+        max_complexity: Normalization ceiling — CC >= this → Cv = 1.0 (default 30)
+        multiplier_max: T_max = base_threshold × this (for low-complexity code, default 1.3)
+        multiplier_min: T_min = base_threshold × this (for high-complexity code, default 0.5)
+        hard_cap: Absolute ceiling in non-whitespace chars (~2500-token context cliff, default 8000)
+
+    Returns:
+        Effective max_chars threshold, always in range [T_min, hard_cap]
+
+    Examples:
+        >>> compute_adaptive_threshold(1, 3000)   # linear code: ~3900 chars
+        3858
+        >>> compute_adaptive_threshold(15, 3000)  # moderate: ~2700 chars
+        2700
+        >>> compute_adaptive_threshold(30, 3000)  # complex: 1500 chars
+        1500
+    """
+    cv = min(complexity / max(max_complexity, 1), 1.0)
+    t_max = base_threshold * multiplier_max
+    t_min = base_threshold * multiplier_min
+    effective = t_max - (t_max - t_min) * cv
+    return min(int(effective), hard_cap)
+
+
 def estimate_tokens(content: str, method: str = "whitespace") -> int:
     """Estimate token count for content.
 
@@ -156,6 +196,21 @@ class LanguageChunker(ABC):
             Metadata dictionary
         """
         pass
+
+    def get_node_complexity(self, node: Any) -> int:
+        """Get cyclomatic complexity for a node.
+
+        Default implementation returns 1 (no complexity info — treated as linear code).
+        Override in language-specific chunkers that support complexity analysis.
+
+        Args:
+            node: Tree-sitter node (function_definition or similar)
+
+        Returns:
+            Cyclomatic complexity (minimum 1). Used by adaptive sizing to modulate
+            chunk size thresholds — higher CC → smaller chunks.
+        """
+        return 1
 
     def should_chunk_node(self, node: Any) -> bool:
         """Check if a node should be chunked.
@@ -819,6 +874,7 @@ class LanguageChunker(ABC):
         self,
         source_code: str,
         config: Optional["ChunkingConfig"] = None,
+        repo_profile: Any | None = None,
     ) -> list[TreeSitterChunk]:
         """Chunk source code into semantic units.
 
@@ -826,6 +882,10 @@ class LanguageChunker(ABC):
             source_code: Source code string
             config: Optional ChunkingConfig for merge settings.
                     If None, uses ServiceLocator to get global config.
+            repo_profile: Optional RepoProfile for adaptive chunk sizing.
+                    When provided and config.sizing_mode == "adaptive", chunk size
+                    thresholds are adjusted per-function based on P75 baseline and
+                    cyclomatic complexity.
 
         Returns:
             List of TreeSitterChunk objects (may include merged chunks)
@@ -851,13 +911,36 @@ class LanguageChunker(ABC):
                     and node_lines > config.max_chunk_lines
                     and node.type in ("function_definition", "decorated_definition")
                 ):
+                    # Determine effective split threshold:
+                    # - "fixed" mode: use static max_split_chars from config
+                    # - "adaptive" mode: modulate based on P75 baseline + complexity
+                    effective_max_chars = config.max_split_chars
+                    if (
+                        config.sizing_mode == "adaptive"
+                        and repo_profile is not None
+                        and repo_profile.p75_chars > 0
+                    ):
+                        complexity = self.get_node_complexity(node)
+                        effective_max_chars = compute_adaptive_threshold(
+                            complexity=complexity,
+                            base_threshold=repo_profile.p75_chars,
+                            max_complexity=repo_profile.max_complexity
+                            or config.max_complexity_cap,
+                            multiplier_max=config.adaptive_multiplier_max,
+                            multiplier_min=config.adaptive_multiplier_min,
+                        )
+                        logger.debug(
+                            f"[ADAPTIVE] node CC={complexity}, P75={repo_profile.p75_chars}, "
+                            f"threshold={effective_max_chars} (static={config.max_split_chars})"
+                        )
+
                     split_chunks = self._split_large_node(
                         node,
                         source_bytes,
                         parent_info,
                         max_lines=config.max_chunk_lines,
                         split_size_method=config.split_size_method,
-                        max_chars=config.max_split_chars,
+                        max_chars=effective_max_chars,
                     )
                     if split_chunks:
                         chunks.extend(split_chunks)

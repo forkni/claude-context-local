@@ -2117,7 +2117,7 @@ echo   - 20-30%% fewer chunks (merged getters/setters)
 echo   - Denser embeddings with more context per vector
 echo.
 echo Current Settings:
-".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Community Detection:', 'Enabled' if cfg.chunking.enable_community_detection else 'Disabled'); print('  Community Merge (full re-index only):', 'Enabled' if cfg.chunking.enable_community_merge else 'Disabled'); print('  Community Resolution:', cfg.chunking.community_resolution); print('  Token Estimation:', cfg.chunking.token_estimation); print('  Large Node Splitting:', 'Enabled' if cfg.chunking.enable_large_node_splitting else 'Disabled'); print('  Max Chunk Lines:', cfg.chunking.max_chunk_lines); print('  Split Size Method:', cfg.chunking.split_size_method); print('  Max Split Chars:', cfg.chunking.max_split_chars)" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Community Detection:', 'Enabled' if cfg.chunking.enable_community_detection else 'Disabled'); print('  Community Merge (full re-index only):', 'Enabled' if cfg.chunking.enable_community_merge else 'Disabled'); print('  Community Resolution:', cfg.chunking.community_resolution); print('  Token Estimation:', cfg.chunking.token_estimation); print('  Large Node Splitting:', 'Enabled' if cfg.chunking.enable_large_node_splitting else 'Disabled'); print('  Max Chunk Lines:', cfg.chunking.max_chunk_lines); print('  Split Size Method:', cfg.chunking.split_size_method); print('  Max Split Chars:', cfg.chunking.max_split_chars); print('  Sizing Mode:', cfg.chunking.sizing_mode); print('  Adaptive Max Multiplier:', cfg.chunking.adaptive_multiplier_max); print('  Adaptive Min Multiplier:', cfg.chunking.adaptive_multiplier_min); print('  Max Complexity Cap:', cfg.chunking.max_complexity_cap)" 2>nul
 echo.
 echo   --- Community Detection ^& Merging ---
 echo   1. Enable Community Detection           - Detect code communities for better chunking
@@ -2136,10 +2136,16 @@ echo.
 echo   --- Token Estimation ---
 echo   B. Set Token Estimation                 - whitespace (fast) or tiktoken (accurate)
 echo.
+echo   --- Adaptive Sizing ---
+echo   C. Set Sizing Mode                      - fixed (static) or adaptive (repo-profiled P75 + complexity)
+echo   D. Set Adaptive Max Multiplier          - T_max: P75 x this for low-complexity (1.0-2.0, default: 1.3)
+echo   E. Set Adaptive Min Multiplier          - T_min: P75 x this for high-complexity (0.1-1.0, default: 0.5)
+echo   F. Set Max Complexity Cap               - CC ceiling for normalization (5-100, default: 30)
+echo.
 echo   0. Back to Search Configuration
 echo.
 set "chunk_choice="
-set /p chunk_choice="Select option (0-9, A-B): "
+set /p chunk_choice="Select option (0-9, A-F): "
 
 if not defined chunk_choice goto search_config_menu
 if "!chunk_choice!"=="" goto search_config_menu
@@ -2342,8 +2348,96 @@ if /i "!chunk_choice!"=="B" (
     goto chunking_menu_end
 )
 
-if not "!chunk_choice!"=="1" if not "!chunk_choice!"=="2" if not "!chunk_choice!"=="3" if not "!chunk_choice!"=="4" if not "!chunk_choice!"=="5" if not "!chunk_choice!"=="6" if not "!chunk_choice!"=="7" if not "!chunk_choice!"=="8" if not "!chunk_choice!"=="9" if /i not "!chunk_choice!"=="A" if /i not "!chunk_choice!"=="B" (
-    echo [ERROR] Invalid choice. Please select 0-9, A-B.
+REM --- Adaptive Sizing Handlers ---
+if /i "!chunk_choice!"=="C" (
+    echo.
+    echo Select sizing mode:
+    echo   1. fixed    - Static thresholds ^(current: max_split_chars^)
+    echo   2. adaptive - Repo-profiled P75 baseline + complexity modulation
+    echo.
+    set "sizing_mode_choice="
+    set /p sizing_mode_choice="Enter choice (1-2): "
+    if "!sizing_mode_choice!"=="1" (
+        echo [INFO] Setting sizing mode to fixed...
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.sizing_mode = 'fixed'; mgr.save_config(cfg); print('[OK] Sizing mode set to fixed')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Failed to save configuration
+        ) else (
+            echo [INFO] Static chunk size thresholds will be used
+            echo [INFO] Re-index project to apply changes
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+    if "!sizing_mode_choice!"=="2" (
+        echo [INFO] Setting sizing mode to adaptive...
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.sizing_mode = 'adaptive'; mgr.save_config(cfg); print('[OK] Sizing mode set to adaptive')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Failed to save configuration
+        ) else (
+            echo [INFO] Repo profiling ^(P75 + complexity^) will be used for chunk sizing
+            echo [INFO] Re-index project to apply changes
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+    goto chunking_menu_end
+)
+if /i "!chunk_choice!"=="D" (
+    echo.
+    echo Enter adaptive max multiplier (1.0-2.0, default: 1.3^):
+    echo   Controls chunk size for LOW-complexity functions: T_max = P75_baseline x this
+    echo.
+    set "adapt_max="
+    set /p adapt_max="Enter value: "
+    if defined adapt_max if not "!adapt_max!"=="" (
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); val = float('!adapt_max!'); assert 1.0 <= val <= 2.0, 'Out of range'; cfg.chunking.adaptive_multiplier_max = val; mgr.save_config(cfg); print('[OK] Adaptive max multiplier updated to !adapt_max!')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Invalid value. Must be between 1.0 and 2.0
+        ) else (
+            echo [INFO] Re-index project to apply changes
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+    goto chunking_menu_end
+)
+if /i "!chunk_choice!"=="E" (
+    echo.
+    echo Enter adaptive min multiplier (0.1-1.0, default: 0.5^):
+    echo   Controls chunk size for HIGH-complexity functions: T_min = P75_baseline x this
+    echo.
+    set "adapt_min="
+    set /p adapt_min="Enter value: "
+    if defined adapt_min if not "!adapt_min!"=="" (
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); val = float('!adapt_min!'); assert 0.1 <= val <= 1.0, 'Out of range'; cfg.chunking.adaptive_multiplier_min = val; mgr.save_config(cfg); print('[OK] Adaptive min multiplier updated to !adapt_min!')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Invalid value. Must be between 0.1 and 1.0
+        ) else (
+            echo [INFO] Re-index project to apply changes
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+    goto chunking_menu_end
+)
+if /i "!chunk_choice!"=="F" (
+    echo.
+    echo Enter max complexity cap (5-100, default: 30^):
+    echo   Cyclomatic complexity ceiling for Cv normalization
+    echo.
+    set "max_cc="
+    set /p max_cc="Enter value: "
+    if defined max_cc if not "!max_cc!"=="" (
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); val = int('!max_cc!'); assert 5 <= val <= 100, 'Out of range'; cfg.chunking.max_complexity_cap = val; mgr.save_config(cfg); print('[OK] Max complexity cap updated to !max_cc!')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Invalid value. Must be between 5 and 100
+        ) else (
+            echo [INFO] Re-index project to apply changes
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+    goto chunking_menu_end
+)
+
+if not "!chunk_choice!"=="1" if not "!chunk_choice!"=="2" if not "!chunk_choice!"=="3" if not "!chunk_choice!"=="4" if not "!chunk_choice!"=="5" if not "!chunk_choice!"=="6" if not "!chunk_choice!"=="7" if not "!chunk_choice!"=="8" if not "!chunk_choice!"=="9" if /i not "!chunk_choice!"=="A" if /i not "!chunk_choice!"=="B" if /i not "!chunk_choice!"=="C" if /i not "!chunk_choice!"=="D" if /i not "!chunk_choice!"=="E" if /i not "!chunk_choice!"=="F" (
+    echo [ERROR] Invalid choice. Please select 0-9, A-F.
 )
 :chunking_menu_end
 pause
