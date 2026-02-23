@@ -11,7 +11,7 @@ echo ""
 # Find all .sh files in scripts/
 mapfile -t SHELL_FILES < <(find "$PROJECT_ROOT/scripts" -name "*.sh" -type f 2>/dev/null)
 
-if [ ${#SHELL_FILES[@]} -eq 0 ]; then
+if [[ ${#SHELL_FILES[@]} -eq 0 ]]; then
     echo "No shell scripts found in scripts/"
     exit 0
 fi
@@ -21,10 +21,10 @@ echo ""
 
 # Detect shellcheck location (project-local or system)
 SHELLCHECK=""
-if [ -x "$PROJECT_ROOT/tools/bin/shellcheck.exe" ]; then
+if [[[ -x "$PROJECT_ROOT/tools/bin/shellcheck.exe" ]]; then
     SHELLCHECK="$PROJECT_ROOT/tools/bin/shellcheck.exe"
     echo "Using project-local shellcheck: $SHELLCHECK"
-elif [ -x "$PROJECT_ROOT/tools/bin/shellcheck" ]; then
+elif [[[ -x "$PROJECT_ROOT/tools/bin/shellcheck" ]]; then
     SHELLCHECK="$PROJECT_ROOT/tools/bin/shellcheck"
     echo "Using project-local shellcheck: $SHELLCHECK"
 elif command -v shellcheck >/dev/null 2>&1; then
@@ -60,7 +60,7 @@ for file in "${SHELL_FILES[@]}"; do
 done
 
 echo ""
-if [ $EXIT_CODE -eq 0 ]; then
+if [[ $EXIT_CODE -eq 0 ]]; then
     echo "[OK] All shell scripts passed ShellCheck"
 else
     echo "[FAIL] ShellCheck found issues"

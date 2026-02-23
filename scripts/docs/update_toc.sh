@@ -14,7 +14,7 @@ if ! command -v markdown-toc >/dev/null 2>&1; then
     echo "markdown-toc not found. Installing globally..."
     npm install -g markdown-toc
     
-    if [ $? -ne 0 ]; then
+    if [[ $? -ne 0 ]]; then
         echo "ERROR: Failed to install markdown-toc"
         echo "Install manually: npm install -g markdown-toc"
         exit 1
@@ -36,7 +36,7 @@ UPDATED_COUNT=0
 SKIPPED_COUNT=0
 
 for doc in "${DOCS[@]}"; do
-    if [ -f "$doc" ]; then
+    if [[[ -f "$doc" ]]; then
         echo "Processing: $doc"
         
         # markdown-toc -i updates in-place
