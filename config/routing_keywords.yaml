@@ -136,6 +136,19 @@ full_pool:
         - fuse
         - combine
         - binary
+        # Vector search understanding (2026-02-23)
+        # "how does FaissVectorIndex store embeddings" must route to qwen3, not bge_code.
+        # Root: bge_code's domain keywords (faiss, vector, store, index, embedding, embed)
+        # count=6 beat qwen3's intent keywords (how does, how do) count=2 despite the
+        # query being a class-understanding query.
+        # Fix: add matching terms so qwen3 reaches 6 matches × 1.2 = 0.72 vs bge_code 0.60.
+        # "faiss"/"vector"/"vectors" — FAISS is almost always a conceptual understanding query
+        # "index"/"embed" — also match in "faissvectorindex"/"embeddings" for this query type
+        - faiss
+        - vector
+        - vectors
+        - index
+        - embed
 
     bge_code:
       weight: 1.0
