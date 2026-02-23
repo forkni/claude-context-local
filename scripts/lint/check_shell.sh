@@ -31,15 +31,15 @@ elif command -v shellcheck >/dev/null 2>&1; then
     SHELLCHECK="shellcheck"
     echo "Using system shellcheck: $(command -v shellcheck)"
 else
-    echo "WARNING: ShellCheck not installed"
-    echo ""
-    echo "Install instructions:"
-    echo "  Project:  Already in tools/bin/ - check permissions"
-    echo "  Windows:  scoop install shellcheck"
-    echo "  Linux:    apt-get install shellcheck"
-    echo "  macOS:    brew install shellcheck"
-    echo ""
-    echo "Skipping shell check..."
+    echo "WARNING: ShellCheck not installed" >&2
+    echo "" >&2
+    echo "Install instructions:" >&2
+    echo "  Project:  Already in tools/bin/ - check permissions" >&2
+    echo "  Windows:  scoop install shellcheck" >&2
+    echo "  Linux:    apt-get install shellcheck" >&2
+    echo "  macOS:    brew install shellcheck" >&2
+    echo "" >&2
+    echo "Skipping shell check..." >&2
     exit 0
 fi
 

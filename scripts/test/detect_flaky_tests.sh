@@ -26,8 +26,8 @@ fi
 
 # Check if pytest-repeat is installed
 if ! "$PYTHON" -c "import pytest_repeat" 2>/dev/null; then
-    echo "ERROR: pytest-repeat not installed"
-    echo "Install with: pip install pytest-repeat"
+    echo "ERROR: pytest-repeat not installed" >&2
+    echo "Install with: pip install pytest-repeat" >&2
     exit 1
 fi
 
