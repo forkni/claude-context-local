@@ -3,7 +3,7 @@ setlocal EnableDelayedExpansion
 REM Installation Repair Script - Fixes common installation issues
 
 title Claude Context Installation Repair
-cd /d "%~dp0\..\.."
+pushd "%~dp0..\.." || (echo ERROR: Failed to change directory & exit /b 1)
 
 echo ========================================
 echo Claude Context Installation Repair Tool

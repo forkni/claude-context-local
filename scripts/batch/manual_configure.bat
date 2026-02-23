@@ -6,8 +6,7 @@ REM Use this if the PowerShell script fails
 setlocal enabledelayedexpansion
 
 REM Get the project directory (two levels up from this script)
-set "SCRIPT_DIR=%~dp0"
-cd /d "%SCRIPT_DIR%..\.."
+pushd "%~dp0..\.." || (echo ERROR: Failed to change directory & exit /b 1)
 set "PROJECT_DIR=%CD%"
 
 set "PYTHON_EXE=%PROJECT_DIR%\.venv\Scripts\python.exe"
@@ -47,7 +46,7 @@ echo   2. Project-specific (this project only)
 echo.
 set /p SCOPE_CHOICE="Select scope (1 or 2, default is 1): "
 
-if "%SCOPE_CHOICE%"=="" set SCOPE_CHOICE=1
+if "%SCOPE_CHOICE%"=="" set "SCOPE_CHOICE=1"
 if "%SCOPE_CHOICE%"=="2" (
     set "SCOPE_FLAG=--project"
     echo [INFO] Configuring for project-specific scope

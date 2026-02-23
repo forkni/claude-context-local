@@ -27,8 +27,9 @@ echo [INFO] Running HuggingFace verification...
 echo.
 
 ".venv\Scripts\python.exe" scripts\verify_hf_auth.py
+set "EXIT_CODE=%ERRORLEVEL%"
 
-if %ERRORLEVEL% neq 0 (
+if %EXIT_CODE% neq 0 (
     echo.
     echo [INFO] If authentication failed, you can fix it with:
     echo   scripts\powershell\hf_auth.ps1 -Token "your_hf_token"
@@ -36,9 +37,6 @@ if %ERRORLEVEL% neq 0 (
     echo [INFO] Or re-run the installer which includes auth setup:
     echo   install-windows.bat
 )
-
-REM Capture exit code before popd
-set "EXIT_CODE=%ERRORLEVEL%"
 
 echo.
 echo Verification completed.

@@ -1,4 +1,6 @@
 @echo off
+setlocal
+pushd "%~dp0..\.." || (echo ERROR: Failed to change directory & exit /b 1)
 echo =================================================
 echo claude-context-local: PyTorch CUDA Installation Script
 echo Resolves PyTorch+CUDA and Transformers Issues
@@ -96,4 +98,6 @@ echo   1. Test semantic search: start_mcp_server.bat
 echo   2. Index a project: tools/batch_index.py
 echo   3. Enjoy 40-45%% token reduction with semantic search!
 echo =================================================
+popd
+endlocal
 pause

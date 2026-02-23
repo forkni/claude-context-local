@@ -1,10 +1,10 @@
 @echo off
+setlocal EnableDelayedExpansion
 REM Simple MCP Server Start - Minimal output mode
 title Claude Context MCP Server - Simple Mode
 
 REM Get the project directory (go up 2 levels from scripts\batch)
-set "PROJECT_DIR=%~dp0..\..\"
-cd /d "%PROJECT_DIR%"
+pushd "%~dp0..\.." || (echo ERROR: Failed to change directory & exit /b 1)
 
 REM Check prerequisites silently
 if not exist ".venv\Scripts\python.exe" (
@@ -36,4 +36,6 @@ if %SERVER_EXIT_CODE% equ 0 (
     echo Server stopped with error code: %SERVER_EXIT_CODE%
     echo Run start_mcp_debug.bat for detailed error information.
 )
+popd
+endlocal
 pause

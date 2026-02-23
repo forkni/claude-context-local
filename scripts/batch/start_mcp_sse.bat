@@ -1,11 +1,11 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-:: Name:     start_mcp_sse.bat
-:: Purpose:  Start MCP Server with SSE transport on port 8765
-:: Note:     Avoids stdio transport bugs in Claude Code 2.0.22+
-:: Author:   claude-context-local project
-:: Revision: 2025-11-14 - Fixed delayed expansion inheritance issue
+rem Name:     start_mcp_sse.bat
+rem Purpose:  Start MCP Server with SSE transport on port 8765
+rem Note:     Avoids stdio transport bugs in Claude Code 2.0.22+
+rem Author:   claude-context-local project
+rem Revision: 2025-11-14 - Fixed delayed expansion inheritance issue
 
 echo ============================================================
 echo MCP Server SSE Mode
@@ -15,7 +15,7 @@ echo Press Ctrl+C to stop the server
 echo ============================================================
 echo.
 
-cd /d "%~dp0..\.."
+pushd "%~dp0..\.." || (echo ERROR: Failed to change directory & exit /b 1)
 
 REM Set environment variables
 set "PYTHONPATH=%~dp0..\..\"
@@ -55,4 +55,6 @@ if "!EXIT_CODE!"=="0" (
 )
 echo ============================================================
 echo.
+popd
+endlocal
 pause >nul

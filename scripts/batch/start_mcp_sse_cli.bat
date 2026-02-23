@@ -9,7 +9,7 @@ echo Press Ctrl+C to stop the server
 echo ============================================================
 echo.
 
-cd /d "%~dp0..\.."
+pushd "%~dp0..\.." || (echo ERROR: Failed to change directory & exit /b 1)
 
 REM Check if port 8766 is already in use
 netstat -ano | findstr :8766 >nul 2>&1
@@ -17,7 +17,7 @@ if !errorlevel! equ 0 (
     echo [WARNING] Port 8766 is already in use
     echo.
     for /f "tokens=5" %%a in ('netstat -ano ^| findstr :8766') do (
-        set PID=%%a
+        set "PID=%%a"
         goto :found_pid
     )
     :found_pid

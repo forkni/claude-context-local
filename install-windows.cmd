@@ -85,7 +85,7 @@ echo [5] Clear Stale Snapshots/Indexes ^(Repair Tool^)
 echo [6] Verify Installation Status
 echo [7] Exit
 echo.
-set choice=
+set "choice="
 set /p choice="Select option (1-7): "
 
 if "!choice!"=="1" goto auto_install
@@ -138,7 +138,7 @@ echo.
 echo Note: PyTorch 2.6.0 only supports CUDA 11.8 build
 echo       This build is fully compatible with CUDA 12.x systems
 echo.
-set cuda_choice=
+set "cuda_choice="
 set /p cuda_choice="Select option (1-3): "
 
 if "!cuda_choice!"=="1" (
@@ -223,18 +223,18 @@ for /f "skip=1 tokens=*" %%i in ('nvidia-smi --query-gpu=gpu_name --format=csv,n
 REM Fallback: extract from main nvidia-smi output
 if "!GPU_NAME!"=="" (
     for /f "tokens=2,3,4,5,6" %%i in ('nvidia-smi 2^>nul ^| findstr "GeForce\|RTX\|Quadro\|Tesla"') do (
-        set GPU_NAME=%%i %%j %%k %%l %%m
+        set "GPU_NAME=%%i %%j %%k %%l %%m"
         goto process_cuda_version
     )
 )
 
 REM Final fallback with a more generic name
-if "!GPU_NAME!"=="" set GPU_NAME=NVIDIA Graphics Card
+if "!GPU_NAME!"=="" set "GPU_NAME=NVIDIA Graphics Card"
 
 :process_cuda_version
 REM Use the installed CUDA version if we found one, otherwise note that no toolkit was found
 if not "!CUDA_INSTALLED_VERSION!"=="" (
-    set CUDA_FULL=!CUDA_INSTALLED_VERSION!
+    set "CUDA_FULL=!CUDA_INSTALLED_VERSION!"
     echo [OK] Using installed CUDA !CUDA_FULL! with !GPU_NAME!
 ) else (
     echo [INFO] No CUDA toolkit installed. GPU supports CUDA but toolkit not detected.
@@ -341,7 +341,7 @@ if defined CUDA_PATH (
 
     if defined CUDA_INSTALLED_VERSION (
         echo [OK] CUDA !CUDA_INSTALLED_VERSION! detected via CUDA_PATH
-        set CUDA_FULL=!CUDA_INSTALLED_VERSION!
+        set "CUDA_FULL=!CUDA_INSTALLED_VERSION!"
     ) else (
         echo [INFO] CUDA_PATH exists but version not detectable from folder name
     )
@@ -623,7 +623,7 @@ echo 3. Get your token: https://huggingface.co/settings/tokens
 echo 4. Create a token with 'Read' permissions
 echo.
 
-set hf_token=
+set "hf_token="
 set /p "hf_token=Enter your HuggingFace token (starts with hf_): "
 
 if "!hf_token!"=="" (

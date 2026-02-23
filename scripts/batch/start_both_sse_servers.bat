@@ -12,7 +12,7 @@ echo Both servers will access the same indexed projects.
 echo ================================================================
 echo.
 
-cd /d "%~dp0..\.."
+pushd "%~dp0..\.." || (echo ERROR: Failed to change directory & exit /b 1)
 
 REM Check for port conflicts
 echo [Pre-flight] Checking port availability...
@@ -126,4 +126,6 @@ echo.
 echo To stop servers: Close both server windows (Ctrl+C)
 echo.
 echo Close this window, or press any key to continue...
+popd
+endlocal
 pause >nul

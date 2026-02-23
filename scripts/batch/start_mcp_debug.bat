@@ -1,10 +1,10 @@
 @echo off
+setlocal EnableDelayedExpansion
 REM MCP Server Debug Mode - Enhanced logging and error reporting
 title Claude Context MCP Server - DEBUG MODE
 
 REM Get the project directory (go up 2 levels from scripts\batch)
-set "PROJECT_DIR=%~dp0..\..\"
-cd /d "%PROJECT_DIR%"
+pushd "%~dp0..\.." || (echo ERROR: Failed to change directory & exit /b 1)
 
 echo [DEBUG] Claude Context MCP Server - Debug Mode
 echo [DEBUG] =======================================
@@ -75,4 +75,6 @@ if %SERVER_EXIT_CODE% equ 0 (
     echo [DEBUG] Check error messages above for troubleshooting
 )
 echo [DEBUG] =======================================
+popd
+endlocal
 pause
