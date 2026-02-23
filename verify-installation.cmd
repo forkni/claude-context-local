@@ -7,7 +7,7 @@ REM If not running in persistent mode, relaunch in new window
 if not defined VERIFY_PERSISTENT_MODE (
     set "VERIFY_PERSISTENT_MODE=1"
     cmd /c ""%~f0""
-    exit
+    exit /b
 )
 
 set "PROJECT_DIR=%~dp0"

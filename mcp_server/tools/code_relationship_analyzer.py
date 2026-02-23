@@ -234,7 +234,7 @@ class ImpactReport:
 class CodeRelationshipAnalyzer:
     """Analyzes the impact radius of code changes."""
 
-    def __init__(self, searcher):
+    def __init__(self, searcher: Any):
         """
         Initialize impact analyzer.
 

@@ -13,8 +13,13 @@ Based on research:
 import logging
 from collections import Counter
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import networkx as nx
+
+
+if TYPE_CHECKING:
+    from graph.graph_storage import CodeGraphStorage
 
 
 logger = logging.getLogger(__name__)
@@ -96,7 +101,7 @@ class SubgraphExtractor:
     DiGraph stored in CodeGraphStorage into a compact, agent-consumable format.
     """
 
-    def __init__(self, graph_storage):
+    def __init__(self, graph_storage: "CodeGraphStorage"):
         """Initialize with a CodeGraphStorage instance.
 
         Args:

@@ -32,7 +32,7 @@ class SearchFactory:
         pass
 
     def get_index_manager(
-        self, project_path: str = None, model_key: str = None
+        self, project_path: str | None = None, model_key: str | None = None
     ) -> "CodeIndexManager":
         """Get index manager for specific project or current project.
 

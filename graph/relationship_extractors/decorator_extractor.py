@@ -107,7 +107,7 @@ class DecoratorExtractor(BaseRelationshipExtractor):
 
         return self.edges
 
-    def _extract_from_tree(self, tree, chunk_metadata: dict[str, Any]):
+    def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         """
         Extract decorators from AST tree.
 

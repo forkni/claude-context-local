@@ -14,6 +14,7 @@ Example:
             return edges
 """
 
+import ast
 import logging
 from abc import ABC, abstractmethod
 from typing import Any
@@ -38,7 +39,7 @@ class BaseRelationshipExtractor(ABC):
     def __init__(self) -> None:
         """Initialize the base extractor."""
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.relationship_type: RelationshipType = None  # Set by subclass
+        self.relationship_type: RelationshipType | None = None  # Set by subclass
         self.edges: list[RelationshipEdge] = []
 
     @abstractmethod
@@ -344,7 +345,7 @@ class MultiPassExtractor(BaseRelationshipExtractor):
         super()._reset_state()
         self.context = {}
 
-    def _extract_pass_1(self, tree, chunk_metadata: dict[str, Any]):
+    def _extract_pass_1(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         """
         First pass: Build context.
 
@@ -356,7 +357,7 @@ class MultiPassExtractor(BaseRelationshipExtractor):
         """
         pass
 
-    def _extract_pass_2(self, tree, chunk_metadata: dict[str, Any]):
+    def _extract_pass_2(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         """
         Second pass: Extract relationships using context.
 

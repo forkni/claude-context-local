@@ -254,13 +254,13 @@ class GenerativeReranker:
             self._logger.info(f"Generative reranker loaded on {self.device}")
 
     @property
-    def model(self):
+    def model(self) -> "AutoModel":
         """Get the generative reranker model (lazy loaded)."""
         self._ensure_loaded()
         return self._model
 
     @property
-    def tokenizer(self):
+    def tokenizer(self) -> "AutoModel":
         """Get the tokenizer (lazy loaded)."""
         self._ensure_loaded()
         return self._tokenizer
