@@ -11,12 +11,16 @@ if TYPE_CHECKING:
 def generate_community_summaries(
     chunks: list["CodeChunk"],
     community_map: dict[str, int],
+    centrality_scores: dict[str, float] | None = None,
 ) -> list["CodeChunk"]:
     """Create one community-summary CodeChunk per community with 2+ members.
 
     Args:
         chunks: All CodeChunks from indexing (pre-remerge chunk_ids match community_map)
         community_map: Mapping from chunk_id to community_id
+        centrality_scores: Optional PageRank centrality scores for hub detection.
+            When provided, uses the highest-centrality chunk as community hub instead
+            of the largest chunk by line count.
 
     Returns:
         List of synthetic community CodeChunks (one per qualifying community)
@@ -34,13 +38,17 @@ def generate_community_summaries(
     for community_id, community_chunks in by_community.items():
         if len(community_chunks) < 2:
             continue  # Skip single-chunk communities
-        summaries.append(_build_community_summary(community_id, community_chunks))
+        summaries.append(
+            _build_community_summary(community_id, community_chunks, centrality_scores)
+        )
 
     return summaries
 
 
 def _build_community_summary(
-    community_id: int, community_chunks: list["CodeChunk"]
+    community_id: int,
+    community_chunks: list["CodeChunk"],
+    centrality_scores: dict[str, float] | None = None,
 ) -> "CodeChunk":
     """Build a synthetic community CodeChunk from community chunks.
 
@@ -85,11 +93,17 @@ def _build_community_summary(
         if chunk.imports:
             all_imports.extend(chunk.imports[:5])  # Cap per-chunk imports
 
-    # Find hub function (largest chunk as proxy for most connected)
-    hub_chunk = max(
-        community_chunks,
-        key=lambda c: c.end_line - c.start_line if c.start_line else 0,
-    )
+    # Find hub function: prefer highest PageRank centrality, fallback to largest chunk
+    if centrality_scores:
+        hub_chunk = max(
+            community_chunks,
+            key=lambda c: centrality_scores.get(c.chunk_id or "", 0.0),
+        )
+    else:
+        hub_chunk = max(
+            community_chunks,
+            key=lambda c: c.end_line - c.start_line if c.start_line else 0,
+        )
 
     # Generate label from dominant directory + primary class/function
     if classes:
@@ -123,7 +137,17 @@ def _build_community_summary(
         parts.append(f"# Imports: {', '.join(unique_imports)}")
 
     if hub_chunk.name:
-        parts.append(f"# Hub function: {hub_chunk.name}")
+        hub_score = (
+            centrality_scores.get(hub_chunk.chunk_id or "", 0.0)
+            if centrality_scores
+            else None
+        )
+        if hub_score:
+            parts.append(
+                f"# Hub function: {hub_chunk.name} (centrality: {hub_score:.4f})"
+            )
+        else:
+            parts.append(f"# Hub function: {hub_chunk.name}")
 
     if docstring_lines:
         parts.extend(docstring_lines[:5])

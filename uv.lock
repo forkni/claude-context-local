@@ -427,7 +427,7 @@ requires-dist = [
     { name = "pytest-mock", marker = "extra == 'test'", specifier = ">=3.14.1" },
     { name = "pytest-repeat", marker = "extra == 'test'", specifier = ">=0.9.3" },
     { name = "rank-bm25", specifier = ">=0.2.2" },
-    { name = "rich", specifier = ">=14.3.2" },
+    { name = "rich", specifier = ">=14.3.3" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.1" },
     { name = "sentence-transformers", specifier = ">=5.2.0" },
     { name = "sqlitedict", specifier = ">=2.1.0" },

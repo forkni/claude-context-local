@@ -38,7 +38,7 @@ dependencies = [
     "psutil>=7.2.1",
     "rank-bm25>=0.2.2",
     "torch>=2.8.0,<2.9.0",  # 2.9.x breaks ModernBERT torch.compile (template conflict)
-    "rich>=14.3.2",
+    "rich>=14.3.3",
     "sentence-transformers>=5.2.0",
     "transformers>=4.57.3",  # Required for Qwen3-0.6B support
     "sqlitedict>=2.1.0",
@@ -112,10 +112,10 @@ include = ["chunking*", "embeddings*", "mcp_server*", "search*", "merkle*"]
 #
 # Verification: .venv/Scripts/pip-audit --format json | .venv/Scripts/python.exe tools/summarize_audit.py
 #
-# Safe patch updates (tested 2026-02-12):
+# Safe patch updates (tested 2026-02-24):
 # * cryptography (46.0.4 -> 46.0.5): Resolves CVE-2026-26007.
-# * rich (14.3.1 -> 14.3.2), tqdm (4.67.1 -> 4.67.3), uv (0.10.0 -> 0.10.2).
-# * ruff (0.15.0 -> 0.15.1).
+# * rich (14.3.2 -> 14.3.3), uv (0.10.2 -> 0.10.5), uvicorn (0.40.0 -> 0.41.0).
+# * regex (2026.1.15 -> 2026.2.19), ruff (0.15.0 -> 0.15.1).
 # Tested: CUDA verified, pip check passed.
 # Remaining CVEs: 1 (sqlitedict CVE-2024-35515 - no fix available).
 

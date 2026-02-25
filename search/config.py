@@ -353,6 +353,16 @@ class EgoGraphConfig:
     edge_weights: dict[str, float] | None = field(
         default_factory=lambda: DEFAULT_EDGE_WEIGHTS.copy()
     )  # Use weighted BFS by default (calls > imports priority)
+    # QW2: community-bounded expansion — prefer intra-community neighbors
+    community_bounded: bool = True  # Apply cross-community penalty when ranking
+    cross_community_penalty: float = (
+        0.6  # Score multiplier for cross-community neighbors
+    )
+    # QW3: expansion mode — "bfs" (default) or "ppr" (Personalized PageRank)
+    expansion_mode: str = "bfs"  # "bfs" = k-hop BFS, "ppr" = Personalized PageRank
+    ppr_alpha: float = 0.85  # PPR damping factor (standard default)
+    # QW5: minimum cosine similarity threshold for ego-graph neighbor filtering
+    min_similarity_threshold: float = 0.15  # Neighbors below this are filtered out
 
 
 @dataclass

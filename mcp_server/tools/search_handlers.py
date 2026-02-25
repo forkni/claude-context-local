@@ -860,6 +860,30 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
             f"max_neighbors_per_hop={ego_graph_max_neighbors}"
         )
 
+    # QW5: apply intent-adaptive similarity threshold to ego-graph expansion
+    # Different query intents benefit from different neighbor precision/recall trade-offs
+    if isinstance(searcher, HybridSearcher) and ego_graph_enabled and intent_decision:
+        if search_config is None:
+            search_config = get_search_config()
+        _intent_ego_thresholds = {
+            "local": 0.25,  # Higher precision for specific symbol lookups
+            "global": 0.10,  # Broader coverage for architecture queries
+            "contextual": 0.12,  # Broad context gathering
+            "navigational": 0.20,
+            "path_tracing": 0.15,
+            "similarity": 0.10,  # Broad coverage for similarity queries
+            "hybrid": 0.15,
+        }
+        intent_threshold = _intent_ego_thresholds.get(
+            intent_decision.intent.value, 0.15
+        )
+        if intent_threshold != 0.15:  # Only log non-default values
+            logger.info(
+                f"[EGO_GRAPH] Intent-adaptive threshold: "
+                f"{intent_decision.intent.value} -> {intent_threshold}"
+            )
+        search_config.ego_graph.min_similarity_threshold = intent_threshold
+
     # Build SearchConfig with parent-retrieval settings if enabled
     if isinstance(searcher, HybridSearcher) and include_parent:
         # Get base config if not already set
@@ -960,6 +984,19 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
 
             # Compute centrality scores for subgraph population
             centrality_scores = ranker._get_centrality_scores()
+
+            # QW1: pass centrality scores to ego-graph retriever so neighbors
+            # are ranked by architectural importance before truncation
+            if (
+                isinstance(searcher, HybridSearcher)
+                and hasattr(searcher, "ego_graph_retriever")
+                and searcher.ego_graph_retriever is not None
+                and centrality_scores
+            ):
+                searcher.ego_graph_retriever.set_centrality_scores(centrality_scores)
+                logger.debug(
+                    f"[EGO_GRAPH] Injected {len(centrality_scores)} centrality scores"
+                )
 
             # Rerank results by blended score if enabled in config
             if graph_config.centrality_reranking:

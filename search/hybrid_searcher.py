@@ -816,11 +816,14 @@ class HybridSearcher(BaseSearcher):
                             similarity = float(
                                 np.dot(query_embedding, neighbor_embedding)
                             )
-                            # Optional: filter very low relevance neighbors
-                            if similarity < 0.15:
+                            # QW5: configurable similarity threshold (intent-adaptive)
+                            threshold = getattr(
+                                ego_config, "min_similarity_threshold", 0.15
+                            )
+                            if similarity < threshold:
                                 self._logger.debug(
                                     f"Filtering ego-graph neighbor {chunk_id}: "
-                                    f"similarity={similarity:.3f} < 0.15"
+                                    f"similarity={similarity:.3f} < {threshold:.2f}"
                                 )
                                 continue
                             # Scale score relative to anchor (prevents neighbors from outranking anchors)

@@ -783,6 +783,14 @@ class CodeGraphStorage:
                 return json.load(f)
         return None
 
+    def get_graph(self) -> "nx.DiGraph":
+        """Expose raw NetworkX DiGraph for external algorithms (e.g., PPR).
+
+        Returns:
+            The underlying NetworkX directed graph.
+        """
+        return self.graph
+
     def get_community_for_chunk(self, chunk_id: str) -> int | None:
         """Get community ID for a specific chunk.
 

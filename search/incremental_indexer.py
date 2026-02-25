@@ -695,6 +695,7 @@ class IncrementalIndexer:
             # Community detection runs independently of chunk merging
             config = get_search_config()
             community_map = None  # Will be populated if community detection runs
+            temp_graph = None  # Will be set if community detection succeeds
 
             # Step A: Community Detection (Independent - can run without merging)
             if config.chunking.enable_community_detection and all_chunks:
@@ -746,8 +747,28 @@ class IncrementalIndexer:
                 try:
                     from graph.community_summarizer import generate_community_summaries
 
+                    # Compute PageRank centrality for hub detection (QW4)
+                    centrality_scores_for_summaries: dict[str, float] | None = None
+                    if community_map and temp_graph is not None:
+                        try:
+                            from graph.graph_queries import GraphQueryEngine
+
+                            gqe = GraphQueryEngine(temp_graph.storage)
+                            centrality_scores_for_summaries = gqe.compute_centrality(
+                                method="pagerank"
+                            )
+                            logger.info(
+                                f"[COMMUNITY_SUMMARIES] Computed centrality for "
+                                f"{len(centrality_scores_for_summaries)} nodes"
+                            )
+                        except Exception as ce:
+                            logger.debug(
+                                f"[COMMUNITY_SUMMARIES] Centrality unavailable, "
+                                f"using line-count fallback: {ce}"
+                            )
+
                     community_summaries = generate_community_summaries(
-                        all_chunks, community_map
+                        all_chunks, community_map, centrality_scores_for_summaries
                     )
                     logger.info(
                         f"[COMMUNITY_SUMMARIES] Computed {len(community_summaries)} community summary chunks"
