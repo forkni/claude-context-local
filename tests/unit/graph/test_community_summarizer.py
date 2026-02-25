@@ -209,6 +209,72 @@ class TestGenerateCommunitySummaries:
         summaries = generate_community_summaries(chunks, community_map)
         assert summaries == []
 
+    def test_hub_detection_uses_centrality_when_provided(self):
+        """Highest-centrality chunk becomes hub, overriding line-count heuristic."""
+        # small_func is short but high-centrality (hub); large_func is long but low-centrality
+        chunks = [
+            self._make_chunk(
+                "test.py", "function", "small_func", start_line=1, end_line=5
+            ),
+            self._make_chunk(
+                "test.py", "function", "large_func", start_line=10, end_line=100
+            ),
+        ]
+        community_map = {
+            "test.py:1-5:function:small_func": 7,
+            "test.py:10-100:function:large_func": 7,
+        }
+        centrality_scores = {
+            "test.py:1-5:function:small_func": 0.9,  # high centrality
+            "test.py:10-100:function:large_func": 0.1,  # low centrality
+        }
+        summaries = generate_community_summaries(
+            chunks, community_map, centrality_scores
+        )
+        # With centrality, small_func (score=0.9) wins despite being smaller
+        assert "Hub function: small_func" in summaries[0].content
+        assert "centrality: 0.9000" in summaries[0].content
+
+    def test_hub_detection_falls_back_to_line_count_when_no_centrality(self):
+        """Without centrality_scores, falls back to largest chunk heuristic."""
+        chunks = [
+            self._make_chunk(
+                "test.py", "function", "small_func", start_line=1, end_line=5
+            ),
+            self._make_chunk(
+                "test.py", "function", "large_func", start_line=10, end_line=100
+            ),
+        ]
+        community_map = {
+            "test.py:1-5:function:small_func": 7,
+            "test.py:10-100:function:large_func": 7,
+        }
+        # No centrality provided — line count should decide
+        summaries = generate_community_summaries(chunks, community_map, None)
+        assert "Hub function: large_func" in summaries[0].content
+        assert "centrality:" not in summaries[0].content
+
+    def test_centrality_score_shown_only_when_nonzero(self):
+        """Zero centrality score should not show centrality annotation."""
+        chunks = [
+            self._make_chunk("a.py", "function", "f1", start_line=1, end_line=5),
+            self._make_chunk("a.py", "function", "f2", start_line=10, end_line=100),
+        ]
+        community_map = {
+            "a.py:1-5:function:f1": 0,
+            "a.py:10-100:function:f2": 0,
+        }
+        # Both chunks have zero centrality
+        centrality_scores = {
+            "a.py:1-5:function:f1": 0.0,
+            "a.py:10-100:function:f2": 0.0,
+        }
+        summaries = generate_community_summaries(
+            chunks, community_map, centrality_scores
+        )
+        # Hub is selected by centrality (both 0.0, so first wins via max), but score=0 → no annotation
+        assert "centrality:" not in summaries[0].content
+
     def test_chunks_without_chunk_id(self):
         chunks = [
             CodeChunk(
