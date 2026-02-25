@@ -249,7 +249,9 @@ class EgoGraphRetriever:
         for neighbor in top_neighbors:
             assigned = default_anchor
             for anchor in valid_anchors:
-                if nx_graph.has_edge(anchor, neighbor) or nx_graph.has_edge(neighbor, anchor):
+                if nx_graph.has_edge(anchor, neighbor) or nx_graph.has_edge(
+                    neighbor, anchor
+                ):
                     assigned = anchor
                     break
             results[assigned].append(neighbor)
