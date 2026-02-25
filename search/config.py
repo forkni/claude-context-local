@@ -552,6 +552,7 @@ class SearchConfig:
                 "adaptive_multiplier_max": self.chunking.adaptive_multiplier_max,
                 "adaptive_multiplier_min": self.chunking.adaptive_multiplier_min,
                 "max_complexity_cap": self.chunking.max_complexity_cap,
+                "max_phantom_degree": self.chunking.max_phantom_degree,
             },
             "ego_graph": {
                 "enabled": self.ego_graph.enabled,
@@ -744,6 +745,7 @@ class SearchConfig:
                     "adaptive_multiplier_min", 0.5
                 ),
                 max_complexity_cap=chunking_data.get("max_complexity_cap", 30),
+                max_phantom_degree=chunking_data.get("max_phantom_degree", 20),
             )
 
             ego_graph = EgoGraphConfig(
@@ -881,6 +883,7 @@ class SearchConfig:
                 enable_community_merge=data.get("enable_community_merge", True),
                 split_size_method=data.get("split_size_method", "characters"),
                 max_split_chars=data.get("max_split_chars", 3000),
+                max_phantom_degree=data.get("max_phantom_degree", 20),
             )
 
             ego_graph = EgoGraphConfig(
