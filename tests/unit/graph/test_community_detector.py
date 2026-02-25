@@ -3,7 +3,6 @@
 from unittest.mock import MagicMock
 
 import networkx as nx
-import pytest
 
 from graph.community_detector import CommunityDetector
 
@@ -116,9 +115,9 @@ class TestDetectCommunitiesPhantomDegreeCap:
         # group_b should NOT be in the same community as group_a
         # (str phantom was skipped so no cross-group edges)
         b_communities = {result[c] for c in group_b}
-        assert a_communities.isdisjoint(
-            b_communities
-        ), "group_a and group_b should be in different communities"
+        assert a_communities.isdisjoint(b_communities), (
+            "group_a and group_b should be in different communities"
+        )
 
     def test_default_cap_is_20(self):
         """Verify default max_phantom_degree=20 is the effective default."""
