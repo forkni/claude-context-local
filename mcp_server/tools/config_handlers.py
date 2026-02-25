@@ -270,6 +270,7 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
             - enable_community_detection: Enable/disable community detection (independent)
             - enable_community_merge: Enable/disable community-based remerge (full index only)
             - community_resolution: Resolution parameter for Louvain community detection (0.1-2.0)
+            - max_phantom_degree: Skip phantom nodes with >N callers to reduce graph noise (1-1000)
             - token_estimation: Token estimation method ("whitespace" or "tiktoken")
             - enable_large_node_splitting: Enable/disable AST block splitting
             - max_chunk_lines: Maximum lines per chunk before splitting
@@ -294,6 +295,7 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
     enable_community_detection = arguments.get("enable_community_detection")
     enable_community_merge = arguments.get("enable_community_merge")
     community_resolution = arguments.get("community_resolution")
+    max_phantom_degree = arguments.get("max_phantom_degree")
     token_estimation = arguments.get("token_estimation")
     enable_large_node_splitting = arguments.get("enable_large_node_splitting")
     max_chunk_lines = arguments.get("max_chunk_lines")
@@ -316,6 +318,13 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
         else:
             return {
                 "error": f"Invalid community_resolution: {community_resolution}. Must be between 0.1 and 2.0"
+            }
+    if max_phantom_degree is not None:
+        if 1 <= max_phantom_degree <= 1000:
+            config.chunking.max_phantom_degree = max_phantom_degree
+        else:
+            return {
+                "error": f"Invalid max_phantom_degree: {max_phantom_degree}. Must be between 1 and 1000"
             }
     if token_estimation is not None:
         if token_estimation in ["whitespace", "tiktoken"]:
@@ -381,6 +390,7 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
             "enable_community_detection": config.chunking.enable_community_detection,
             "enable_community_merge": config.chunking.enable_community_merge,
             "community_resolution": config.chunking.community_resolution,
+            "max_phantom_degree": config.chunking.max_phantom_degree,
             "token_estimation": config.chunking.token_estimation,
             "enable_large_node_splitting": config.chunking.enable_large_node_splitting,
             "max_chunk_lines": config.chunking.max_chunk_lines,

@@ -664,6 +664,7 @@ Args:
     enable_community_detection: Enable/disable community detection (default: True)
     enable_community_merge: Enable/disable community-based remerge (full index only) (default: True)
     community_resolution: Resolution parameter for Louvain community detection (default: 1.0, range: 0.1-2.0, higher = more communities)
+    max_phantom_degree: Skip phantom nodes with >N callers during community detection (1-1000, default: 20). Prevents builtins (str, dict, list) from creating O(N²) noise edges.
     token_estimation: Token estimation method - "whitespace" (fast) or "tiktoken" (accurate) (default: "whitespace")
     enable_large_node_splitting: Enable/disable AST block splitting for large functions (default: False)
     max_chunk_lines: Maximum lines per chunk before splitting at AST boundaries (default: 100)
@@ -693,6 +694,12 @@ Note: min_chunk_tokens (50) and max_merged_tokens (1000) are optimal defaults an
                     "description": "Resolution parameter for Louvain community detection (higher = more communities)",
                     "minimum": 0.1,
                     "maximum": 2.0,
+                },
+                "max_phantom_degree": {
+                    "type": "integer",
+                    "description": "Skip phantom nodes with >N callers to reduce graph noise (prevents builtins from creating O(N²) edges)",
+                    "minimum": 1,
+                    "maximum": 1000,
                 },
                 "token_estimation": {
                     "type": "string",

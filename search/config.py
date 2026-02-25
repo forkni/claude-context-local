@@ -304,6 +304,9 @@ class ChunkingConfig:
     community_resolution: float = (
         1.0  # Resolution parameter (higher = more/smaller communities)
     )
+    max_phantom_degree: int = (
+        20  # Skip phantom nodes with >N callers during community detection
+    )
 
     # Large function splitting (Task 3.4 - placeholder for future implementation)
     enable_large_node_splitting: bool = False  # Split functions > max_chunk_lines

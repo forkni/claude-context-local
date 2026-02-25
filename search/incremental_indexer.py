@@ -715,7 +715,10 @@ class IncrementalIndexer:
 
                     detector = CommunityDetector(temp_graph.storage)
                     community_map = detector.detect_communities(
-                        resolution=config.chunking.community_resolution
+                        resolution=config.chunking.community_resolution,
+                        max_phantom_degree=getattr(
+                            config.chunking, "max_phantom_degree", 20
+                        ),
                     )
                     logger.info(
                         f"[COMMUNITY_DETECT] Detected {len(set(community_map.values()))} communities from {len(community_map)} nodes"

@@ -43,7 +43,9 @@ class CommunityDetector:
         self.storage = graph_storage
         self.logger = logging.getLogger(__name__)
 
-    def detect_communities(self, resolution: float = 1.0) -> dict[str, int]:
+    def detect_communities(
+        self, resolution: float = 1.0, max_phantom_degree: int = 20
+    ) -> dict[str, int]:
         """Detect communities using NetworkX native Louvain algorithm.
 
         Algorithm: Modularity maximization (purely algorithmic, no LLM)
@@ -56,6 +58,9 @@ class CommunityDetector:
             resolution: Resolution parameter (default: 1.0)
                        Higher values = more/smaller communities (fine-grained)
                        Lower values = fewer/larger communities (coarse)
+            max_phantom_degree: Skip phantom nodes with more than this many callers
+                               (default: 20). Prevents builtins like str/dict/list from
+                               creating O(N²) clique edges that destroy community structure.
 
         Returns:
             Dict mapping chunk_id -> community_id (only for actual chunk nodes)
@@ -120,6 +125,7 @@ class CommunityDetector:
         # Second: Collapse phantom nodes - connect chunks sharing same call targets
         # This groups chunks that use similar APIs/libraries together
         collapsed_edges = 0
+        skipped_phantoms = 0
         for phantom in phantom_nodes:
             # Find all chunks that call/reference this phantom
             callers = [
@@ -127,6 +133,12 @@ class CommunityDetector:
                 for pred in self.nx_graph.predecessors(phantom)
                 if pred in chunk_nodes_set
             ]
+
+            # Skip high-degree phantom nodes (builtins/stdlib like str, dict, list)
+            # They create O(N²) clique edges that destroy community structure
+            if len(callers) > max_phantom_degree:
+                skipped_phantoms += 1
+                continue
 
             # Only create co-reference edges if multiple chunks share this target
             if len(callers) > 1:
@@ -140,6 +152,10 @@ class CommunityDetector:
                             collapsed_graph.add_edge(caller1, caller2, weight=1)
                             collapsed_edges += 1
 
+        self.logger.info(
+            f"Collapsing {len(phantom_nodes) - skipped_phantoms} phantom nodes "
+            f"(skipped {skipped_phantoms} with >{max_phantom_degree} callers)"
+        )
         self.logger.info(
             f"Collapsed graph: {collapsed_graph.number_of_nodes()} nodes, "
             f"{collapsed_graph.number_of_edges()} edges "
