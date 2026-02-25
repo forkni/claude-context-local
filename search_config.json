@@ -75,7 +75,6 @@
     "enable_community_detection": true,
     "enable_community_merge": false,
     "community_resolution": 1.5,
-    "max_phantom_degree": 20,
     "enable_large_node_splitting": true,
     "max_chunk_lines": 100,
     "token_estimation": "tiktoken",
@@ -87,7 +86,8 @@
     "sizing_mode": "adaptive",
     "adaptive_multiplier_max": 1.3,
     "adaptive_multiplier_min": 0.5,
-    "max_complexity_cap": 30
+    "max_complexity_cap": 30,
+    "max_phantom_degree": 20
   },
   "ego_graph": {
     "enabled": true,
