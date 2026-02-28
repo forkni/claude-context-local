@@ -623,9 +623,21 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     # Intent Classification (Phase 2)
     config = get_config()
     if config.intent.enabled:
+        # Optionally supply the cached embedder for semantic anchor scoring.
+        # Uses the searcher cached from the previous request (get_state().searcher)
+        # so there is zero overhead on the first request (falls back to keyword-only).
+        _intent_embedder = None
+        if config.intent.semantic_enabled:
+            _cached = get_state().searcher
+            if _cached is not None and hasattr(_cached, "search_executor"):
+                _intent_embedder = getattr(_cached.search_executor, "embedder", None)
+
         intent_classifier = IntentClassifier(
             confidence_threshold=config.intent.confidence_threshold,
             enable_logging=config.intent.log_classifications,
+            embedder=_intent_embedder,
+            semantic_enabled=config.intent.semantic_enabled,
+            semantic_weight=config.intent.semantic_weight,
         )
         intent_decision = intent_classifier.classify(query)
 

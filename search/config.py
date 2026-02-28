@@ -258,12 +258,14 @@ class RoutingConfig:
 
 @dataclass
 class IntentConfig:
-    """Intent classification settings (5 fields)."""
+    """Intent classification settings (6 fields)."""
 
     enabled: bool = True  # Enable intent classification for query routing
     confidence_threshold: float = 0.35  # Minimum confidence for intent-specific routing
     default_intent: str = "HYBRID"  # Default intent when confidence is low
     log_classifications: bool = True  # Log intent classification decisions
+    semantic_enabled: bool = False  # Enable semantic anchor-embedding scoring (opt-in)
+    semantic_weight: float = 0.3  # Semantic score weight in ensemble (0.0-1.0)
 
 
 @dataclass

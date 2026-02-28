@@ -1,0 +1,95 @@
+# Intent Anchor Queries for Semantic Intent Classification
+#
+# Each intent has 8-10 representative queries that anchor the semantic space
+# for that intent type. These are embedded at classification time and compared
+# against the incoming query via cosine similarity.
+#
+# Source: Drawn from SSCG golden dataset queries + keyword list examples
+# Purpose: Generalize beyond keyword/regex patterns to novel phrasings
+# Ensemble weight: 0.3 (semantic) + 0.7 (keyword) by default
+#
+# Last updated: 2026-02-28
+
+anchors:
+  local:
+    # Small function discovery - single symbol/entity lookup
+    - "where is QueryRouter defined"
+    - "find function estimate_tokens"
+    - "get embedding model name from config"
+    - "validate chunk id format"
+    - "normalize file path separators"
+    - "get node text from tree sitter"
+    - "find BM25Index.load implementation"
+    - "locate EmbeddingConfig dataclass"
+    - "what is the definition of normalize_chunk_id"
+    - "show me the SearchResult dataclass"
+
+  global:
+    # Architectural / conceptual - how does the system work
+    - "how does the search pipeline work"
+    - "explain the indexing architecture"
+    - "how does HybridSearcher combine BM25 and semantic search"
+    - "what does CodeEmbedder do with batch processing"
+    - "explain IncrementalIndexer change detection"
+    - "how does FaissVectorIndex store embeddings"
+    - "what is SearchConfigManager responsible for"
+    - "overview of the community detection process"
+    - "describe the multi-hop search strategy"
+    - "how is the search score calculated"
+
+  navigational:
+    # Relationship / caller discovery
+    - "what calls handle_search_code"
+    - "find callers of embed_query"
+    - "who invokes the indexing pipeline"
+    - "what depends on get_search_config"
+    - "find all imports of HybridSearcher"
+    - "which functions call normalize_path"
+    - "what are the callers of classify"
+    - "find usages of SearchResult"
+    - "what calls validate_index_consistency"
+    - "dependencies of IntentClassifier"
+
+  path_tracing:
+    # Trace flow between two points
+    - "trace flow from handle_search_code to embed_query"
+    - "how does a query reach the FAISS index"
+    - "path from search request to retrieved chunk IDs"
+    - "flow from index_directory to community detection"
+    - "how does BM25 score reach the final result"
+    - "trace from user query to ranked results"
+    - "how does the reranker connect to the search pipeline"
+    - "path from chunker to FAISS index storage"
+
+  similarity:
+    # Find similar or alternative implementations
+    - "find similar code to RRFReranker"
+    - "what is similar to normalize_path"
+    - "find other chunkers like PythonChunker"
+    - "find functions that do the same as embed_query"
+    - "show code similar to the merkle tree builder"
+    - "alternative implementations of calculate_recall_at_k"
+    - "find other distance metrics like cosine similarity"
+    - "what else works like the community detector"
+
+  contextual:
+    # Broad context gathering around a symbol
+    - "give me context around CodeEmbedder"
+    - "show everything related to the BM25 index"
+    - "what surrounds the IncrementalIndexer class"
+    - "full context for the SearchConfigManager"
+    - "surrounding code for the merkle DAG builder"
+    - "what is near the ego graph retriever"
+    - "context for the neural reranker"
+    - "related code around QueryRouter"
+
+  hybrid:
+    # Mixed or ambiguous intent
+    - "save and load search configuration"
+    - "encode and decode embeddings"
+    - "build and query merkle tree"
+    - "check if index exists for project"
+    - "search and retrieve code chunks"
+    - "parse and validate configuration"
+    - "create and update the index"
+    - "load model and run inference"

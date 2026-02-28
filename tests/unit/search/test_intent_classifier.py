@@ -707,3 +707,131 @@ class TestSymbolDetection:
         decision = classifier.classify("HybridSearcher embed_chunks FAISS __init__")
         # CamelCase +0.25, snake +0.20, UPPER +0.15, dunder +0.20 = 0.80, capped at 0.5
         assert decision.scores["local"] == 0.5
+
+
+class TestSemanticIntentClassification:
+    """Test semantic anchor-embedding scoring for intent classification.
+
+    These tests verify the ensemble architecture works correctly
+    without requiring real embeddings (uses a mock embedder).
+    """
+
+    class _MockEmbedder:
+        """Minimal embedder mock returning identity-like vectors."""
+
+        def embed_query(self, text: str):
+            import numpy as np
+
+            # Deterministic pseudo-embedding based on first char ordinal
+            # Different queries get clearly different vectors
+            seed = sum(ord(c) for c in text[:10])
+            rng = np.random.default_rng(seed)
+            vec = rng.standard_normal(64).astype(np.float32)
+            return vec / np.linalg.norm(vec)
+
+    @pytest.fixture
+    def mock_embedder(self):
+        return self._MockEmbedder()
+
+    def test_semantic_disabled_by_default(self, mock_embedder):
+        """semantic_enabled defaults to False — no embedding called."""
+        classifier = IntentClassifier(
+            enable_logging=False,
+            embedder=mock_embedder,
+            # semantic_enabled not passed — should default to False
+        )
+        assert not classifier._semantic_enabled
+
+    def test_semantic_enabled_none_embedder_disables(self):
+        """semantic_enabled=True with embedder=None must stay disabled."""
+        classifier = IntentClassifier(
+            enable_logging=False,
+            embedder=None,
+            semantic_enabled=True,
+        )
+        assert not classifier._semantic_enabled
+
+    def test_semantic_enabled_with_embedder(self, mock_embedder):
+        """semantic_enabled=True with real embedder activates ensemble."""
+        classifier = IntentClassifier(
+            enable_logging=False,
+            embedder=mock_embedder,
+            semantic_enabled=True,
+        )
+        assert classifier._semantic_enabled
+
+    def test_classify_runs_without_error_semantic_on(self, mock_embedder):
+        """classify() runs successfully with semantic scoring enabled."""
+        classifier = IntentClassifier(
+            enable_logging=False,
+            embedder=mock_embedder,
+            semantic_enabled=True,
+        )
+        decision = classifier.classify("where is QueryRouter defined")
+        # Keyword signal for LOCAL is strong; result should still be LOCAL
+        assert decision.intent == QueryIntent.LOCAL
+        assert 0.0 <= decision.confidence <= 1.0
+
+    def test_anchor_embeddings_loaded_lazily(self, mock_embedder):
+        """Anchor embeddings are None before first classify(), loaded after."""
+        classifier = IntentClassifier(
+            enable_logging=False,
+            embedder=mock_embedder,
+            semantic_enabled=True,
+        )
+        assert classifier._anchor_embeddings is None  # not loaded yet
+        classifier.classify("how does search work")
+        assert classifier._anchor_embeddings is not None
+
+    def test_ensemble_scores_keyword_dominant(self):
+        """Ensemble with alpha=0.7 keeps keyword scores dominant."""
+        from search.intent_classifier import IntentClassifier
+
+        classifier = IntentClassifier(
+            enable_logging=False,
+            semantic_weight=0.3,
+        )
+        keyword_scores = {"local": 0.8, "global": 0.1, "hybrid": 0.0}
+        semantic_scores = {"local": 0.0, "global": 0.9, "hybrid": 0.5}
+        blended = classifier._ensemble_scores(keyword_scores, semantic_scores)
+        # local: 0.7*0.8 + 0.3*0.0 = 0.56
+        # global: 0.7*0.1 + 0.3*0.9 = 0.34
+        assert blended["local"] > blended["global"], (
+            "Keyword-dominant 'local' should still win"
+        )
+        assert abs(blended["local"] - 0.56) < 0.01
+        assert abs(blended["global"] - 0.34) < 0.01
+
+    def test_ensemble_scores_capped_at_one(self):
+        """Blended scores are capped at 1.0."""
+        classifier = IntentClassifier(enable_logging=False, semantic_weight=0.3)
+        kw = {"local": 1.0}
+        sem = {"local": 1.0}
+        blended = classifier._ensemble_scores(kw, sem)
+        assert blended["local"] <= 1.0
+
+    def test_ensemble_includes_all_keys(self):
+        """_ensemble_scores includes keys from both dicts."""
+        classifier = IntentClassifier(enable_logging=False, semantic_weight=0.3)
+        kw = {"local": 0.5, "global": 0.1}
+        sem = {"local": 0.3, "navigational": 0.7}
+        blended = classifier._ensemble_scores(kw, sem)
+        assert "local" in blended
+        assert "global" in blended
+        assert "navigational" in blended
+
+    def test_keyword_fallback_when_semantic_fails(self, mock_embedder):
+        """If embedder raises, classify falls back to keyword-only scores."""
+
+        class _BrokenEmbedder:
+            def embed_query(self, _text):
+                raise RuntimeError("embedding failed")
+
+        classifier = IntentClassifier(
+            enable_logging=False,
+            embedder=_BrokenEmbedder(),
+            semantic_enabled=True,
+        )
+        # Should not raise; falls back to keyword scores
+        decision = classifier.classify("where is QueryRouter defined")
+        assert decision.intent == QueryIntent.LOCAL

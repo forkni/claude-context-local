@@ -1,7 +1,7 @@
 {
   "embedding": {
-    "model_name": "Alibaba-NLP/gte-modernbert-base",
-    "dimension": 768,
+    "model_name": "Qwen/Qwen3-Embedding-0.6B",
+    "dimension": 1024,
     "batch_size": 128,
     "query_cache_size": 128,
     "enable_import_context": true,
@@ -51,7 +51,7 @@
   "routing": {
     "multi_model_enabled": true,
     "default_model": "qwen3",
-    "multi_model_pool": "lightweight-speed"
+    "multi_model_pool": "full"
   },
   "intent": {
     "enabled": true,
@@ -61,7 +61,7 @@
   },
   "reranker": {
     "enabled": true,
-    "model_name": "Alibaba-NLP/gte-reranker-modernbert-base",
+    "model_name": "jinaai/jina-reranker-v3",
     "top_k_candidates": 50,
     "min_vram_gb": 6.0,
     "batch_size": 16

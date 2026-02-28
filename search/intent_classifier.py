@@ -14,10 +14,37 @@ import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+
+
+if TYPE_CHECKING:
+    from embeddings.embedder import CodeEmbedder
 
 
 logger = logging.getLogger(__name__)
+
+
+def _load_anchor_config() -> dict | None:
+    """Load intent anchor queries from config/intent_anchors.yaml.
+
+    Uses the same lazy-load pattern as QueryRouter's routing_keywords.yaml.
+
+    Returns:
+        Parsed YAML dict or None if file not found / invalid.
+    """
+    try:
+        import yaml
+
+        config_path = Path(__file__).parent.parent / "config" / "intent_anchors.yaml"
+        if config_path.exists():
+            with open(config_path, encoding="utf-8") as f:
+                return yaml.safe_load(f)
+    except Exception as exc:
+        logger.warning(f"[INTENT-SEM] Failed to load intent_anchors.yaml: {exc}")
+    return None
 
 
 # Blocklist of common programming terms that shouldn't be matched as symbols
@@ -589,7 +616,12 @@ class IntentClassifier:
     CONFIDENCE_THRESHOLD = 0.3
 
     def __init__(
-        self, confidence_threshold: float | None = None, enable_logging: bool = True
+        self,
+        confidence_threshold: float | None = None,
+        enable_logging: bool = True,
+        embedder: "CodeEmbedder | None" = None,
+        semantic_enabled: bool = False,
+        semantic_weight: float = 0.3,
     ) -> None:
         """Initialize intent classifier.
 
@@ -597,6 +629,11 @@ class IntentClassifier:
             confidence_threshold: Minimum confidence for intent-specific routing.
                 If None, uses CONFIDENCE_THRESHOLD (0.3).
             enable_logging: Enable detailed classification logging.
+            embedder: Optional CodeEmbedder for semantic anchor scoring.
+                When provided and semantic_enabled=True, enables ensemble scoring.
+            semantic_enabled: Enable semantic anchor scoring (default False).
+            semantic_weight: Weight for semantic scores in ensemble [0.0, 1.0].
+                Keyword weight = 1 - semantic_weight. Default 0.3 (keyword dominant).
         """
         self.confidence_threshold = (
             confidence_threshold
@@ -604,6 +641,12 @@ class IntentClassifier:
             else self.CONFIDENCE_THRESHOLD
         )
         self.enable_logging = enable_logging
+        self._embedder = embedder
+        self._semantic_enabled = semantic_enabled and embedder is not None
+        self._semantic_weight = semantic_weight
+        # Anchor embeddings: lazily pre-computed per-intent numpy arrays
+        self._anchor_embeddings: dict[str, list[np.ndarray]] | None = None
+        self._anchor_config = _load_anchor_config()
 
     def classify(
         self, query: str, confidence_threshold: float | None = None
@@ -637,6 +680,12 @@ class IntentClassifier:
 
         # Calculate scores for each intent
         scores = self._calculate_scores(query)
+
+        # Semantic ensemble: blend keyword scores with anchor-embedding cosine similarities
+        if self._semantic_enabled and self._embedder is not None:
+            semantic_scores = self._calculate_semantic_scores(query)
+            if semantic_scores:
+                scores = self._ensemble_scores(scores, semantic_scores)
 
         # Check for token count constraint (LOCAL intent)
         query_tokens = query.lower().split()
@@ -755,6 +804,115 @@ class IntentClassifier:
                 )
 
         return scores
+
+    # ------------------------------------------------------------------
+    # Semantic anchor-embedding scoring
+    # ------------------------------------------------------------------
+
+    def _load_anchor_embeddings(self) -> None:
+        """Pre-compute anchor embeddings for all intents (lazy initialization).
+
+        Called on first classify() call with semantic_enabled=True.
+        Results cached in self._anchor_embeddings.
+        """
+        if self._embedder is None or not self._anchor_config:
+            self._anchor_embeddings = {}
+            return
+
+        anchors_section = self._anchor_config.get("anchors", {})
+        self._anchor_embeddings = {}
+        for intent_key, queries in anchors_section.items():
+            vecs: list[np.ndarray] = []
+            for q in queries:
+                try:
+                    vec = self._embedder.embed_query(q)
+                    if vec is not None and len(vec) > 0:
+                        norm = float(np.linalg.norm(vec))
+                        if norm > 0:
+                            vecs.append(vec / norm)
+                except Exception as exc:
+                    logger.debug(
+                        f"[INTENT-SEM] Failed to embed anchor '{q[:40]}': {exc}"
+                    )
+            if vecs:
+                self._anchor_embeddings[intent_key] = vecs
+        logger.debug(
+            f"[INTENT-SEM] Loaded anchor embeddings for "
+            f"{len(self._anchor_embeddings)} intents"
+        )
+
+    def _calculate_semantic_scores(self, query: str) -> dict[str, float]:
+        """Compute per-intent semantic scores via cosine similarity to anchor embeddings.
+
+        Lazily initializes anchor embeddings on first call.
+
+        Args:
+            query: Search query string.
+
+        Returns:
+            Dict mapping intent key to max cosine similarity across that intent's anchors.
+            Returns empty dict on error or if embedder/anchors are unavailable.
+        """
+        # Lazy initialization
+        if self._anchor_embeddings is None:
+            self._load_anchor_embeddings()
+
+        if not self._anchor_embeddings:
+            return {}
+
+        try:
+            query_vec = self._embedder.embed_query(query)  # type: ignore[union-attr]
+            if query_vec is None or len(query_vec) == 0:
+                return {}
+            norm = float(np.linalg.norm(query_vec))
+            if norm == 0:
+                return {}
+            query_vec = query_vec / norm
+        except Exception as exc:
+            logger.debug(f"[INTENT-SEM] embed_query failed: {exc}")
+            return {}
+
+        sem_scores: dict[str, float] = {}
+        for intent_key, anchor_vecs in self._anchor_embeddings.items():
+            sims = [float(np.dot(query_vec, a)) for a in anchor_vecs]
+            sem_scores[intent_key] = max(sims) if sims else 0.0
+
+        return sem_scores
+
+    def _ensemble_scores(
+        self,
+        keyword_scores: dict[str, float],
+        semantic_scores: dict[str, float],
+    ) -> dict[str, float]:
+        """Blend keyword and semantic scores via weighted average.
+
+        Keyword scores are dominant by default (alpha=0.7) so existing
+        rule-based behaviour is preserved. Semantic scores act as a boost
+        for novel phrasings not covered by keyword/regex patterns.
+
+        Formula: blended = alpha * keyword + (1 - alpha) * semantic
+
+        Args:
+            keyword_scores: Scores from _calculate_scores().
+            semantic_scores: Scores from _calculate_semantic_scores().
+
+        Returns:
+            Blended score dict, capped at 1.0.
+        """
+        alpha = 1.0 - self._semantic_weight  # keyword weight
+        all_keys = set(keyword_scores) | set(semantic_scores)
+        blended: dict[str, float] = {}
+        for key in all_keys:
+            kw = keyword_scores.get(key, 0.0)
+            sem = semantic_scores.get(key, 0.0)
+            blended[key] = min(alpha * kw + self._semantic_weight * sem, 1.0)
+        if self.enable_logging:
+            top = sorted(blended.items(), key=lambda x: -x[1])[:3]
+            logger.debug(
+                "[INTENT-SEM] Ensemble top-3: "
+                + ", ".join(f"{k}={v:.3f}" for k, v in top)
+            )
+        return blended
 
     def _resolve_tie(self, scores: dict[str, float]) -> str:
         """Resolve ties using explicit precedence order.
