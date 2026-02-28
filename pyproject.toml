@@ -34,7 +34,7 @@ dependencies = [
     "huggingface-hub>=0.36.0",
     "mcp>=1.25.0",
     "networkx>=3.0",  # Required for graph storage and community detection
-    "nltk>=3.8",
+    "nltk>=3.9.3",  # Security: Fixes CVE-2025-14009 (path traversal in downloader)
     "psutil>=7.2.1",
     "rank-bm25>=0.2.2",
     "torch>=2.8.0,<2.9.0",  # 2.9.x breaks ModernBERT torch.compile (template conflict)
@@ -96,14 +96,15 @@ include = ["chunking*", "embeddings*", "mcp_server*", "search*", "merkle*"]
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2026-01-30 (pip-audit - 0 vulnerabilities)
+# Last audit: 2026-02-28 (pip-audit - 1 advisory: sqlitedict CVE-2024-35515, mitigated)
 #
 # Direct dependency security updates:
 # mcp>=1.25.0        # Fixes CVE-2025-66416 (DNS rebinding vulnerability)
+# nltk>=3.9.3        # Fixes CVE-2025-14009 (path traversal in zipfile.extractall)
 #
 # Transitive dependency security updates:
 # authlib>=1.6.5     # Fixes CVE-2025-59420, CVE-2025-61920, CVE-2025-62706
-# pip>=25.3          # Fixes CVE-2025-8869 (tarfile path traversal)
+# pip>=26.0.1        # Fixes CVE-2025-8869 (tarfile path traversal), CVE-2026-1703
 # python-multipart>=0.0.22  # Fixes CVE-2026-24486 (path traversal in file uploads)
 # starlette>=0.51.0  # Fixes CVE (version: 0.47.3 → 0.51.0)
 # uv>=0.9.6          # Fixes 2 CVEs (version: 0.8.21 → 0.9.6)
@@ -117,7 +118,7 @@ include = ["chunking*", "embeddings*", "mcp_server*", "search*", "merkle*"]
 # * rich (14.3.2 -> 14.3.3), uv (0.10.2 -> 0.10.5), uvicorn (0.40.0 -> 0.41.0).
 # * regex (2026.1.15 -> 2026.2.19), ruff (0.15.0 -> 0.15.1).
 # Tested: CUDA verified, pip check passed.
-# Remaining CVEs: 1 (sqlitedict CVE-2024-35515 - no fix available).
+# Remaining CVEs: 1 (sqlitedict CVE-2024-35515 - no upstream fix; mitigated via JSON serialization in metadata.py).
 
 [tool.uv]
 index-url = "https://pypi.org/simple"
