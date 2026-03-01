@@ -34,6 +34,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+
 # ---------------------------------------------------------------------------
 # sys.path setup — must run before project imports
 # ---------------------------------------------------------------------------
@@ -43,11 +44,11 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from evaluation.metrics import (  # noqa: E402
-    aggregate_metrics,
     calculate_metrics_from_results,
     normalize_chunk_ids,
 )
 from search.intent_classifier import IntentClassifier  # noqa: E402
+
 
 # ---------------------------------------------------------------------------
 # Novel phrasings — synonyms / paraphrases NOT in keyword lists
@@ -181,10 +182,18 @@ def run_classification_comparison(
         query = item["query"]
         expected_intent = item.get("expected_intent")  # None for SSCG queries
 
-        off = _classify_one(query, semantic_enabled=False, embedder=None,
-                            confidence_threshold=confidence_threshold)
-        on = _classify_one(query, semantic_enabled=True, embedder=embedder,
-                           confidence_threshold=confidence_threshold)
+        off = _classify_one(
+            query,
+            semantic_enabled=False,
+            embedder=None,
+            confidence_threshold=confidence_threshold,
+        )
+        on = _classify_one(
+            query,
+            semantic_enabled=True,
+            embedder=embedder,
+            confidence_threshold=confidence_threshold,
+        )
 
         changed = off["intent"] != on["intent"]
         conf_delta = round(on["confidence"] - off["confidence"], 4)
@@ -290,9 +299,7 @@ def run_retrieval_comparison(
 ) -> list[dict[str, Any]]:
     """For classification-changed queries, compare retrieval with semantic on vs off."""
     # Build lookup for golden dataset expected results
-    golden_lookup: dict[str, dict[str, Any]] = {
-        q["id"]: q for q in sscg_queries
-    }
+    golden_lookup: dict[str, dict[str, Any]] = {q["id"]: q for q in sscg_queries}
 
     results = []
     for row in changed_rows:
@@ -324,7 +331,14 @@ def run_retrieval_comparison(
         )
         params_on = _apply_intent_params(
             row["intent_on"],
-            _classify_one(query, True, searcher.search_executor.embedder if hasattr(searcher, "search_executor") else None, confidence_threshold)["suggested_params"],
+            _classify_one(
+                query,
+                True,
+                searcher.search_executor.embedder
+                if hasattr(searcher, "search_executor")
+                else None,
+                confidence_threshold,
+            )["suggested_params"],
             base_k,
             row["conf_on"],
             confidence_threshold,
@@ -347,9 +361,11 @@ def run_retrieval_comparison(
         mrr_delta = round(metrics_on["mrr"] - metrics_off["mrr"], 4)
         recall_delta = round(metrics_on["recall@5"] - metrics_off["recall@5"], 4)
         verdict = (
-            "IMPROVED" if mrr_delta > 0.01 else
-            "REGRESSED" if mrr_delta < -0.01 else
-            "UNCHANGED"
+            "IMPROVED"
+            if mrr_delta > 0.01
+            else "REGRESSED"
+            if mrr_delta < -0.01
+            else "UNCHANGED"
         )
 
         results.append(
@@ -430,8 +446,12 @@ def print_classification_table(rows: list[dict[str, Any]]) -> None:
     print()
     print("-" * 110)
     print(f"  Summary: {len(changed)}/{total} queries changed intent")
-    print(f"    SSCG queries changed   : {sum(1 for r in sscg_rows if r['changed'])}/{len(sscg_rows)}")
-    print(f"    Novel queries changed  : {len(changed) - sum(1 for r in sscg_rows if r['changed'])}/{len(novel_rows)}")
+    print(
+        f"    SSCG queries changed   : {sum(1 for r in sscg_rows if r['changed'])}/{len(sscg_rows)}"
+    )
+    print(
+        f"    Novel queries changed  : {len(changed) - sum(1 for r in sscg_rows if r['changed'])}/{len(novel_rows)}"
+    )
     if novel_rows:
         print(f"    Novel -> correct intent : {len(improved_novel)}")
         print(f"    Novel -> wrong intent   : {len(regressed_novel)}")
@@ -449,7 +469,9 @@ def print_retrieval_table(results: list[dict[str, Any]]) -> None:
     novel_results = [r for r in results if "mrr_off" not in r]
 
     if not sscg_results:
-        print("  No SSCG queries had classification changes -- no retrieval comparison needed.")
+        print(
+            "  No SSCG queries had classification changes -- no retrieval comparison needed."
+        )
     else:
         header = (
             f"  {'ID':<5} {'Query':<{COL_W}} {'MRR(off)':<10} {'MRR(on)':<10} "
@@ -483,44 +505,80 @@ def print_summary(
     print("=" * 110)
 
     sscg_changed = [r for r in class_rows if r["category"] != "novel" and r["changed"]]
-    novel_improved = [r for r in class_rows if r["category"] == "novel" and r.get("correct_improvement") is True]
-    novel_regressed = [r for r in class_rows if r["category"] == "novel" and r.get("correct_improvement") is False]
+    novel_improved = [
+        r
+        for r in class_rows
+        if r["category"] == "novel" and r.get("correct_improvement") is True
+    ]
+    novel_regressed = [
+        r
+        for r in class_rows
+        if r["category"] == "novel" and r.get("correct_improvement") is False
+    ]
 
     retrieval_improved = []
     retrieval_regressed = []
     if retrieval_results:
-        retrieval_improved = [r for r in retrieval_results if r.get("verdict") == "IMPROVED"]
-        retrieval_regressed = [r for r in retrieval_results if r.get("verdict") == "REGRESSED"]
+        retrieval_improved = [
+            r for r in retrieval_results if r.get("verdict") == "IMPROVED"
+        ]
+        retrieval_regressed = [
+            r for r in retrieval_results if r.get("verdict") == "REGRESSED"
+        ]
 
     print()
     if sscg_changed:
-        print(f"  [!!] {len(sscg_changed)} SSCG queries changed classification -- check for regressions.")
+        print(
+            f"  [!!] {len(sscg_changed)} SSCG queries changed classification -- check for regressions."
+        )
     else:
-        print("  [OK] No SSCG queries changed classification (semantic scoring reinforces existing decisions).")
+        print(
+            "  [OK] No SSCG queries changed classification (semantic scoring reinforces existing decisions)."
+        )
 
     if novel_improved:
-        print(f"  [OK] {len(novel_improved)}/8 novel phrasings correctly reclassified with semantic on.")
+        print(
+            f"  [OK] {len(novel_improved)}/8 novel phrasings correctly reclassified with semantic on."
+        )
     if novel_regressed:
-        print(f"  [!!] {len(novel_regressed)}/8 novel phrasings misclassified with semantic on.")
+        print(
+            f"  [!!] {len(novel_regressed)}/8 novel phrasings misclassified with semantic on."
+        )
     if not novel_improved and not novel_regressed:
-        print("  [--] Novel phrasings: no classification changes (keyword scoring already handles these).")
+        print(
+            "  [--] Novel phrasings: no classification changes (keyword scoring already handles these)."
+        )
 
     if retrieval_improved:
-        print(f"  [OK] Retrieval improved for {len(retrieval_improved)} queries (MRR delta > 0.01).")
+        print(
+            f"  [OK] Retrieval improved for {len(retrieval_improved)} queries (MRR delta > 0.01)."
+        )
     if retrieval_regressed:
-        print(f"  [!!] Retrieval regressed for {len(retrieval_regressed)} queries (MRR delta < -0.01).")
+        print(
+            f"  [!!] Retrieval regressed for {len(retrieval_regressed)} queries (MRR delta < -0.01)."
+        )
 
     # Overall recommendation
     print()
     if not sscg_changed and not novel_regressed and not retrieval_regressed:
-        print("  RECOMMENDATION: semantic_enabled=True is safe -- no regressions detected.")
+        print(
+            "  RECOMMENDATION: semantic_enabled=True is safe -- no regressions detected."
+        )
         if novel_improved or retrieval_improved:
-            print("  BENEFIT: Improves novel phrasings / retrieval for reclassified queries.")
+            print(
+                "  BENEFIT: Improves novel phrasings / retrieval for reclassified queries."
+            )
         else:
-            print("  BENEFIT: Neutral -- no regressions and no detectable improvements on this dataset.")
-            print("           (The keyword classifier already handles these queries well.)")
+            print(
+                "  BENEFIT: Neutral -- no regressions and no detectable improvements on this dataset."
+            )
+            print(
+                "           (The keyword classifier already handles these queries well.)"
+            )
     else:
-        print("  RECOMMENDATION: Review regressions before keeping semantic_enabled=True.")
+        print(
+            "  RECOMMENDATION: Review regressions before keeping semantic_enabled=True."
+        )
     print()
 
 
@@ -566,7 +624,7 @@ def main() -> None:
         else _PROJECT_ROOT / "evaluation" / "golden_dataset.json"
     )
 
-    print(f"\nSemantic Intent Classification Evaluation")
+    print("\nSemantic Intent Classification Evaluation")
     print(f"  Project : {project_path}")
     print(f"  Dataset : {golden_path}")
     print(f"  Conf threshold: {args.confidence_threshold}")
@@ -600,14 +658,18 @@ def main() -> None:
     # Extract embedder for semantic scoring
     embedder = _extract_embedder(searcher)
     if embedder is None:
-        print("[WARN] Could not extract embedder from searcher -- semantic scoring will be disabled")
+        print(
+            "[WARN] Could not extract embedder from searcher -- semantic scoring will be disabled"
+        )
     else:
         print(f"  Embedder: {getattr(embedder, 'model_name', 'unknown')}")
 
     # -----------------------------------------------------------------------
     # Part A: Classification comparison
     # -----------------------------------------------------------------------
-    print(f"\nRunning Part A: classifying {len(all_queries)} queries (semantic on vs off)...")
+    print(
+        f"\nRunning Part A: classifying {len(all_queries)} queries (semantic on vs off)..."
+    )
     t_a = time.perf_counter()
     class_rows = run_classification_comparison(
         all_queries,
@@ -624,7 +686,9 @@ def main() -> None:
     if not args.no_retrieval:
         changed_rows = [r for r in class_rows if r["changed"]]
         if changed_rows:
-            print(f"Running Part B: retrieval comparison for {len(changed_rows)} changed queries...")
+            print(
+                f"Running Part B: retrieval comparison for {len(changed_rows)} changed queries..."
+            )
             t_b = time.perf_counter()
             retrieval_results = run_retrieval_comparison(
                 changed_rows,
@@ -635,7 +699,9 @@ def main() -> None:
             print(f"  Done in {time.perf_counter() - t_b:.1f}s")
             print_retrieval_table(retrieval_results)
         else:
-            print("Part B: No queries changed classification -- skipping retrieval comparison.")
+            print(
+                "Part B: No queries changed classification -- skipping retrieval comparison."
+            )
             retrieval_results = []
     else:
         print("Part B: Skipped (--no-retrieval)")
