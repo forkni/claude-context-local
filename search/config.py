@@ -525,6 +525,8 @@ class SearchConfig:
                 "confidence_threshold": self.intent.confidence_threshold,
                 "default_intent": self.intent.default_intent,
                 "log_classifications": self.intent.log_classifications,
+                "semantic_enabled": self.intent.semantic_enabled,
+                "semantic_weight": self.intent.semantic_weight,
             },
             "reranker": {
                 "enabled": self.reranker.enabled,
@@ -703,6 +705,8 @@ class SearchConfig:
                 confidence_threshold=intent_data.get("confidence_threshold", 0.3),
                 default_intent=intent_data.get("default_intent", "HYBRID"),
                 log_classifications=intent_data.get("log_classifications", True),
+                semantic_enabled=intent_data.get("semantic_enabled", False),
+                semantic_weight=intent_data.get("semantic_weight", 0.3),
             )
 
             reranker = RerankerConfig(
@@ -857,6 +861,8 @@ class SearchConfig:
                 confidence_threshold=data.get("intent_confidence_threshold", 0.3),
                 default_intent=data.get("intent_default_intent", "HYBRID"),
                 log_classifications=data.get("intent_log_classifications", True),
+                semantic_enabled=data.get("intent_semantic_enabled", False),
+                semantic_weight=data.get("intent_semantic_weight", 0.3),
             )
 
             reranker = RerankerConfig(

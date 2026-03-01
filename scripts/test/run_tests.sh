@@ -7,9 +7,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Detect venv pytest (Windows/Linux/macOS)
-if [[[ -f "$PROJECT_ROOT/.venv/Scripts/pytest.exe" ]]; then
+if [[ -f "$PROJECT_ROOT/.venv/Scripts/pytest.exe" ]]; then
     PYTEST="$PROJECT_ROOT/.venv/Scripts/pytest.exe"
-elif [[[ -f "$PROJECT_ROOT/.venv/bin/pytest" ]]; then
+elif [[ -f "$PROJECT_ROOT/.venv/bin/pytest" ]]; then
     PYTEST="$PROJECT_ROOT/.venv/bin/pytest"
 else
     echo "[ERROR] Virtual environment not found at $PROJECT_ROOT/.venv" >&2

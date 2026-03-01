@@ -102,11 +102,11 @@ def _apply_weight_overrides(
 
         cfg = get_search_config()
         if bm25_weight is not None:
-            cfg.search.bm25_weight = bm25_weight
+            cfg.search_mode.bm25_weight = bm25_weight
         if dense_weight is not None:
-            cfg.search.dense_weight = dense_weight
+            cfg.search_mode.dense_weight = dense_weight
         if search_mode is not None:
-            cfg.search.default_mode = search_mode
+            cfg.search_mode.default_mode = search_mode
     except Exception as e:
         print(f"[WARN] Could not apply weight overrides: {e}", file=sys.stderr)
 
@@ -308,9 +308,9 @@ def compare_runs(result_files: list[str]) -> None:
                     deltas.append((qid, q["query"][:40], delta_mrr, delta_r5))
         if deltas:
             print(
-                f"\n--- Changes from '{r1['config_name']}' → '{r2['config_name']}' ---"
+                f"\n--- Changes from '{r1['config_name']}' -> '{r2['config_name']}' ---"
             )
-            print(f"{'ID':<5} {'ΔMRR':>7} {'ΔR@5':>7} Query")
+            print(f"{'ID':<5} {'dMRR':>7} {'dR@5':>7} Query")
             print("-" * 60)
             for qid, query, dmrr, dr5 in sorted(deltas, key=lambda x: -abs(x[2])):
                 sign = "+" if dmrr >= 0 else ""
@@ -548,12 +548,12 @@ def main() -> None:
     # Pass/fail summary
     pf = result["aggregate"].get("pass_fail", {})
     all_pass = all(v == "PASS" for v in pf.values())
-    print(f"\nOverall: {'PASS ✓' if all_pass else 'FAIL ✗'}")
+    print(f"\nOverall: {'PASS' if all_pass else 'FAIL'}")
     for metric, status in pf.items():
         threshold = THRESHOLDS.get(
             metric.replace("@", "_at_").replace("hit_rate_at_5", "hit_rate_at_5"), "?"
         )
-        print(f"  {metric:<14}: {status}  (threshold ≥ {threshold})")
+        print(f"  {metric:<14}: {status}  (threshold >= {threshold})")
 
     # Save results
     output_path = args.output or str(
