@@ -1286,6 +1286,12 @@ class CodeEmbedder:
 
     def cleanup(self) -> None:
         """Clean up model from memory to free GPU/CPU resources."""
+        import sys
+
+        if sys.meta_path is None:
+            # Python interpreter is shutting down; imports are unavailable.
+            # Skip cleanup to avoid spurious errors from gc/torch teardown.
+            return
         if self._model is not None:
             try:
                 import gc

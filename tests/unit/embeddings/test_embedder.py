@@ -284,23 +284,24 @@ def test_query_cache_lru_eviction(mock_sentence_transformer, mock_model_loader_s
     stats = embedder.get_cache_stats()
     assert stats["cache_size"] == 3
     assert stats["misses"] == 3
-    assert call_count[0] == 3
+    # call_count includes 1 warm-up encode from ModelLoader.load() + 3 query encodes
+    assert call_count[0] == 4
 
     # Add 4th query - should evict query1 (oldest)
     query4 = "query 4"
-    _ = embedder.embed_query(query4)  # call_count=4
+    _ = embedder.embed_query(query4)  # call_count=5
 
     stats = embedder.get_cache_stats()
     assert stats["cache_size"] == 3  # Still max size
     assert stats["misses"] == 4
-    assert call_count[0] == 4
+    assert call_count[0] == 5
 
     # Query 1 should be evicted - should trigger new encode call
-    _ = embedder.embed_query(query1)  # call_count=5
+    _ = embedder.embed_query(query1)  # call_count=6
     stats = embedder.get_cache_stats()
     assert stats["hits"] == 0  # Still no hits (query1 was evicted)
     assert stats["misses"] == 5
-    assert call_count[0] == 5
+    assert call_count[0] == 6
 
     # Now cache has: query3, query4, query1 (query2 was evicted when query1 was re-added)
     # Query 3 should still be cached - should be a cache hit
@@ -308,7 +309,7 @@ def test_query_cache_lru_eviction(mock_sentence_transformer, mock_model_loader_s
     stats = embedder.get_cache_stats()
     assert stats["hits"] == 1  # First cache hit
     assert stats["misses"] == 5
-    assert call_count[0] == 5  # No new encode call
+    assert call_count[0] == 6  # No new encode call
 
 
 @patch("embeddings.model_loader.SentenceTransformer")
@@ -565,16 +566,17 @@ def test_query_cache_with_task_instruction(
     query = "test query"
 
     # First call - should encode with task instruction
+    # (encoded_queries[0] is the warm-up from ModelLoader.load(); index 1 is the real query)
     embedding1 = embedder.embed_query(query)
-    assert len(encoded_queries) == 1
-    assert encoded_queries[0].startswith(
+    assert len(encoded_queries) == 2
+    assert encoded_queries[1].startswith(
         "Represent this query for searching relevant code"
     )
-    assert "test query" in encoded_queries[0]
+    assert "test query" in encoded_queries[1]
 
     # Second call - should hit cache
     embedding2 = embedder.embed_query(query)
-    assert len(encoded_queries) == 1  # No new encode call
+    assert len(encoded_queries) == 2  # No new encode call
     assert np.allclose(embedding1, embedding2)
 
     stats = embedder.get_cache_stats()
@@ -659,8 +661,9 @@ def test_instruction_mode_custom(mock_sentence_transformer, mock_model_loader_st
     _ = embedder.embed_query(query)
 
     # Verify custom instruction was prepended
-    assert len(encoded_queries) == 1
-    encoded_query, encode_kwargs = encoded_queries[0]
+    # (encoded_queries[0] is the warm-up from ModelLoader.load(); index 1 is the real query)
+    assert len(encoded_queries) == 2
+    encoded_query, encode_kwargs = encoded_queries[1]
     assert (
         "Instruct: Retrieve source code implementations matching the query"
         in encoded_query
@@ -706,8 +709,9 @@ def test_instruction_mode_prompt_name(mock_sentence_transformer, mock_model_load
     _ = embedder.embed_query(query)
 
     # Verify prompt_name was passed to encode
-    assert len(encoded_queries) == 1
-    encoded_query, prompt_name_arg = encoded_queries[0]
+    # (encoded_queries[0] is the warm-up from ModelLoader.load(); index 1 is the real query)
+    assert len(encoded_queries) == 2
+    encoded_query, prompt_name_arg = encoded_queries[1]
     assert encoded_query == "find authentication functions"  # No prefix added
     assert prompt_name_arg == "query"  # prompt_name passed to encode
 
@@ -743,13 +747,13 @@ def test_instruction_mode_cache_keys(mock_sentence_transformer, mock_model_loade
 
     query = "test query"
 
-    # First call - cache miss
+    # First call - cache miss (encode_count includes 1 warm-up + 1 real query)
     embedding1 = embedder.embed_query(query)
-    assert encode_count[0] == 1
+    assert encode_count[0] == 2
 
     # Second call with same query - cache hit
     embedding2 = embedder.embed_query(query)
-    assert encode_count[0] == 1  # No new encode
+    assert encode_count[0] == 2  # No new encode
     assert np.allclose(embedding1, embedding2)
 
     stats = embedder.get_cache_stats()

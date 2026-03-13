@@ -260,11 +260,20 @@ class HybridSearcher(BaseSearcher):
 
         if project_id:
             try:
-                # Graph storage in parent of storage_dir (same as graph_integration.py)
-                graph_dir = self.storage_dir.parent
-                self._graph_storage = CodeGraphStorage(
-                    project_id=project_id, storage_dir=graph_dir
-                )
+                # Reuse the CodeGraphStorage already loaded by CodeIndexManager
+                # (via dense_index.graph_storage) to avoid a second JSON deserialize.
+                existing_storage = getattr(self.dense_index, "graph_storage", None)
+                if existing_storage is not None:
+                    self._graph_storage = existing_storage
+                    self._logger.debug(
+                        "[INIT] Reusing graph storage from dense_index (skipped duplicate load)"
+                    )
+                else:
+                    # Fallback: load independently (e.g., CodeIndexManager had no project_id)
+                    graph_dir = self.storage_dir.parent
+                    self._graph_storage = CodeGraphStorage(
+                        project_id=project_id, storage_dir=graph_dir
+                    )
                 self.ego_graph_retriever = EgoGraphRetriever(self._graph_storage)
                 self._logger.info(
                     f"[INIT] Ego-graph retrieval initialized for project: {project_id}"

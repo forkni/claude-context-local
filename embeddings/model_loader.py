@@ -178,13 +178,14 @@ class ModelLoader:
         return "cpu"
 
     def _build_constructor_kwargs(
-        self, resolved_device: str, model_kwargs_dict: dict
+        self, resolved_device: str, model_kwargs_dict: dict, cache_valid: bool = False
     ) -> dict:
         """Build constructor kwargs for SentenceTransformer loading.
 
         Args:
             resolved_device: Resolved device string ("cuda", "mps", or "cpu")
             model_kwargs_dict: Model kwargs (e.g., dtype)
+            cache_valid: Whether cache has been validated; enables local_files_only
 
         Returns:
             Dictionary of constructor kwargs for SentenceTransformer
@@ -202,6 +203,10 @@ class ModelLoader:
             "device": resolved_device,
             "trust_remote_code": trust_remote_code,
         }
+
+        if cache_valid:
+            kwargs["local_files_only"] = True
+            self._logger.debug("local_files_only=True (validated cache)")
 
         truncate_dim = model_config.get("truncate_dim")
         if truncate_dim is not None:
@@ -356,7 +361,9 @@ class ModelLoader:
                 self._logger.info(
                     "[VALIDATED CACHE] Enabling offline mode for faster startup."
                 )
-                local_model_dir = self._cache_manager.find_local_model_dir()
+                local_model_dir = self._cache_manager.find_local_model_dir(
+                    cache_valid=cache_valid
+                )
                 if local_model_dir:
                     self._logger.info(
                         f"Loading model from validated cache: {local_model_dir}"
@@ -387,7 +394,7 @@ class ModelLoader:
         try:
             # Build constructor kwargs (deduplicated helper method)
             constructor_kwargs = self._build_constructor_kwargs(
-                resolved_device, model_kwargs_dict
+                resolved_device, model_kwargs_dict, cache_valid=cache_valid
             )
 
             # Debug: Log constructor args
@@ -396,6 +403,16 @@ class ModelLoader:
             )
 
             model = SentenceTransformer(model_source, **constructor_kwargs)
+
+            # Warm-up: trigger TorchDynamo JIT compilation at init time
+            # so the first real user query is not penalized by compilation latency.
+            try:
+                model.encode(
+                    ["warm-up"], convert_to_numpy=True, show_progress_bar=False
+                )
+                self._logger.debug("Model warm-up complete (TorchDynamo pre-compiled)")
+            except Exception as _wu_err:
+                self._logger.debug(f"Model warm-up skipped: {_wu_err}")
 
             # Build detailed info string
             precision_info = f" ({torch_dtype})" if torch_dtype else " (fp32 default)"

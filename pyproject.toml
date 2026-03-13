@@ -82,6 +82,10 @@ dev = [
     "pipdeptree>=2.24.0",
     "pre-commit>=4.0.1",
 ]
+profile = [
+    "snoop>=0.6.0",
+    "py-heat>=0.0.6",
+]
 
 [project.urls]
 Homepage = "https://github.com/forkni/claude-context-local"
