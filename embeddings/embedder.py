@@ -58,14 +58,14 @@ MODEL_ACTIVATION_COST_OVERRIDES: dict[str, float] = {
     # due to long context (8192 tokens) and full BERT-base layer stack
     "nomic-ai/CodeRankEmbed": 0.25,  # Conservative estimate between observed 0.19-0.32
     # BGE-Code-v1: 2B params, Qwen2 architecture, 4096 context.
-    # Weight is ~4GB (classified 'large' tier at 0.40 GB/item) but actual
-    # activation memory is ~0.65 GB/item due to deep Qwen2 architecture.
-    # Measured: 23 items → 15GB activations = 0.65 GB/item on RTX 4090.
-    "BAAI/bge-code-v1": 0.65,
+    # Weight is ~4GB but activation memory matches 'large' models (>=6GB) tier
+    # due to its parameter count and layer depth (deep architecture).
+    "BAAI/bge-code-v1": 0.40,
     # Qwen3-0.6B: 600M params, 32768 context, bf16.
     # Weight is only 1.1GB (classified "medium" tier at 0.08 GB/item) but actual
-    # activation memory is ~0.27 GB/item due to long context window (32K tokens).
-    # Measured: 64 items → 17GB activations = 0.266 GB/item on RTX 4090.
+    # activation memory is higher due to long context window (32K tokens).
+    # Note: PyTorch caching allocator inflates driver-level VRAM readings;
+    # this value is based on batch sizing safety, not raw mem_get_info deltas.
     "Qwen/Qwen3-Embedding-0.6B": 0.27,
 }
 
@@ -517,9 +517,13 @@ class CodeEmbedder:
             return 0.0, False, False
 
         try:
-            # Use system-wide free/total (accounts for ALL processes, not just ours)
-            free_memory, total_memory = torch.cuda.mem_get_info(0)
-            usage_pct = 1.0 - (free_memory / total_memory) if total_memory > 0 else 0.0
+            # Use PyTorch allocated memory, not CUDA driver-level mem_get_info().
+            # mem_get_info() includes PyTorch's caching allocator reserved blocks,
+            # which are pre-allocated and reused — not actual working-set pressure.
+            # This caused false 87% warnings regardless of batch size.
+            allocated = torch.cuda.memory_allocated(0)
+            total_memory = torch.cuda.get_device_properties(0).total_memory
+            usage_pct = allocated / total_memory if total_memory > 0 else 0.0
 
             should_warn = usage_pct > vram_warning_threshold
             should_abort = usage_pct > vram_abort_threshold
