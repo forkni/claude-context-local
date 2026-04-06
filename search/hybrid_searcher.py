@@ -1035,10 +1035,27 @@ class HybridSearcher(BaseSearcher):
                     f"[RERANK-SIMILAR] Reranking {len(results)} candidates "
                     f"using reference chunk as query (length: {len(query_content)} chars)"
                 )
-                # Delegate to reranking_engine for lifecycle + reranking
-                results = self.reranking_engine.apply_neural_reranking(
-                    query_content, results, k, context="similarity"
+                # Convert to reranker.SearchResult (has .score) for the reranking pipeline.
+                # searcher.SearchResult uses .similarity_score, which reranker doesn't know.
+                from .reranker import SearchResult as RankerResult
+
+                rich_by_id = {r.chunk_id: r for r in results}
+                ranker_inputs = [
+                    RankerResult(
+                        chunk_id=r.chunk_id,
+                        score=r.similarity_score,
+                        metadata=r.metadata,
+                        source="similarity",
+                    )
+                    for r in results
+                ]
+                reranked = self.reranking_engine.apply_neural_reranking(
+                    query_content, ranker_inputs, k, context="similarity"
                 )
+                # Restore rich searcher.SearchResult objects in reranked order
+                results = [
+                    rich_by_id[r.chunk_id] for r in reranked if r.chunk_id in rich_by_id
+                ]
             else:
                 self._logger.warning(
                     f"[RERANK-SIMILAR] No content found for reference chunk {chunk_id}, "

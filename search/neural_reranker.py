@@ -1,6 +1,7 @@
 """Neural cross-encoder reranker for semantic scoring."""
 
 import logging
+import os
 from typing import TYPE_CHECKING
 
 import torch
@@ -459,33 +460,77 @@ class JinaRerankerV3:
             AutoModel: Loaded Jina reranker model
         """
         if self._model is None:
-            self._logger.info(f"Loading Jina reranker: {self.model_name}")
+            import io
+            import sys
+
             import transformers as _tf
+            from huggingface_hub import try_to_load_from_cache
             from transformers import AutoConfig, AutoModel
 
-            # Load config first and disable weight tying
-            # Jina v3 replaces lm_head with Identity, so tie_word_embeddings must be False
-            config = AutoConfig.from_pretrained(self.model_name, trust_remote_code=True)
-            config.tie_word_embeddings = False
+            self._logger.info(f"Loading Jina reranker: {self.model_name}")
+
+            # Use local_files_only when model is cached to skip HuggingFace HEAD
+            # requests (eliminates ~3-4s of network latency per from_pretrained call)
+            cached = try_to_load_from_cache(self.model_name, "config.json")
+            local_only = isinstance(cached, str) and os.path.exists(cached)
+
+            def _load_config(local_files_only: bool) -> AutoConfig:
+                cfg = AutoConfig.from_pretrained(
+                    self.model_name,
+                    trust_remote_code=True,
+                    local_files_only=local_files_only,
+                )
+                # Jina v3 replaces lm_head with nn.Identity(); disabling weight
+                # tying prevents the LOAD REPORT "lm_head.weight | MISSING" warning
+                cfg.tie_word_embeddings = False
+                return cfg
 
             try:
-                self._model = AutoModel.from_pretrained(
-                    self.model_name,
-                    config=config,
-                    dtype="auto",  # Jina's custom parameter
-                    trust_remote_code=True,
-                )
-            except TypeError:
-                # dtype="auto" is Jina-specific; retry without it on older transformers
+                config = _load_config(local_only)
+            except (OSError, ValueError):
+                config = _load_config(False)
+                local_only = False  # cache miss — fall through to network for model too
+
+            def _load_model(cfg: AutoConfig, local_files_only: bool):
+                # Suppress Jina's lm_head MISSING LOAD REPORT printed to stdout
+                # (cosmetic: lm_head is replaced by nn.Identity() and is never
+                # used during reranking; scoring uses the projector head instead)
+                _captured = io.StringIO()
+                old_stdout = sys.stdout
+                sys.stdout = _captured
+                try:
+                    try:
+                        return AutoModel.from_pretrained(
+                            self.model_name,
+                            config=cfg,
+                            dtype="auto",  # Jina's custom parameter
+                            trust_remote_code=True,
+                            local_files_only=local_files_only,
+                        )
+                    except TypeError:
+                        # dtype="auto" is Jina-specific; retry without it on older transformers
+                        self._logger.warning(
+                            f"dtype='auto' not supported (transformers {_tf.__version__}), "
+                            "retrying without it"
+                        )
+                        return AutoModel.from_pretrained(
+                            self.model_name,
+                            config=cfg,
+                            trust_remote_code=True,
+                            local_files_only=local_files_only,
+                        )
+                finally:
+                    sys.stdout = old_stdout
+
+            try:
+                self._model = _load_model(config, local_only)
+            except (OSError, ValueError):
+                # Cache stale/corrupt — retry over network
                 self._logger.warning(
-                    f"dtype='auto' not supported (transformers {_tf.__version__}), "
-                    "retrying without it"
+                    "Local cache miss for Jina reranker, fetching from HuggingFace Hub"
                 )
-                self._model = AutoModel.from_pretrained(
-                    self.model_name,
-                    config=config,
-                    trust_remote_code=True,
-                )
+                config = _load_config(False)
+                self._model = _load_model(config, False)
 
             self._model = self._model.to(self.device)  # Move to GPU if available
             self._model.eval()
@@ -500,6 +545,20 @@ class JinaRerankerV3:
                     f"(transformers=={_tf.__version__}). "
                     "If this persists, verify model compatibility with your transformers version."
                 )
+
+            # Pre-load tokenizer now to consolidate all HuggingFace Hub API calls
+            # into this init window. Jina loads the tokenizer lazily on the first
+            # rerank() call via _ensure_tokenizer(), which triggers a second round
+            # of network requests (config.json, tokenizer_config.json, model tree)
+            # after the model is already on GPU, adding ~1s to first-query latency.
+            if hasattr(self._model, "_ensure_tokenizer"):
+                try:
+                    self._model._ensure_tokenizer()
+                except Exception as e:
+                    self._logger.warning(
+                        f"Tokenizer pre-load failed (will retry on first rerank): {e}"
+                    )
+
             self._logger.info(f"Jina reranker loaded on {self.device}")
         return self._model
 

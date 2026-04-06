@@ -58,9 +58,15 @@ MODEL_ACTIVATION_COST_OVERRIDES: dict[str, float] = {
     # due to long context (8192 tokens) and full BERT-base layer stack
     "nomic-ai/CodeRankEmbed": 0.25,  # Conservative estimate between observed 0.19-0.32
     # BGE-Code-v1: 2B params, Qwen2 architecture, 4096 context.
-    # Weight is ~4GB but activation memory matches 'large' models (>=6GB) tier
-    # due to its parameter count and layer depth (deep architecture).
-    "BAAI/bge-code-v1": 0.40,
+    # Weight is ~4GB (classified 'large' tier at 0.40 GB/item) but actual
+    # activation memory is ~0.65 GB/item due to deep Qwen2 architecture.
+    # Measured: 23 items → 15GB activations = 0.65 GB/item on RTX 4090.
+    "BAAI/bge-code-v1": 0.65,
+    # Qwen3-0.6B: 600M params, 32768 context, bf16.
+    # Weight is only 1.1GB (classified "medium" tier at 0.08 GB/item) but actual
+    # activation memory is ~0.27 GB/item due to long context window (32K tokens).
+    # Measured: 64 items → 17GB activations = 0.266 GB/item on RTX 4090.
+    "Qwen/Qwen3-Embedding-0.6B": 0.27,
 }
 
 

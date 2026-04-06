@@ -1324,17 +1324,42 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
                     "resolution_method": "direct_lookup",
                 }
 
-        # Fall back to semantic search if direct lookup failed
+        # Try graph node exact-name lookup before falling back to semantic search
+        if not resolved_source and hasattr(searcher, "dense_index"):
+            gs = getattr(searcher.dense_index, "graph_storage", None)
+            if gs and hasattr(gs, "graph"):
+                for node_id, data in gs.graph.nodes(data=True):
+                    if data.get("name") == source or node_id.endswith(f":{source}"):
+                        resolved_source = node_id
+                        source_info = {
+                            "resolved_from": source,
+                            "chunk_id": resolved_source,
+                            "resolution_method": "graph_lookup",
+                        }
+                        break
+
+        # Fall back to semantic search if all lookups failed
         if not resolved_source:
-            results = searcher.search(source, k=1)
-            if results:
+            results = searcher.search(source, k=5)
+            # Prefer chunks whose name matches the symbol over module-level chunks
+            for r in results:
+                meta = r.metadata if hasattr(r, "metadata") else {}
+                if meta.get("name") == source:
+                    resolved_source = r.chunk_id
+                    source_info = {
+                        "resolved_from": source,
+                        "chunk_id": resolved_source,
+                        "resolution_method": "semantic_search",
+                    }
+                    break
+            if not resolved_source and results:
                 resolved_source = results[0].chunk_id
                 source_info = {
                     "resolved_from": source,
                     "chunk_id": resolved_source,
                     "resolution_method": "semantic_search",
                 }
-            else:
+            if not resolved_source:
                 return {
                     "path_found": False,
                     "error": f"Could not resolve source symbol: {source}",
@@ -1356,17 +1381,42 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
                     "resolution_method": "direct_lookup",
                 }
 
-        # Fall back to semantic search if direct lookup failed
+        # Try graph node exact-name lookup before falling back to semantic search
+        if not resolved_target and hasattr(searcher, "dense_index"):
+            gs = getattr(searcher.dense_index, "graph_storage", None)
+            if gs and hasattr(gs, "graph"):
+                for node_id, data in gs.graph.nodes(data=True):
+                    if data.get("name") == target or node_id.endswith(f":{target}"):
+                        resolved_target = node_id
+                        target_info = {
+                            "resolved_from": target,
+                            "chunk_id": resolved_target,
+                            "resolution_method": "graph_lookup",
+                        }
+                        break
+
+        # Fall back to semantic search if all lookups failed
         if not resolved_target:
-            results = searcher.search(target, k=1)
-            if results:
+            results = searcher.search(target, k=5)
+            # Prefer chunks whose name matches the symbol over module-level chunks
+            for r in results:
+                meta = r.metadata if hasattr(r, "metadata") else {}
+                if meta.get("name") == target:
+                    resolved_target = r.chunk_id
+                    target_info = {
+                        "resolved_from": target,
+                        "chunk_id": resolved_target,
+                        "resolution_method": "semantic_search",
+                    }
+                    break
+            if not resolved_target and results:
                 resolved_target = results[0].chunk_id
                 target_info = {
                     "resolved_from": target,
                     "chunk_id": resolved_target,
                     "resolution_method": "semantic_search",
                 }
-            else:
+            if not resolved_target:
                 return {
                     "path_found": False,
                     "error": f"Could not resolve target symbol: {target}",
