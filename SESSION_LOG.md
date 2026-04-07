@@ -6164,3 +6164,51 @@ project_dir = base_dir / "projects" / f"{project_name}_{hash}_{dimension}d"
 
 ---
 
+### Session: 2026-04-06 — CI Review Round 2 Fixes & v0.9.5 Merge
+
+**Primary Achievement**: Fixed 6 code quality issues from Charlie's second CI review of PR #16 (thread safety, graph correctness, cache eviction, installer UX, benchmark accuracy), then merged development → main and closed PR #16.
+
+#### Key Accomplishments
+- Fixed `JinaRerankerV3` double-checked locking: extracted `_load_or_fetch()`, removed re-entrant `_load_lock` inside inner `_load_model` (would have deadlocked)
+- Fixed `_name_index` stale entries in `graph_storage.py`: evict old name on node rename, return `.copy()` from `get_nodes_by_name()`, removed O(n) duplicate check in `load()` rebuild
+- Bounded `_ANCHOR_EMBEDDINGS_CACHE` to `maxsize=8` with FIFO eviction in `intent_classifier.py`
+- Removed misleading "Manual CUDA Version Selection" menu option [3] from `install-windows.cmd` (now a no-op since `uv sync` handles index selection); renumbered options 3–6
+- Fixed `aggregate_metrics()` in `evaluation/metrics.py` to use `q.get(key, 0.0)` so error queries count as 0.0 instead of being silently excluded
+- Added full zeroed metric dict to exception path in `run_sscg_benchmark.py` for schema consistency
+- Merged development → main (`88041d7`), pushed both branches + tags, PR #16 auto-closed
+
+#### Technical Details
+
+**Fix 1 — Thread-safe reranker init** (`search/neural_reranker.py`):
+- Old: `_load_lock` only guarded `redirect_stdout` inside `_load_model()` — two threads could both pass the outer `if self._model is None` check
+- New: `model` property uses double-checked locking (`if None → with lock → if None → _load_or_fetch()`); `_load_or_fetch()` uses `contextlib.redirect_stdout` without re-acquiring the lock
+
+**Fix 2 — Graph name index correctness** (`graph/graph_storage.py`):
+- `add_node()` now checks for existing name and removes stale mapping using `contextlib.suppress(ValueError)` (ruff SIM105)
+- `get_nodes_by_name()` returns `list(...)` copy — callers can no longer mutate internal state
+- `load()` rebuild drops the `if node_id not in` guard (node IDs are unique in a DiGraph)
+
+**Fix 3 — Cache eviction** (`search/intent_classifier.py`):
+- Added `_ANCHOR_CACHE_MAXSIZE = 8` constant
+- Insertion path evicts oldest entry (FIFO, dict insertion order) when at capacity
+
+**Fix 4 — Installer cleanup** (`install-windows.cmd`):
+- Removed `:manual_cuda` + `:manual_cuda_install` blocks (~38 lines)
+- Options renumbered: 4→3 (Update/Repair), 5→4 (Snapshots), 6→5 (Verify), 7→6 (Exit)
+- Used Python byte-level script to handle CRLF line endings safely
+
+**Fixes 5–6 — Benchmark correctness** (`evaluation/metrics.py`, `scripts/benchmark/run_sscg_benchmark.py`):
+- Aggregation now includes all 9 metric keys with 0.0 default
+- Exception path emits full schema: `recall@1/5/10`, `precision@1/5/10`, `mrr`, `ndcg@5/10`
+
+**Verification**: 1682 unit tests pass, ruff clean
+
+#### Files Modified
+- `search/neural_reranker.py` — double-checked locking, extracted `_load_or_fetch()`, removed deadlock
+- `graph/graph_storage.py` — stale name eviction, copy return, simplified load rebuild; added `import contextlib`
+- `search/intent_classifier.py` — `_ANCHOR_CACHE_MAXSIZE=8`, FIFO eviction on insert
+- `install-windows.cmd` — removed option [3], renumbered menu
+- `evaluation/metrics.py` — `q.get(key, 0.0)` aggregation
+- `scripts/benchmark/run_sscg_benchmark.py` — full zeroed metric dict in exception path
+
+---
