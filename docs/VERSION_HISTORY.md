@@ -4,14 +4,53 @@ Complete version history and feature timeline for claude-context-local MCP serve
 
 ## Current Status: All Features Operational (2026-04-06)
 
-- **Version**: 0.9.4
+- **Version**: 0.9.5
 - **Status**: Production-ready
 - **Test Coverage**: 1,682+ unit tests + 8 integration tests (100% pass rate)
 - **Dependencies**: 125 packages (38% reduction from 201)
 - **Index Quality**: 109 active files, 789 chunks (34% reduction via greedy merge, BGE-M3 1024d, ~16 MB)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
 - **SSCG Benchmark**: MRR=0.94, Recall@4=92.3% (12/13 queries)
-- **Recent Features**: Ego-graph QW1-QW5, semantic intent classification, 5 MCP bug fixes, startup performance, security patches
+- **Recent Features**: Installer fixes, 8 CI review fixes (intent classifier caching, graph name index, thread-safe reranker, find_path O(1))
+
+---
+
+## v0.9.5 - Installer & Code Quality Fixes (2026-04-06)
+
+### Status: PATCH RELEASE ✅
+
+Targeted fixes identified by isolated environment installation testing and CI code review. Three installer bugs prevented clean fresh-machine setup. Eight code quality issues flagged by Charlie (CI) have been resolved — covering a performance footgun in per-request `IntentClassifier` instantiation, a correctness issue with negative cosine similarities in ensemble scoring, a scalability issue with O(N) graph node scans in `find_path`, and several smaller correctness/maintainability issues.
+
+### Highlights
+
+- **Installer fixed**: `uv sync` now handles all PyTorch installation; dead cu118 pre-install and transformers preview steps removed
+- **IntentClassifier caching**: YAML parsed once per process; anchor embeddings shared across instances (module-level cache)
+- **find_path O(1)**: `CodeGraphStorage._name_index` enables constant-time name-to-chunk_id resolution
+- **Thread-safe reranker**: `contextlib.redirect_stdout` + `threading.Lock` replace global `sys.stdout` swap
+
+### 🔧 Bug Fixes
+
+- **Installer (cu118→cu128)**: CUDA 12.x was mapped to `cu118` index, installing torch 2.7.1 (fails `>=2.8.0`); `uv sync` now used exclusively (`177405c`)
+- **Installer (transformers preview)**: Removed dead `pip install transformers@v4.56.0-Embedding-Gemma-preview` step — overwritten by `uv sync` instantly (`177405c`)
+- **Installer (hardcoded path)**: `install-windows.ps1` had `C:\Users\Inter\...`; replaced with `(Get-Command python).Source` (`177405c`)
+- **IntentClassifier YAML re-parse**: `_load_anchor_config()` called per request; now `@lru_cache` cached (`b37ba8b`)
+- **IntentClassifier anchor re-embedding**: Per-instance `_anchor_embeddings`; now shared via `_ANCHOR_EMBEDDINGS_CACHE[id(embedder)]` (`b37ba8b`)
+- **`semantic_weight` unbounded**: Out-of-range values silently broke ensemble; clamped to `[0.0, 1.0]` in `__init__` (`b37ba8b`)
+- **Negative cosine in ensemble**: Similarities in `[-1, 1]` blended with keyword scores in `[0, 1]`; negative values now clamped to `0.0` (`b37ba8b`)
+- **find_path O(N) scan**: Tier-2 lookup iterated all nodes with attribute access; replaced with `_name_index` (O(1)) in `CodeGraphStorage` (`b37ba8b`)
+- **find_similar_code score mismatch**: Reranked order kept original `similarity_score`; reranker score now in `metadata["reranker_score"]` (`b37ba8b`)
+- **sys.stdout thread-safety**: Global swap in `JinaRerankerV3._load_model` replaced with `contextlib.redirect_stdout` + lock (`b37ba8b`)
+- **Benchmark sweep/compare mismatch**: `--compare` now unwraps `{"sweep_results": [...]}` sweep files (`b37ba8b`)
+- **Benchmark Part B redundant classification**: `suggested_params` cached from Part A, eliminating 2 extra `_classify_one()` calls per query (`b37ba8b`)
+
+### ⚡ Performance
+
+- Intent classifier hot path: anchor YAML parsed once; embeddings computed once per embedder lifetime
+- `find_path` graph name resolution: O(N·attrs) → O(1)
+
+### 🧪 Tests
+
+- 1,682/1,682 unit tests passing (no regressions)
 
 ---
 
