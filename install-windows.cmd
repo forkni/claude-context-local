@@ -130,20 +130,20 @@ echo === Manual CUDA Version Selection ===
 echo.
 echo Your system has CUDA !CUDA_VERSION! installed
 echo.
-echo Available PyTorch CUDA Versions ^(PyTorch 2.6.0+^):
-echo [1] CUDA 11.8 ^(Recommended for CUDA 11.8+ and 12.x^)
+echo Available PyTorch CUDA Versions ^(PyTorch 2.8.0+^):
+echo [1] CUDA 12.8 ^(Recommended - matches uv sync cu128 build^)
 echo [2] CPU Only ^(No CUDA^)
 echo [3] Back to main menu
 echo.
-echo Note: PyTorch 2.6.0 only supports CUDA 11.8 build
-echo       This build is fully compatible with CUDA 12.x systems
+echo Note: PyTorch 2.8.0 uses CUDA 12.8 build ^(cu128^)
+echo       This build requires CUDA 12.x driver ^(recommended^)
 echo.
 set "cuda_choice="
 set /p cuda_choice="Select option (1-3): "
 
 if "!cuda_choice!"=="1" (
-    set PYTORCH_INDEX=https://download.pytorch.org/whl/cu118
-    set SELECTED_CUDA=11.8
+    set PYTORCH_INDEX=https://download.pytorch.org/whl/cu128
+    set SELECTED_CUDA=12.8
     goto manual_cuda_install
 )
 if "!cuda_choice!"=="2" goto cpu_install
@@ -248,12 +248,12 @@ for /f "tokens=2 delims=." %%i in ("!CUDA_FULL!") do set CUDA_MINOR=%%i
 
 echo [OK] CUDA !CUDA_FULL! detected with !GPU_NAME!
 
-REM Map CUDA version to PyTorch index (PyTorch 2.6.0+ compatibility)
+REM Map CUDA version to PyTorch index (PyTorch 2.8.0+ / cu128)
 if "!CUDA_MAJOR!"=="12" (
-    REM PyTorch 2.6.0 doesn't have cu121, use cu118 (fully backward compatible)
-    echo [INFO] CUDA 12.!CUDA_MINOR! detected. Using PyTorch CUDA 11.8 build ^(compatible with CUDA 12.x^)
-    set CUDA_VERSION=11.8
-    set PYTORCH_INDEX=https://download.pytorch.org/whl/cu118
+    REM PyTorch 2.8.0 provides cu128 builds natively for CUDA 12.x
+    echo [INFO] CUDA 12.!CUDA_MINOR! detected. Using PyTorch CUDA 12.8 build ^(cu128^)
+    set CUDA_VERSION=12.8
+    set PYTORCH_INDEX=https://download.pytorch.org/whl/cu128
     set CUDA_AVAILABLE=1
 ) else if "!CUDA_MAJOR!"=="11" (
     if "!CUDA_MINOR!"=="8" (
@@ -261,7 +261,7 @@ if "!CUDA_MAJOR!"=="12" (
         set PYTORCH_INDEX=https://download.pytorch.org/whl/cu118
         set CUDA_AVAILABLE=1
     ) else if "!CUDA_MINOR!"=="7" (
-        echo [WARNING] CUDA 11.7 detected. PyTorch 2.6.0 requires 11.8+
+        echo [WARNING] CUDA 11.7 detected. PyTorch 2.8.0 recommends 11.8+
         echo [INFO] Using CUDA 11.8 build for compatibility
         set CUDA_VERSION=11.8
         set PYTORCH_INDEX=https://download.pytorch.org/whl/cu118
@@ -370,41 +370,41 @@ goto :eof
 
 :install_cuda_mode
 call :setup_environment
-echo [INFO] Installing PyTorch with CUDA !CUDA_VERSION! support...
-call :install_with_index !PYTORCH_INDEX!
+echo [INFO] CUDA detected. PyTorch cu128 will be installed via uv sync...
+call :install_remaining_deps
 goto :eof
 
 :install_cpu_mode
 call :setup_environment
-echo [INFO] Installing PyTorch CPU-only version...
-".venv\Scripts\uv.exe" pip install torch
-if %ERRORLEVEL% neq 0 (
-    echo [ERROR] PyTorch CPU installation failed
-    pause
-    exit /b 1
-)
-echo [OK] PyTorch CPU-only installed
+echo [INFO] CPU-only mode. PyTorch CPU build will be installed via uv sync...
 call :install_remaining_deps
 goto :eof
 
+
+
+
+
+
+
+
 :install_with_index
-set "INDEX_URL=%~1"
-".venv\Scripts\uv.exe" pip install torch --index-url %INDEX_URL%
-if %ERRORLEVEL% neq 0 (
-    echo [ERROR] PyTorch installation failed with index %INDEX_URL%
-    echo [INFO] Falling back to CPU-only installation...
-    ".venv\Scripts\uv.exe" pip install torch
-    if %ERRORLEVEL% neq 0 (
-        echo [ERROR] Fallback installation also failed
-        pause
-        exit /b 1
-    )
-    echo [OK] Fallback to CPU-only successful
-) else (
-    echo [OK] PyTorch with CUDA support installed
-)
+REM install_with_index is deprecated - uv sync handles PyTorch installation
+REM Kept for backward compatibility with manual CUDA selection
 call :install_remaining_deps
 goto :eof
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 :setup_environment
 echo [INFO] Setting up Python virtual environment...
@@ -442,14 +442,14 @@ goto :eof
 :install_remaining_deps
 echo [INFO] Installing remaining dependencies...
 
-REM Install transformers preview for EmbeddingGemma support
-echo [INFO] Installing transformers with EmbeddingGemma support...
-".venv\Scripts\python.exe" -m pip install "git+https://github.com/huggingface/transformers@v4.56.0-Embedding-Gemma-preview"
-if %ERRORLEVEL% neq 0 (
-    echo [WARNING] Transformers preview installation failed - continuing with standard version
-)
+REM EmbeddingGemma is now supported in transformers 5.0+ (no preview needed)
 
-REM Install all other dependencies using UV
+
+
+
+
+
+
 echo [INFO] Installing all project dependencies...
 ".venv\Scripts\uv.exe" sync
 if %ERRORLEVEL% neq 0 (

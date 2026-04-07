@@ -9,7 +9,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 $PROJECT_DIR = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$PYTHON_PATH = "C:\Users\Inter\AppData\Local\Programs\Python\Python311\python.exe"
+$PYTHON_PATH = (Get-Command python -ErrorAction SilentlyContinue)?.Source
+if (-not $PYTHON_PATH) {
+    $PYTHON_PATH = (Get-Command python3 -ErrorAction SilentlyContinue)?.Source
+}
+if (-not $PYTHON_PATH) {
+    Write-Host "[ERROR] Python not found in PATH. Please install Python 3.11+ and ensure it is in your PATH." -ForegroundColor Red
+    exit 1
+}
 
 Write-Host "=== Windows MCP Integration Installer ===" -ForegroundColor Cyan
 Write-Host "Python 3.11+ Compatible Installation" -ForegroundColor Cyan
@@ -27,7 +34,7 @@ Write-Host "[OK] Working directory: $PWD" -ForegroundColor Green
 # Verify Python installation
 if (-not (Test-Path $PYTHON_PATH)) {
     Write-Host "[ERROR] Python 3.11+ not found at: $PYTHON_PATH" -ForegroundColor Red
-    Write-Host "Please install Python 3.11+ or update the PYTHON_PATH variable" -ForegroundColor Yellow
+    Write-Host "Please install Python 3.11+ and ensure it is accessible in your PATH." -ForegroundColor Yellow
     exit 1
 }
 
