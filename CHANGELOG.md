@@ -15,6 +15,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.4] - 2026-04-06
+
+### Added
+
+- **Ego-Graph Quick Wins QW1-QW5** - Centrality-based ranking, community-bounded expansion, Personalized PageRank mode, hub node detection, and configurable threshold; 10 new unit tests
+- **Max Phantom Degree Cap** - Limits high-fanout phantom nodes in community detection to fix low modularity (modularity 0.24→0.56)
+- **Automated SSCG Benchmark Pipeline** - `scripts/benchmark/run_sscg_benchmark.py` with single-run, parameter sweep, and config comparison modes; venv-aware shell wrapper
+- **Semantic Intent Classification** - Opt-in anchor-based ensemble scoring for 7 intent types (`local`, `global`, `navigational`, `path_tracing`, `similarity`, `contextual`, `hybrid`); ensemble: `0.7×keyword + 0.3×semantic`
+- **Semantic Intent Config Roundtrip** - `semantic_enabled`/`semantic_weight` fields persisted through config save/load cycle; status display in server UI
+- **Adaptive Chunking Params in UI** - View Current Configuration and Reset to Defaults panels now show `max_phantom_degree` and adaptive chunking parameters
+
+### Fixed
+
+- **Searcher cache miss** - `get_searcher()` now resolves `project_path=None` to `state.current_project` before cache check; eliminates ~7s Jina reranker reload on every tool call (back-to-back calls now 49× faster: 140ms vs 6856ms)
+- **Reranker AttributeError** - `find_similar_code` neural reranking crashed with `'SearchResult' has no attribute 'score'` due to two conflicting `SearchResult` dataclasses; fix converts to `reranker.SearchResult` for the reranking step then restores rich result objects
+- **find_path wrong symbol resolution** - Symbol names now resolved via graph exact-name lookup before falling back to semantic search (k=5 with name filtering); `handle_search_code` previously resolved to wrong file
+- **VRAM monitor false alarms** - `_check_vram_status()` used `mem_get_info()` (driver-level, includes PyTorch caching allocator reserved blocks) causing permanent 87% warnings; fixed to use `memory_allocated()` / `get_device_properties().total_memory`
+- **max_phantom_degree config roundtrip** - Field now correctly persisted through `from_dict`/`to_dict` in `SearchConfig`
+- **Qwen3 routing keywords** - Extended keyword list to correctly route FaissVectorIndex queries to qwen3 model
+
+### Security
+
+- Patched nltk CVE-2025-14009 (ReDoS in `punkt` tokenizer)
+- Locked `cryptography`, `regex`, and `pip` to CVE-free minimum versions
+
+### Performance
+
+- **Startup optimization** - Fixed 4 startup bugs; added model warm-up to eliminate first-query cold-start latency (Jina reranker pre-loaded)
+- **Searcher caching** - Verified: second tool call reuses HybridSearcher + Jina reranker without re-initialization
+- **Multi-model indexing** - Deduplicated repo profiler; eliminated redundant profiling when indexing with multiple embedding models simultaneously
+
+---
+
 ## [0.9.3] - 2026-02-21
 
 ### Added

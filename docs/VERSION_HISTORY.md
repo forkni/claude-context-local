@@ -2,16 +2,66 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-02-21)
+## Current Status: All Features Operational (2026-04-06)
 
-- **Version**: 0.9.3
+- **Version**: 0.9.4
 - **Status**: Production-ready
-- **Test Coverage**: 1,635+ unit tests + 8 integration tests (100% pass rate)
+- **Test Coverage**: 1,682+ unit tests + 8 integration tests (100% pass rate)
 - **Dependencies**: 125 packages (38% reduction from 201)
 - **Index Quality**: 109 active files, 789 chunks (34% reduction via greedy merge, BGE-M3 1024d, ~16 MB)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **SSCG Benchmark**: Recall@4=1.00 (perfect), MRR=0.81
-- **Recent Features**: Resource lifecycle stabilization, RAM fallback, resource cleanup fixes, search pipeline optimization
+- **SSCG Benchmark**: MRR=0.94, Recall@4=92.3% (12/13 queries)
+- **Recent Features**: Ego-graph QW1-QW5, semantic intent classification, 5 MCP bug fixes, startup performance, security patches
+
+---
+
+## v0.9.4 - Ego-Graph, Semantic Intent & MCP Bug Fixes (2026-04-06)
+
+### Status: MINOR RELEASE ✅
+
+Broad feature and stability release. Ego-graph retrieval gets 5 quick-win improvements (centrality ranking, community-bounded expansion, PPR, hub detection). Semantic intent classification lands as an opt-in feature. An automated SSCG benchmark pipeline enables reproducible evaluation. Five MCP tool bugs found via systematic testing are fixed, including a critical searcher cache miss that was causing 7s Jina reranker reloads on every tool call. Security patches address nltk CVE-2025-14009.
+
+### Highlights
+
+- **Ego-Graph QW1-QW5**: Centrality-based ranking, community-bounded expansion, PPR mode, hub detection
+- **Semantic Intent Classification**: Anchor-based ensemble scoring for 7 intent types (opt-in)
+- **SSCG Benchmark Pipeline**: Automated parameter sweep and config comparison
+- **Searcher Caching Fix**: Back-to-back tool calls 49× faster (140ms vs 6856ms)
+- **VRAM Monitor Fix**: Switched from driver-level `mem_get_info()` to `memory_allocated()`
+- **Security**: nltk CVE-2025-14009 patched
+
+### 🆕 Added
+
+- Ego-graph quick wins QW1-QW5 with 10 new unit tests (`ecefcda`, `b56cfd4`)
+- Max phantom degree cap for community modularity fix (`feac6d9`)
+- Automated SSCG benchmark pipeline (`d6b0728`)
+- Semantic intent classification opt-in feature (`bac67b7`, `ffa24ea`)
+- Adaptive chunking params shown in server UI (`d36b1de`)
+
+### 🔧 Bug Fixes
+
+- Searcher cache miss: `get_searcher()` resolves `None` project path before cache check (`8c33f87`)
+- Reranker `AttributeError: .score` in `find_similar_code` neural reranking (`8c33f87`)
+- `find_path` wrong symbol resolution: graph exact-name lookup added (`8c33f87`)
+- VRAM monitor false 87% alarms from PyTorch caching allocator (`8561be0`)
+- `max_phantom_degree` config roundtrip (`0f2daa9`)
+- Qwen3 routing keywords for FaissVectorIndex queries (`f2cc21c`)
+
+### 🔒 Security
+
+- nltk CVE-2025-14009 (ReDoS), cryptography/regex/pip locked to CVE-free versions (`448b91e`)
+
+### ⚡ Performance
+
+- Startup: 4 bugs fixed + model warm-up for first-query latency (`1da3aae`)
+- Searcher caching verified: 49× speedup on consecutive tool calls
+- Multi-model indexing: deduplicated repo profiler (`c83342b`)
+
+### 🧪 Tests
+
+- 1,682+ unit tests (up from 1,635+)
+- 10 new ego-graph unit tests (`b56cfd4`)
+- 9 new semantic intent tests
 
 ---
 
