@@ -30,7 +30,10 @@ logger = logging.getLogger(__name__)
 # Module-level cache for anchor embeddings keyed by embedder id.
 # Persists across per-request IntentClassifier instantiations so the
 # ~70 anchor embeddings are computed at most once per embedder lifetime.
+# Bounded to _ANCHOR_CACHE_MAXSIZE to prevent unbounded growth during
+# model switching (in practice 3–4 embedder models are ever loaded).
 _ANCHOR_EMBEDDINGS_CACHE: dict[int, dict[str, list[np.ndarray]]] = {}
+_ANCHOR_CACHE_MAXSIZE: int = 8
 
 
 @lru_cache(maxsize=1)
@@ -860,8 +863,16 @@ class IntentClassifier:
         )
         # Populate module-level cache so subsequent IntentClassifier instances
         # sharing the same embedder skip the embedding work entirely.
+        # Evict oldest entry when the cache is full to prevent unbounded growth.
         if self._embedder is not None:
-            _ANCHOR_EMBEDDINGS_CACHE[id(self._embedder)] = self._anchor_embeddings
+            embedder_id = id(self._embedder)
+            if (
+                embedder_id not in _ANCHOR_EMBEDDINGS_CACHE
+                and len(_ANCHOR_EMBEDDINGS_CACHE) >= _ANCHOR_CACHE_MAXSIZE
+            ):
+                # Remove the oldest entry (insertion-ordered dict, Python 3.7+)
+                _ANCHOR_EMBEDDINGS_CACHE.pop(next(iter(_ANCHOR_EMBEDDINGS_CACHE)))
+            _ANCHOR_EMBEDDINGS_CACHE[embedder_id] = self._anchor_embeddings
 
     def _calculate_semantic_scores(self, query: str) -> dict[str, float]:
         """Compute per-intent semantic scores via cosine similarity to anchor embeddings.

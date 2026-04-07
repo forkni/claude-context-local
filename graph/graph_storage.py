@@ -4,6 +4,7 @@ Graph storage and persistence using NetworkX.
 Provides NetworkX-based storage for code call graphs with JSON persistence.
 """
 
+import contextlib
 import heapq
 import json
 import logging
@@ -168,6 +169,15 @@ class CodeGraphStorage:
             language: Programming language
             **kwargs: Additional node attributes
         """
+        # If node already exists under a different name, remove the stale mapping.
+        if chunk_id in self.graph:
+            old_name = self.graph.nodes[chunk_id].get("name")
+            if old_name and old_name != name and old_name in self._name_index:
+                with contextlib.suppress(ValueError):
+                    self._name_index[old_name].remove(chunk_id)
+                if not self._name_index[old_name]:
+                    del self._name_index[old_name]
+
         self.graph.add_node(
             chunk_id,
             name=name,
@@ -629,7 +639,7 @@ class CodeGraphStorage:
         Returns:
             List of matching chunk_ids (empty list if none found).
         """
-        return self._name_index.get(name, [])
+        return list(self._name_index.get(name, []))
 
     def get_edge_data(self, caller_id: str, callee_id: str) -> dict[str, Any] | None:
         """
@@ -739,14 +749,14 @@ class CodeGraphStorage:
             self.graph = nx.node_link_graph(data, directed=True, edges="edges")
 
             # Rebuild name index from loaded graph so get_nodes_by_name() works.
+            # node_ids are unique in a DiGraph, so no duplicate check needed.
             self._name_index = {}
             for node_id, attrs in self.graph.nodes(data=True):
                 node_name = attrs.get("name")
                 if node_name:
                     if node_name not in self._name_index:
                         self._name_index[node_name] = []
-                    if node_id not in self._name_index[node_name]:
-                        self._name_index[node_name].append(node_id)
+                    self._name_index[node_name].append(node_id)
 
             self.logger.info(
                 f"Loaded call graph: {self.graph.number_of_nodes()} nodes, "

@@ -224,8 +224,15 @@ def run_benchmark(
                     "category": category,
                     "error": str(exc),
                     "hit": False,
+                    "recall@1": 0.0,
                     "recall@5": 0.0,
+                    "recall@10": 0.0,
+                    "precision@1": 0.0,
+                    "precision@5": 0.0,
+                    "precision@10": 0.0,
                     "mrr": 0.0,
+                    "ndcg@5": 0.0,
+                    "ndcg@10": 0.0,
                 }
             )
 

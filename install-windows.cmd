@@ -77,26 +77,22 @@ if "!CUDA_AVAILABLE!"=="1" (
     echo [1] Auto-Install ^(Recommended - CPU-Only^)
 )
 echo [2] CPU-Only Installation ^(No GPU acceleration^)
-if "!CUDA_AVAILABLE!"=="1" (
-    echo [3] Manual CUDA Version Selection
-)
-echo [4] Update/Repair Existing Installation
-echo [5] Clear Stale Snapshots/Indexes ^(Repair Tool^)
-echo [6] Verify Installation Status
-echo [7] Exit
+echo [3] Update/Repair Existing Installation
+echo [4] Clear Stale Snapshots/Indexes ^(Repair Tool^)
+echo [5] Verify Installation Status
+echo [6] Exit
 echo.
 set "choice="
-set /p choice="Select option (1-7): "
+set /p choice="Select option (1-6): "
 
 if "!choice!"=="1" goto auto_install
 if "!choice!"=="2" goto cpu_install
-if "!choice!"=="3" goto manual_cuda
-if "!choice!"=="4" goto update_install
-if "!choice!"=="5" goto run_repair_tool
-if "!choice!"=="6" goto verify_install
-if "!choice!"=="7" exit /b 0
+if "!choice!"=="3" goto update_install
+if "!choice!"=="4" goto run_repair_tool
+if "!choice!"=="5" goto verify_install
+if "!choice!"=="6" exit /b 0
 
-echo [ERROR] Invalid choice. Please select 1-7.
+echo [ERROR] Invalid choice. Please select 1-6.
 pause
 goto menu
 
@@ -117,46 +113,6 @@ echo.
 echo === CPU-Only Installation Mode ===
 echo Installing CPU-only version (no GPU acceleration)...
 call :install_cpu_mode
-goto installation_complete
-
-:manual_cuda
-if "!CUDA_AVAILABLE!"=="0" (
-    echo [ERROR] No CUDA detected. Redirecting to CPU-only installation.
-    goto cpu_install
-)
-
-echo.
-echo === Manual CUDA Version Selection ===
-echo.
-echo Your system has CUDA !CUDA_VERSION! installed
-echo.
-echo Available PyTorch CUDA Versions ^(PyTorch 2.8.0+^):
-echo [1] CUDA 12.8 ^(Recommended - matches uv sync cu128 build^)
-echo [2] CPU Only ^(No CUDA^)
-echo [3] Back to main menu
-echo.
-echo Note: PyTorch 2.8.0 uses CUDA 12.8 build ^(cu128^)
-echo       This build requires CUDA 12.x driver ^(recommended^)
-echo.
-set "cuda_choice="
-set /p cuda_choice="Select option (1-3): "
-
-if "!cuda_choice!"=="1" (
-    set PYTORCH_INDEX=https://download.pytorch.org/whl/cu128
-    set SELECTED_CUDA=12.8
-    goto manual_cuda_install
-)
-if "!cuda_choice!"=="2" goto cpu_install
-if "!cuda_choice!"=="3" goto main_menu
-
-echo [ERROR] Invalid choice. Please select 1-3.
-pause
-goto manual_cuda
-
-:manual_cuda_install
-echo.
-echo Installing PyTorch with CUDA !SELECTED_CUDA! support...
-call :install_with_index !PYTORCH_INDEX!
 goto installation_complete
 
 :update_install

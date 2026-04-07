@@ -194,7 +194,9 @@ def aggregate_metrics(per_query: list[dict[str, Any]]) -> dict[str, Any]:
         "success_count": sum(1 for q in per_query if q.get("hit", False)),
     }
     for key in float_keys:
-        vals = [q[key] for q in per_query if key in q]
+        # Use 0.0 for queries missing a key (e.g. error rows) so they count
+        # against the aggregate rather than being silently excluded.
+        vals = [float(q.get(key, 0.0)) for q in per_query]
         agg[key] = round(mean(vals), 4) if vals else 0.0
 
     agg["hit_rate@5"] = round(agg["success_count"] / agg["total_queries"], 4)
