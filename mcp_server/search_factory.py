@@ -129,11 +129,14 @@ class SearchFactory:
 
         state = get_state()
 
-        if project_path is None and state.current_project is None:
-            project_path = str(PROJECT_ROOT)
-            logger.info(
-                f"No active project found. Using server directory: {project_path}"
-            )
+        if project_path is None:
+            if state.current_project is None:
+                project_path = str(PROJECT_ROOT)
+                logger.info(
+                    f"No active project found. Using server directory: {project_path}"
+                )
+            else:
+                project_path = state.current_project
 
         # Use effective model key: passed value OR current value (preserve routing)
         effective_model_key = (

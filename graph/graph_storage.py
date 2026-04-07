@@ -4,6 +4,7 @@ Graph storage and persistence using NetworkX.
 Provides NetworkX-based storage for code call graphs with JSON persistence.
 """
 
+import contextlib
 import heapq
 import json
 import logging
@@ -140,6 +141,10 @@ class CodeGraphStorage:
         # Initialize directed graph (calls have direction)
         self.graph = nx.DiGraph()
 
+        # Secondary index: name -> list[chunk_id] for O(1) find_path lookups.
+        # Populated by add_node() and rebuilt by load() after graph restore.
+        self._name_index: dict[str, list[str]] = {}
+
         # Load existing graph if available
         if self.graph_path.exists():
             self.load()
@@ -164,6 +169,15 @@ class CodeGraphStorage:
             language: Programming language
             **kwargs: Additional node attributes
         """
+        # If node already exists under a different name, remove the stale mapping.
+        if chunk_id in self.graph:
+            old_name = self.graph.nodes[chunk_id].get("name")
+            if old_name and old_name != name and old_name in self._name_index:
+                with contextlib.suppress(ValueError):
+                    self._name_index[old_name].remove(chunk_id)
+                if not self._name_index[old_name]:
+                    del self._name_index[old_name]
+
         self.graph.add_node(
             chunk_id,
             name=name,
@@ -172,6 +186,10 @@ class CodeGraphStorage:
             language=language,
             **kwargs,
         )
+        if name not in self._name_index:
+            self._name_index[name] = []
+        if chunk_id not in self._name_index[name]:
+            self._name_index[name].append(chunk_id)
 
     def add_call_edge(
         self,
@@ -610,6 +628,19 @@ class CodeGraphStorage:
 
         return dict(self.graph.nodes[normalized_chunk_id])
 
+    def get_nodes_by_name(self, name: str) -> list[str]:
+        """Get chunk_ids whose ``name`` attribute equals *name* (O(1) lookup).
+
+        Uses the secondary ``_name_index`` maintained by :meth:`add_node`.
+
+        Args:
+            name: Symbol name to look up (e.g. ``"my_function"``).
+
+        Returns:
+            List of matching chunk_ids (empty list if none found).
+        """
+        return list(self._name_index.get(name, []))
+
     def get_edge_data(self, caller_id: str, callee_id: str) -> dict[str, Any] | None:
         """
         Get edge metadata with validation and normalization.
@@ -717,6 +748,16 @@ class CodeGraphStorage:
             # Using edges="edges" for NetworkX 3.6+ forward compatibility
             self.graph = nx.node_link_graph(data, directed=True, edges="edges")
 
+            # Rebuild name index from loaded graph so get_nodes_by_name() works.
+            # node_ids are unique in a DiGraph, so no duplicate check needed.
+            self._name_index = {}
+            for node_id, attrs in self.graph.nodes(data=True):
+                node_name = attrs.get("name")
+                if node_name:
+                    if node_name not in self._name_index:
+                        self._name_index[node_name] = []
+                    self._name_index[node_name].append(node_id)
+
             self.logger.info(
                 f"Loaded call graph: {self.graph.number_of_nodes()} nodes, "
                 f"{self.graph.number_of_edges()} edges ← {self.graph_path}"
@@ -733,6 +774,7 @@ class CodeGraphStorage:
     def clear(self) -> None:
         """Clear all nodes and edges from the graph."""
         self.graph.clear()
+        self._name_index.clear()
         self.logger.info("Cleared call graph")
 
     def get_stats(self) -> dict[str, Any]:

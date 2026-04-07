@@ -2,16 +2,105 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-02-21)
+## Current Status: All Features Operational (2026-04-06)
 
-- **Version**: 0.9.3
+- **Version**: 0.9.5
 - **Status**: Production-ready
-- **Test Coverage**: 1,635+ unit tests + 8 integration tests (100% pass rate)
+- **Test Coverage**: 1,682+ unit tests + 8 integration tests (100% pass rate)
 - **Dependencies**: 125 packages (38% reduction from 201)
 - **Index Quality**: 109 active files, 789 chunks (34% reduction via greedy merge, BGE-M3 1024d, ~16 MB)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **SSCG Benchmark**: Recall@4=1.00 (perfect), MRR=0.81
-- **Recent Features**: Resource lifecycle stabilization, RAM fallback, resource cleanup fixes, search pipeline optimization
+- **SSCG Benchmark**: MRR=0.94, Recall@4=92.3% (12/13 queries)
+- **Recent Features**: Installer fixes, 8 CI review fixes (intent classifier caching, graph name index, thread-safe reranker, find_path O(1))
+
+---
+
+## v0.9.5 - Installer & Code Quality Fixes (2026-04-06)
+
+### Status: PATCH RELEASE ✅
+
+Targeted fixes identified by isolated environment installation testing and CI code review. Three installer bugs prevented clean fresh-machine setup. Eight code quality issues flagged by Charlie (CI) have been resolved — covering a performance footgun in per-request `IntentClassifier` instantiation, a correctness issue with negative cosine similarities in ensemble scoring, a scalability issue with O(N) graph node scans in `find_path`, and several smaller correctness/maintainability issues.
+
+### Highlights
+
+- **Installer fixed**: `uv sync` now handles all PyTorch installation; dead cu118 pre-install and transformers preview steps removed
+- **IntentClassifier caching**: YAML parsed once per process; anchor embeddings shared across instances (module-level cache)
+- **find_path O(1)**: `CodeGraphStorage._name_index` enables constant-time name-to-chunk_id resolution
+- **Thread-safe reranker**: `contextlib.redirect_stdout` + `threading.Lock` replace global `sys.stdout` swap
+
+### 🔧 Bug Fixes
+
+- **Installer (cu118→cu128)**: CUDA 12.x was mapped to `cu118` index, installing torch 2.7.1 (fails `>=2.8.0`); `uv sync` now used exclusively (`177405c`)
+- **Installer (transformers preview)**: Removed dead `pip install transformers@v4.56.0-Embedding-Gemma-preview` step — overwritten by `uv sync` instantly (`177405c`)
+- **Installer (hardcoded path)**: `install-windows.ps1` had `C:\Users\Inter\...`; replaced with `(Get-Command python).Source` (`177405c`)
+- **IntentClassifier YAML re-parse**: `_load_anchor_config()` called per request; now `@lru_cache` cached (`b37ba8b`)
+- **IntentClassifier anchor re-embedding**: Per-instance `_anchor_embeddings`; now shared via `_ANCHOR_EMBEDDINGS_CACHE[id(embedder)]` (`b37ba8b`)
+- **`semantic_weight` unbounded**: Out-of-range values silently broke ensemble; clamped to `[0.0, 1.0]` in `__init__` (`b37ba8b`)
+- **Negative cosine in ensemble**: Similarities in `[-1, 1]` blended with keyword scores in `[0, 1]`; negative values now clamped to `0.0` (`b37ba8b`)
+- **find_path O(N) scan**: Tier-2 lookup iterated all nodes with attribute access; replaced with `_name_index` (O(1)) in `CodeGraphStorage` (`b37ba8b`)
+- **find_similar_code score mismatch**: Reranked order kept original `similarity_score`; reranker score now in `metadata["reranker_score"]` (`b37ba8b`)
+- **sys.stdout thread-safety**: Global swap in `JinaRerankerV3._load_model` replaced with `contextlib.redirect_stdout` + lock (`b37ba8b`)
+- **Benchmark sweep/compare mismatch**: `--compare` now unwraps `{"sweep_results": [...]}` sweep files (`b37ba8b`)
+- **Benchmark Part B redundant classification**: `suggested_params` cached from Part A, eliminating 2 extra `_classify_one()` calls per query (`b37ba8b`)
+
+### ⚡ Performance
+
+- Intent classifier hot path: anchor YAML parsed once; embeddings computed once per embedder lifetime
+- `find_path` graph name resolution: O(N·attrs) → O(1)
+
+### 🧪 Tests
+
+- 1,682/1,682 unit tests passing (no regressions)
+
+---
+
+## v0.9.4 - Ego-Graph, Semantic Intent & MCP Bug Fixes (2026-04-06)
+
+### Status: MINOR RELEASE ✅
+
+Broad feature and stability release. Ego-graph retrieval gets 5 quick-win improvements (centrality ranking, community-bounded expansion, PPR, hub detection). Semantic intent classification lands as an opt-in feature. An automated SSCG benchmark pipeline enables reproducible evaluation. Five MCP tool bugs found via systematic testing are fixed, including a critical searcher cache miss that was causing 7s Jina reranker reloads on every tool call. Security patches address nltk CVE-2025-14009.
+
+### Highlights
+
+- **Ego-Graph QW1-QW5**: Centrality-based ranking, community-bounded expansion, PPR mode, hub detection
+- **Semantic Intent Classification**: Anchor-based ensemble scoring for 7 intent types (opt-in)
+- **SSCG Benchmark Pipeline**: Automated parameter sweep and config comparison
+- **Searcher Caching Fix**: Back-to-back tool calls 49× faster (140ms vs 6856ms)
+- **VRAM Monitor Fix**: Switched from driver-level `mem_get_info()` to `memory_allocated()`
+- **Security**: nltk CVE-2025-14009 patched
+
+### 🆕 Added
+
+- Ego-graph quick wins QW1-QW5 with 10 new unit tests (`ecefcda`, `b56cfd4`)
+- Max phantom degree cap for community modularity fix (`feac6d9`)
+- Automated SSCG benchmark pipeline (`d6b0728`)
+- Semantic intent classification opt-in feature (`bac67b7`, `ffa24ea`)
+- Adaptive chunking params shown in server UI (`d36b1de`)
+
+### 🔧 Bug Fixes
+
+- Searcher cache miss: `get_searcher()` resolves `None` project path before cache check (`8c33f87`)
+- Reranker `AttributeError: .score` in `find_similar_code` neural reranking (`8c33f87`)
+- `find_path` wrong symbol resolution: graph exact-name lookup added (`8c33f87`)
+- VRAM monitor false 87% alarms from PyTorch caching allocator (`8561be0`)
+- `max_phantom_degree` config roundtrip (`0f2daa9`)
+- Qwen3 routing keywords for FaissVectorIndex queries (`f2cc21c`)
+
+### 🔒 Security
+
+- nltk CVE-2025-14009 (ReDoS), cryptography/regex/pip locked to CVE-free versions (`448b91e`)
+
+### ⚡ Performance
+
+- Startup: 4 bugs fixed + model warm-up for first-query latency (`1da3aae`)
+- Searcher caching verified: 49× speedup on consecutive tool calls
+- Multi-model indexing: deduplicated repo profiler (`c83342b`)
+
+### 🧪 Tests
+
+- 1,682+ unit tests (up from 1,635+)
+- 10 new ego-graph unit tests (`b56cfd4`)
+- 9 new semantic intent tests
 
 ---
 

@@ -15,6 +15,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.5] - 2026-04-06
+
+### Fixed
+
+- **Installer: dead cu118 torch install** — `install-windows.cmd` was mapping all CUDA 12.x systems to the `cu118` PyTorch index, installing torch 2.7.1 (fails `>=2.8.0` requirement). The manual `uv pip install torch --index-url cu118` step has been removed; `uv sync` now handles PyTorch installation directly from the `cu128` index defined in `pyproject.toml`
+- **Installer: dead transformers preview install** — `pip install transformers@v4.56.0-Embedding-Gemma-preview` step removed; EmbeddingGemma is supported in transformers 5.0+ and `uv sync` installs the correct version
+- **Installer: hardcoded Python path** — `scripts/powershell/install-windows.ps1` had `C:\Users\Inter\...` hardcoded; replaced with `(Get-Command python).Source` to work on any machine
+- **IntentClassifier per-request overhead** — `_load_anchor_config()` was called (YAML parse) on every request due to per-request instantiation; added `@lru_cache` so the file is read once. Anchor embeddings are now shared across instances via module-level `_ANCHOR_EMBEDDINGS_CACHE` keyed by `id(embedder)`, eliminating repeated embedding of ~70 anchor queries
+- **`semantic_weight` not validated** — Out-of-range values (config typo, migration bug) could produce negative keyword weight or semantic weight > 1; now clamped to `[0.0, 1.0]` in `__init__`
+- **Negative cosine similarity in ensemble** — Cosine similarities in `[-1, 1]` were blended directly with keyword scores `[0, 1]`; negative values now clamped to `0.0` before blending so semantic acts as a boost, not a penalty
+- **find_path O(N) graph scan** — Tier-2 name lookup iterated all graph nodes with attribute access; `CodeGraphStorage` now maintains `_name_index: dict[str, list[str]]` populated by `add_node()`, rebuilt by `load()`, cleared by `clear()`; `find_path` handler uses `get_nodes_by_name()` (O(1)) instead
+- **find_similar_code score/order inconsistency** — After neural reranking, original `SearchResult` objects were restored in reranked order but kept original `similarity_score`; reranker score now propagated to `metadata["reranker_score"]` so order and scores agree
+- **sys.stdout swap not thread-safe** — `JinaRerankerV3._load_model` used a global `sys.stdout` replacement; replaced with `contextlib.redirect_stdout` + per-instance `threading.Lock`
+- **Benchmark `--sweep` incompatible with `--compare`** — Sweep output was wrapped as `{"sweep_results": [...]}` but `--compare` expected a flat run object; `compare_runs()` now detects and unwraps sweep files
+- **Redundant classification in benchmark Part B** — `test_semantic_intent.py` called `_classify_one()` again in Part B to get `suggested_params` already computed in Part A; params now cached in Part A rows
+
+### Performance
+
+- **Intent classifier** — Anchor YAML parsed once per process (was once per request); anchor embeddings computed once per embedder lifetime (was once per IntentClassifier instance)
+- **find_path** — Graph name lookup is now O(1) vs O(N·attrs) for the secondary tier
+
+---
+
+## [0.9.4] - 2026-04-06
+
+### Added
+
+- **Ego-Graph Quick Wins QW1-QW5** - Centrality-based ranking, community-bounded expansion, Personalized PageRank mode, hub node detection, and configurable threshold; 10 new unit tests
+- **Max Phantom Degree Cap** - Limits high-fanout phantom nodes in community detection to fix low modularity (modularity 0.24→0.56)
+- **Automated SSCG Benchmark Pipeline** - `scripts/benchmark/run_sscg_benchmark.py` with single-run, parameter sweep, and config comparison modes; venv-aware shell wrapper
+- **Semantic Intent Classification** - Opt-in anchor-based ensemble scoring for 7 intent types (`local`, `global`, `navigational`, `path_tracing`, `similarity`, `contextual`, `hybrid`); ensemble: `0.7×keyword + 0.3×semantic`
+- **Semantic Intent Config Roundtrip** - `semantic_enabled`/`semantic_weight` fields persisted through config save/load cycle; status display in server UI
+- **Adaptive Chunking Params in UI** - View Current Configuration and Reset to Defaults panels now show `max_phantom_degree` and adaptive chunking parameters
+
+### Fixed
+
+- **Searcher cache miss** - `get_searcher()` now resolves `project_path=None` to `state.current_project` before cache check; eliminates ~7s Jina reranker reload on every tool call (back-to-back calls now 49× faster: 140ms vs 6856ms)
+- **Reranker AttributeError** - `find_similar_code` neural reranking crashed with `'SearchResult' has no attribute 'score'` due to two conflicting `SearchResult` dataclasses; fix converts to `reranker.SearchResult` for the reranking step then restores rich result objects
+- **find_path wrong symbol resolution** - Symbol names now resolved via graph exact-name lookup before falling back to semantic search (k=5 with name filtering); `handle_search_code` previously resolved to wrong file
+- **VRAM monitor false alarms** - `_check_vram_status()` used `mem_get_info()` (driver-level, includes PyTorch caching allocator reserved blocks) causing permanent 87% warnings; fixed to use `memory_allocated()` / `get_device_properties().total_memory`
+- **max_phantom_degree config roundtrip** - Field now correctly persisted through `from_dict`/`to_dict` in `SearchConfig`
+- **Qwen3 routing keywords** - Extended keyword list to correctly route FaissVectorIndex queries to qwen3 model
+
+### Security
+
+- Patched nltk CVE-2025-14009 (ReDoS in `punkt` tokenizer)
+- Locked `cryptography`, `regex`, and `pip` to CVE-free minimum versions
+
+### Performance
+
+- **Startup optimization** - Fixed 4 startup bugs; added model warm-up to eliminate first-query cold-start latency (Jina reranker pre-loaded)
+- **Searcher caching** - Verified: second tool call reuses HybridSearcher + Jina reranker without re-initialization
+- **Multi-model indexing** - Deduplicated repo profiler; eliminated redundant profiling when indexing with multiple embedding models simultaneously
+
+---
+
 ## [0.9.3] - 2026-02-21
 
 ### Added

@@ -120,6 +120,11 @@ def main():
 
         print(f"RAM Fallback: {'On' if ram_fallback else 'Off'}")
 
+        # -- Semantic Intent --
+        intent = cfg.get("intent", {})
+        semantic = intent.get("semantic_enabled", False)
+        print(f"Semantic Intent: {'On' if semantic else 'Off'}")
+
         # -- Output Format --
         out_fmt = output.get("format", "compact")
         print(f"Output Format: {out_fmt}")

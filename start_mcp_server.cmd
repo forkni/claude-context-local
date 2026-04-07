@@ -377,15 +377,16 @@ echo.
 echo === Search Mode Configuration ===
 echo.
 echo Current Settings:
-".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Search Mode:', cfg.search_mode.default_mode); print('  BM25 Weight:', cfg.search_mode.bm25_weight); print('  Dense Weight:', cfg.search_mode.dense_weight); print('  Parallel Search:', 'Enabled' if cfg.performance.use_parallel_search else 'Disabled')" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Search Mode:', cfg.search_mode.default_mode); print('  BM25 Weight:', cfg.search_mode.bm25_weight); print('  Dense Weight:', cfg.search_mode.dense_weight); print('  Parallel Search:', 'Enabled' if cfg.performance.use_parallel_search else 'Disabled'); print('  Semantic Intent:', 'Enabled' if cfg.intent.semantic_enabled else 'Disabled')" 2>nul
 echo.
 echo   1. Set Search Mode              - Hybrid/Semantic/BM25/Auto ^(Auto recommended - intent-driven^)
 echo   2. Configure Search Weights     - Balance BM25 vs semantic matching
 echo   3. Configure Parallel Search    - Run BM25+Dense in parallel ^(faster^)
+echo   4. Toggle Semantic Intent       - Use anchor embeddings for intent classification
 echo   0. Back to Search Configuration
 echo.
 set "mode_choice="
-set /p mode_choice="Select option (0-3): "
+set /p mode_choice="Select option (0-4): "
 
 REM Handle empty input gracefully
 if not defined mode_choice (
@@ -400,9 +401,10 @@ if "!mode_choice!"=="" (
 if "!mode_choice!"=="1" goto set_search_mode
 if "!mode_choice!"=="2" goto set_weights
 if "!mode_choice!"=="3" goto configure_parallel_search
+if "!mode_choice!"=="4" goto toggle_semantic_intent
 if "!mode_choice!"=="0" goto search_config_menu
 
-echo [ERROR] Invalid choice. Please select 0-3.
+echo [ERROR] Invalid choice. Please select 0-4.
 pause
 cls
 goto search_mode_menu
@@ -1849,6 +1851,15 @@ if errorlevel 1 (
     echo [ERROR] Failed to toggle shared memory
 )
 goto start
+
+:toggle_semantic_intent
+cls
+".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); new_val = not cfg.intent.semantic_enabled; cfg.intent.semantic_enabled = new_val; mgr.save_config(cfg); print('Semantic Intent:', 'Enabled' if new_val else 'Disabled')" 2>nul
+if errorlevel 1 (
+    echo [ERROR] Failed to toggle semantic intent
+)
+pause
+goto search_mode_menu
 
 :quick_model_switch
 echo.

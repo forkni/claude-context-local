@@ -61,6 +61,12 @@ MODEL_ACTIVATION_COST_OVERRIDES: dict[str, float] = {
     # Weight is ~4GB but activation memory matches 'large' models (>=6GB) tier
     # due to its parameter count and layer depth (deep architecture).
     "BAAI/bge-code-v1": 0.40,
+    # Qwen3-0.6B: 600M params, 32768 context, bf16.
+    # Weight is only 1.1GB (classified "medium" tier at 0.08 GB/item) but actual
+    # activation memory is higher due to long context window (32K tokens).
+    # Note: PyTorch caching allocator inflates driver-level VRAM readings;
+    # this value is based on batch sizing safety, not raw mem_get_info deltas.
+    "Qwen/Qwen3-Embedding-0.6B": 0.27,
 }
 
 
@@ -511,9 +517,13 @@ class CodeEmbedder:
             return 0.0, False, False
 
         try:
-            # Use system-wide free/total (accounts for ALL processes, not just ours)
-            free_memory, total_memory = torch.cuda.mem_get_info(0)
-            usage_pct = 1.0 - (free_memory / total_memory) if total_memory > 0 else 0.0
+            # Use PyTorch allocated memory, not CUDA driver-level mem_get_info().
+            # mem_get_info() includes PyTorch's caching allocator reserved blocks,
+            # which are pre-allocated and reused — not actual working-set pressure.
+            # This caused false 87% warnings regardless of batch size.
+            allocated = torch.cuda.memory_allocated(0)
+            total_memory = torch.cuda.get_device_properties(0).total_memory
+            usage_pct = allocated / total_memory if total_memory > 0 else 0.0
 
             should_warn = usage_pct > vram_warning_threshold
             should_abort = usage_pct > vram_abort_threshold
@@ -1286,6 +1296,12 @@ class CodeEmbedder:
 
     def cleanup(self) -> None:
         """Clean up model from memory to free GPU/CPU resources."""
+        import sys
+
+        if sys.meta_path is None:
+            # Python interpreter is shutting down; imports are unavailable.
+            # Skip cleanup to avoid spurious errors from gc/torch teardown.
+            return
         if self._model is not None:
             try:
                 import gc

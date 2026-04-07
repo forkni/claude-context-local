@@ -260,11 +260,20 @@ class HybridSearcher(BaseSearcher):
 
         if project_id:
             try:
-                # Graph storage in parent of storage_dir (same as graph_integration.py)
-                graph_dir = self.storage_dir.parent
-                self._graph_storage = CodeGraphStorage(
-                    project_id=project_id, storage_dir=graph_dir
-                )
+                # Reuse the CodeGraphStorage already loaded by CodeIndexManager
+                # (via dense_index.graph_storage) to avoid a second JSON deserialize.
+                existing_storage = getattr(self.dense_index, "graph_storage", None)
+                if existing_storage is not None:
+                    self._graph_storage = existing_storage
+                    self._logger.debug(
+                        "[INIT] Reusing graph storage from dense_index (skipped duplicate load)"
+                    )
+                else:
+                    # Fallback: load independently (e.g., CodeIndexManager had no project_id)
+                    graph_dir = self.storage_dir.parent
+                    self._graph_storage = CodeGraphStorage(
+                        project_id=project_id, storage_dir=graph_dir
+                    )
                 self.ego_graph_retriever = EgoGraphRetriever(self._graph_storage)
                 self._logger.info(
                     f"[INIT] Ego-graph retrieval initialized for project: {project_id}"
@@ -1026,10 +1035,36 @@ class HybridSearcher(BaseSearcher):
                     f"[RERANK-SIMILAR] Reranking {len(results)} candidates "
                     f"using reference chunk as query (length: {len(query_content)} chars)"
                 )
-                # Delegate to reranking_engine for lifecycle + reranking
-                results = self.reranking_engine.apply_neural_reranking(
-                    query_content, results, k, context="similarity"
+                # Convert to reranker.SearchResult (has .score) for the reranking pipeline.
+                # searcher.SearchResult uses .similarity_score, which reranker doesn't know.
+                from .reranker import SearchResult as RankerResult
+
+                rich_by_id = {r.chunk_id: r for r in results}
+                ranker_inputs = [
+                    RankerResult(
+                        chunk_id=r.chunk_id,
+                        score=r.similarity_score,
+                        metadata=r.metadata,
+                        source="similarity",
+                    )
+                    for r in results
+                ]
+                reranked = self.reranking_engine.apply_neural_reranking(
+                    query_content, ranker_inputs, k, context="similarity"
                 )
+                # Restore rich searcher.SearchResult objects in reranked order.
+                # Attach reranker_score to metadata so order and score agree:
+                # similarity_score retains the original vector similarity while
+                # reranker_score reflects the neural relevance judgment.
+                results = []
+                for rr in reranked:
+                    rich = rich_by_id.get(rr.chunk_id)
+                    if rich:
+                        rich.metadata = {
+                            **(rich.metadata or {}),
+                            "reranker_score": rr.score,
+                        }
+                        results.append(rich)
             else:
                 self._logger.warning(
                     f"[RERANK-SIMILAR] No content found for reference chunk {chunk_id}, "

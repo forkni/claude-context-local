@@ -623,9 +623,21 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     # Intent Classification (Phase 2)
     config = get_config()
     if config.intent.enabled:
+        # Optionally supply the cached embedder for semantic anchor scoring.
+        # Uses the searcher cached from the previous request (get_state().searcher)
+        # so there is zero overhead on the first request (falls back to keyword-only).
+        _intent_embedder = None
+        if config.intent.semantic_enabled:
+            _cached = get_state().searcher
+            if _cached is not None and hasattr(_cached, "search_executor"):
+                _intent_embedder = getattr(_cached.search_executor, "embedder", None)
+
         intent_classifier = IntentClassifier(
             confidence_threshold=config.intent.confidence_threshold,
             enable_logging=config.intent.log_classifications,
+            embedder=_intent_embedder,
+            semantic_enabled=config.intent.semantic_enabled,
+            semantic_weight=config.intent.semantic_weight,
         )
         intent_decision = intent_classifier.classify(query)
 
@@ -1312,17 +1324,50 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
                     "resolution_method": "direct_lookup",
                 }
 
-        # Fall back to semantic search if direct lookup failed
+        # Try graph node exact-name lookup before falling back to semantic search.
+        # Uses the O(1) name index when available; falls back to a key-only scan
+        # (no attribute access) for the chunk_id suffix pattern.
+        if not resolved_source and hasattr(searcher, "dense_index"):
+            gs = getattr(searcher.dense_index, "graph_storage", None)
+            if gs:
+                matches = (
+                    gs.get_nodes_by_name(source)
+                    if hasattr(gs, "get_nodes_by_name")
+                    else []
+                )
+                if not matches:
+                    # Chunk_id suffix match (e.g. "file.py:function:my_func" ends with ":my_func")
+                    matches = [n for n in gs.graph.nodes() if n.endswith(f":{source}")]
+                if matches:
+                    resolved_source = matches[0]
+                    source_info = {
+                        "resolved_from": source,
+                        "chunk_id": resolved_source,
+                        "resolution_method": "graph_lookup",
+                    }
+
+        # Fall back to semantic search if all lookups failed
         if not resolved_source:
-            results = searcher.search(source, k=1)
-            if results:
+            results = searcher.search(source, k=5)
+            # Prefer chunks whose name matches the symbol over module-level chunks
+            for r in results:
+                meta = r.metadata if hasattr(r, "metadata") else {}
+                if meta.get("name") == source:
+                    resolved_source = r.chunk_id
+                    source_info = {
+                        "resolved_from": source,
+                        "chunk_id": resolved_source,
+                        "resolution_method": "semantic_search",
+                    }
+                    break
+            if not resolved_source and results:
                 resolved_source = results[0].chunk_id
                 source_info = {
                     "resolved_from": source,
                     "chunk_id": resolved_source,
                     "resolution_method": "semantic_search",
                 }
-            else:
+            if not resolved_source:
                 return {
                     "path_found": False,
                     "error": f"Could not resolve source symbol: {source}",
@@ -1344,17 +1389,49 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
                     "resolution_method": "direct_lookup",
                 }
 
-        # Fall back to semantic search if direct lookup failed
+        # Try graph node exact-name lookup before falling back to semantic search.
+        # Uses the O(1) name index when available; falls back to a key-only scan
+        # (no attribute access) for the chunk_id suffix pattern.
+        if not resolved_target and hasattr(searcher, "dense_index"):
+            gs = getattr(searcher.dense_index, "graph_storage", None)
+            if gs:
+                matches = (
+                    gs.get_nodes_by_name(target)
+                    if hasattr(gs, "get_nodes_by_name")
+                    else []
+                )
+                if not matches:
+                    matches = [n for n in gs.graph.nodes() if n.endswith(f":{target}")]
+                if matches:
+                    resolved_target = matches[0]
+                    target_info = {
+                        "resolved_from": target,
+                        "chunk_id": resolved_target,
+                        "resolution_method": "graph_lookup",
+                    }
+
+        # Fall back to semantic search if all lookups failed
         if not resolved_target:
-            results = searcher.search(target, k=1)
-            if results:
+            results = searcher.search(target, k=5)
+            # Prefer chunks whose name matches the symbol over module-level chunks
+            for r in results:
+                meta = r.metadata if hasattr(r, "metadata") else {}
+                if meta.get("name") == target:
+                    resolved_target = r.chunk_id
+                    target_info = {
+                        "resolved_from": target,
+                        "chunk_id": resolved_target,
+                        "resolution_method": "semantic_search",
+                    }
+                    break
+            if not resolved_target and results:
                 resolved_target = results[0].chunk_id
                 target_info = {
                     "resolved_from": target,
                     "chunk_id": resolved_target,
                     "resolution_method": "semantic_search",
                 }
-            else:
+            if not resolved_target:
                 return {
                     "path_found": False,
                     "error": f"Could not resolve target symbol: {target}",

@@ -563,7 +563,7 @@ class ModelCacheManager:
         is_valid, _ = self.validate_cache()
         return is_valid
 
-    def find_local_model_dir(self) -> Path | None:
+    def find_local_model_dir(self, cache_valid: bool | None = None) -> Path | None:
         """Locate the cached model directory if available.
 
         Returns the path to the snapshot directory containing the model files.
@@ -576,11 +576,19 @@ class ModelCacheManager:
         returns the custom cache path so SentenceTransformer can find config.json
         and load weights from default cache automatically.
 
+        Args:
+            cache_valid: Pre-computed validation result to avoid a redundant
+                validate_cache() disk scan.  If None, validate_cache() is called.
+
         Returns:
             Path to snapshot directory containing model files, or None if invalid
         """
         # Use validation to ensure cache is complete
-        is_valid, reason = self.validate_cache()
+        if cache_valid is None:
+            is_valid, reason = self.validate_cache()
+        else:
+            is_valid = cache_valid
+            reason = "pre-validated"
         if not is_valid:
             self._logger.debug(f"Cache not valid: {reason}")
             return None

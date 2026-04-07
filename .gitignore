@@ -1,3 +1,6 @@
+# Profiling output
+*_heatmap.png
+
 # Claude Code user settings (local-only)
 .claude/*
 !.claude/skills/
