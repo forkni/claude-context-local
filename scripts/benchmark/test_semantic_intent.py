@@ -223,6 +223,8 @@ def run_classification_comparison(
                 "note": item.get("note"),
                 "scores_off": off["scores"],
                 "scores_on": on["scores"],
+                "params_off": off["suggested_params"],
+                "params_on": on["suggested_params"],
             }
         )
     return rows
@@ -321,24 +323,17 @@ def run_retrieval_comparison(
         expected = golden["expected"]
         expected_primary = golden.get("expected_primary", expected)
 
-        # Build params for each config
+        # Build params for each config — use cached suggested_params from Part A
         params_off = _apply_intent_params(
             row["intent_off"],
-            _classify_one(query, False, None, confidence_threshold)["suggested_params"],
+            row["params_off"],
             base_k,
             row["conf_off"],
             confidence_threshold,
         )
         params_on = _apply_intent_params(
             row["intent_on"],
-            _classify_one(
-                query,
-                True,
-                searcher.search_executor.embedder
-                if hasattr(searcher, "search_executor")
-                else None,
-                confidence_threshold,
-            )["suggested_params"],
+            row["params_on"],
             base_k,
             row["conf_on"],
             confidence_threshold,

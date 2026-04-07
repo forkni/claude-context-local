@@ -292,7 +292,12 @@ def compare_runs(result_files: list[str]) -> None:
     for f in result_files:
         with open(f, encoding="utf-8") as fh:
             data = json.load(fh)
-        runs.append(data)
+        # Sweep files are wrapped as {"sweep_results": [...]}; unwrap them so
+        # each individual run is comparable against single-run output files.
+        if "sweep_results" in data:
+            runs.extend(data["sweep_results"])
+        else:
+            runs.append(data)
     print_leaderboard(runs, title="COMPARISON LEADERBOARD")
     # Per-query delta for first two runs
     if len(runs) >= 2:

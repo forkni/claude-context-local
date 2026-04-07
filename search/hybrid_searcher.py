@@ -1052,10 +1052,19 @@ class HybridSearcher(BaseSearcher):
                 reranked = self.reranking_engine.apply_neural_reranking(
                     query_content, ranker_inputs, k, context="similarity"
                 )
-                # Restore rich searcher.SearchResult objects in reranked order
-                results = [
-                    rich_by_id[r.chunk_id] for r in reranked if r.chunk_id in rich_by_id
-                ]
+                # Restore rich searcher.SearchResult objects in reranked order.
+                # Attach reranker_score to metadata so order and score agree:
+                # similarity_score retains the original vector similarity while
+                # reranker_score reflects the neural relevance judgment.
+                results = []
+                for rr in reranked:
+                    rich = rich_by_id.get(rr.chunk_id)
+                    if rich:
+                        rich.metadata = {
+                            **(rich.metadata or {}),
+                            "reranker_score": rr.score,
+                        }
+                        results.append(rich)
             else:
                 self._logger.warning(
                     f"[RERANK-SIMILAR] No content found for reference chunk {chunk_id}, "

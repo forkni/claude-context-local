@@ -1324,19 +1324,27 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
                     "resolution_method": "direct_lookup",
                 }
 
-        # Try graph node exact-name lookup before falling back to semantic search
+        # Try graph node exact-name lookup before falling back to semantic search.
+        # Uses the O(1) name index when available; falls back to a key-only scan
+        # (no attribute access) for the chunk_id suffix pattern.
         if not resolved_source and hasattr(searcher, "dense_index"):
             gs = getattr(searcher.dense_index, "graph_storage", None)
-            if gs and hasattr(gs, "graph"):
-                for node_id, data in gs.graph.nodes(data=True):
-                    if data.get("name") == source or node_id.endswith(f":{source}"):
-                        resolved_source = node_id
-                        source_info = {
-                            "resolved_from": source,
-                            "chunk_id": resolved_source,
-                            "resolution_method": "graph_lookup",
-                        }
-                        break
+            if gs:
+                matches = (
+                    gs.get_nodes_by_name(source)
+                    if hasattr(gs, "get_nodes_by_name")
+                    else []
+                )
+                if not matches:
+                    # Chunk_id suffix match (e.g. "file.py:function:my_func" ends with ":my_func")
+                    matches = [n for n in gs.graph.nodes() if n.endswith(f":{source}")]
+                if matches:
+                    resolved_source = matches[0]
+                    source_info = {
+                        "resolved_from": source,
+                        "chunk_id": resolved_source,
+                        "resolution_method": "graph_lookup",
+                    }
 
         # Fall back to semantic search if all lookups failed
         if not resolved_source:
@@ -1381,19 +1389,26 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
                     "resolution_method": "direct_lookup",
                 }
 
-        # Try graph node exact-name lookup before falling back to semantic search
+        # Try graph node exact-name lookup before falling back to semantic search.
+        # Uses the O(1) name index when available; falls back to a key-only scan
+        # (no attribute access) for the chunk_id suffix pattern.
         if not resolved_target and hasattr(searcher, "dense_index"):
             gs = getattr(searcher.dense_index, "graph_storage", None)
-            if gs and hasattr(gs, "graph"):
-                for node_id, data in gs.graph.nodes(data=True):
-                    if data.get("name") == target or node_id.endswith(f":{target}"):
-                        resolved_target = node_id
-                        target_info = {
-                            "resolved_from": target,
-                            "chunk_id": resolved_target,
-                            "resolution_method": "graph_lookup",
-                        }
-                        break
+            if gs:
+                matches = (
+                    gs.get_nodes_by_name(target)
+                    if hasattr(gs, "get_nodes_by_name")
+                    else []
+                )
+                if not matches:
+                    matches = [n for n in gs.graph.nodes() if n.endswith(f":{target}")]
+                if matches:
+                    resolved_target = matches[0]
+                    target_info = {
+                        "resolved_from": target,
+                        "chunk_id": resolved_target,
+                        "resolution_method": "graph_lookup",
+                    }
 
         # Fall back to semantic search if all lookups failed
         if not resolved_target:

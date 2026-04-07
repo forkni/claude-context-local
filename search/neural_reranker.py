@@ -1,7 +1,9 @@
 """Neural cross-encoder reranker for semantic scoring."""
 
+import contextlib
 import logging
 import os
+import threading
 from typing import TYPE_CHECKING
 
 import torch
@@ -445,6 +447,7 @@ class JinaRerankerV3:
         self.model_name = model_name
         self._model = None
         self._logger = logging.getLogger(__name__)
+        self._load_lock = threading.Lock()
 
         # Auto-detect device
         if device is None:
@@ -460,9 +463,6 @@ class JinaRerankerV3:
             AutoModel: Loaded Jina reranker model
         """
         if self._model is None:
-            import io
-            import sys
-
             import transformers as _tf
             from huggingface_hub import try_to_load_from_cache
             from transformers import AutoConfig, AutoModel
@@ -494,11 +494,12 @@ class JinaRerankerV3:
             def _load_model(cfg: AutoConfig, local_files_only: bool):
                 # Suppress Jina's lm_head MISSING LOAD REPORT printed to stdout
                 # (cosmetic: lm_head is replaced by nn.Identity() and is never
-                # used during reranking; scoring uses the projector head instead)
-                _captured = io.StringIO()
-                old_stdout = sys.stdout
-                sys.stdout = _captured
-                try:
+                # used during reranking; scoring uses the projector head instead).
+                # Use redirect_stdout + a per-instance lock to avoid the global
+                # sys.stdout swap that is not thread-safe.
+                import io as _io
+
+                with self._load_lock, contextlib.redirect_stdout(_io.StringIO()):
                     try:
                         return AutoModel.from_pretrained(
                             self.model_name,
@@ -519,8 +520,6 @@ class JinaRerankerV3:
                             trust_remote_code=True,
                             local_files_only=local_files_only,
                         )
-                finally:
-                    sys.stdout = old_stdout
 
             try:
                 self._model = _load_model(config, local_only)

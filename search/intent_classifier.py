@@ -14,6 +14,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -26,11 +27,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Module-level cache for anchor embeddings keyed by embedder id.
+# Persists across per-request IntentClassifier instantiations so the
+# ~70 anchor embeddings are computed at most once per embedder lifetime.
+_ANCHOR_EMBEDDINGS_CACHE: dict[int, dict[str, list[np.ndarray]]] = {}
 
+
+@lru_cache(maxsize=1)
 def _load_anchor_config() -> dict | None:
     """Load intent anchor queries from config/intent_anchors.yaml.
 
     Uses the same lazy-load pattern as QueryRouter's routing_keywords.yaml.
+    Result is cached at module level so repeated per-request instantiations
+    of IntentClassifier do not re-parse the YAML file.
 
     Returns:
         Parsed YAML dict or None if file not found / invalid.
@@ -643,10 +652,19 @@ class IntentClassifier:
         self.enable_logging = enable_logging
         self._embedder = embedder
         self._semantic_enabled = semantic_enabled and embedder is not None
-        self._semantic_weight = semantic_weight
-        # Anchor embeddings: lazily pre-computed per-intent numpy arrays
-        self._anchor_embeddings: dict[str, list[np.ndarray]] | None = None
+        # Clamp to [0.0, 1.0] so negative keyword weight or semantic weight > 1
+        # can never occur due to a config typo or migration bug.
+        self._semantic_weight = max(0.0, min(1.0, semantic_weight))
         self._anchor_config = _load_anchor_config()
+        # Reuse pre-computed anchor embeddings from the module-level cache when
+        # the same embedder instance is reused across requests.
+        embedder_id = id(embedder) if embedder is not None else None
+        if embedder_id is not None and embedder_id in _ANCHOR_EMBEDDINGS_CACHE:
+            self._anchor_embeddings: dict[str, list[np.ndarray]] | None = (
+                _ANCHOR_EMBEDDINGS_CACHE[embedder_id]
+            )
+        else:
+            self._anchor_embeddings = None  # computed lazily on first semantic call
 
     def classify(
         self, query: str, confidence_threshold: float | None = None
@@ -840,6 +858,10 @@ class IntentClassifier:
             f"[INTENT-SEM] Loaded anchor embeddings for "
             f"{len(self._anchor_embeddings)} intents"
         )
+        # Populate module-level cache so subsequent IntentClassifier instances
+        # sharing the same embedder skip the embedding work entirely.
+        if self._embedder is not None:
+            _ANCHOR_EMBEDDINGS_CACHE[id(self._embedder)] = self._anchor_embeddings
 
     def _calculate_semantic_scores(self, query: str) -> dict[str, float]:
         """Compute per-intent semantic scores via cosine similarity to anchor embeddings.
@@ -904,7 +926,10 @@ class IntentClassifier:
         blended: dict[str, float] = {}
         for key in all_keys:
             kw = keyword_scores.get(key, 0.0)
-            sem = semantic_scores.get(key, 0.0)
+            # Cosine similarities are in [-1, 1]; clamp to [0, 1] so negative
+            # values don't penalise the keyword score (semantic acts as a boost,
+            # not a penalty).
+            sem = max(0.0, semantic_scores.get(key, 0.0))
             blended[key] = min(alpha * kw + self._semantic_weight * sem, 1.0)
         if self.enable_logging:
             top = sorted(blended.items(), key=lambda x: -x[1])[:3]
