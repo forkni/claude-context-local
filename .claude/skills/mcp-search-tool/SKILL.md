@@ -314,20 +314,20 @@ find_path(
 | `contextual` | All weights raised to min 0.5 | **ego_graph enabled** |
 | `hybrid` | Default weights | Standard search |
 
-**Automatic Tool Routing** (when confidence ≥ `confidence_threshold=0.4`):
+**Automatic Tool Routing** (when confidence ≥ `confidence_threshold=0.35`):
 
 - `path_tracing` → `search_code()` is transparently redirected to `find_path()`
 - `similarity` → `search_code()` is transparently redirected to `find_similar_code()`
 - `global` → k expanded to `suggested_k` for broader coverage
 - `contextual` → ego_graph expansion enabled
 
-**Semantic Enhancement** (current config: `semantic_enabled=True`, `semantic_weight=0.3`):
+**Semantic Enhancement** (opt-in: `semantic_enabled=False` by default, `semantic_weight=0.3`):
 
 - Classifier blends keyword pattern matching with anchor-embedding cosine similarity
 - Ensemble: `0.7 × keyword_score + 0.3 × anchor_embedding_score`
 - Anchor queries: 8–10 representative phrases per intent in `config/intent_anchors.yaml`
 - Benefit: rescues ambiguous queries that keyword-only scoring leaves as HYBRID
-- `confidence_threshold=0.4`: queries below threshold fall back to HYBRID (safe default)
+- `confidence_threshold=0.35`: queries below threshold fall back to HYBRID (safe default)
 - Embedder cached from previous search — zero startup cost after first query
 
 **Status**: Always-on. Semantic enhancement activates automatically when an embedder is loaded.

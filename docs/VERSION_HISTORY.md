@@ -2,16 +2,44 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-04-06)
+## Current Status: All Features Operational (2026-04-09)
 
-- **Version**: 0.9.5
+- **Version**: 0.10.0
 - **Status**: Production-ready
-- **Test Coverage**: 1,682+ unit tests + 8 integration tests (100% pass rate)
+- **Test Coverage**: 1,682 unit tests + 8 integration tests (100% pass rate)
 - **Dependencies**: 125 packages (38% reduction from 201)
-- **Index Quality**: 109 active files, 789 chunks (34% reduction via greedy merge, BGE-M3 1024d, ~16 MB)
+- **SSCG Benchmark**: MRR=0.94, Recall@4=0.89 (12/13 queries)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **SSCG Benchmark**: MRR=0.94, Recall@4=92.3% (12/13 queries)
-- **Recent Features**: Installer fixes, 8 CI review fixes (intent classifier caching, graph name index, thread-safe reranker, find_path O(1))
+- **Recent Features**: Source-position reranking (DOS RAG), centrality-adaptive BM25 boost, file-role tagging, lower chunk split/merge thresholds (1600 chars / 400 tokens)
+
+---
+
+## v0.10.0 - RAG Quality Improvements (2026-04-09)
+
+### Status: FEATURE RELEASE ✅
+
+Four retrieval quality improvements derived from research analysis of 5 external repositories (stronger-baselines-rag, ConDB, LIMIT/DeepMind, chunking_evaluation, PageIndex). All modifications verified via MCP search tool against production debug logs.
+
+### Highlights
+
+- **Source-Position Reranking** (+5.3% LLM accuracy): Results from the same file grouped and sorted by line number; `[... N lines omitted ...]` gap indicators between non-contiguous chunks. Controlled by `OutputConfig.source_order_output` (default: True).
+- **Centrality-Adaptive BM25 Boost**: High-centrality nodes (PageRank > 0.02) receive additive score boost (centrality × 5.0, capped at 0.15) — compensates for sign-rank bottleneck in single-vector retrieval (LIMIT paper, DeepMind ICLR 2026). Controlled by `GraphEnhancedConfig.centrality_bm25_boost` (default: True).
+- **File-Role Tagging**: `_classify_file_role()` classifies each chunk's file as `src/test/doc/config` at index time. Role flows into `CentralityRanker.rerank()`: test → 0.85×, doc → 0.80×, config → 0.88× (boosted when query has matching intent). Source: ConDB filesystem adapter pattern.
+- **Lower Chunk Thresholds**: `max_split_chars` 3000→1600 (~400 tokens), `max_merged_tokens` 1000→400, `enable_large_node_splitting` False→True. Research shows 200-400 token chunks get 3-9% better recall vs 800+ token chunks (Chroma chunking_evaluation benchmark).
+
+### 🔧 Changes
+
+- **`mcp_server/tools/search_handlers.py`**: Added `_reorder_by_source_position()`, wired after result cap in pipeline. Log tag: `[SOURCE_ORDER]`
+- **`search/config.py`**: Added `OutputConfig.source_order_output`, 4 fields to `GraphEnhancedConfig`, updated `ChunkingConfig` defaults
+- **`search/centrality_ranker.py`**: Added centrality BM25 boost block + doc-file demotion (0.80×) in `rerank()`
+- **`chunking/multi_language_chunker.py`**: Added `_classify_file_role()` static method, extended `_extract_semantic_tags()`
+- **`mcp_server/tool_registry.py`**: Updated description strings to reflect new defaults
+- **`start_mcp_server.cmd`**: New "Output & Ranking Enhancements" submenu (option 8 in Search Configuration); new settings in View Current Configuration
+
+### Test Results
+
+- 1,682/1,682 unit tests pass (including updated `test_greedy_merge.py` assertions for new defaults)
+- MCP debug log confirms: `[SOURCE_ORDER]` on every query, `[CENTRALITY] BM25 adaptive boost` for high-centrality nodes, `_classify_file_role` correctly indexed and callable
 
 ---
 
