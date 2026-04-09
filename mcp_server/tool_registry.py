@@ -666,10 +666,10 @@ Args:
     community_resolution: Resolution parameter for Louvain community detection (default: 1.0, range: 0.1-2.0, higher = more communities)
     max_phantom_degree: Skip phantom nodes with >N callers during community detection (1-1000, default: 20). Prevents builtins (str, dict, list) from creating O(N²) noise edges.
     token_estimation: Token estimation method - "whitespace" (fast) or "tiktoken" (accurate) (default: "whitespace")
-    enable_large_node_splitting: Enable/disable AST block splitting for large functions (default: False)
+    enable_large_node_splitting: Enable/disable AST block splitting for large functions (default: True)
     max_chunk_lines: Maximum lines per chunk before splitting at AST boundaries (default: 100)
     split_size_method: Size method for splitting - "lines" (default) or "characters" (default: "characters")
-    max_split_chars: Maximum characters per split chunk (1000-10000, default: 3000)
+    max_split_chars: Maximum characters per split chunk (1000-10000, default: 1600)
     enable_file_summaries: Enable/disable file-level module summary chunks (A2 feature, default: True)
     enable_community_summaries: Enable/disable community-level summary chunks (B1 feature, default: True)
     sizing_mode: Chunk sizing algorithm - "fixed" (static thresholds) or "adaptive" (repo-profiled P75 baseline + complexity modulation) (default: "fixed")
@@ -677,7 +677,7 @@ Args:
     adaptive_multiplier_min: T_min multiplier applied to P75 baseline for high-complexity functions (0.1-1.0, default: 0.5)
     max_complexity_cap: Cyclomatic complexity ceiling for Cv normalization — functions above this are capped (5-100, default: 30)
 
-Note: min_chunk_tokens (50) and max_merged_tokens (1000) are optimal defaults and not exposed for configuration.""",
+Note: min_chunk_tokens (50) and max_merged_tokens (400) are optimal defaults and not exposed for configuration.""",
         "input_schema": {
             "type": "object",
             "properties": {

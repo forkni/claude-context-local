@@ -281,11 +281,12 @@ class RerankerConfig:
 
 @dataclass
 class OutputConfig:
-    """MCP output formatting settings (1 field)."""
+    """MCP output formatting settings (2 fields)."""
 
     format: str = (
         "ultra"  # verbose, compact, ultra (default: ultra for 45-55% token reduction)
     )
+    source_order_output: bool = True  # Reorder results by file position (DOS RAG)
 
 
 @dataclass
@@ -294,7 +295,7 @@ class ChunkingConfig:
 
     # Token size constraints for chunks
     min_chunk_tokens: int = 50  # Minimum tokens before considering merge
-    max_merged_tokens: int = 1000  # Maximum tokens for merged chunk
+    max_merged_tokens: int = 400  # Maximum tokens for merged chunk (research: 200-400 optimal)
 
     # Community Detection settings (independent control restored)
     enable_community_detection: bool = (
@@ -310,8 +311,8 @@ class ChunkingConfig:
         20  # Skip phantom nodes with >N callers during community detection
     )
 
-    # Large function splitting (Task 3.4 - placeholder for future implementation)
-    enable_large_node_splitting: bool = False  # Split functions > max_chunk_lines
+    # Large function splitting (cAST paper: AST-aware splitting improves Recall@5 +66%)
+    enable_large_node_splitting: bool = True  # Split functions > max_chunk_lines
     max_chunk_lines: int = 100  # Maximum lines before AST block splitting
 
     # Token estimation method
@@ -322,7 +323,7 @@ class ChunkingConfig:
 
     # Splitting-specific configs (separate from merging)
     split_size_method: str = "characters"  # "lines" or "characters"
-    max_split_chars: int = 3000  # Character-based splitting (benchmark winner)
+    max_split_chars: int = 1600  # Character-based splitting (~400 tokens, optimal for retrieval)
 
     # File-level module summaries (A2: improve GLOBAL query recall)
     enable_file_summaries: bool = True  # Generate module-summary chunks per file
@@ -391,6 +392,13 @@ class GraphEnhancedConfig:
     enable_size_normalization: bool = True  # Enable logarithmic size penalty
     size_norm_target_lines: int = 200  # Target chunk size (no penalty below this)
     size_norm_alpha: float = 0.1  # Penalty strength (higher = stronger penalty)
+    # Centrality-adaptive BM25 boost (LIMIT paper insight)
+    # High-centrality chunks (utility functions, base classes) are exactly where
+    # single-vector embeddings fail. Extra boost compensates for this limitation.
+    centrality_bm25_boost: bool = True  # Enable adaptive boost for high-centrality results
+    centrality_boost_threshold: float = 0.02  # Centrality score threshold to trigger boost
+    centrality_boost_factor: float = 5.0  # Multiplier: boost = centrality * factor
+    centrality_boost_cap: float = 0.15  # Maximum boost added to blended_score
 
 
 class SearchConfig:
@@ -723,7 +731,7 @@ class SearchConfig:
 
             chunking = ChunkingConfig(
                 min_chunk_tokens=chunking_data.get("min_chunk_tokens", 50),
-                max_merged_tokens=chunking_data.get("max_merged_tokens", 1000),
+                max_merged_tokens=chunking_data.get("max_merged_tokens", 400),
                 enable_large_node_splitting=chunking_data.get(
                     "enable_large_node_splitting", False
                 ),
@@ -738,7 +746,7 @@ class SearchConfig:
                 community_resolution=chunking_data.get("community_resolution", 1.0),
                 size_method=chunking_data.get("size_method", "tokens"),
                 split_size_method=chunking_data.get("split_size_method", "characters"),
-                max_split_chars=chunking_data.get("max_split_chars", 3000),
+                max_split_chars=chunking_data.get("max_split_chars", 1600),
                 enable_file_summaries=chunking_data.get("enable_file_summaries", True),
                 enable_community_summaries=chunking_data.get(
                     "enable_community_summaries", True

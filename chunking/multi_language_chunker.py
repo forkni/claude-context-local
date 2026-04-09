@@ -223,6 +223,50 @@ class MultiLanguageChunker:
 
         return folder_parts
 
+    @staticmethod
+    def _classify_file_role(relative_path: str) -> str:
+        """Classify a file's role for search boosting (ConDB file-role tagging).
+
+        Categories:
+          - "test"   : files in test/tests directories or named test_*.py / *_test.py
+          - "doc"    : markdown/rst/txt files or files under docs/ directories
+          - "config" : project configuration files (pyproject.toml, Dockerfile, etc.)
+          - "src"    : everything else (implementation code)
+
+        Args:
+            relative_path: File path relative to project root
+
+        Returns:
+            One of "src", "test", "doc", "config"
+        """
+        parts = Path(relative_path).parts
+        name = Path(relative_path).name.lower()
+        ext = Path(relative_path).suffix.lower()
+
+        # Test files
+        if any(p.lower() in ("test", "tests", "testing", "__tests__", "spec", "specs") for p in parts):
+            return "test"
+        if name.startswith("test_") or name.endswith("_test.py") or name.endswith(".spec.py"):
+            return "test"
+
+        # Documentation files
+        if any(p.lower() in ("docs", "doc", "documentation", "wiki") for p in parts):
+            return "doc"
+        if ext in (".md", ".rst", ".txt", ".adoc"):
+            return "doc"
+
+        # Config/infrastructure files
+        config_names = {
+            "setup.py", "setup.cfg", "pyproject.toml", "poetry.lock",
+            "requirements.txt", "requirements-dev.txt", "dockerfile",
+            ".gitignore", ".gitattributes", ".editorconfig", "makefile",
+            "tox.ini", "pytest.ini", ".flake8", ".pylintrc", "mypy.ini",
+        }
+        if name in config_names or ext in (".yaml", ".yml", ".toml", ".cfg", ".ini", ".env"):
+            return "config"
+
+        return "src"
+
     def _extract_semantic_tags(self, metadata: dict, language: str) -> list[str]:
         """Extract semantic tags from chunk metadata.
 
@@ -231,7 +275,7 @@ class MultiLanguageChunker:
             language: Programming language
 
         Returns:
-            List of semantic tags (async, generator, export, etc.)
+            List of semantic tags (async, generator, export, role:xxx, etc.)
         """
         tags = []
 
@@ -248,6 +292,12 @@ class MultiLanguageChunker:
 
         # Add language tag
         tags.append(language)
+
+        # Add file-role tag (ConDB insight: src/test/doc/config classification)
+        relative_path = metadata.get("relative_path", "")
+        if relative_path:
+            role = self._classify_file_role(relative_path)
+            tags.append(f"role:{role}")
 
         return tags
 

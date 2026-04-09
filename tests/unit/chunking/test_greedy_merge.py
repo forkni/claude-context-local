@@ -394,9 +394,9 @@ class TestChunkingConfig:
         """Default values are sensible."""
         config = ChunkingConfig()
         assert config.min_chunk_tokens == 50
-        assert config.max_merged_tokens == 1000
+        assert config.max_merged_tokens == 400
         assert config.token_estimation == "whitespace"
-        assert config.enable_large_node_splitting is False
+        assert config.enable_large_node_splitting is True
         assert config.max_chunk_lines == 100
         assert config.size_method == "tokens"
 

@@ -251,6 +251,24 @@ class CentralityRanker:
                         f"{chunk_lines} lines → factor={size_factor:.3f}"
                     )
 
+            # Centrality-adaptive BM25 boost (LIMIT paper, ICLR 2026)
+            # High-centrality chunks are exactly where single-vector embedding fails
+            # (sign-rank bottleneck). A small additive boost compensates.
+            if (
+                self.config is not None
+                and self.config.centrality_bm25_boost
+                and centrality > self.config.centrality_boost_threshold
+            ):
+                boost = min(
+                    centrality * self.config.centrality_boost_factor,
+                    self.config.centrality_boost_cap,
+                )
+                result["blended_score"] = round(result["blended_score"] + boost, 4)
+                logger.debug(
+                    f"[CENTRALITY] BM25 adaptive boost for {result.get('chunk_id', '')}: "
+                    f"centrality={centrality:.4f} → boost={boost:.4f}"
+                )
+
             # Query-aware boosting (ported from IntelligentSearcher)
             if query:
                 chunk_type = result.get("kind", "")
@@ -337,6 +355,20 @@ class CentralityRanker:
                 )
                 if is_config_code and not query_has_config_intent:
                     result["blended_score"] = round(result["blended_score"] * 0.88, 4)
+
+                # Documentation file demotion (ConDB file-role tagging insight)
+                # Markdown/RST/txt docs rarely contain the implementation sought by code queries.
+                # Demote unless query explicitly asks for docs/readme/documentation.
+                is_doc_file = file_path.lower().endswith((".md", ".rst", ".txt")) or any(
+                    pattern in file_path.lower()
+                    for pattern in ("/docs/", "/doc/", "/documentation/")
+                )
+                query_has_doc_intent = any(
+                    w in query_lower
+                    for w in ("doc", "docs", "readme", "documentation", "guide", "tutorial")
+                )
+                if is_doc_file and not query_has_doc_intent:
+                    result["blended_score"] = round(result["blended_score"] * 0.80, 4)
 
                 # Name-match boost: extract name from chunk_id when field absent
                 chunk_id = result.get("chunk_id", "")
