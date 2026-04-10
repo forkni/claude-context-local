@@ -251,6 +251,24 @@ class CentralityRanker:
                         f"{chunk_lines} lines → factor={size_factor:.3f}"
                     )
 
+            # Centrality-adaptive BM25 boost (LIMIT paper, ICLR 2026)
+            # High-centrality chunks are exactly where single-vector embedding fails
+            # (sign-rank bottleneck). A small additive boost compensates.
+            if (
+                self.config is not None
+                and self.config.centrality_bm25_boost
+                and centrality > self.config.centrality_boost_threshold
+            ):
+                boost = min(
+                    centrality * self.config.centrality_boost_factor,
+                    self.config.centrality_boost_cap,
+                )
+                result["blended_score"] = round(result["blended_score"] + boost, 4)
+                logger.debug(
+                    f"[CENTRALITY] BM25 adaptive boost for {result.get('chunk_id', '')}: "
+                    f"centrality={centrality:.4f} → boost={boost:.4f}"
+                )
+
             # Query-aware boosting (ported from IntelligentSearcher)
             if query:
                 chunk_type = result.get("kind", "")
@@ -306,36 +324,55 @@ class CentralityRanker:
                 if any(chunk_id.startswith(d) for d in core_dirs):
                     result["blended_score"] = round(result["blended_score"] * 1.1, 4)
 
-                # Test/verification code demotion (generalizable pattern)
+                # Role-based demotion/boost driven by indexed role: tags (from _classify_file_role).
+                # Using tags avoids re-detecting file role from the path — keeps both systems in sync.
+                # Fallback to path-based detection for chunks indexed before v0.10.0.
                 chunk_id = result.get("chunk_id", "")
                 file_path = chunk_id.split(":")[0] if ":" in chunk_id else ""
-                is_test_code = any(
-                    pattern in file_path.lower()
-                    for pattern in (
-                        "test_",
-                        "_test.",
-                        "tests/",
-                        "verify_",
-                        "verification",
-                    )
+                tags = result.get("tags", [])
+                indexed_role = next(
+                    (t[len("role:"):] for t in tags if isinstance(t, str) and t.startswith("role:")),
+                    None,
                 )
-                query_has_test_intent = any(
-                    w in query_lower
-                    for w in ("test", "testing", "verify", "verification")
-                )
-                if is_test_code and not query_has_test_intent:
-                    result["blended_score"] = round(result["blended_score"] * 0.85, 4)
 
-                # Config/settings file demotion (analogous to test demotion above)
-                is_config_code = any(
-                    pattern in file_path.lower()
-                    for pattern in ("config.py", "settings.py", "constants.py")
+                # Determine role: prefer indexed tag, fall back to path heuristics
+                if indexed_role is None:
+                    # Normalize to forward slashes so patterns work on Windows paths too
+                    norm_path = file_path.replace("\\", "/").lower()
+                    if any(
+                        p in norm_path
+                        for p in ("test_", "_test.", "tests/", "verify_", "verification")
+                    ):
+                        indexed_role = "test"
+                    elif norm_path.endswith((".md", ".rst", ".txt", ".adoc")) or any(
+                        p in norm_path for p in ("/docs/", "/doc/", "/documentation/", "/wiki/")
+                    ):
+                        indexed_role = "doc"
+                    elif any(
+                        p in norm_path
+                        for p in ("config.py", "settings.py", "constants.py")
+                    ):
+                        indexed_role = "config"
+
+                query_has_test_intent = any(
+                    w in query_lower for w in ("test", "testing", "verify", "verification")
+                )
+                query_has_doc_intent = any(
+                    w in query_lower
+                    for w in ("doc", "docs", "readme", "documentation", "guide", "tutorial")
                 )
                 query_has_config_intent = any(
-                    w in query_lower
-                    for w in ("config", "configuration", "setting", "constant")
+                    w in query_lower for w in ("config", "configuration", "setting", "constant")
                 )
-                if is_config_code and not query_has_config_intent:
+
+                if indexed_role == "test":
+                    if query_has_test_intent:
+                        result["blended_score"] = round(result["blended_score"] * 1.15, 4)
+                    else:
+                        result["blended_score"] = round(result["blended_score"] * 0.85, 4)
+                elif indexed_role == "doc" and not query_has_doc_intent:
+                    result["blended_score"] = round(result["blended_score"] * 0.80, 4)
+                elif indexed_role == "config" and not query_has_config_intent:
                     result["blended_score"] = round(result["blended_score"] * 0.88, 4)
 
                 # Name-match boost: extract name from chunk_id when field absent

@@ -341,6 +341,7 @@ echo   4. Configure Neural Reranker        - Cross-encoder reranking ^(+5-15%% q
 echo   5. Entity Tracking Configuration    - Symbol tracking, import/class context
 echo   6. Configure Chunking Settings      - Chunk merging, AST splitting ^(+4.3 Recall@5^)
 echo   7. Performance Settings             - GPU acceleration, VRAM management, auto-reindex
+echo   8. Output ^& Ranking Enhancements    - Source ordering, centrality boost, doc demotion
 echo   9. Reset to Defaults                - Restore optimal default settings
 echo   0. Back to Main Menu
 echo.
@@ -364,6 +365,7 @@ if "!search_choice!"=="4" goto configure_reranker
 if "!search_choice!"=="5" goto entity_tracking_menu
 if "!search_choice!"=="6" goto configure_chunking
 if "!search_choice!"=="7" goto performance_settings_menu
+if "!search_choice!"=="8" goto output_ranking_menu
 if "!search_choice!"=="9" goto reset_config
 if "!search_choice!"=="0" goto menu_restart
 
@@ -1122,17 +1124,17 @@ REM Search Configuration Functions
 echo.
 echo [INFO] Current Search Configuration:
 if exist ".venv\Scripts\python.exe" (
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = config.routing.multi_model_enabled; pool = config.routing.multi_model_pool or 'full'; model_display = f'BGE-M3 + gte-modernbert ({pool})' if multi_enabled and pool == 'lightweight-speed' else f'BGE-Code-v1 + Qwen3 ({pool})' if multi_enabled else f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print('    Multi-Model Routing:', 'Enabled' if multi_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print('    File Summaries:', 'Enabled' if config.chunking.enable_file_summaries else 'Disabled'); print('    Community Summaries:', 'Enabled' if config.chunking.enable_community_summaries else 'Disabled'); print(); print('  Chunking Settings:'); print('    Community Detection:', 'Enabled' if config.chunking.enable_community_detection else 'Disabled'); print('    Community Merge (full re-index only):', 'Enabled' if config.chunking.enable_community_merge else 'Disabled'); print(f'    Community Resolution: {config.chunking.community_resolution}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'    Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(f'    Split Size Method: {config.chunking.split_size_method}'); print(f'    Max Split Chars: {config.chunking.max_split_chars}'); print(f'    Sizing Mode: {config.chunking.sizing_mode}'); print(f'    Adaptive Max Multiplier: {config.chunking.adaptive_multiplier_max}'); print(f'    Adaptive Min Multiplier: {config.chunking.adaptive_multiplier_min}'); print(f'    Max Complexity Cap: {config.chunking.max_complexity_cap}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    RAM Fallback: {\"On\" if config.performance.allow_ram_fallback else \"Off\"}'); print(); print('  Output Format:', config.output.format)"
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = config.routing.multi_model_enabled; pool = config.routing.multi_model_pool or 'full'; model_display = f'BGE-M3 + gte-modernbert ({pool})' if multi_enabled and pool == 'lightweight-speed' else f'BGE-Code-v1 + Qwen3 ({pool})' if multi_enabled else f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print('    Multi-Model Routing:', 'Enabled' if multi_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print('    File Summaries:', 'Enabled' if config.chunking.enable_file_summaries else 'Disabled'); print('    Community Summaries:', 'Enabled' if config.chunking.enable_community_summaries else 'Disabled'); print(); print('  Chunking Settings:'); print('    Community Detection:', 'Enabled' if config.chunking.enable_community_detection else 'Disabled'); print('    Community Merge (full re-index only):', 'Enabled' if config.chunking.enable_community_merge else 'Disabled'); print(f'    Community Resolution: {config.chunking.community_resolution}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'    Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(f'    Split Size Method: {config.chunking.split_size_method}'); print(f'    Max Split Chars: {config.chunking.max_split_chars}'); print(f'    Sizing Mode: {config.chunking.sizing_mode}'); print(f'    Adaptive Max Multiplier: {config.chunking.adaptive_multiplier_max}'); print(f'    Adaptive Min Multiplier: {config.chunking.adaptive_multiplier_min}'); print(f'    Max Complexity Cap: {config.chunking.max_complexity_cap}'); print(f'    Max Merged Tokens: {config.chunking.max_merged_tokens}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    RAM Fallback: {\"On\" if config.performance.allow_ram_fallback else \"Off\"}'); print(); print('  Output Format:', config.output.format); g = config.graph_enhanced; print(); print('  Output ^& Ranking Enhancements:'); print('    Source-Position Ordering:', 'Enabled' if config.output.source_order_output else 'Disabled'); print('    Centrality BM25 Boost:', 'Enabled' if g.centrality_bm25_boost else 'Disabled'); print(f'      Boost Threshold: {g.centrality_boost_threshold}'); print(f'      Boost Factor: {g.centrality_boost_factor}'); print(f'      Boost Cap: {g.centrality_boost_cap}')"
     if "!ERRORLEVEL!" neq "0" (
         echo Error loading configuration
-        echo Using defaults: hybrid mode, BM25=0.4, Dense=0.6
+        echo Using defaults: hybrid mode, BM25=0.35, Dense=0.65
     )
 ) else (
     echo Python environment not available
     echo Default configuration:
     echo   Search Mode: hybrid
-    echo   BM25 Weight: 0.4
-    echo   Dense Weight: 0.6
+    echo   BM25 Weight: 0.35
+    echo   Dense Weight: 0.65
 )
 pause
 goto search_config_menu
@@ -2142,7 +2144,7 @@ echo   6. Enable Large Node Splitting          - Split functions ^> threshold at
 echo   7. Disable Large Node Splitting         - Keep large functions intact
 echo   8. Set Split Size Method                - lines or characters (default: characters)
 echo   9. Set Max Chunk Lines                  - Line threshold (default: 100)
-echo   A. Set Max Split Characters             - Character threshold (1000-10000, default: 3000)
+echo   A. Set Max Split Characters             - Character threshold (1000-10000, default: 1600)
 echo.
 echo   --- Token Estimation ---
 echo   B. Set Token Estimation                 - whitespace (fast) or tiktoken (accurate)
@@ -2312,7 +2314,7 @@ if "!chunk_choice!"=="9" (
 if /i "!chunk_choice!"=="A" (
     echo.
     set "max_chars="
-    set /p max_chars="Enter max split characters (1000-10000, default: 3000): "
+    set /p max_chars="Enter max split characters (1000-10000, default: 1600): "
     if defined max_chars (
         echo [INFO] Setting max split characters to: !max_chars!
         ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); val = int('!max_chars!'); assert 1000 <= val <= 10000, 'Out of range'; cfg.chunking.max_split_chars = val; mgr.save_config(cfg); print('[OK] Max split characters updated to !max_chars!')" 2>nul
@@ -2453,6 +2455,139 @@ if not "!chunk_choice!"=="1" if not "!chunk_choice!"=="2" if not "!chunk_choice!
 :chunking_menu_end
 pause
 goto search_config_menu
+
+:output_ranking_menu
+echo.
+echo === Output ^& Ranking Enhancements ===
+echo.
+echo Controls post-retrieval result ordering and scoring adjustments.
+echo Changes apply immediately (no re-indexing required).
+echo.
+echo Current Settings:
+if exist ".venv\Scripts\python.exe" (
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); g = cfg.graph_enhanced; o = cfg.output; print('  Source-Position Ordering:', 'Enabled' if o.source_order_output else 'Disabled'); print('  Centrality BM25 Boost:', 'Enabled' if g.centrality_bm25_boost else 'Disabled'); print('  Centrality Boost Threshold:', g.centrality_boost_threshold); print('  Centrality Boost Factor:', g.centrality_boost_factor); print('  Centrality Boost Cap:', g.centrality_boost_cap)" 2>nul
+) else (
+    echo   Python environment not available - showing defaults
+    echo   Source-Position Ordering: Enabled
+    echo   Centrality BM25 Boost: Enabled
+)
+echo.
+echo   --- Source-Position Ordering (DOS RAG, +5.3%% LLM accuracy) ---
+echo   1. Enable Source-Position Ordering  - Group results by file, sort by line number
+echo   2. Disable Source-Position Ordering - Keep results sorted by relevance score
+echo.
+echo   --- Centrality-Adaptive BM25 Boost (LIMIT paper, DeepMind ICLR 2026) ---
+echo   3. Enable Centrality BM25 Boost     - Boost high-centrality chunks (base classes, utilities)
+echo   4. Disable Centrality BM25 Boost    - Use raw blended scores only
+echo   5. Set Boost Threshold              - Centrality score to trigger boost (default: 0.02)
+echo   6. Set Boost Factor                 - Multiplier: boost = centrality x factor (default: 5.0)
+echo   7. Set Boost Cap                    - Maximum boost added to score (default: 0.15)
+echo.
+echo   0. Back to Search Configuration
+echo.
+set "rank_choice="
+set /p rank_choice="Select option (0-7): "
+
+if not defined rank_choice goto search_config_menu
+if "!rank_choice!"=="" goto search_config_menu
+if "!rank_choice!"=="0" goto search_config_menu
+
+if "!rank_choice!"=="1" (
+    echo.
+    echo [INFO] Enabling source-position ordering...
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.output.source_order_output = True; mgr.save_config(cfg); print('[OK] Source-position ordering enabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Results from the same file will be grouped and sorted by line number
+        echo [INFO] Gap indicators show omitted lines between non-contiguous chunks
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+    )
+    goto output_ranking_menu_end
+)
+if "!rank_choice!"=="2" (
+    echo.
+    echo [INFO] Disabling source-position ordering...
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.output.source_order_output = False; mgr.save_config(cfg); print('[OK] Source-position ordering disabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Results will be returned in relevance-score order
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+    )
+    goto output_ranking_menu_end
+)
+if "!rank_choice!"=="3" (
+    echo.
+    echo [INFO] Enabling centrality BM25 boost...
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.graph_enhanced.centrality_bm25_boost = True; mgr.save_config(cfg); print('[OK] Centrality BM25 boost enabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] High-centrality chunks (base classes, utilities) will receive score boost
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+    )
+    goto output_ranking_menu_end
+)
+if "!rank_choice!"=="4" (
+    echo.
+    echo [INFO] Disabling centrality BM25 boost...
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.graph_enhanced.centrality_bm25_boost = False; mgr.save_config(cfg); print('[OK] Centrality BM25 boost disabled')" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to save configuration
+    ) else (
+        echo [INFO] Blended scores will be used without centrality adjustment
+        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+    )
+    goto output_ranking_menu_end
+)
+if "!rank_choice!"=="5" (
+    echo.
+    set "boost_thresh="
+    set /p boost_thresh="Enter centrality boost threshold (0.001-0.5, default: 0.02): "
+    if defined boost_thresh if not "!boost_thresh!"=="" (
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); val = float('!boost_thresh!'); assert 0.001 <= val <= 0.5, 'Out of range'; cfg.graph_enhanced.centrality_boost_threshold = val; mgr.save_config(cfg); print('[OK] Centrality boost threshold updated to !boost_thresh!')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Invalid value. Must be between 0.001 and 0.5
+        ) else (
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+    goto output_ranking_menu_end
+)
+if "!rank_choice!"=="6" (
+    echo.
+    set "boost_factor="
+    set /p boost_factor="Enter boost factor (1.0-20.0, default: 5.0): "
+    if defined boost_factor if not "!boost_factor!"=="" (
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); val = float('!boost_factor!'); assert 1.0 <= val <= 20.0, 'Out of range'; cfg.graph_enhanced.centrality_boost_factor = val; mgr.save_config(cfg); print('[OK] Centrality boost factor updated to !boost_factor!')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Invalid value. Must be between 1.0 and 20.0
+        ) else (
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+    goto output_ranking_menu_end
+)
+if "!rank_choice!"=="7" (
+    echo.
+    set "boost_cap="
+    set /p boost_cap="Enter boost cap (0.01-0.5, default: 0.15): "
+    if defined boost_cap if not "!boost_cap!"=="" (
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); val = float('!boost_cap!'); assert 0.01 <= val <= 0.5, 'Out of range'; cfg.graph_enhanced.centrality_boost_cap = val; mgr.save_config(cfg); print('[OK] Centrality boost cap updated to !boost_cap!')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Invalid value. Must be between 0.01 and 0.5
+        ) else (
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+    goto output_ranking_menu_end
+)
+
+echo [ERROR] Invalid choice. Please select 0-7.
+:output_ranking_menu_end
+pause
+goto output_ranking_menu
 
 :configure_output_format
 echo.

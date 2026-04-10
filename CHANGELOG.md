@@ -15,6 +15,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.10.0] - 2026-04-09
+
+### Added
+
+- **Source-position reranking** (`_reorder_by_source_position()` in `search_handlers.py`) — after retrieval, results from the same file are grouped and sorted by start line. Non-contiguous chunks from the same file get `[... N lines omitted ...]` gap indicators. Based on DOS RAG (EMNLP 2025, +5.3% LLM accuracy). Controlled by `OutputConfig.source_order_output` (default: True)
+- **Centrality-adaptive BM25 boost** in `CentralityRanker.rerank()` — chunks with PageRank centrality > threshold (0.02) receive additive score boost (`centrality × 5.0`, capped at 0.15). Addresses sign-rank bottleneck for high-connectivity nodes (DeepMind LIMIT paper, ICLR 2026). Tunable via `GraphEnhancedConfig`: `centrality_bm25_boost`, `centrality_boost_threshold`, `centrality_boost_factor`, `centrality_boost_cap`
+- **File-role tagging** (`_classify_file_role()` in `multi_language_chunker.py`) — classifies each chunk's file as `role:src`, `role:test`, `role:doc`, or `role:config` at index time. Role-based demotion in `CentralityRanker.rerank()`: test → 0.85×, doc → 0.80×, config → 0.88× (test boosted 1.15× when query has test intent). Source: ConDB filesystem adapter pattern
+- **Output & Ranking Enhancements menu** in `start_mcp_server.cmd` (option 8 under Search Configuration) — toggle source-position ordering, enable/disable centrality BM25 boost, tune boost threshold/factor/cap. New settings visible in "View Current Configuration"
+
+### Changed
+
+- **`ChunkingConfig` defaults** — `max_split_chars` 3000→1600 (~400 tokens, Chroma benchmark shows 3-9% better recall), `max_merged_tokens` 1000→400, `enable_large_node_splitting` False→True. Research basis: chunking_evaluation benchmark (Chroma, EMNLP 2024)
+- **Documentation aligned** — fixed stale defaults across MCP_TOOLS_REFERENCE, HYBRID_SEARCH_CONFIGURATION_GUIDE, DOCUMENTATION_INDEX (ego_graph k_hops 2→1, max_neighbors 10→5; BM25 weights 0.4/0.6→0.35/0.65; test counts; tool counts)
+
+---
+
 ## [0.9.5] - 2026-04-06
 
 ### Fixed

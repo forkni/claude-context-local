@@ -2,23 +2,21 @@
 setlocal enabledelayedexpansion
 pushd "%~dp0" || exit /b 1
 
-REM Batch script to recursively remove __pycache__ folders and Claude Code temp files
-REM Run this script from the project root to clean Python cache and temporary files
-
 echo ========================================
-echo  Python Cache & Temp Files Cleanup
-echo  claude-context-local
+echo  Python Cache ^& Temp Files Cleanup
+echo  %~dp0
 echo ========================================
-echo.
-echo Searching for __pycache__ folders...
-echo Current directory: %CD%
 echo.
 
 set "count=0"
+set "tempcount=0"
+set "clcount=0"
 
-REM Recursively find and delete all __pycache__ folders
+REM Remove __pycache__ folders (skip .venv and .git)
+REM Use for /d /r to avoid the "File Not Found" hazard from dir output parsing
+echo Searching for __pycache__ folders...
 for /d /r %%d in (__pycache__) do (
-    if exist "%%d" (
+    echo %%d | findstr /i /l /c:".venv" /c:".git" >nul || (
         echo Removing: %%d
         rmdir /s /q "%%d"
         if !errorlevel! equ 0 (
@@ -29,15 +27,12 @@ for /d /r %%d in (__pycache__) do (
     )
 )
 
-REM Clean up Claude Code temporary files (tmpclaude-*-cwd)
+REM Remove orphaned .pyc files outside __pycache__ (skip .venv and .git)
 echo.
-echo Searching for Claude Code temporary files...
-
-set "tempcount=0"
-
-for /r %%f in (tmpclaude-*-cwd) do (
-    if exist "%%f" (
-        echo Removing temp file: %%f
+echo Searching for orphaned .pyc files...
+for /r %%f in (*.pyc) do (
+    echo %%f | findstr /i /l /c:".venv" /c:".git" /c:"__pycache__" >nul || (
+        echo Removing: %%f
         del /f /q "%%f"
         if !errorlevel! equ 0 (
             set /a tempcount+=1
@@ -47,11 +42,25 @@ for /r %%f in (tmpclaude-*-cwd) do (
     )
 )
 
+REM Remove Claude Code temporary files
+echo.
+echo Searching for Claude Code temp files...
+for /r %%f in (tmpclaude-*-cwd) do (
+    echo Removing: %%f
+    del /f /q "%%f"
+    if !errorlevel! equ 0 (
+        set /a clcount+=1
+    ) else (
+        echo WARNING: Could not remove %%f
+    )
+)
+
 echo.
 echo ========================================
 echo Cleanup complete!
-echo Total __pycache__ folders removed: !count!
-echo Total temp files removed: !tempcount!
+echo   __pycache__ folders removed: !count!
+echo   Orphaned .pyc files removed: !tempcount!
+echo   Claude temp files removed:   !clcount!
 echo ========================================
 echo.
 pause

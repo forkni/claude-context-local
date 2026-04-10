@@ -141,8 +141,8 @@ find_connections(symbol_name="MyClass", relationship_types=["inherits", "imports
 | Parameter | Type | Default | Range | Description |
 |-----------|------|---------|-------|-------------|
 | `ego_graph_enabled` | boolean | false | - | Enable k-hop neighbor expansion from call graph |
-| `ego_graph_k_hops` | integer | 2 | 1-5 | Graph traversal depth (1=direct neighbors, 2=neighbors of neighbors) |
-| `ego_graph_max_neighbors_per_hop` | integer | 10 | 1-50 | Limit neighbors per hop to prevent explosion |
+| `ego_graph_k_hops` | integer | 1 | 1-5 | Graph traversal depth (1=direct neighbors, 2=neighbors of neighbors) |
+| `ego_graph_max_neighbors_per_hop` | integer | 5 | 1-50 | Limit neighbors per hop to prevent explosion |
 
 **⭐ NEW (v0.8.3): Automatic Import Filtering**
 
@@ -482,7 +482,7 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 ### Commands
 
 ```
-/configure_search_mode "hybrid" 0.4 0.6   # Set mode + weights
+/configure_search_mode "hybrid" 0.35 0.65  # Set mode + weights
 /get_search_config_status                 # Check current config
 ```
 
@@ -496,24 +496,64 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 
 **Parameters**:
 
-- `enable_chunk_merging` (bool): Enable/disable greedy chunk merging (default: True)
-- `min_chunk_tokens` (int): Minimum tokens before merge (10-500, default: 50)
-- `max_merged_tokens` (int): Maximum tokens for merged chunks (100-5000, default: 1000)
+- `enable_community_detection` (bool): Detect code communities for better chunking (default: True)
+- `enable_community_merge` (bool): Use communities for chunk remerging — full re-index only (default: False)
+- `community_resolution` (float): Louvain algorithm resolution parameter (0.1-2.0, default: 1.5)
 - `token_estimation` (str): Token estimation method - "whitespace" (fast) or "tiktoken" (accurate, default: "whitespace")
-- `enable_large_node_splitting` (bool): Enable AST block splitting for large functions (default: False)
+- `enable_large_node_splitting` (bool): Enable AST block splitting for large functions (default: True)
 - `max_chunk_lines` (int): Maximum lines per chunk before splitting at AST boundaries (10-1000, default: 100)
+- `split_size_method` (str): Size method for splitting - "lines" or "characters" (default: "characters")
+- `max_split_chars` (int): Maximum characters per split chunk (1000-10000, default: 1600)
+- `enable_file_summaries` (bool): Generate file-level module summary chunks (A2 feature, default: True)
+- `enable_community_summaries` (bool): Generate community-level summary chunks (B1 feature, default: True)
+- `sizing_mode` (str): Chunk sizing algorithm - "fixed" or "adaptive" (repo-profiled P75 + complexity, default: "fixed")
+- `adaptive_multiplier_max` (float): T_max multiplier for low-complexity functions (1.0-2.0, default: 1.3)
+- `adaptive_multiplier_min` (float): T_min multiplier for high-complexity functions (0.1-1.0, default: 0.5)
+- `max_complexity_cap` (int): Cyclomatic complexity ceiling for normalization (5-100, default: 30)
 
-**Returns**: Updated configuration + system message
-
-**Note**: Re-index project to apply changes
+**Note**: `min_chunk_tokens` (50) and `max_merged_tokens` (400) are optimal defaults and not exposed for configuration. Re-index project to apply changes.
 
 ### Commands
 
 ```
-/configure_chunking --enable_chunk_merging true --min_chunk_tokens 50
-/configure_chunking --enable_large_node_splitting true --max_chunk_lines 100
+/configure_chunking --enable_large_node_splitting true --max_split_chars 1600
+/configure_chunking --enable_community_detection true --sizing_mode adaptive
 /get_search_config_status  # View current chunking settings
 ```
+
+---
+
+## Output & Ranking Enhancements
+
+Configured via `search_config.json` or the `start_mcp_server.cmd` UI (Search Configuration → 8).
+
+### Source-Position Reranking (`OutputConfig.source_order_output`, default: True)
+
+After retrieval, results from the same file are grouped and sorted by start line. Non-contiguous chunks from the same file get `[... N lines omitted ...]` gap indicators inserted between them. LLMs comprehend code better when chunks appear in logical order (imports → class → methods).
+
+**Research basis**: DOS RAG (EMNLP 2025) — +5.3% LLM accuracy at zero retrieval cost.
+
+### Centrality-Adaptive BM25 Boost (`GraphEnhancedConfig`)
+
+High-centrality chunks (base classes, utility functions, heavily-imported modules) receive an additive score boost based on their PageRank centrality. This compensates for the sign-rank bottleneck proved by the LIMIT paper (DeepMind, ICLR 2026) — single-vector retrieval systematically under-ranks high-connectivity nodes.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `centrality_bm25_boost` | `True` | Enable adaptive boost |
+| `centrality_boost_threshold` | `0.02` | Centrality score minimum to trigger boost |
+| `centrality_boost_factor` | `5.0` | Multiplier: `boost = centrality × factor` |
+| `centrality_boost_cap` | `0.15` | Maximum additive boost to blended_score |
+
+### File-Role Tagging (`role:src/test/doc/config`)
+
+At index time, every chunk is tagged with its file role via `_classify_file_role()`. Role tags flow into `CentralityRanker.rerank()` for query-aware demotion:
+
+| Role | Demotion (default query) | Boost (role-specific query) |
+|------|--------------------------|-----------------------------|
+| `src` | — (baseline) | — |
+| `test` | 0.85× | 1.15× when query contains test keywords |
+| `doc` | 0.80× | — (no boost when doc intent detected) |
+| `config` | 0.88× | — |
 
 ---
 
@@ -558,7 +598,7 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 /find_similar_code "auth.py:15-42:function:login"
 
 # Configure search
-/configure_search_mode "hybrid" 0.4 0.6
+/configure_search_mode "hybrid" 0.35 0.65
 /get_search_config_status
 
 # Model management

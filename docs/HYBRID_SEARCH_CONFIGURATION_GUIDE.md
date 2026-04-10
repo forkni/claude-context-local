@@ -98,8 +98,8 @@ All hybrid search features have been **comprehensively tested** and validated fo
   },
   "ego_graph": {
     "enabled": false,
-    "k_hops": 2,
-    "max_neighbors_per_hop": 10
+    "k_hops": 1,
+    "max_neighbors_per_hop": 5
   }
 }
 ```
@@ -125,8 +125,8 @@ The ego-graph feature is configured via per-query parameters, not global setting
 search_code(
     "authentication handler",
     ego_graph_enabled=True,     # Opt-in parameter
-    ego_graph_k_hops=2,         # Graph traversal depth
-    ego_graph_max_neighbors_per_hop=10  # Neighbor limit
+    ego_graph_k_hops=1,         # Graph traversal depth
+    ego_graph_max_neighbors_per_hop=5   # Neighbor limit
 )
 ```
 
@@ -135,8 +135,8 @@ search_code(
 | Parameter | Default | Range | Description |
 |-----------|---------|-------|-------------|
 | `ego_graph_enabled` | `false` | - | Enable k-hop neighbor expansion from call graph |
-| `ego_graph_k_hops` | `2` | 1-5 | Graph traversal depth (1=direct, 2=neighbors of neighbors) |
-| `ego_graph_max_neighbors_per_hop` | `10` | 1-50 | Limit neighbors per hop to prevent explosion |
+| `ego_graph_k_hops` | `1` | 1-5 | Graph traversal depth (1=direct, 2=neighbors of neighbors) |
+| `ego_graph_max_neighbors_per_hop` | `5` | 1-50 | Limit neighbors per hop to prevent explosion |
 
 ### Interaction with Multi-Hop Search
 
@@ -628,8 +628,8 @@ Create a `search_config.json` file in your project root:
   "search_mode": {
     "default_mode": "hybrid",
     "enable_hybrid": true,
-    "bm25_weight": 0.4,
-    "dense_weight": 0.6,
+    "bm25_weight": 0.35,
+    "dense_weight": 0.65,
     "bm25_use_stemming": true,
     "rrf_k_parameter": 100
   },
@@ -979,7 +979,7 @@ start_mcp_server.bat
 
 ### Search Strategy
 
-1. **Start with defaults** - hybrid mode with 0.4/0.6 weights
+1. **Start with defaults** - hybrid mode with 0.35/0.65 weights
 2. **Monitor results** - adjust based on search success
 3. **Use auto-mode** for mixed query types
 4. **Tune weights** for specific use cases
@@ -1007,8 +1007,8 @@ start_mcp_server.bat
   "search_mode": {
     "default_mode": "hybrid",
     "enable_hybrid": true,
-    "bm25_weight": 0.4,
-    "dense_weight": 0.6,
+    "bm25_weight": 0.35,
+    "dense_weight": 0.65,
     "bm25_use_stemming": true,
     "rrf_k_parameter": 100
   },

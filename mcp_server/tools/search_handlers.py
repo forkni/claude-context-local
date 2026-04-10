@@ -528,6 +528,72 @@ def _format_search_results(results: list) -> list[dict]:
     return formatted_results
 
 
+def _parse_line(lines_str: str, part: int = 0) -> int:
+    """Extract start (part=0) or end (part=-1) line from 'start-end' format."""
+    try:
+        return int(lines_str.split("-")[part])
+    except (ValueError, IndexError, AttributeError):
+        return 0
+
+
+def _reorder_by_source_position(results: list[dict]) -> list[dict]:
+    """Reorder results by file source position (DOS RAG technique).
+
+    Groups results by file path and sorts each group by start line number.
+    Inter-file ordering is preserved by each file group's highest score.
+    Gap indicators are added between non-contiguous chunks from the same file.
+
+    Based on: "Stronger Baselines for RAG with Long-Context LMs" (EMNLP 2025).
+    Sorting retrieved chunks into original document order gives +5.3% accuracy
+    over similarity-ranked order at zero retrieval cost.
+
+    Args:
+        results: List of formatted result dicts with "file" and "lines" fields
+
+    Returns:
+        Results reordered by source position, with gap indicators inserted
+    """
+    if not results:
+        return results
+
+    # Group results by file, preserving highest score per group for inter-file ordering
+    file_groups: dict[str, list[dict]] = {}
+    file_best_score: dict[str, float] = {}
+
+    for result in results:
+        file_key = result.get("file", "")
+        bs = result.get("blended_score")
+        score = bs if bs is not None else result.get("score", 0.0)
+        if file_key not in file_groups:
+            file_groups[file_key] = []
+            file_best_score[file_key] = score
+        else:
+            file_best_score[file_key] = max(file_best_score[file_key], score)
+        file_groups[file_key].append(result)
+
+    # Sort file groups by their best score (descending)
+    sorted_files = sorted(file_groups.keys(), key=lambda f: file_best_score[f], reverse=True)
+
+    reordered: list[dict] = []
+    for file_key in sorted_files:
+        group = file_groups[file_key]
+        # Sort chunks within each file by start line
+        group.sort(key=lambda r: _parse_line(r.get("lines", "0"), 0))
+
+        # Annotate gap info on the preceding chunk (gap_after field) to avoid
+        # injecting synthetic rows that would dilute downstream [:k] slices.
+        for i, chunk in enumerate(group):
+            reordered.append(chunk)
+            if i < len(group) - 1:
+                curr_end = _parse_line(group[i].get("lines", "0"), -1)
+                next_start = _parse_line(group[i + 1].get("lines", "0"), 0)
+                gap = next_start - curr_end - 1
+                if gap > 0:
+                    chunk["gap_after"] = f"[... {gap} lines omitted ...]"
+
+    return reordered
+
+
 def _enrich_results_with_graph_data(
     results: list[dict], index_manager: CodeIndexManager | None
 ) -> list[dict]:
@@ -1095,6 +1161,15 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
                     )
         except Exception as e:
             logger.debug(f"[SSCG] Subgraph extraction failed: {e}")
+
+    # === Source-position reordering (DOS RAG technique) ===
+    # Applied after subgraph extraction so [:k] / [k:] partitioning sees only real chunks.
+    # Gap info is stored as gap_after on the preceding chunk (no synthetic rows injected).
+    if search_config is None:
+        search_config = get_search_config()
+    if getattr(search_config.output, "source_order_output", True) and len(formatted_results) > 1:
+        formatted_results = _reorder_by_source_position(formatted_results)
+        logger.debug(f"[SOURCE_ORDER] Reordered {len(formatted_results)} results by file position")
 
     # Apply context budget truncation
     if max_context_tokens > 0 and formatted_results:
