@@ -208,4 +208,266 @@ def aggregate_metrics(per_query: list[dict[str, Any]]) -> dict[str, Any]:
         if agg["hit_rate@5"] >= THRESHOLDS["hit_rate_at_5"]
         else "FAIL",
     }
+
+    # Line-overlap metrics — only average queries where the key is present
+    # (queries without golden line ranges are excluded, not counted as 0)
+    for key in ("line_recall", "line_precision", "line_iou"):
+        vals = [float(q[key]) for q in per_query if key in q]
+        if vals:
+            agg[key] = round(mean(vals), 4)
+            agg[f"{key}_count"] = len(vals)
+
     return agg
+
+
+# ---------------------------------------------------------------------------
+# Line-range overlap metrics (Chroma-style, adapted to source line ranges)
+#
+# Adapted from: Chroma Technical Report "Evaluating Chunking Strategies for
+# Retrieval" (Smith & Troynikov, 2024). Character-range arithmetic translated
+# to inclusive line-number ranges since every chunk stores start_line/end_line.
+#
+# All range inputs/outputs use (start_line, end_line) inclusive tuples, e.g.
+# (5, 8) covers lines 5, 6, 7, 8 = 4 lines.
+# ---------------------------------------------------------------------------
+
+
+def merge_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Merge overlapping or adjacent line ranges into non-overlapping sorted ranges.
+
+    Args:
+        ranges: List of (start_line, end_line) inclusive tuples (may overlap).
+
+    Returns:
+        Sorted list of non-overlapping (start, end) tuples.
+
+    Examples::
+
+        merge_ranges([(1, 5), (3, 8), (12, 15)]) -> [(1, 8), (12, 15)]
+        merge_ranges([(1, 3), (4, 6)])            -> [(1, 6)]  # adjacent
+        merge_ranges([])                           -> []
+    """
+    if not ranges:
+        return []
+    sorted_ranges = sorted(ranges)
+    merged: list[tuple[int, int]] = [sorted_ranges[0]]
+    for start, end in sorted_ranges[1:]:
+        prev_start, prev_end = merged[-1]
+        if start <= prev_end + 1:  # overlapping or directly adjacent
+            merged[-1] = (prev_start, max(prev_end, end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def intersect_ranges(
+    a: list[tuple[int, int]], b: list[tuple[int, int]]
+) -> list[tuple[int, int]]:
+    """Compute the intersection of two sorted, non-overlapping range lists.
+
+    Both inputs should already be merged (from ``merge_ranges``).
+
+    Args:
+        a: First sorted, merged range list.
+        b: Second sorted, merged range list.
+
+    Returns:
+        Sorted, non-overlapping intersection ranges.
+
+    Examples::
+
+        intersect_ranges([(1, 10)], [(5, 15)]) -> [(5, 10)]
+        intersect_ranges([(1, 5)],  [(7, 10)]) -> []
+    """
+    result: list[tuple[int, int]] = []
+    i = j = 0
+    while i < len(a) and j < len(b):
+        lo = max(a[i][0], b[j][0])
+        hi = min(a[i][1], b[j][1])
+        if lo <= hi:
+            result.append((lo, hi))
+        if a[i][1] < b[j][1]:
+            i += 1
+        else:
+            j += 1
+    return result
+
+
+def count_lines(ranges: list[tuple[int, int]]) -> int:
+    """Count total lines covered by a list of ranges (inclusive).
+
+    Args:
+        ranges: List of (start_line, end_line) inclusive tuples.
+
+    Returns:
+        Total line count. ``(5, 8)`` covers 4 lines.
+
+    Examples::
+
+        count_lines([(5, 8), (12, 13)]) -> 6
+        count_lines([])                  -> 0
+    """
+    return sum(end - start + 1 for start, end in ranges)
+
+
+def calculate_line_recall(
+    retrieved_ranges: dict[str, list[tuple[int, int]]],
+    golden_ranges: dict[str, list[tuple[int, int]]],
+) -> float:
+    """Line-level Recall = covered_golden_lines / total_golden_lines.
+
+    Uses merged ranges on both sides to avoid double-counting.
+    Only files present in ``golden_ranges`` contribute to the score.
+
+    Args:
+        retrieved_ranges: ``{relative_path: [(start, end), ...]}`` for retrieved chunks.
+        golden_ranges: ``{relative_path: [(start, end), ...]}`` for ground-truth lines.
+
+    Returns:
+        Recall score in [0.0, 1.0].
+    """
+    total_golden = 0
+    covered = 0
+    for path, g_ranges in golden_ranges.items():
+        merged_golden = merge_ranges(g_ranges)
+        total_golden += count_lines(merged_golden)
+        if path in retrieved_ranges:
+            merged_retrieved = merge_ranges(retrieved_ranges[path])
+            overlap = intersect_ranges(merged_golden, merged_retrieved)
+            covered += count_lines(overlap)
+    return covered / total_golden if total_golden > 0 else 0.0
+
+
+def calculate_line_precision(
+    retrieved_ranges: dict[str, list[tuple[int, int]]],
+    golden_ranges: dict[str, list[tuple[int, int]]],
+) -> float:
+    """Line-level Precision = overlap_lines / total_retrieved_lines.
+
+    Uses the **raw sum** of retrieved lines (before merging) as the denominator
+    to penalise redundant overlapping chunks — matching Chroma's precision
+    approach where retrieving duplicate content hurts precision.
+
+    Args:
+        retrieved_ranges: ``{relative_path: [(start, end), ...]}`` for retrieved chunks.
+        golden_ranges: ``{relative_path: [(start, end), ...]}`` for ground-truth lines.
+
+    Returns:
+        Precision score in [0.0, 1.0].
+    """
+    # Raw (un-merged) sum of retrieved lines penalizes chunk redundancy
+    total_retrieved = sum(
+        end - start + 1
+        for ranges in retrieved_ranges.values()
+        for start, end in ranges
+    )
+    if total_retrieved == 0:
+        return 0.0
+    # Overlap uses merged ranges on both sides to avoid double-counting the numerator
+    overlap = 0
+    for path, g_ranges in golden_ranges.items():
+        if path in retrieved_ranges:
+            merged_golden = merge_ranges(g_ranges)
+            merged_retrieved = merge_ranges(retrieved_ranges[path])
+            overlap += count_lines(intersect_ranges(merged_golden, merged_retrieved))
+    return overlap / total_retrieved
+
+
+def calculate_line_iou(
+    retrieved_ranges: dict[str, list[tuple[int, int]]],
+    golden_ranges: dict[str, list[tuple[int, int]]],
+) -> float:
+    """Line-level IoU (Intersection over Union) = overlap_lines / union_lines.
+
+    Uses merged ranges for both the overlap and the union computation.
+
+    Args:
+        retrieved_ranges: ``{relative_path: [(start, end), ...]}`` for retrieved chunks.
+        golden_ranges: ``{relative_path: [(start, end), ...]}`` for ground-truth lines.
+
+    Returns:
+        IoU score in [0.0, 1.0].
+    """
+    overlap = 0
+    for path, g_ranges in golden_ranges.items():
+        if path in retrieved_ranges:
+            merged_golden = merge_ranges(g_ranges)
+            merged_retrieved = merge_ranges(retrieved_ranges[path])
+            overlap += count_lines(intersect_ranges(merged_golden, merged_retrieved))
+
+    golden_lines = sum(
+        count_lines(merge_ranges(ranges)) for ranges in golden_ranges.values()
+    )
+    retrieved_lines = sum(
+        count_lines(merge_ranges(ranges)) for ranges in retrieved_ranges.values()
+    )
+    union = golden_lines + retrieved_lines - overlap
+    return overlap / union if union > 0 else 0.0
+
+
+def build_chunk_line_lookup(
+    metadata_store: Any,
+) -> dict[str, tuple[str, int, int]]:
+    """Build a lookup from normalized chunk ID to (relative_path, start_line, end_line).
+
+    Scans the MetadataStore once and normalises all raw chunk IDs (which include
+    line ranges) so they can be matched against the normalized chunk IDs used in
+    the golden dataset.
+
+    Args:
+        metadata_store: An open ``MetadataStore`` instance.
+
+    Returns:
+        Dict mapping ``normalized_chunk_id → (relative_path, start_line, end_line)``.
+        Only entries with non-zero start/end lines are included.
+
+    Example::
+
+        lookup = build_chunk_line_lookup(searcher.dense_index.metadata_store)
+        # lookup["search/config.py:decorated_definition:EmbeddingConfig"]
+        # -> ("search/config.py", 148, 161)
+    """
+    lookup: dict[str, tuple[str, int, int]] = {}
+    for raw_id, entry in metadata_store.items():
+        meta = entry.get("metadata", {})
+        path = meta.get("relative_path", "")
+        start = meta.get("start_line") or 0
+        end = meta.get("end_line") or 0
+        if path and start and end:
+            normalized = normalize_chunk_id(raw_id)
+            lookup[normalized] = (path, int(start), int(end))
+    return lookup
+
+
+def resolve_chunk_ids_to_ranges(
+    chunk_ids: list[str],
+    lookup: dict[str, tuple[str, int, int]],
+) -> dict[str, list[tuple[int, int]]]:
+    """Resolve normalized chunk IDs to per-file line ranges.
+
+    Uses a pre-built lookup table from ``build_chunk_line_lookup`` so the
+    MetadataStore does not need to be queried per-chunk at evaluation time.
+
+    Args:
+        chunk_ids: Normalized chunk IDs (line ranges already stripped).
+        lookup: Pre-built ``{normalized_id: (relative_path, start_line, end_line)}``.
+
+    Returns:
+        ``{relative_path: [(start_line, end_line), ...]}`` grouped by file.
+        Missing chunk IDs are silently skipped.
+
+    Example::
+
+        ranges = resolve_chunk_ids_to_ranges(
+            ["search/config.py:decorated_definition:EmbeddingConfig"],
+            lookup,
+        )
+        # ranges == {"search/config.py": [(148, 161)]}
+    """
+    result: dict[str, list[tuple[int, int]]] = {}
+    for cid in chunk_ids:
+        normalized = normalize_chunk_id(cid)
+        if normalized in lookup:
+            path, start, end = lookup[normalized]
+            result.setdefault(path, []).append((start, end))
+    return result
