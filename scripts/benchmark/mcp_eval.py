@@ -18,10 +18,16 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from evaluation.metrics import normalize_chunk_ids, calculate_metrics_from_results, aggregate_metrics  # noqa: E402
+from evaluation.metrics import (  # noqa: E402
+    aggregate_metrics,
+    calculate_metrics_from_results,
+    normalize_chunk_ids,
+)
+
 
 # ---------------------------------------------------------------------------
 # Mode labels and output naming
