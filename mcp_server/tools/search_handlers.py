@@ -328,8 +328,16 @@ def _check_auto_reindex(
             embedder=embedder,
             bm25_weight=config.search_mode.bm25_weight,
             dense_weight=config.search_mode.dense_weight,
+            rrf_k=config.search_mode.rrf_k_parameter,
+            max_workers=2,
             project_id=project_id,
+            config=config,
         )
+        # Cache searcher so get_searcher() in handle_search_code reuses it (avoids double init)
+        state = get_state()
+        state.current_project = project_path
+        state.current_model_key = model_key_for_embedder
+        state.searcher = indexer
     else:
         indexer = get_index_manager(project_path, model_key=selected_model_key)
     chunker = MultiLanguageChunker(
@@ -572,7 +580,9 @@ def _reorder_by_source_position(results: list[dict]) -> list[dict]:
         file_groups[file_key].append(result)
 
     # Sort file groups by their best score (descending)
-    sorted_files = sorted(file_groups.keys(), key=lambda f: file_best_score[f], reverse=True)
+    sorted_files = sorted(
+        file_groups.keys(), key=lambda f: file_best_score[f], reverse=True
+    )
 
     reordered: list[dict] = []
     for file_key in sorted_files:
@@ -1167,9 +1177,14 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     # Gap info is stored as gap_after on the preceding chunk (no synthetic rows injected).
     if search_config is None:
         search_config = get_search_config()
-    if getattr(search_config.output, "source_order_output", True) and len(formatted_results) > 1:
+    if (
+        getattr(search_config.output, "source_order_output", True)
+        and len(formatted_results) > 1
+    ):
         formatted_results = _reorder_by_source_position(formatted_results)
-        logger.debug(f"[SOURCE_ORDER] Reordered {len(formatted_results)} results by file position")
+        logger.debug(
+            f"[SOURCE_ORDER] Reordered {len(formatted_results)} results by file position"
+        )
 
     # Apply context budget truncation
     if max_context_tokens > 0 and formatted_results:

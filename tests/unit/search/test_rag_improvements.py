@@ -20,6 +20,7 @@ from search.config import GraphEnhancedConfig
 # _reorder_by_source_position
 # ---------------------------------------------------------------------------
 
+
 class TestReorderBySourcePosition:
     """Tests for _reorder_by_source_position()."""
 
@@ -87,7 +88,7 @@ class TestReorderBySourcePosition:
         out = _reorder_by_source_position([r1, r2])
         assert len(out) == 2
         # The gap info is on the chunk itself, not a separate dict
-        assert "file" in out[0]   # still a real chunk (not a bare gap row)
+        assert "file" in out[0]  # still a real chunk (not a bare gap row)
         assert "score" in out[0]  # still carries score
 
     def test_malformed_lines_string_does_not_raise(self):
@@ -109,6 +110,7 @@ class TestReorderBySourcePosition:
 # ---------------------------------------------------------------------------
 # _classify_file_role
 # ---------------------------------------------------------------------------
+
 
 class TestClassifyFileRole:
     """Tests for MultiLanguageChunker._classify_file_role()."""
@@ -232,9 +234,21 @@ class TestCentralityBM25Boost:
 
     def _make_results(self):
         return [
-            {"chunk_id": "search/a.py:1-10:function:func_a", "score": 0.5, "file": "search/a.py"},
-            {"chunk_id": "search/b.py:1-10:function:func_b", "score": 0.5, "file": "search/b.py"},
-            {"chunk_id": "search/c.py:1-10:function:func_c", "score": 0.5, "file": "search/c.py"},
+            {
+                "chunk_id": "search/a.py:1-10:function:func_a",
+                "score": 0.5,
+                "file": "search/a.py",
+            },
+            {
+                "chunk_id": "search/b.py:1-10:function:func_b",
+                "score": 0.5,
+                "file": "search/b.py",
+            },
+            {
+                "chunk_id": "search/c.py:1-10:function:func_c",
+                "score": 0.5,
+                "file": "search/c.py",
+            },
         ]
 
     def test_high_centrality_result_gets_boost(self, mock_engine):
@@ -286,7 +300,9 @@ class TestCentralityBM25Boost:
         With threshold=0.001, centrality 1.0 > threshold → boost applied.
         We compare blended_score between the two configs to detect boost presence.
         """
-        config_above = self._config(centrality_boost_threshold=1.01)  # no chunk qualifies
+        config_above = self._config(
+            centrality_boost_threshold=1.01
+        )  # no chunk qualifies
         config_below = self._config(centrality_boost_threshold=0.001)  # all qualify
 
         ranker_above = CentralityRanker(mock_engine, config=config_above)
@@ -295,8 +311,12 @@ class TestCentralityBM25Boost:
         out_above = ranker_above.rerank(self._make_results())
         out_below = ranker_below.rerank(self._make_results())
 
-        c_above = next(r["blended_score"] for r in out_above if "func_c" in r["chunk_id"])
-        c_below = next(r["blended_score"] for r in out_below if "func_c" in r["chunk_id"])
+        c_above = next(
+            r["blended_score"] for r in out_above if "func_c" in r["chunk_id"]
+        )
+        c_below = next(
+            r["blended_score"] for r in out_below if "func_c" in r["chunk_id"]
+        )
 
         # When threshold is above any possible centrality, no boost is added
         # When threshold is very low, the high-centrality chunk C gets a boost

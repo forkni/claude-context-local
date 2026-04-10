@@ -244,9 +244,16 @@ class MultiLanguageChunker:
         ext = Path(relative_path).suffix.lower()
 
         # Test files
-        if any(p.lower() in ("test", "tests", "testing", "__tests__", "spec", "specs") for p in parts):
+        if any(
+            p.lower() in ("test", "tests", "testing", "__tests__", "spec", "specs")
+            for p in parts
+        ):
             return "test"
-        if name.startswith("test_") or name.endswith("_test.py") or name.endswith(".spec.py"):
+        if (
+            name.startswith("test_")
+            or name.endswith("_test.py")
+            or name.endswith(".spec.py")
+        ):
             return "test"
 
         # Documentation files
@@ -257,11 +264,26 @@ class MultiLanguageChunker:
 
         # Config/infrastructure files
         config_names = {
-            "setup.py", "setup.cfg", "pyproject.toml", "poetry.lock",
-            "requirements.txt", "requirements-dev.txt", "dockerfile",
-            ".gitignore", ".gitattributes", ".editorconfig", "makefile",
-            "tox.ini", "pytest.ini", ".flake8", ".pylintrc", "mypy.ini",
-            ".env", ".env.example", ".env.local", ".env.production",
+            "setup.py",
+            "setup.cfg",
+            "pyproject.toml",
+            "poetry.lock",
+            "requirements.txt",
+            "requirements-dev.txt",
+            "dockerfile",
+            ".gitignore",
+            ".gitattributes",
+            ".editorconfig",
+            "makefile",
+            "tox.ini",
+            "pytest.ini",
+            ".flake8",
+            ".pylintrc",
+            "mypy.ini",
+            ".env",
+            ".env.example",
+            ".env.local",
+            ".env.production",
         }
         if name in config_names or ext in (".yaml", ".yml", ".toml", ".cfg", ".ini"):
             return "config"

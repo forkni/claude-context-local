@@ -295,7 +295,9 @@ class ChunkingConfig:
 
     # Token size constraints for chunks
     min_chunk_tokens: int = 50  # Minimum tokens before considering merge
-    max_merged_tokens: int = 400  # Maximum tokens for merged chunk (research: 200-400 optimal)
+    max_merged_tokens: int = (
+        400  # Maximum tokens for merged chunk (research: 200-400 optimal)
+    )
 
     # Community Detection settings (independent control restored)
     enable_community_detection: bool = (
@@ -323,7 +325,9 @@ class ChunkingConfig:
 
     # Splitting-specific configs (separate from merging)
     split_size_method: str = "characters"  # "lines" or "characters"
-    max_split_chars: int = 1600  # Character-based splitting (~400 tokens, optimal for retrieval)
+    max_split_chars: int = (
+        1600  # Character-based splitting (~400 tokens, optimal for retrieval)
+    )
 
     # File-level module summaries (A2: improve GLOBAL query recall)
     enable_file_summaries: bool = True  # Generate module-summary chunks per file
@@ -395,8 +399,12 @@ class GraphEnhancedConfig:
     # Centrality-adaptive BM25 boost (LIMIT paper insight)
     # High-centrality chunks (utility functions, base classes) are exactly where
     # single-vector embeddings fail. Extra boost compensates for this limitation.
-    centrality_bm25_boost: bool = True  # Enable adaptive boost for high-centrality results
-    centrality_boost_threshold: float = 0.02  # Centrality score threshold to trigger boost
+    centrality_bm25_boost: bool = (
+        True  # Enable adaptive boost for high-centrality results
+    )
+    centrality_boost_threshold: float = (
+        0.02  # Centrality score threshold to trigger boost
+    )
     centrality_boost_factor: float = 5.0  # Multiplier: boost = centrality * factor
     centrality_boost_cap: float = 0.15  # Maximum boost added to blended_score
 
