@@ -727,6 +727,7 @@ class SearchConfig:
 
             output = OutputConfig(
                 format=output_data.get("format", "compact"),
+                source_order_output=output_data.get("source_order_output", True),
             )
 
             chunking = ChunkingConfig(
@@ -789,6 +790,18 @@ class SearchConfig:
                     "size_norm_target_lines", 200
                 ),
                 size_norm_alpha=graph_enhanced_data.get("size_norm_alpha", 0.1),
+                centrality_bm25_boost=graph_enhanced_data.get(
+                    "centrality_bm25_boost", True
+                ),
+                centrality_boost_threshold=graph_enhanced_data.get(
+                    "centrality_boost_threshold", 0.02
+                ),
+                centrality_boost_factor=graph_enhanced_data.get(
+                    "centrality_boost_factor", 5.0
+                ),
+                centrality_boost_cap=graph_enhanced_data.get(
+                    "centrality_boost_cap", 0.15
+                ),
             )
 
         else:
@@ -883,6 +896,7 @@ class SearchConfig:
 
             output = OutputConfig(
                 format=data.get("output_format", "compact"),
+                source_order_output=data.get("source_order_output", True),
             )
 
             chunking = ChunkingConfig(
@@ -919,6 +933,10 @@ class SearchConfig:
                 enable_size_normalization=data.get("enable_size_normalization", True),
                 size_norm_target_lines=data.get("size_norm_target_lines", 200),
                 size_norm_alpha=data.get("size_norm_alpha", 0.1),
+                centrality_bm25_boost=data.get("centrality_bm25_boost", True),
+                centrality_boost_threshold=data.get("centrality_boost_threshold", 0.02),
+                centrality_boost_factor=data.get("centrality_boost_factor", 5.0),
+                centrality_boost_cap=data.get("centrality_boost_cap", 0.15),
             )
 
         return cls(

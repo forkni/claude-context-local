@@ -41,10 +41,11 @@ class TestReorderBySourcePosition:
         r2 = self._make_result("a.py", "10-20", 0.9)
         r3 = self._make_result("a.py", "30-40", 0.5)
         out = _reorder_by_source_position([r1, r2, r3])
-        actual_files = [r for r in out if r.get("type") != "gap"]
-        assert actual_files[0]["lines"] == "10-20"
-        assert actual_files[1]["lines"] == "30-40"
-        assert actual_files[2]["lines"] == "50-60"
+        # No separate gap rows — list length equals input length
+        assert len(out) == 3
+        assert out[0]["lines"] == "10-20"
+        assert out[1]["lines"] == "30-40"
+        assert out[2]["lines"] == "50-60"
 
     def test_multi_file_ordered_by_best_score(self):
         """File groups are ordered by their highest-scoring chunk."""
@@ -52,41 +53,42 @@ class TestReorderBySourcePosition:
         b = self._make_result("b.py", "10-20", 0.9)
         c = self._make_result("c.py", "10-20", 0.6)
         out = _reorder_by_source_position([a, b, c])
-        actual = [r for r in out if r.get("type") != "gap"]
-        assert actual[0]["file"] == "b.py"
-        assert actual[1]["file"] == "c.py"
-        assert actual[2]["file"] == "a.py"
+        assert len(out) == 3
+        assert out[0]["file"] == "b.py"
+        assert out[1]["file"] == "c.py"
+        assert out[2]["file"] == "a.py"
 
-    def test_gap_inserted_between_non_contiguous_chunks(self):
-        """Gap indicator inserted between chunks with lines missing between them."""
+    def test_gap_stored_as_gap_after_on_preceding_chunk(self):
+        """Gap info stored as gap_after on the preceding chunk — no extra rows injected."""
         r1 = self._make_result("a.py", "10-20")
         r2 = self._make_result("a.py", "50-60")  # gap of 29 lines (21-49)
         out = _reorder_by_source_position([r1, r2])
-        assert len(out) == 3
-        gap = out[1]
-        assert gap.get("type") == "gap"
-        assert "29 lines omitted" in gap["gap"]
-        assert gap["file"] == "a.py"
+        # No synthetic gap rows — exactly 2 results returned
+        assert len(out) == 2
+        # Gap annotation on the chunk preceding the gap (first chunk)
+        assert "gap_after" in out[0]
+        assert "29 lines omitted" in out[0]["gap_after"]
+        # Second chunk has no gap_after (it's the last in the group)
+        assert "gap_after" not in out[1]
 
     def test_no_gap_for_contiguous_chunks(self):
-        """No gap indicator when chunks are adjacent (no lines between them)."""
+        """No gap_after annotation when chunks are adjacent (no lines between them)."""
         r1 = self._make_result("a.py", "10-20")
         r2 = self._make_result("a.py", "21-30")  # immediately adjacent
         out = _reorder_by_source_position([r1, r2])
         assert len(out) == 2
-        assert all(r.get("type") != "gap" for r in out)
+        assert "gap_after" not in out[0]
+        assert "gap_after" not in out[1]
 
-    def test_gap_sentinel_has_type_field(self):
-        """Gap dicts carry type='gap' sentinel for safe downstream filtering."""
+    def test_gap_after_does_not_add_extra_rows(self):
+        """gap_after field must never increase the list length (no injected rows)."""
         r1 = self._make_result("a.py", "1-10")
         r2 = self._make_result("a.py", "50-60")
         out = _reorder_by_source_position([r1, r2])
-        gaps = [r for r in out if r.get("type") == "gap"]
-        assert len(gaps) == 1
-        assert gaps[0]["type"] == "gap"
-        # Gap dicts should NOT have chunk_id, score, etc.
-        assert "chunk_id" not in gaps[0]
-        assert "score" not in gaps[0]
+        assert len(out) == 2
+        # The gap info is on the chunk itself, not a separate dict
+        assert "file" in out[0]   # still a real chunk (not a bare gap row)
+        assert "score" in out[0]  # still carries score
 
     def test_malformed_lines_string_does_not_raise(self):
         """Chunks with missing or malformed lines field are handled gracefully."""
@@ -94,15 +96,14 @@ class TestReorderBySourcePosition:
         r2 = {"file": "a.py", "lines": "bad", "score": 0.5, "blended_score": 0.5}
         r3 = self._make_result("a.py", "10-20", 0.7)
         out = _reorder_by_source_position([r1, r2, r3])
-        assert len(out) >= 3  # may include gaps but should not raise
+        assert len(out) == 3  # no extra rows added
 
     def test_results_without_file_key_grouped_together(self):
         """Results with no 'file' field are grouped under empty string key."""
         r1 = {"score": 0.8, "blended_score": 0.8, "lines": "1-10"}
         r2 = {"score": 0.6, "blended_score": 0.6, "lines": "50-60"}
         out = _reorder_by_source_position([r1, r2])
-        actual = [r for r in out if r.get("type") != "gap"]
-        assert len(actual) == 2
+        assert len(out) == 2
 
 
 # ---------------------------------------------------------------------------

@@ -13,34 +13,39 @@ set "tempcount=0"
 set "clcount=0"
 
 REM Remove __pycache__ folders (skip .venv and .git)
+REM Use for /d /r to avoid the "File Not Found" hazard from dir output parsing
 echo Searching for __pycache__ folders...
-for /f "delims=" %%d in ('dir /s /b /ad __pycache__ 2^>nul ^| findstr /v /i "\\.venv\\ \\.git\\"') do (
-    echo Removing: %%d
-    rmdir /s /q "%%d"
-    if !errorlevel! equ 0 (
-        set /a count+=1
-    ) else (
-        echo WARNING: Could not remove %%d
+for /d /r %%d in (__pycache__) do (
+    echo %%d | findstr /i /l /c:".venv" /c:".git" >nul || (
+        echo Removing: %%d
+        rmdir /s /q "%%d"
+        if !errorlevel! equ 0 (
+            set /a count+=1
+        ) else (
+            echo WARNING: Could not remove %%d
+        )
     )
 )
 
 REM Remove orphaned .pyc files outside __pycache__ (skip .venv and .git)
 echo.
 echo Searching for orphaned .pyc files...
-for /f "delims=" %%f in ('dir /s /b *.pyc 2^>nul ^| findstr /v /i "\\.venv\\ \\.git\\ __pycache__"') do (
-    echo Removing: %%f
-    del /f /q "%%f"
-    if !errorlevel! equ 0 (
-        set /a tempcount+=1
-    ) else (
-        echo WARNING: Could not remove %%f
+for /r %%f in (*.pyc) do (
+    echo %%f | findstr /i /l /c:".venv" /c:".git" /c:"__pycache__" >nul || (
+        echo Removing: %%f
+        del /f /q "%%f"
+        if !errorlevel! equ 0 (
+            set /a tempcount+=1
+        ) else (
+            echo WARNING: Could not remove %%f
+        )
     )
 )
 
 REM Remove Claude Code temporary files
 echo.
 echo Searching for Claude Code temp files...
-for /f "delims=" %%f in ('dir /s /b tmpclaude-*-cwd 2^>nul') do (
+for /r %%f in (tmpclaude-*-cwd) do (
     echo Removing: %%f
     del /f /q "%%f"
     if !errorlevel! equ 0 (

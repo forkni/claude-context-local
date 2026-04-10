@@ -1127,14 +1127,14 @@ if exist ".venv\Scripts\python.exe" (
     ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = config.routing.multi_model_enabled; pool = config.routing.multi_model_pool or 'full'; model_display = f'BGE-M3 + gte-modernbert ({pool})' if multi_enabled and pool == 'lightweight-speed' else f'BGE-Code-v1 + Qwen3 ({pool})' if multi_enabled else f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print('    Multi-Model Routing:', 'Enabled' if multi_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print('    File Summaries:', 'Enabled' if config.chunking.enable_file_summaries else 'Disabled'); print('    Community Summaries:', 'Enabled' if config.chunking.enable_community_summaries else 'Disabled'); print(); print('  Chunking Settings:'); print('    Community Detection:', 'Enabled' if config.chunking.enable_community_detection else 'Disabled'); print('    Community Merge (full re-index only):', 'Enabled' if config.chunking.enable_community_merge else 'Disabled'); print(f'    Community Resolution: {config.chunking.community_resolution}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'    Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(f'    Split Size Method: {config.chunking.split_size_method}'); print(f'    Max Split Chars: {config.chunking.max_split_chars}'); print(f'    Sizing Mode: {config.chunking.sizing_mode}'); print(f'    Adaptive Max Multiplier: {config.chunking.adaptive_multiplier_max}'); print(f'    Adaptive Min Multiplier: {config.chunking.adaptive_multiplier_min}'); print(f'    Max Complexity Cap: {config.chunking.max_complexity_cap}'); print(f'    Max Merged Tokens: {config.chunking.max_merged_tokens}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    RAM Fallback: {\"On\" if config.performance.allow_ram_fallback else \"Off\"}'); print(); print('  Output Format:', config.output.format); g = config.graph_enhanced; print(); print('  Output ^& Ranking Enhancements:'); print('    Source-Position Ordering:', 'Enabled' if config.output.source_order_output else 'Disabled'); print('    Centrality BM25 Boost:', 'Enabled' if g.centrality_bm25_boost else 'Disabled'); print(f'      Boost Threshold: {g.centrality_boost_threshold}'); print(f'      Boost Factor: {g.centrality_boost_factor}'); print(f'      Boost Cap: {g.centrality_boost_cap}')"
     if "!ERRORLEVEL!" neq "0" (
         echo Error loading configuration
-        echo Using defaults: hybrid mode, BM25=0.4, Dense=0.6
+        echo Using defaults: hybrid mode, BM25=0.35, Dense=0.65
     )
 ) else (
     echo Python environment not available
     echo Default configuration:
     echo   Search Mode: hybrid
-    echo   BM25 Weight: 0.4
-    echo   Dense Weight: 0.6
+    echo   BM25 Weight: 0.35
+    echo   Dense Weight: 0.65
 )
 pause
 goto search_config_menu
@@ -2464,7 +2464,13 @@ echo Controls post-retrieval result ordering and scoring adjustments.
 echo Changes apply immediately (no re-indexing required).
 echo.
 echo Current Settings:
-".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); g = cfg.graph_enhanced; o = cfg.output; print('  Source-Position Ordering:', 'Enabled' if o.source_order_output else 'Disabled'); print('  Centrality BM25 Boost:', 'Enabled' if g.centrality_bm25_boost else 'Disabled'); print('  Centrality Boost Threshold:', g.centrality_boost_threshold); print('  Centrality Boost Factor:', g.centrality_boost_factor); print('  Centrality Boost Cap:', g.centrality_boost_cap)" 2>nul
+if exist ".venv\Scripts\python.exe" (
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); g = cfg.graph_enhanced; o = cfg.output; print('  Source-Position Ordering:', 'Enabled' if o.source_order_output else 'Disabled'); print('  Centrality BM25 Boost:', 'Enabled' if g.centrality_bm25_boost else 'Disabled'); print('  Centrality Boost Threshold:', g.centrality_boost_threshold); print('  Centrality Boost Factor:', g.centrality_boost_factor); print('  Centrality Boost Cap:', g.centrality_boost_cap)" 2>nul
+) else (
+    echo   Python environment not available - showing defaults
+    echo   Source-Position Ordering: Enabled
+    echo   Centrality BM25 Boost: Enabled
+)
 echo.
 echo   --- Source-Position Ordering (DOS RAG, +5.3%% LLM accuracy) ---
 echo   1. Enable Source-Position Ordering  - Group results by file, sort by line number

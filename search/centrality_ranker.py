@@ -337,17 +337,19 @@ class CentralityRanker:
 
                 # Determine role: prefer indexed tag, fall back to path heuristics
                 if indexed_role is None:
+                    # Normalize to forward slashes so patterns work on Windows paths too
+                    norm_path = file_path.replace("\\", "/").lower()
                     if any(
-                        p in file_path.lower()
+                        p in norm_path
                         for p in ("test_", "_test.", "tests/", "verify_", "verification")
                     ):
                         indexed_role = "test"
-                    elif file_path.lower().endswith((".md", ".rst", ".txt", ".adoc")) or any(
-                        p in file_path.lower() for p in ("/docs/", "/doc/", "/documentation/", "/wiki/")
+                    elif norm_path.endswith((".md", ".rst", ".txt", ".adoc")) or any(
+                        p in norm_path for p in ("/docs/", "/doc/", "/documentation/", "/wiki/")
                     ):
                         indexed_role = "doc"
                     elif any(
-                        p in file_path.lower()
+                        p in norm_path
                         for p in ("config.py", "settings.py", "constants.py")
                     ):
                         indexed_role = "config"

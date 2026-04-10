@@ -554,7 +554,8 @@ def _reorder_by_source_position(results: list[dict]) -> list[dict]:
 
     for result in results:
         file_key = result.get("file", "")
-        score = result.get("blended_score") or result.get("score", 0.0)
+        bs = result.get("blended_score")
+        score = bs if bs is not None else result.get("score", 0.0)
         if file_key not in file_groups:
             file_groups[file_key] = []
             file_best_score[file_key] = score
@@ -578,7 +579,8 @@ def _reorder_by_source_position(results: list[dict]) -> list[dict]:
         # Sort chunks within each file by start line
         group.sort(key=lambda r: _parse_line(r.get("lines", "0"), 0))
 
-        # Insert gap indicators between non-contiguous chunks from same file
+        # Annotate gap info on the preceding chunk (gap_after field) to avoid
+        # injecting synthetic rows that would dilute downstream [:k] slices.
         for i, chunk in enumerate(group):
             reordered.append(chunk)
             if i < len(group) - 1:
@@ -586,11 +588,7 @@ def _reorder_by_source_position(results: list[dict]) -> list[dict]:
                 next_start = _parse_line(group[i + 1].get("lines", "0"), 0)
                 gap = next_start - curr_end - 1
                 if gap > 0:
-                    reordered.append({
-                        "type": "gap",
-                        "file": file_key,
-                        "gap": f"[... {gap} lines omitted ...]",
-                    })
+                    chunk["gap_after"] = f"[... {gap} lines omitted ...]"
 
     return reordered
 
@@ -1117,16 +1115,6 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
         logger.info(f"Capping total results: {len(formatted_results)} -> {max_total}")
         formatted_results = formatted_results[:max_total]
 
-    # === Source-position reordering (DOS RAG technique) ===
-    # Reorder results by file source position for better LLM comprehension.
-    # Applied whenever source_order_output=True (default) and more than one result returned.
-    # Gap indicators ("type": "gap") are inserted between non-contiguous chunks from same file.
-    if search_config is None:
-        search_config = get_search_config()
-    if getattr(search_config.output, "source_order_output", True) and len(formatted_results) > 1:
-        formatted_results = _reorder_by_source_position(formatted_results)
-        logger.debug(f"[SOURCE_ORDER] Reordered {len(formatted_results)} results by file position")
-
     # === Extract subgraph over search results ===
     subgraph_data = None
     if index_manager and index_manager.graph_storage is not None:
@@ -1172,6 +1160,15 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
                     )
         except Exception as e:
             logger.debug(f"[SSCG] Subgraph extraction failed: {e}")
+
+    # === Source-position reordering (DOS RAG technique) ===
+    # Applied after subgraph extraction so [:k] / [k:] partitioning sees only real chunks.
+    # Gap info is stored as gap_after on the preceding chunk (no synthetic rows injected).
+    if search_config is None:
+        search_config = get_search_config()
+    if getattr(search_config.output, "source_order_output", True) and len(formatted_results) > 1:
+        formatted_results = _reorder_by_source_position(formatted_results)
+        logger.debug(f"[SOURCE_ORDER] Reordered {len(formatted_results)} results by file position")
 
     # Apply context budget truncation
     if max_context_tokens > 0 and formatted_results:
