@@ -333,11 +333,18 @@ def _check_auto_reindex(
             project_id=project_id,
             config=config,
         )
-        # Cache searcher so get_searcher() in handle_search_code reuses it (avoids double init)
+        # Cache searcher so get_searcher() in handle_search_code reuses it (avoids double init).
+        # Only store when no valid searcher is cached — preserves an existing searcher (with
+        # its already-loaded Jina model) to avoid reloading GPU weights on every stale check.
         state = get_state()
-        state.current_project = project_path
-        state.current_model_key = model_key_for_embedder
-        state.searcher = indexer
+        if (
+            state.searcher is None
+            or state.current_project != project_path
+            or state.current_model_key != model_key_for_embedder
+        ):
+            state.current_project = project_path
+            state.current_model_key = model_key_for_embedder
+            state.searcher = indexer
     else:
         indexer = get_index_manager(project_path, model_key=selected_model_key)
     chunker = MultiLanguageChunker(
