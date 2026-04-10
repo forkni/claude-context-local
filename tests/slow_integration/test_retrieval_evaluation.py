@@ -21,7 +21,6 @@ import pytest
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from evaluation.metrics import (
-    THRESHOLDS,
     aggregate_metrics,
     calculate_metrics_from_results,
     normalize_chunk_ids,
@@ -206,10 +205,7 @@ def _file_hit(results, expected_file_suffix):
 
     Normalizes path separators before comparison so tests pass on Windows.
     """
-    for r in results:
-        if expected_file_suffix in _norm_path(r.chunk_id):
-            return True
-    return False
+    return any(expected_file_suffix in _norm_path(r.chunk_id) for r in results)
 
 
 def _content_hit(results, term):
