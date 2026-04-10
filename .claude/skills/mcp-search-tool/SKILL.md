@@ -330,7 +330,7 @@ find_path(
 - `confidence_threshold=0.35`: queries below threshold fall back to HYBRID (safe default)
 - Embedder cached from previous search — zero startup cost after first query
 
-**Status**: Always-on. Semantic enhancement activates automatically when an embedder is loaded.
+**Status**: Opt-in (`semantic_enabled=False` by default). Enable via `configure_search_mode` or `search_config.json`. When enabled, activates automatically once an embedder is loaded.
 
 ### Centrality Reranking
 

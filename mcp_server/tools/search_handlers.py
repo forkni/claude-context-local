@@ -587,6 +587,7 @@ def _reorder_by_source_position(results: list[dict]) -> list[dict]:
                 gap = next_start - curr_end - 1
                 if gap > 0:
                     reordered.append({
+                        "type": "gap",
                         "file": file_key,
                         "gap": f"[... {gap} lines omitted ...]",
                     })
@@ -1118,8 +1119,8 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
 
     # === Source-position reordering (DOS RAG technique) ===
     # Reorder results by file source position for better LLM comprehension.
-    # Only applied when centrality reranking ran (results are already scored);
-    # skipped for single-result returns and ego-graph-only results.
+    # Applied whenever source_order_output=True (default) and more than one result returned.
+    # Gap indicators ("type": "gap") are inserted between non-contiguous chunks from same file.
     if search_config is None:
         search_config = get_search_config()
     if getattr(search_config.output, "source_order_output", True) and len(formatted_results) > 1:

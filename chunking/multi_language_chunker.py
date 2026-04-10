@@ -261,6 +261,7 @@ class MultiLanguageChunker:
             "requirements.txt", "requirements-dev.txt", "dockerfile",
             ".gitignore", ".gitattributes", ".editorconfig", "makefile",
             "tox.ini", "pytest.ini", ".flake8", ".pylintrc", "mypy.ini",
+            ".env", ".env.example", ".env.local", ".env.production",
         }
         if name in config_names or ext in (".yaml", ".yml", ".toml", ".cfg", ".ini", ".env"):
             return "config"

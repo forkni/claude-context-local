@@ -733,7 +733,7 @@ class SearchConfig:
                 min_chunk_tokens=chunking_data.get("min_chunk_tokens", 50),
                 max_merged_tokens=chunking_data.get("max_merged_tokens", 400),
                 enable_large_node_splitting=chunking_data.get(
-                    "enable_large_node_splitting", False
+                    "enable_large_node_splitting", True
                 ),
                 max_chunk_lines=chunking_data.get("max_chunk_lines", 100),
                 token_estimation=chunking_data.get("token_estimation", "whitespace"),
@@ -887,9 +887,9 @@ class SearchConfig:
 
             chunking = ChunkingConfig(
                 min_chunk_tokens=data.get("min_chunk_tokens", 50),
-                max_merged_tokens=data.get("max_merged_tokens", 1000),
+                max_merged_tokens=data.get("max_merged_tokens", 400),
                 enable_large_node_splitting=data.get(
-                    "enable_large_node_splitting", False
+                    "enable_large_node_splitting", True
                 ),
                 max_chunk_lines=data.get("max_chunk_lines", 100),
                 token_estimation=data.get("token_estimation", "whitespace"),
@@ -898,7 +898,7 @@ class SearchConfig:
                 enable_community_detection=data.get("enable_community_detection", True),
                 enable_community_merge=data.get("enable_community_merge", True),
                 split_size_method=data.get("split_size_method", "characters"),
-                max_split_chars=data.get("max_split_chars", 3000),
+                max_split_chars=data.get("max_split_chars", 1600),
                 max_phantom_degree=data.get("max_phantom_degree", 20),
             )
 
