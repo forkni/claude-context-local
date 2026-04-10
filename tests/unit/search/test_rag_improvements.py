@@ -10,8 +10,8 @@ from unittest.mock import MagicMock
 import networkx as nx
 import pytest
 
-from mcp_server.tools.search_handlers import _reorder_by_source_position
 from chunking.multi_language_chunker import MultiLanguageChunker
+from mcp_server.tools.search_handlers import _reorder_by_source_position
 from search.centrality_ranker import CentralityRanker
 from search.config import GraphEnhancedConfig
 
@@ -220,12 +220,12 @@ class TestCentralityBM25Boost:
     """Tests for centrality-adaptive BM25 boost in CentralityRanker.rerank()."""
 
     def _config(self, **kwargs) -> GraphEnhancedConfig:
-        defaults = dict(
-            centrality_bm25_boost=True,
-            centrality_boost_threshold=0.02,
-            centrality_boost_factor=5.0,
-            centrality_boost_cap=0.15,
-        )
+        defaults = {
+            "centrality_bm25_boost": True,
+            "centrality_boost_threshold": 0.02,
+            "centrality_boost_factor": 5.0,
+            "centrality_boost_cap": 0.15,
+        }
         defaults.update(kwargs)
         return GraphEnhancedConfig(**defaults)
 
