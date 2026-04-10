@@ -263,7 +263,7 @@ class MultiLanguageChunker:
             "tox.ini", "pytest.ini", ".flake8", ".pylintrc", "mypy.ini",
             ".env", ".env.example", ".env.local", ".env.production",
         }
-        if name in config_names or ext in (".yaml", ".yml", ".toml", ".cfg", ".ini", ".env"):
+        if name in config_names or ext in (".yaml", ".yml", ".toml", ".cfg", ".ini"):
             return "config"
 
         return "src"

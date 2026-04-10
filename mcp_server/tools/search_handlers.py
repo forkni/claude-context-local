@@ -528,6 +528,14 @@ def _format_search_results(results: list) -> list[dict]:
     return formatted_results
 
 
+def _parse_line(lines_str: str, part: int = 0) -> int:
+    """Extract start (part=0) or end (part=-1) line from 'start-end' format."""
+    try:
+        return int(lines_str.split("-")[part])
+    except (ValueError, IndexError, AttributeError):
+        return 0
+
+
 def _reorder_by_source_position(results: list[dict]) -> list[dict]:
     """Reorder results by file source position (DOS RAG technique).
 
@@ -565,13 +573,6 @@ def _reorder_by_source_position(results: list[dict]) -> list[dict]:
 
     # Sort file groups by their best score (descending)
     sorted_files = sorted(file_groups.keys(), key=lambda f: file_best_score[f], reverse=True)
-
-    def _parse_line(lines_str: str, part: int = 0) -> int:
-        """Extract start (part=0) or end (part=-1) line from 'start-end' format."""
-        try:
-            return int(lines_str.split("-")[part])
-        except (ValueError, IndexError, AttributeError):
-            return 0
 
     reordered: list[dict] = []
     for file_key in sorted_files:

@@ -279,24 +279,28 @@ class TestCentralityBM25Boost:
         assert c_on > c_off
 
     def test_boost_not_applied_below_threshold(self, mock_engine):
-        """Chunks with centrality <= threshold do not receive boost.
+        """Chunks with centrality below threshold do not receive a boost.
 
-        Verify by comparing annotate() centrality directly against boost_threshold:
-        C's normalized centrality is 1.0 (highest). With threshold=0.99, no boost.
-        With threshold=0.001, boost = min(1.0 * factor, cap) is applied.
-        We read the effect from the ranker's internal score rather than rerank()
-        to avoid interference from core_dirs / query-aware adjustments.
+        C has the highest normalized centrality (≈1.0).
+        With threshold=1.01, centrality 1.0 < threshold → no boost applied.
+        With threshold=0.001, centrality 1.0 > threshold → boost applied.
+        We compare blended_score between the two configs to detect boost presence.
         """
-        # Annotate only (no other adjustments) to isolate the centrality value
-        config_high = self._config(centrality_boost_threshold=0.99)
-        ranker_high = CentralityRanker(mock_engine, config=config_high)
-        annotated = ranker_high.annotate(self._make_results())
-        c_centrality = next(r["centrality"] for r in annotated if "func_c" in r["chunk_id"])
-        # C's normalized centrality must be 1.0 (highest in the graph)
-        assert c_centrality == pytest.approx(1.0, abs=0.01)
-        # With threshold=0.99, centrality 1.0 > 0.99 → boost would apply
-        # With threshold=1.01, centrality 1.0 < 1.01 → no boost
-        assert c_centrality > config_high.centrality_boost_threshold
+        config_above = self._config(centrality_boost_threshold=1.01)  # no chunk qualifies
+        config_below = self._config(centrality_boost_threshold=0.001)  # all qualify
+
+        ranker_above = CentralityRanker(mock_engine, config=config_above)
+        ranker_below = CentralityRanker(mock_engine, config=config_below)
+
+        out_above = ranker_above.rerank(self._make_results())
+        out_below = ranker_below.rerank(self._make_results())
+
+        c_above = next(r["blended_score"] for r in out_above if "func_c" in r["chunk_id"])
+        c_below = next(r["blended_score"] for r in out_below if "func_c" in r["chunk_id"])
+
+        # When threshold is above any possible centrality, no boost is added
+        # When threshold is very low, the high-centrality chunk C gets a boost
+        assert c_below > c_above
 
     def test_no_config_no_boost(self, mock_engine):
         """When config=None, no BM25 boost is applied (safe default)."""
