@@ -17,14 +17,14 @@ The project has **three distinct graph-aware subsystems** that are often confuse
 
 ## Multi-Hop Search (semantic + graph expansion)
 
-**Status:** Always-on. Runs unconditionally on every `search_code` call (`hybrid_searcher.py:650`; `MultiHopConfig.enabled=True` by default at `search/config.py:238`). Not exposed at the MCP boundary.
+**Status:** Always-on. Runs unconditionally on every `code-search:search_code` call. Governed internally by `MultiHopConfig.enabled` (default `True`) in `search/config.py`; not exposed at the MCP boundary.
 
 **Purpose:** Expand the initial hit set with semantically similar chunks and graph-neighbor chunks, so the candidate pool is richer than pure lexical/dense retrieval.
 
-**How it works** (`search/multi_hop_searcher.py`):
+**How it works** — implemented in `search/multi_hop_searcher.py`, invoked from `HybridSearcher.search()` in `search/hybrid_searcher.py`:
 1. Retrieve initial hits for the query (direct semantic/BM25 match). These chunks carry `source="search"`.
-2. Expand each initial hit along **semantic** similarity → expansion chunks tagged `source="multi_hop"` (line 142).
-3. Expand along **graph** edges (calls / imports) → expansion chunks tagged `source="graph_hop"` (line 223).
+2. Expand each initial hit along **semantic** similarity → expansion chunks tagged `source="multi_hop"`.
+3. Expand along **graph** edges (calls / imports) → expansion chunks tagged `source="graph_hop"`.
 4. Merge, dedupe, and rerank the combined set.
 
 **In results:** the `source` field distinguishes origins:
@@ -42,15 +42,15 @@ You cannot disable multi-hop via tool parameters. For debugging, change `MultiHo
 
 ## Ego-Graph Expansion (opt-in)
 
-**Status:** **Opt-in.** Default `ego_graph_enabled=False` (`mcp_server/tool_registry.py:120-124`). Separate subsystem from multi-hop above — the two are not the same thing.
+**Status:** **Opt-in.** Default `ego_graph_enabled=False` (declared in `mcp_server/tool_registry.py` under the `search_code` schema). Separate subsystem from multi-hop above — the two are not the same thing.
 
 **Purpose:** Explicitly fetch k-hop neighbors of the top result(s) via weighted BFS, with configurable hop depth and neighbor caps. Useful when you know you want a local neighborhood of related code rather than the engine's default expansion.
 
-**How it works** (`search/ego_graph_retriever.py`; gate at `hybrid_searcher.py:675` reads `effective_config.ego_graph.enabled`):
+**How it works** — implemented in `search/ego_graph_retriever.py`, gated inside `HybridSearcher.search()` (`search/hybrid_searcher.py`) on `effective_config.ego_graph.enabled`:
 1. Run normal search (which already includes always-on multi-hop above).
 2. **If `ego_graph_enabled=True`**, take top result(s) and do weighted BFS out to `ego_graph_k_hops` (default `2`) with edge weights `calls=1.0`, `imports=0.3`, others intermediate.
 3. Cap neighbors per hop via `ego_graph_max_neighbors_per_hop` (default `10`).
-4. A post-expansion neural rerank runs only when this gate is open (`hybrid_searcher.py:688`).
+4. A post-expansion neural rerank runs only when this gate is open.
 
 **To enable:** `code-search:search_code(..., ego_graph_enabled=True, ego_graph_k_hops=2)`
 
@@ -60,7 +60,7 @@ You cannot disable multi-hop via tool parameters. For debugging, change `MultiHo
 
 ## Centrality Reranking
 
-**Status:** Always-on when graph data is available — runs independently of `ego_graph_enabled` (`mcp_server/tools/search_handlers.py:1062-1098`, gated only on `graph_config.centrality_reranking` and presence of `index_manager.graph_storage`).
+**Status:** Always-on when graph data is available — runs independently of `ego_graph_enabled`. Implemented in `mcp_server/tools/search_handlers.py`, gated only on `graph_config.centrality_reranking` and presence of `index_manager.graph_storage`.
 
 **Formula:** `blended_score = centrality × 0.3 + semantic_score × 0.7`
 

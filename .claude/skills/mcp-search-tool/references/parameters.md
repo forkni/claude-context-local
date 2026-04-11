@@ -93,9 +93,9 @@ code-search:search_code("how does the indexing pipeline work", k=10)
 **Standard 2-step workflow:**
 
 ```text
-# Step 1: Find the symbol
-results = code-search:search_code("chunk_file function", chunk_type="function")
-chunk_id = results[0]["chunk_id"]  # scan all results, pick best
+# Step 1: Find the symbol (k=5 baseline — see SKILL.md for rationale)
+results = code-search:search_code("chunk_file function", k=5, chunk_type="function")
+chunk_id = results[0]["chunk_id"]  # scan all k results, pick best match
 
 # Step 2: Get all relationships
 code-search:find_connections(chunk_id=chunk_id, exclude_dirs=["tests/"])

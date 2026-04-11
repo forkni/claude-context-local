@@ -31,9 +31,9 @@ Ensures all MCP semantic search operations follow correct workflows for accurate
 
 ## Critical: Results Are Candidates, Not Answers
 
-MCP search returns **ranked candidates**, not definitive answers. The correct result is always present in the top 5 (100% Hit@5), but it is NOT always ranked first.
+MCP search returns **ranked candidates**, not definitive answers. On the 2026-04-10 13-query SSCG benchmark the target appeared in the top 5 for every query (Hit@5 = 100% at `k≥5`) — but the correct result is **not always ranked first**, and that benchmark is not a general reliability guarantee for arbitrary queries or codebases.
 
-**Baseline rule:** **use `k=5` when correctness matters.** The tool default is `k=4`, which means one answer in twenty will be missed purely because you didn't ask for enough candidates. Use `k=10` for architectural / global queries.
+**Baseline rule:** **pass `k=5` explicitly when correctness matters.** The tool default is `k=4`; the Hit@5 benchmark result only holds at `k≥5`. Use `k=10` for architectural / global queries.
 
 **Result Interpretation Workflow:**
 1. Run `code-search:search_code(query, k=5)` with appropriate filters
@@ -82,9 +82,9 @@ What are you trying to do?
 
 | Wrong Approach | Correct Approach |
 |----------------|------------------|
-| `Grep("\.function\(")` for callers | `code-search:find_connections(chunk_id)` |
-| Multiple Reads to trace flow | `code-search:find_connections(max_depth=5)` |
-| Manual import tracing | `code-search:find_connections(symbol_name)` |
+| `Grep("\.function\(")` for callers | 1. `code-search:search_code(query, k=5)` → pick `chunk_id`. 2. `code-search:find_connections(chunk_id=<chunk_id>)` |
+| Multiple Reads to trace a call chain | `code-search:find_connections(chunk_id=<chunk_id>, max_depth=5)` |
+| Manual import tracing | `code-search:find_connections(chunk_id=<chunk_id>, relationship_types=["imports"])` |
 
 ---
 

@@ -16,7 +16,7 @@ Evaluated against 13 queries across 4 categories (A: Small Function Discovery, B
 - **BM25**: Best for exact symbol lookup (Cat A: 0.90, MRR 0.846). Fastest mode.
 - **Hybrid**: Best at deep recall — R@10 = 0.833, NDCG@10 = 0.730. Best for architectural/conceptual queries.
 - **Semantic**: Ties BM25 on Cat C (Class Overview: 0.80). Underperforms on Cat A (exact symbols: 0.60).
-- **All modes**: 100% Hit@5 — the answer is always present in the top 5 results.
+- **All modes**: 100% Hit@5 **on this 13-query SSCG benchmark** — the labeled target appeared in the top 5 for every query. This is not a general reliability guarantee; treat it as a mode-comparison baseline, not a property of arbitrary future queries.
 
 **Source files:**
 - `evaluation/golden_dataset.json` — 13 queries, labels, thresholds, metadata
