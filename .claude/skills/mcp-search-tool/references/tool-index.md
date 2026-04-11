@@ -19,7 +19,7 @@ Find code with natural language query or direct chunk lookup. Use for all initia
 
 **Key options:** `query`, `chunk_id` (direct O(1) lookup), `k` (results count, default 4), `search_mode` ("hybrid"/"semantic"/"bm25"/"auto"), `model_key` ("qwen3"/"bge_m3"/"coderankembed"/"gte_modernbert"/"c2llm"), `use_routing` (default true), `file_pattern`, `include_dirs`, `exclude_dirs`, `chunk_type` (see below), `include_context` (default true), `auto_reindex` (default true), `max_age_minutes` (default 5), `ego_graph_enabled` (default false), `ego_graph_k_hops` (default 2, range 1-5), `ego_graph_max_neighbors_per_hop` (default 10, range 1-50), `include_parent` (default false), `output_format` ("compact"/"verbose"/"ultra", default "compact"), `max_context_tokens` (token-budget cap). Full parameter reference in [parameters.md](parameters.md).
 
-**chunk_type values:** "function", "class", "method", "module", "decorated_definition", "interface", "enum", "struct", "type", "merged", "split_block", "community", or None
+**chunk_type values:** "function", "class", "method", "module", "decorated_definition", "interface", "enum", "struct", "type", "merged", "split_block", "community" (omit the field to match any chunk type)
 
 **Chunk ID format:** `file.py:start-end:type:name` (e.g., `auth.py:10-50:function:login`)
 

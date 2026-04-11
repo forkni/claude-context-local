@@ -36,7 +36,7 @@ MCP search returns **ranked candidates**, not definitive answers. On the 2026-04
 **Baseline rule:** **pass `k=5` explicitly when correctness matters.** The tool default is `k=4`; the Hit@5 benchmark result only holds at `k≥5`. Use `k=10` for architectural / global queries.
 
 **Result Interpretation Workflow:**
-1. Run `code-search:search_code(query, k=5)` with appropriate filters
+1. Run `code-search:search_code(query="<your query>", k=5)` with appropriate filters
 2. **Scan ALL k results** — read each chunk_id and code snippet
 3. **Identify the best match** based on your actual need (not just highest score)
 4. If the best match is a module/summary chunk but you need specific code, look at lower-ranked results
@@ -56,26 +56,26 @@ MCP search returns **ranked candidates**, not definitive answers. On the 2026-04
 ```
 What are you trying to do?
 │
-├─ "Find callers of X" ──────────────► code-search:find_connections(chunk_id)
-├─ "What depends on X" ──────────────► code-search:find_connections(chunk_id)
-├─ "Trace flow from X to Y" ─────────► code-search:find_path(source_chunk_id, target_chunk_id)
-├─ "How does X connect to Y?" ───────► code-search:find_path(source_chunk_id, target_chunk_id)
-├─ "Find only imports/inheritance" ──► code-search:find_connections(chunk_id, relationship_types=["imports", "inherits"])
-├─ "Find similar code to X" ─────────► code-search:find_similar_code(chunk_id)
+├─ "Find callers of X" ──────────────► code-search:find_connections(chunk_id=<chunk_id>)
+├─ "What depends on X" ──────────────► code-search:find_connections(chunk_id=<chunk_id>)
+├─ "Trace flow from X to Y" ─────────► code-search:find_path(source_chunk_id=<src>, target_chunk_id=<tgt>)
+├─ "How does X connect to Y?" ───────► code-search:find_path(source_chunk_id=<src>, target_chunk_id=<tgt>)
+├─ "Find only imports/inheritance" ──► code-search:find_connections(chunk_id=<chunk_id>, relationship_types=["imports", "inherits"])
+├─ "Find similar code to X" ─────────► code-search:find_similar_code(chunk_id=<chunk_id>)
 │
-├─ "Find function definition" ───────► code-search:search_code(query, k=5, chunk_type="function")
-├─ "Find class definition" ──────────► code-search:search_code(query, k=5, chunk_type="class")
-├─ "Find exact API call pattern" ────► code-search:search_code(query, k=5, search_mode="bm25")
-├─ "Understand concept/feature" ─────► code-search:search_code(query, k=5)  [hybrid mode]
-├─ "Architectural / global query" ───► code-search:search_code(query, k=10)
+├─ "Find function definition" ───────► code-search:search_code(query="<your query>", k=5, chunk_type="function")
+├─ "Find class definition" ──────────► code-search:search_code(query="<your query>", k=5, chunk_type="class")
+├─ "Find exact API call pattern" ────► code-search:search_code(query="<your query>", k=5, search_mode="bm25")
+├─ "Understand concept/feature" ─────► code-search:search_code(query="<your query>", k=5)  [hybrid mode]
+├─ "Architectural / global query" ───► code-search:search_code(query="<your query>", k=10)
 ├─ "Expand via call graph neighbors"─► code-search:search_code(..., ego_graph_enabled=true, ego_graph_k_hops=2)
 │
 └─ "Validate line numbers only" ─────► Grep (LAST RESORT)
 ```
 
 **CRITICAL**: For ANY query about callers, dependencies, or code flow:
-1. First: `code-search:search_code()` to get chunk_id
-2. Then: `code-search:find_connections(chunk_id)` for relationships
+1. First: `code-search:search_code(query=..., k=5)` to get chunk_id
+2. Then: `code-search:find_connections(chunk_id=<chunk_id>)` for relationships
 
 **NEVER use Grep for relationship discovery.**
 
@@ -85,7 +85,7 @@ What are you trying to do?
 
 | Wrong Approach | Correct Approach |
 |----------------|------------------|
-| `Grep("\.function\(")` for callers | 1. `code-search:search_code(query, k=5)` → pick `chunk_id`. 2. `code-search:find_connections(chunk_id=<chunk_id>)` |
+| `Grep("\.function\(")` for callers | 1. `code-search:search_code(query="<your query>", k=5)` → pick `chunk_id`. 2. `code-search:find_connections(chunk_id=<chunk_id>)` |
 | Multiple Reads to trace a call chain | `code-search:find_connections(chunk_id=<chunk_id>, max_depth=5)` |
 | Manual import tracing | `code-search:find_connections(chunk_id=<chunk_id>, relationship_types=["imports"])` |
 
