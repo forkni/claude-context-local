@@ -45,7 +45,7 @@ cd "$PROJECT_ROOT" || exit 1
 
 # Suppress noisy PyTorch/TorchDynamo tracing logs
 export TORCHDYNAMO_VERBOSE=0
-export TORCH_LOGS=""
+unset TORCH_LOGS
 
 echo "[INFO] Using Python: $PYTHON"
 echo "[INFO] Running: run_sscg_benchmark.py $*"

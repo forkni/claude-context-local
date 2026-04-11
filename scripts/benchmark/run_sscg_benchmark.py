@@ -51,8 +51,13 @@ if str(_PROJECT_ROOT) not in sys.path:
 from evaluation.metrics import (  # noqa: E402
     THRESHOLDS,
     aggregate_metrics,
+    build_chunk_line_lookup,
+    calculate_line_iou,
+    calculate_line_precision,
+    calculate_line_recall,
     calculate_metrics_from_results,
     normalize_chunk_ids,
+    resolve_chunk_ids_to_ranges,
 )
 
 
@@ -124,14 +129,56 @@ def _get_searcher(project_path: str):
         return get_searcher()
 
 
-def _run_query(searcher: Any, query: str, k: int) -> tuple[list[str], float]:
-    """Execute a single search query and return (normalized_chunk_ids, latency_ms)."""
+def _run_query(searcher: Any, query: str, k: int) -> tuple[list[Any], float]:
+    """Execute a single search query and return (raw SearchResult objects, latency_ms)."""
     start = time.perf_counter()
     results = searcher.search(query, k=k)
     latency_ms = (time.perf_counter() - start) * 1000.0
-    raw_ids = [r.chunk_id for r in results]
-    normalized = normalize_chunk_ids(raw_ids)
-    return normalized, latency_ms
+    return results, latency_ms
+
+
+def _extract_ranges_from_results(
+    results: list[Any],
+) -> dict[str, list[tuple[int, int]]]:
+    """Extract per-file line ranges from SearchResult objects.
+
+    Args:
+        results: List of SearchResult objects with relative_path/start_line/end_line.
+
+    Returns:
+        ``{relative_path: [(start_line, end_line), ...]}`` grouped by file.
+    """
+    ranges: dict[str, list[tuple[int, int]]] = {}
+    for r in results:
+        path = getattr(r, "relative_path", "") or ""
+        start = getattr(r, "start_line", 0) or 0
+        end = getattr(r, "end_line", 0) or 0
+        if path and start and end:
+            ranges.setdefault(path, []).append((start, end))
+    return ranges
+
+
+def _build_line_lookup(searcher: Any) -> dict[str, tuple[str, int, int]]:
+    """Build chunk-ID-to-line-range lookup from the searcher's MetadataStore.
+
+    Walks ``searcher.dense_index.metadata_store`` once and builds a lookup
+    that maps normalized chunk IDs to (relative_path, start_line, end_line).
+    Returns an empty dict if the MetadataStore is not accessible.
+
+    Args:
+        searcher: Initialized HybridSearcher instance.
+
+    Returns:
+        Lookup dict for use with ``resolve_chunk_ids_to_ranges``.
+    """
+    try:
+        metadata_store = searcher.dense_index.metadata_store
+        lookup = build_chunk_line_lookup(metadata_store)
+        print(f"  Built line-range lookup: {len(lookup)} chunks indexed", flush=True)
+        return lookup
+    except AttributeError as exc:
+        print(f"  [WARN] Could not build line-range lookup: {exc}", file=sys.stderr)
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +193,7 @@ def run_benchmark(
     k: int,
     category_filter: str | None,
     verbose: bool,
+    line_lookup: dict[str, tuple[str, int, int]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[float]]:
     """Run all queries and return (per_query_results, latencies).
 
@@ -155,6 +203,10 @@ def run_benchmark(
         k: Number of search results to retrieve.
         category_filter: If set, only run queries in this category.
         verbose: Print per-query details.
+        line_lookup: Pre-built ``{normalized_chunk_id: (path, start, end)}`` lookup
+            from ``_build_line_lookup``. When provided, line-overlap metrics
+            (line_recall, line_precision, line_iou) are computed for each query
+            whose golden primary chunks resolve to line ranges.
 
     Returns:
         Tuple of (per_query_results, latencies).
@@ -179,8 +231,11 @@ def run_benchmark(
             print(f"{prefix} {query}")
 
         try:
-            retrieved, latency_ms = _run_query(searcher, query, k=k)
+            raw_results, latency_ms = _run_query(searcher, query, k=k)
             latencies.append(latency_ms)
+
+            # Normalize chunk IDs for chunk-level metrics
+            retrieved = normalize_chunk_ids([r.chunk_id for r in raw_results])
 
             metrics = calculate_metrics_from_results(
                 retrieved=retrieved,
@@ -188,12 +243,35 @@ def run_benchmark(
                 expected_primary=expected_primary,
             )
 
+            # Line-overlap metrics (when line_lookup is available)
+            line_metrics: dict[str, float] = {}
+            if line_lookup:
+                golden_ranges = resolve_chunk_ids_to_ranges(expected_primary, line_lookup)
+                if golden_ranges:
+                    retrieved_ranges = _extract_ranges_from_results(raw_results[:k])
+                    line_metrics = {
+                        "line_recall": calculate_line_recall(
+                            retrieved_ranges, golden_ranges
+                        ),
+                        "line_precision": calculate_line_precision(
+                            retrieved_ranges, golden_ranges
+                        ),
+                        "line_iou": calculate_line_iou(retrieved_ranges, golden_ranges),
+                    }
+
             status = "HIT " if metrics["hit"] else "MISS"
             if verbose:
+                line_str = (
+                    f"  LR={line_metrics['line_recall']:.2f} "
+                    f"LP={line_metrics['line_precision']:.2f} "
+                    f"LIoU={line_metrics['line_iou']:.2f}"
+                    if line_metrics
+                    else ""
+                )
                 print(
                     f"          [{status}] R@5={metrics['recall@5']:.2f}  "
                     f"MRR={metrics['mrr']:.3f}  NDCG@5={metrics['ndcg@5']:.3f}  "
-                    f"({latency_ms:.0f} ms)"
+                    f"({latency_ms:.0f} ms){line_str}"
                 )
                 # Failure drill-down
                 if not metrics["hit"]:
@@ -212,6 +290,7 @@ def run_benchmark(
                     "expected_primary": expected_primary,
                     "latency_ms": round(latency_ms, 1),
                     **metrics,
+                    **line_metrics,
                 }
             )
 
@@ -249,43 +328,114 @@ def print_leaderboard(
     title: str = "BENCHMARK LEADERBOARD",
 ) -> None:
     """Print a leaderboard table comparing one or more benchmark runs."""
-    sep = "=" * 80
-    print(f"\n{sep}\n{title}\n{sep}")
-    header = f"{'Config':<22} {'MRR':>6} {'R@5':>6} {'R@10':>6} {'HR@5':>6} {'NDCG@5':>8} {'Lat(ms)':>8} {'MRR':>5} {'R@5':>5} {'HR@5':>5}"
-    print(header)
-    print("-" * 80)
-    for run in runs:
-        agg = run["aggregate"]
-        pf = agg.get("pass_fail", {})
-        pf_str = f"{pf.get('mrr', '?'):>5} {pf.get('recall@5', '?'):>5} {pf.get('hit_rate@5', '?'):>5}"
-        lat = run.get("avg_latency_ms", agg.get("avg_latency_ms", 0))
-        print(
-            f"{run['config_name']:<22} "
-            f"{agg['mrr']:>6.3f} {agg['recall@5']:>6.3f} {agg['recall@10']:>6.3f} "
-            f"{agg['hit_rate@5']:>6.3f} {agg['ndcg@5']:>8.3f} "
-            f"{lat:>8.0f} {pf_str}"
+    # Detect whether any run has line-overlap metrics
+    has_line = any("line_iou" in run.get("aggregate", {}) for run in runs)
+
+    if has_line:
+        width = 100
+        sep = "=" * width
+        print(f"\n{sep}\n{title}\n{sep}")
+        header = (
+            f"{'Config':<22} {'MRR':>6} {'R@5':>6} {'R@10':>6} {'HR@5':>6} "
+            f"{'NDCG@5':>8} {'Lat(ms)':>8} | {'LR':>6} {'LP':>6} {'LIoU':>6}"
         )
-    print(sep)
+        print(header)
+        print("-" * width)
+        for run in runs:
+            agg = run["aggregate"]
+            lat = run.get("avg_latency_ms", agg.get("avg_latency_ms", 0))
+            lr = agg.get("line_recall")
+            lp = agg.get("line_precision")
+            li = agg.get("line_iou")
+            line_str = (
+                f" | {lr:>6.3f} {lp:>6.3f} {li:>6.3f}"
+                if lr is not None
+                else " |      -      -      -"
+            )
+            print(
+                f"{run['config_name']:<22} "
+                f"{agg['mrr']:>6.3f} {agg['recall@5']:>6.3f} {agg['recall@10']:>6.3f} "
+                f"{agg['hit_rate@5']:>6.3f} {agg['ndcg@5']:>8.3f} "
+                f"{lat:>8.0f}{line_str}"
+            )
+        if has_line:
+            n = next(
+                (agg.get("line_recall_count") for run in runs
+                 if (agg := run.get("aggregate", {})) and "line_recall_count" in agg),
+                None,
+            )
+            if n is not None:
+                print(f"  (LR/LP/LIoU = line-overlap metrics, averaged over {n} queries)")
+        print(sep)
+    else:
+        width = 80
+        sep = "=" * width
+        print(f"\n{sep}\n{title}\n{sep}")
+        header = (
+            f"{'Config':<22} {'MRR':>6} {'R@5':>6} {'R@10':>6} {'HR@5':>6} "
+            f"{'NDCG@5':>8} {'Lat(ms)':>8} {'MRR':>5} {'R@5':>5} {'HR@5':>5}"
+        )
+        print(header)
+        print("-" * width)
+        for run in runs:
+            agg = run["aggregate"]
+            pf = agg.get("pass_fail", {})
+            pf_str = f"{pf.get('mrr', '?'):>5} {pf.get('recall@5', '?'):>5} {pf.get('hit_rate@5', '?'):>5}"
+            lat = run.get("avg_latency_ms", agg.get("avg_latency_ms", 0))
+            print(
+                f"{run['config_name']:<22} "
+                f"{agg['mrr']:>6.3f} {agg['recall@5']:>6.3f} {agg['recall@10']:>6.3f} "
+                f"{agg['hit_rate@5']:>6.3f} {agg['ndcg@5']:>8.3f} "
+                f"{lat:>8.0f} {pf_str}"
+            )
+        print(sep)
 
 
 def print_per_query_drilldown(
     per_query: list[dict[str, Any]], config_name: str
 ) -> None:
     """Print per-query results for a single run (Lesson 2 drill-down pattern)."""
+    has_line = any("line_iou" in q for q in per_query)
     print(f"\n--- Per-query drill-down: {config_name} ---")
-    print(
-        f"{'ID':<5} {'Cat':<3} {'R@5':>6} {'MRR':>6} {'NDCG@5':>8} {'Status':<5} Query"
-    )
-    print("-" * 70)
-    for q in per_query:
-        status = "HIT" if q.get("hit") else "MISS"
-        r5 = q.get("recall@5", 0.0)
-        mrr = q.get("mrr", 0.0)
-        ndcg = q.get("ndcg@5", 0.0)
-        query_short = q["query"][:35]
+    if has_line:
         print(
-            f"{q['id']:<5} {q.get('category', '?'):<3} {r5:>6.3f} {mrr:>6.3f} {ndcg:>8.3f} {status:<5} {query_short}"
+            f"{'ID':<5} {'Cat':<3} {'R@5':>6} {'MRR':>6} {'NDCG@5':>8} "
+            f"{'LR':>6} {'LP':>6} {'LIoU':>6} {'Status':<5} Query"
         )
+        print("-" * 85)
+        for q in per_query:
+            status = "HIT" if q.get("hit") else "MISS"
+            r5 = q.get("recall@5", 0.0)
+            mrr = q.get("mrr", 0.0)
+            ndcg = q.get("ndcg@5", 0.0)
+            lr = q.get("line_recall")
+            lp = q.get("line_precision")
+            li = q.get("line_iou")
+            line_str = (
+                f"{lr:>6.3f} {lp:>6.3f} {li:>6.3f}"
+                if lr is not None
+                else f"{'n/a':>6} {'n/a':>6} {'n/a':>6}"
+            )
+            query_short = q["query"][:28]
+            print(
+                f"{q['id']:<5} {q.get('category', '?'):<3} {r5:>6.3f} {mrr:>6.3f} "
+                f"{ndcg:>8.3f} {line_str} {status:<5} {query_short}"
+            )
+    else:
+        print(
+            f"{'ID':<5} {'Cat':<3} {'R@5':>6} {'MRR':>6} {'NDCG@5':>8} {'Status':<5} Query"
+        )
+        print("-" * 70)
+        for q in per_query:
+            status = "HIT" if q.get("hit") else "MISS"
+            r5 = q.get("recall@5", 0.0)
+            mrr = q.get("mrr", 0.0)
+            ndcg = q.get("ndcg@5", 0.0)
+            query_short = q["query"][:35]
+            print(
+                f"{q['id']:<5} {q.get('category', '?'):<3} {r5:>6.3f} {mrr:>6.3f} "
+                f"{ndcg:>8.3f} {status:<5} {query_short}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -439,12 +589,16 @@ def run_single(
             f"  Weights: BM25={bm25_weight or 'default'}  dense={dense_weight or 'default'}"
         )
 
+    # Build line-range lookup for line-overlap metrics (one-time scan of MetadataStore)
+    line_lookup = _build_line_lookup(searcher)
+
     per_query, latencies = run_benchmark(
         searcher=searcher,
         queries=queries,
         k=k,
         category_filter=category_filter,
         verbose=verbose,
+        line_lookup=line_lookup,
     )
 
     agg = aggregate_metrics(per_query)

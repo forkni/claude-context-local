@@ -12,9 +12,9 @@ set "count=0"
 set "tempcount=0"
 set "clcount=0"
 
-REM Remove __pycache__ folders (skip .venv and .git)
+REM Remove __pycache__ folders (skip .git only — .venv caches are safe to clean)
 echo Searching for __pycache__ folders...
-for /f "delims=" %%d in ('dir /s /b /ad __pycache__ 2^>nul ^| findstr /v /i "\\.venv\\ \\.git\\"') do (
+for /f "delims=" %%d in ('dir /s /b /ad __pycache__ 2^>nul ^| findstr /v /i "\\.git\\"') do (
     echo Removing: %%d
     rmdir /s /q "%%d"
     if !errorlevel! equ 0 (
@@ -24,10 +24,10 @@ for /f "delims=" %%d in ('dir /s /b /ad __pycache__ 2^>nul ^| findstr /v /i "\\.
     )
 )
 
-REM Remove orphaned .pyc files outside __pycache__ (skip .venv and .git)
+REM Remove orphaned .pyc files outside __pycache__ (skip .git only)
 echo.
 echo Searching for orphaned .pyc files...
-for /f "delims=" %%f in ('dir /s /b *.pyc 2^>nul ^| findstr /v /i "\\.venv\\ \\.git\\ __pycache__"') do (
+for /f "delims=" %%f in ('dir /s /b *.pyc 2^>nul ^| findstr /v /i "\\.git\\ __pycache__"') do (
     echo Removing: %%f
     del /f /q "%%f"
     if !errorlevel! equ 0 (

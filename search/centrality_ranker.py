@@ -331,7 +331,11 @@ class CentralityRanker:
                 file_path = chunk_id.split(":")[0] if ":" in chunk_id else ""
                 tags = result.get("tags", [])
                 indexed_role = next(
-                    (t[len("role:"):] for t in tags if isinstance(t, str) and t.startswith("role:")),
+                    (
+                        t[len("role:") :]
+                        for t in tags
+                        if isinstance(t, str) and t.startswith("role:")
+                    ),
                     None,
                 )
 
@@ -341,11 +345,18 @@ class CentralityRanker:
                     norm_path = file_path.replace("\\", "/").lower()
                     if any(
                         p in norm_path
-                        for p in ("test_", "_test.", "tests/", "verify_", "verification")
+                        for p in (
+                            "test_",
+                            "_test.",
+                            "tests/",
+                            "verify_",
+                            "verification",
+                        )
                     ):
                         indexed_role = "test"
                     elif norm_path.endswith((".md", ".rst", ".txt", ".adoc")) or any(
-                        p in norm_path for p in ("/docs/", "/doc/", "/documentation/", "/wiki/")
+                        p in norm_path
+                        for p in ("/docs/", "/doc/", "/documentation/", "/wiki/")
                     ):
                         indexed_role = "doc"
                     elif any(
@@ -355,21 +366,34 @@ class CentralityRanker:
                         indexed_role = "config"
 
                 query_has_test_intent = any(
-                    w in query_lower for w in ("test", "testing", "verify", "verification")
+                    w in query_lower
+                    for w in ("test", "testing", "verify", "verification")
                 )
                 query_has_doc_intent = any(
                     w in query_lower
-                    for w in ("doc", "docs", "readme", "documentation", "guide", "tutorial")
+                    for w in (
+                        "doc",
+                        "docs",
+                        "readme",
+                        "documentation",
+                        "guide",
+                        "tutorial",
+                    )
                 )
                 query_has_config_intent = any(
-                    w in query_lower for w in ("config", "configuration", "setting", "constant")
+                    w in query_lower
+                    for w in ("config", "configuration", "setting", "constant")
                 )
 
                 if indexed_role == "test":
                     if query_has_test_intent:
-                        result["blended_score"] = round(result["blended_score"] * 1.15, 4)
+                        result["blended_score"] = round(
+                            result["blended_score"] * 1.15, 4
+                        )
                     else:
-                        result["blended_score"] = round(result["blended_score"] * 0.85, 4)
+                        result["blended_score"] = round(
+                            result["blended_score"] * 0.85, 4
+                        )
                 elif indexed_role == "doc" and not query_has_doc_intent:
                     result["blended_score"] = round(result["blended_score"] * 0.80, 4)
                 elif indexed_role == "config" and not query_has_config_intent:

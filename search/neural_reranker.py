@@ -485,6 +485,16 @@ class JinaRerankerV3:
         cached = try_to_load_from_cache(self.model_name, "config.json")
         local_only = isinstance(cached, str) and os.path.exists(cached)
 
+        # Enable offline mode when cache is validated — prevents transformers from
+        # making HTTP HEAD requests to huggingface.co on every from_pretrained call
+        # (mirrors the pattern in embeddings/model_loader.py:358-363)
+        if local_only:
+            os.environ.setdefault("HF_HUB_OFFLINE", "1")
+            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+            self._logger.debug(
+                "[VALIDATED CACHE] Enabling offline mode for Jina reranker load."
+            )
+
         def _load_config(local_files_only: bool) -> AutoConfig:
             cfg = AutoConfig.from_pretrained(
                 self.model_name,
@@ -499,6 +509,8 @@ class JinaRerankerV3:
         try:
             config = _load_config(local_only)
         except (OSError, ValueError):
+            os.environ.pop("HF_HUB_OFFLINE", None)
+            os.environ.pop("TRANSFORMERS_OFFLINE", None)
             config = _load_config(False)
             local_only = False  # cache miss — fall through to network for model too
 
@@ -535,6 +547,8 @@ class JinaRerankerV3:
             self._model = _load_model(config, local_only)
         except (OSError, ValueError):
             # Cache stale/corrupt — retry over network
+            os.environ.pop("HF_HUB_OFFLINE", None)
+            os.environ.pop("TRANSFORMERS_OFFLINE", None)
             self._logger.warning(
                 "Local cache miss for Jina reranker, fetching from HuggingFace Hub"
             )
@@ -569,6 +583,9 @@ class JinaRerankerV3:
                 )
 
         self._logger.info(f"Jina reranker loaded on {self.device}")
+        # Clean up offline env vars after load to avoid side effects on other code
+        os.environ.pop("HF_HUB_OFFLINE", None)
+        os.environ.pop("TRANSFORMERS_OFFLINE", None)
 
     def rerank(
         self,

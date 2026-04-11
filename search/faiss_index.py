@@ -232,11 +232,13 @@ class FaissVectorIndex:
             if self.embedder is not None:
                 try:
                     stored_dim = self._index.d
-                    current_model_dim = self.embedder.get_model_info()[
-                        "embedding_dimension"
-                    ]
-
-                    if stored_dim != current_model_dim:
+                    model_info = self.embedder.get_model_info()
+                    current_model_dim = model_info.get("embedding_dimension")
+                    if current_model_dim is None:
+                        self._logger.debug(
+                            "Skipping dimension validation: model not loaded yet"
+                        )
+                    elif stored_dim != current_model_dim:
                         self._logger.error(
                             f"CRITICAL: Index dimension mismatch!\n"
                             f"  Stored index: {stored_dim} dimensions\n"
