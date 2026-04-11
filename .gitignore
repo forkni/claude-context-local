@@ -377,3 +377,6 @@ temp/
 .gemini/
 gemini-skills/
 gha-creds-*.json
+
+# claude-git-workflow local config (use cgw.conf.example as template)
+.cgw.conf
