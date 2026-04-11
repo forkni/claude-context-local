@@ -2,6 +2,8 @@
 
 Covers `code-search:search_code`, `code-search:find_connections`, and `code-search:find_path` in full depth. For all other tools, see [tool-index.md](tool-index.md).
 
+> **Note on example style:** the fenced `text` blocks below are pseudocode that describe MCP tool calls. They are not executable Python. Booleans use JSON style (`true`/`false`), all arguments are named (no positional calls), and any `results[0]["chunk_id"]`-style indexing is a conceptual placeholder — your MCP client hands you the full result object, which you then pass back in as a parameter.
+
 ## Contents
 - search_code — all parameters + examples
 - find_connections — all parameters + examples
@@ -22,18 +24,18 @@ Covers `code-search:search_code`, `code-search:find_connections`, and `code-sear
 | `k` | 4 | Number of results to return. **Recommended: pass `k=5` explicitly** — the engine's 100% Hit@5 benchmark only holds at `k≥5`. Use `k=10` for architectural queries. |
 | `search_mode` | "auto" | "hybrid", "semantic", "bm25", "auto" |
 | `model_key` | — | Force model: "qwen3", "bge_m3", "coderankembed", "gte_modernbert", "c2llm" |
-| `use_routing` | True | Enable multi-model query routing |
+| `use_routing` | true | Enable multi-model query routing |
 | `file_pattern` | — | Filter by filename/path substring (e.g., "auth", "models") |
 | `include_dirs` | — | Whitelist directories, e.g. `["src/"]` |
 | `exclude_dirs` | — | Blacklist directories, e.g. `["tests/"]` |
 | `chunk_type` | — | Filter by structure type (see below) |
-| `include_context` | True | Include similar chunks and relationships |
-| `auto_reindex` | True | Auto-reindex if index is stale |
+| `include_context` | true | Include similar chunks and relationships |
+| `auto_reindex` | true | Auto-reindex if index is stale |
 | `max_age_minutes` | 5 | Max age (minutes) before auto-reindex triggers |
-| `ego_graph_enabled` | False | Enable k-hop graph expansion for neighbors |
+| `ego_graph_enabled` | false | Enable k-hop graph expansion for neighbors |
 | `ego_graph_k_hops` | 2 | Graph traversal depth (range 1-5) |
 | `ego_graph_max_neighbors_per_hop` | 10 | Max neighbors per hop (range 1-50) |
-| `include_parent` | False | Also retrieve enclosing class when matching methods |
+| `include_parent` | false | Also retrieve enclosing class when matching methods |
 | `output_format` | "compact" | "compact" (omit empty fields) / "verbose" / "ultra" (tabular) |
 | `max_context_tokens` | — | Token-budget cap to prevent context overflow |
 
@@ -43,7 +45,7 @@ Covers `code-search:search_code`, `code-search:find_connections`, and `code-sear
 
 **Result fields (optional):** `complexity_score`, `graph`, `reranker_score`, `summary`
 
-**Source values:** `"search"` (direct lexical/dense match), `"multi_hop"` (always-on semantic expansion of initial hits), `"graph_hop"` (always-on call/import graph expansion of initial hits), `"ego_graph"` (opt-in k-hop neighbors via `ego_graph_enabled=True`). See [advanced-features.md](advanced-features.md) for the full disambiguation.
+**Source values:** `"search"` (direct lexical/dense match), `"multi_hop"` (always-on semantic expansion of initial hits), `"graph_hop"` (always-on call/import graph expansion of initial hits), `"ego_graph"` (opt-in k-hop neighbors via `ego_graph_enabled=true`). See [advanced-features.md](advanced-features.md) for the full disambiguation.
 
 **Examples:**
 
@@ -55,7 +57,7 @@ code-search:search_code("authentication handler")
 code-search:search_code("OSC message handlers", include_dirs=["Scripts/"], chunk_type="function")
 
 # Graph-enhanced search with neighbors
-code-search:search_code("token merging", ego_graph_enabled=True, ego_graph_k_hops=2)
+code-search:search_code("token merging", ego_graph_enabled=true, ego_graph_k_hops=2)
 
 # BM25 for exact symbol name
 code-search:search_code("HybridSearcher", search_mode="bm25")

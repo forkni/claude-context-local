@@ -18,6 +18,8 @@ Evaluated against 13 queries across 4 categories (A: Small Function Discovery, B
 - **Semantic**: Ties BM25 on Cat C (Class Overview: 0.80). Underperforms on Cat A (exact symbols: 0.60).
 - **All modes**: 100% Hit@5 **on this 13-query SSCG benchmark** — the labeled target appeared in the top 5 for every query. This is not a general reliability guarantee; treat it as a mode-comparison baseline, not a property of arbitrary future queries.
 
+**Note on `k`:** Benchmark runs were executed with `k=10` (visible in the filenames below) — so each query retrieved 10 ranked results. The reported metrics `Hit@5` / `Recall@5` / `P@1` are cutoff metrics computed from those same ranked lists at the given cutoff. Running with `k=10` does not change the `@5` values; it just also lets us report `@10`.
+
 **Source files:**
 - `evaluation/golden_dataset.json` — 13 queries, labels, thresholds, metadata
 - `benchmark_results/sscg_mcp_bm25_k10_20260410_175903.json`

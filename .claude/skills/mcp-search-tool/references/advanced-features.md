@@ -6,7 +6,7 @@ The project has **three distinct graph-aware subsystems** that are often confuse
 
 ## Contents
 - Multi-Hop Search (always-on — semantic + graph expansion, tags `multi_hop`/`graph_hop`)
-- Ego-Graph Expansion (**opt-in** via `ego_graph_enabled`, default `False`)
+- Ego-Graph Expansion (**opt-in** via `ego_graph_enabled`, default `false`)
 - Centrality Reranking (always-on when graph data exists)
 - BM25 Snowball Stemming (always-on)
 - A1: Intent-Adaptive Edge Weights (internal)
@@ -44,19 +44,19 @@ You cannot disable multi-hop via tool parameters. For debugging, edit `search_co
 
 ## Ego-Graph Expansion (opt-in)
 
-**Status:** **Opt-in.** Default `ego_graph_enabled=False` in the `code-search:search_code` tool schema. Separate subsystem from multi-hop above — the two are not the same thing.
+**Status:** **Opt-in.** Default `ego_graph_enabled=false` in the `code-search:search_code` tool schema. Separate subsystem from multi-hop above — the two are not the same thing.
 
 **Purpose:** Explicitly fetch k-hop neighbors of the top result(s) via weighted BFS, with configurable hop depth and neighbor caps. Useful when you know you want a local neighborhood of related code rather than the engine's default expansion.
 
 **Observable behavior:**
 1. Run normal search (which already includes always-on multi-hop above).
-2. **If `ego_graph_enabled=True`**, take top result(s) and do weighted BFS out to `ego_graph_k_hops` (default `2`) with edge weights `calls=1.0`, `imports=0.3`, others intermediate.
+2. **If `ego_graph_enabled=true`**, take top result(s) and do weighted BFS out to `ego_graph_k_hops` (default `2`) with edge weights `calls=1.0`, `imports=0.3`, others intermediate.
 3. Cap neighbors per hop via `ego_graph_max_neighbors_per_hop` (default `10`).
-4. A post-expansion neural rerank runs only when this gate is open.
+4. An **additional** post-expansion neural rerank (to unify scoring across the original results + the ego-graph-added results on a single cross-encoder scale) runs only when this gate is open. The standard neural reranker used by hybrid search is independent of `ego_graph_enabled` and continues to run as configured via `code-search:configure_reranking`.
 
 > **Implementation notes (may drift — 2026-04-11):** default declared in `mcp_server/tool_registry.py` `search_code` schema; core logic in `search/ego_graph_retriever.py`; gated inside `HybridSearcher.search()` in `search/hybrid_searcher.py` on `effective_config.ego_graph.enabled`.
 
-**To enable:** `code-search:search_code(..., ego_graph_enabled=True, ego_graph_k_hops=2)`
+**To enable:** `code-search:search_code(..., ego_graph_enabled=true, ego_graph_k_hops=2)`
 
 **When to use:** contextual / local-neighborhood queries ("show me everything that touches this class"). Overkill for simple symbol lookups.
 
@@ -103,7 +103,7 @@ Normalizes word forms so "indexing", "indexed", and "index" all resolve to the s
 | `hybrid` | default weights | Standard search |
 
 **Semantic enhancement** (opt-in, default off):
-- `semantic_enabled=False` by default; `semantic_weight=0.3`
+- `semantic_enabled=false` by default; `semantic_weight=0.3`
 - Ensemble: `0.7 × keyword_score + 0.3 × anchor_embedding_score`
 - Anchor queries: 8–10 representative phrases per intent, defined in `config/intent_anchors.yaml`
 - Confidence threshold: 0.35 (queries below fall back to HYBRID intent)
@@ -121,7 +121,7 @@ Normalizes word forms so "indexing", "indexed", and "index" all resolve to the s
 
 **Score handling:** Demoted by 0.82–0.90× multiplier to rank below concrete implementations. Excluded from call graph.
 
-**Control:** `code-search:configure_chunking(enable_file_summaries=True/False)`
+**Control:** `code-search:configure_chunking(enable_file_summaries=true/false)`
 
 **Usage tip:** If module chunks surface at rank-1 when you need a specific implementation, add `chunk_type="function"` or `chunk_type="class"` to your query to filter them out.
 
@@ -137,7 +137,7 @@ Normalizes word forms so "indexing", "indexed", and "index" all resolve to the s
 
 **Score handling:** Demoted by 0.9–0.95× multiplier. Excluded from call graph.
 
-**Control:** `code-search:configure_chunking(enable_community_summaries=True/False)`
+**Control:** `code-search:configure_chunking(enable_community_summaries=true/false)`
 
 ---
 

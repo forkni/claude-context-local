@@ -17,7 +17,7 @@ All tools use the `code-search:` server prefix. Always use fully qualified names
 ### code-search:search_code
 Find code with natural language query or direct chunk lookup. Use for all initial code searches.
 
-**Key options:** `query`, `chunk_id` (direct O(1) lookup), `k` (results count, default 4), `search_mode` ("hybrid"/"semantic"/"bm25"/"auto"), `model_key` ("qwen3"/"bge_m3"/"coderankembed"/"gte_modernbert"/"c2llm"), `use_routing` (default True), `file_pattern`, `include_dirs`, `exclude_dirs`, `chunk_type` (see below), `include_context` (default True), `auto_reindex` (default True), `max_age_minutes` (default 5), `ego_graph_enabled` (default False), `ego_graph_k_hops` (default 2, range 1-5), `ego_graph_max_neighbors_per_hop` (default 10, range 1-50), `include_parent` (default False), `output_format` ("compact"/"verbose"/"ultra", default "compact"), `max_context_tokens` (token-budget cap)
+**Key options:** `query`, `chunk_id` (direct O(1) lookup), `k` (results count, default 4), `search_mode` ("hybrid"/"semantic"/"bm25"/"auto"), `model_key` ("qwen3"/"bge_m3"/"coderankembed"/"gte_modernbert"/"c2llm"), `use_routing` (default true), `file_pattern`, `include_dirs`, `exclude_dirs`, `chunk_type` (see below), `include_context` (default true), `auto_reindex` (default true), `max_age_minutes` (default 5), `ego_graph_enabled` (default false), `ego_graph_k_hops` (default 2, range 1-5), `ego_graph_max_neighbors_per_hop` (default 10, range 1-50), `include_parent` (default false), `output_format` ("compact"/"verbose"/"ultra", default "compact"), `max_context_tokens` (token-budget cap). Full parameter reference in [parameters.md](parameters.md).
 
 **chunk_type values:** "function", "class", "method", "module", "decorated_definition", "interface", "enum", "struct", "type", "merged", "split_block", "community", or None
 
@@ -40,39 +40,41 @@ Find shortest path between two code entities via the relationship graph. Uses bi
 
 ---
 
+> This is a name-only catalog. For parameters, types, and examples, see [parameters.md](parameters.md) (essential tools) or call the tool via your MCP client, which will surface the authoritative schema from the server.
+
 ## Project Management
 
 | Tool | Purpose |
 |------|---------|
 | `code-search:list_projects` | Show all indexed projects |
-| `code-search:switch_project(path)` | Switch active project |
+| `code-search:switch_project` | Switch active project |
 | `code-search:get_index_status` | Check index health and staleness |
-| `code-search:index_directory(path, incremental=True)` | Index or re-index a project; `multi_model` flag for parallel model indexing |
+| `code-search:index_directory` | Index or re-index a project (supports incremental and multi-model indexing) |
 | `code-search:clear_index` | Delete entire current index |
-| `code-search:delete_project(path, force=False)` | Safely delete project data |
+| `code-search:delete_project` | Safely delete project data |
 
 ## Search Configuration
 
 | Tool | Purpose |
 |------|---------|
-| `code-search:configure_search_mode(mode, bm25_weight=0.35, dense_weight=0.65)` | Set hybrid/semantic/bm25 weights |
+| `code-search:configure_search_mode` | Set hybrid/semantic/bm25 mode and BM25/dense weights |
 | `code-search:get_search_config_status` | View current search config |
-| `code-search:configure_query_routing(enable_multi_model, default_model, confidence_threshold=0.35)` | Multi-model routing; `default_model` accepts: qwen3, bge_m3, bge_code, coderankembed, gte_modernbert, c2llm |
+| `code-search:configure_query_routing` | Multi-model routing settings |
 
 ## Advanced Search
 
 | Tool | Purpose |
 |------|---------|
-| `code-search:find_similar_code(chunk_id, k=4)` | Find functionally similar code |
-| `code-search:configure_reranking(enabled, model_name, top_k_candidates)` | Neural reranking settings |
-| `code-search:configure_chunking(...)` | Chunking + community detection; `enable_file_summaries`, `enable_community_summaries`, `sizing_mode` (fixed/adaptive), `adaptive_multiplier_max/min`, etc. |
+| `code-search:find_similar_code` | Find functionally similar code |
+| `code-search:configure_reranking` | Neural reranking settings |
+| `code-search:configure_chunking` | Chunking + community detection (file/community summaries, sizing mode, etc.) |
 
 ## Model Management
 
 | Tool | Purpose |
 |------|---------|
 | `code-search:list_embedding_models` | Show available models (BGE-M3, Qwen3-0.6B, CodeRankEmbed, GTE-ModernBERT, EmbeddingGemma-300m) |
-| `code-search:switch_embedding_model(name)` | Change embedding model (fast if previously loaded) |
+| `code-search:switch_embedding_model` | Change embedding model (fast if previously loaded) |
 
 **Note:** In `code-search:search_code.model_key`, the BGE-family key is `bge_m3`. `code-search:configure_query_routing.default_model` additionally accepts `bge_code`; consult `code-search:list_embedding_models` at runtime for the authoritative list of currently valid keys.
 

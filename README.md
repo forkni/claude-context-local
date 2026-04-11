@@ -219,11 +219,13 @@ start_mcp_server.cmd → 3 (Search Configuration)
 
 ## Search Modes
 
-| Mode | Description | Performance | Quality | Status |
-|------|-------------|-------------|---------|--------|
-| **hybrid** (default) | BM25 + Semantic fusion | — | MRR 0.800, R@5 0.622, R@10 0.833, Hit@5 100% | ✅ Operational |
-| **semantic** | Dense vector search | — | MRR 0.712, R@5 0.660, Hit@5 100% | ✅ Operational |
-| **bm25** | Text-based sparse search | — | MRR 0.846 (best overall), R@5 0.660, P@1 0.769, Hit@5 100% | ✅ Operational |
+Quality metrics below are from the [SSCG benchmark](#benchmark-results) (2026-04-10, 13 queries, k≥5). They describe mode performance on this benchmark only — not general reliability guarantees.
+
+| Mode | Description | SSCG Quality (2026-04-10, k≥5) | Status |
+|------|-------------|-------------------------------|--------|
+| **hybrid** (default) | BM25 + Semantic fusion | MRR 0.800, R@5 0.622, R@10 0.833, Hit@5 100% | ✅ Operational |
+| **semantic** | Dense vector search | MRR 0.712, R@5 0.660, Hit@5 100% | ✅ Operational |
+| **bm25** | Text-based sparse search | MRR 0.846 (best overall), R@5 0.660, P@1 0.769, Hit@5 100% | ✅ Operational |
 
 **Configuration**: See [Hybrid Search Configuration Guide](docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md)
 

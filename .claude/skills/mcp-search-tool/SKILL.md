@@ -50,6 +50,9 @@ MCP search returns **ranked candidates**, not definitive answers. On the 2026-04
 
 ## Quick Start: Which Tool?
 
+> **Note on snippet style:** the arrow-diagram and examples below are pseudocode, not executable Python. MCP tool arguments are JSON-shaped — booleans are written `true`/`false` (not `True`/`False`), and every argument is named. Pass the values to your MCP client as native parameters rather than copy-pasting the text.
+
+
 ```
 What are you trying to do?
 │
@@ -62,10 +65,10 @@ What are you trying to do?
 │
 ├─ "Find function definition" ───────► code-search:search_code(query, k=5, chunk_type="function")
 ├─ "Find class definition" ──────────► code-search:search_code(query, k=5, chunk_type="class")
-├─ "Find exact API call pattern" ────► code-search:search_code(query, search_mode="bm25")
+├─ "Find exact API call pattern" ────► code-search:search_code(query, k=5, search_mode="bm25")
 ├─ "Understand concept/feature" ─────► code-search:search_code(query, k=5)  [hybrid mode]
 ├─ "Architectural / global query" ───► code-search:search_code(query, k=10)
-├─ "Expand via call graph neighbors"─► code-search:search_code(..., ego_graph_enabled=True, ego_graph_k_hops=2)
+├─ "Expand via call graph neighbors"─► code-search:search_code(..., ego_graph_enabled=true, ego_graph_k_hops=2)
 │
 └─ "Validate line numbers only" ─────► Grep (LAST RESORT)
 ```
