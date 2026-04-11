@@ -2,9 +2,12 @@
 
 Internal search-engine behaviors that affect result quality. Most of these operate automatically — they are documented here for debugging and tuning, not for direct invocation.
 
+The project has **three distinct graph-aware subsystems** that are often confused. This page disambiguates them.
+
 ## Contents
-- Multi-Hop Search (always-on)
-- Centrality Reranking (always-on)
+- Multi-Hop Search (always-on — semantic + graph expansion, tags `multi_hop`/`graph_hop`)
+- Ego-Graph Expansion (**opt-in** via `ego_graph_enabled`, default `False`)
+- Centrality Reranking (always-on when graph data exists)
 - BM25 Snowball Stemming (always-on)
 - A1: Intent-Adaptive Edge Weights (internal)
 - A2: File-Level Summary Chunks (configurable)
@@ -12,27 +15,52 @@ Internal search-engine behaviors that affect result quality. Most of these opera
 
 ---
 
-## Multi-Hop Search (Graph-Aware)
+## Multi-Hop Search (semantic + graph expansion)
 
-**Status:** Always-on. Cannot be disabled, but controlled via `ego_graph_*` parameters.
+**Status:** Always-on. Runs unconditionally on every `search_code` call (`hybrid_searcher.py:650`; `MultiHopConfig.enabled=True` by default at `search/config.py:238`). Not exposed at the MCP boundary.
 
-**Purpose:** Discover interconnected code through graph traversal + semantic similarity.
+**Purpose:** Expand the initial hit set with semantically similar chunks and graph-neighbor chunks, so the candidate pool is richer than pure lexical/dense retrieval.
 
-**How it works:**
-1. Find chunks matching query (k×2 candidates)
-2. Find graph neighbors via weighted BFS (edge weights: `calls`=1.0, `imports`=0.3, others intermediate)
-3. Find semantically similar chunks
-4. Rerank ALL discovered chunks
+**How it works** (`search/multi_hop_searcher.py`):
+1. Retrieve initial hits for the query (direct semantic/BM25 match). These chunks carry `source="search"`.
+2. Expand each initial hit along **semantic** similarity → expansion chunks tagged `source="multi_hop"` (line 142).
+3. Expand along **graph** edges (calls / imports) → expansion chunks tagged `source="graph_hop"` (line 223).
+4. Merge, dedupe, and rerank the combined set.
 
-**In results:** `source: "multi_hop"` marks chunks discovered via graph (not direct semantic match).
+**In results:** the `source` field distinguishes origins:
 
-**To use graph expansion explicitly:** `code-search:search_code(..., ego_graph_enabled=True, ego_graph_k_hops=2)`
+| `source` value | Meaning |
+|---|---|
+| `search` | Direct lexical / dense match to the query |
+| `multi_hop` | Reached by semantic expansion of an initial hit |
+| `graph_hop` | Reached by call / import graph traversal from an initial hit |
+| `ego_graph` | Reached by the opt-in ego-graph k-hop retriever (see below) |
+
+You cannot disable multi-hop via tool parameters. For debugging, change `MultiHopConfig.enabled` in `search_config.json` and restart.
+
+---
+
+## Ego-Graph Expansion (opt-in)
+
+**Status:** **Opt-in.** Default `ego_graph_enabled=False` (`mcp_server/tool_registry.py:120-124`). Separate subsystem from multi-hop above — the two are not the same thing.
+
+**Purpose:** Explicitly fetch k-hop neighbors of the top result(s) via weighted BFS, with configurable hop depth and neighbor caps. Useful when you know you want a local neighborhood of related code rather than the engine's default expansion.
+
+**How it works** (`search/ego_graph_retriever.py`; gate at `hybrid_searcher.py:675` reads `effective_config.ego_graph.enabled`):
+1. Run normal search (which already includes always-on multi-hop above).
+2. **If `ego_graph_enabled=True`**, take top result(s) and do weighted BFS out to `ego_graph_k_hops` (default `2`) with edge weights `calls=1.0`, `imports=0.3`, others intermediate.
+3. Cap neighbors per hop via `ego_graph_max_neighbors_per_hop` (default `10`).
+4. A post-expansion neural rerank runs only when this gate is open (`hybrid_searcher.py:688`).
+
+**To enable:** `code-search:search_code(..., ego_graph_enabled=True, ego_graph_k_hops=2)`
+
+**When to use:** contextual / local-neighborhood queries ("show me everything that touches this class"). Overkill for simple symbol lookups.
 
 ---
 
 ## Centrality Reranking
 
-**Status:** Always-on when graph data is available.
+**Status:** Always-on when graph data is available — runs independently of `ego_graph_enabled` (`mcp_server/tools/search_handlers.py:1062-1098`, gated only on `graph_config.centrality_reranking` and presence of `index_manager.graph_storage`).
 
 **Formula:** `blended_score = centrality × 0.3 + semantic_score × 0.7`
 

@@ -25,9 +25,14 @@ Evaluated against 13 queries across 4 categories (A: Small Function Discovery, B
 - `benchmark_results/sscg_mcp_semantic_k10_20260410_175331.json`
 
 **Re-run benchmark:**
+
+Replace `<project-path>` with the path to the project you want to evaluate. From the repo root of this project, pass `.` to re-run on itself.
+
 ```bash
-./scripts/benchmark/run_benchmark.sh --project-path F:/RD_PROJECTS/COMPONENTS/claude-context-local
-# or per mode:
+# Run all three modes (hybrid, bm25, semantic):
+./scripts/benchmark/run_benchmark.sh --project-path <project-path>
+
+# Or run a single mode directly (cwd = repo root):
 .venv/Scripts/python scripts/benchmark/mcp_eval.py --mode hybrid
 .venv/Scripts/python scripts/benchmark/mcp_eval.py --mode bm25
 .venv/Scripts/python scripts/benchmark/mcp_eval.py --mode semantic

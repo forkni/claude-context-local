@@ -19,7 +19,7 @@ Covers `code-search:search_code`, `code-search:find_connections`, and `code-sear
 |-----------|---------|-------------|
 | `query` | — | Natural language description. Optional if `chunk_id` given. |
 | `chunk_id` | — | Direct chunk ID for O(1) lookup. Format: `"file:lines:type:name"` |
-| `k` | 4 | Number of results to return |
+| `k` | 4 | Number of results to return. **Recommended: pass `k=5` explicitly** — the engine's 100% Hit@5 benchmark only holds at `k≥5`. Use `k=10` for architectural queries. |
 | `search_mode` | "auto" | "hybrid", "semantic", "bm25", "auto" |
 | `model_key` | — | Force model: "qwen3", "bge_m3", "coderankembed", "gte_modernbert", "c2llm" |
 | `use_routing` | True | Enable multi-model query routing |
@@ -43,11 +43,11 @@ Covers `code-search:search_code`, `code-search:find_connections`, and `code-sear
 
 **Result fields (optional):** `complexity_score`, `graph`, `reranker_score`, `summary`
 
-**Source values:** `"search"` (direct semantic match), `"multi_hop"` (discovered via graph traversal)
+**Source values:** `"search"` (direct lexical/dense match), `"multi_hop"` (always-on semantic expansion of initial hits), `"graph_hop"` (always-on call/import graph expansion of initial hits), `"ego_graph"` (opt-in k-hop neighbors via `ego_graph_enabled=True`). See [advanced-features.md](advanced-features.md) for the full disambiguation.
 
 **Examples:**
 
-```python
+```text
 # General search
 code-search:search_code("authentication handler")
 
@@ -92,7 +92,7 @@ code-search:search_code("how does the indexing pipeline work", k=10)
 
 **Standard 2-step workflow:**
 
-```python
+```text
 # Step 1: Find the symbol
 results = code-search:search_code("chunk_file function", chunk_type="function")
 chunk_id = results[0]["chunk_id"]  # scan all results, pick best
@@ -103,7 +103,7 @@ code-search:find_connections(chunk_id=chunk_id, exclude_dirs=["tests/"])
 
 **More examples:**
 
-```python
+```text
 # By chunk_id (preferred)
 code-search:find_connections(chunk_id="mcp_server/server.py:100-180:function:handle_tool_call")
 
@@ -141,7 +141,7 @@ code-search:find_connections(chunk_id="...", relationship_types=["imports", "use
 
 **Examples:**
 
-```python
+```text
 # Preferred: by chunk_ids
 code-search:find_path(
     source_chunk_id="mcp_server/server.py:100-180:function:handle_tool_call",

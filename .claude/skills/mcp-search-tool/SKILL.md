@@ -3,7 +3,7 @@ name: mcp-search-tool
 description: "Guides semantic code search via the code-search MCP server. Provides correct workflows for code-search:search_code, code-search:find_connections, and code-search:find_path. Triggers when searching for code definitions, callers, dependencies, or tracing code flow in indexed projects."
 user-invocable: true
 argument-hint: "search query or 'status' for index health"
-allowed-tools: "Bash, Read, Grep, code-search:search_code, code-search:find_connections, code-search:find_path, code-search:find_similar_code, code-search:index_directory, code-search:get_index_status, code-search:get_search_config_status, code-search:list_projects"
+allowed-tools: "Bash, Read, Grep, code-search:search_code, code-search:find_connections, code-search:find_path, code-search:find_similar_code, code-search:index_directory, code-search:list_projects, code-search:switch_project, code-search:get_index_status, code-search:clear_index, code-search:delete_project, code-search:configure_search_mode, code-search:get_search_config_status, code-search:configure_query_routing, code-search:configure_reranking, code-search:configure_chunking, code-search:list_embedding_models, code-search:switch_embedding_model, code-search:get_memory_status, code-search:cleanup_resources"
 ---
 
 # MCP Search Tool Skill
@@ -25,7 +25,7 @@ allowed-tools: "Bash, Read, Grep, code-search:search_code, code-search:find_conn
 
 Ensures all MCP semantic search operations follow correct workflows for accurate results. The key behavioral rule: **search results are ranked candidates, not definitive answers — always scan all returned results.**
 
-**SSCG benchmark (2026-04-10, 13 queries, 3 modes):** 100% Hit@5 across all modes. Best MRR: BM25 0.846. See [references/performance.md](references/performance.md) for full results.
+**SSCG benchmark (2026-04-10, 13 queries, 3 modes):** **100% Hit@5** across all modes — but only when `k≥5`. Default is `k=4`. Best MRR: BM25 0.846. See [references/performance.md](references/performance.md) for full results.
 
 ---
 
@@ -33,8 +33,10 @@ Ensures all MCP semantic search operations follow correct workflows for accurate
 
 MCP search returns **ranked candidates**, not definitive answers. The correct result is always present in the top 5 (100% Hit@5), but it is NOT always ranked first.
 
+**Baseline rule:** **use `k=5` when correctness matters.** The tool default is `k=4`, which means one answer in twenty will be missed purely because you didn't ask for enough candidates. Use `k=10` for architectural / global queries.
+
 **Result Interpretation Workflow:**
-1. Run `code-search:search_code()` with appropriate query and filters
+1. Run `code-search:search_code(query, k=5)` with appropriate filters
 2. **Scan ALL k results** — read each chunk_id and code snippet
 3. **Identify the best match** based on your actual need (not just highest score)
 4. If the best match is a module/summary chunk but you need specific code, look at lower-ranked results
@@ -58,10 +60,12 @@ What are you trying to do?
 ├─ "Find only imports/inheritance" ──► code-search:find_connections(chunk_id, relationship_types=["imports", "inherits"])
 ├─ "Find similar code to X" ─────────► code-search:find_similar_code(chunk_id)
 │
-├─ "Find class/function definition" ─► code-search:search_code(query, chunk_type="function")
+├─ "Find function definition" ───────► code-search:search_code(query, k=5, chunk_type="function")
+├─ "Find class definition" ──────────► code-search:search_code(query, k=5, chunk_type="class")
 ├─ "Find exact API call pattern" ────► code-search:search_code(query, search_mode="bm25")
-├─ "Understand concept/feature" ─────► code-search:search_code(query)  [hybrid mode]
-├─ "Find related code via graph" ────► code-search:search_code(..., ego_graph_enabled=True)
+├─ "Understand concept/feature" ─────► code-search:search_code(query, k=5)  [hybrid mode]
+├─ "Architectural / global query" ───► code-search:search_code(query, k=10)
+├─ "Expand via call graph neighbors"─► code-search:search_code(..., ego_graph_enabled=True, ego_graph_k_hops=2)
 │
 └─ "Validate line numbers only" ─────► Grep (LAST RESORT)
 ```
@@ -124,3 +128,16 @@ Benchmark data & mode selection guide: [references/performance.md](references/pe
 | **Wrong result at rank-1** | Scan all k results — answer likely at rank 2-4. Use `chunk_type` filter to exclude module/community summary chunks |
 | **Too slow** | Use `search_mode="bm25"` for exact symbols (fastest). Check: `code-search:get_memory_status`. Free: `code-search:cleanup_resources` |
 | **Memory issues** | `code-search:cleanup_resources`. Smaller model: `code-search:switch_embedding_model("google/embeddinggemma-300m")` |
+
+---
+
+## Status Check
+
+When the user invokes the skill with the argument `status` (e.g. `/mcp-search-tool status`), run this exact sequence and report the result:
+
+1. `code-search:list_projects` — show which project is active, when it was last indexed
+2. `code-search:get_index_status` — chunk count, staleness, graph data presence
+3. `code-search:get_search_config_status` — current search_mode, BM25/dense weights, reranker state
+4. `code-search:get_memory_status` — RAM/VRAM usage
+
+Summarize in one short block: **active project**, **index staleness**, **active search mode**, **memory pressure**. Flag anything that looks off (no active project, stale index, missing graph data, >80% VRAM).
