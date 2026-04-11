@@ -74,7 +74,7 @@ Find shortest path between two code entities via the relationship graph. Uses bi
 | `code-search:list_embedding_models` | Show available models (BGE-M3, Qwen3-0.6B, CodeRankEmbed, GTE-ModernBERT, EmbeddingGemma-300m) |
 | `code-search:switch_embedding_model(name)` | Change embedding model (fast if previously loaded) |
 
-**Note:** `code-search:configure_query_routing.default_model` accepts `bge_code` as a valid model key, but `code-search:search_code.model_key` does NOT include `bge_code` — this is a known registry inconsistency. Use `bge_m3` in search_code if you want BGE-family models.
+**Note:** In `code-search:search_code.model_key`, the BGE-family key is `bge_m3`. `code-search:configure_query_routing.default_model` additionally accepts `bge_code`; consult `code-search:list_embedding_models` at runtime for the authoritative list of currently valid keys.
 
 ## Memory Management
 

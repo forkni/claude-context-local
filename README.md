@@ -28,9 +28,9 @@
 
 ## Highlights
 
-- **Hybrid Search**: BM25 + semantic fusion — **100% Hit@5, MRR 0.80, R@10 0.83 (best deep recall)** - [benchmarks](docs/BENCHMARKS.md)
+- **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-04-10, 13 queries, k≥5): **Hit@5 100%, MRR 0.80, R@10 0.83 (best deep recall)** - [benchmarks](docs/BENCHMARKS.md)
 - **Neural Reranking**: Cross-encoder models (BGE-reranker-v2-m3 OR Jina-reranker-v2) improve ranking quality by 5-15% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
-- **SSCG Integration**: Structural-Semantic Code Graph — **13/13 Hit@5 across all three modes (hybrid, BM25, semantic); BM25 MRR=0.846 (best overall)** - [benchmark results](#benchmark-results)
+- **SSCG Integration**: Structural-Semantic Code Graph — on the [SSCG benchmark](#benchmark-results) (2026-04-10, 13 queries, k≥5): **13/13 Hit@5 across all three modes (hybrid, BM25, semantic); BM25 MRR=0.846 (best overall)**
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
 - **Multi-Model Routing**: Intelligent query routing (Qwen3, BGE-M3, CodeRankEmbed) with 100% accuracy - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md)
 - **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking

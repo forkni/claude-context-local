@@ -55,7 +55,7 @@ Replace `<project-path>` with the path to the project you want to evaluate. From
 
 ## Result Reliability
 
-- **Hit@5 = 100%**: The correct result is always in the top 5 for well-formed queries.
+- **Hit@5 = 100% on this 13-query SSCG benchmark**: the labeled target appeared in the top 5 for every query at `k≥5`. This is a mode-comparison baseline, not a general reliability guarantee for arbitrary queries.
 - **Rank-1 reliability:** BM25 highest (P@1 = 0.769), semantic/hybrid lower (P@1 = 0.692). Always scan all k results before concluding.
 - **When rank-1 is most reliable:** exact symbol lookup, small function discovery ("get X", "validate Y").
 - **When you must scan all results:** class overview, sibling pairs ("encode and decode", "save and load"), queries where module/community summary chunks may surface.

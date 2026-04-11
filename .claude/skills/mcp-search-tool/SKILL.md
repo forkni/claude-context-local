@@ -112,8 +112,8 @@ What are you trying to do?
 | code-search:get_memory_status | Check RAM/VRAM usage |
 | code-search:cleanup_resources | Free memory/caches |
 
-Full parameter reference: [references/tool-index.md](references/tool-index.md)
-Detailed params for essential tools: [references/parameters.md](references/parameters.md)
+19-tool catalog (names + one-liner purposes): [references/tool-index.md](references/tool-index.md)
+Full parameter reference for essential tools (search_code, find_connections, find_path): [references/parameters.md](references/parameters.md)
 Advanced features (multi-hop, intent routing, summaries): [references/advanced-features.md](references/advanced-features.md)
 Benchmark data & mode selection guide: [references/performance.md](references/performance.md)
 
