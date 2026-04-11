@@ -122,7 +122,7 @@ class ConstantExtractor(BaseRelationshipExtractor):
                         )
                         self.known_constants.add(target.id)
 
-    def _extract_constant_usages(self, tree: ast.AST, chunk_metadata: dict[str, Any]):
+    def _extract_constant_usages(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         """
         Extract references to known constants.
 
@@ -245,7 +245,7 @@ class ConstantExtractor(BaseRelationshipExtractor):
 
         return False
 
-    def _reset_state(self):
+    def _reset_state(self) -> None:
         """Reset extractor state before extraction."""
         super()._reset_state()
         # Note: We don't reset known_constants here because we want to track

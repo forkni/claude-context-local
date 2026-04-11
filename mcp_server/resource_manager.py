@@ -258,7 +258,7 @@ def get_resource_manager() -> ResourceManager:
     return _resource_manager
 
 
-def _cleanup_previous_resources():
+def _cleanup_previous_resources() -> None:
     """Cleanup previous project resources to free memory.
 
     .. note::

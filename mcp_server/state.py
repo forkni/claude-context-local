@@ -231,7 +231,7 @@ def get_state() -> ApplicationState:
 
 
 # Register ApplicationState with ServiceLocator for dependency injection
-def _register_with_service_locator():
+def _register_with_service_locator() -> None:
     """Register ApplicationState with ServiceLocator on module import."""
     try:
         from mcp_server.services import ServiceLocator

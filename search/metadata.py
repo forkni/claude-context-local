@@ -49,7 +49,7 @@ class MetadataStore:
         cache_path = db_path.parent / f"{db_path.stem}_symbol_cache.json"
         self._symbol_cache = SymbolHashCache(cache_path)
 
-    def _ensure_open(self):
+    def _ensure_open(self) -> None:
         """Lazy-load database connection.
 
         Uses JSON serialization instead of pickle to mitigate CVE-2024-35515
