@@ -357,9 +357,7 @@ def calculate_line_precision(
     """
     # Raw (un-merged) sum of retrieved lines penalizes chunk redundancy
     total_retrieved = sum(
-        end - start + 1
-        for ranges in retrieved_ranges.values()
-        for start, end in ranges
+        end - start + 1 for ranges in retrieved_ranges.values() for start, end in ranges
     )
     if total_retrieved == 0:
         return 0.0

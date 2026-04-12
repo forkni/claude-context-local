@@ -898,7 +898,9 @@ class LanguageChunker(ABC):
         if config is None:
             config = self._get_chunking_config()
 
-        def traverse(node: Any, depth: int = 0, parent_info: dict | None = None) -> None:
+        def traverse(
+            node: Any, depth: int = 0, parent_info: dict | None = None
+        ) -> None:
             """Recursively traverse the tree and extract chunks."""
             if self.should_chunk_node(node):
                 start_line, end_line = self.get_line_numbers(node)
