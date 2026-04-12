@@ -1,5 +1,5 @@
 checkCommands:
-  fix: ruff check --fix . && ruff format .
+  fix: pip install ruff && ruff check --fix . && ruff format .
   lint: pip install ruff && ruff check .
   test: pip install pytest && pytest tests/ -x -q
 beta:
