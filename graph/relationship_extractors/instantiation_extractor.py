@@ -133,7 +133,7 @@ class InstantiationExtractor(BaseRelationshipExtractor):
             if isinstance(node, ast.Call):
                 self._extract_instantiation(node, chunk_id)
 
-    def _extract_instantiation(self, node: ast.Call, chunk_id: str):
+    def _extract_instantiation(self, node: ast.Call, chunk_id: str) -> None:
         """
         Extract class instantiation from a Call node.
 

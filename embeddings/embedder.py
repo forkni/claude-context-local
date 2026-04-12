@@ -96,7 +96,7 @@ def _get_activation_cost_override(model_name: str) -> float | None:
 
 # Configure PyTorch CUDA allocator BEFORE any torch imports
 # This must be done early to prevent fragmentation and enable better memory management
-def _configure_cuda_allocator():
+def _configure_cuda_allocator() -> None:
     """Configure PyTorch CUDA allocator for reduced fragmentation.
 
     Must be called BEFORE any CUDA operations (import torch.cuda, tensor.cuda(), etc.)
@@ -858,7 +858,22 @@ class CodeEmbedder:
     def embed_chunks(
         self, chunks: list[CodeChunk], batch_size: int | None = None
     ) -> list[EmbeddingResult]:
-        """Generate embeddings for multiple chunks with batching."""
+        """Generate embeddings for multiple chunks with dynamic batching.
+
+        Uses GPU-aware batch sizing when CUDA is available, falling back to
+        a registry estimate or runtime tracking if measurement fails.
+
+        Args:
+            chunks: Code chunks to embed.
+            batch_size: Optional override for batch size. When ``None``,
+                resolves batch size from config (dynamic GPU sizing when
+                enabled, otherwise ``config.embedding.batch_size``).
+
+        Returns:
+            List of ``EmbeddingResult`` (one per input chunk, in order).
+            Each result's ``embedding`` field is an ``np.ndarray`` of shape
+            ``(embedding_dim,)`` with dtype ``float32``.
+        """
         results = []
 
         # Get model-specific configuration for prefixing
@@ -1134,9 +1149,17 @@ class CodeEmbedder:
 
         Caches query embeddings to improve performance for repeated queries.
         Cache is keyed by query text + model name + prefixes/instructions.
-
         Supports both query_prefix (simple prefix) and task_instruction
         (instruction-based models like CodeRankEmbed).
+
+        Args:
+            query: Natural-language search query to embed.
+
+        Returns:
+            np.ndarray of shape ``(embedding_dim,)`` with dtype ``float32``,
+            where ``embedding_dim`` is model-specific (e.g., 1024 for BGE-M3,
+            1024 for Qwen3-0.6B). Values are L2-normalized when the underlying
+            model is configured for normalized output.
         """
         # Get model-specific configuration
         model_config = self._get_model_config()
@@ -1239,7 +1262,7 @@ class CodeEmbedder:
         """
         return dict(self._model_vram_usage)
 
-    def _log_vram_usage(self, phase: str, batch_idx: int = 0):
+    def _log_vram_usage(self, phase: str, batch_idx: int = 0) -> None:
         """Log current VRAM usage for debugging memory issues.
 
         Args:

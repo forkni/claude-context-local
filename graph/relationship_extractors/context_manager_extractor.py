@@ -88,7 +88,7 @@ class ContextManagerExtractor(BaseRelationshipExtractor):
         self._log_extraction_result(chunk_metadata)
         return self.edges
 
-    def _extract_context_expr(self, node: ast.AST, chunk_metadata: dict[str, Any]):
+    def _extract_context_expr(self, node: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         """
         Extract the context manager being used.
 

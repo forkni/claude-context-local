@@ -163,7 +163,7 @@ class ExceptionExtractor(BaseRelationshipExtractor):
             elif isinstance(node, ast.Try):
                 self._extract_except_handlers(node, chunk_id)
 
-    def _extract_raise(self, node: ast.Raise, chunk_id: str):
+    def _extract_raise(self, node: ast.Raise, chunk_id: str) -> None:
         """
         Extract exception from a raise statement.
 
@@ -185,7 +185,7 @@ class ExceptionExtractor(BaseRelationshipExtractor):
                 confidence=1.0,
             )
 
-    def _extract_except_handlers(self, node: ast.Try, chunk_id: str):
+    def _extract_except_handlers(self, node: ast.Try, chunk_id: str) -> None:
         """
         Extract exceptions from except handlers.
 

@@ -413,19 +413,49 @@ class IntelligentSearcher(BaseSearcher):
         file_patterns: list[str],
         k: int = 4,
     ) -> list[SearchResult]:
-        """Search within specific file patterns."""
+        """Search within a set of file path patterns.
+
+        Args:
+            query: Natural-language search query.
+            file_patterns: Glob-style patterns (e.g., ``["**/*.py", "src/**"]``)
+                used to restrict results to matching files.
+            k: Number of results to return (default: 4).
+
+        Returns:
+            Ranked list of ``SearchResult``, filtered to chunks whose source
+            file matches at least one of ``file_patterns``.
+        """
         filters = {"file_pattern": file_patterns}
         return self.search(query, k=k, filters=filters)
 
     def search_by_chunk_type(
         self, query: str, chunk_type: str, k: int = 4
     ) -> list[SearchResult]:
-        """Search for specific types of code chunks."""
+        """Search restricted to a specific chunk type.
+
+        Args:
+            query: Natural-language search query.
+            chunk_type: Chunk kind to match (e.g., ``"function"``, ``"class"``,
+                ``"method"``, ``"module"``).
+            k: Number of results to return (default: 4).
+
+        Returns:
+            Ranked list of ``SearchResult`` filtered to the requested chunk type.
+        """
         filters = {"chunk_type": chunk_type}
         return self.search(query, k=k, filters=filters)
 
     def find_similar_to_chunk(self, chunk_id: str, k: int = 4) -> list[SearchResult]:
-        """Find chunks similar to a given chunk."""
+        """Find chunks functionally similar to a given chunk.
+
+        Args:
+            chunk_id: Chunk ID in the form ``"file.py:start-end:type:name"``.
+            k: Number of similar chunks to return (default: 4).
+
+        Returns:
+            Ranked list of ``SearchResult`` ordered by similarity (descending).
+            Each result is enriched with ``context_depth=1`` neighbor context.
+        """
         similar_chunks = self.index_manager.get_similar_chunks(chunk_id, k)
 
         results = []
@@ -479,7 +509,17 @@ class IntelligentSearcher(BaseSearcher):
         return result
 
     def get_search_suggestions(self, partial_query: str) -> list[str]:
-        """Generate search suggestions based on indexed content."""
+        """Generate search suggestions from indexed content.
+
+        Uses the index's aggregate statistics (top tags, chunk types) to
+        propose candidate query completions that match ``partial_query``.
+
+        Args:
+            partial_query: Partial user query used as a substring filter.
+
+        Returns:
+            List of suggestion strings (may be empty if nothing matches).
+        """
         # This is a simplified implementation
         # In a full system, you might maintain a separate suggestions index
 

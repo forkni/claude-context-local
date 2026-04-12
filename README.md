@@ -28,9 +28,9 @@
 
 ## Highlights
 
-- **Hybrid Search**: BM25 + semantic fusion (44.4% precision, 100% MRR) - [benchmarks](docs/BENCHMARKS.md)
+- **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-04-10, 13 queries, k=10; cutoffs @5/@10): **Hit@5 100%, MRR 0.80, R@10 0.83 (best deep recall)** - [benchmarks](docs/BENCHMARKS.md)
 - **Neural Reranking**: Cross-encoder models (BGE-reranker-v2-m3 OR Jina-reranker-v2) improve ranking quality by 5-15% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
-- **SSCG Integration**: Structural-Semantic Code Graph with MRR=0.94, Recall@4=92.3% (12/13 queries) - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#sscg-integration)
+- **SSCG Integration**: Structural-Semantic Code Graph — on the [SSCG benchmark](#benchmark-results) (2026-04-10, 13 queries, k=10; cutoffs @5/@10): **13/13 Hit@5 across all three modes (hybrid, BM25, semantic); BM25 MRR=0.846 (best overall)**
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
 - **Multi-Model Routing**: Intelligent query routing (Qwen3, BGE-M3, CodeRankEmbed) with 100% accuracy - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md)
 - **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
@@ -219,11 +219,13 @@ start_mcp_server.cmd → 3 (Search Configuration)
 
 ## Search Modes
 
-| Mode | Description | Performance | Quality | Status |
-|------|-------------|-------------|---------|--------|
-| **hybrid** (default) | BM25 + Semantic fusion | 487ms | 44.4% precision, 100% MRR | ✅ Operational |
-| **semantic** | Dense vector search | 487ms | 38.9% precision, 100% MRR | ✅ Operational |
-| **bm25** | Text-based sparse search | 162ms | 33.3% precision, 61.1% MRR | ✅ Operational |
+Quality metrics below are from the [SSCG benchmark](#benchmark-results) (2026-04-10, 13 queries, k=10; cutoffs @5/@10). They describe mode performance on this benchmark only — not general reliability guarantees.
+
+| Mode | Description | SSCG Quality (2026-04-10, k=10) | Status |
+|------|-------------|-------------------------------|--------|
+| **hybrid** (default) | BM25 + Semantic fusion | MRR 0.800, R@5 0.622, R@10 0.833, Hit@5 100% | ✅ Operational |
+| **semantic** | Dense vector search | MRR 0.712, R@5 0.660, Hit@5 100% | ✅ Operational |
+| **bm25** | Text-based sparse search | MRR 0.846 (best overall), R@5 0.660, P@1 0.769, Hit@5 100% | ✅ Operational |
 
 **Configuration**: See [Hybrid Search Configuration Guide](docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md)
 
@@ -415,16 +417,17 @@ claude-context-local/
 
 ## Benchmark Results
 
-### SSCG Evaluation (v0.9.2)
+### SSCG Evaluation (2026-04-10, three-mode)
 
-Evaluated against 13 queries across 3 categories on the project's own codebase:
+Evaluated against 13 queries across 4 categories (A/B/C/D) on the project's own codebase. All three search modes pass all thresholds (MRR ≥ 0.50, Recall@5 ≥ 0.55, Hit@5 ≥ 0.80):
 
-| Category | Queries | Pass Rate | Description |
-|----------|---------|-----------|-------------|
-| **A: Small Function Discovery** | 5 | 4/5 (80%) | Find specific functions by description |
-| **B: Sibling Context** | 3 | 3/3 (100%) | Find related encode/decode, save/load pairs |
-| **C: Class Overview** | 5 | 5/5 (100%) | Understand class responsibilities |
-| **Overall** | **13** | **12/13 (92.3%)** | MRR: 0.94, Recall@4: 0.89 |
+| Mode | MRR | Recall@5 | Recall@10 | Hit@5 | NDCG@10 | Best category |
+|------|-----|----------|-----------|-------|---------|---------------|
+| **BM25** | **0.846** | 0.660 | 0.712 | 13/13 (100%) | 0.709 | A: 0.90 (exact symbol lookup) |
+| **Hybrid** | 0.800 | 0.622 | **0.833** | 13/13 (100%) | **0.730** | A: 0.85 |
+| **Semantic** | 0.712 | 0.660 | 0.731 | 13/13 (100%) | 0.685 | C: 0.80 |
+
+**Key findings**: BM25 best for exact symbol lookup; Hybrid best at deep recall (R@10, NDCG@10); Semantic ties BM25 on Cat C (Class Overview). See `evaluation/golden_dataset.json` and `scripts/benchmark/mcp_eval.py` for details.
 
 See [benchmarks](docs/BENCHMARKS.md) for token efficiency results (63% reduction).
 

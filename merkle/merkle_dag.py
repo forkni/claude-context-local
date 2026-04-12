@@ -273,7 +273,7 @@ class MerkleDAG:
             dag.root_node = MerkleNode.from_dict(data["root_node"])
 
             # Rebuild nodes dictionary
-            def add_to_nodes(node: MerkleNode):
+            def add_to_nodes(node: MerkleNode) -> None:
                 dag.nodes[node.path] = node
                 for child in node.children:
                     add_to_nodes(child)

@@ -120,7 +120,7 @@ class EnumMemberExtractor(BaseRelationshipExtractor):
 
         return False
 
-    def _extract_enum_members(self, node: ast.ClassDef, chunk_metadata: dict[str, Any]):
+    def _extract_enum_members(self, node: ast.ClassDef, chunk_metadata: dict[str, Any]) -> None:
         """
         Extract Enum.MEMBER definitions from enum class body.
 

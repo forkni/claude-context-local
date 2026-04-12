@@ -8,6 +8,9 @@
 !.claude/skills/mcp-search-tool/
 .claude/skills/mcp-search-tool/*
 !.claude/skills/mcp-search-tool/SKILL.md
+!.claude/skills/mcp-search-tool/references/
+.claude/skills/mcp-search-tool/references/*
+!.claude/skills/mcp-search-tool/references/*.md
 !.claude/commands/
 .claude/commands/*
 !.claude/commands/mcp-search.md

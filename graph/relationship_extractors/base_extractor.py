@@ -78,7 +78,7 @@ class BaseRelationshipExtractor(ABC):
         """
         pass
 
-    def _reset_state(self):
+    def _reset_state(self) -> None:
         """
         Reset extractor state before extraction.
 
@@ -87,7 +87,7 @@ class BaseRelationshipExtractor(ABC):
         """
         self.edges = []
 
-    def _log_extraction_result(self, chunk_metadata: dict[str, Any]):
+    def _log_extraction_result(self, chunk_metadata: dict[str, Any]) -> None:
         """
         Log extraction results for debugging.
 
