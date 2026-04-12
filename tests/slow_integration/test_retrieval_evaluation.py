@@ -124,10 +124,10 @@ GOLDEN_QUERIES = [
 # These are intentionally conservative — BM25 on a small corpus should
 # easily exceed them. If they start failing, it signals a regression.
 SAMPLE_THRESHOLDS = {
-    "mrr": 0.30,           # At least some queries rank relevant item in top-3
-    "recall_at_5": 0.25,   # BM25 recall@5 is bounded by k/chunk_count: with ~15 chunks
-                            # per file and k=5, max possible recall is ~33%, so 0.25 is realistic
-    "hit_rate": 0.70,      # At least 7/10 queries should return a relevant result
+    "mrr": 0.30,  # At least some queries rank relevant item in top-3
+    "recall_at_5": 0.25,  # BM25 recall@5 is bounded by k/chunk_count: with ~15 chunks
+    # per file and k=5, max possible recall is ~33%, so 0.25 is realistic
+    "hit_rate": 0.70,  # At least 7/10 queries should return a relevant result
 }
 
 
@@ -187,11 +187,13 @@ def _make_deterministic_embeddings(chunks, dim=768):
             "end_line": chunk.end_line,
             "language": getattr(chunk, "language", "python"),
         }
-        results.append(EmbeddingResult(
-            embedding=embedding,
-            chunk_id=chunk_id,
-            metadata=metadata,
-        ))
+        results.append(
+            EmbeddingResult(
+                embedding=embedding,
+                chunk_id=chunk_id,
+                metadata=metadata,
+            )
+        )
     return results
 
 
@@ -310,8 +312,12 @@ class TestRetrievalEvaluation:
     def test_all_source_files_indexed(self, indexed_environment):
         """Every source file from the sample codebase has at least one chunk."""
         doc_ids = [_norm_path(cid) for cid in indexed_environment["doc_ids"]]
-        expected_files = ["src/auth/auth.py", "src/database/database.py",
-                         "src/api/api.py", "src/utils/utils.py"]
+        expected_files = [
+            "src/auth/auth.py",
+            "src/database/database.py",
+            "src/api/api.py",
+            "src/utils/utils.py",
+        ]
         for f in expected_files:
             found = any(f in cid for cid in doc_ids)
             assert found, f"No chunks indexed for {f}"
@@ -321,14 +327,17 @@ class TestRetrievalEvaluation:
         chunks = indexed_environment["chunks"]
         types = {c.chunk_type for c in chunks}
         # Should have at least function and class chunks
-        assert "function" in types or "decorated_definition" in types, \
+        assert "function" in types or "decorated_definition" in types, (
             f"No function chunks found. Types: {types}"
+        )
 
     # -------------------------------------------------------------------
     # 2. BM25 retrieval quality — per-query assertions
     # -------------------------------------------------------------------
 
-    @pytest.mark.parametrize("golden", GOLDEN_QUERIES, ids=[q["id"] for q in GOLDEN_QUERIES])
+    @pytest.mark.parametrize(
+        "golden", GOLDEN_QUERIES, ids=[q["id"] for q in GOLDEN_QUERIES]
+    )
     def test_bm25_file_hit(self, indexed_environment, golden):
         """BM25 retrieval returns results from the expected source file."""
         searcher = indexed_environment["searcher"]
@@ -342,7 +351,9 @@ class TestRetrievalEvaluation:
                 f"Got: {[r.chunk_id for r in results[:5]]}"
             )
 
-    @pytest.mark.parametrize("golden", GOLDEN_QUERIES, ids=[q["id"] for q in GOLDEN_QUERIES])
+    @pytest.mark.parametrize(
+        "golden", GOLDEN_QUERIES, ids=[q["id"] for q in GOLDEN_QUERIES]
+    )
     def test_bm25_content_relevance(self, indexed_environment, golden):
         """BM25 results contain expected terms in their content."""
         searcher = indexed_environment["searcher"]
@@ -382,15 +393,25 @@ class TestRetrievalEvaluation:
         retrieved = normalize_chunk_ids([_norm_path(r.chunk_id) for r in results])
         # Build expected from file matches: any chunk from expected files
         doc_ids_norm = indexed_environment["doc_ids_norm"]
-        expected = [cid for cid in doc_ids_norm
-                   if any(f in cid for f in q["expected_files"])]
+        expected = [
+            cid for cid in doc_ids_norm if any(f in cid for f in q["expected_files"])
+        ]
         expected_normalized = normalize_chunk_ids(expected)
 
         metrics = calculate_metrics_from_results(retrieved, expected_normalized)
 
-        expected_keys = {"recall@1", "recall@5", "recall@10",
-                        "precision@1", "precision@5", "precision@10",
-                        "mrr", "ndcg@5", "ndcg@10", "hit"}
+        expected_keys = {
+            "recall@1",
+            "recall@5",
+            "recall@10",
+            "precision@1",
+            "precision@5",
+            "precision@10",
+            "mrr",
+            "ndcg@5",
+            "ndcg@10",
+            "hit",
+        }
         assert set(metrics.keys()) == expected_keys
 
     def test_full_evaluation_loop(self, indexed_environment):
@@ -406,10 +427,13 @@ class TestRetrievalEvaluation:
             retrieved = normalize_chunk_ids([_norm_path(r.chunk_id) for r in results])
 
             # Expected: all chunks from expected files
-            expected = normalize_chunk_ids([
-                cid for cid in doc_ids_norm
-                if any(f in cid for f in q["expected_files"])
-            ])
+            expected = normalize_chunk_ids(
+                [
+                    cid
+                    for cid in doc_ids_norm
+                    if any(f in cid for f in q["expected_files"])
+                ]
+            )
 
             metrics = calculate_metrics_from_results(retrieved, expected)
             metrics["id"] = q["id"]
@@ -480,18 +504,21 @@ class TestRetrievalEvaluation:
             scores = [r.score for r in results]
             for i in range(len(scores) - 1):
                 assert scores[i] >= scores[i + 1], (
-                    f"Results not sorted: score[{i}]={scores[i]:.4f} < score[{i+1}]={scores[i+1]:.4f}"
+                    f"Results not sorted: score[{i}]={scores[i]:.4f} < score[{i + 1}]={scores[i + 1]:.4f}"
                 )
 
     # -------------------------------------------------------------------
     # 7. Category-level analysis
     # -------------------------------------------------------------------
 
-    @pytest.mark.parametrize("category,label", [
-        ("A", "exact_symbol"),
-        ("B", "concept"),
-        ("C", "cross_module"),
-    ])
+    @pytest.mark.parametrize(
+        "category,label",
+        [
+            ("A", "exact_symbol"),
+            ("B", "concept"),
+            ("C", "cross_module"),
+        ],
+    )
     def test_category_hit_rate(self, indexed_environment, category, label):
         """Each query category has at least one hit."""
         searcher = indexed_environment["searcher"]
@@ -502,10 +529,13 @@ class TestRetrievalEvaluation:
         for q in category_queries:
             results = searcher.search(q["query"], k=10, search_mode="bm25")
             retrieved = normalize_chunk_ids([_norm_path(r.chunk_id) for r in results])
-            expected = normalize_chunk_ids([
-                cid for cid in doc_ids_norm
-                if any(f in cid for f in q["expected_files"])
-            ])
+            expected = normalize_chunk_ids(
+                [
+                    cid
+                    for cid in doc_ids_norm
+                    if any(f in cid for f in q["expected_files"])
+                ]
+            )
             metrics = calculate_metrics_from_results(retrieved, expected)
             if metrics["hit"]:
                 hits += 1
@@ -535,6 +565,7 @@ class TestRetrievalEvaluation:
         Subsequent queries should be fast (in-memory BM25, no model).
         """
         import time
+
         searcher = indexed_environment["searcher"]
 
         # Warmup: first query pays NLTK/index init overhead; exclude from measurement
@@ -549,7 +580,9 @@ class TestRetrievalEvaluation:
         avg_latency = sum(latencies) / len(latencies)
         max_latency = max(latencies)
         assert max_latency < 2000, f"Slowest query: {max_latency:.0f}ms (limit: 2000ms)"
-        assert avg_latency < 1000, f"Average latency: {avg_latency:.0f}ms (limit: 1000ms)"
+        assert avg_latency < 1000, (
+            f"Average latency: {avg_latency:.0f}ms (limit: 1000ms)"
+        )
 
     # -------------------------------------------------------------------
     # Helper
@@ -568,10 +601,13 @@ class TestRetrievalEvaluation:
         for q in GOLDEN_QUERIES:
             results = searcher.search(q["query"], k=10, search_mode="bm25")
             retrieved = normalize_chunk_ids([_norm_path(r.chunk_id) for r in results])
-            expected = normalize_chunk_ids([
-                cid for cid in doc_ids_norm
-                if any(f in cid for f in q["expected_files"])
-            ])
+            expected = normalize_chunk_ids(
+                [
+                    cid
+                    for cid in doc_ids_norm
+                    if any(f in cid for f in q["expected_files"])
+                ]
+            )
             metrics = calculate_metrics_from_results(retrieved, expected)
             metrics["hit"] = bool(metrics["hit"])
             per_query.append(metrics)

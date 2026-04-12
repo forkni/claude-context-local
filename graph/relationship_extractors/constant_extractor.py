@@ -122,7 +122,9 @@ class ConstantExtractor(BaseRelationshipExtractor):
                         )
                         self.known_constants.add(target.id)
 
-    def _extract_constant_usages(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
+    def _extract_constant_usages(
+        self, tree: ast.AST, chunk_metadata: dict[str, Any]
+    ) -> None:
         """
         Extract references to known constants.
 

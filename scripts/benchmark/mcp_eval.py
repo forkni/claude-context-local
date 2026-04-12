@@ -12,6 +12,7 @@ Usage:
     python mcp_eval.py --mode bm25
     python mcp_eval.py --mode semantic
 """
+
 import argparse
 import json
 import sys
@@ -44,13 +45,18 @@ def load_raw_results(mode: str) -> dict[str, list]:
     data_path = PROJECT_ROOT / "evaluation" / f"raw_mcp_results_{mode}.json"
     if not data_path.exists():
         print(f"[ERROR] Raw results file not found: {data_path}", file=sys.stderr)
-        print(f"  Collect results by running search_code(..., search_mode={mode!r})", file=sys.stderr)
+        print(
+            f"  Collect results by running search_code(..., search_mode={mode!r})",
+            file=sys.stderr,
+        )
         print(f"  and saving to {data_path}", file=sys.stderr)
         sys.exit(1)
     with open(data_path) as f:
         data = json.load(f)
     # Convert [[score, chunk_id], ...] entries to [(score, chunk_id), ...]
-    return {qid: [(s, c) for s, c in entries] for qid, entries in data["results"].items()}
+    return {
+        qid: [(s, c) for s, c in entries] for qid, entries in data["results"].items()
+    }
 
 
 def get_top_k_chunk_ids(raw: list, k: int = 10) -> list[str]:
@@ -81,10 +87,12 @@ def main() -> None:
     thresholds = golden["thresholds"]
 
     per_query = []
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print(f"MCP-based SSCG Evaluation (k=10, {label} mode)")
-    print(f"{'='*80}\n")
-    print(f"{'ID':<6} {'Cat':<4} {'MRR':>6} {'R@5':>6} {'R@10':>6} {'Hit@5':>6} {'NDCG@5':>7}  Status")
+    print(f"{'=' * 80}\n")
+    print(
+        f"{'ID':<6} {'Cat':<4} {'MRR':>6} {'R@5':>6} {'R@10':>6} {'Hit@5':>6} {'NDCG@5':>7}  Status"
+    )
     print("-" * 70)
 
     for qid, raw in sorted(raw_results.items()):
@@ -112,15 +120,21 @@ def main() -> None:
         )
 
     agg = aggregate_metrics(per_query)
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"AGGREGATE METRICS ({label})")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
     thr_mrr = thresholds["mrr"]
     thr_r5 = thresholds["recall_at_5"]
     thr_hit = thresholds["hit_rate_at_5"]
-    print(f"  MRR:          {agg.get('mrr', 0):.4f}  (threshold: {thr_mrr})  {'PASS' if agg.get('mrr', 0) >= thr_mrr else 'FAIL'}")
-    print(f"  Recall@5:     {agg.get('recall@5', 0):.4f}  (threshold: {thr_r5})  {'PASS' if agg.get('recall@5', 0) >= thr_r5 else 'FAIL'}")
-    print(f"  Hit Rate@5:   {agg.get('hit_rate@5', 0):.4f}  (threshold: {thr_hit})  {'PASS' if agg.get('hit_rate@5', 0) >= thr_hit else 'FAIL'}")
+    print(
+        f"  MRR:          {agg.get('mrr', 0):.4f}  (threshold: {thr_mrr})  {'PASS' if agg.get('mrr', 0) >= thr_mrr else 'FAIL'}"
+    )
+    print(
+        f"  Recall@5:     {agg.get('recall@5', 0):.4f}  (threshold: {thr_r5})  {'PASS' if agg.get('recall@5', 0) >= thr_r5 else 'FAIL'}"
+    )
+    print(
+        f"  Hit Rate@5:   {agg.get('hit_rate@5', 0):.4f}  (threshold: {thr_hit})  {'PASS' if agg.get('hit_rate@5', 0) >= thr_hit else 'FAIL'}"
+    )
     print(f"  Recall@10:    {agg.get('recall@10', 0):.4f}")
     print(f"  NDCG@5:       {agg.get('ndcg@5', 0):.4f}")
     print(f"  NDCG@10:      {agg.get('ndcg@10', 0):.4f}")
@@ -135,8 +149,8 @@ def main() -> None:
         cat_hits = [1.0 if m.get("hit", False) else 0.0 for m in cats[c]]
         print(
             f"  Category {c}: "
-            f"MRR={sum(cat_mrrs)/len(cat_mrrs):.3f}  "
-            f"Hit@5={sum(cat_hits)/len(cat_hits):.3f}  "
+            f"MRR={sum(cat_mrrs) / len(cat_mrrs):.3f}  "
+            f"Hit@5={sum(cat_hits) / len(cat_hits):.3f}  "
             f"(n={len(cat_mrrs)})"
         )
 
@@ -148,11 +162,13 @@ def main() -> None:
                 f"  {pq['query_id']} ({pq['category']}): "
                 f"recall@5={pq.get('recall@5', 0):.3f} "
                 f"mrr={pq.get('mrr', 0):.3f}  "
-                f"\"{pq['query']}\""
+                f'"{pq["query"]}"'
             )
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_path = PROJECT_ROOT / "benchmark_results" / f"sscg_mcp_{mode}_k10_{timestamp}.json"
+    out_path = (
+        PROJECT_ROOT / "benchmark_results" / f"sscg_mcp_{mode}_k10_{timestamp}.json"
+    )
     out_path.parent.mkdir(exist_ok=True)
     result = {
         "config_name": f"mcp_{mode}_k10",

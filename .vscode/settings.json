@@ -1,8 +1,6 @@
 {
   // Python interpreter - use project's virtual environment
   "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
-  // Pyrefly type checker
-  "python.pyrefly.displayTypeErrors": "force-on",
   // Ruff extension configuration
   "ruff.enable": true,
   "ruff.path": [

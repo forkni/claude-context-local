@@ -1,7 +1,6 @@
 checkCommands:
   fix: ruff check --fix . && ruff format .
   lint: pip install ruff && ruff check .
-  types: pip install pyrefly && pyrefly check
   test: pip install pytest && pytest tests/ -x -q
 beta:
   canApprovePullRequests: false

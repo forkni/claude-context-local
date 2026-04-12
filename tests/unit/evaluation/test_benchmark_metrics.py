@@ -48,7 +48,10 @@ class TestThresholds:
 class TestNormalizeChunkId:
     def test_standard_function_chunk(self):
         raw = "search/config.py:148-161:decorated_definition:EmbeddingConfig"
-        assert normalize_chunk_id(raw) == "search/config.py:decorated_definition:EmbeddingConfig"
+        assert (
+            normalize_chunk_id(raw)
+            == "search/config.py:decorated_definition:EmbeddingConfig"
+        )
 
     def test_module_chunk(self):
         # Module chunks have fewer colons — no trailing :name
@@ -126,18 +129,26 @@ class TestNormalizeChunkIds:
 
 class TestCalculateRecallAtK:
     def test_perfect_recall(self):
-        assert calculate_recall_at_k(["A", "B", "C"], ["A", "B", "C"], 3) == pytest.approx(1.0)
+        assert calculate_recall_at_k(
+            ["A", "B", "C"], ["A", "B", "C"], 3
+        ) == pytest.approx(1.0)
 
     def test_zero_recall(self):
-        assert calculate_recall_at_k(["X", "Y", "Z"], ["A", "B"], 3) == pytest.approx(0.0)
+        assert calculate_recall_at_k(["X", "Y", "Z"], ["A", "B"], 3) == pytest.approx(
+            0.0
+        )
 
     def test_partial_recall(self):
         # 2 of 3 relevant items found within k=4
-        assert calculate_recall_at_k(["A", "X", "B", "Y"], ["A", "B", "C"], 4) == pytest.approx(2 / 3)
+        assert calculate_recall_at_k(
+            ["A", "X", "B", "Y"], ["A", "B", "C"], 4
+        ) == pytest.approx(2 / 3)
 
     def test_k_limits_retrieval(self):
         # Relevant items C and D are at positions 3 and 4, but k=2 only sees A, B
-        assert calculate_recall_at_k(["A", "B", "C", "D"], ["C", "D"], 2) == pytest.approx(0.0)
+        assert calculate_recall_at_k(
+            ["A", "B", "C", "D"], ["C", "D"], 2
+        ) == pytest.approx(0.0)
 
     def test_k_exceeds_list_length(self):
         # k much larger than retrieved list — slicing handles gracefully
@@ -172,7 +183,9 @@ class TestCalculatePrecisionAtK:
 
     def test_partial_precision(self):
         # 2 hits in 3 slots
-        assert calculate_precision_at_k(["A", "X", "B"], ["A", "B"], 3) == pytest.approx(2 / 3)
+        assert calculate_precision_at_k(
+            ["A", "X", "B"], ["A", "B"], 3
+        ) == pytest.approx(2 / 3)
 
     def test_k_larger_than_retrieved(self):
         # Denominator is k=5, not len(retrieved)=1; only A is hit
@@ -269,7 +282,9 @@ class TestCalculateNdcgAtK:
         # k=2, 3 relevant items; IDCG uses min(3, 2) = 2 ideal positions
         # All 3 retrieved are relevant, k=2 cuts off at position 2
         # DCG = 1/log2(2) + 1/log2(3), IDCG = 1/log2(2) + 1/log2(3) → perfect within k
-        assert calculate_ndcg_at_k(["A", "B", "C"], ["A", "B", "C"], 2) == pytest.approx(1.0)
+        assert calculate_ndcg_at_k(
+            ["A", "B", "C"], ["A", "B", "C"], 2
+        ) == pytest.approx(1.0)
 
     def test_k_larger_than_retrieved(self):
         # Only 1 item retrieved but k=5; 2 relevant items
@@ -321,26 +336,44 @@ class TestCalculateMetricsFromResults:
         retrieved = ["A", "B"]
         expected = ["A", "B"]
         result = calculate_metrics_from_results(retrieved, expected)
-        assert result["recall@1"] == pytest.approx(0.5)   # only A in top-1 of 2 expected
-        assert result["recall@5"] == pytest.approx(1.0)   # both in top-5
+        assert result["recall@1"] == pytest.approx(0.5)  # only A in top-1 of 2 expected
+        assert result["recall@5"] == pytest.approx(1.0)  # both in top-5
         assert result["precision@1"] == pytest.approx(1.0)  # A is relevant
         assert result["precision@5"] == pytest.approx(2 / 5)  # 2 hits / 5 slots
-        assert result["mrr"] == pytest.approx(1.0)           # A at rank 1
+        assert result["mrr"] == pytest.approx(1.0)  # A at rank 1
         assert result["ndcg@5"] == pytest.approx(1.0)
         assert result["hit"] is True
 
     def test_no_overlap(self):
         result = calculate_metrics_from_results(["X", "Y"], ["A", "B"])
-        for key in ("recall@1", "recall@5", "recall@10", "precision@1",
-                    "precision@5", "precision@10", "mrr", "ndcg@5", "ndcg@10"):
+        for key in (
+            "recall@1",
+            "recall@5",
+            "recall@10",
+            "precision@1",
+            "precision@5",
+            "precision@10",
+            "mrr",
+            "ndcg@5",
+            "ndcg@10",
+        ):
             assert result[key] == pytest.approx(0.0), f"{key} should be 0.0"
         assert result["hit"] is False
 
     def test_empty_expected(self):
         # All guards in sub-functions return 0.0 when relevant is empty
         result = calculate_metrics_from_results(["A", "B"], [])
-        for key in ("recall@1", "recall@5", "recall@10", "precision@1",
-                    "precision@5", "precision@10", "mrr", "ndcg@5", "ndcg@10"):
+        for key in (
+            "recall@1",
+            "recall@5",
+            "recall@10",
+            "precision@1",
+            "precision@5",
+            "precision@10",
+            "mrr",
+            "ndcg@5",
+            "ndcg@10",
+        ):
             assert result[key] == pytest.approx(0.0), f"{key} should be 0.0"
         assert result["hit"] is False
 
@@ -382,15 +415,29 @@ class TestCalculateMetricsFromResults:
 # ---------------------------------------------------------------------------
 
 _ALL_ZERO_QUERY: dict = {
-    "recall@1": 0.0, "recall@5": 0.0, "recall@10": 0.0,
-    "precision@1": 0.0, "precision@5": 0.0, "precision@10": 0.0,
-    "mrr": 0.0, "ndcg@5": 0.0, "ndcg@10": 0.0, "hit": False,
+    "recall@1": 0.0,
+    "recall@5": 0.0,
+    "recall@10": 0.0,
+    "precision@1": 0.0,
+    "precision@5": 0.0,
+    "precision@10": 0.0,
+    "mrr": 0.0,
+    "ndcg@5": 0.0,
+    "ndcg@10": 0.0,
+    "hit": False,
 }
 
 _ALL_ONE_QUERY: dict = {
-    "recall@1": 1.0, "recall@5": 1.0, "recall@10": 1.0,
-    "precision@1": 1.0, "precision@5": 1.0, "precision@10": 1.0,
-    "mrr": 1.0, "ndcg@5": 1.0, "ndcg@10": 1.0, "hit": True,
+    "recall@1": 1.0,
+    "recall@5": 1.0,
+    "recall@10": 1.0,
+    "precision@1": 1.0,
+    "precision@5": 1.0,
+    "precision@10": 1.0,
+    "mrr": 1.0,
+    "ndcg@5": 1.0,
+    "ndcg@10": 1.0,
+    "hit": True,
 }
 
 
@@ -467,7 +514,12 @@ class TestAggregateMetrics:
 
     def test_line_overlap_keys_only_when_present(self):
         # Only one of two queries has line_recall — averaged across that one only
-        q_with = {**_ALL_ONE_QUERY, "line_recall": 0.8, "line_precision": 0.6, "line_iou": 0.5}
+        q_with = {
+            **_ALL_ONE_QUERY,
+            "line_recall": 0.8,
+            "line_precision": 0.6,
+            "line_iou": 0.5,
+        }
         q_without = {**_ALL_ONE_QUERY}
         agg = aggregate_metrics([q_with, q_without])
         assert agg["line_recall"] == pytest.approx(0.8)
