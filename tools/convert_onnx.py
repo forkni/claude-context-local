@@ -122,6 +122,15 @@ def convert(
             "Run --list to see eligible models."
         )
 
+    # Resolve output dir early so we can check the cache before importing optimum
+    onnx_dir = output or _onnx_cache_dir(model_name)
+
+    if _is_converted(onnx_dir):
+        _log.info(
+            "ONNX model already exists — skipping conversion (use --force to re-convert)."
+        )
+        return onnx_dir
+
     # Lazy import — only required when converting
     try:
         from optimum.onnxruntime import (
@@ -146,18 +155,11 @@ def convert(
             device = "cpu"
 
     provider = _resolve_provider(device)
-    onnx_dir = output or _onnx_cache_dir(model_name)
 
     _log.info(f"Model:     {model_name}")
     _log.info(f"Optimize:  {optimize}")
     _log.info(f"Device:    {device} ({provider})")
     _log.info(f"Output:    {onnx_dir}")
-
-    if _is_converted(onnx_dir):
-        _log.info(
-            "ONNX model already exists — skipping conversion (use --force to re-convert)."
-        )
-        return onnx_dir
 
     onnx_dir.mkdir(parents=True, exist_ok=True)
 
@@ -235,6 +237,10 @@ def validate(model_name: str, onnx_dir: Path, device: str = "cpu") -> bool:
     Encodes 10 code-like sentences with both backends. Passes if max cosine diff < 0.001
     (threshold from the Optimum notebook benchmark: GEMM GELU max diff was 0.0004).
 
+    Pooling strategy is read from MODEL_REGISTRY["onnx_pooling"] and must match
+    what ONNXEmbeddingModel uses — otherwise validation results are meaningless for
+    mean-pooling models (e.g. Qwen3-Embedding-0.6B, embeddinggemma-300m).
+
     Args:
         model_name: Original HuggingFace model name for PyTorch reference.
         onnx_dir: Directory containing the optimized ONNX model.
@@ -273,6 +279,15 @@ def validate(model_name: str, onnx_dir: Path, device: str = "cpu") -> bool:
         _log.error(f"optimum not available: {e}")
         return False
 
+    # Resolve pooling strategy from MODEL_REGISTRY (default: "cls")
+    try:
+        from search.config import MODEL_REGISTRY
+
+        pooling = MODEL_REGISTRY.get(model_name, {}).get("onnx_pooling", "cls")
+    except ImportError:
+        pooling = "cls"
+    _log.info(f"Pooling strategy: {pooling!r} (from MODEL_REGISTRY)")
+
     provider = _resolve_provider(device)
 
     # Load PyTorch reference model
@@ -296,8 +311,14 @@ def validate(model_name: str, onnx_dir: Path, device: str = "cpu") -> bool:
     )
     with torch.no_grad():
         ort_out = ort_model(**encoded)
-    # CLS pooling (position 0 of last_hidden_state)
-    onnx_embeddings = ort_out.last_hidden_state[:, 0, :]
+    last_hidden = ort_out.last_hidden_state  # (N, seq_len, dim)
+    if pooling == "mean":
+        attention_mask = encoded["attention_mask"]
+        mask_expanded = attention_mask.unsqueeze(-1).float()
+        onnx_embeddings = (last_hidden * mask_expanded).sum(dim=1)
+        onnx_embeddings = onnx_embeddings / mask_expanded.sum(dim=1).clamp(min=1e-9)
+    else:  # cls
+        onnx_embeddings = last_hidden[:, 0, :]
     onnx_embeddings = F.normalize(onnx_embeddings.float(), p=2, dim=1)
 
     # Compute diffs

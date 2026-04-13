@@ -39,8 +39,7 @@
     "dynamic_batch_min": 16,
     "dynamic_batch_max": 64,
     "enable_auto_reindex": true,
-    "max_index_age_minutes": 30.0,
-    "use_onnx": false
+    "max_index_age_minutes": 30.0
   },
   "multi_hop": {
     "enabled": true,
