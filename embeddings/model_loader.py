@@ -220,6 +220,64 @@ class ModelLoader:
 
         return kwargs
 
+    def _should_use_onnx(self) -> bool:
+        """Return True if ONNX is enabled in config and this model is eligible.
+
+        Eligibility requires:
+        - use_onnx=True in performance config
+        - Model does NOT require trust_remote_code (custom architectures unsupported)
+        """
+        try:
+            from mcp_server.utils.config_helpers import (
+                get_config_via_service_locator as _get_config,
+            )
+
+            config = _get_config()
+            if not config or not getattr(config.performance, "use_onnx", False):
+                return False
+        except Exception:
+            return False
+
+        model_config = self._get_model_config()
+        if model_config.get("trust_remote_code", False):
+            self._logger.debug(
+                f"[ONNX] Skipping {self.model_name!r}: trust_remote_code=True"
+            )
+            return False
+        return True
+
+    def _load_onnx(self) -> tuple[Any, str]:
+        """Load model via ONNX Runtime, auto-converting from HuggingFace if needed.
+
+        Returns:
+            Tuple of (ONNXEmbeddingModel, resolved_device)
+        """
+        from embeddings.onnx_loader import ONNXModelLoader
+        from embeddings.onnx_wrapper import ONNXEmbeddingModel
+
+        model_config = self._get_model_config()
+        pooling = model_config.get("onnx_pooling", "cls")
+
+        loader = ONNXModelLoader(
+            model_name=self.model_name,
+            cache_dir=self.cache_dir,
+            device=self.device,
+        )
+        ort_model, tokenizer, device = loader.load()
+
+        wrapper = ONNXEmbeddingModel(
+            ort_model=ort_model,
+            tokenizer=tokenizer,
+            device=device,
+            pooling=pooling,
+            model_name=self.model_name,
+        )
+        self._logger.info(
+            f"Model loaded successfully on device: {device} "
+            f"[backend=onnxruntime, pooling={pooling}]"
+        )
+        return wrapper, device
+
     def load(self) -> tuple[Any, str]:
         """Load model with automatic cache corruption recovery and fallback.
 
@@ -231,6 +289,10 @@ class ModelLoader:
             ValueError: If model not found on HuggingFace Hub
             RuntimeError: If model loading fails after all recovery attempts
         """
+        # ONNX fast path — bypasses PyTorch loading entirely when enabled
+        if self._should_use_onnx():
+            return self._load_onnx()
+
         if SentenceTransformer is None:
             raise ImportError(
                 "sentence-transformers not found. Install with: "

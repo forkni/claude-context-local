@@ -34,6 +34,7 @@ MODEL_REGISTRY = {
         "description": "Default model, fast and efficient",
         "vram_gb": "4-8GB",
         "fallback_batch_size": 128,  # Used when dynamic sizing disabled
+        "onnx_pooling": "mean",  # Gemma uses mean pooling
     },
     "BAAI/bge-m3": {
         "dimension": 1024,
@@ -41,6 +42,7 @@ MODEL_REGISTRY = {
         "description": "Recommended upgrade, hybrid search support",
         "vram_gb": "1-1.5GB",  # Updated from "3-4GB" (actual measured: 1.07GB)
         "fallback_batch_size": 256,  # Used when dynamic sizing disabled
+        "onnx_pooling": "cls",  # BGE uses CLS pooling (confirmed by Optimum notebook)
     },
     "BAAI/bge-code-v1": {
         "dimension": 1536,
@@ -57,6 +59,7 @@ MODEL_REGISTRY = {
         "vram_gb": "2.3GB",
         "fallback_batch_size": 256,
         "vram_tier": "minimal",  # Usable on all GPUs
+        "onnx_pooling": "mean",  # Qwen3-Embedding uses mean pooling
         # Matryoshka Representation Learning (MRL) support
         "mrl_dimensions": [1024, 512, 256, 128, 64, 32],  # Supported MRL dimensions
         "truncate_dim": None,  # Optional: Set to reduce output dimension (e.g., 512)
@@ -83,6 +86,7 @@ MODEL_REGISTRY = {
         "vram_gb": "0.28GB",
         "fallback_batch_size": 256,
         "model_type": "code-optimized",
+        "onnx_pooling": "cls",  # GTE-ModernBERT uses CLS pooling
     },
 }
 
@@ -225,6 +229,11 @@ class PerformanceConfig:
         16  # Minimum batch size (lowered for fragmentation headroom)
     )
     dynamic_batch_max: int = 384  # Maximum batch size (safer for 8-16GB GPUs)
+
+    # ONNX Runtime inference (optional — requires uv pip install -e .[onnx])
+    use_onnx: bool = (
+        False  # When True, loads eligible models via ORTModelForFeatureExtraction
+    )
 
     # Auto-reindexing
     enable_auto_reindex: bool = True

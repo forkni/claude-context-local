@@ -1,7 +1,7 @@
 {
   "embedding": {
-    "model_name": "Qwen/Qwen3-Embedding-0.6B",
-    "dimension": 1024,
+    "model_name": "BAAI/bge-code-v1",
+    "dimension": 1536,
     "batch_size": 128,
     "query_cache_size": 128,
     "enable_import_context": true,
@@ -39,7 +39,8 @@
     "dynamic_batch_min": 16,
     "dynamic_batch_max": 64,
     "enable_auto_reindex": true,
-    "max_index_age_minutes": 30.0
+    "max_index_age_minutes": 30.0,
+    "use_onnx": false
   },
   "multi_hop": {
     "enabled": true,

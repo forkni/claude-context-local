@@ -41,7 +41,7 @@ dependencies = [
     "torch>=2.8.0,<2.9.0",  # 2.9.x breaks ModernBERT torch.compile (template conflict)
     "rich>=14.3.3",
     "sentence-transformers>=5.2.2",
-    "transformers>=5.0.0",  # Required for Qwen3-0.6B support
+    "transformers>=4.51.0,<4.58.0",  # >=4.51 for Qwen3; <4.58 required by optimum-onnx ONNX compatibility
     "sqlitedict>=2.1.0",
     "tree-sitter>=0.25.0",
     "tree-sitter-c>=0.24.1",
@@ -86,6 +86,13 @@ profile = [
     "snoop>=0.6.0",
     "py-heat>=0.0.6",
 ]
+onnx = [
+    "optimum[onnxruntime-gpu]>=1.25.0",
+]
+# NOTE: optimum[onnxruntime-gpu] caps transformers<4.58.0. This is why
+# transformers is pinned to >=4.51.0,<4.58.0 in the main dependencies.
+# Install: uv pip install -e .[onnx]
+# See tools/convert_onnx.py for standalone conversion usage.
 
 [project.urls]
 Homepage = "https://github.com/forkni/claude-context-local"
