@@ -230,6 +230,9 @@ class ONNXModelLoader:
         _log.info(
             f"[ONNX] Loading {self.model_name!r} from {self._onnx_dir} via {provider}"
         )
+        # Suppress benign upstream tokenizer warning about incorrect regex pattern.
+        # BGE-M3 (and Mistral-derived tokenizer configs) emit this during both
+        # ORTModelForFeatureExtraction.from_pretrained() and AutoTokenizer.from_pretrained().
         try:
             import onnxruntime as ort
 
@@ -251,23 +254,19 @@ class ONNXModelLoader:
                 except Exception:
                     pass
 
-            ort_model = ORTModelForFeatureExtraction.from_pretrained(
-                str(self._onnx_dir),
-                file_name=model_file,
-                provider=provider,
-                session_options=session_options,
-            )
-            try:
-                # Suppress benign upstream tokenizer warning about incorrect regex pattern
-                # (affects BGE-M3 and models derived from Mistral tokenizer configs).
-                with warnings.catch_warnings():
-                    warnings.filterwarnings(
-                        "ignore", message=".*incorrect regex pattern.*"
-                    )
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*incorrect regex pattern.*")
+                ort_model = ORTModelForFeatureExtraction.from_pretrained(
+                    str(self._onnx_dir),
+                    file_name=model_file,
+                    provider=provider,
+                    session_options=session_options,
+                )
+                try:
                     tokenizer = AutoTokenizer.from_pretrained(str(self._onnx_dir))
-            except Exception:
-                # Unoptimized fallback exports may not have tokenizer files in the ONNX dir
-                tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+                except Exception:
+                    # Unoptimized fallback exports may not have tokenizer files in the ONNX dir
+                    tokenizer = AutoTokenizer.from_pretrained(self.model_name)
         except Exception as e:
             raise RuntimeError(
                 f"[ONNX] Failed to load from {self._onnx_dir}: {e}\n"

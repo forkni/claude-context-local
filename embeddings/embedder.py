@@ -72,9 +72,10 @@ MODEL_ACTIVATION_COST_OVERRIDES: dict[str, float] = {
     # ORT has no in-place optimization and uses a separate allocator, so per-item
     # cost is ~3.5x higher than the PyTorch medium tier (0.08 GB/item).
     "BAAI/bge-m3": 0.28,
-    # GTE-ModernBERT (ONNX): smaller 768-dim model, estimated from ONNX overhead pattern.
-    # Conservative estimate pending empirical measurement on RTX 3070.
-    "Alibaba-NLP/gte-modernbert-base": 0.15,
+    # GTE-ModernBERT (ONNX): 768-dim, ORT overhead measured via shared memory spill.
+    # batch=22 at 0.15 GB/item spilled to shared memory on RTX 3070 (8GB).
+    # Increased to 0.25 GB/item to keep dedicated VRAM under capacity.
+    "Alibaba-NLP/gte-modernbert-base": 0.25,
 }
 
 
