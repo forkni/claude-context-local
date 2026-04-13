@@ -53,11 +53,11 @@ class TestConvertOnnxIsConverted:
         (tmp_path / "model_optimized.onnx").write_bytes(b"")
         assert convert_onnx._is_converted(tmp_path) is True
 
-    def test_false_with_only_base_model(self, tmp_path):
-        """CLI version requires model_optimized.onnx specifically — model.onnx alone is not enough."""
+    def test_true_with_only_base_model(self, tmp_path):
+        """model.onnx (unoptimized fallback) is also accepted as a valid conversion."""
         (tmp_path / "convert_meta.json").write_text("{}")
         (tmp_path / "model.onnx").write_bytes(b"")
-        assert convert_onnx._is_converted(tmp_path) is False
+        assert convert_onnx._is_converted(tmp_path) is True
 
     def test_false_missing_meta(self, tmp_path):
         (tmp_path / "model_optimized.onnx").write_bytes(b"")
@@ -177,6 +177,33 @@ class TestConvert:
         assert result == tmp_path
         meta = json.loads((tmp_path / "convert_meta.json").read_text())
         assert meta["model_file"] == "model.onnx"
+
+    def test_unsupported_arch_falls_back_to_unoptimized(self, tmp_path):
+        """When ORTOptimizer reports unsupported architecture, save unoptimized model.onnx."""
+        mock_ort = MagicMock()
+        mock_ort_model = MagicMock()
+        mock_ort.ORTModelForFeatureExtraction.from_pretrained.return_value = (
+            mock_ort_model
+        )
+        mock_optimizer = MagicMock()
+        mock_optimizer.optimize.side_effect = RuntimeError(
+            "ONNX Runtime doesn't support the graph optimization of qwen3 yet."
+        )
+        mock_ort.ORTOptimizer.from_pretrained.return_value = mock_optimizer
+
+        def _save_pretrained(save_dir, **kw):
+            (Path(save_dir) / "model.onnx").write_bytes(b"")
+
+        mock_ort_model.save_pretrained.side_effect = _save_pretrained
+
+        with patch.dict("sys.modules", {"optimum.onnxruntime": mock_ort}):
+            result = convert_onnx.convert("BAAI/bge-m3", device="cpu", output=tmp_path)
+
+        assert result == tmp_path
+        assert (tmp_path / "model.onnx").is_file()
+        meta = json.loads((tmp_path / "convert_meta.json").read_text())
+        assert meta["optimization_level"] == "none"
+        assert meta["gemm_gelu_fusion"] is False
 
     def test_no_model_file_after_optimization_raises(self, tmp_path):
         mock_ort = MagicMock()

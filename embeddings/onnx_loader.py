@@ -234,7 +234,11 @@ class ONNXModelLoader:
                 str(self._onnx_dir),
                 provider=provider,
             )
-            tokenizer = AutoTokenizer.from_pretrained(str(self._onnx_dir))
+            try:
+                tokenizer = AutoTokenizer.from_pretrained(str(self._onnx_dir))
+            except Exception:
+                # Unoptimized fallback exports may not have tokenizer files in the ONNX dir
+                tokenizer = AutoTokenizer.from_pretrained(self.model_name)
         except Exception as e:
             raise RuntimeError(
                 f"[ONNX] Failed to load from {self._onnx_dir}: {e}\n"

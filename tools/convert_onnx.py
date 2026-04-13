@@ -37,7 +37,9 @@ _ONNX_INELIGIBLE = {
     "jinaai/jina-reranker-v3",  # Listwise, custom model.rerank() API
     "Qwen/Qwen3-Reranker-0.6B",  # Generative causal LM, wrong paradigm for ONNX
     "Qwen/Qwen3-Reranker-4B",
+    "Qwen/Qwen3-Embedding-0.6B",  # ORT requires position_ids not provided by tokenizer
     "BAAI/bge-code-v1",  # 2B params, GPU-bound — marginal ONNX gain
+    "google/embeddinggemma-300m",  # Gemma3 ONNX trace breaks (TracerWarnings → wrong embeddings)
 }
 
 _OPTIMIZE_LEVELS = ("O1", "O2", "O3", "O4")
@@ -57,8 +59,10 @@ def _onnx_cache_dir(model_name: str, base: Path | None = None) -> Path:
 def _is_converted(onnx_dir: Path) -> bool:
     """True if a valid converted model already exists at onnx_dir."""
     meta = onnx_dir / "convert_meta.json"
-    model_file = onnx_dir / "model_optimized.onnx"
-    return meta.is_file() and model_file.is_file()
+    return meta.is_file() and (
+        (onnx_dir / "model_optimized.onnx").is_file()
+        or (onnx_dir / "model.onnx").is_file()
+    )
 
 
 def list_models() -> None:
@@ -177,7 +181,10 @@ def convert(
     # Step 2: Optimize with O4 + GEMM GELU fusion
     # GEMM GELU fusion is more accurate than gelu_approximation (max diff 0.0004 vs 0.0011)
     # per the Faster_Embeddings_with_Optimum.ipynb benchmark.
+    # For architectures not yet supported by ORTOptimizer (e.g. gemma3, qwen3), we fall back
+    # to saving the unoptimized ONNX export so the model is still usable for inference.
     _log.info(f"Step 2/2: Applying {optimize} optimization + GEMM GELU fusion...")
+    _optimized = True
     try:
         optimizer = ORTOptimizer.from_pretrained(ort_model)
 
@@ -191,7 +198,25 @@ def convert(
             optimization_config=optimization_config,
         )
     except Exception as e:
-        raise RuntimeError(f"ONNX optimization failed: {e}") from e
+        _unsupported = "not available yet" in str(
+            e
+        ) or "doesn't support the graph optimization" in str(e)
+        if _unsupported:
+            _log.warning(
+                "ORTOptimizer does not support this architecture — saving unoptimized model."
+            )
+            _log.warning(f"  Reason: {e}")
+            ort_model.save_pretrained(str(onnx_dir))
+            # save_pretrained() saves model+config but not the tokenizer — save it explicitly
+            try:
+                from transformers import AutoTokenizer
+
+                AutoTokenizer.from_pretrained(model_name).save_pretrained(str(onnx_dir))
+            except Exception as tok_err:
+                _log.warning(f"Could not save tokenizer to ONNX dir: {tok_err}")
+            _optimized = False
+        else:
+            raise RuntimeError(f"ONNX optimization failed: {e}") from e
 
     # Verify the optimized model file exists
     model_file = onnx_dir / "model_optimized.onnx"
@@ -216,8 +241,8 @@ def convert(
 
     meta = {
         "source_model": model_name,
-        "optimization_level": optimize,
-        "gemm_gelu_fusion": True,
+        "optimization_level": optimize if _optimized else "none",
+        "gemm_gelu_fusion": _optimized,
         "device": device,
         "provider": provider,
         "converted_at": datetime.now(UTC).isoformat(),
@@ -300,7 +325,12 @@ def validate(model_name: str, onnx_dir: Path, device: str = "cpu") -> bool:
 
     # Load ONNX model
     _log.info("Loading ONNX model...")
-    tokenizer = AutoTokenizer.from_pretrained(str(onnx_dir))
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(str(onnx_dir))
+    except Exception:
+        # Unoptimized fallback models may not have tokenizer saved in onnx_dir
+        _log.info("Tokenizer not in ONNX dir — loading from original model name...")
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
     ort_model = ORTModelForFeatureExtraction.from_pretrained(
         str(onnx_dir), provider=provider
     )
@@ -429,7 +459,9 @@ Examples:
         sys.exit(1)
 
     if args.validate:
-        device = args.device or ("cuda" if _cuda_available() else "cpu")
+        # Default to CPU for quality validation — avoids ORT CUDA provider compatibility
+        # issues on some systems. Use --device cuda to force CUDA validation explicitly.
+        device = args.device or "cpu"
         ok = validate(args.model, onnx_dir, device=device)
         sys.exit(0 if ok else 1)
 
