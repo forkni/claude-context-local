@@ -302,9 +302,6 @@ class ModelLoader:
         )
         ort_model, tokenizer, device = loader.load()
 
-        post_vram_bytes = _get_nvml_used_bytes(device)
-        vram_delta_gb = max(0.0, (post_vram_bytes - pre_vram_bytes) / (1024**3))
-
         wrapper = ONNXEmbeddingModel(
             ort_model=ort_model,
             tokenizer=tokenizer,
@@ -312,6 +309,21 @@ class ModelLoader:
             pooling=pooling,
             model_name=self.model_name,
         )
+
+        # Warmup inference: ORT CUDAExecutionProvider defers bulk CUDA allocation to
+        # first inference. Without warmup, the pynvml delta only captures session setup
+        # overhead (~0.5GB) rather than the full runtime footprint (~1.5-2.5GB).
+        if device == "cuda":
+            try:
+                wrapper.encode(["warmup"], batch_size=1)
+                self._logger.debug(
+                    "[ONNX] Warmup inference complete — CUDA memory now allocated"
+                )
+            except Exception as e:
+                self._logger.debug(f"[ONNX] Warmup failed (non-fatal): {e}")
+
+        post_vram_bytes = _get_nvml_used_bytes(device)
+        vram_delta_gb = max(0.0, (post_vram_bytes - pre_vram_bytes) / (1024**3))
         wrapper._vram_gb = (
             vram_delta_gb  # used by _get_model_vram_gb() for batch sizing
         )

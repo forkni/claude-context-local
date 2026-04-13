@@ -67,6 +67,14 @@ MODEL_ACTIVATION_COST_OVERRIDES: dict[str, float] = {
     # Note: PyTorch caching allocator inflates driver-level VRAM readings;
     # this value is based on batch sizing safety, not raw mem_get_info deltas.
     "Qwen/Qwen3-Embedding-0.6B": 0.27,
+    # BGE-M3 (ONNX): ORT CUDAExecutionProvider uses ~0.28 GB/item activation.
+    # Measured via Task Manager: 4.5GB activations for batch=16 → 0.28 GB/item.
+    # ORT has no in-place optimization and uses a separate allocator, so per-item
+    # cost is ~3.5x higher than the PyTorch medium tier (0.08 GB/item).
+    "BAAI/bge-m3": 0.28,
+    # GTE-ModernBERT (ONNX): smaller 768-dim model, estimated from ONNX overhead pattern.
+    # Conservative estimate pending empirical measurement on RTX 3070.
+    "Alibaba-NLP/gte-modernbert-base": 0.15,
 }
 
 

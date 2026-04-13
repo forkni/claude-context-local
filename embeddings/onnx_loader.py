@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import warnings
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -237,13 +238,33 @@ class ONNXModelLoader:
             # assigns shape-related ops to CPU; the messages are noise, not errors.
             session_options.log_severity_level = 3  # ERROR only (0=VERBOSE, 3=ERROR)
 
+            # Resolve the ONNX model filename from conversion metadata.
+            # Optimum's default file resolution looks for "model.onnx" but our
+            # optimized export produces "model_optimized.onnx" — passing file_name
+            # explicitly silences the "could not find model.onnx" warning.
+            model_file = "model_optimized.onnx"  # O4-optimized default
+            meta_path = self._onnx_dir / "convert_meta.json"
+            if meta_path.is_file():
+                try:
+                    meta = json.loads(meta_path.read_text())
+                    model_file = meta.get("model_file", model_file)
+                except Exception:
+                    pass
+
             ort_model = ORTModelForFeatureExtraction.from_pretrained(
                 str(self._onnx_dir),
+                file_name=model_file,
                 provider=provider,
                 session_options=session_options,
             )
             try:
-                tokenizer = AutoTokenizer.from_pretrained(str(self._onnx_dir))
+                # Suppress benign upstream tokenizer warning about incorrect regex pattern
+                # (affects BGE-M3 and models derived from Mistral tokenizer configs).
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore", message=".*incorrect regex pattern.*"
+                    )
+                    tokenizer = AutoTokenizer.from_pretrained(str(self._onnx_dir))
             except Exception:
                 # Unoptimized fallback exports may not have tokenizer files in the ONNX dir
                 tokenizer = AutoTokenizer.from_pretrained(self.model_name)
