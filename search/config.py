@@ -532,6 +532,7 @@ class SearchConfig:
                 "dynamic_batch_max": self.performance.dynamic_batch_max,
                 "enable_auto_reindex": self.performance.enable_auto_reindex,
                 "max_index_age_minutes": self.performance.max_index_age_minutes,
+                "use_onnx": self.performance.use_onnx,
             },
             "multi_hop": {
                 "enabled": self.multi_hop.enabled,
@@ -709,6 +710,7 @@ class SearchConfig:
                 max_index_age_minutes=performance_data.get(
                     "max_index_age_minutes", 5.0
                 ),
+                use_onnx=performance_data.get("use_onnx", False),
             )
 
             multi_hop = MultiHopConfig(
@@ -878,6 +880,7 @@ class SearchConfig:
                 dynamic_batch_max=data.get("dynamic_batch_max", 384),
                 enable_auto_reindex=data.get("enable_auto_reindex", True),
                 max_index_age_minutes=data.get("max_index_age_minutes", 5.0),
+                use_onnx=data.get("use_onnx", False),
             )
 
             multi_hop = MultiHopConfig(

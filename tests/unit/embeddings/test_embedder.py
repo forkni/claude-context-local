@@ -22,6 +22,7 @@ supported_models = [m for m in MODEL_REGISTRY if "8B" not in m]
 
 
 @pytest.mark.parametrize("model_name", supported_models)
+@patch("embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False)
 @patch("embeddings.model_loader.SentenceTransformer")
 @patch("embeddings.embedder.SentenceTransformer")
 def test_model_loading_and_embedding(
@@ -175,6 +176,7 @@ def test_prefixing_logic(mock_sentence_transformer, mock_model_loader_st):
     del MODEL_REGISTRY["test/query-prefix-model"]
 
 
+@patch("embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False)
 @patch("embeddings.model_loader.SentenceTransformer")
 @patch("embeddings.embedder.SentenceTransformer")
 def test_query_cache_hits_and_misses(mock_sentence_transformer, mock_model_loader_st):
@@ -241,6 +243,7 @@ def test_query_cache_hits_and_misses(mock_sentence_transformer, mock_model_loade
     assert stats["cache_size"] == 2
 
 
+@patch("embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False)
 @patch("embeddings.model_loader.SentenceTransformer")
 @patch("embeddings.embedder.SentenceTransformer")
 def test_query_cache_lru_eviction(mock_sentence_transformer, mock_model_loader_st):
@@ -584,6 +587,7 @@ def test_query_cache_with_task_instruction(
     assert stats["misses"] == 1
 
 
+@patch("embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False)
 @patch("embeddings.model_loader.SentenceTransformer")
 @patch("embeddings.embedder.SentenceTransformer")
 def test_mrl_truncate_dim_support(mock_sentence_transformer, mock_model_loader_st):
@@ -631,6 +635,7 @@ def test_mrl_truncate_dim_support(mock_sentence_transformer, mock_model_loader_s
         )
 
 
+@patch("embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False)
 @patch("embeddings.model_loader.SentenceTransformer")
 @patch("embeddings.embedder.SentenceTransformer")
 def test_instruction_mode_custom(mock_sentence_transformer, mock_model_loader_st):
@@ -674,6 +679,7 @@ def test_instruction_mode_custom(mock_sentence_transformer, mock_model_loader_st
     assert "prompt_name" not in encode_kwargs
 
 
+@patch("embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False)
 @patch("embeddings.model_loader.SentenceTransformer")
 @patch("embeddings.embedder.SentenceTransformer")
 def test_instruction_mode_prompt_name(mock_sentence_transformer, mock_model_loader_st):
@@ -719,6 +725,7 @@ def test_instruction_mode_prompt_name(mock_sentence_transformer, mock_model_load
     MODEL_REGISTRY["Qwen/Qwen3-Embedding-0.6B"]["instruction_mode"] = "custom"
 
 
+@patch("embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False)
 @patch("embeddings.model_loader.SentenceTransformer")
 @patch("embeddings.embedder.SentenceTransformer")
 def test_instruction_mode_cache_keys(mock_sentence_transformer, mock_model_loader_st):

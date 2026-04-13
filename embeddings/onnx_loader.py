@@ -230,9 +230,17 @@ class ONNXModelLoader:
             f"[ONNX] Loading {self.model_name!r} from {self._onnx_dir} via {provider}"
         )
         try:
+            import onnxruntime as ort
+
+            session_options = ort.SessionOptions()
+            # Suppress Memcpy/shape-op assignment warnings — ORT intentionally
+            # assigns shape-related ops to CPU; the messages are noise, not errors.
+            session_options.log_severity_level = 3  # ERROR only (0=VERBOSE, 3=ERROR)
+
             ort_model = ORTModelForFeatureExtraction.from_pretrained(
                 str(self._onnx_dir),
                 provider=provider,
+                session_options=session_options,
             )
             try:
                 tokenizer = AutoTokenizer.from_pretrained(str(self._onnx_dir))

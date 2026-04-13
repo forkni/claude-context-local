@@ -1304,9 +1304,22 @@ class CodeEmbedder:
         Returns GPU memory allocated by the model in gigabytes.
         Used for dynamic batch size calculation to avoid using registry estimates.
 
+        For ONNX models: PyTorch's allocator reports 0 because ORT's
+        CUDAExecutionProvider allocates CUDA memory outside PyTorch. ModelLoader
+        stores the pynvml before/after delta on the wrapper as `_vram_gb` instead.
+
         Returns:
             Model VRAM usage in GB, or 0.0 if GPU not available
         """
+        # ONNX path: use measured ORT allocation delta (set by ModelLoader._load_onnx)
+        if (
+            self._model is not None
+            and hasattr(self._model, "_vram_gb")
+            and self._model._vram_gb > 0
+        ):
+            return self._model._vram_gb
+
+        # PyTorch path
         if torch is None or not torch.cuda.is_available():
             return 0.0
 
@@ -1329,8 +1342,20 @@ class CodeEmbedder:
             try:
                 import gc
 
-                # Step 1: Move model to CPU (frees VRAM immediately)
-                if torch is not None and torch.cuda.is_available():
+                # Step 1: Free GPU memory.
+                # ONNX path: call cleanup() to explicitly destroy the ORT CUDA session,
+                # which is the only way to release CUDA memory allocated by ORT's
+                # CUDAExecutionProvider (not tracked by torch.cuda.memory_allocated).
+                # PyTorch path: move to CPU first to free VRAM, then delete.
+                if hasattr(self._model, "cleanup"):
+                    self._logger.info("Releasing ONNX Runtime CUDA session...")
+                    self._model.cleanup()
+                    self._logger.info("ONNX VRAM freed")
+                elif (
+                    torch is not None
+                    and torch.cuda.is_available()
+                    and hasattr(self._model, "cpu")
+                ):
                     self._logger.info("Moving model from GPU to CPU...")
                     self._model = self._model.cpu()
                     torch.cuda.synchronize()  # Wait for GPU operations

@@ -30,6 +30,25 @@ from mcp_server.utils.config_helpers import (
 )
 
 
+def _get_nvml_used_bytes() -> int:
+    """Return total GPU memory used (bytes) via NVML, or 0 on failure.
+
+    Used to take before/after snapshots around ONNX model loads so that
+    ORT's CUDAExecutionProvider allocations (invisible to PyTorch) can be
+    measured and reported to the dynamic batch-size calculator.
+    """
+    try:
+        import pynvml
+
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        pynvml.nvmlShutdown()
+        return mem.used
+    except Exception:
+        return 0
+
+
 class ModelLoader:
     """Handles loading and device management for embedding models.
 
@@ -258,12 +277,20 @@ class ModelLoader:
         model_config = self._get_model_config()
         pooling = model_config.get("onnx_pooling", "cls")
 
+        # Snapshot real VRAM before ORT session creation. ORT's CUDAExecutionProvider
+        # allocates CUDA memory outside PyTorch — torch.cuda.memory_allocated() stays 0.
+        # A before/after delta gives the true model footprint for batch-size calculation.
+        pre_vram_bytes = _get_nvml_used_bytes()
+
         loader = ONNXModelLoader(
             model_name=self.model_name,
             cache_dir=self.cache_dir,
             device=self.device,
         )
         ort_model, tokenizer, device = loader.load()
+
+        post_vram_bytes = _get_nvml_used_bytes()
+        vram_delta_gb = max(0.0, (post_vram_bytes - pre_vram_bytes) / (1024**3))
 
         wrapper = ONNXEmbeddingModel(
             ort_model=ort_model,
@@ -272,9 +299,13 @@ class ModelLoader:
             pooling=pooling,
             model_name=self.model_name,
         )
+        wrapper._vram_gb = (
+            vram_delta_gb  # used by _get_model_vram_gb() for batch sizing
+        )
+
         self._logger.info(
             f"Model loaded successfully on device: {device} "
-            f"[backend=onnxruntime, pooling={pooling}]"
+            f"[backend=onnxruntime, pooling={pooling}, vram={vram_delta_gb:.2f}GB]"
         )
         return wrapper, device
 

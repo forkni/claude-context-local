@@ -41,13 +41,16 @@ class TestModelLoader:
     @pytest.fixture
     def model_loader(self, temp_cache_dir, cache_manager, model_config_basic):
         """Create a basic model loader for testing."""
-        return ModelLoader(
+        loader = ModelLoader(
             model_name="BAAI/bge-m3",
             cache_dir=str(temp_cache_dir),
             device="auto",
             cache_manager=cache_manager,
             model_config_getter=lambda: model_config_basic,
         )
+        # Keep tests isolated from live search_config.json (use_onnx=True)
+        loader._should_use_onnx = lambda: False
+        return loader
 
     def test_initialization(self, temp_cache_dir, cache_manager, model_config_basic):
         """Test model loader initialization."""

@@ -10,6 +10,7 @@ Pooling strategies:
 
 from __future__ import annotations
 
+import gc
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -50,6 +51,9 @@ class ONNXEmbeddingModel:
         self.device = device
         self.pooling = pooling
         self.model_name = model_name
+        # Set by ModelLoader._load_onnx() after measuring actual VRAM delta via pynvml.
+        # Used by CodeEmbedder._get_model_vram_gb() for dynamic batch-size calculation.
+        self._vram_gb: float = 0.0
 
         # Validate pooling strategy
         if pooling not in ("cls", "mean"):
@@ -61,6 +65,15 @@ class ONNXEmbeddingModel:
             f"ONNXEmbeddingModel ready: model={model_name!r}, "
             f"pooling={pooling!r}, device={device}"
         )
+
+    def get_sentence_embedding_dimension(self) -> int:
+        """Return embedding output dimension (SentenceTransformer compatibility)."""
+        return self.ort_model.config.hidden_size
+
+    @property
+    def max_seq_length(self) -> int:
+        """Return max sequence length (SentenceTransformer compatibility)."""
+        return getattr(self.ort_model.config, "max_position_embeddings", 512)
 
     def encode(
         self,
@@ -130,3 +143,35 @@ class ONNXEmbeddingModel:
         if convert_to_tensor:
             return embeddings  # torch.Tensor on target_device
         return embeddings.cpu().numpy()
+
+    def cleanup(self) -> None:
+        """Release ONNX Runtime CUDA session and free GPU memory.
+
+        ORT's CUDAExecutionProvider allocates CUDA memory outside PyTorch's
+        allocator. torch.cuda.empty_cache() cannot release it — the ORT session
+        must be explicitly deleted so its destructor frees the CUDA allocations.
+        """
+        import torch
+
+        try:
+            if self.ort_model is not None:
+                # Delete the ORT session — triggers CUDAExecutionProvider destructor
+                # which releases GPU memory allocated outside PyTorch.
+                del self.ort_model
+                self.ort_model = None  # type: ignore[assignment]
+            if self.tokenizer is not None:
+                del self.tokenizer
+                self.tokenizer = None  # type: ignore[assignment]
+
+            gc.collect()
+
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+
+            _log.info(
+                f"ONNXEmbeddingModel cleanup complete: model={self.model_name!r}, "
+                "ORT CUDA session released"
+            )
+        except Exception as e:
+            _log.warning(f"ONNXEmbeddingModel cleanup error: {e}")

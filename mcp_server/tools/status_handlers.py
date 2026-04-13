@@ -3,6 +3,7 @@
 Handlers for read-only status queries that don't modify state.
 """
 
+import contextlib
 import json
 import logging
 from typing import Any
@@ -197,28 +198,71 @@ async def handle_get_memory_status(arguments: dict[str, Any]) -> dict:
         "percent": mem.percent,
     }
 
-    # GPU memory
+    # GPU memory — use pynvml for real VRAM (ORT allocates outside PyTorch allocator)
     gpu_memory = {}
     if torch.cuda.is_available():
+        # Try pynvml for actual VRAM used by this process (includes ORT allocations)
+        nvml_available = False
+        try:
+            import pynvml
+
+            pynvml.nvmlInit()
+            nvml_available = True
+        except Exception:
+            pass
+
         for i in range(torch.cuda.device_count()):
-            allocated = torch.cuda.memory_allocated(i) / (1024**3)
-            reserved = torch.cuda.memory_reserved(i) / (1024**3)
+            torch_allocated = torch.cuda.memory_allocated(i) / (1024**3)
+            torch_reserved = torch.cuda.memory_reserved(i) / (1024**3)
             total_vram = torch.cuda.get_device_properties(i).total_memory / (1024**3)
 
-            gpu_memory[f"gpu_{i}"] = {
-                "allocated_gb": round(allocated, 2),
-                "reserved_gb": round(reserved, 2),
-                # Add GPU hardware details
+            # Real VRAM from nvml (includes ORT, reranker, all CUDA allocators)
+            if nvml_available:
+                try:
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                    mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                    real_used_gb = round(mem_info.used / (1024**3), 2)
+                    real_free_gb = round(mem_info.free / (1024**3), 2)
+                except Exception:
+                    real_used_gb = None
+                    real_free_gb = None
+            else:
+                real_used_gb = None
+                real_free_gb = None
+
+            entry: dict[str, Any] = {
+                "torch_allocated_gb": round(torch_allocated, 2),
+                "torch_reserved_gb": round(torch_reserved, 2),
                 "device_name": torch.cuda.get_device_name(i),
                 "device_id": i,
                 "total_vram_gb": round(total_vram, 1),
                 "compute_capability": ".".join(
                     map(str, torch.cuda.get_device_capability(i))
                 ),
-                "utilization_percent": (
-                    round((allocated / total_vram * 100), 1) if total_vram > 0 else 0
-                ),
             }
+            if real_used_gb is not None:
+                entry["used_gb"] = real_used_gb
+                entry["free_gb"] = real_free_gb
+                entry["utilization_percent"] = (
+                    round((real_used_gb / total_vram * 100), 1) if total_vram > 0 else 0
+                )
+                entry["ort_untracked_gb"] = round(
+                    max(0.0, real_used_gb - torch_allocated), 2
+                )
+            else:
+                # Fallback: torch only (may undercount ORT allocations)
+                entry["allocated_gb"] = round(torch_allocated, 2)
+                entry["reserved_gb"] = round(torch_reserved, 2)
+                entry["utilization_percent"] = (
+                    round((torch_allocated / total_vram * 100), 1)
+                    if total_vram > 0
+                    else 0
+                )
+            gpu_memory[f"gpu_{i}"] = entry
+
+        if nvml_available:
+            with contextlib.suppress(Exception):
+                pynvml.nvmlShutdown()
 
     # Index memory estimate
     index_memory = {}

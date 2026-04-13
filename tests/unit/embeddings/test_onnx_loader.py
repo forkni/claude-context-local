@@ -402,9 +402,10 @@ class TestONNXModelLoaderLoad:
             patch("embeddings.onnx_loader._is_converted", return_value=True),
         ):
             loader.load()
-        mock_ort.ORTModelForFeatureExtraction.from_pretrained.assert_called_once_with(
-            str(tmp_path), provider="CUDAExecutionProvider"
-        )
+        call_kwargs = mock_ort.ORTModelForFeatureExtraction.from_pretrained.call_args
+        assert call_kwargs.args == (str(tmp_path),)
+        assert call_kwargs.kwargs["provider"] == "CUDAExecutionProvider"
+        assert "session_options" in call_kwargs.kwargs
 
     def test_runtime_error_on_model_load_failure(self, tmp_path):
         mock_ort_model, mock_tokenizer, mock_ort, mock_tf = self._setup_load_mocks(
