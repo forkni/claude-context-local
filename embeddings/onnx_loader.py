@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import logging
-import warnings
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -254,8 +253,13 @@ class ONNXModelLoader:
                 except Exception:
                     pass
 
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", message=".*incorrect regex pattern.*")
+            # Suppress benign "incorrect regex pattern" warning from transformers.
+            # BGE-M3 uses a Mistral-derived tokenizer that triggers this via logger.warning()
+            # (not warnings.warn), so we must temporarily raise the transformers log level.
+            _transformers_logger = logging.getLogger("transformers")
+            _prev_level = _transformers_logger.level
+            _transformers_logger.setLevel(logging.ERROR)
+            try:
                 ort_model = ORTModelForFeatureExtraction.from_pretrained(
                     str(self._onnx_dir),
                     file_name=model_file,
@@ -267,6 +271,8 @@ class ONNXModelLoader:
                 except Exception:
                     # Unoptimized fallback exports may not have tokenizer files in the ONNX dir
                     tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            finally:
+                _transformers_logger.setLevel(_prev_level)
         except Exception as e:
             raise RuntimeError(
                 f"[ONNX] Failed to load from {self._onnx_dir}: {e}\n"
