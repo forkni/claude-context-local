@@ -30,6 +30,19 @@ from mcp_server.utils.config_helpers import (
 )
 
 
+# Dummy text representative of a typical code chunk (~512 tokens).
+# Used during warmup activation measurement to estimate per-item VRAM cost.
+_WARMUP_TEXT = (
+    "def process_data(self, input_data: list[str], max_length: int = 512) -> list[str]:\n"
+    '    """Process and filter input data."""\n'
+    "    results = []\n"
+    "    for item in input_data:\n"
+    "        if len(item) <= max_length:\n"
+    "            results.append(item.strip())\n"
+    "    return results\n"
+) * 8  # repeat to fill ~512 tokens
+
+
 def _get_nvml_used_bytes(device: str = "cuda:0") -> int:
     """Return total GPU memory used (bytes) via NVML, or 0 on failure.
 
@@ -129,6 +142,70 @@ class ModelLoader:
                 )
         except Exception as e:
             self._logger.debug(f"GPU memory logging failed: {e}")
+
+    def _measure_activation_per_item(
+        self,
+        model: Any,
+        device: str,
+        batch_size: int = 4,
+        is_onnx: bool = False,
+    ) -> float:
+        """Measure activation VRAM per batch item using a small warmup batch.
+
+        Runs ``batch_size`` dummy inputs through the model and records the peak
+        memory delta.  This captures allocator overhead, GEMM workspace buffers,
+        and implementation-specific behaviour that analytical formulas miss.
+
+        Stores the result on ``model._activation_gb_per_item`` and also returns it.
+
+        Args:
+            model: Loaded model (SentenceTransformer or ONNXEmbeddingModel).
+            device: Resolved device string ("cuda" or "cpu").
+            batch_size: Warmup batch size for measurement (default: 4).
+            is_onnx: True for ONNX Runtime backend (uses pynvml instead of torch).
+
+        Returns:
+            Measured activation memory per item in GB, or 0.0 on failure.
+        """
+        if device != "cuda" or (torch is None or not torch.cuda.is_available()):
+            return 0.0
+
+        dummy_batch = [_WARMUP_TEXT] * batch_size
+        try:
+            if is_onnx:
+                # ORT allocates outside PyTorch — use pynvml delta
+                pre = _get_nvml_used_bytes()
+                model.encode(dummy_batch, batch_size=batch_size)
+                post = _get_nvml_used_bytes()
+                delta_gb = max(0.0, (post - pre) / (1024**3))
+            else:
+                # PyTorch: track peak allocated memory across the batch
+                torch.cuda.reset_peak_memory_stats()
+                pre_allocated = torch.cuda.memory_allocated()
+                model.encode(
+                    dummy_batch,
+                    batch_size=batch_size,
+                    show_progress_bar=False,
+                    convert_to_numpy=True,
+                )
+                peak = torch.cuda.max_memory_allocated()
+                delta_gb = max(0.0, (peak - pre_allocated) / (1024**3))
+
+            # Per-item cost + 1.3× safety margin for real batches with longer sequences
+            per_item = delta_gb / batch_size * 1.3
+            model._activation_gb_per_item = per_item
+            self._logger.info(
+                f"[ACTIVATION_MEASURE] {self.model_name}: "
+                f"batch={batch_size}, delta={delta_gb:.3f}GB, "
+                f"per_item={per_item:.3f}GB (×1.3 safety)"
+            )
+            return per_item
+
+        except Exception as e:
+            self._logger.debug(
+                f"[ACTIVATION_MEASURE] Measurement failed for {self.model_name}: {e}"
+            )
+            return 0.0
 
     def get_torch_dtype(self) -> Optional["torch.dtype"]:
         """Get torch dtype based on config and GPU capability.
@@ -329,6 +406,12 @@ class ModelLoader:
         wrapper._vram_gb = (
             vram_delta_gb  # used by _get_model_vram_gb() for batch sizing
         )
+
+        # Measure per-item activation cost with a representative warmup batch
+        if device == "cuda":
+            self._measure_activation_per_item(
+                wrapper, device, batch_size=4, is_onnx=True
+            )
 
         self._logger.info(
             f"Model loaded successfully on device: {device} "
@@ -544,15 +627,39 @@ class ModelLoader:
 
             model = SentenceTransformer(model_source, **constructor_kwargs)
 
-            # Warm-up: trigger TorchDynamo JIT compilation at init time
-            # so the first real user query is not penalized by compilation latency.
+            # Warm-up: trigger TorchDynamo JIT compilation at init time so the first
+            # real user query is not penalized by compilation latency.
+            # Also measures per-item activation cost — reuses this encode() call so no
+            # extra forward pass is needed.
+            _cuda_measure = (
+                torch is not None
+                and torch.cuda.is_available()
+                and resolved_device == "cuda"
+            )
+            _wu_pre_alloc: int = 0
+            if _cuda_measure:
+                torch.cuda.reset_peak_memory_stats()
+                _wu_pre_alloc = torch.cuda.memory_allocated()
+            _wu_succeeded = False
             try:
                 model.encode(
                     ["warm-up"], convert_to_numpy=True, show_progress_bar=False
                 )
                 self._logger.debug("Model warm-up complete (TorchDynamo pre-compiled)")
+                _wu_succeeded = True
             except Exception as _wu_err:
                 self._logger.debug(f"Model warm-up skipped: {_wu_err}")
+
+            # Derive per-item activation cost from the warmup peak (no extra encode call)
+            if _cuda_measure and _wu_succeeded:
+                _wu_peak = torch.cuda.max_memory_allocated()
+                _wu_delta_gb = max(0.0, (_wu_peak - _wu_pre_alloc) / (1024**3))
+                model._activation_gb_per_item = _wu_delta_gb * 1.3
+                self._logger.info(
+                    f"[ACTIVATION_MEASURE] {self.model_name}: "
+                    f"warmup delta={_wu_delta_gb:.3f}GB, "
+                    f"per_item={model._activation_gb_per_item:.3f}GB (×1.3 safety)"
+                )
 
             # Build detailed info string
             precision_info = f" ({torch_dtype})" if torch_dtype else " (fp32 default)"
@@ -605,6 +712,39 @@ class ModelLoader:
                         "[FALLBACK SUCCESS] Downloaded fresh model from HuggingFace"
                     )
                     self.log_gpu_memory("AFTER_FALLBACK_LOAD")
+
+                    # Warmup + activation measurement (fallback path — same pattern as primary)
+                    _fb_cuda = (
+                        torch is not None
+                        and torch.cuda.is_available()
+                        and resolved_device == "cuda"
+                    )
+                    _fb_pre_alloc: int = 0
+                    if _fb_cuda:
+                        torch.cuda.reset_peak_memory_stats()
+                        _fb_pre_alloc = torch.cuda.memory_allocated()
+                    _fb_wu_ok = False
+                    try:
+                        model.encode(
+                            ["warm-up"], convert_to_numpy=True, show_progress_bar=False
+                        )
+                        self._logger.debug(
+                            "Fallback model warm-up complete (TorchDynamo pre-compiled)"
+                        )
+                        _fb_wu_ok = True
+                    except Exception as _fb_wu_err:
+                        self._logger.debug(
+                            f"Fallback model warm-up skipped: {_fb_wu_err}"
+                        )
+                    if _fb_cuda and _fb_wu_ok:
+                        _fb_peak = torch.cuda.max_memory_allocated()
+                        _fb_delta_gb = max(0.0, (_fb_peak - _fb_pre_alloc) / (1024**3))
+                        model._activation_gb_per_item = _fb_delta_gb * 1.3
+                        self._logger.info(
+                            f"[ACTIVATION_MEASURE] {self.model_name}: "
+                            f"warmup delta={_fb_delta_gb:.3f}GB, "
+                            f"per_item={model._activation_gb_per_item:.3f}GB (×1.3 safety)"
+                        )
 
                     # Track VRAM usage for this model (fallback path)
                     if torch and torch.cuda.is_available():

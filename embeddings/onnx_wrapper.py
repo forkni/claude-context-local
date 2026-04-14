@@ -54,6 +54,9 @@ class ONNXEmbeddingModel:
         # Set by ModelLoader._load_onnx() after measuring actual VRAM delta via pynvml.
         # Used by CodeEmbedder._get_model_vram_gb() for dynamic batch-size calculation.
         self._vram_gb: float = 0.0
+        # Set by ModelLoader._measure_activation_per_item() using a warmup batch.
+        # Represents measured activation memory per batch item in GB.
+        self._activation_gb_per_item: float = 0.0
 
         # Validate pooling strategy
         if pooling not in ("cls", "mean"):
