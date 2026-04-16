@@ -212,74 +212,45 @@ except ImportError:
     torch = None
 
 
-def set_vram_limit(fraction: float = 0.90) -> bool:
-    """Set hard VRAM limit to prevent shared memory spillover.
+def compute_effective_vram_cap(
+    fraction: float,
+) -> tuple[float, int, float, float, float, float] | None:
+    """Compute effective VRAM cap accounting for other-process allocations.
 
-    On Windows, the NVIDIA driver preemptively evicts to shared memory when
-    VRAM approaches capacity. This hard limit prevents that by raising OOM
-    errors instead of spilling (which is much faster than slow spillover).
+    Pure function — reads current GPU state, does not set any limits or produce
+    any side effects.  Call this from both the PyTorch-cap path
+    (``set_vram_limit``) and the ORT-cap path (``onnx_loader.py``) to ensure
+    both backends use identical budgets.
 
-    The effective fraction is computed dynamically from current free/allocated
-    VRAM so that memory held by other processes (browser, games, other ML jobs)
-    is subtracted from our budget.  This prevents the process cap from being set
-    above the physically available headroom, which would otherwise let our
-    allocations overcommit and trigger WDDM shared-memory spillover on Windows.
+    Formula::
 
-    It is safe and expected to call this function multiple times (e.g., at init
-    and again before each embedding run); each call re-measures the system state
-    and re-applies the cap.
-
-    If allow_ram_fallback is True in config, skip setting the limit to allow
-    slower but more reliable spillover to system RAM.
+        T            = total device VRAM
+        F            = system-wide free VRAM (excludes ALL processes)
+        A_us         = bytes our PyTorch process currently holds
+        A_other      = T - F - A_us  (held by every other process)
+        headroom     = (1 − fraction) × T   (safety reserve)
+        physical_cap = A_us + F − headroom  (max we can hold without spill)
+        cap          = max(min(user_cap, physical_cap), A_us)
+        effective_fraction = clamp(cap / T, 0.05, fraction)
 
     Args:
-        fraction: Requested fraction of dedicated VRAM (default: 0.90 = 90%).
-            The *effective* fraction may be lower when other processes hold VRAM.
-            Recommended: 0.80-0.90 depending on GPU headroom needs.
+        fraction: Requested fraction of total VRAM (0.05–1.0).
 
     Returns:
-        True if limit was set successfully, False otherwise.
+        ``(effective_fraction, cap_bytes, free_gb, us_gb, other_gb, headroom_gb)``
+        or ``None`` if CUDA is unavailable or measurement fails.
 
-    Note:
-        - Safe to call multiple times; re-application is idempotent.
-        - On ONNX models, the cap only constrains PyTorch operations.
-          ORT's CUDAExecutionProvider allocates memory outside PyTorch and
-          is not governed by this limit.
-        - FAISS GPU indexes use their own CUDA allocator and are also not
-          constrained by set_per_process_memory_fraction.
+        - *effective_fraction* — value for ``set_per_process_memory_fraction``
+        - *cap_bytes*          — value for ORT ``gpu_mem_limit`` provider option
+        - *free_gb / us_gb / other_gb / headroom_gb* — diagnostic values for logs
     """
     if not torch or not torch.cuda.is_available():
-        return False
-
-    # Check if RAM fallback is allowed
+        return None
     try:
-        config = _get_config_via_service_locator()
-        if config and config.performance.allow_ram_fallback:
-            logging.getLogger(__name__).info(
-                "[VRAM_LIMIT] RAM fallback allowed - skipping hard VRAM limit"
-            )
-            return True  # Don't set limit, allow spillover
-    except Exception as e:
-        logging.getLogger(__name__).debug(f"Config not available, using defaults: {e}")
-
-    logger = logging.getLogger(__name__)
-    try:
-        # Measure current VRAM state so the effective cap accounts for memory
-        # already held by other processes.
-        #   T = total device VRAM
-        #   F = system-wide free VRAM (excludes ALL processes)
-        #   A_us = bytes our PyTorch process currently holds
-        #   A_other = bytes held by every other process
         free_b, total_b = torch.cuda.mem_get_info(0)
         us_b = torch.cuda.memory_allocated(0)
         other_b = max(0, total_b - free_b - us_b)
 
-        # Formula (see docs for derivation):
-        #   user_cap     = fraction * T            — what the caller requested
-        #   headroom     = (1 - fraction) * T      — safety reserve to stay below
-        #   physical_cap = A_us + F - headroom     — max we can hold without spill
-        #   cap          = max(min(user_cap, physical_cap), A_us)
-        #                  (never below current usage — would cause instant OOM)
         headroom_b = int((1.0 - fraction) * total_b)
         user_cap_b = int(fraction * total_b)
         physical_cap_b = us_b + free_b - headroom_b
@@ -288,31 +259,90 @@ def set_vram_limit(fraction: float = 0.90) -> bool:
         cap_b = max(cap_b, us_b)  # cannot shrink below what we already hold
 
         effective_fraction = (cap_b / total_b) if total_b > 0 else fraction
-        # Clamp: never below 5% (absolute minimum for any allocation to work),
-        # never above the caller-requested fraction.
         effective_fraction = max(0.05, min(effective_fraction, fraction))
 
-        free_gb = free_b / 1024**3
-        us_gb = us_b / 1024**3
-        other_gb = other_b / 1024**3
-        headroom_gb = headroom_b / 1024**3
+        return (
+            effective_fraction,
+            int(cap_b),
+            free_b / 1024**3,
+            us_b / 1024**3,
+            other_b / 1024**3,
+            headroom_b / 1024**3,
+        )
+    except (RuntimeError, ValueError, AssertionError, TypeError):
+        return None
 
-        if physical_cap_b < us_b:
-            # GPU is under heavy external pressure; we cannot honor the requested
-            # headroom — warn so the user knows the cap was forced up.
-            logger.warning(
-                f"[VRAM_LIMIT] Cannot honor requested headroom — GPU under external "
-                f"pressure. Requested={fraction:.0%}, effective={effective_fraction:.0%} "
-                f"(free={free_gb:.1f}GB, us={us_gb:.1f}GB, "
-                f"other={other_gb:.1f}GB, headroom={headroom_gb:.1f}GB)"
-            )
-        else:
-            logger.info(
-                f"[VRAM_LIMIT] Requested={fraction:.0%}, effective={effective_fraction:.0%} "
-                f"(free={free_gb:.1f}GB, us={us_gb:.1f}GB, "
-                f"other={other_gb:.1f}GB, headroom={headroom_gb:.1f}GB)"
-            )
 
+def set_vram_limit(fraction: float = 0.90) -> bool:
+    """Set hard VRAM limit on the PyTorch CUDA allocator to prevent spillover.
+
+    On Windows, the NVIDIA driver preemptively evicts to shared memory when
+    VRAM approaches capacity. This hard limit prevents that by raising OOM
+    errors instead of spilling (which is much faster than slow spillover).
+
+    The effective fraction is computed by ``compute_effective_vram_cap`` from
+    live ``mem_get_info`` readings so that memory held by other processes
+    (browser, games, other ML jobs) is subtracted from our budget.
+
+    It is safe and expected to call this function multiple times; each call
+    re-measures the system state and re-applies the cap.
+
+    **Note on `allow_ram_fallback`**: when True in config, this function
+    returns without applying any cap — the PyTorch allocator is uncapped and
+    the OS may spill to shared RAM.  The flag does *not* affect the ORT
+    ``gpu_mem_limit`` cap (set in ``embeddings/onnx_loader.py``), which is
+    always-on when ``onnx_gpu_mem_limit=true``.
+
+    **ORT / FAISS**: ``set_per_process_memory_fraction`` only governs the
+    PyTorch CUDA allocator.  ORT's ``CUDAExecutionProvider`` and FAISS GPU
+    indexes use their own allocators and are not constrained here.
+
+    Args:
+        fraction: Requested fraction of dedicated VRAM (default: 0.90 = 90%).
+            The *effective* fraction may be lower when other processes hold VRAM.
+            Recommended: 0.80–0.90 depending on GPU headroom needs.
+
+    Returns:
+        True if limit was set (or skipped due to allow_ram_fallback), else False.
+    """
+    if not torch or not torch.cuda.is_available():
+        return False
+
+    # Check if RAM fallback is allowed — if so, skip the PyTorch cap only.
+    try:
+        config = _get_config_via_service_locator()
+        if config and config.performance.allow_ram_fallback:
+            logging.getLogger(__name__).info(
+                "[VRAM_LIMIT] RAM fallback allowed - skipping PyTorch VRAM cap"
+            )
+            return True  # Don't set limit, allow PyTorch spillover
+    except Exception as e:
+        logging.getLogger(__name__).debug(f"Config not available, using defaults: {e}")
+
+    logger = logging.getLogger(__name__)
+    result = compute_effective_vram_cap(fraction)
+    if result is None:
+        logger.warning("[VRAM_LIMIT] Failed to measure VRAM state — cap not applied")
+        return False
+
+    effective_fraction, cap_b, free_gb, us_gb, other_gb, headroom_gb = result
+
+    # Warn when free memory is below the requested headroom (external GPU pressure).
+    if free_gb < headroom_gb:
+        logger.warning(
+            f"[VRAM_LIMIT] Cannot honor requested headroom — GPU under external "
+            f"pressure. Requested={fraction:.0%}, effective={effective_fraction:.0%} "
+            f"(free={free_gb:.1f}GB, us={us_gb:.1f}GB, "
+            f"other={other_gb:.1f}GB, headroom={headroom_gb:.1f}GB)"
+        )
+    else:
+        logger.info(
+            f"[VRAM_LIMIT] Requested={fraction:.0%}, effective={effective_fraction:.0%} "
+            f"(free={free_gb:.1f}GB, us={us_gb:.1f}GB, "
+            f"other={other_gb:.1f}GB, headroom={headroom_gb:.1f}GB)"
+        )
+
+    try:
         torch.cuda.set_per_process_memory_fraction(effective_fraction, device=0)
         return True
     except (RuntimeError, ValueError, AssertionError, TypeError) as e:

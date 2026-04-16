@@ -1030,6 +1030,103 @@ class TestSetVramLimitEffective:
         assert abs(eff1 - eff2) < 1e-9
 
 
+class TestComputeEffectiveVramCap:
+    """Tests for compute_effective_vram_cap() — the pure helper used by both
+    set_vram_limit (PyTorch cap) and onnx_loader (ORT gpu_mem_limit).
+    """
+
+    @patch("embeddings.embedder.torch")
+    def test_no_external_pressure_cap_equals_user_request(self, mock_torch):
+        """Idle GPU: cap_bytes ≈ fraction × total."""
+        mock_torch.cuda.is_available.return_value = True
+        total = int(24 * 1024**3)
+        mock_torch.cuda.mem_get_info.return_value = (total, total)
+        mock_torch.cuda.memory_allocated.return_value = 0
+
+        from embeddings.embedder import compute_effective_vram_cap
+
+        result = compute_effective_vram_cap(0.8)
+        assert result is not None
+        eff_frac, cap_bytes, free_gb, us_gb, other_gb, headroom_gb = result
+        # cap_bytes should be ≈ 0.80 × 24 GB
+        expected_bytes = int(0.8 * total)
+        assert abs(cap_bytes - expected_bytes) < 1024**2  # within 1 MB
+        assert 0.79 <= eff_frac <= 0.81
+
+    @patch("embeddings.embedder.torch")
+    def test_other_process_holds_10gb_reduces_cap(self, mock_torch):
+        """Bug scenario: other process holds 10 GB on 24 GB GPU.
+
+        physical_cap = 0 + 14 − 4.8 = 9.2 GB → cap_bytes ≈ 9.2 GB.
+        """
+        mock_torch.cuda.is_available.return_value = True
+        total = int(24 * 1024**3)
+        mock_torch.cuda.mem_get_info.return_value = (int(14 * 1024**3), total)
+        mock_torch.cuda.memory_allocated.return_value = 0
+
+        from embeddings.embedder import compute_effective_vram_cap
+
+        result = compute_effective_vram_cap(0.8)
+        assert result is not None
+        eff_frac, cap_bytes, free_gb, us_gb, other_gb, headroom_gb = result
+        cap_gb = cap_bytes / 1024**3
+        # physical_cap = 14 − 4.8 = 9.2 GB
+        assert 9.0 <= cap_gb <= 9.4, f"expected ~9.2 GB cap, got {cap_gb:.2f} GB"
+        assert 0.36 <= eff_frac <= 0.40
+        # Diagnostic fields
+        assert abs(free_gb - 14.0) < 0.1
+        assert abs(other_gb - 10.0) < 0.1
+        assert abs(headroom_gb - 4.8) < 0.1
+
+    @patch("embeddings.embedder.torch")
+    def test_reapplication_mid_run(self, mock_torch):
+        """Re-application while holding 6 GB, others hold 4 GB.
+
+        physical_cap = 6 + 14 − 4.8 = 15.2 GB.
+        """
+        mock_torch.cuda.is_available.return_value = True
+        total = int(24 * 1024**3)
+        mock_torch.cuda.mem_get_info.return_value = (int(14 * 1024**3), total)
+        mock_torch.cuda.memory_allocated.return_value = int(6 * 1024**3)
+
+        from embeddings.embedder import compute_effective_vram_cap
+
+        result = compute_effective_vram_cap(0.8)
+        assert result is not None
+        eff_frac, cap_bytes, free_gb, us_gb, other_gb, headroom_gb = result
+        cap_gb = cap_bytes / 1024**3
+        # physical_cap = 6 + 14 - 4.8 = 15.2 GB
+        assert 15.0 <= cap_gb <= 15.4, f"expected ~15.2 GB cap, got {cap_gb:.2f} GB"
+        # cap must never be below current us (6 GB)
+        assert cap_gb >= 5.9
+
+    @patch("embeddings.embedder.torch", None)
+    def test_no_cuda_returns_none(self):
+        """Returns None when torch is unavailable."""
+        from embeddings.embedder import compute_effective_vram_cap
+
+        assert compute_effective_vram_cap(0.8) is None
+
+    @patch("embeddings.embedder.torch")
+    def test_no_cuda_available_returns_none(self, mock_torch):
+        """Returns None when CUDA is not available."""
+        mock_torch.cuda.is_available.return_value = False
+
+        from embeddings.embedder import compute_effective_vram_cap
+
+        assert compute_effective_vram_cap(0.8) is None
+
+    @patch("embeddings.embedder.torch")
+    def test_mem_get_info_raises_returns_none(self, mock_torch):
+        """Returns None when GPU measurement fails."""
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.mem_get_info.side_effect = RuntimeError("CUDA error")
+
+        from embeddings.embedder import compute_effective_vram_cap
+
+        assert compute_effective_vram_cap(0.8) is None
+
+
 class TestContextExtraction:
     """Test context extraction features (v0.8.0+) for import and class signatures."""
 

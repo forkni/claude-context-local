@@ -34,6 +34,50 @@ This file maintains session memory and context for the Claude-context-MCP semant
 
 ## Session History
 
+### 2026-04-16: VRAM Hard-Limit Fix — Account for Other-Process Allocation
+
+**Primary Achievement**: Fixed Windows WDDM shared-memory spillover bug where `set_vram_limit()` applied the process cap against total GPU memory without subtracting VRAM already held by other processes, causing embedding streams to spill to system RAM when other apps occupied VRAM.
+
+#### Key Accomplishments
+
+- Diagnosed root cause: `torch.cuda.set_per_process_memory_fraction(fraction, device=0)` was using `fraction × total_memory` as the cap, so a 10 GB external allocation on a 24 GB GPU was invisible to the 19.2 GB cap — combined demand 29.2 GB triggered WDDM shared-memory eviction
+- Rewrote `set_vram_limit()` to compute an *effective* fraction from live `mem_get_info()` + `memory_allocated()` readings, capping our process at `min(user_cap, A_us + F − headroom)` so the hard limit respects physically available VRAM
+- Added automatic re-application of the cap at the start of `embed_chunks()` so mid-session VRAM pressure (browser, game, reranker loading) is accounted for at embedding time
+- Added re-apply before each of the three reranker lazy-load sites (`NeuralReranker`, `GenerativeReranker`, `JinaRerankerV3`) so model loads also see current free VRAM
+- 8 new unit tests covering: no-pressure baseline, 10 GB other-process scenario (the bug), mid-run re-apply, clamp-up when physical cap < current usage, `allow_ram_fallback` short-circuit, no CUDA, raise, idempotency
+- All 964 unit tests (224 embeddings + 740 search) pass; lint clean
+
+#### Technical Details
+
+**Formula** (`T`=total, `F`=free, `A_us`=our allocated, `A_other = max(0, T−F−A_us)`, `r`=requested fraction):
+```
+headroom     = (1 − r) × T
+physical_cap = A_us + F − headroom   (== T − A_other − headroom)
+cap          = max(min(r×T, physical_cap), A_us)
+effective_fraction = clamp(cap / T, 0.05, r)
+```
+
+Example — 24 GB GPU, `r=0.8`, other process holds 10 GB: `effective_fraction ≈ 0.383` instead of 0.80. Combined usage at saturation: 9.2 + 10 = 19.2 GB ≤ 24 GB physical. No WDDM spill.
+
+New log format: `[VRAM_LIMIT] Requested=80%, effective=38% (free=14.0GB, us=0.0GB, other=10.0GB, headroom=4.8GB)`
+
+The `allow_ram_fallback=True` short-circuit is preserved verbatim — cap is skipped entirely in that mode.
+
+Not covered (documented in `set_vram_limit()` docstring): FAISS GPU allocator and ORT CUDAExecutionProvider both use separate CUDA allocators that `set_per_process_memory_fraction` does not govern.
+
+#### Files Modified
+
+- `embeddings/embedder.py` — `set_vram_limit()` rewritten with effective-fraction formula; re-apply call inserted at top of `embed_chunks()` after model warmup
+- `search/neural_reranker.py` — VRAM cap re-applied before lazy load in `NeuralReranker.model`, `GenerativeReranker._ensure_loaded()`, `JinaRerankerV3._load_or_fetch()`
+- `tests/unit/embeddings/test_embedder.py` — `TestSetVramLimitEffective` class (8 tests)
+- `docs/INSTALLATION_GUIDE.md` — Windows VRAM auto-adjustment note in VRAM Limit Fraction section
+
+#### Commit
+
+- `a209849` — fix: account for other-process VRAM allocation in hard limit to prevent WDDM spillover
+
+---
+
 ### 2026-04-10: SSCG Three-Mode Evaluation & Golden Dataset Fix
 
 **Primary Achievement**: Completed three-mode (hybrid/BM25/semantic) SSCG evaluation via live MCP server, identified 4 broken golden labels and 3 oversized expected sets, fixed all issues — benchmark now passes all thresholds with 13/13 Hit Rate across all modes.
