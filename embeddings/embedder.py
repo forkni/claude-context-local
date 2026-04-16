@@ -219,18 +219,34 @@ def set_vram_limit(fraction: float = 0.90) -> bool:
     VRAM approaches capacity. This hard limit prevents that by raising OOM
     errors instead of spilling (which is much faster than slow spillover).
 
+    The effective fraction is computed dynamically from current free/allocated
+    VRAM so that memory held by other processes (browser, games, other ML jobs)
+    is subtracted from our budget.  This prevents the process cap from being set
+    above the physically available headroom, which would otherwise let our
+    allocations overcommit and trigger WDDM shared-memory spillover on Windows.
+
+    It is safe and expected to call this function multiple times (e.g., at init
+    and again before each embedding run); each call re-measures the system state
+    and re-applies the cap.
+
     If allow_ram_fallback is True in config, skip setting the limit to allow
     slower but more reliable spillover to system RAM.
 
     Args:
-        fraction: Fraction of dedicated VRAM to use (default: 0.90 = 90%)
-                  Recommended: 0.85-0.95 depending on GPU headroom needs
+        fraction: Requested fraction of dedicated VRAM (default: 0.90 = 90%).
+            The *effective* fraction may be lower when other processes hold VRAM.
+            Recommended: 0.80-0.90 depending on GPU headroom needs.
 
     Returns:
-        True if limit was set successfully, False otherwise
+        True if limit was set successfully, False otherwise.
 
     Note:
-        Should be called early, before heavy CUDA allocations.
+        - Safe to call multiple times; re-application is idempotent.
+        - On ONNX models, the cap only constrains PyTorch operations.
+          ORT's CUDAExecutionProvider allocates memory outside PyTorch and
+          is not governed by this limit.
+        - FAISS GPU indexes use their own CUDA allocator and are also not
+          constrained by set_per_process_memory_fraction.
     """
     if not torch or not torch.cuda.is_available():
         return False
@@ -246,14 +262,61 @@ def set_vram_limit(fraction: float = 0.90) -> bool:
     except Exception as e:
         logging.getLogger(__name__).debug(f"Config not available, using defaults: {e}")
 
+    logger = logging.getLogger(__name__)
     try:
-        torch.cuda.set_per_process_memory_fraction(fraction, device=0)
-        logging.getLogger(__name__).info(
-            f"[VRAM_LIMIT] Set hard limit to {fraction:.0%} of dedicated VRAM"
-        )
+        # Measure current VRAM state so the effective cap accounts for memory
+        # already held by other processes.
+        #   T = total device VRAM
+        #   F = system-wide free VRAM (excludes ALL processes)
+        #   A_us = bytes our PyTorch process currently holds
+        #   A_other = bytes held by every other process
+        free_b, total_b = torch.cuda.mem_get_info(0)
+        us_b = torch.cuda.memory_allocated(0)
+        other_b = max(0, total_b - free_b - us_b)
+
+        # Formula (see docs for derivation):
+        #   user_cap     = fraction * T            — what the caller requested
+        #   headroom     = (1 - fraction) * T      — safety reserve to stay below
+        #   physical_cap = A_us + F - headroom     — max we can hold without spill
+        #   cap          = max(min(user_cap, physical_cap), A_us)
+        #                  (never below current usage — would cause instant OOM)
+        headroom_b = int((1.0 - fraction) * total_b)
+        user_cap_b = int(fraction * total_b)
+        physical_cap_b = us_b + free_b - headroom_b
+
+        cap_b = min(user_cap_b, physical_cap_b)
+        cap_b = max(cap_b, us_b)  # cannot shrink below what we already hold
+
+        effective_fraction = (cap_b / total_b) if total_b > 0 else fraction
+        # Clamp: never below 5% (absolute minimum for any allocation to work),
+        # never above the caller-requested fraction.
+        effective_fraction = max(0.05, min(effective_fraction, fraction))
+
+        free_gb = free_b / 1024**3
+        us_gb = us_b / 1024**3
+        other_gb = other_b / 1024**3
+        headroom_gb = headroom_b / 1024**3
+
+        if physical_cap_b < us_b:
+            # GPU is under heavy external pressure; we cannot honor the requested
+            # headroom — warn so the user knows the cap was forced up.
+            logger.warning(
+                f"[VRAM_LIMIT] Cannot honor requested headroom — GPU under external "
+                f"pressure. Requested={fraction:.0%}, effective={effective_fraction:.0%} "
+                f"(free={free_gb:.1f}GB, us={us_gb:.1f}GB, "
+                f"other={other_gb:.1f}GB, headroom={headroom_gb:.1f}GB)"
+            )
+        else:
+            logger.info(
+                f"[VRAM_LIMIT] Requested={fraction:.0%}, effective={effective_fraction:.0%} "
+                f"(free={free_gb:.1f}GB, us={us_gb:.1f}GB, "
+                f"other={other_gb:.1f}GB, headroom={headroom_gb:.1f}GB)"
+            )
+
+        torch.cuda.set_per_process_memory_fraction(effective_fraction, device=0)
         return True
     except (RuntimeError, ValueError, AssertionError, TypeError) as e:
-        logging.getLogger(__name__).warning(f"[VRAM_LIMIT] Failed to set: {e}")
+        logger.warning(f"[VRAM_LIMIT] Failed to set: {e}")
         return False
 
 
@@ -933,6 +996,16 @@ class CodeEmbedder:
 
         # Log VRAM usage after model load
         self._log_vram_usage("MODEL_LOADED")
+
+        # Re-apply VRAM cap with fresh memory readings — other processes may have
+        # allocated VRAM since CodeEmbedder.__init__, which would otherwise let us
+        # overcommit and trigger Windows WDDM shared-memory spillover.
+        try:
+            _embed_cfg = _get_config_via_service_locator()
+            if _embed_cfg and _embed_cfg.performance:
+                set_vram_limit(_embed_cfg.performance.vram_limit_fraction)
+        except (RuntimeError, AttributeError):
+            pass  # keep the __init__-time cap on failure
 
         # Load batch size from config if not explicitly provided
         if batch_size is None:

@@ -844,6 +844,192 @@ class TestCheckVramStatus:
         assert should_abort is False
 
 
+class TestSetVramLimitEffective:
+    """Tests for set_vram_limit() effective-fraction computation.
+
+    Verifies that the VRAM cap accounts for memory already held by other
+    processes, preventing Windows WDDM shared-memory spillover when external
+    GPU allocations are present at call time.
+    """
+
+    # Helpers to build mock torch with configurable mem_get_info / memory_allocated
+    @staticmethod
+    def _make_torch(free_gb: float, total_gb: float, us_gb: float = 0.0):
+        """Return a MagicMock that mimics torch with the given VRAM readings."""
+        m = MagicMock()
+        m.cuda.is_available.return_value = True
+        m.cuda.mem_get_info.return_value = (
+            int(free_gb * 1024**3),
+            int(total_gb * 1024**3),
+        )
+        m.cuda.memory_allocated.return_value = int(us_gb * 1024**3)
+        return m
+
+    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.torch")
+    def test_no_external_pressure(self, mock_torch, mock_cfg):
+        """GPU is idle: effective fraction equals the requested fraction."""
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.mem_get_info.return_value = (
+            int(24 * 1024**3),
+            int(24 * 1024**3),
+        )
+        mock_torch.cuda.memory_allocated.return_value = 0
+        mock_cfg.return_value = None  # no config → skip allow_ram_fallback check
+
+        from embeddings.embedder import set_vram_limit
+
+        result = set_vram_limit(0.8)
+
+        assert result is True
+        mock_torch.cuda.set_per_process_memory_fraction.assert_called_once()
+        eff = mock_torch.cuda.set_per_process_memory_fraction.call_args[0][0]
+        # With no external pressure physical_cap == user_cap → effective == r
+        assert 0.79 <= eff <= 0.81, f"expected ~0.80, got {eff:.4f}"
+
+    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.torch")
+    def test_other_process_holds_10gb_bug_scenario(self, mock_torch, mock_cfg):
+        """Bug scenario: other process holds 10 GB on a 24 GB GPU.
+
+        Expected: effective fraction is reduced so our process + other ≤ 19.2 GB.
+        """
+        mock_torch.cuda.is_available.return_value = True
+        # free=14 GB, total=24 GB, we hold 0 → other = 10 GB
+        mock_torch.cuda.mem_get_info.return_value = (
+            int(14 * 1024**3),
+            int(24 * 1024**3),
+        )
+        mock_torch.cuda.memory_allocated.return_value = 0
+        mock_cfg.return_value = None
+
+        from embeddings.embedder import set_vram_limit
+
+        result = set_vram_limit(0.8)
+
+        assert result is True
+        mock_torch.cuda.set_per_process_memory_fraction.assert_called_once()
+        eff = mock_torch.cuda.set_per_process_memory_fraction.call_args[0][0]
+        # physical_cap = 0 + 14 - 4.8 = 9.2 GB → 9.2/24 ≈ 0.383
+        assert 0.36 <= eff <= 0.40, f"expected ~0.383, got {eff:.4f}"
+        # Verify total physical demand at saturation doesn't exceed 24 GB
+        cap_gb = eff * 24
+        assert cap_gb + 10 <= 24.05, f"Would spill: cap={cap_gb:.1f} + other=10 > 24 GB"
+
+    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.torch")
+    def test_reapplication_mid_run(self, mock_torch, mock_cfg):
+        """Re-application while our process already holds 6 GB, others hold 4 GB."""
+        mock_torch.cuda.is_available.return_value = True
+        # free=14 GB, total=24 GB, us=6 GB → other=4 GB
+        mock_torch.cuda.mem_get_info.return_value = (
+            int(14 * 1024**3),
+            int(24 * 1024**3),
+        )
+        mock_torch.cuda.memory_allocated.return_value = int(6 * 1024**3)
+        mock_cfg.return_value = None
+
+        from embeddings.embedder import set_vram_limit
+
+        result = set_vram_limit(0.8)
+
+        assert result is True
+        eff = mock_torch.cuda.set_per_process_memory_fraction.call_args[0][0]
+        # physical_cap = 6 + 14 - 4.8 = 15.2 GB → 15.2/24 ≈ 0.633
+        assert 0.61 <= eff <= 0.65, f"expected ~0.633, got {eff:.4f}"
+        # Cap must not be below what we already hold
+        assert eff * 24 >= 6 - 0.1
+
+    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.torch")
+    def test_clamp_when_physical_cap_below_current_usage(self, mock_torch, mock_cfg):
+        """GPU under heavy external pressure: cap is forced up to us_b, warning logged."""
+        mock_torch.cuda.is_available.return_value = True
+        # free=2 GB, total=24 GB, us=12 GB → other=10 GB
+        mock_torch.cuda.mem_get_info.return_value = (
+            int(2 * 1024**3),
+            int(24 * 1024**3),
+        )
+        mock_torch.cuda.memory_allocated.return_value = int(12 * 1024**3)
+        mock_cfg.return_value = None
+
+        from embeddings.embedder import set_vram_limit
+
+        result = set_vram_limit(0.8)
+
+        assert result is True
+        eff = mock_torch.cuda.set_per_process_memory_fraction.call_args[0][0]
+        # physical_cap = 12+2-4.8 = 9.2 < us=12 → clamped to us → eff = 12/24 = 0.5
+        assert 0.49 <= eff <= 0.51, f"expected ~0.50, got {eff:.4f}"
+
+    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.torch")
+    def test_allow_ram_fallback_skips_limit(self, mock_torch, mock_cfg):
+        """When allow_ram_fallback=True, set_per_process_memory_fraction is NOT called."""
+        mock_torch.cuda.is_available.return_value = True
+        perf = MagicMock()
+        perf.allow_ram_fallback = True
+        cfg = MagicMock()
+        cfg.performance = perf
+        mock_cfg.return_value = cfg
+
+        from embeddings.embedder import set_vram_limit
+
+        result = set_vram_limit(0.8)
+
+        assert result is True
+        mock_torch.cuda.set_per_process_memory_fraction.assert_not_called()
+
+    @patch("embeddings.embedder.torch", None)
+    def test_no_cuda_returns_false(self):
+        """Returns False immediately when torch/CUDA is unavailable."""
+        from embeddings.embedder import set_vram_limit
+
+        result = set_vram_limit(0.8)
+        assert result is False
+
+    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.torch")
+    def test_set_per_process_raises_returns_false(self, mock_torch, mock_cfg):
+        """Returns False and logs a warning when set_per_process_memory_fraction raises."""
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.mem_get_info.return_value = (
+            int(20 * 1024**3),
+            int(24 * 1024**3),
+        )
+        mock_torch.cuda.memory_allocated.return_value = 0
+        mock_torch.cuda.set_per_process_memory_fraction.side_effect = RuntimeError(
+            "CUDA error"
+        )
+        mock_cfg.return_value = None
+
+        from embeddings.embedder import set_vram_limit
+
+        result = set_vram_limit(0.8)
+        assert result is False
+
+    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.torch")
+    def test_idempotent_same_inputs(self, mock_torch, mock_cfg):
+        """Two back-to-back calls with identical inputs produce the same effective fraction."""
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.mem_get_info.return_value = (
+            int(16 * 1024**3),
+            int(24 * 1024**3),
+        )
+        mock_torch.cuda.memory_allocated.return_value = 0
+        mock_cfg.return_value = None
+
+        from embeddings.embedder import set_vram_limit
+
+        set_vram_limit(0.8)
+        eff1 = mock_torch.cuda.set_per_process_memory_fraction.call_args_list[-1][0][0]
+        set_vram_limit(0.8)
+        eff2 = mock_torch.cuda.set_per_process_memory_fraction.call_args_list[-1][0][0]
+
+        assert abs(eff1 - eff2) < 1e-9
+
+
 class TestContextExtraction:
     """Test context extraction features (v0.8.0+) for import and class signatures."""
 
