@@ -30,18 +30,31 @@ from mcp_server.utils.config_helpers import (
 )
 
 
-def _get_nvml_used_bytes() -> int:
+def _get_nvml_used_bytes(device: str = "cuda:0") -> int:
     """Return total GPU memory used (bytes) via NVML, or 0 on failure.
 
     Used to take before/after snapshots around ONNX model loads so that
     ORT's CUDAExecutionProvider allocations (invisible to PyTorch) can be
     measured and reported to the dynamic batch-size calculator.
+
+    Args:
+        device: PyTorch device string (e.g. "cuda:0", "cuda:1", "cuda").
+            The integer index is parsed from after the colon; bare "cuda"
+            and non-cuda strings fall back to index 0.
     """
     try:
         import pynvml
 
+        # Parse device index from "cuda:N"; default to 0 for "cuda"/"cpu"/"auto"/etc.
+        idx = 0
+        if ":" in device:
+            try:
+                idx = int(device.split(":", 1)[1])
+            except ValueError:
+                idx = 0
+
         pynvml.nvmlInit()
-        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
         mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
         pynvml.nvmlShutdown()
         return mem.used
@@ -280,7 +293,7 @@ class ModelLoader:
         # Snapshot real VRAM before ORT session creation. ORT's CUDAExecutionProvider
         # allocates CUDA memory outside PyTorch — torch.cuda.memory_allocated() stays 0.
         # A before/after delta gives the true model footprint for batch-size calculation.
-        pre_vram_bytes = _get_nvml_used_bytes()
+        pre_vram_bytes = _get_nvml_used_bytes(self.device)
 
         loader = ONNXModelLoader(
             model_name=self.model_name,
@@ -289,7 +302,7 @@ class ModelLoader:
         )
         ort_model, tokenizer, device = loader.load()
 
-        post_vram_bytes = _get_nvml_used_bytes()
+        post_vram_bytes = _get_nvml_used_bytes(device)
         vram_delta_gb = max(0.0, (post_vram_bytes - pre_vram_bytes) / (1024**3))
 
         wrapper = ONNXEmbeddingModel(
