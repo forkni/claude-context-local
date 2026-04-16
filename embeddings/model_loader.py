@@ -333,9 +333,18 @@ class ModelLoader:
             ValueError: If model not found on HuggingFace Hub
             RuntimeError: If model loading fails after all recovery attempts
         """
-        # ONNX fast path — bypasses PyTorch loading entirely when enabled
+        # ONNX fast path — bypasses PyTorch loading entirely when enabled.
+        # If optimum[onnxruntime] is not installed (optional dep), ONNX load
+        # raises ImportError from onnx_loader._convert_model(); catch it and
+        # fall through to the PyTorch path so fresh installs without the ONNX
+        # extra don't hard-fail on first model load.
         if self._should_use_onnx():
-            return self._load_onnx()
+            try:
+                return self._load_onnx()
+            except ImportError as e:
+                self._logger.warning(
+                    f"[ONNX] Falling back to PyTorch — optimum not installed: {e}"
+                )
 
         if SentenceTransformer is None:
             raise ImportError(
