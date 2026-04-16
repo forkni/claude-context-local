@@ -322,6 +322,7 @@ def calculate_optimal_batch_size(
     model_vram_gb: float = 0.0,
     model_name: str | None = None,
     activation_gb_per_item: float = 0.0,
+    ort_cap_gb: float = 0.0,
 ) -> int:
     """Calculate optimal batch size from architecture-derived activation memory cost.
 
@@ -365,6 +366,15 @@ def calculate_optimal_batch_size(
         # Use free memory — model weights are already loaded so they're excluded
         available_gb = free_gb
 
+        # For ONNX backend: constrain to the ORT arena's remaining activation budget.
+        # ORT's CUDAExecutionProvider has a hard gpu_mem_limit; the model weights
+        # already consume model_vram_gb of that cap.  Using system-wide free_gb
+        # would overestimate — ORT cannot exceed its cap regardless of system free.
+        if ort_cap_gb > 0.0:
+            ort_remaining_gb = max(0.0, ort_cap_gb - model_vram_gb)
+            if ort_remaining_gb < available_gb:
+                available_gb = ort_remaining_gb
+
         # Apply fragmentation factor: PyTorch caching allocator reserves ~18% extra
         # Validated from OOM analysis: 2.67GB fragmentation / 14.74GB allocated = 18%
         target_activation_gb = available_gb * memory_fraction * FRAGMENTATION_OVERHEAD
@@ -393,9 +403,14 @@ def calculate_optimal_batch_size(
         result = max(min_batch, min(optimal_batch, max_batch))
 
         logger = logging.getLogger(__name__)
+        ort_info = (
+            f", ORT cap: {ort_cap_gb:.1f}GB → remaining: {max(0.0, ort_cap_gb - model_vram_gb):.1f}GB"
+            if ort_cap_gb > 0.0
+            else ""
+        )
         logger.info(
             f"[DYNAMIC_BATCH] GPU: {free_gb:.1f}GB free / {total_gb:.1f}GB total, "
-            f"model: {model_vram_gb:.1f}GB ({model_name or 'unknown'}), "
+            f"model: {model_vram_gb:.1f}GB ({model_name or 'unknown'}){ort_info}, "
             f"available: {available_gb:.1f}GB → "
             f"target: {target_activation_gb:.1f}GB "
             f"({memory_fraction:.0%} × {FRAGMENTATION_OVERHEAD:.0%} frag), "
@@ -1050,6 +1065,20 @@ class CodeEmbedder:
                     0.05, min(memory_fraction, 0.95)
                 )  # Clamp to safe range
 
+                # For ONNX backend: tell the batch sizer about the ORT arena cap so
+                # it uses ORT-remaining budget (cap − model_weights) as available_gb
+                # instead of system-wide free memory (which ORT cannot fully use).
+                ort_cap_gb = 0.0
+                if hasattr(self._model, "ort_model"):
+                    try:
+                        _cap_result = compute_effective_vram_cap(
+                            config.performance.vram_limit_fraction
+                        )
+                        if _cap_result is not None:
+                            ort_cap_gb = _cap_result[1] / 1024**3  # bytes → GB
+                    except Exception:
+                        pass
+
                 batch_size = calculate_optimal_batch_size(
                     embedding_dim=config.embedding.dimension,
                     min_batch=config.performance.dynamic_batch_min,
@@ -1058,6 +1087,7 @@ class CodeEmbedder:
                     model_vram_gb=model_vram_gb,
                     model_name=self.model_name,
                     activation_gb_per_item=activation_gb_per_item,
+                    ort_cap_gb=ort_cap_gb,
                 )
                 self._logger.info(
                     f"Using dynamic GPU-optimized batch size {batch_size} for {len(chunks)} chunks"
@@ -1074,7 +1104,9 @@ class CodeEmbedder:
 
         # Process in batches for efficiency with progress bar
         console = Console(force_terminal=True)
-        total_batches = (len(chunks) + batch_size - 1) // batch_size
+        # current_batch_size tracks the live batch size — may be halved on OOM.
+        current_batch_size = batch_size
+        total_batches = (len(chunks) + current_batch_size - 1) // current_batch_size
 
         # Suppress INFO logs during progress bar to prevent line mixing
         original_log_level = self._logger.level
@@ -1090,9 +1122,11 @@ class CodeEmbedder:
             transient=False,
         ) as progress:
             task = progress.add_task("Embedding...", total=total_batches)
-            for i in range(0, len(chunks), batch_size):
-                batch = chunks[i : i + batch_size]
-                batch_num = (i // batch_size) + 1
+            i = 0
+            batch_num = 0
+            while i < len(chunks):
+                batch = chunks[i : i + current_batch_size]
+                batch_num += 1
 
                 # Log VRAM before batch
                 self._log_vram_usage("BATCH_START", batch_num)
@@ -1134,58 +1168,48 @@ class CodeEmbedder:
                         convert_to_tensor=use_tensor,
                         device=self.device if use_tensor else None,
                     )
-                except (RuntimeError, torch.cuda.OutOfMemoryError) as e:
-                    # OOM recovery: Clear cache, halve batch, retry
-                    if "out of memory" in str(e).lower():
-                        half_batch_size = len(batch_contents) // 2
-                        if half_batch_size < 1:
-                            self._logger.error(
-                                "[OOM_RECOVERY] Cannot reduce batch further, re-raising OOM"
-                            )
-                            raise  # Can't reduce further
-
-                        self._logger.warning(
-                            f"[OOM_RECOVERY] CUDA OOM detected! "
-                            f"Reducing batch from {len(batch_contents)} to {half_batch_size}, "
-                            f"clearing cache, and retrying..."
+                except RuntimeError as e:
+                    # OOM recovery: halve current_batch_size and retry the same chunk
+                    # position with a smaller batch.  Applies to both PyTorch CUDA OOM
+                    # (torch.cuda.OutOfMemoryError subclasses RuntimeError) and ORT BFCArena OOM
+                    # ("BFCArena::AllocateRawInternal Available memory … smaller than requested").
+                    err_str = str(e).lower()
+                    is_oom = (
+                        "out of memory" in err_str
+                        or "bfcarena" in err_str
+                        or (
+                            "available memory" in err_str
+                            and "smaller than requested" in err_str
                         )
-
-                        # Clear GPU cache and Python garbage
+                    )
+                    if is_oom and current_batch_size > 1:
+                        new_size = max(1, current_batch_size // 2)
+                        self._logger.warning(
+                            f"[OOM_RECOVERY] OOM at batch_size={current_batch_size} "
+                            f"({type(e).__name__}) — halving to {new_size}. "
+                            f"All subsequent batches will use size {new_size}."
+                        )
+                        current_batch_size = new_size
+                        # Recalculate progress-bar total for the remaining smaller batches
+                        completed = int(progress.tasks[task].completed)
+                        remaining_chunks = len(chunks) - i
+                        remaining_batches = (
+                            remaining_chunks + current_batch_size - 1
+                        ) // current_batch_size
+                        progress.update(task, total=completed + remaining_batches)
+                        # Flush GPU caches before retry
                         if torch and torch.cuda.is_available():
                             torch.cuda.empty_cache()
                         gc.collect()
-
-                        # Split batch in half and process each half
-                        half1 = batch_contents[:half_batch_size]
-                        half2 = batch_contents[half_batch_size:]
-
-                        # Process first half
-                        emb1 = self.model.encode(
-                            half1,
-                            show_progress_bar=False,
-                            convert_to_tensor=use_tensor,
-                            device=self.device if use_tensor else None,
-                        )
-
-                        # Process second half
-                        emb2 = self.model.encode(
-                            half2,
-                            show_progress_bar=False,
-                            convert_to_tensor=use_tensor,
-                            device=self.device if use_tensor else None,
-                        )
-
-                        # Combine results
-                        if torch and torch.is_tensor(emb1):
-                            batch_embeddings = torch.cat([emb1, emb2], dim=0)
-                        else:
-                            batch_embeddings = np.vstack([emb1, emb2])
-
-                        self._logger.info(
-                            "[OOM_RECOVERY] Successfully recovered from OOM by splitting batch"
-                        )
+                        batch_num -= 1  # this attempt is retried, don't advance counter
+                        continue  # retry the same i with the smaller batch size
                     else:
-                        raise  # Different error, re-raise
+                        if is_oom:
+                            self._logger.error(
+                                f"[OOM_RECOVERY] Cannot reduce batch further "
+                                f"(current_batch_size={current_batch_size}), re-raising OOM"
+                            )
+                        raise
 
                 # Convert back to numpy for consistency with rest of codebase
                 # Note: bf16 tensors must be converted to float32 first (numpy doesn't support bf16)
@@ -1257,7 +1281,8 @@ class CodeEmbedder:
                 # Log VRAM after batch
                 self._log_vram_usage("BATCH_END", batch_num)
 
-                # Update progress bar
+                # Advance to next chunk position and update progress bar
+                i += current_batch_size
                 progress.update(task, advance=1)
 
         # Restore original log level
