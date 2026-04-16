@@ -39,6 +39,42 @@ from utils.timing import timed
 # Empirically derived from OOM analysis: 2.67GB fragmentation / 14.74GB allocated = 18% overhead
 FRAGMENTATION_OVERHEAD = 0.82  # 1.0 - 0.18 = 82% usable VRAM, 18% fragmentation
 
+# ONNX activation cost FLOORS — used as a safety floor for ONNX Runtime models
+# whose runtime warmup / architecture-formula estimates have proven too optimistic
+# in practice (BFCArena single-op peaks blow past per-item × batch budget).
+#
+# These values were empirically calibrated under conditions that did NOT trigger
+# ORT BFCArena OOM on an 8GB RTX laptop. They act as a lower bound: the final
+# per-item cost is `max(measured_or_estimated, override_floor)`. New ONNX models
+# without a floor entry continue to use measured/estimated values.
+#
+# DO NOT remove without re-validating against a force-reindex run on a memory-
+# constrained GPU — these are the values that prevent OOM on first-try batches.
+MODEL_ACTIVATION_COST_OVERRIDES_ONNX: dict[str, float] = {
+    # BGE-M3: ORT measured 4.5GB activations at batch=16 → 0.28 GB/item.
+    # Without floor, runtime warmup (batch=4) reports 0.053 GB/item → batch=16 OOMs
+    # (single Add op wants 941 MB at batch=16 vs 5 MB free).
+    "BAAI/bge-m3": 0.28,
+    # GTE-ModernBERT (ONNX): batch=22 at 0.15 GB/item spilled to shared memory.
+    # Without floor, runtime warmup reports 0.046 GB/item → batch=32 OOMs
+    # (single MatMul wants 1.34 GB at batch=32 vs 875 MB free).
+    "Alibaba-NLP/gte-modernbert-base": 0.25,
+}
+
+
+def _get_onnx_cost_floor(model_name: str | None) -> float:
+    """Look up the ONNX activation cost floor for a model (0.0 if no floor)."""
+    if not model_name:
+        return 0.0
+    if model_name in MODEL_ACTIVATION_COST_OVERRIDES_ONNX:
+        return MODEL_ACTIVATION_COST_OVERRIDES_ONNX[model_name]
+    # Fuzzy match for local paths (e.g. "/cache/BAAI/bge-m3")
+    for key, cost in MODEL_ACTIVATION_COST_OVERRIDES_ONNX.items():
+        if model_name.endswith(key) or key in model_name:
+            return cost
+    return 0.0
+
+
 # Model types that use gated MLP (SwiGLU/GeGLU): gate_proj + up_proj + down_proj.
 # These use 2× intermediate_size memory vs standard FFN (one up + down projection).
 _GATED_MLP_MODEL_TYPES = frozenset(
@@ -1057,6 +1093,22 @@ class CodeEmbedder:
                             f"[DYNAMIC_BATCH] Activation cost estimated from model config: "
                             f"{activation_gb_per_item:.3f} GB/item"
                         )
+
+                # Tier 3: ONNX safety floor.  Runtime warmup at batch=4 linearly
+                # extrapolates per-item cost, but ORT BFCArena single-op peaks
+                # (e.g. attention MatMul, residual Add) do not scale linearly
+                # with batch and can blow past the per-item × batch budget.
+                # Apply an empirically-validated floor for known ONNX models.
+                if hasattr(self._model, "ort_model"):
+                    onnx_floor = _get_onnx_cost_floor(self.model_name)
+                    if onnx_floor > activation_gb_per_item:
+                        self._logger.info(
+                            f"[DYNAMIC_BATCH] Applying ONNX activation cost floor "
+                            f"for {self.model_name!r}: "
+                            f"{activation_gb_per_item:.3f} → {onnx_floor:.3f} GB/item "
+                            f"(prevents BFCArena OOM on first-try batch)"
+                        )
+                        activation_gb_per_item = onnx_floor
 
                 # Derive memory_fraction from vram_limit_fraction to maintain consistent safety margin
                 # Target ~81% of hard VRAM ceiling for batch sizing (0.8125 ratio)

@@ -201,7 +201,10 @@ async def handle_get_memory_status(arguments: dict[str, Any]) -> dict:
     # GPU memory — use pynvml for real VRAM (ORT allocates outside PyTorch allocator)
     gpu_memory = {}
     if torch.cuda.is_available():
-        # Try pynvml for actual VRAM used by this process (includes ORT allocations)
+        # Try pynvml for device-wide VRAM (sum of all processes + drivers + ORT).
+        # NOTE: nvmlDeviceGetMemoryInfo().used is NOT per-process; it reflects total
+        # allocations on the GPU. A proper per-process reading would require
+        # nvmlDeviceGetComputeRunningProcesses() filtered by os.getpid().
         nvml_available = False
         try:
             import pynvml

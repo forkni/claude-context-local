@@ -51,7 +51,11 @@ def _is_converted(onnx_dir: Path) -> bool:
 
 
 def _resolve_provider(device: str) -> str:
-    if device == "cuda":
+    # Accept any CUDA device form: "cuda", "cuda:0", "cuda:1", etc.
+    # The device index is handled by the CUDAExecutionProvider itself via
+    # provider_options or the current torch.cuda device — we only need to pick
+    # the right EP here.
+    if device.startswith("cuda"):
         return "CUDAExecutionProvider"
     return "CPUExecutionProvider"
 
@@ -107,7 +111,10 @@ def _convert_model(model_name: str, onnx_dir: Path, device: str) -> None:
             "Set use_onnx: false in search_config.json to use PyTorch instead."
         ) from e
 
-    # Step 2: Apply O4 optimization + GEMM GELU fusion
+    # Step 2: Apply O4 optimization + GEMM GELU fusion.
+    # For architectures not yet supported by ORTOptimizer (e.g. gemma3, qwen3),
+    # fall back to saving the unoptimized ONNX export so the model is still
+    # usable for inference. Mirrors the CLI tool's behaviour in tools/convert_onnx.py.
     _log.info(f"[ONNX] Step 2/2: Applying {_DEFAULT_OPTIMIZE} + GEMM GELU fusion...")
     try:
         optimizer = ORTOptimizer.from_pretrained(ort_model)
@@ -120,7 +127,28 @@ def _convert_model(model_name: str, onnx_dir: Path, device: str) -> None:
             optimization_config=optimization_config,
         )
     except Exception as e:
-        raise RuntimeError(f"[ONNX] Optimization failed: {e}") from e
+        _unsupported = "not available yet" in str(
+            e
+        ) or "doesn't support the graph optimization" in str(e)
+        if _unsupported:
+            _log.warning(
+                "[ONNX] ORTOptimizer does not support this architecture — "
+                "saving unoptimized model."
+            )
+            _log.warning(f"[ONNX]   Reason: {e}")
+            ort_model.save_pretrained(str(onnx_dir))
+        else:
+            raise RuntimeError(f"[ONNX] Optimization failed: {e}") from e
+
+    # Save tokenizer alongside the model so subsequent loads don't have to
+    # re-download from HuggingFace (the load-time fallback is functional but
+    # adds latency on first ORT load and breaks offline use).
+    try:
+        from transformers import AutoTokenizer
+
+        AutoTokenizer.from_pretrained(model_name).save_pretrained(str(onnx_dir))
+    except Exception as tok_err:
+        _log.warning(f"[ONNX] Could not save tokenizer to {onnx_dir}: {tok_err}")
 
     # Write metadata
     try:
@@ -267,7 +295,66 @@ class ONNXModelLoader:
                             f"{meta.get('model_file')!r} — using {default_model_file!r}"
                         )
                 except Exception:
-                    pass
+                    _log.debug(
+                        "[ONNX] Failed to parse convert_meta.json — "
+                        f"using default model file {default_model_file!r}",
+                        exc_info=True,
+                    )
+
+            # Constrain ORT's own CUDA arena allocator so it cannot push the GPU
+            # into WDDM shared-memory spillover on Windows.
+            # Unlike PyTorch's set_per_process_memory_fraction (which ORT ignores),
+            # gpu_mem_limit is respected by the CUDAExecutionProvider arena.
+            # Uses the same effective-cap formula as set_vram_limit() so both
+            # backends share the same budget.  Not applied for CPUExecutionProvider.
+            provider_options = None
+            if provider == "CUDAExecutionProvider":
+                try:
+                    from embeddings.embedder import compute_effective_vram_cap
+                    from mcp_server.utils.config_helpers import (
+                        get_config_via_service_locator as _get_cfg,
+                    )
+
+                    _cfg = _get_cfg()
+                    _fraction = (
+                        _cfg.performance.vram_limit_fraction
+                        if _cfg and _cfg.performance
+                        else 0.80
+                    )
+                    _onnx_cap_enabled = (
+                        _cfg.performance.onnx_gpu_mem_limit
+                        if _cfg and _cfg.performance
+                        else True
+                    )
+                    if _onnx_cap_enabled:
+                        _cap_result = compute_effective_vram_cap(_fraction)
+                        if _cap_result is not None:
+                            (
+                                _,
+                                _cap_bytes,
+                                _free_gb,
+                                _us_gb,
+                                _other_gb,
+                                _headroom_gb,
+                            ) = _cap_result
+                            provider_options = [
+                                {
+                                    "gpu_mem_limit": int(_cap_bytes),
+                                    "arena_extend_strategy": "kSameAsRequested",
+                                }
+                            ]
+                            _log.info(
+                                f"[ONNX_VRAM] gpu_mem_limit={_cap_bytes / 1024**3:.2f}GB, "
+                                f"arena=kSameAsRequested "
+                                f"(free={_free_gb:.1f}GB, us={_us_gb:.1f}GB, "
+                                f"other={_other_gb:.1f}GB, headroom={_headroom_gb:.1f}GB)"
+                            )
+                        else:
+                            _log.debug(
+                                "[ONNX_VRAM] CUDA not available — gpu_mem_limit not set"
+                            )
+                except Exception as _e:
+                    _log.debug(f"[ONNX_VRAM] Could not compute cap (non-fatal): {_e}")
 
             # Constrain ORT's own CUDA arena allocator so it cannot push the GPU
             # into WDDM shared-memory spillover on Windows.
