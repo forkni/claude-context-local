@@ -67,6 +67,15 @@ MODEL_ACTIVATION_COST_OVERRIDES: dict[str, float] = {
     # Note: PyTorch caching allocator inflates driver-level VRAM readings;
     # this value is based on batch sizing safety, not raw mem_get_info deltas.
     "Qwen/Qwen3-Embedding-0.6B": 0.27,
+}
+
+# ONNX Runtime-measured overrides — ORT's CUDAExecutionProvider uses a separate
+# BFCArena allocator with no in-place activation reuse, so per-item cost differs
+# substantially from the PyTorch path for the same model.
+# These values must NOT be applied when the model loads via the PyTorch fallback
+# (e.g. when use_onnx=true but optimum is unavailable), which is why they live in
+# a separate table consulted only when backend="onnx".
+MODEL_ACTIVATION_COST_OVERRIDES_ONNX: dict[str, float] = {
     # BGE-M3 (ONNX): ORT CUDAExecutionProvider uses ~0.28 GB/item activation.
     # Measured via Task Manager: 4.5GB activations for batch=16 → 0.28 GB/item.
     # ORT has no in-place optimization and uses a separate allocator, so per-item
@@ -79,25 +88,37 @@ MODEL_ACTIVATION_COST_OVERRIDES: dict[str, float] = {
 }
 
 
-def _get_activation_cost_override(model_name: str) -> float | None:
-    """Look up activation cost override with fuzzy model name matching.
+def _get_activation_cost_override(
+    model_name: str, backend: str = "pytorch"
+) -> float | None:
+    """Look up activation cost override for (model_name, backend).
 
     Supports exact match, suffix match, and substring match to handle
     local paths and variant names (e.g., "/path/to/nomic-ai/CodeRankEmbed").
 
+    ONNX-measured overrides (MODEL_ACTIVATION_COST_OVERRIDES_ONNX) are only
+    returned when backend="onnx", preventing them from being applied when a
+    model falls back to the PyTorch path (e.g. optimum not installed).
+
     Args:
         model_name: Model identifier (may be HF ID or local path)
+        backend: Inference backend — "onnx" or "pytorch" (default)
 
     Returns:
         Override cost in GB per item, or None if no match
     """
     if model_name is None:
         return None
+    table = (
+        MODEL_ACTIVATION_COST_OVERRIDES_ONNX
+        if backend == "onnx"
+        else MODEL_ACTIVATION_COST_OVERRIDES
+    )
     # Exact match first (fastest path)
-    if model_name in MODEL_ACTIVATION_COST_OVERRIDES:
-        return MODEL_ACTIVATION_COST_OVERRIDES[model_name]
+    if model_name in table:
+        return table[model_name]
     # Fuzzy match: suffix or substring
-    for key, cost in MODEL_ACTIVATION_COST_OVERRIDES.items():
+    for key, cost in table.items():
         if model_name.endswith(key) or key in model_name:
             return cost
     return None
@@ -197,6 +218,7 @@ def calculate_optimal_batch_size(
     memory_fraction: float = 0.8,  # Target 80% VRAM utilization (20% headroom)
     model_vram_gb: float = 0.0,
     model_name: str | None = None,
+    backend: str = "pytorch",
 ) -> int:
     """Calculate optimal batch size using model-aware activation memory estimation.
 
@@ -260,7 +282,7 @@ def calculate_optimal_batch_size(
         # Check for model-specific activation cost overrides first
         # Some models have activation memory that doesn't correlate with their weight VRAM
         # (e.g., CodeRankEmbed: small weight but long context → high activation memory)
-        override_cost = _get_activation_cost_override(model_name)
+        override_cost = _get_activation_cost_override(model_name, backend=backend)
         if override_cost is not None:
             gb_per_item = override_cost
             model_tier = "override"
@@ -929,6 +951,7 @@ class CodeEmbedder:
                     0.05, min(memory_fraction, 0.95)
                 )  # Clamp to safe range
 
+                _backend = "onnx" if hasattr(self._model, "ort_model") else "pytorch"
                 batch_size = calculate_optimal_batch_size(
                     embedding_dim=config.embedding.dimension,
                     min_batch=config.performance.dynamic_batch_min,
@@ -936,6 +959,7 @@ class CodeEmbedder:
                     memory_fraction=memory_fraction,
                     model_vram_gb=model_vram_gb,
                     model_name=self.model_name,
+                    backend=_backend,
                 )
                 self._logger.info(
                     f"Using dynamic GPU-optimized batch size {batch_size} for {len(chunks)} chunks"
