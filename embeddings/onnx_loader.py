@@ -51,7 +51,11 @@ def _is_converted(onnx_dir: Path) -> bool:
 
 
 def _resolve_provider(device: str) -> str:
-    if device == "cuda":
+    # Accept any CUDA device form: "cuda", "cuda:0", "cuda:1", etc.
+    # The device index is handled by the CUDAExecutionProvider itself via
+    # provider_options or the current torch.cuda device — we only need to pick
+    # the right EP here.
+    if device.startswith("cuda"):
         return "CUDAExecutionProvider"
     return "CPUExecutionProvider"
 
@@ -107,7 +111,10 @@ def _convert_model(model_name: str, onnx_dir: Path, device: str) -> None:
             "Set use_onnx: false in search_config.json to use PyTorch instead."
         ) from e
 
-    # Step 2: Apply O4 optimization + GEMM GELU fusion
+    # Step 2: Apply O4 optimization + GEMM GELU fusion.
+    # For architectures not yet supported by ORTOptimizer (e.g. gemma3, qwen3),
+    # fall back to saving the unoptimized ONNX export so the model is still
+    # usable for inference. Mirrors the CLI tool's behaviour in tools/convert_onnx.py.
     _log.info(f"[ONNX] Step 2/2: Applying {_DEFAULT_OPTIMIZE} + GEMM GELU fusion...")
     try:
         optimizer = ORTOptimizer.from_pretrained(ort_model)
@@ -120,7 +127,28 @@ def _convert_model(model_name: str, onnx_dir: Path, device: str) -> None:
             optimization_config=optimization_config,
         )
     except Exception as e:
-        raise RuntimeError(f"[ONNX] Optimization failed: {e}") from e
+        _unsupported = "not available yet" in str(
+            e
+        ) or "doesn't support the graph optimization" in str(e)
+        if _unsupported:
+            _log.warning(
+                "[ONNX] ORTOptimizer does not support this architecture — "
+                "saving unoptimized model."
+            )
+            _log.warning(f"[ONNX]   Reason: {e}")
+            ort_model.save_pretrained(str(onnx_dir))
+        else:
+            raise RuntimeError(f"[ONNX] Optimization failed: {e}") from e
+
+    # Save tokenizer alongside the model so subsequent loads don't have to
+    # re-download from HuggingFace (the load-time fallback is functional but
+    # adds latency on first ORT load and breaks offline use).
+    try:
+        from transformers import AutoTokenizer
+
+        AutoTokenizer.from_pretrained(model_name).save_pretrained(str(onnx_dir))
+    except Exception as tok_err:
+        _log.warning(f"[ONNX] Could not save tokenizer to {onnx_dir}: {tok_err}")
 
     # Write metadata
     try:

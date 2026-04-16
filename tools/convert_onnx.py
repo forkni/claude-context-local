@@ -351,14 +351,17 @@ def validate(model_name: str, onnx_dir: Path, device: str = "cpu") -> bool:
         onnx_embeddings = last_hidden[:, 0, :]
     onnx_embeddings = F.normalize(onnx_embeddings.float(), p=2, dim=1)
 
-    # Compute diffs
+    # Compute element-wise absolute differences between L2-normalised embeddings.
+    # This is the same metric the Optimum benchmark uses (max diff 0.0004 for
+    # GEMM GELU fusion vs 0.0011 for gelu_approximation), NOT cosine distance —
+    # earlier versions of this log line were mislabelled.
     diffs = (pt_embeddings.cpu() - onnx_embeddings.cpu()).abs()
     max_diff = float(diffs.max())
     mean_diff = float(diffs.mean())
     threshold = 0.001
 
-    _log.info(f"Max cosine diff:  {max_diff:.6f}  (threshold: {threshold})")
-    _log.info(f"Mean cosine diff: {mean_diff:.6f}")
+    _log.info(f"Max abs diff:  {max_diff:.6f}  (threshold: {threshold})")
+    _log.info(f"Mean abs diff: {mean_diff:.6f}")
 
     if max_diff <= threshold:
         _log.info("Quality gate PASSED ✓")

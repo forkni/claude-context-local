@@ -348,16 +348,27 @@ class ModelLoader:
             RuntimeError: If model loading fails after all recovery attempts
         """
         # ONNX fast path — bypasses PyTorch loading entirely when enabled.
-        # If optimum[onnxruntime] is not installed (optional dep), ONNX load
-        # raises ImportError from onnx_loader._convert_model(); catch it and
-        # fall through to the PyTorch path so fresh installs without the ONNX
-        # extra don't hard-fail on first model load.
+        # Falls back to PyTorch on:
+        #   - ImportError: optimum[onnxruntime] not installed (fresh install without
+        #     the ONNX extra).
+        #   - RuntimeError: ONNX export, optimization, or runtime load failed
+        #     (e.g. unsupported architecture, corrupted cache, missing optimum
+        #     symbol). With use_onnx=true as the default, swallowing these here
+        #     prevents a hard startup failure on environments where ORT can't run
+        #     the requested model — at the cost of silently changing backends.
+        # Both paths log a loud warning so the backend switch is visible in logs.
         if self._should_use_onnx():
             try:
                 return self._load_onnx()
             except ImportError as e:
                 self._logger.warning(
                     f"[ONNX] Falling back to PyTorch — optimum not installed: {e}"
+                )
+            except RuntimeError as e:
+                self._logger.warning(
+                    f"[ONNX] Falling back to PyTorch — ONNX load/conversion "
+                    f"failed: {e}",
+                    exc_info=True,
                 )
 
         if SentenceTransformer is None:
