@@ -34,6 +34,54 @@ This file maintains session memory and context for the Claude-context-MCP semant
 
 ## Session History
 
+### 2026-04-16: ONNX Stack Merged Into Development
+
+**Primary Achievement**: Finalized the 4-PR ONNX Runtime stack by resolving merge conflicts, committing the merge into `development`, pushing to origin, and closing all 4 stacked PRs with a reference to the merge commit.
+
+#### Key Accomplishments
+
+- Completed in-progress merge of `pr/04-wddm-vram-fix` → `development` that had stopped at content conflicts in `embeddings/embedder.py` and `embeddings/model_loader.py`
+- Resolved both conflicts via `git checkout --theirs` (verified pr/04 is a strict superset of `development`'s prior state — no code discarded)
+- Staged all 5 modified files, finalized merge commit `52f33fb` (two parents: `aa75b73` + `7ded10c`)
+- Pushed 12 commits to `origin/development` (`aa75b73..52f33fb`)
+- Closed PRs forkni/claude-context-local#20, #21, #22, #23 with a note pointing to `52f33fb`
+
+#### Technical Details
+
+The merge brought 11 stack commits into `development` via a single merge commit:
+
+| Commit | Description |
+|--------|-------------|
+| `87d76cc` | Scope activation-cost overrides by backend (ONNX vs PyTorch) |
+| `290b56d` | Log debug on `convert_meta.json` parse failure |
+| `4dc15ab` | 6-fix bundle: `cuda:N` device handling, RuntimeError fallback, tokenizer save, unsupported-optimizer fallback, abs-diff label, NVML comment |
+| `a29f896` | Replace tier-based batch sizing with architecture-derived formula |
+| `4c058bb` | Pass `device` to `_get_nvml_used_bytes` in activation measurement |
+| `4f5fd19` | ONNX activation cost floor to prevent BFCArena OOM on first-try batches |
+| `23e2bb3` | Route PyTorch warmup through `_measure_activation_per_item` |
+| `b8a3de1` | Account for other-process VRAM in hard limit |
+| `480a1fb` | Constrain ORT CUDAExecutionProvider arena |
+| `054d9c1` | ORT-aware batch sizing + BFCArena OOM recovery |
+| `7ded10c` | SESSION_LOG update |
+
+PRs #20–#23 were closed (not merged via GitHub) because their bases targeted each other in a stack, not `development`. They can be re-opened against `main` when `development` is promoted.
+
+#### Files Modified
+
+All modifications were brought in via the incoming commits — no new code was written during the merge session itself.
+
+- `embeddings/embedder.py` — ONNX cost floor, backend-scoped overrides, OOM backoff, VRAM cap
+- `embeddings/model_loader.py` — PyTorch warmup unified method, 6-fix bundle items
+- `embeddings/onnx_loader.py` — `cuda:N` provider fix, tokenizer save, unsupported-optimizer fallback
+- `mcp_server/tools/status_handlers.py` — NVML "this process" comment clarification
+- `tools/convert_onnx.py` — abs-diff label correction
+
+#### Commits
+
+- `52f33fb` — Merge pr/04-wddm-vram-fix into development
+
+---
+
 ### 2026-04-16: ONNX Runtime VRAM Cap + OOM Recovery (Fixes A & B)
 
 **Primary Achievement**: Extended the WDDM spillover fix to the active ONNX Runtime backend by capping ORT's CUDA arena and adding BFCArena-aware OOM recovery with batch-size backoff, eliminating VRAM spillover end-to-end on 8 GB laptop GPUs.
