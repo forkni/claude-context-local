@@ -424,3 +424,153 @@ class TestONNXModelLoaderLoad:
             pytest.raises(RuntimeError, match="Failed to load"),
         ):
             loader.load()
+
+
+# ---------------------------------------------------------------------------
+# ORT provider_options — gpu_mem_limit cap
+# ---------------------------------------------------------------------------
+
+
+class TestOrtProviderOptions:
+    """Verify that ONNXModelLoader.load() passes gpu_mem_limit to the ORT session
+    when CUDAExecutionProvider is used and onnx_gpu_mem_limit is enabled.
+
+    The cap logic uses lazy imports (inside the function body) to avoid circular
+    imports.  Patching must target the *source* module attributes, not the
+    onnx_loader namespace (since the names are resolved at call time via
+    ``from X import Y`` inside the function).
+    """
+
+    def _mock_ort(self):
+        mock_ort = MagicMock()
+        mock_ort.ORTModelForFeatureExtraction.from_pretrained.return_value = MagicMock()
+        return mock_ort
+
+    def _mock_tf(self):
+        mock_tf = MagicMock()
+        mock_tf.AutoTokenizer.from_pretrained.return_value = MagicMock()
+        return mock_tf
+
+    def _make_cfg(self, fraction=0.8, onnx_gpu_mem_limit=True):
+        perf = MagicMock()
+        perf.vram_limit_fraction = fraction
+        perf.onnx_gpu_mem_limit = onnx_gpu_mem_limit
+        cfg = MagicMock()
+        cfg.performance = perf
+        return cfg
+
+    def test_cuda_provider_passes_gpu_mem_limit(self, tmp_path):
+        """CUDAExecutionProvider with onnx_gpu_mem_limit=True gets gpu_mem_limit > 0."""
+        mock_ort = self._mock_ort()
+        mock_tf = self._mock_tf()
+        loader = ONNXModelLoader("m", onnx_cache_dir=tmp_path, device="cuda")
+
+        # Patch compute_effective_vram_cap to return a deterministic cap (6 GB).
+        # Must patch at the source module because the import is lazy (inside fn body).
+        _cap_bytes = int(6 * 1024**3)
+        _cap_result = (0.75, _cap_bytes, 8.0, 0.0, 0.5, 1.6)
+
+        with (
+            patch.dict(
+                "sys.modules",
+                {"optimum.onnxruntime": mock_ort, "transformers": mock_tf},
+            ),
+            patch("embeddings.onnx_loader._is_converted", return_value=True),
+            patch(
+                "embeddings.embedder.compute_effective_vram_cap",
+                return_value=_cap_result,
+            ),
+            patch(
+                "mcp_server.utils.config_helpers.get_config_via_service_locator",
+                return_value=self._make_cfg(onnx_gpu_mem_limit=True),
+            ),
+        ):
+            loader.load()
+
+        call_kwargs = (
+            mock_ort.ORTModelForFeatureExtraction.from_pretrained.call_args.kwargs
+        )
+        assert "provider_options" in call_kwargs
+        po = call_kwargs["provider_options"]
+        assert po is not None
+        assert len(po) == 1
+        assert po[0]["gpu_mem_limit"] == _cap_bytes
+        assert po[0]["arena_extend_strategy"] == "kSameAsRequested"
+
+    def test_onnx_gpu_mem_limit_false_passes_none(self, tmp_path):
+        """When onnx_gpu_mem_limit=False, provider_options is None."""
+        mock_ort = self._mock_ort()
+        mock_tf = self._mock_tf()
+        loader = ONNXModelLoader("m", onnx_cache_dir=tmp_path, device="cuda")
+
+        _cap_result = (0.75, int(6 * 1024**3), 8.0, 0.0, 0.5, 1.6)
+
+        with (
+            patch.dict(
+                "sys.modules",
+                {"optimum.onnxruntime": mock_ort, "transformers": mock_tf},
+            ),
+            patch("embeddings.onnx_loader._is_converted", return_value=True),
+            patch(
+                "embeddings.embedder.compute_effective_vram_cap",
+                return_value=_cap_result,
+            ),
+            patch(
+                "mcp_server.utils.config_helpers.get_config_via_service_locator",
+                return_value=self._make_cfg(onnx_gpu_mem_limit=False),
+            ),
+        ):
+            loader.load()
+
+        call_kwargs = (
+            mock_ort.ORTModelForFeatureExtraction.from_pretrained.call_args.kwargs
+        )
+        assert call_kwargs.get("provider_options") is None
+
+    def test_cpu_provider_passes_none(self, tmp_path):
+        """CPUExecutionProvider never gets provider_options (no gpu_mem_limit concept)."""
+        mock_ort = self._mock_ort()
+        mock_tf = self._mock_tf()
+        loader = ONNXModelLoader("m", onnx_cache_dir=tmp_path, device="cpu")
+
+        with (
+            patch.dict(
+                "sys.modules",
+                {"optimum.onnxruntime": mock_ort, "transformers": mock_tf},
+            ),
+            patch("embeddings.onnx_loader._is_converted", return_value=True),
+        ):
+            loader.load()
+
+        call_kwargs = (
+            mock_ort.ORTModelForFeatureExtraction.from_pretrained.call_args.kwargs
+        )
+        assert call_kwargs.get("provider_options") is None
+
+    def test_cap_compute_failure_falls_back_to_none(self, tmp_path):
+        """If compute_effective_vram_cap returns None, provider_options is None (non-fatal)."""
+        mock_ort = self._mock_ort()
+        mock_tf = self._mock_tf()
+        loader = ONNXModelLoader("m", onnx_cache_dir=tmp_path, device="cuda")
+
+        with (
+            patch.dict(
+                "sys.modules",
+                {"optimum.onnxruntime": mock_ort, "transformers": mock_tf},
+            ),
+            patch("embeddings.onnx_loader._is_converted", return_value=True),
+            patch(
+                "embeddings.embedder.compute_effective_vram_cap",
+                return_value=None,
+            ),
+            patch(
+                "mcp_server.utils.config_helpers.get_config_via_service_locator",
+                return_value=self._make_cfg(onnx_gpu_mem_limit=True),
+            ),
+        ):
+            loader.load()  # must not raise
+
+        call_kwargs = (
+            mock_ort.ORTModelForFeatureExtraction.from_pretrained.call_args.kwargs
+        )
+        assert call_kwargs.get("provider_options") is None

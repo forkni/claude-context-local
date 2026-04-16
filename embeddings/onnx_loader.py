@@ -269,6 +269,61 @@ class ONNXModelLoader:
                 except Exception:
                     pass
 
+            # Constrain ORT's own CUDA arena allocator so it cannot push the GPU
+            # into WDDM shared-memory spillover on Windows.
+            # Unlike PyTorch's set_per_process_memory_fraction (which ORT ignores),
+            # gpu_mem_limit is respected by the CUDAExecutionProvider arena.
+            # Uses the same effective-cap formula as set_vram_limit() so both
+            # backends share the same budget.  Not applied for CPUExecutionProvider.
+            provider_options = None
+            if provider == "CUDAExecutionProvider":
+                try:
+                    from embeddings.embedder import compute_effective_vram_cap
+                    from mcp_server.utils.config_helpers import (
+                        get_config_via_service_locator as _get_cfg,
+                    )
+
+                    _cfg = _get_cfg()
+                    _fraction = (
+                        _cfg.performance.vram_limit_fraction
+                        if _cfg and _cfg.performance
+                        else 0.80
+                    )
+                    _onnx_cap_enabled = (
+                        _cfg.performance.onnx_gpu_mem_limit
+                        if _cfg and _cfg.performance
+                        else True
+                    )
+                    if _onnx_cap_enabled:
+                        _cap_result = compute_effective_vram_cap(_fraction)
+                        if _cap_result is not None:
+                            (
+                                _,
+                                _cap_bytes,
+                                _free_gb,
+                                _us_gb,
+                                _other_gb,
+                                _headroom_gb,
+                            ) = _cap_result
+                            provider_options = [
+                                {
+                                    "gpu_mem_limit": int(_cap_bytes),
+                                    "arena_extend_strategy": "kSameAsRequested",
+                                }
+                            ]
+                            _log.info(
+                                f"[ONNX_VRAM] gpu_mem_limit={_cap_bytes / 1024**3:.2f}GB, "
+                                f"arena=kSameAsRequested "
+                                f"(free={_free_gb:.1f}GB, us={_us_gb:.1f}GB, "
+                                f"other={_other_gb:.1f}GB, headroom={_headroom_gb:.1f}GB)"
+                            )
+                        else:
+                            _log.debug(
+                                "[ONNX_VRAM] CUDA not available — gpu_mem_limit not set"
+                            )
+                except Exception as _e:
+                    _log.debug(f"[ONNX_VRAM] Could not compute cap (non-fatal): {_e}")
+
             # Suppress benign "incorrect regex pattern" warning from transformers.
             # BGE-M3 uses a Mistral-derived tokenizer that triggers this via logger.warning()
             # (not warnings.warn), so we must temporarily raise the transformers log level.
@@ -281,6 +336,7 @@ class ONNXModelLoader:
                     file_name=model_file,
                     provider=provider,
                     session_options=session_options,
+                    provider_options=provider_options,
                 )
                 try:
                     tokenizer = AutoTokenizer.from_pretrained(str(self._onnx_dir))

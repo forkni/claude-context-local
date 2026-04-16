@@ -234,6 +234,12 @@ class PerformanceConfig:
     use_onnx: bool = (
         False  # When True, loads eligible models via ORTModelForFeatureExtraction
     )
+    onnx_gpu_mem_limit: bool = (
+        True  # Constrain ORT CUDAExecutionProvider arena via gpu_mem_limit.
+        # Uses the same effective-cap formula as set_vram_limit() so the ONNX
+        # session cannot push the GPU into WDDM shared-memory spillover.
+        # Disable only for debugging (raises OOM instead of spilling if too tight).
+    )
 
     # Auto-reindexing
     enable_auto_reindex: bool = True
@@ -533,6 +539,7 @@ class SearchConfig:
                 "enable_auto_reindex": self.performance.enable_auto_reindex,
                 "max_index_age_minutes": self.performance.max_index_age_minutes,
                 "use_onnx": self.performance.use_onnx,
+                "onnx_gpu_mem_limit": self.performance.onnx_gpu_mem_limit,
             },
             "multi_hop": {
                 "enabled": self.multi_hop.enabled,
@@ -711,6 +718,7 @@ class SearchConfig:
                     "max_index_age_minutes", 5.0
                 ),
                 use_onnx=performance_data.get("use_onnx", False),
+                onnx_gpu_mem_limit=performance_data.get("onnx_gpu_mem_limit", True),
             )
 
             multi_hop = MultiHopConfig(
@@ -881,6 +889,7 @@ class SearchConfig:
                 enable_auto_reindex=data.get("enable_auto_reindex", True),
                 max_index_age_minutes=data.get("max_index_age_minutes", 5.0),
                 use_onnx=data.get("use_onnx", False),
+                onnx_gpu_mem_limit=data.get("onnx_gpu_mem_limit", True),
             )
 
             multi_hop = MultiHopConfig(
