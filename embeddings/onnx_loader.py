@@ -267,7 +267,11 @@ class ONNXModelLoader:
                             f"{meta.get('model_file')!r} — using {default_model_file!r}"
                         )
                 except Exception:
-                    pass
+                    _log.debug(
+                        "[ONNX] Failed to parse convert_meta.json — "
+                        f"using default model file {default_model_file!r}",
+                        exc_info=True,
+                    )
 
             # Suppress benign "incorrect regex pattern" warning from transformers.
             # BGE-M3 uses a Mistral-derived tokenizer that triggers this via logger.warning()
