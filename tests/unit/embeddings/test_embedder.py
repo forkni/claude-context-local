@@ -1405,3 +1405,289 @@ class TestContextExtraction:
         assert "class TestClass:" not in embedding_content
         # But code content should still be present
         assert "def method(self):" in embedding_content
+
+
+class TestCalculateOptimalBatchSizeOrtCap:
+    """Tests for the ort_cap_gb parameter of calculate_optimal_batch_size().
+
+    Verifies that when an ORT arena cap is provided the batch sizer uses
+    ``min(free_gb, ort_cap - model_vram)`` as the available memory budget
+    rather than the full system-free figure.
+    """
+
+    @patch("embeddings.embedder.torch")
+    def test_ort_cap_constrains_available(self, mock_torch):
+        """ORT cap tighter than system free → available_gb clipped to cap remaining."""
+        from embeddings.embedder import calculate_optimal_batch_size
+
+        mock_torch.cuda.is_available.return_value = True
+        total_bytes = int(8 * 1024**3)
+        # System free after model load = 5.3 GB, but ORT cap was 5.0 GB and model
+        # already occupies 1.0 GB of that cap → ORT remaining = 4.0 GB.
+        mock_torch.cuda.mem_get_info.return_value = (int(5.3 * 1024**3), total_bytes)
+
+        # activation cost = 0.3 GB/item so batch without cap = floor(5.3*0.65*0.82/0.3)=9
+        # with ORT cap remaining = 4.0 GB: floor(4.0*0.65*0.82/0.3) = 7
+        result_without_cap = calculate_optimal_batch_size(
+            model_vram_gb=1.0,
+            activation_gb_per_item=0.3,
+            memory_fraction=0.65,
+            min_batch=1,
+            max_batch=64,
+        )
+        result_with_cap = calculate_optimal_batch_size(
+            model_vram_gb=1.0,
+            activation_gb_per_item=0.3,
+            memory_fraction=0.65,
+            min_batch=1,
+            max_batch=64,
+            ort_cap_gb=5.0,
+        )
+        assert result_with_cap < result_without_cap, (
+            f"ORT cap should lower batch size: with_cap={result_with_cap}, "
+            f"without_cap={result_without_cap}"
+        )
+
+    @patch("embeddings.embedder.torch")
+    def test_ort_cap_zero_leaves_behavior_unchanged(self, mock_torch):
+        """ort_cap_gb=0.0 (default) must not change available_gb."""
+        from embeddings.embedder import calculate_optimal_batch_size
+
+        mock_torch.cuda.is_available.return_value = True
+        total_bytes = int(24 * 1024**3)
+        mock_torch.cuda.mem_get_info.return_value = (int(16 * 1024**3), total_bytes)
+
+        r0 = calculate_optimal_batch_size(
+            model_vram_gb=2.0,
+            activation_gb_per_item=0.2,
+            memory_fraction=0.8,
+            min_batch=1,
+            max_batch=256,
+        )
+        r_explicit_zero = calculate_optimal_batch_size(
+            model_vram_gb=2.0,
+            activation_gb_per_item=0.2,
+            memory_fraction=0.8,
+            min_batch=1,
+            max_batch=256,
+            ort_cap_gb=0.0,
+        )
+        assert r0 == r_explicit_zero
+
+    @patch("embeddings.embedder.torch")
+    def test_ort_cap_larger_than_free_not_applied(self, mock_torch):
+        """ort_cap > system_free: cap is not the bottleneck, free_gb wins."""
+        from embeddings.embedder import calculate_optimal_batch_size
+
+        mock_torch.cuda.is_available.return_value = True
+        total_bytes = int(24 * 1024**3)
+        # free=4 GB, cap=20 GB → remaining=18 GB > 4 GB → free_gb is the limit
+        mock_torch.cuda.mem_get_info.return_value = (int(4 * 1024**3), total_bytes)
+
+        r_no_cap = calculate_optimal_batch_size(
+            model_vram_gb=2.0,
+            activation_gb_per_item=0.1,
+            memory_fraction=0.8,
+            min_batch=1,
+            max_batch=256,
+        )
+        r_large_cap = calculate_optimal_batch_size(
+            model_vram_gb=2.0,
+            activation_gb_per_item=0.1,
+            memory_fraction=0.8,
+            min_batch=1,
+            max_batch=256,
+            ort_cap_gb=20.0,
+        )
+        assert r_large_cap == r_no_cap
+
+
+class TestOomRecoveryBackoff:
+    """Tests for Fix B: OOM-recovery backoff in embed_chunks().
+
+    Verifies that BFCArena-style OOM errors (ORT) and classic CUDA OOM are
+    both caught, trigger batch-size halving, and allow the embedding run to
+    complete.  Uses a minimal fake model that raises on the first call and
+    succeeds on the second.
+    """
+
+    def _make_chunks(self, n: int):
+        """Return n minimal CodeChunk objects."""
+        chunks = []
+        for i in range(n):
+            c = MagicMock()
+            c.relative_path = Path(f"f{i}.py")
+            c.file_path = f"f{i}.py"
+            c.start_line = 1
+            c.end_line = 10
+            c.chunk_type = "function"
+            c.name = f"fn{i}"
+            c.parent_name = ""
+            c.parent_chunk_id = None
+            c.docstring = ""
+            c.decorators = []
+            c.imports = []
+            c.complexity_score = 1
+            c.tags = []
+            c.content = f"def fn{i}(): pass"
+            c.calls = []
+            c.relationships = []
+            chunks.append(c)
+        return chunks
+
+    @patch("embeddings.embedder.torch")
+    @patch("embeddings.embedder._get_config_via_service_locator")
+    def test_bfcarena_oom_triggers_halve_and_retry(self, mock_get_cfg, mock_torch):
+        """BFCArena OOM → batch halved → all chunks embedded successfully."""
+        from embeddings.embedder import CodeEmbedder
+
+        mock_torch.cuda.is_available.return_value = False
+        mock_torch.is_tensor = MagicMock(return_value=False)
+
+        cfg = MagicMock()
+        cfg.performance.enable_dynamic_batch_size = False
+        cfg.performance.allow_ram_fallback = True
+        cfg.embedding.batch_size = 4
+        cfg.embedding.dimension = 768
+        mock_get_cfg.return_value = cfg
+
+        embedder = CodeEmbedder.__new__(CodeEmbedder)
+        embedder._logger = MagicMock()
+        embedder.model_name = "test/model"
+        embedder.device = "cpu"
+        embedder._query_cache = MagicMock()
+        embedder._model_vram_usage = {}
+        embedder._model_warmed_up = True
+        embedder._check_vram_status = MagicMock(return_value=(0.5, False, False))
+        embedder._log_vram_usage = MagicMock()
+        embedder._is_gpu_device = MagicMock(return_value=False)
+        embedder._get_model_config = MagicMock(return_value={"passage_prefix": ""})
+
+        call_count = 0
+
+        def fake_encode(texts, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError(
+                    "BFCArena::AllocateRawInternal Available memory of "
+                    "875860224 is smaller than requested bytes of 1338163200"
+                )
+            dim = 768
+            return np.zeros((len(texts), dim), dtype=np.float32)
+
+        fake_model = MagicMock()
+        fake_model.encode = fake_encode
+        embedder._model = fake_model
+        embedder.create_embedding_content = MagicMock(side_effect=lambda c: c.content)
+
+        chunks = self._make_chunks(4)
+        results = embedder.embed_chunks(chunks)
+
+        assert len(results) == 4
+        # Warning should have been logged about halving
+        warn_calls = [str(c) for c in embedder._logger.warning.call_args_list]
+        assert any("OOM_RECOVERY" in w for w in warn_calls)
+
+    @patch("embeddings.embedder.torch")
+    @patch("embeddings.embedder._get_config_via_service_locator")
+    def test_classic_cuda_oom_still_caught(self, mock_get_cfg, mock_torch):
+        """Classic 'out of memory' RuntimeError is also caught and triggers halving."""
+        from embeddings.embedder import CodeEmbedder
+
+        mock_torch.cuda.is_available.return_value = False
+        mock_torch.is_tensor = MagicMock(return_value=False)
+
+        cfg = MagicMock()
+        cfg.performance.enable_dynamic_batch_size = False
+        cfg.performance.allow_ram_fallback = True
+        cfg.embedding.batch_size = 4
+        cfg.embedding.dimension = 768
+        mock_get_cfg.return_value = cfg
+
+        embedder = CodeEmbedder.__new__(CodeEmbedder)
+        embedder._logger = MagicMock()
+        embedder.model_name = "test/model"
+        embedder.device = "cpu"
+        embedder._query_cache = MagicMock()
+        embedder._model_vram_usage = {}
+        embedder._model_warmed_up = True
+        embedder._check_vram_status = MagicMock(return_value=(0.5, False, False))
+        embedder._log_vram_usage = MagicMock()
+        embedder._is_gpu_device = MagicMock(return_value=False)
+        embedder._get_model_config = MagicMock(return_value={"passage_prefix": ""})
+
+        call_count = 0
+
+        def fake_encode(texts, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("CUDA out of memory. Tried to allocate 2.00 GiB")
+            dim = 768
+            return np.zeros((len(texts), dim), dtype=np.float32)
+
+        fake_model = MagicMock()
+        fake_model.encode = fake_encode
+        embedder._model = fake_model
+        embedder.create_embedding_content = MagicMock(side_effect=lambda c: c.content)
+
+        chunks = self._make_chunks(4)
+        results = embedder.embed_chunks(chunks)
+
+        assert len(results) == 4
+
+    @patch("embeddings.embedder.torch")
+    @patch("embeddings.embedder._get_config_via_service_locator")
+    def test_batch_size_reduced_persists_for_subsequent_batches(
+        self, mock_get_cfg, mock_torch
+    ):
+        """After OOM, the smaller batch_size is used for all remaining batches."""
+        from embeddings.embedder import CodeEmbedder
+
+        mock_torch.cuda.is_available.return_value = False
+        mock_torch.is_tensor = MagicMock(return_value=False)
+
+        cfg = MagicMock()
+        cfg.performance.enable_dynamic_batch_size = False
+        cfg.performance.allow_ram_fallback = True
+        cfg.embedding.batch_size = 4
+        cfg.embedding.dimension = 768
+        mock_get_cfg.return_value = cfg
+
+        embedder = CodeEmbedder.__new__(CodeEmbedder)
+        embedder._logger = MagicMock()
+        embedder.model_name = "test/model"
+        embedder.device = "cpu"
+        embedder._query_cache = MagicMock()
+        embedder._model_vram_usage = {}
+        embedder._model_warmed_up = True
+        embedder._check_vram_status = MagicMock(return_value=(0.5, False, False))
+        embedder._log_vram_usage = MagicMock()
+        embedder._is_gpu_device = MagicMock(return_value=False)
+        embedder._get_model_config = MagicMock(return_value={"passage_prefix": ""})
+
+        batch_sizes_seen = []
+
+        def fake_encode(texts, **kwargs):
+            batch_sizes_seen.append(len(texts))
+            if len(texts) >= 4:
+                raise RuntimeError(
+                    "BFCArena::AllocateRawInternal Available memory of "
+                    "100 is smaller than requested bytes of 200"
+                )
+            return np.zeros((len(texts), 768), dtype=np.float32)
+
+        fake_model = MagicMock()
+        fake_model.encode = fake_encode
+        embedder._model = fake_model
+        embedder.create_embedding_content = MagicMock(side_effect=lambda c: c.content)
+
+        # 8 chunks, initial batch=4 → OOM → halved to 2 → all 4 batches of 2
+        chunks = self._make_chunks(8)
+        results = embedder.embed_chunks(chunks)
+
+        assert len(results) == 8
+        # First call fails with batch=4, then all subsequent calls use batch=2
+        assert batch_sizes_seen[0] == 4  # the failing attempt
+        assert all(s == 2 for s in batch_sizes_seen[1:])  # all retries use 2
