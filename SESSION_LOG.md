@@ -34,6 +34,45 @@ This file maintains session memory and context for the Claude-context-MCP semant
 
 ## Session History
 
+### 2026-04-16: ONNX Runtime VRAM Cap + OOM Recovery (Fixes A & B)
+
+**Primary Achievement**: Extended the WDDM spillover fix to the active ONNX Runtime backend by capping ORT's CUDA arena and adding BFCArena-aware OOM recovery with batch-size backoff, eliminating VRAM spillover end-to-end on 8 GB laptop GPUs.
+
+#### Key Accomplishments
+
+- Constrained ORT `CUDAExecutionProvider` allocator via `gpu_mem_limit` + `arena_extend_strategy="kSameAsRequested"` — the critical missing piece, since `torch.cuda.set_per_process_memory_fraction` does not govern ORT's allocator
+- Extracted `compute_effective_vram_cap(fraction)` as a shared helper returning `(effective_fraction, cap_bytes, free_gb, us_gb, other_gb, headroom_gb)` so PyTorch and ORT compute identical caps
+- **Fix A (budget-aware batch sizing)**: `calculate_optimal_batch_size()` now accepts `ort_cap_gb` and constrains `available_gb = min(free_gb, ort_cap_gb − model_vram_gb)` so dynamic batching respects the ORT session arena, not just raw free VRAM
+- **Fix B (OOM backoff)**: Converted `embed_chunks()` batch loop from `for` to `while` with mutable `current_batch_size`; on BFCArena/RuntimeError OOM, halve the batch, `empty_cache()`, re-sync `progress.update(total=...)`, and retry — no user-visible failure
+- Added `onnx_gpu_mem_limit: bool = True` config flag; documented ORT cap behavior and updated 8 GB tier guidance in `INSTALLATION_GUIDE.md`
+- 6 new unit tests: `TestCalculateOptimalBatchSizeOrtCap` (3) + `TestOomRecoveryBackoff` (3); full suite 1975/1975 pass
+- Live validation on RTX 4060 Laptop: gte-modernbert 32→16, bge-m3 16→8 after OOM, 3120 chunks in 143.80s, **zero shared-memory spillover**
+
+#### Technical Details
+
+**ORT cap plumbing** (`onnx_loader.py`): on `CUDAExecutionProvider`, build `provider_options=[{"gpu_mem_limit": int(cap_bytes), "arena_extend_strategy": "kSameAsRequested"}]` from `compute_effective_vram_cap()` and pass to `ORTModelForFeatureExtraction.from_pretrained(...)`. Gated behind `performance.onnx_gpu_mem_limit`; decoupled from `allow_ram_fallback` so the ORT cap applies even when PyTorch fallback is permitted. New `[ONNX_VRAM]` log line mirrors `[VRAM_LIMIT]` format.
+
+**OOM recovery pattern** (`embedder.py`): `except RuntimeError as e:` checks `"out of memory" | "bfcarena" | ("available memory" & "smaller than requested")` substrings. On match with `current_batch_size > 1`: halve, recompute `remaining_batches = ceil((len−i) / new_size)`, `progress.update(task, total=completed + remaining_batches)`, `empty_cache()`, `gc.collect()`, `batch_num -= 1`, `continue`. Reduced batch size persists for subsequent batches, so cost is paid once per file. `torch.cuda.OutOfMemoryError` is a `RuntimeError` subclass, so listing both caused `TypeError` when `torch` was mocked — fixed by catching `RuntimeError` only.
+
+**ORT cap detection at call site**: `embed_chunks()` reads `ort_cap_gb` via `compute_effective_vram_cap()` when the model has an `ort_model` attribute, then passes it to `calculate_optimal_batch_size()` for the initial size guess.
+
+#### Files Modified
+
+- `embeddings/embedder.py` — extracted `compute_effective_vram_cap()`; added `ort_cap_gb` param to `calculate_optimal_batch_size()`; converted `embed_chunks()` batch loop to while+mutable size with BFCArena-aware OOM handler
+- `embeddings/onnx_loader.py` — provider_options with `gpu_mem_limit` + `kSameAsRequested` for `CUDAExecutionProvider`; gated by `onnx_gpu_mem_limit` config flag
+- `search/config.py` — `onnx_gpu_mem_limit: bool = True` added to `PerformanceConfig`
+- `search_config.json` — `"onnx_gpu_mem_limit": true` under `"performance"`
+- `tests/unit/embeddings/test_embedder.py` — `TestComputeEffectiveVramCap`, `TestCalculateOptimalBatchSizeOrtCap`, `TestOomRecoveryBackoff` classes
+- `tests/unit/embeddings/test_onnx_loader.py` — provider_options assertions (CUDA + CPU + flag-disabled cases)
+- `docs/INSTALLATION_GUIDE.md` — ORT cap documentation in VRAM Limit Fraction section; revised 8 GB tier guidance
+
+#### Commits
+
+- `457648b` — fix: constrain ORT CUDAExecutionProvider arena to prevent WDDM VRAM spillover
+- `7b90388` — fix: ORT-aware batch sizing + BFCArena OOM recovery (fix B+A)
+
+---
+
 ### 2026-04-16: VRAM Hard-Limit Fix — Account for Other-Process Allocation
 
 **Primary Achievement**: Fixed Windows WDDM shared-memory spillover bug where `set_vram_limit()` applied the process cap against total GPU memory without subtracting VRAM already held by other processes, causing embedding streams to spill to system RAM when other apps occupied VRAM.
