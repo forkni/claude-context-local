@@ -319,8 +319,10 @@ class ModelLoader:
                 self._logger.debug(
                     "[ONNX] Warmup inference complete — CUDA memory now allocated"
                 )
-            except Exception as e:
-                self._logger.debug(f"[ONNX] Warmup failed (non-fatal): {e}")
+            except Exception:
+                # Preserve traceback for diagnostics while keeping severity at debug —
+                # warmup failure is non-fatal (batch sizing falls back to setup-only VRAM).
+                self._logger.debug("[ONNX] Warmup failed (non-fatal)", exc_info=True)
 
         post_vram_bytes = _get_nvml_used_bytes(device)
         vram_delta_gb = max(0.0, (post_vram_bytes - pre_vram_bytes) / (1024**3))
