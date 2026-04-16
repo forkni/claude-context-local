@@ -174,9 +174,9 @@ class ModelLoader:
         try:
             if is_onnx:
                 # ORT allocates outside PyTorch — use pynvml delta
-                pre = _get_nvml_used_bytes()
+                pre = _get_nvml_used_bytes(device)
                 model.encode(dummy_batch, batch_size=batch_size)
-                post = _get_nvml_used_bytes()
+                post = _get_nvml_used_bytes(device)
                 delta_gb = max(0.0, (post - pre) / (1024**3))
             else:
                 # PyTorch: track peak allocated memory across the batch
