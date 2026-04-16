@@ -244,12 +244,28 @@ class ONNXModelLoader:
             # Optimum's default file resolution looks for "model.onnx" but our
             # optimized export produces "model_optimized.onnx" — passing file_name
             # explicitly silences the "could not find model.onnx" warning.
-            model_file = "model_optimized.onnx"  # O4-optimized default
+            #
+            # convert_meta.json is read from a user-controlled cache directory, so
+            # we treat `model_file` as untrusted: strip any path components, require
+            # the .onnx extension, and fall back to the safe default if the resolved
+            # path does not actually exist inside _onnx_dir.
+            default_model_file = "model_optimized.onnx"
+            model_file = default_model_file
             meta_path = self._onnx_dir / "convert_meta.json"
             if meta_path.is_file():
                 try:
                     meta = json.loads(meta_path.read_text())
-                    model_file = meta.get("model_file", model_file)
+                    candidate = Path(meta.get("model_file", default_model_file)).name
+                    if (
+                        candidate.endswith(".onnx")
+                        and (self._onnx_dir / candidate).is_file()
+                    ):
+                        model_file = candidate
+                    else:
+                        _log.warning(
+                            f"[ONNX] Ignoring invalid model_file in convert_meta.json: "
+                            f"{meta.get('model_file')!r} — using {default_model_file!r}"
+                        )
                 except Exception:
                     pass
 
