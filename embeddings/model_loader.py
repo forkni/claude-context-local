@@ -167,7 +167,9 @@ class ModelLoader:
         Returns:
             Measured activation memory per item in GB, or 0.0 on failure.
         """
-        if device != "cuda" or (torch is None or not torch.cuda.is_available()):
+        if not str(device).startswith("cuda"):
+            return 0.0
+        if not is_onnx and (torch is None or not torch.cuda.is_available()):
             return 0.0
 
         dummy_batch = [_WARMUP_TEXT] * batch_size
