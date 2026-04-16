@@ -1052,6 +1052,16 @@ Two new settings are available to manage GPU memory allocation on systems with l
 2. **Hard Ceiling**: `vram_limit_fraction` (80%) enforces VRAM limit
 3. **Spillover Control**: `allow_ram_fallback` (false) prevents slow shared memory usage
 
+**Automatic adjustment for other processes (Windows)**:
+
+On Windows, the effective VRAM cap is automatically reduced when other processes
+(browsers, games, other ML workloads) hold GPU memory at runtime. At each embedding
+run and model load, the system re-measures free and allocated VRAM and derives an
+effective fraction that prevents our process from overcommitting physical VRAM —
+which would otherwise trigger the WDDM driver to evict memory to shared system RAM
+(10–100× slower than dedicated VRAM). Check `[VRAM_LIMIT]` log lines for the
+requested vs. effective fraction and the per-process breakdown.
+
 **When `allow_ram_fallback=true`**:
 
 - `vram_limit_fraction` is ignored (no hard limit set)
