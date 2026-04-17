@@ -337,6 +337,8 @@ class ModelLoader:
         Eligibility requires:
         - use_onnx=True in performance config
         - Model does NOT require trust_remote_code (custom architectures unsupported)
+        - Model does NOT set onnx_supported=False (opt-out for models whose upstream
+          pooling is not yet implemented in onnx_wrapper.py, e.g. lasttoken)
         """
         try:
             from mcp_server.utils.config_helpers import (
@@ -353,6 +355,12 @@ class ModelLoader:
         if model_config.get("trust_remote_code", False):
             self._logger.debug(
                 f"[ONNX] Skipping {self.model_name!r}: trust_remote_code=True"
+            )
+            return False
+        if not model_config.get("onnx_supported", True):
+            self._logger.debug(
+                f"[ONNX] Skipping {self.model_name!r}: onnx_supported=False "
+                "(upstream pooling not supported by wrapper)"
             )
             return False
         return True

@@ -51,7 +51,9 @@ MODEL_REGISTRY = {
         "vram_gb": "4GB",  # ~4GB in FP16
         "fallback_batch_size": 32,  # Conservative batch size for 2B model
         "trust_remote_code": False,
-        "onnx_pooling": "mean",
+        # Upstream uses lasttoken pooling, which the ONNX wrapper does not yet support.
+        # Gate ONNX off for this model until lasttoken support lands in onnx_wrapper.py.
+        "onnx_supported": False,
     },
     "Qwen/Qwen3-Embedding-0.6B": {
         "dimension": 1024,
@@ -79,7 +81,8 @@ MODEL_REGISTRY = {
         "model_type": "code-specific",
         "task_instruction": "Represent this query for searching relevant code",  # Required query prefix
         "trust_remote_code": True,
-        "onnx_pooling": "mean",
+        # Upstream pooling is CLS; `.get("onnx_pooling", "cls")` in model_loader
+        # defaults correctly. ONNX is blocked anyway via trust_remote_code=True.
     },
     "Alibaba-NLP/gte-modernbert-base": {
         "dimension": 768,

@@ -146,7 +146,7 @@ def estimate_activation_gb_from_config(
     _dtype = getattr(config, "torch_dtype", None)
     _fp32 = getattr(torch, "float32", None) if torch is not None else None
     dtype_bytes: int = (
-        4 if (_dtype is not None and _dtype == _fp32 or _dtype == "float32") else 2
+        4 if ((_dtype is not None and _dtype == _fp32) or _dtype == "float32") else 2
     )
 
     has_gated_mlp = model_type in _GATED_MLP_MODEL_TYPES
