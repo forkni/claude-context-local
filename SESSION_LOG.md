@@ -34,6 +34,165 @@ This file maintains session memory and context for the Claude-context-MCP semant
 
 ## Session History
 
+### 2026-04-16: CI Review Fixes Applied to Development
+
+**Primary Achievement**: Verified CI review agent findings against code and applied all valid fixes in 3 logical commits (ONNX correctness, VRAM/OOM robustness, cosmetics).
+
+#### Key Fixes
+
+- **A: ONNX correctness** — deleted duplicated ORT provider-options block (L304-357 of `onnx_loader.py`; the second copy was the one wired to `from_pretrained`); fixed `_measure_activation_per_item` to accept `cuda:N` device strings (was `!= "cuda"`, now `startswith`); ONNX path no longer requires torch for NVML-based measurement; updated `validate()` docstring to say "max abs diff" not "cosine diff".
+- **B: VRAM/OOM robustness** — OOM detection now prefers `isinstance(e, torch.cuda.OutOfMemoryError)` with string-match fallback; `estimate_activation_gb_from_config` is now dtype-aware (fp32 → 4 bytes, fp16/bf16 → 2 bytes, unknown → 2); `ort_untracked_gb` key in status handler renamed to `non_torch_gb` (was mathematically wrong: subtracted per-process from device-wide NVML); added missing test for non-OOM RuntimeError propagation.
+- **C: Cosmetics** — added `onnx_pooling: "mean"` to `BAAI/bge-code-v1` and `nomic-ai/CodeRankEmbed` in `MODEL_REGISTRY`; narrowed `TypeError` from except tuples in `compute_effective_vram_cap`/`set_vram_limit`; DEBUG-logged previously silent excepts; fixed `onnx_gpu_mem_limit` field style; added `mem_get_info(0)` explicit index for consistency; added comment explaining ORT cap computed once before batch loop.
+
+#### Config Default Switch (intentional)
+
+`search_config.json` defaults were updated when the multi-model pool was switched to `lightweight-speed` for this laptop target:
+- `model_name`: Qwen3-Embedding-0.6B → `BAAI/bge-m3`
+- `default_model`: `qwen3` → `bge_m3`
+- `reranker`: `jinaai/jina-reranker-v3` → `Alibaba-NLP/gte-reranker-modernbert-base`
+- `multi_model_pool`: `full` → `lightweight-speed`
+
+**Existing users must re-index** if upgrading from a Qwen3-based index (dimension unchanged at 1024, but model weights differ).
+
+#### CI False Positives (not fixed — already correct)
+
+- `_resolve_provider` already uses `device.startswith("cuda")` (CI claimed literal match).
+- ONNX fast-path fallback already catches both `ImportError` and `RuntimeError` (CI said only `ImportError`).
+- `allow_ram_fallback` in `search_config.json` is `true` (CI claimed `false`).
+
+---
+
+### 2026-04-16: ONNX Stack Merged Into Development
+
+**Primary Achievement**: Finalized the 4-PR ONNX Runtime stack by resolving merge conflicts, committing the merge into `development`, pushing to origin, and closing all 4 stacked PRs with a reference to the merge commit.
+
+#### Key Accomplishments
+
+- Completed in-progress merge of `pr/04-wddm-vram-fix` → `development` that had stopped at content conflicts in `embeddings/embedder.py` and `embeddings/model_loader.py`
+- Resolved both conflicts via `git checkout --theirs` (verified pr/04 is a strict superset of `development`'s prior state — no code discarded)
+- Staged all 5 modified files, finalized merge commit `52f33fb` (two parents: `aa75b73` + `7ded10c`)
+- Pushed 12 commits to `origin/development` (`aa75b73..52f33fb`)
+- Closed PRs forkni/claude-context-local#20, #21, #22, #23 with a note pointing to `52f33fb`
+
+#### Technical Details
+
+The merge brought 11 stack commits into `development` via a single merge commit:
+
+| Commit | Description |
+|--------|-------------|
+| `87d76cc` | Scope activation-cost overrides by backend (ONNX vs PyTorch) |
+| `290b56d` | Log debug on `convert_meta.json` parse failure |
+| `4dc15ab` | 6-fix bundle: `cuda:N` device handling, RuntimeError fallback, tokenizer save, unsupported-optimizer fallback, abs-diff label, NVML comment |
+| `a29f896` | Replace tier-based batch sizing with architecture-derived formula |
+| `4c058bb` | Pass `device` to `_get_nvml_used_bytes` in activation measurement |
+| `4f5fd19` | ONNX activation cost floor to prevent BFCArena OOM on first-try batches |
+| `23e2bb3` | Route PyTorch warmup through `_measure_activation_per_item` |
+| `b8a3de1` | Account for other-process VRAM in hard limit |
+| `480a1fb` | Constrain ORT CUDAExecutionProvider arena |
+| `054d9c1` | ORT-aware batch sizing + BFCArena OOM recovery |
+| `7ded10c` | SESSION_LOG update |
+
+PRs #20–#23 were closed (not merged via GitHub) because their bases targeted each other in a stack, not `development`. They can be re-opened against `main` when `development` is promoted.
+
+#### Files Modified
+
+All modifications were brought in via the incoming commits — no new code was written during the merge session itself.
+
+- `embeddings/embedder.py` — ONNX cost floor, backend-scoped overrides, OOM backoff, VRAM cap
+- `embeddings/model_loader.py` — PyTorch warmup unified method, 6-fix bundle items
+- `embeddings/onnx_loader.py` — `cuda:N` provider fix, tokenizer save, unsupported-optimizer fallback
+- `mcp_server/tools/status_handlers.py` — NVML "this process" comment clarification
+- `tools/convert_onnx.py` — abs-diff label correction
+
+#### Commits
+
+- `52f33fb` — Merge pr/04-wddm-vram-fix into development
+
+---
+
+### 2026-04-16: ONNX Runtime VRAM Cap + OOM Recovery (Fixes A & B)
+
+**Primary Achievement**: Extended the WDDM spillover fix to the active ONNX Runtime backend by capping ORT's CUDA arena and adding BFCArena-aware OOM recovery with batch-size backoff, eliminating VRAM spillover end-to-end on 8 GB laptop GPUs.
+
+#### Key Accomplishments
+
+- Constrained ORT `CUDAExecutionProvider` allocator via `gpu_mem_limit` + `arena_extend_strategy="kSameAsRequested"` — the critical missing piece, since `torch.cuda.set_per_process_memory_fraction` does not govern ORT's allocator
+- Extracted `compute_effective_vram_cap(fraction)` as a shared helper returning `(effective_fraction, cap_bytes, free_gb, us_gb, other_gb, headroom_gb)` so PyTorch and ORT compute identical caps
+- **Fix A (budget-aware batch sizing)**: `calculate_optimal_batch_size()` now accepts `ort_cap_gb` and constrains `available_gb = min(free_gb, ort_cap_gb − model_vram_gb)` so dynamic batching respects the ORT session arena, not just raw free VRAM
+- **Fix B (OOM backoff)**: Converted `embed_chunks()` batch loop from `for` to `while` with mutable `current_batch_size`; on BFCArena/RuntimeError OOM, halve the batch, `empty_cache()`, re-sync `progress.update(total=...)`, and retry — no user-visible failure
+- Added `onnx_gpu_mem_limit: bool = True` config flag; documented ORT cap behavior and updated 8 GB tier guidance in `INSTALLATION_GUIDE.md`
+- 6 new unit tests: `TestCalculateOptimalBatchSizeOrtCap` (3) + `TestOomRecoveryBackoff` (3); full suite 1975/1975 pass
+- Live validation on RTX 4060 Laptop: gte-modernbert 32→16, bge-m3 16→8 after OOM, 3120 chunks in 143.80s, **zero shared-memory spillover**
+
+#### Technical Details
+
+**ORT cap plumbing** (`onnx_loader.py`): on `CUDAExecutionProvider`, build `provider_options=[{"gpu_mem_limit": int(cap_bytes), "arena_extend_strategy": "kSameAsRequested"}]` from `compute_effective_vram_cap()` and pass to `ORTModelForFeatureExtraction.from_pretrained(...)`. Gated behind `performance.onnx_gpu_mem_limit`; decoupled from `allow_ram_fallback` so the ORT cap applies even when PyTorch fallback is permitted. New `[ONNX_VRAM]` log line mirrors `[VRAM_LIMIT]` format.
+
+**OOM recovery pattern** (`embedder.py`): `except RuntimeError as e:` checks `"out of memory" | "bfcarena" | ("available memory" & "smaller than requested")` substrings. On match with `current_batch_size > 1`: halve, recompute `remaining_batches = ceil((len−i) / new_size)`, `progress.update(task, total=completed + remaining_batches)`, `empty_cache()`, `gc.collect()`, `batch_num -= 1`, `continue`. Reduced batch size persists for subsequent batches, so cost is paid once per file. `torch.cuda.OutOfMemoryError` is a `RuntimeError` subclass, so listing both caused `TypeError` when `torch` was mocked — fixed by catching `RuntimeError` only.
+
+**ORT cap detection at call site**: `embed_chunks()` reads `ort_cap_gb` via `compute_effective_vram_cap()` when the model has an `ort_model` attribute, then passes it to `calculate_optimal_batch_size()` for the initial size guess.
+
+#### Files Modified
+
+- `embeddings/embedder.py` — extracted `compute_effective_vram_cap()`; added `ort_cap_gb` param to `calculate_optimal_batch_size()`; converted `embed_chunks()` batch loop to while+mutable size with BFCArena-aware OOM handler
+- `embeddings/onnx_loader.py` — provider_options with `gpu_mem_limit` + `kSameAsRequested` for `CUDAExecutionProvider`; gated by `onnx_gpu_mem_limit` config flag
+- `search/config.py` — `onnx_gpu_mem_limit: bool = True` added to `PerformanceConfig`
+- `search_config.json` — `"onnx_gpu_mem_limit": true` under `"performance"`
+- `tests/unit/embeddings/test_embedder.py` — `TestComputeEffectiveVramCap`, `TestCalculateOptimalBatchSizeOrtCap`, `TestOomRecoveryBackoff` classes
+- `tests/unit/embeddings/test_onnx_loader.py` — provider_options assertions (CUDA + CPU + flag-disabled cases)
+- `docs/INSTALLATION_GUIDE.md` — ORT cap documentation in VRAM Limit Fraction section; revised 8 GB tier guidance
+
+#### Commits
+
+- `457648b` — fix: constrain ORT CUDAExecutionProvider arena to prevent WDDM VRAM spillover
+- `7b90388` — fix: ORT-aware batch sizing + BFCArena OOM recovery (fix B+A)
+
+---
+
+### 2026-04-16: VRAM Hard-Limit Fix — Account for Other-Process Allocation
+
+**Primary Achievement**: Fixed Windows WDDM shared-memory spillover bug where `set_vram_limit()` applied the process cap against total GPU memory without subtracting VRAM already held by other processes, causing embedding streams to spill to system RAM when other apps occupied VRAM.
+
+#### Key Accomplishments
+
+- Diagnosed root cause: `torch.cuda.set_per_process_memory_fraction(fraction, device=0)` was using `fraction × total_memory` as the cap, so a 10 GB external allocation on a 24 GB GPU was invisible to the 19.2 GB cap — combined demand 29.2 GB triggered WDDM shared-memory eviction
+- Rewrote `set_vram_limit()` to compute an *effective* fraction from live `mem_get_info()` + `memory_allocated()` readings, capping our process at `min(user_cap, A_us + F − headroom)` so the hard limit respects physically available VRAM
+- Added automatic re-application of the cap at the start of `embed_chunks()` so mid-session VRAM pressure (browser, game, reranker loading) is accounted for at embedding time
+- Added re-apply before each of the three reranker lazy-load sites (`NeuralReranker`, `GenerativeReranker`, `JinaRerankerV3`) so model loads also see current free VRAM
+- 8 new unit tests covering: no-pressure baseline, 10 GB other-process scenario (the bug), mid-run re-apply, clamp-up when physical cap < current usage, `allow_ram_fallback` short-circuit, no CUDA, raise, idempotency
+- All 964 unit tests (224 embeddings + 740 search) pass; lint clean
+
+#### Technical Details
+
+**Formula** (`T`=total, `F`=free, `A_us`=our allocated, `A_other = max(0, T−F−A_us)`, `r`=requested fraction):
+```
+headroom     = (1 − r) × T
+physical_cap = A_us + F − headroom   (== T − A_other − headroom)
+cap          = max(min(r×T, physical_cap), A_us)
+effective_fraction = clamp(cap / T, 0.05, r)
+```
+
+Example — 24 GB GPU, `r=0.8`, other process holds 10 GB: `effective_fraction ≈ 0.383` instead of 0.80. Combined usage at saturation: 9.2 + 10 = 19.2 GB ≤ 24 GB physical. No WDDM spill.
+
+New log format: `[VRAM_LIMIT] Requested=80%, effective=38% (free=14.0GB, us=0.0GB, other=10.0GB, headroom=4.8GB)`
+
+The `allow_ram_fallback=True` short-circuit is preserved verbatim — cap is skipped entirely in that mode.
+
+Not covered (documented in `set_vram_limit()` docstring): FAISS GPU allocator and ORT CUDAExecutionProvider both use separate CUDA allocators that `set_per_process_memory_fraction` does not govern.
+
+#### Files Modified
+
+- `embeddings/embedder.py` — `set_vram_limit()` rewritten with effective-fraction formula; re-apply call inserted at top of `embed_chunks()` after model warmup
+- `search/neural_reranker.py` — VRAM cap re-applied before lazy load in `NeuralReranker.model`, `GenerativeReranker._ensure_loaded()`, `JinaRerankerV3._load_or_fetch()`
+- `tests/unit/embeddings/test_embedder.py` — `TestSetVramLimitEffective` class (8 tests)
+- `docs/INSTALLATION_GUIDE.md` — Windows VRAM auto-adjustment note in VRAM Limit Fraction section
+
+#### Commit
+
+- `a209849` — fix: account for other-process VRAM allocation in hard limit to prevent WDDM spillover
+
+---
+
 ### 2026-04-10: SSCG Three-Mode Evaluation & Golden Dataset Fix
 
 **Primary Achievement**: Completed three-mode (hybrid/BM25/semantic) SSCG evaluation via live MCP server, identified 4 broken golden labels and 3 oversized expected sets, fixed all issues — benchmark now passes all thresholds with 13/13 Hit Rate across all modes.
