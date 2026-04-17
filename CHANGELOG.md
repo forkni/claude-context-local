@@ -45,6 +45,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`handle_get_memory_status()` field rename**: GPU entries now expose `non_torch_gb` instead of `ort_untracked_gb`. The old name was misleading — the computed value is device-wide NVML usage minus per-process PyTorch allocations, which conflates other processes + drivers + ORT, not just ORT. Any external dashboard or monitor reading the old key will receive `None`
 
+### Security
+
+- **Transitive dependency patch upgrades** (4 CVEs fixed) — `pygments` 2.19.2 → 2.20.0 (CVE-2026-4539, ReDoS in `AdlLexer`), `pyjwt` 2.10.1 → 2.12.0 (CVE-2026-32597, missing `crit` header validation per RFC 7515), `python-multipart` 0.0.22 → 0.0.26 (CVE-2026-40347, DoS via large multipart preamble/epilogue), `requests` 2.32.5 → 2.33.0 (CVE-2026-25645, predictable tempfile name in `extract_zipped_paths()`)
+- **Orphan dependency cleanup** — uninstalled `cryptography` (no dependents after `authlib` was removed upstream; eliminated CVE-2026-34073 + CVE-2026-39892), `typer-slim` and `shellingham` (pulled in by unused `mcp[cli]`/`huggingface_hub[mcp]` extras). Venv dropped from 127 → 124 packages; open CVE count dropped from 8 → 2 (remaining: `sqlitedict` CVE-2024-35515 mitigated via JSON serialization in `metadata.py`; `transformers` CVE-2026-1839 blocked by `optimum-onnx <4.58.0` pin)
+- **pyproject.toml security-comments block refreshed** — stale `cryptography`/`authlib` references removed; new transitive-dep CVE fixes documented; last-audit date bumped to 2026-04-16
+
+### Tests
+
+- Unit test count: **1,987** (up from 1,985). Additions cover narrowed OOM string fallback propagation, ONNX `cuda:1` device parametrization, and key-rename assertions (`non_torch_gb` present, `ort_untracked_gb` absent)
+
 ---
 
 ## [0.10.0] - 2026-04-09

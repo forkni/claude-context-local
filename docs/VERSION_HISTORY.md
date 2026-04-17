@@ -6,8 +6,8 @@ Complete version history and feature timeline for claude-context-local MCP serve
 
 - **Version**: 0.11.0
 - **Status**: Production-ready
-- **Test Coverage**: 1,985 unit tests + 8 integration tests (100% pass rate)
-- **Dependencies**: 125 packages (38% reduction from 201) + optional `onnxruntime-gpu` for ONNX backend
+- **Test Coverage**: 1,987 unit tests + 8 integration tests (100% pass rate)
+- **Dependencies**: 124 packages (38% reduction from 201) + optional `onnxruntime-gpu` for ONNX backend
 - **SSCG Benchmark**: MRR=0.94, Recall@4=0.89 (12/13 queries)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
 - **Recent Features**: ONNX Runtime backend (opt-in), ORT CUDA arena cap, BFCArena OOM recovery, dtype-aware activation estimate, `onnx_supported` registry flag, lightweight-speed default pool (BGE-M3 + gte-reranker-modernbert-base)
@@ -43,7 +43,7 @@ Production-grade ONNX Runtime backend with Windows-WDDM-safe VRAM caps, BFCArena
 
 ### ✅ Verification
 
-- 1,985 unit tests pass (including new `test_handle_get_memory_status_gpu_key_rename`, `TestEstimateActivationDtypeAwareness`, `TestMeasureActivationPerItem`)
+- 1,987 unit tests pass (including new `test_handle_get_memory_status_gpu_key_rename`, `TestEstimateActivationDtypeAwareness`, `TestMeasureActivationPerItem`)
 - Charlie CI re-reviewed PR #24: all blocking items resolved, verdict "Ready to merge"
 - Smoke-tested on 8 GB RTX laptop: BGE-M3 via ONNX produces zero shared-memory spillover under the ORT cap
 

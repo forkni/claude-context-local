@@ -40,7 +40,7 @@
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
 - **File-Role Tagging**: Chunks tagged `role:src/test/doc/config` at index time — enables role-aware ranking and precision boosts
 
-**Status**: ✅ Production-ready | 1,985+ passing tests | All 19 MCP tools operational | Windows 10/11
+**Status**: ✅ Production-ready | 1,987+ passing tests | All 19 MCP tools operational | Windows 10/11
 
 ## Quick Start
 
