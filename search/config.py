@@ -26,6 +26,14 @@ MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED = {
     "bge_m3": "BAAI/bge-m3",
 }
 
+# MODEL_REGISTRY convention for ONNX support:
+# - "onnx_supported": False  -> ONNX path is skipped in _should_use_onnx().
+#   Use this when the upstream pooling mode is not handled by
+#   embeddings/onnx_wrapper.py (which supports only "cls" and "mean").
+# - Key absent (or True)     -> ONNX path allowed, subject to other gates
+#   (trust_remote_code, performance.use_onnx, etc.).
+# New models with non-cls/mean pooling (lasttoken, weightedmean, etc.) MUST
+# set onnx_supported: False explicitly until onnx_wrapper.py gains support.
 MODEL_REGISTRY = {
     "google/embeddinggemma-300m": {
         "dimension": 768,

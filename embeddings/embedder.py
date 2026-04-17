@@ -96,9 +96,11 @@ _GATED_MLP_MODEL_TYPES = frozenset(
     }
 )
 
-# Known PyTorch CUDA OOM message shapes — compat fallback for torch builds
-# where torch.cuda.OutOfMemoryError is not a distinct exception class.
-_PYTORCH_OOM_STRINGS = ("cuda out of memory", "torch.cuda.outofmemoryerror")
+# Known PyTorch CUDA OOM message text — compat fallback for legacy torch
+# builds where torch.cuda.OutOfMemoryError is not a distinct exception class.
+# str(exception).lower() yields the message text (not the class name), so only
+# message-shape strings belong here. Kept as a tuple for future extensibility.
+_PYTORCH_OOM_STRINGS = ("cuda out of memory",)
 
 
 def estimate_activation_gb_from_config(
@@ -149,6 +151,8 @@ def estimate_activation_gb_from_config(
     model_type: str = getattr(config, "model_type", "").lower()
     _dtype = getattr(config, "torch_dtype", None)
     _fp32 = getattr(torch, "float32", None) if torch is not None else None
+    # fp32 doubles activation memory vs fp16/bf16. float64 is not used by
+    # embedding models in practice and is treated as fp16 here (2 bytes).
     dtype_bytes: int = (
         4 if ((_dtype is not None and _dtype == _fp32) or _dtype == "float32") else 2
     )
