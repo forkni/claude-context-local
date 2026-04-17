@@ -107,34 +107,34 @@ include = ["chunking*", "embeddings*", "mcp_server*", "search*", "merkle*"]
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2026-04-09 (pip-audit - 1 advisory: sqlitedict CVE-2024-35515, mitigated)
+# Last audit: 2026-04-16 (pip-audit - 2 advisories: sqlitedict CVE-2024-35515 mitigated,
+#             transformers CVE-2026-1839 blocked by optimum-onnx <4.58.0 pin)
 #
 # Direct dependency security updates:
 # mcp>=1.27.0        # Fixes CVE-2025-66416 (DNS rebinding vulnerability)
 # nltk>=3.9.4        # Fixes CVE-2025-14009 (path traversal in zipfile.extractall)
 # aiohttp>=3.13.5    # Fixes CVE-2025-69223 through CVE-2025-69230
-# cryptography>=46.0.7  # Fixes CVE-2026-26007, CVE-2026-39892 (buffer overflow)
 #
 # Transitive dependency security updates:
-# authlib>=1.6.5     # Fixes CVE-2025-59420, CVE-2025-61920, CVE-2025-62706
-# pip>=26.0.1        # Fixes CVE-2025-8869 (tarfile path traversal), CVE-2026-1703
-# python-multipart>=0.0.24  # Fixes CVE-2026-24486 (path traversal in file uploads)
-# starlette>=0.51.0  # Fixes CVE (version: 0.47.3 → 0.51.0)
-# uv>=0.11.6         # Fixes 2 CVEs (version: 0.8.21 → 0.9.6)
-# werkzeug>=3.1.4    # Fixes CVE-2025-66221 (Windows device name handling)
-# wheel>=0.46.3      # Fixes CVE-2026-24049 (path traversal in unpack)
+# pip>=26.0.1              # Fixes CVE-2025-8869 (tarfile path traversal), CVE-2026-1703
+# python-multipart>=0.0.26 # Fixes CVE-2026-24486 (path traversal), CVE-2026-40347 (DoS in multipart parser)
+# pygments>=2.20.0         # Fixes CVE-2026-4539 (ReDoS in AdlLexer)
+# pyjwt>=2.12.0            # Fixes CVE-2026-32597 (JWS crit header not validated)
+# requests>=2.33.0         # Fixes CVE-2026-25645 (predictable tempfile name)
+# starlette>=0.51.0        # Fixes CVE (version: 0.47.3 → 0.51.0)
+# uv>=0.11.6               # Fixes 2 CVEs (version: 0.8.21 → 0.9.6)
+# werkzeug>=3.1.4          # Fixes CVE-2025-66221 (Windows device name handling)
+# wheel>=0.46.3            # Fixes CVE-2026-24049 (path traversal in unpack)
 #
 # Verification: .venv/Scripts/pip-audit --format json | .venv/Scripts/python.exe tools/summarize_audit.py
 #
-# Safe patch updates (tested 2026-04-09):
-# * cryptography (46.0.6 -> 46.0.7), pytest (9.0.2 -> 9.0.3), mcp (1.26.0 -> 1.27.0).
-# * python-dotenv (1.2.1 -> 1.2.2), python-multipart (0.0.22 -> 0.0.24).
-# * pip-licenses (5.5.1 -> 5.5.5), pipdeptree (2.30.0 -> 2.34.0), pydantic-settings (2.12.0 -> 2.13.1).
-# * sse-starlette (3.2.0 -> 3.3.4), tree-sitter-rust (0.24.0 -> 0.24.2), uv (0.11.3 -> 0.11.6), ruff (0.15.9 -> 0.15.10).
-# * pyjwt (2.10.1 -> 2.12.1), pygments (2.19.2 -> 2.20.0), requests (2.32.5 -> 2.33.1).
-# * pytest-cov (6.2.1 -> 7.1.0), uvicorn (0.40.0 -> 0.44.0).
-# Tested: 1719 unit tests pass, pip check passed.
-# Remaining CVEs: 1 (sqlitedict CVE-2024-35515 - no upstream fix; mitigated via JSON serialization in metadata.py).
+# Safe patch updates (tested 2026-04-16):
+# * pygments (2.19.2 -> 2.20.0), pyjwt (2.10.1 -> 2.12.0), requests (2.32.5 -> 2.33.0).
+# * python-multipart (0.0.22 -> 0.0.26).
+# * Orphans removed: cryptography, typer-slim, shellingham (no dependents; eliminated 2 CVEs).
+# Tested: 1987 unit tests pass, pip check passed.
+# Remaining CVEs: 2 (sqlitedict CVE-2024-35515 - no upstream fix, mitigated via JSON serialization in metadata.py;
+#                    transformers CVE-2026-1839 - fix requires 5.0.0rc3, blocked by optimum-onnx <4.58.0 pin).
 
 [tool.uv]
 index-url = "https://pypi.org/simple"
