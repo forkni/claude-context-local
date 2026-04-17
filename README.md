@@ -29,17 +29,18 @@
 ## Highlights
 
 - **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-04-10, 13 queries, k=10; cutoffs @5/@10): **Hit@5 100%, MRR 0.80, R@10 0.83 (best deep recall)** - [benchmarks](docs/BENCHMARKS.md)
-- **Neural Reranking**: Cross-encoder models (BGE-reranker-v2-m3 OR Jina-reranker-v2) improve ranking quality by 5-15% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
+- **Neural Reranking**: Cross-encoder models (gte-reranker-modernbert-base OR BGE-reranker-v2-m3 OR Jina-reranker-v2) improve ranking quality by 5-15% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
 - **SSCG Integration**: Structural-Semantic Code Graph — on the [SSCG benchmark](#benchmark-results) (2026-04-10, 13 queries, k=10; cutoffs @5/@10): **13/13 Hit@5 across all three modes (hybrid, BM25, semantic); BM25 MRR=0.846 (best overall)**
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
 - **Multi-Model Routing**: Intelligent query routing (Qwen3, BGE-M3, CodeRankEmbed) with 100% accuracy - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md)
+- **ONNX Runtime Backend** (opt-in): `performance.use_onnx` loads eligible models via `ORTModelForFeatureExtraction` with `CUDAExecutionProvider` + `gpu_mem_limit` arena cap — prevents WDDM shared-memory spillover on 8 GB laptop GPUs
 - **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
 - **19 MCP Tools**: Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
 - **Source-Position Reranking**: Groups results by file, sorted by line number — LLMs read code in logical order (+5.3% accuracy, DOS RAG)
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
 - **File-Role Tagging**: Chunks tagged `role:src/test/doc/config` at index time — enables role-aware ranking and precision boosts
 
-**Status**: ✅ Production-ready | 1,682+ passing tests | All 19 MCP tools operational | Windows 10/11
+**Status**: ✅ Production-ready | 1,987+ passing tests | All 19 MCP tools operational | Windows 10/11
 
 ## Quick Start
 

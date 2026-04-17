@@ -167,7 +167,9 @@ class ModelLoader:
         Returns:
             Measured activation memory per item in GB, or 0.0 on failure.
         """
-        if device != "cuda" or (torch is None or not torch.cuda.is_available()):
+        if not str(device).startswith("cuda"):
+            return 0.0
+        if not is_onnx and (torch is None or not torch.cuda.is_available()):
             return 0.0
 
         dummy_batch = [_WARMUP_TEXT] * batch_size
@@ -335,6 +337,8 @@ class ModelLoader:
         Eligibility requires:
         - use_onnx=True in performance config
         - Model does NOT require trust_remote_code (custom architectures unsupported)
+        - Model does NOT set onnx_supported=False (opt-out for models whose upstream
+          pooling is not yet implemented in onnx_wrapper.py, e.g. lasttoken)
         """
         try:
             from mcp_server.utils.config_helpers import (
@@ -351,6 +355,12 @@ class ModelLoader:
         if model_config.get("trust_remote_code", False):
             self._logger.debug(
                 f"[ONNX] Skipping {self.model_name!r}: trust_remote_code=True"
+            )
+            return False
+        if not model_config.get("onnx_supported", True):
+            self._logger.debug(
+                f"[ONNX] Skipping {self.model_name!r}: onnx_supported=False "
+                f"(upstream pooling not supported by wrapper)"
             )
             return False
         return True

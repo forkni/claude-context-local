@@ -3,6 +3,8 @@
 Supports multiple embedding models including:
 - EmbeddingGemma (google/embeddinggemma-300m)
 - BGE-M3 (BAAI/bge-m3)
+
+Single-GPU assumption: all torch.cuda.* calls target device index 0.
 """
 
 import contextlib
@@ -94,6 +96,12 @@ _GATED_MLP_MODEL_TYPES = frozenset(
     }
 )
 
+# Known PyTorch CUDA OOM message text — compat fallback for legacy torch
+# builds where torch.cuda.OutOfMemoryError is not a distinct exception class.
+# str(exception).lower() yields the message text (not the class name), so only
+# message-shape strings belong here. Kept as a tuple for future extensibility.
+_PYTORCH_OOM_STRINGS = ("cuda out of memory",)
+
 
 def estimate_activation_gb_from_config(
     config: Any,
@@ -141,7 +149,13 @@ def estimate_activation_gb_from_config(
         or 4 * hidden
     )
     model_type: str = getattr(config, "model_type", "").lower()
-    dtype_bytes: int = 2  # bf16 / fp16 (both 2 bytes)
+    _dtype = getattr(config, "torch_dtype", None)
+    _fp32 = getattr(torch, "float32", None) if torch is not None else None
+    # fp32 doubles activation memory vs fp16/bf16. float64 is not used by
+    # embedding models in practice and is treated as fp16 here (2 bytes).
+    dtype_bytes: int = (
+        4 if ((_dtype is not None and _dtype == _fp32) or _dtype == "float32") else 2
+    )
 
     has_gated_mlp = model_type in _GATED_MLP_MODEL_TYPES
 
@@ -269,7 +283,7 @@ def compute_effective_vram_cap(
             other_b / 1024**3,
             headroom_b / 1024**3,
         )
-    except (RuntimeError, ValueError, AssertionError, TypeError):
+    except (RuntimeError, ValueError, AssertionError):
         return None
 
 
@@ -395,7 +409,7 @@ def calculate_optimal_batch_size(
 
     try:
         # Get system-wide free/total GPU memory (accounts for ALL processes)
-        free_memory, total_memory = torch.cuda.mem_get_info()
+        free_memory, total_memory = torch.cuda.mem_get_info(0)
         total_gb = total_memory / (1024**3)
         free_gb = free_memory / (1024**3)
 
@@ -1049,8 +1063,10 @@ class CodeEmbedder:
             _embed_cfg = _get_config_via_service_locator()
             if _embed_cfg and _embed_cfg.performance:
                 set_vram_limit(_embed_cfg.performance.vram_limit_fraction)
-        except (RuntimeError, AttributeError):
-            pass  # keep the __init__-time cap on failure
+        except (RuntimeError, AttributeError) as _cap_err:
+            self._logger.debug(
+                "Ignoring %s re-applying VRAM cap", type(_cap_err).__name__
+            )
 
         # Load batch size from config if not explicitly provided
         if batch_size is None:
@@ -1117,9 +1133,8 @@ class CodeEmbedder:
                     0.05, min(memory_fraction, 0.95)
                 )  # Clamp to safe range
 
-                # For ONNX backend: tell the batch sizer about the ORT arena cap so
-                # it uses ORT-remaining budget (cap − model_weights) as available_gb
-                # instead of system-wide free memory (which ORT cannot fully use).
+                # ORT cap: gpu_mem_limit is static (set at from_pretrained time), so
+                # computing it once here (not per-batch) is correct and sufficient.
                 ort_cap_gb = 0.0
                 if hasattr(self._model, "ort_model"):
                     try:
@@ -1128,8 +1143,10 @@ class CodeEmbedder:
                         )
                         if _cap_result is not None:
                             ort_cap_gb = _cap_result[1] / 1024**3  # bytes → GB
-                    except Exception:
-                        pass
+                    except Exception as _ort_err:
+                        self._logger.debug(
+                            "Ignoring %s computing ORT cap", type(_ort_err).__name__
+                        )
 
                 batch_size = calculate_optimal_batch_size(
                     embedding_dim=config.embedding.dimension,
@@ -1225,15 +1242,23 @@ class CodeEmbedder:
                     # position with a smaller batch.  Applies to both PyTorch CUDA OOM
                     # (torch.cuda.OutOfMemoryError subclasses RuntimeError) and ORT BFCArena OOM
                     # ("BFCArena::AllocateRawInternal Available memory … smaller than requested").
-                    err_str = str(e).lower()
-                    is_oom = (
-                        "out of memory" in err_str
-                        or "bfcarena" in err_str
-                        or (
-                            "available memory" in err_str
-                            and "smaller than requested" in err_str
-                        )
+                    _oom_type = (
+                        getattr(torch.cuda, "OutOfMemoryError", None)
+                        if torch is not None
+                        else None
                     )
+                    is_torch_oom = isinstance(_oom_type, type) and isinstance(
+                        e, _oom_type
+                    )
+                    err_str = str(e).lower()
+                    is_ort_oom = "bfcarena" in err_str or (
+                        "available memory" in err_str
+                        and "smaller than requested" in err_str
+                    )
+                    is_legacy_torch_oom = any(
+                        s in err_str for s in _PYTORCH_OOM_STRINGS
+                    )
+                    is_oom = is_torch_oom or is_ort_oom or is_legacy_torch_oom
                     if is_oom and current_batch_size > 1:
                         new_size = max(1, current_batch_size // 2)
                         self._logger.warning(

@@ -259,7 +259,8 @@ def convert(
 def validate(model_name: str, onnx_dir: Path, device: str = "cpu") -> bool:
     """Quality gate: compare PyTorch vs ONNX embeddings.
 
-    Encodes 10 code-like sentences with both backends. Passes if max cosine diff < 0.001
+    Encodes 10 code-like sentences with both backends. Passes if max absolute
+    element-wise diff (on L2-normalised embeddings) < 0.001
     (threshold from the Optimum notebook benchmark: GEMM GELU max diff was 0.0004).
 
     Pooling strategy is read from MODEL_REGISTRY["onnx_pooling"] and must match
@@ -351,10 +352,7 @@ def validate(model_name: str, onnx_dir: Path, device: str = "cpu") -> bool:
         onnx_embeddings = last_hidden[:, 0, :]
     onnx_embeddings = F.normalize(onnx_embeddings.float(), p=2, dim=1)
 
-    # Compute element-wise absolute differences between L2-normalised embeddings.
-    # This is the same metric the Optimum benchmark uses (max diff 0.0004 for
-    # GEMM GELU fusion vs 0.0011 for gelu_approximation), NOT cosine distance —
-    # earlier versions of this log line were mislabelled.
+    # Element-wise |pt - onnx| on L2-normalised embeddings (Optimum benchmark metric).
     diffs = (pt_embeddings.cpu() - onnx_embeddings.cpu()).abs()
     max_diff = float(diffs.max())
     mean_diff = float(diffs.mean())

@@ -15,6 +15,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.11.0] - 2026-04-16
+
+### Added
+
+- **ONNX Runtime backend** (`embeddings/onnx_loader.py`, `embeddings/onnx_wrapper.py`) — opt-in inference path (`performance.use_onnx`) that loads eligible models via `ORTModelForFeatureExtraction` with the `CUDAExecutionProvider`. Auto-converts HuggingFace models to ONNX on first use, caches under `~/.cache/huggingface/hub/onnx/`. Supported pooling strategies: `cls`, `mean` (declared via `onnx_pooling` in `MODEL_REGISTRY`). Backend selection is per-model via `_should_use_onnx()` in `embeddings/model_loader.py`
+- **ORT CUDA arena cap** (`performance.onnx_gpu_mem_limit`, default `true`) — constrains ORT's CUDAExecutionProvider memory arena via the `gpu_mem_limit` provider option, using the same effective VRAM cap as the PyTorch `set_per_process_memory_fraction()` path. Prevents WDDM shared-memory spillover on Windows when external processes (browsers, games) hold GPU memory. Check `[ONNX_VRAM]` log lines for the computed cap
+- **BFCArena OOM recovery** (`CodeEmbedder.embed_chunks`) — when ORT raises a `BFCArena` OOM, the embedder now halves the dynamic batch size and retries (same flow as PyTorch `torch.cuda.OutOfMemoryError`). Detection uses `isinstance(e, torch.cuda.OutOfMemoryError)` with a string fallback for ORT-specific errors (`"bfcarena"`, `"available memory" + "smaller than requested"`)
+- **`onnx_supported` registry flag** — opt-out field on `MODEL_REGISTRY` entries whose upstream pooling is not representable in `onnx_wrapper.py` (currently `cls` / `mean` only). Set on `BAAI/bge-code-v1` (`lasttoken`) to prevent silent semantic drift. Gate lives in `_should_use_onnx()`
+- **Per-model activation measurement** (`ModelLoader._measure_activation_per_item`) — Tier-1 runtime measurement of peak VRAM delta per batch item via PyTorch memory stats (torch path) or NVML snapshots (ONNX path). Feeds dynamic batch sizing and replaces hardcoded per-model constants for models without explicit floors
+
+### Changed
+
+- **Default embedding pool: lightweight-speed** — `search_config.json` ships with `routing.multi_model_pool: "lightweight-speed"` (`BAAI/bge-m3` + `Alibaba-NLP/gte-modernbert-base`) and `routing.default_model: "bge_m3"`. Targeted at 8 GB laptop GPUs with zero shared-memory spillover under the ORT cap. Existing users with Qwen3 + BGE-Code indexes must re-index when switching pools
+- **Default reranker: `Alibaba-NLP/gte-reranker-modernbert-base`** — replaces `BAAI/bge-reranker-v2-m3` in the default config. Lighter VRAM footprint, comparable quality on the SSCG benchmark
+- **dtype-aware activation estimate** (`estimate_activation_gb_from_config`) — reads `config.torch_dtype` and uses 4 bytes for fp32 / 2 bytes for fp16/bf16. Previously hardcoded 2 bytes; fp32 models (rare in embeddings) were 2× under-estimated
+- **ORT-aware activation floors** (`MODEL_ACTIVATION_COST_OVERRIDES_ONNX`) — empirically calibrated per-item floors for BGE-M3 (0.28 GB) and GTE-ModernBERT (0.25 GB) prevent Tier-1 warmup undercounting (single-op peaks that warmup batches miss) from causing OOM at real batch sizes
+- **`_measure_activation_per_item` accepts `cuda:N`** — previously the device gate only accepted bare `"cuda"`; `cuda:0`/`cuda:1` silently skipped measurement and fell through to lower tiers
+
+### Fixed
+
+- **Duplicated ORT provider-options block** (`embeddings/onnx_loader.py`) — two near-identical 54-line blocks computed the same `provider_options`; only the second reached `from_pretrained` because the first was reset to `None`. The dead block has been removed
+- **OOM type detection** (`CodeEmbedder.embed_chunks`) — replaces string-only `"out of memory"` substring check with `isinstance(e, torch.cuda.OutOfMemoryError)` + a dedicated ORT BFCArena string fallback. Non-OOM `RuntimeError`s now propagate correctly without triggering batch halving
+- **`validate()` docstring** (`tools/convert_onnx.py`) — previously claimed "max cosine diff < 0.001"; code computes `abs(pt - onnx).max()` on L2-normalised embeddings. Docstring updated to match
+- **Narrowed exception tuples** (`CodeEmbedder`) — `(RuntimeError, ValueError, AssertionError, TypeError)` → `(RuntimeError, ValueError, AssertionError)` on paths where `TypeError` would mask real bugs
+- **Silent excepts logged at DEBUG** — VRAM-cap re-apply and ORT-cap compute paths previously swallowed errors silently. Now emit a DEBUG log line with the exception type for diagnostics
+
+### Breaking changes
+
+- **`handle_get_memory_status()` field rename**: GPU entries now expose `non_torch_gb` instead of `ort_untracked_gb`. The old name was misleading — the computed value is device-wide NVML usage minus per-process PyTorch allocations, which conflates other processes + drivers + ORT, not just ORT. Any external dashboard or monitor reading the old key will receive `None`
+
+### Security
+
+- **Transitive dependency patch upgrades** (4 CVEs fixed) — `pygments` 2.19.2 → 2.20.0 (CVE-2026-4539, ReDoS in `AdlLexer`), `pyjwt` 2.10.1 → 2.12.0 (CVE-2026-32597, missing `crit` header validation per RFC 7515), `python-multipart` 0.0.22 → 0.0.26 (CVE-2026-40347, DoS via large multipart preamble/epilogue), `requests` 2.32.5 → 2.33.0 (CVE-2026-25645, predictable tempfile name in `extract_zipped_paths()`)
+- **Orphan dependency cleanup** — uninstalled `cryptography` (no dependents after `authlib` was removed upstream; eliminated CVE-2026-34073 + CVE-2026-39892), `typer-slim` and `shellingham` (pulled in by unused `mcp[cli]`/`huggingface_hub[mcp]` extras). Venv dropped from 127 → 124 packages; open CVE count dropped from 8 → 2 (remaining: `sqlitedict` CVE-2024-35515 mitigated via JSON serialization in `metadata.py`; `transformers` CVE-2026-1839 blocked by `optimum-onnx <4.58.0` pin)
+- **pyproject.toml security-comments block refreshed** — stale `cryptography`/`authlib` references removed; new transitive-dep CVE fixes documented; last-audit date bumped to 2026-04-16
+
+### Tests
+
+- Unit test count: **1,987** (up from 1,985). Additions cover narrowed OOM string fallback propagation, ONNX `cuda:1` device parametrization, and key-rename assertions (`non_torch_gb` present, `ort_untracked_gb` absent)
+
+---
+
 ## [0.10.0] - 2026-04-09
 
 ### Added

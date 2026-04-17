@@ -26,6 +26,14 @@ MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED = {
     "bge_m3": "BAAI/bge-m3",
 }
 
+# MODEL_REGISTRY convention for ONNX support:
+# - "onnx_supported": False  -> ONNX path is skipped in _should_use_onnx().
+#   Use this when the upstream pooling mode is not handled by
+#   embeddings/onnx_wrapper.py (which supports only "cls" and "mean").
+# - Key absent (or True)     -> ONNX path allowed, subject to other gates
+#   (trust_remote_code, performance.use_onnx, etc.).
+# New models with non-cls/mean pooling (lasttoken, weightedmean, etc.) MUST
+# set onnx_supported: False explicitly until onnx_wrapper.py gains support.
 MODEL_REGISTRY = {
     "google/embeddinggemma-300m": {
         "dimension": 768,
@@ -51,6 +59,9 @@ MODEL_REGISTRY = {
         "vram_gb": "4GB",  # ~4GB in FP16
         "fallback_batch_size": 32,  # Conservative batch size for 2B model
         "trust_remote_code": False,
+        # Upstream uses lasttoken pooling, which the ONNX wrapper does not yet support.
+        # Gate ONNX off for this model until lasttoken support lands in onnx_wrapper.py.
+        "onnx_supported": False,
     },
     "Qwen/Qwen3-Embedding-0.6B": {
         "dimension": 1024,
@@ -78,6 +89,8 @@ MODEL_REGISTRY = {
         "model_type": "code-specific",
         "task_instruction": "Represent this query for searching relevant code",  # Required query prefix
         "trust_remote_code": True,
+        # Upstream pooling is CLS; `.get("onnx_pooling", "cls")` in model_loader
+        # defaults correctly. ONNX is blocked anyway via trust_remote_code=True.
     },
     "Alibaba-NLP/gte-modernbert-base": {
         "dimension": 768,
@@ -234,12 +247,9 @@ class PerformanceConfig:
     use_onnx: bool = (
         False  # When True, loads eligible models via ORTModelForFeatureExtraction
     )
-    onnx_gpu_mem_limit: bool = (
-        True  # Constrain ORT CUDAExecutionProvider arena via gpu_mem_limit.
-        # Uses the same effective-cap formula as set_vram_limit() so the ONNX
-        # session cannot push the GPU into WDDM shared-memory spillover.
-        # Disable only for debugging (raises OOM instead of spilling if too tight).
-    )
+    # Constrain ORT CUDAExecutionProvider arena (same formula as set_vram_limit()).
+    # Disable only for debugging — prevents WDDM spillover for ONNX sessions.
+    onnx_gpu_mem_limit: bool = True
 
     # Auto-reindexing
     enable_auto_reindex: bool = True

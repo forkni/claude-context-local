@@ -1691,3 +1691,98 @@ class TestOomRecoveryBackoff:
         # First call fails with batch=4, then all subsequent calls use batch=2
         assert batch_sizes_seen[0] == 4  # the failing attempt
         assert all(s == 2 for s in batch_sizes_seen[1:])  # all retries use 2
+
+    @patch("embeddings.embedder.torch")
+    @patch("embeddings.embedder._get_config_via_service_locator")
+    def test_non_oom_runtime_error_propagates(self, mock_get_cfg, mock_torch):
+        """A RuntimeError whose message is not OOM-related must propagate, not trigger halving."""
+        from embeddings.embedder import CodeEmbedder
+
+        mock_torch.cuda.is_available.return_value = False
+        mock_torch.is_tensor = MagicMock(return_value=False)
+        # Ensure isinstance(e, torch.cuda.OutOfMemoryError) is False
+        mock_torch.cuda.OutOfMemoryError = type("OutOfMemoryError", (RuntimeError,), {})
+
+        cfg = MagicMock()
+        cfg.performance.enable_dynamic_batch_size = False
+        cfg.performance.allow_ram_fallback = True
+        cfg.embedding.batch_size = 4
+        cfg.embedding.dimension = 768
+        mock_get_cfg.return_value = cfg
+
+        embedder = CodeEmbedder.__new__(CodeEmbedder)
+        embedder._logger = MagicMock()
+        embedder.model_name = "test/model"
+        embedder.device = "cpu"
+        embedder._query_cache = MagicMock()
+        embedder._model_vram_usage = {}
+        embedder._model_warmed_up = True
+        embedder._check_vram_status = MagicMock(return_value=(0.5, False, False))
+        embedder._log_vram_usage = MagicMock()
+        embedder._is_gpu_device = MagicMock(return_value=False)
+        embedder._get_model_config = MagicMock(return_value={"passage_prefix": ""})
+
+        initial_batch_size = 4
+        embedder._current_batch_size = initial_batch_size
+
+        fake_model = MagicMock()
+        fake_model.encode.side_effect = RuntimeError("invalid device function")
+        embedder._model = fake_model
+        embedder.create_embedding_content = MagicMock(side_effect=lambda c: c.content)
+
+        with pytest.raises(RuntimeError, match="invalid device function"):
+            embedder.embed_chunks(self._make_chunks(4))
+
+        assert embedder._current_batch_size == initial_batch_size
+
+
+# ---------------------------------------------------------------------------
+# estimate_activation_gb_from_config — dtype-awareness
+# ---------------------------------------------------------------------------
+
+
+class TestEstimateActivationDtypeAwareness:
+    """Verify estimate_activation_gb_from_config uses correct byte-width per dtype."""
+
+    def _make_config(self, torch_dtype=None, hidden_size=768, num_attention_heads=12):
+        cfg = MagicMock()
+        cfg.hidden_size = hidden_size
+        cfg.num_attention_heads = num_attention_heads
+        cfg.num_key_value_heads = num_attention_heads
+        cfg.head_dim = None
+        cfg.intermediate_size = 3072
+        cfg.model_type = "bert"
+        cfg.torch_dtype = torch_dtype
+        return cfg
+
+    def test_fp32_dtype_doubles_estimate(self):
+        from embeddings.embedder import estimate_activation_gb_from_config
+
+        cfg_fp16 = self._make_config(torch_dtype="float16")
+        cfg_fp32 = self._make_config(torch_dtype="float32")
+
+        est_fp16 = estimate_activation_gb_from_config(cfg_fp16, is_onnx=False)
+        est_fp32 = estimate_activation_gb_from_config(cfg_fp32, is_onnx=False)
+
+        assert est_fp32 == pytest.approx(est_fp16 * 2, rel=1e-6)
+
+    def test_unknown_dtype_defaults_to_fp16_bytes(self):
+        from embeddings.embedder import estimate_activation_gb_from_config
+
+        cfg_none = self._make_config(torch_dtype=None)
+        cfg_fp16 = self._make_config(torch_dtype="float16")
+
+        est_none = estimate_activation_gb_from_config(cfg_none, is_onnx=False)
+        est_fp16 = estimate_activation_gb_from_config(cfg_fp16, is_onnx=False)
+
+        assert est_none == pytest.approx(est_fp16, rel=1e-6)
+
+    def test_bfloat16_treated_as_2_bytes(self):
+        from embeddings.embedder import estimate_activation_gb_from_config
+
+        cfg_bf16 = self._make_config(torch_dtype="bfloat16")
+        cfg_fp16 = self._make_config(torch_dtype="float16")
+
+        assert estimate_activation_gb_from_config(cfg_bf16) == pytest.approx(
+            estimate_activation_gb_from_config(cfg_fp16), rel=1e-6
+        )

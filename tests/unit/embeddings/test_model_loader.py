@@ -465,3 +465,83 @@ class TestModelLoader:
         """Test model_vram_usage property."""
         model_loader._model_vram_usage["test-model"] = 123.4
         assert model_loader.model_vram_usage == {"test-model": 123.4}
+
+
+# ---------------------------------------------------------------------------
+# _measure_activation_per_item — device-string acceptance
+# ---------------------------------------------------------------------------
+
+
+class TestMeasureActivationPerItem:
+    """Verify _measure_activation_per_item handles cuda:N device strings correctly."""
+
+    def _make_loader(self, tmp_path):
+        cache = ModelCacheManager(
+            model_name="BAAI/bge-m3",
+            cache_dir=str(tmp_path),
+            model_config_getter=lambda: {},
+        )
+        loader = ModelLoader(
+            model_name="BAAI/bge-m3",
+            cache_dir=str(tmp_path),
+            device="auto",
+            cache_manager=cache,
+            model_config_getter=lambda: {},
+        )
+        loader._should_use_onnx = lambda: False
+        return loader
+
+    def test_cpu_device_returns_zero(self, tmp_path):
+        loader = self._make_loader(tmp_path)
+        mock_model = Mock()
+        result = loader._measure_activation_per_item(mock_model, "cpu", batch_size=2)
+        assert result == 0.0
+        mock_model.encode.assert_not_called()
+
+    @pytest.mark.parametrize("device", ["cuda", "cuda:0", "cuda:1"])
+    def test_pytorch_path_accepts_cuda_index(self, tmp_path, device):
+        """cuda, cuda:0, and cuda:1 must all pass the device gate for the PyTorch path."""
+        loader = self._make_loader(tmp_path)
+        mock_model = Mock()
+        mock_model.encode.return_value = None
+
+        with (
+            patch("embeddings.model_loader.torch") as mock_torch,
+        ):
+            mock_torch.cuda.is_available.return_value = True
+            mock_torch.cuda.reset_peak_memory_stats.return_value = None
+            # Simulate 50 MB activation delta
+            mock_torch.cuda.memory_allocated.return_value = 100_000_000
+            mock_torch.cuda.max_memory_allocated.return_value = 150_000_000
+
+            result = loader._measure_activation_per_item(
+                mock_model, device, batch_size=2, is_onnx=False
+            )
+
+        assert result > 0.0, f"Expected activation measurement for device={device!r}"
+        mock_model.encode.assert_called_once()
+
+    @pytest.mark.parametrize("device", ["cuda", "cuda:0", "cuda:1"])
+    def test_onnx_path_accepts_cuda_index_without_torch(self, tmp_path, device):
+        """ONNX path uses NVML; must not short-circuit when torch is unavailable."""
+        loader = self._make_loader(tmp_path)
+        mock_model = Mock()
+        mock_model.encode.return_value = None
+
+        nvml_values = iter([100_000_000, 160_000_000])
+
+        with (
+            patch("embeddings.model_loader.torch", None),
+            patch(
+                "embeddings.model_loader._get_nvml_used_bytes",
+                side_effect=lambda d: next(nvml_values),
+            ),
+        ):
+            result = loader._measure_activation_per_item(
+                mock_model, device, batch_size=2, is_onnx=True
+            )
+
+        assert result > 0.0, (
+            f"ONNX activation measurement skipped for device={device!r}"
+        )
+        mock_model.encode.assert_called_once()

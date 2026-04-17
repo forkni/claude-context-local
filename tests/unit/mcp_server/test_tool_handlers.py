@@ -231,6 +231,53 @@ async def test_handle_get_memory_status():
 
 
 @pytest.mark.asyncio
+async def test_handle_get_memory_status_gpu_key_rename():
+    """Key rename guard: the GPU entry must expose `non_torch_gb`, not the old
+    `ort_untracked_gb`. The old name was misleading — it reflects all non-PyTorch
+    allocations (other processes + drivers + ORT), not just ORT."""
+    import mcp_server.tools.status_handlers as status_handlers
+
+    mock_mem = Mock()
+    mock_mem.total = 16 * 1024**3
+    mock_mem.available = 8 * 1024**3
+    mock_mem.used = 8 * 1024**3
+    mock_mem.percent = 50.0
+
+    mock_pynvml = Mock()
+    mock_pynvml.nvmlInit = Mock()
+    mock_pynvml.nvmlShutdown = Mock()
+    mock_pynvml.nvmlDeviceGetHandleByIndex = Mock(return_value=Mock())
+    nvml_info = Mock()
+    nvml_info.used = 6 * 1024**3
+    nvml_info.free = 10 * 1024**3
+    mock_pynvml.nvmlDeviceGetMemoryInfo = Mock(return_value=nvml_info)
+
+    device_props = Mock()
+    device_props.total_memory = 16 * 1024**3
+
+    with (
+        patch("psutil.virtual_memory", return_value=mock_mem),
+        patch("torch.cuda.is_available", return_value=True),
+        patch("torch.cuda.device_count", return_value=1),
+        patch("torch.cuda.memory_allocated", return_value=2 * 1024**3),
+        patch("torch.cuda.memory_reserved", return_value=2 * 1024**3),
+        patch("torch.cuda.get_device_properties", return_value=device_props),
+        patch("torch.cuda.get_device_name", return_value="Mock GPU"),
+        patch("torch.cuda.get_device_capability", return_value=(8, 6)),
+        patch.dict("sys.modules", {"pynvml": mock_pynvml}),
+    ):
+        result = await status_handlers.handle_get_memory_status({})
+
+    gpu_entry = result["gpu_memory"]["gpu_0"]
+    assert "non_torch_gb" in gpu_entry, "expected renamed key `non_torch_gb`"
+    assert "ort_untracked_gb" not in gpu_entry, (
+        "old key `ort_untracked_gb` must not be re-introduced"
+    )
+    # Sanity: non_torch_gb = max(0, nvml_used - torch_allocated) = 6 - 2 = 4.0
+    assert gpu_entry["non_torch_gb"] == 4.0
+
+
+@pytest.mark.asyncio
 async def test_handle_cleanup_resources():
     """Test cleanup_resources calls cleanup function."""
     with patch(

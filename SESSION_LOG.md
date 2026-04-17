@@ -34,6 +34,34 @@ This file maintains session memory and context for the Claude-context-MCP semant
 
 ## Session History
 
+### 2026-04-16: CI Review Fixes Applied to Development
+
+**Primary Achievement**: Verified CI review agent findings against code and applied all valid fixes in 3 logical commits (ONNX correctness, VRAM/OOM robustness, cosmetics).
+
+#### Key Fixes
+
+- **A: ONNX correctness** — deleted duplicated ORT provider-options block (L304-357 of `onnx_loader.py`; the second copy was the one wired to `from_pretrained`); fixed `_measure_activation_per_item` to accept `cuda:N` device strings (was `!= "cuda"`, now `startswith`); ONNX path no longer requires torch for NVML-based measurement; updated `validate()` docstring to say "max abs diff" not "cosine diff".
+- **B: VRAM/OOM robustness** — OOM detection now prefers `isinstance(e, torch.cuda.OutOfMemoryError)` with string-match fallback; `estimate_activation_gb_from_config` is now dtype-aware (fp32 → 4 bytes, fp16/bf16 → 2 bytes, unknown → 2); `ort_untracked_gb` key in status handler renamed to `non_torch_gb` (was mathematically wrong: subtracted per-process from device-wide NVML); added missing test for non-OOM RuntimeError propagation.
+- **C: Cosmetics** — added `onnx_pooling: "mean"` to `BAAI/bge-code-v1` and `nomic-ai/CodeRankEmbed` in `MODEL_REGISTRY`; narrowed `TypeError` from except tuples in `compute_effective_vram_cap`/`set_vram_limit`; DEBUG-logged previously silent excepts; fixed `onnx_gpu_mem_limit` field style; added `mem_get_info(0)` explicit index for consistency; added comment explaining ORT cap computed once before batch loop.
+
+#### Config Default Switch (intentional)
+
+`search_config.json` defaults were updated when the multi-model pool was switched to `lightweight-speed` for this laptop target:
+- `model_name`: Qwen3-Embedding-0.6B → `BAAI/bge-m3`
+- `default_model`: `qwen3` → `bge_m3`
+- `reranker`: `jinaai/jina-reranker-v3` → `Alibaba-NLP/gte-reranker-modernbert-base`
+- `multi_model_pool`: `full` → `lightweight-speed`
+
+**Existing users must re-index** if upgrading from a Qwen3-based index (dimension unchanged at 1024, but model weights differ).
+
+#### CI False Positives (not fixed — already correct)
+
+- `_resolve_provider` already uses `device.startswith("cuda")` (CI claimed literal match).
+- ONNX fast-path fallback already catches both `ImportError` and `RuntimeError` (CI said only `ImportError`).
+- `allow_ram_fallback` in `search_config.json` is `true` (CI claimed `false`).
+
+---
+
 ### 2026-04-16: ONNX Stack Merged Into Development
 
 **Primary Achievement**: Finalized the 4-PR ONNX Runtime stack by resolving merge conflicts, committing the merge into `development`, pushing to origin, and closing all 4 stacked PRs with a reference to the merge commit.
