@@ -360,7 +360,7 @@ class ModelLoader:
         if not model_config.get("onnx_supported", True):
             self._logger.debug(
                 f"[ONNX] Skipping {self.model_name!r}: onnx_supported=False "
-                "(upstream pooling not supported by wrapper)"
+                f"(upstream pooling not supported by wrapper)"
             )
             return False
         return True

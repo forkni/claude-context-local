@@ -521,7 +521,7 @@ class TestMeasureActivationPerItem:
         assert result > 0.0, f"Expected activation measurement for device={device!r}"
         mock_model.encode.assert_called_once()
 
-    @pytest.mark.parametrize("device", ["cuda", "cuda:0"])
+    @pytest.mark.parametrize("device", ["cuda", "cuda:0", "cuda:1"])
     def test_onnx_path_accepts_cuda_index_without_torch(self, tmp_path, device):
         """ONNX path uses NVML; must not short-circuit when torch is unavailable."""
         loader = self._make_loader(tmp_path)

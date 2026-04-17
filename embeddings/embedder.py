@@ -96,6 +96,10 @@ _GATED_MLP_MODEL_TYPES = frozenset(
     }
 )
 
+# Known PyTorch CUDA OOM message shapes — compat fallback for torch builds
+# where torch.cuda.OutOfMemoryError is not a distinct exception class.
+_PYTORCH_OOM_STRINGS = ("cuda out of memory", "torch.cuda.outofmemoryerror")
+
 
 def estimate_activation_gb_from_config(
     config: Any,
@@ -1247,7 +1251,10 @@ class CodeEmbedder:
                         "available memory" in err_str
                         and "smaller than requested" in err_str
                     )
-                    is_oom = is_torch_oom or is_ort_oom or "out of memory" in err_str
+                    is_legacy_torch_oom = any(
+                        s in err_str for s in _PYTORCH_OOM_STRINGS
+                    )
+                    is_oom = is_torch_oom or is_ort_oom or is_legacy_torch_oom
                     if is_oom and current_batch_size > 1:
                         new_size = max(1, current_batch_size // 2)
                         self._logger.warning(
