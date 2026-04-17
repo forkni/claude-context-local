@@ -2,15 +2,50 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-04-09)
+## Current Status: All Features Operational (2026-04-16)
 
-- **Version**: 0.10.0
+- **Version**: 0.11.0
 - **Status**: Production-ready
-- **Test Coverage**: 1,682 unit tests + 8 integration tests (100% pass rate)
-- **Dependencies**: 125 packages (38% reduction from 201)
+- **Test Coverage**: 1,985 unit tests + 8 integration tests (100% pass rate)
+- **Dependencies**: 125 packages (38% reduction from 201) + optional `onnxruntime-gpu` for ONNX backend
 - **SSCG Benchmark**: MRR=0.94, Recall@4=0.89 (12/13 queries)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent Features**: Source-position reranking (DOS RAG), centrality-adaptive BM25 boost, file-role tagging, lower chunk split/merge thresholds (1600 chars / 400 tokens)
+- **Recent Features**: ONNX Runtime backend (opt-in), ORT CUDA arena cap, BFCArena OOM recovery, dtype-aware activation estimate, `onnx_supported` registry flag, lightweight-speed default pool (BGE-M3 + gte-reranker-modernbert-base)
+
+---
+
+## v0.11.0 - ONNX Runtime Backend + VRAM Robustness (2026-04-16)
+
+### Status: FEATURE RELEASE ✅
+
+Production-grade ONNX Runtime backend with Windows-WDDM-safe VRAM caps, BFCArena OOM recovery, and per-model activation measurement. Verified against Charlie CI review on PR #24.
+
+### Highlights
+
+- **ONNX Runtime backend** (opt-in via `performance.use_onnx`): loads eligible models via `ORTModelForFeatureExtraction` with `CUDAExecutionProvider`. Auto-converts HuggingFace → ONNX on first use. Supported pooling: `cls`, `mean`. Models can opt out via `onnx_supported: False` (used for BGE-code-v1, whose upstream `lasttoken` pooling is not yet wrappable).
+- **ORT CUDA arena cap** (`performance.onnx_gpu_mem_limit`, default `true`): passes the same effective VRAM cap to ORT's `gpu_mem_limit` provider option that the PyTorch path applies via `set_per_process_memory_fraction()`. Prevents WDDM shared-memory spillover on Windows when external processes hold VRAM. Check `[ONNX_VRAM]` log lines.
+- **BFCArena OOM recovery**: `CodeEmbedder.embed_chunks` detects ORT OOM (`BFCArena`, `"available memory" + "smaller than requested"`) and halves the dynamic batch size the same way PyTorch `OutOfMemoryError` recovery already did.
+- **Per-model activation measurement** (`ModelLoader._measure_activation_per_item`): Tier-1 runtime measurement via PyTorch memory stats (torch path) or NVML snapshots (ONNX path). Replaces hardcoded per-model activation constants for models without explicit floors.
+- **Default pool → lightweight-speed**: `search_config.json` ships with `BAAI/bge-m3` (embeddings) + `Alibaba-NLP/gte-reranker-modernbert-base` (reranker). Targeted at 8 GB laptop GPUs with zero shared-memory spillover under the ORT cap.
+
+### 🔧 Changes
+
+- `search_config.json` — default `embedding.model_name: "BAAI/bge-m3"`, `reranker.model_name: "Alibaba-NLP/gte-reranker-modernbert-base"`, `routing.multi_model_pool: "lightweight-speed"`, `routing.default_model: "bge_m3"`, `performance.use_onnx: true`, `performance.onnx_gpu_mem_limit: true`
+- `embeddings/onnx_loader.py` + `embeddings/onnx_wrapper.py` — new modules; `ONNXEmbeddingModel` wrapper exposes SentenceTransformer-compatible `.encode()` with `cls`/`mean` pooling
+- `embeddings/model_loader.py` — `_should_use_onnx()` gate (checks `use_onnx` + `trust_remote_code` + `onnx_supported`); `_measure_activation_per_item()` accepts `cuda:N`
+- `embeddings/embedder.py` — `isinstance(torch.cuda.OutOfMemoryError)` OOM detection + ORT string fallback; dtype-aware `estimate_activation_gb_from_config()`
+- `search/config.py` — `MODEL_REGISTRY` + `MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED`; `onnx_pooling` declared per model; `onnx_supported: False` added to BGE-code-v1
+- `mcp_server/tools/status_handlers.py` — **breaking**: GPU entries now expose `non_torch_gb` (was `ort_untracked_gb`); old name was misleading since the computed value conflates other processes + drivers + ORT
+
+### 🚨 Breaking Changes
+
+- `handle_get_memory_status()` GPU entries: `ort_untracked_gb` → `non_torch_gb`. External dashboards or monitors reading the old key receive `None`.
+
+### ✅ Verification
+
+- 1,985 unit tests pass (including new `test_handle_get_memory_status_gpu_key_rename`, `TestEstimateActivationDtypeAwareness`, `TestMeasureActivationPerItem`)
+- Charlie CI re-reviewed PR #24: all blocking items resolved, verdict "Ready to merge"
+- Smoke-tested on 8 GB RTX laptop: BGE-M3 via ONNX produces zero shared-memory spillover under the ORT cap
 
 ---
 
