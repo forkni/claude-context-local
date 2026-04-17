@@ -202,9 +202,8 @@ async def handle_get_memory_status(arguments: dict[str, Any]) -> dict:
     gpu_memory = {}
     if torch.cuda.is_available():
         # Try pynvml for device-wide VRAM (sum of all processes + drivers + ORT).
-        # NOTE: nvmlDeviceGetMemoryInfo().used is NOT per-process; it reflects total
-        # allocations on the GPU. A proper per-process reading would require
-        # nvmlDeviceGetComputeRunningProcesses() filtered by os.getpid().
+        # NOTE: nvmlDeviceGetMemoryInfo().used is device-wide, NOT per-process.
+        # non_torch_gb approximates non-PyTorch usage but includes other processes.
         nvml_available = False
         try:
             import pynvml
@@ -249,7 +248,7 @@ async def handle_get_memory_status(arguments: dict[str, Any]) -> dict:
                 entry["utilization_percent"] = (
                     round((real_used_gb / total_vram * 100), 1) if total_vram > 0 else 0
                 )
-                entry["ort_untracked_gb"] = round(
+                entry["non_torch_gb"] = round(
                     max(0.0, real_used_gb - torch_allocated), 2
                 )
             else:

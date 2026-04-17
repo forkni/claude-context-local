@@ -141,7 +141,11 @@ def estimate_activation_gb_from_config(
         or 4 * hidden
     )
     model_type: str = getattr(config, "model_type", "").lower()
-    dtype_bytes: int = 2  # bf16 / fp16 (both 2 bytes)
+    _dtype = getattr(config, "torch_dtype", None)
+    _fp32 = getattr(torch, "float32", None) if torch is not None else None
+    dtype_bytes: int = (
+        4 if (_dtype is not None and _dtype == _fp32 or _dtype == "float32") else 2
+    )
 
     has_gated_mlp = model_type in _GATED_MLP_MODEL_TYPES
 
@@ -1225,15 +1229,20 @@ class CodeEmbedder:
                     # position with a smaller batch.  Applies to both PyTorch CUDA OOM
                     # (torch.cuda.OutOfMemoryError subclasses RuntimeError) and ORT BFCArena OOM
                     # ("BFCArena::AllocateRawInternal Available memory … smaller than requested").
-                    err_str = str(e).lower()
-                    is_oom = (
-                        "out of memory" in err_str
-                        or "bfcarena" in err_str
-                        or (
-                            "available memory" in err_str
-                            and "smaller than requested" in err_str
-                        )
+                    _oom_type = (
+                        getattr(torch.cuda, "OutOfMemoryError", None)
+                        if torch is not None
+                        else None
                     )
+                    is_torch_oom = isinstance(_oom_type, type) and isinstance(
+                        e, _oom_type
+                    )
+                    err_str = str(e).lower()
+                    is_ort_oom = "bfcarena" in err_str or (
+                        "available memory" in err_str
+                        and "smaller than requested" in err_str
+                    )
+                    is_oom = is_torch_oom or is_ort_oom or "out of memory" in err_str
                     if is_oom and current_batch_size > 1:
                         new_size = max(1, current_batch_size // 2)
                         self._logger.warning(
