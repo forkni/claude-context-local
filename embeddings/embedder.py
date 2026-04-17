@@ -3,6 +3,8 @@
 Supports multiple embedding models including:
 - EmbeddingGemma (google/embeddinggemma-300m)
 - BGE-M3 (BAAI/bge-m3)
+
+Single-GPU assumption: all torch.cuda.* calls target device index 0.
 """
 
 import contextlib
@@ -273,7 +275,7 @@ def compute_effective_vram_cap(
             other_b / 1024**3,
             headroom_b / 1024**3,
         )
-    except (RuntimeError, ValueError, AssertionError, TypeError):
+    except (RuntimeError, ValueError, AssertionError):
         return None
 
 
@@ -399,7 +401,7 @@ def calculate_optimal_batch_size(
 
     try:
         # Get system-wide free/total GPU memory (accounts for ALL processes)
-        free_memory, total_memory = torch.cuda.mem_get_info()
+        free_memory, total_memory = torch.cuda.mem_get_info(0)
         total_gb = total_memory / (1024**3)
         free_gb = free_memory / (1024**3)
 
@@ -1053,8 +1055,10 @@ class CodeEmbedder:
             _embed_cfg = _get_config_via_service_locator()
             if _embed_cfg and _embed_cfg.performance:
                 set_vram_limit(_embed_cfg.performance.vram_limit_fraction)
-        except (RuntimeError, AttributeError):
-            pass  # keep the __init__-time cap on failure
+        except (RuntimeError, AttributeError) as _cap_err:
+            self._logger.debug(
+                "Ignoring %s re-applying VRAM cap", type(_cap_err).__name__
+            )
 
         # Load batch size from config if not explicitly provided
         if batch_size is None:
@@ -1121,9 +1125,8 @@ class CodeEmbedder:
                     0.05, min(memory_fraction, 0.95)
                 )  # Clamp to safe range
 
-                # For ONNX backend: tell the batch sizer about the ORT arena cap so
-                # it uses ORT-remaining budget (cap − model_weights) as available_gb
-                # instead of system-wide free memory (which ORT cannot fully use).
+                # ORT cap: gpu_mem_limit is static (set at from_pretrained time), so
+                # computing it once here (not per-batch) is correct and sufficient.
                 ort_cap_gb = 0.0
                 if hasattr(self._model, "ort_model"):
                     try:
@@ -1132,8 +1135,10 @@ class CodeEmbedder:
                         )
                         if _cap_result is not None:
                             ort_cap_gb = _cap_result[1] / 1024**3  # bytes → GB
-                    except Exception:
-                        pass
+                    except Exception as _ort_err:
+                        self._logger.debug(
+                            "Ignoring %s computing ORT cap", type(_ort_err).__name__
+                        )
 
                 batch_size = calculate_optimal_batch_size(
                     embedding_dim=config.embedding.dimension,

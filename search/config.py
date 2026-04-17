@@ -51,6 +51,7 @@ MODEL_REGISTRY = {
         "vram_gb": "4GB",  # ~4GB in FP16
         "fallback_batch_size": 32,  # Conservative batch size for 2B model
         "trust_remote_code": False,
+        "onnx_pooling": "mean",
     },
     "Qwen/Qwen3-Embedding-0.6B": {
         "dimension": 1024,
@@ -78,6 +79,7 @@ MODEL_REGISTRY = {
         "model_type": "code-specific",
         "task_instruction": "Represent this query for searching relevant code",  # Required query prefix
         "trust_remote_code": True,
+        "onnx_pooling": "mean",
     },
     "Alibaba-NLP/gte-modernbert-base": {
         "dimension": 768,
@@ -234,12 +236,9 @@ class PerformanceConfig:
     use_onnx: bool = (
         False  # When True, loads eligible models via ORTModelForFeatureExtraction
     )
-    onnx_gpu_mem_limit: bool = (
-        True  # Constrain ORT CUDAExecutionProvider arena via gpu_mem_limit.
-        # Uses the same effective-cap formula as set_vram_limit() so the ONNX
-        # session cannot push the GPU into WDDM shared-memory spillover.
-        # Disable only for debugging (raises OOM instead of spilling if too tight).
-    )
+    # Constrain ORT CUDAExecutionProvider arena (same formula as set_vram_limit()).
+    # Disable only for debugging — prevents WDDM spillover for ONNX sessions.
+    onnx_gpu_mem_limit: bool = True
 
     # Auto-reindexing
     enable_auto_reindex: bool = True
