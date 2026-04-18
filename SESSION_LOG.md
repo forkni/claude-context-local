@@ -34,6 +34,47 @@ This file maintains session memory and context for the Claude-context-MCP semant
 
 ## Session History
 
+### 2026-04-18: Documentation Alignment Audit and Update
+
+**Primary Achievement**: Audited all documentation, the MCP search-tool skill, and the user memory store for drift from commit `2ba03f5`, then executed a full alignment pass across 7 artifacts plus MEMORY.md seeding.
+
+#### Key Accomplishments
+
+- **Documentation audit** (3-agent parallel exploration) — found 14+ drift points across `CHANGELOG.md`, `SESSION_LOG.md`, `docs/INSTALLATION_GUIDE.md`, `docs/CLAUDE_MD_TEMPLATE.md`, `docs/VERSION_HISTORY.md`, the MCP search-tool skill, and the user memory store; cross-checked against actual code, config, and benchmark files to separate real drift from audit false-positives
+- **CHANGELOG.md** — populated empty `[Unreleased]` section with full 2ba03f5 surface (Added: `embed_queries_batch`, `rerank_batch`, batched FAISS; Changed: load lock, extracted helpers; Fixed: `asyncio.to_thread` wraps; Removed: `SearchBatchCoordinator`)
+- **SESSION_LOG.md** — added 2026-04-18 entry for Part 1 + Part 1.5 concurrency work; updated header date
+- **`docs/INSTALLATION_GUIDE.md:858`** — "15 MCP tools" → "19"
+- **`docs/CLAUDE_MD_TEMPLATE.md:49`** — "Available MCP Tools (18)" → "(19)"
+- **`docs/VERSION_HISTORY.md`** — replaced stale SSCG MRR=0.94 / Recall@4=0.89 (12/13) with canonical numbers from `evaluation/benchmark_results/` (BM25 MRR 0.846, Hybrid R@10 0.833, all modes 13/13 Hit@5); updated header date
+- **MCP search-tool skill** (`C:\Users\INTER\.claude\skills\mcp-search-tool\SKILL.md`) — added "Concurrent Search" section explaining parallel `search_code` calls are safe/efficient post-2ba03f5 via `asyncio.to_thread`
+- **MEMORY.md seeded** — created 6 memory files + index at canonical path `C:\Users\INTER\.claude\projects\D--claude-context-local\memory\`
+
+#### Audit Items Verified Clean (No Changes Made)
+
+- `README.md` test count — 1,987 is correct (audit agent had only counted 3 of 6 `tests/unit/` subdirectories)
+- `docs/ADVANCED_FEATURES_GUIDE.md` pool default — already correctly states `lightweight-speed` as default
+- `references/performance.md` benchmark data — 2026-04-10 three-mode data is canonical
+- `references/tool-index.md` EmbeddingGemma / `c2llm` key — already consistent
+- SKILL.md reranker name — no specific reranker model name stated in any skill file
+
+#### Files Modified
+
+- `CHANGELOG.md` — populated `[Unreleased]` with 2ba03f5 content
+- `SESSION_LOG.md` — 2026-04-18 entry + header date
+- `docs/INSTALLATION_GUIDE.md` — "15" → "19" MCP tools
+- `docs/CLAUDE_MD_TEMPLATE.md` — "(18)" → "(19)"
+- `docs/VERSION_HISTORY.md` — SSCG numbers + header date
+- `C:\Users\INTER\.claude\skills\mcp-search-tool\SKILL.md` — Concurrent Search section (outside repo)
+- `C:\Users\INTER\.claude\projects\D--claude-context-local\memory\` — MEMORY.md index + 6 memory files (outside repo)
+
+#### Commits
+
+| Commit | Description |
+|--------|-------------|
+| `26acb0e` | docs: align CHANGELOG, SESSION_LOG, and docs to 2ba03f5 concurrency changes |
+
+---
+
 ### 2026-04-18: Concurrency Fix — Part 1 + Part 1.5 (commit 2ba03f5)
 
 **Primary Achievement**: Resolved the primary concurrency pain — 5+ parallel MCP `search_code` calls serializing on the event loop and racing on cold-start reranker load. Landed via commit `2ba03f5` on `development` branch.
