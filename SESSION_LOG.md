@@ -34,6 +34,54 @@ This file maintains session memory and context for the Claude-context-MCP semant
 
 ## Session History
 
+### 2026-04-16: Docs Alignment, PR #24 Merge, and v0.11.0 Release
+
+**Primary Achievement**: Closed the PR #24 cycle with documentation alignment, merged `pr/05-ci-review-fixes` into `development`, cut the `development → main` release merge, and published GitHub Release `v0.11.0` covering the full ONNX Runtime backend + VRAM robustness stack.
+
+#### Key Accomplishments
+
+- **Documentation alignment commit** (`f4fcf54`) — added `### Security` and `### Tests` sections to the `[0.11.0]` CHANGELOG entry (4 CVE patch upgrades, orphan cleanup, 1,987-test count); fixed package-count typo (`124 → 122` → `127 → 124`); synced README status line to `1,987+ passing tests`; bumped `docs/VERSION_HISTORY.md` test count (1,985 → 1,987, lines 9 + 46) and package count (125 → 124, line 10)
+- **Charlie CI items verified** — Item #6 (CodeRankEmbed pooling) confirmed clean: `search/config.py:83-94` carries no stale `onnx_pooling` key, defaults to `cls` via `.get("onnx_pooling", "cls")`, and ONNX path is blocked by `trust_remote_code=True` regardless. Item #7 (NVML guard for ONNX activation path) confirmed clean: `_get_nvml_used_bytes()` at `embeddings/model_loader.py:46-75` wraps the full `import pynvml` + NVML call chain in `try/except Exception: return 0`, so pynvml-missing or NVML-failure paths resolve to a safe `0.0` activation estimate with no exception propagation
+- **PR #24 merged into development** — `pr/05-ci-review-fixes → development` via `merge_with_validation.sh --non-interactive` with `CGW_TARGET_BRANCH="development"` env override (script default targets `main`). Merge commit `07d8da3`, backup tag `pre-merge-backup-20260416_225022`; PR auto-closed by GitHub on push, state = `MERGED`
+- **`development → main` release merge** — 41-commit merge via `merge_with_validation.sh --non-interactive` using default config (`CGW_SOURCE_BRANCH=development`, `CGW_TARGET_BRANCH=main`). Merge commit `60ba0ba`, backup tag `pre-merge-backup-20260416_225317`. Brought the full ONNX Runtime backend stack (PR #04) + CI review follow-ups (PR #05) + docs into `main` in one merge commit
+- **v0.11.0 release published** — annotated tag `v0.11.0` created at `60ba0ba` via `create_release.sh v0.11.0 --push --non-interactive`; GitHub Release published at `https://github.com/forkni/claude-context-local/releases/tag/v0.11.0` with full `[0.11.0]` CHANGELOG body as release notes (no `release.yml` workflow exists, so `gh release create --verify-tag --notes-file` was used manually)
+
+#### Technical Details
+
+The session began in plan mode resumed from the prior conversation's summarization boundary. Working-tree state at resume: `pr/05-ci-review-fixes` with two uncommitted doc edits (README.md + CHANGELOG.md). A read-only audit revealed three remaining inconsistencies: (1) a `124 → 122` package-count claim that did not match the actual `.venv/Scripts/pip list` count of 124 (true drop was 127 → 124 after removing `cryptography`, `typer-slim`, `shellingham`); (2) `docs/VERSION_HISTORY.md` lines 9 + 46 still citing `1,985 unit tests`; (3) line 10 still citing `125 packages`.
+
+The release flow required one detour: the first invocation of `merge_with_validation.sh` from branch `development` targeted `main` (per `.cgw.conf` defaults), not the intended PR merge target. The fix was to switch back to `pr/05-ci-review-fixes` and run with an inline env override `CGW_TARGET_BRANCH=development`.
+
+The `create_release.sh` script emits "GitHub Release workflow triggered" on tag push, but no `release.yml` exists under `.github/workflows/`. The release body was populated manually by extracting the `[0.11.0]` CHANGELOG slice with `awk` and passing it to `gh release create --notes-file`.
+
+#### Files Modified
+
+- `CHANGELOG.md` — `### Security` + `### Tests` sections added to `[0.11.0]`; package-count typo corrected
+- `README.md` — status line `1,985+ passing tests` → `1,987+ passing tests`
+- `docs/VERSION_HISTORY.md` — test count 1,985 → 1,987 (lines 9 + 46); package count 125 → 124 (line 10)
+
+#### Commits
+
+| Commit | Description |
+|--------|-------------|
+| `f4fcf54` | docs: add 0.11.0 Security/Tests sections, sync test count (1987) and package count (124) |
+| `07d8da3` | Merge pr/05-ci-review-fixes into development |
+| `60ba0ba` | Merge development into main |
+| `v0.11.0` | Annotated release tag at `60ba0ba` |
+
+#### Release Artifacts
+
+- GitHub Release: <https://github.com/forkni/claude-context-local/releases/tag/v0.11.0>
+- Backup tags: `pre-merge-backup-20260416_225022` (PR #24 merge), `pre-merge-backup-20260416_225317` (release merge)
+
+#### Post-Release Follow-ups
+
+- Bump `pyproject.toml` to `0.12.0-dev` on `development` and open a fresh `[Unreleased]` CHANGELOG section
+- Delete merged `pr/05-ci-review-fixes` branch via `./scripts/git/branch_cleanup.sh --execute`
+- Consider adding `release.yml` workflow so future tag pushes auto-publish GitHub Releases without manual `gh release create`
+
+---
+
 ### 2026-04-16: CI Review Fixes Applied to Development
 
 **Primary Achievement**: Verified CI review agent findings against code and applied all valid fixes in 3 logical commits (ONNX correctness, VRAM/OOM robustness, cosmetics).

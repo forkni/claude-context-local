@@ -89,6 +89,7 @@ class NeuralReranker:
         self.model_name = model_name
         self.batch_size = batch_size
         self._model = None  # Lazy loading
+        self._load_lock = threading.Lock()
         self._logger = logging.getLogger(__name__)
 
         # Auto-detect device
@@ -105,25 +106,32 @@ class NeuralReranker:
             CrossEncoder: Loaded model instance
         """
         if self._model is None:
-            # Re-apply VRAM cap before loading reranker weights — embedder and
-            # other processes may have changed free VRAM since server startup.
-            try:
-                from embeddings.embedder import set_vram_limit
-                from search.config import get_search_config as _gsc
+            with self._load_lock:
+                if self._model is None:
+                    # Re-apply VRAM cap before loading reranker weights — embedder and
+                    # other processes may have changed free VRAM since server startup.
+                    try:
+                        from embeddings.embedder import set_vram_limit
+                        from search.config import get_search_config as _gsc
 
-                set_vram_limit(_gsc().performance.vram_limit_fraction)
-            except Exception:
-                pass  # non-fatal — fall through to load
-            self._logger.info(f"Loading reranker model: {self.model_name}")
-            from sentence_transformers import CrossEncoder
+                        set_vram_limit(_gsc().performance.vram_limit_fraction)
+                    except Exception:
+                        pass  # non-fatal — fall through to load
+                    self._logger.info(f"Loading reranker model: {self.model_name}")
+                    from sentence_transformers import CrossEncoder
 
-            self._model = CrossEncoder(
-                self.model_name,
-                device=self.device,
-                max_length=512,  # Reasonable limit for code chunks
-            )
-            self._logger.info(f"Reranker loaded on {self.device}")
+                    self._model = CrossEncoder(
+                        self.model_name,
+                        device=self.device,
+                        max_length=512,
+                    )
+                    self._logger.info(f"Reranker loaded on {self.device}")
         return self._model
+
+    def _apply_rerank_score(self, candidate, score: float) -> None:
+        candidate.metadata["original_score"] = candidate.score
+        candidate.metadata["reranker_score"] = float(score)
+        candidate.score = float(score)
 
     def rerank(
         self,
@@ -144,39 +152,88 @@ class NeuralReranker:
         if not candidates:
             return []
 
-        # Create (query, document) pairs for cross-encoder
         pairs = []
         for candidate in candidates:
-            # Use content_preview from metadata for scoring
-            content = candidate.metadata.get("content_preview", "")
-            if not content:
-                # Fallback to chunk_id if no content
-                content = candidate.chunk_id
+            content = (
+                candidate.metadata.get("content_preview", "") or candidate.chunk_id
+            )
             pairs.append((query, content))
 
-        # Get semantic relevance scores
         scores = self.model.predict(
             pairs,
             batch_size=self.batch_size,
             show_progress_bar=False,
         )
 
-        # Pair candidates with scores and sort
         scored_candidates = list(zip(candidates, scores, strict=True))
         scored_candidates.sort(key=lambda x: x[1], reverse=True)
 
-        # Return top_k results with updated metadata and score
         results = []
         for candidate, score in scored_candidates[:top_k]:
-            # Preserve original score before mutation
-            candidate.metadata["original_score"] = candidate.score
-            candidate.metadata["reranker_score"] = float(score)
-            candidate.score = float(score)  # Replace original score with reranker score
+            self._apply_rerank_score(candidate, score)
             results.append(candidate)
 
         self._logger.debug(
             f"Reranked {len(candidates)} candidates → {len(results)} results"
         )
+        return results
+
+    def rerank_batch(
+        self,
+        batch: list[tuple[str, list]],  # list of (query, candidates)
+        top_k: int = 10,
+    ) -> list[list]:
+        """Rerank multiple (query, candidates) pairs in a single forward pass.
+
+        Flattens all (query, doc) pairs across all queries into one
+        CrossEncoder.predict call, then splits results back by original offsets.
+        Under concurrent load this is significantly cheaper than N separate
+        rerank() calls because the GPU sees one large batch instead of N small ones.
+
+        Args:
+            batch: List of (query_str, candidates_list) tuples.
+            top_k: Number of results to return per query.
+
+        Returns:
+            List of reranked candidate lists, one per input query.
+        """
+        if not batch:
+            return []
+
+        all_pairs: list[tuple[str, str]] = []
+        offsets: list[int] = []
+
+        for query, candidates in batch:
+            offsets.append(len(all_pairs))
+            for candidate in candidates:
+                content = (
+                    candidate.metadata.get("content_preview", "") or candidate.chunk_id
+                )
+                all_pairs.append((query, content))
+
+        if not all_pairs:
+            return [[] for _ in batch]
+
+        all_scores = self.model.predict(
+            all_pairs,
+            batch_size=self.batch_size,
+            show_progress_bar=False,
+        )
+
+        results = []
+        for i, (_, candidates) in enumerate(batch):
+            start = offsets[i]
+            end = offsets[i + 1] if i + 1 < len(offsets) else len(all_pairs)
+            scores = all_scores[start:end]
+            scored = sorted(
+                zip(candidates, scores, strict=True), key=lambda x: x[1], reverse=True
+            )
+            query_results = []
+            for candidate, score in scored[:top_k]:
+                self._apply_rerank_score(candidate, score)
+                query_results.append(candidate)
+            results.append(query_results)
+
         return results
 
     def is_loaded(self) -> bool:
