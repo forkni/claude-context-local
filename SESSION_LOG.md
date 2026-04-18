@@ -2,7 +2,7 @@
 
 ## Project: General-Purpose Semantic Search MCP Integration System
 
-## Initialized: 2025-09-22 | Updated: 2026-02-16
+## Initialized: 2025-09-22 | Updated: 2026-04-18
 
 This file maintains session memory and context for the Claude-context-MCP semantic search system development and improvements.
 
@@ -33,6 +33,41 @@ This file maintains session memory and context for the Claude-context-MCP semant
 ---
 
 ## Session History
+
+### 2026-04-18: Concurrency Fix — Part 1 + Part 1.5 (commit 2ba03f5)
+
+**Primary Achievement**: Resolved the primary concurrency pain — 5+ parallel MCP `search_code` calls serializing on the event loop and racing on cold-start reranker load. Landed via commit `2ba03f5` on `development` branch.
+
+#### Key Accomplishments
+
+- **Event loop no longer blocks on search work** — 7 `asyncio.to_thread` wraps added across MCP tool handlers (5 in `mcp_server/tools/search_handlers.py`, 2 in `mcp_server/tools/index_handlers.py`). The GIL-releasing FAISS and CrossEncoder C/CUDA sections now run truly in parallel under concurrent MCP requests
+- **Cold-start reranker race eliminated** — `NeuralReranker.model` property now uses double-checked locking with `threading.Lock`, mirroring `JinaRerankerV3`. Live-verified: 6 concurrent cold-start queries produced exactly 1 `Loading reranker model` and 1 `Reranker loaded on cuda`
+- **FAISS batched-query support** — `FaissVectorIndex.search()` extended to accept `[N, d]` and return `[N, k]`; added `query.copy()` guard before `faiss.normalize_L2` to prevent in-place mutation
+- **Dead `SearchBatchCoordinator` deleted** (`mcp_server/search_coordinator.py`, ~200 lines) — its batched fast-path always raised `TypeError` due to signature mismatch with `HybridSearcher.search` and was silently swallowed by `except Exception`. Removed along with `ApplicationState.search_coordinator`, startup block in `server.py`, and `concurrency` section of `search_config.json`
+- **Extracted helpers** — `_format_query_text` + `_tensor_to_numpy` in `embeddings/embedder.py`; `_apply_rerank_score` in `search/neural_reranker.py`
+- **New batch APIs** — `CodeEmbedder.embed_queries_batch` and `NeuralReranker.rerank_batch` as infrastructure for future coalescing (not yet wired into the hot path)
+- **1,987 unit tests pass** — zero regressions
+
+#### Live Verification
+
+MCP debug stream (server start 09:39:34, burst 09:43:39–09:44:21): 10 tool calls (6 `search_code`, 2 `find_path`, 2 `find_connections`); 22 `Reranked N candidates → K results` log lines; exactly 1 `Loading reranker model` + 1 `Reranker loaded on cuda`; 0 `Traceback`, 0 coordinator references.
+
+#### Files Modified
+
+- `mcp_server/tools/search_handlers.py` — 5 `asyncio.to_thread` wraps
+- `mcp_server/tools/index_handlers.py` — 2 `asyncio.to_thread` wraps
+- `search/neural_reranker.py` — `_load_lock`, `_apply_rerank_score`, `rerank_batch`
+- `search/faiss_index.py` — batched search support, normalize_L2 mutation guard
+- `embeddings/embedder.py` — `_format_query_text`, `_tensor_to_numpy`, `embed_queries_batch`
+- `SESSION_LOG.md` — this entry
+
+#### Commits
+
+| Commit | Description |
+|--------|-------------|
+| `2ba03f5` | feat: asyncio.to_thread wraps, batched FAISS/reranker APIs, load lock, delete dead SearchBatchCoordinator |
+
+---
 
 ### 2026-04-16: Docs Alignment, PR #24 Merge, and v0.11.0 Release
 
