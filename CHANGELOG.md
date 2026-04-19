@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.11.1] - 2026-04-18
+
 ### Added
 
 - **`CodeEmbedder.embed_queries_batch(queries)`** (`embeddings/embedder.py:1461-1513`) — batch query embedding in one model forward pass; reuses `_format_query_text` formatting and `embed_chunks` batching machinery. Infrastructure for future coalesced search; not yet wired into the hot path

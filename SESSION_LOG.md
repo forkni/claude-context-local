@@ -34,6 +34,36 @@ This file maintains session memory and context for the Claude-context-MCP semant
 
 ## Session History
 
+### 2026-04-18: v0.11.1 Release — concurrent search + embed_queries_batch fixes
+
+**Primary Achievement**: Merged PR #25 (`feat: concurrent search + docs alignment`) into `main` and cut the `v0.11.1` patch release.
+
+#### What Shipped
+
+- `asyncio.to_thread` wraps on 5 blocking search-handler calls (`mcp_server/tools/search_handlers.py`) — event loop no longer serializes concurrent MCP requests
+- `NeuralReranker` double-checked locking, `rerank_batch`, batched FAISS `[N, d] → [N, k]`, `embed_queries_batch`, helper extractions
+- `embed_queries_batch` empty-batch shape fix `(0,)` → `(0, dim)` (PR #25 review round 1)
+- Query cache key extended with `instruction_mode` + `query_instruction` in both `embed_query` and `embed_queries_batch` (PR #25 review round 1)
+- `np.stack` guard assert, `rerank_batch` in-place mutation docstring warning, prompt_name cache test, SESSION_LOG path scrub (PR #25 review round 2)
+- `SearchBatchCoordinator` deleted (~200 lines dead code)
+
+#### Commits
+
+| Hash | Message |
+|------|---------|
+| `2ba03f5` | feat: concurrent search — asyncio.to_thread wraps, NeuralReranker load lock, FAISS batched queries, embed/rerank helpers |
+| `26acb0e` | docs: align CHANGELOG, SESSION_LOG, and docs to 2ba03f5 concurrency changes |
+| `7ea488e` | docs: add 2026-04-18 documentation alignment session log entry |
+| `1b912de` | fix: embed_queries_batch empty shape (0,dim) + cache key includes instruction_mode/query_instruction (PR #25 review) |
+| `d438de5` | fix: assert no None slots before np.stack, rerank_batch in-place docstring, prompt_name cache test, scrub SESSION_LOG machine paths (PR #25 review round 2) |
+
+#### Release
+
+- Tag `v0.11.1` at merge commit on `main`
+- GitHub Release: <https://github.com/forkni/claude-context-local/releases/tag/v0.11.1>
+
+---
+
 ### 2026-04-18: PR #25 Review Response — embed_queries_batch Bug Fixes
 
 **Primary Achievement**: Addressed two bugs flagged in code review of PR #25 (`feat: concurrent search + docs alignment`).
