@@ -912,24 +912,8 @@ def test_search_accepts_per_call_weights(mock_bm25, mock_dense):
 
         searcher = HybridSearcher(temp_dir)
 
-        captured = {}
-
-        def fake_execute(
-            query,
-            k,
-            search_mode,
-            use_parallel,
-            min_bm25_score,
-            filters,
-            query_embedding=None,
-            bm25_weight=None,
-            dense_weight=None,
-        ):
-            captured["bm25_weight"] = bm25_weight
-            captured["dense_weight"] = dense_weight
-            return []
-
-        searcher.search_executor.execute_single_hop = fake_execute
+        exec_mock = Mock(return_value=[])
+        searcher.search_executor.execute_single_hop = exec_mock
 
         with patch(
             "search.hybrid_searcher._get_config_via_service_locator"
@@ -941,9 +925,11 @@ def test_search_accepts_per_call_weights(mock_bm25, mock_dense):
             mock_cfg.return_value = cfg
             searcher.search("test query", bm25_weight=0.9, dense_weight=0.1)
 
+        exec_mock.assert_called_once()
+        call_kwargs = exec_mock.call_args.kwargs
         # Per-call weights forwarded
-        assert captured.get("bm25_weight") == 0.9
-        assert captured.get("dense_weight") == 0.1
+        assert call_kwargs.get("bm25_weight") == 0.9
+        assert call_kwargs.get("dense_weight") == 0.1
         # Instance state untouched
         assert searcher.bm25_weight == 0.35
         assert searcher.dense_weight == 0.65

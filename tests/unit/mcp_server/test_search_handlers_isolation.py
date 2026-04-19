@@ -47,6 +47,10 @@ async def test_handle_search_code_does_not_mutate_config_singleton():
             patch("mcp_server.tools.search_handlers.get_config") as mock_app_cfg,
             patch("mcp_server.tools.search_handlers.get_config_manager") as mock_cm,
             patch("mcp_server.tools.search_handlers.IntentClassifier") as mock_ic_cls,
+            patch(
+                "mcp_server.tools.search_handlers._check_auto_reindex",
+                return_value=(False, None),
+            ),
         ):
             mock_state.return_value.current_project = "/test"
             mock_state.return_value.searcher = None
