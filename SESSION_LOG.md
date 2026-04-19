@@ -34,6 +34,37 @@ This file maintains session memory and context for the Claude-context-MCP semant
 
 ## Session History
 
+### 2026-04-18: PR #25 Review Response — embed_queries_batch Bug Fixes
+
+**Primary Achievement**: Addressed two bugs flagged in code review of PR #25 (`feat: concurrent search + docs alignment`).
+
+#### Bugs Fixed
+
+- **Empty-batch shape** (`embeddings/embedder.py:embed_queries_batch`) — `np.empty((0,), ...)` replaced with `np.empty((0, dim), ...)` where `dim = model_config.get("dimension", 768)`. Matches the `(N, embedding_dim)` contract; the old `(0,)` shape would raise `IndexError` on `.shape[1]` or FAISS ingestion
+- **Cache key scope** (`embeddings/query_cache.py`, `embeddings/embedder.py`) — `QueryEmbeddingCache._generate_cache_key` / `get` / `put` now accept `instruction_mode` and `query_instruction` kwargs (backward-compatible default `""`). Both `embed_query` and `embed_queries_batch` pass these fields, fixing the cross-mode collision where a `"custom"`-mode result could be returned to a `"prompt_name"` caller. The fix also makes `embed_query` + `embed_queries_batch` correctly share cache entries for identical queries under the same config
+
+#### Tests Added
+
+6 new unit tests in `tests/unit/embeddings/test_embedder.py`:
+- `TestEmbedQueriesBatch::test_empty_input_returns_2d_zero_shape`
+- `TestEmbedQueriesBatch::test_single_query_shape`
+- `TestEmbedQueriesBatch::test_multi_query_shape`
+- `TestCacheKeyInstructionMode::test_key_differs_across_instruction_modes`
+- `TestCacheKeyInstructionMode::test_same_mode_same_key`
+- `TestCacheKeyInstructionMode::test_embed_query_and_batch_share_cache`
+
+All 59 embedder tests and 740 search tests pass.
+
+#### Files Modified
+
+- `embeddings/query_cache.py` — extend `_generate_cache_key`, `get`, `put`
+- `embeddings/embedder.py` — shape fix + cache kwargs in `embed_query` + `embed_queries_batch`
+- `tests/unit/embeddings/test_embedder.py` — 6 new tests
+- `CHANGELOG.md` — Fixed entries under `[Unreleased]`
+- `SESSION_LOG.md` — this entry
+
+---
+
 ### 2026-04-18: Documentation Alignment Audit and Update
 
 **Primary Achievement**: Audited all documentation, the MCP search-tool skill, and the user memory store for drift from commit `2ba03f5`, then executed a full alignment pass across 7 artifacts plus MEMORY.md seeding.

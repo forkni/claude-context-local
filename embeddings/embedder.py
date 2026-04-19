@@ -1418,6 +1418,8 @@ class CodeEmbedder:
         """
         # Get model-specific configuration
         model_config = self._get_model_config()
+        instruction_mode = model_config.get("instruction_mode") or ""
+        query_instruction = model_config.get("query_instruction", "")
 
         # Try to get from cache
         cached_embedding = self._query_cache.get(
@@ -1425,12 +1427,12 @@ class CodeEmbedder:
             model_name=self.model_name,
             task_instruction=model_config.get("task_instruction", ""),
             query_prefix=model_config.get("query_prefix", ""),
+            instruction_mode=instruction_mode,
+            query_instruction=query_instruction,
         )
 
         if cached_embedding is not None:
             return cached_embedding
-
-        instruction_mode = model_config.get("instruction_mode")
         encode_kwargs: dict[str, Any] = {"show_progress_bar": False}
         if self._is_gpu_device():
             encode_kwargs["convert_to_tensor"] = True
@@ -1456,6 +1458,8 @@ class CodeEmbedder:
             embedding=embedding,
             task_instruction=model_config.get("task_instruction", ""),
             query_prefix=model_config.get("query_prefix", ""),
+            instruction_mode=instruction_mode,
+            query_instruction=query_instruction,
         )
 
         return embedding
@@ -1466,13 +1470,15 @@ class CodeEmbedder:
         Returns:
             np.ndarray of shape (N, embedding_dim), dtype float32.
         """
-        if not queries:
-            return np.empty((0,), dtype=np.float32)
-
         model_config = self._get_model_config()
+        if not queries:
+            dim = int(model_config.get("dimension", 768))
+            return np.empty((0, dim), dtype=np.float32)
+
         task_instruction = model_config.get("task_instruction", "")
         query_prefix = model_config.get("query_prefix", "")
-        instruction_mode = model_config.get("instruction_mode")
+        instruction_mode = model_config.get("instruction_mode") or ""
+        query_instruction = model_config.get("query_instruction", "")
 
         results: list[np.ndarray | None] = [None] * len(queries)
         uncached_indices: list[int] = []
@@ -1484,6 +1490,8 @@ class CodeEmbedder:
                 model_name=self.model_name,
                 task_instruction=task_instruction,
                 query_prefix=query_prefix,
+                instruction_mode=instruction_mode,
+                query_instruction=query_instruction,
             )
             if cached is not None:
                 results[i] = cached
@@ -1509,6 +1517,8 @@ class CodeEmbedder:
                     embedding=emb,
                     task_instruction=task_instruction,
                     query_prefix=query_prefix,
+                    instruction_mode=instruction_mode,
+                    query_instruction=query_instruction,
                 )
                 results[orig_i] = emb
 

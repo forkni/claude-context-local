@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`embed_queries_batch` empty-batch shape** (`embeddings/embedder.py`) — empty input now returns `np.empty((0, dim), dtype=float32)` matching the `(N, embedding_dim)` contract; previously returned `(0,)` which would raise `IndexError` on `.shape[1]` or FAISS ingestion
+- **Query cache key includes `instruction_mode` and `query_instruction`** (`embeddings/query_cache.py`, `embeddings/embedder.py`) — cache keys in both `embed_query` and `embed_queries_batch` now incorporate these fields; previously a query cached in `"custom"` mode could be returned to a `"prompt_name"` caller with the wrong instruction prepended. `embed_query` and `embed_queries_batch` now share cache entries correctly when called with identical configs
 - **MCP tool handlers no longer block the event loop** (`mcp_server/tools/search_handlers.py`, `mcp_server/tools/index_handlers.py`) — 7 blocking calls (5 search, 2 index) are now wrapped in `asyncio.to_thread`. Previously, every inbound `search_code` / `find_path` / `find_connections` call held the event loop for the full pipeline (embed → FAISS → BM25 → RRF → neural rerank), serializing N concurrent MCP requests. The GIL-releasing FAISS and CrossEncoder C/CUDA sections now run truly in parallel
 
 ### Removed

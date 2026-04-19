@@ -65,6 +65,8 @@ class QueryEmbeddingCache:
         model_name: str,
         task_instruction: str = "",
         query_prefix: str = "",
+        instruction_mode: str = "",
+        query_instruction: str = "",
     ) -> str:
         """Generate deterministic cache key from query and model config.
 
@@ -73,11 +75,16 @@ class QueryEmbeddingCache:
             model_name: Name of the embedding model
             task_instruction: Optional task instruction (e.g., for CodeRankEmbed)
             query_prefix: Optional query prefix (e.g., for retrieval models)
+            instruction_mode: Instruction strategy ("prompt_name", "custom", or "")
+            query_instruction: Instruction prefix prepended in "custom" mode
 
         Returns:
             MD5 hash of the combined key data
         """
-        key_data = f"{query}|{model_name}|{task_instruction}|{query_prefix}"
+        key_data = (
+            f"{query}|{model_name}|{task_instruction}|{query_prefix}"
+            f"|{instruction_mode}|{query_instruction}"
+        )
         return hashlib.md5(key_data.encode()).hexdigest()
 
     def get(
@@ -86,6 +93,8 @@ class QueryEmbeddingCache:
         model_name: str,
         task_instruction: str = "",
         query_prefix: str = "",
+        instruction_mode: str = "",
+        query_instruction: str = "",
     ) -> np.ndarray | None:
         """Retrieve cached embedding for a query (thread-safe).
 
@@ -94,6 +103,8 @@ class QueryEmbeddingCache:
             model_name: Name of the embedding model
             task_instruction: Optional task instruction
             query_prefix: Optional query prefix
+            instruction_mode: Instruction strategy ("prompt_name", "custom", or "")
+            query_instruction: Instruction prefix prepended in "custom" mode
 
         Returns:
             Cached embedding if found and not expired, None otherwise. Returns a copy to
@@ -104,7 +115,12 @@ class QueryEmbeddingCache:
             return None
 
         cache_key = self._generate_cache_key(
-            query, model_name, task_instruction, query_prefix
+            query,
+            model_name,
+            task_instruction,
+            query_prefix,
+            instruction_mode,
+            query_instruction,
         )
 
         with self._lock:
@@ -135,6 +151,8 @@ class QueryEmbeddingCache:
         embedding: np.ndarray,
         task_instruction: str = "",
         query_prefix: str = "",
+        instruction_mode: str = "",
+        query_instruction: str = "",
     ) -> None:
         """Add or update an embedding in the cache (thread-safe).
 
@@ -148,12 +166,19 @@ class QueryEmbeddingCache:
             embedding: The embedding vector to cache
             task_instruction: Optional task instruction
             query_prefix: Optional query prefix
+            instruction_mode: Instruction strategy ("prompt_name", "custom", or "")
+            query_instruction: Instruction prefix prepended in "custom" mode
         """
         if self._disabled:
             return
 
         cache_key = self._generate_cache_key(
-            query, model_name, task_instruction, query_prefix
+            query,
+            model_name,
+            task_instruction,
+            query_prefix,
+            instruction_mode,
+            query_instruction,
         )
 
         with self._lock:
