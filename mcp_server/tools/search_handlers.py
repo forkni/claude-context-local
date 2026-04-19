@@ -944,18 +944,15 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     # Deep-copy the config singleton so all per-request mutations are request-local.
     # get_search_config() returns a cached singleton; mutating it directly races with
     # concurrent requests. The deep copy is cheap (<1 ms for 12 nested dataclasses).
-    base_config = copy.deepcopy(get_search_config())
+    search_config = copy.deepcopy(get_search_config())
 
     # Build SearchConfig with ego-graph settings if enabled
-    search_config = None
     if isinstance(searcher, HybridSearcher) and ego_graph_enabled:
-        ego_config = EgoGraphConfig(
+        search_config.ego_graph = EgoGraphConfig(
             enabled=ego_graph_enabled,
             k_hops=ego_graph_k_hops,
             max_neighbors_per_hop=ego_graph_max_neighbors,
         )
-        search_config = base_config
-        search_config.ego_graph = ego_config
         logger.info(
             f"[EGO_GRAPH] Enabled with k_hops={ego_graph_k_hops}, "
             f"max_neighbors_per_hop={ego_graph_max_neighbors}"
@@ -964,8 +961,6 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     # QW5: apply intent-adaptive similarity threshold to ego-graph expansion
     # Different query intents benefit from different neighbor precision/recall trade-offs
     if isinstance(searcher, HybridSearcher) and ego_graph_enabled and intent_decision:
-        if search_config is None:
-            search_config = base_config
         _intent_ego_thresholds = {
             "local": 0.25,  # Higher precision for specific symbol lookups
             "global": 0.10,  # Broader coverage for architecture queries
@@ -987,10 +982,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
 
     # Build SearchConfig with parent-retrieval settings if enabled
     if isinstance(searcher, HybridSearcher) and include_parent:
-        if search_config is None:
-            search_config = base_config
-        parent_config = ParentRetrievalConfig(enabled=include_parent)
-        search_config.parent_retrieval = parent_config
+        search_config.parent_retrieval = ParentRetrievalConfig(enabled=include_parent)
         logger.info("[PARENT_RETRIEVAL] Enabled")
 
     # Apply intent-driven weight overrides (per-request kwargs — no shared-state mutation)
@@ -1013,8 +1005,6 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
         intent_key = intent_decision.intent.value  # e.g. "local", "global"
         edge_profile = INTENT_EDGE_WEIGHT_PROFILES.get(intent_key)
         if edge_profile:
-            if search_config is None:
-                search_config = base_config
             search_config.multi_hop.edge_weights = edge_profile
             # Also set for ego-graph path (EgoGraphConfig already has edge_weights field)
             if hasattr(search_config, "ego_graph") and search_config.ego_graph:
@@ -1059,8 +1049,6 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
 
     # === Centrality annotation/reranking ===
     centrality_scores = None
-    if search_config is None:
-        search_config = base_config
     graph_config = getattr(search_config, "graph_enhanced", None)
 
     if (
@@ -1085,7 +1073,12 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
             centrality_scores = ranker._get_centrality_scores()
 
             # QW1: pass centrality scores to ego-graph retriever so neighbors
-            # are ranked by architectural importance before truncation
+            # are ranked by architectural importance before truncation.
+            # NOTE(v0.11.2 follow-up): set_centrality_scores mutates shared retriever
+            # state, but centrality is graph-derived (not query-derived), so all
+            # concurrent requests compute the same scores — races here are benign.
+            # If centrality ever becomes query-aware, isolate this via per-request kwargs
+            # the same way bm25_weight/dense_weight were isolated in v0.11.2.
             if (
                 isinstance(searcher, HybridSearcher)
                 and hasattr(searcher, "ego_graph_retriever")

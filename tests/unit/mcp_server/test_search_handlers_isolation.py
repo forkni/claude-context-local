@@ -120,3 +120,7 @@ async def test_handle_search_code_does_not_mutate_config_singleton():
             original_cfg.multi_hop.edge_weights
             == snapshot_before.multi_hop.edge_weights
         )
+        assert (
+            original_cfg.ego_graph.edge_weights
+            == snapshot_before.ego_graph.edge_weights
+        )
