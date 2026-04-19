@@ -23,6 +23,7 @@ from mcp_server.utils.config_helpers import temporary_ram_fallback_off
 from search.config import (
     EgoGraphConfig,
     ParentRetrievalConfig,
+    SearchConfig,
     get_config_manager,
     get_search_config,
 )
@@ -941,14 +942,23 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     config_manager = get_config_manager()
     actual_search_mode = config_manager.get_search_mode_for_query(query, search_mode)
 
-    # Deep-copy the config singleton so all per-request mutations are request-local.
-    # get_search_config() returns a cached singleton; mutating it directly races with
-    # concurrent requests. The deep copy is cheap (<1 ms for 12 nested dataclasses).
-    search_config = copy.deepcopy(get_search_config())
+    # get_search_config() returns a process-wide cached singleton. Requests that
+    # don't apply ego-graph / parent-retrieval / intent-edge overrides can pass the
+    # singleton straight through. Requests that do mutate lazily deep-copy once,
+    # so the singleton is never written and concurrent requests don't race.
+    config_singleton = get_search_config()
+    config_copy: SearchConfig | None = None
+
+    def mutable_config() -> SearchConfig:
+        """Deep-copy the singleton on first call; return the same copy thereafter."""
+        nonlocal config_copy
+        if config_copy is None:
+            config_copy = copy.deepcopy(config_singleton)
+        return config_copy
 
     # Build SearchConfig with ego-graph settings if enabled
     if isinstance(searcher, HybridSearcher) and ego_graph_enabled:
-        search_config.ego_graph = EgoGraphConfig(
+        mutable_config().ego_graph = EgoGraphConfig(
             enabled=ego_graph_enabled,
             k_hops=ego_graph_k_hops,
             max_neighbors_per_hop=ego_graph_max_neighbors,
@@ -978,11 +988,13 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
                 f"[EGO_GRAPH] Intent-adaptive threshold: "
                 f"{intent_decision.intent.value} -> {intent_threshold}"
             )
-        search_config.ego_graph.min_similarity_threshold = intent_threshold
+        mutable_config().ego_graph.min_similarity_threshold = intent_threshold
 
     # Build SearchConfig with parent-retrieval settings if enabled
     if isinstance(searcher, HybridSearcher) and include_parent:
-        search_config.parent_retrieval = ParentRetrievalConfig(enabled=include_parent)
+        mutable_config().parent_retrieval = ParentRetrievalConfig(
+            enabled=include_parent
+        )
         logger.info("[PARENT_RETRIEVAL] Enabled")
 
     # Apply intent-driven weight overrides (per-request kwargs — no shared-state mutation)
@@ -1005,14 +1017,19 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
         intent_key = intent_decision.intent.value  # e.g. "local", "global"
         edge_profile = INTENT_EDGE_WEIGHT_PROFILES.get(intent_key)
         if edge_profile:
-            search_config.multi_hop.edge_weights = edge_profile
+            cfg = mutable_config()
+            cfg.multi_hop.edge_weights = edge_profile
             # Also set for ego-graph path (EgoGraphConfig already has edge_weights field)
-            if hasattr(search_config, "ego_graph") and search_config.ego_graph:
-                search_config.ego_graph.edge_weights = edge_profile
+            if cfg.ego_graph:
+                cfg.ego_graph.edge_weights = edge_profile
             logger.info(
                 f"[INTENT] Edge weight profile set for {intent_key}: "
                 f"calls={edge_profile.get('calls', 'N/A')}, imports={edge_profile.get('imports', 'N/A')}"
             )
+
+    # Hand the copy to downstream only if we actually made one; otherwise the
+    # read-only singleton is safe to share.
+    effective_config = config_copy if config_copy is not None else config_singleton
 
     if isinstance(searcher, HybridSearcher):
         results = await asyncio.to_thread(
@@ -1023,7 +1040,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
             min_bm25_score=0.1,
             use_parallel=get_config().performance.use_parallel_search,
             filters=filters if filters else None,
-            config=search_config,
+            config=effective_config,
             bm25_weight=suggested_bm25,
             dense_weight=suggested_dense,
         )
@@ -1049,7 +1066,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
 
     # === Centrality annotation/reranking ===
     centrality_scores = None
-    graph_config = getattr(search_config, "graph_enhanced", None)
+    graph_config = getattr(effective_config, "graph_enhanced", None)
 
     if (
         graph_config

@@ -103,7 +103,11 @@ async def test_concurrent_search_weight_isolation():
     import threading
 
     from search.config import SearchConfig
-    from search.hybrid_searcher import HybridSearcher
+    from tests.fixtures.mcp_mocks import (
+        make_app_config_mock,
+        make_hybrid_searcher_mock,
+        make_intent_decision_mock,
+    )
 
     n_calls = 5
     # Unique (bm25, dense) per call so we can distinguish them
@@ -115,54 +119,26 @@ async def test_concurrent_search_weight_isolation():
     captured: list[dict] = []
     capture_lock = threading.Lock()
 
-    def make_search_side_effect():
-        """Capture the bm25_weight/dense_weight kwargs on each call to searcher.search."""
+    def capture_search_kwargs(**kwargs):
+        with capture_lock:
+            captured.append(
+                {
+                    "bm25_weight": kwargs.get("bm25_weight"),
+                    "dense_weight": kwargs.get("dense_weight"),
+                }
+            )
+        return []
 
-        def _search(**kwargs):
-            with capture_lock:
-                captured.append(
-                    {
-                        "bm25_weight": kwargs.get("bm25_weight"),
-                        "dense_weight": kwargs.get("dense_weight"),
-                    }
-                )
-            return []
+    mock_searcher = make_hybrid_searcher_mock(search_side_effect=capture_search_kwargs)
 
-        return _search
-
-    mock_searcher = Mock(spec=HybridSearcher)
-    mock_searcher.is_ready = True
-    mock_searcher.bm25_weight = 0.35
-    mock_searcher.dense_weight = 0.65
-    mock_searcher.search = Mock(side_effect=make_search_side_effect())
-
-    mock_faiss = Mock()
-    mock_faiss.ntotal = 100
-    mock_dense_idx = Mock()
-    mock_dense_idx.index = mock_faiss
-    mock_dense_idx.graph_storage = None
-    mock_searcher.dense_index = mock_dense_idx
-
-    # Pre-build IntentDecision mocks (one per call, keyed by query string)
-    def make_intent_decision(bm25: float, dense: float):
-        d = Mock()
-        d.intent = Mock()
-        d.intent.value = "local"
-        d.confidence = 0.95
-        d.reason = "test"
-        d.suggested_params = {
-            "bm25_weight": bm25,
-            "dense_weight": dense,
-            "search_mode": "hybrid",
-        }
-        return d
-
+    # Pre-build IntentDecision mocks (one per query, keyed by query string)
     decisions = {
-        f"query_{i}": make_intent_decision(*weight_pairs[i]) for i in range(n_calls)
+        f"query_{i}": make_intent_decision_mock("local", *weight_pairs[i])
+        for i in range(n_calls)
     }
 
     def classify_side_effect(query):
-        return decisions.get(query, make_intent_decision(0.35, 0.65))
+        return decisions.get(query, make_intent_decision_mock("local", 0.35, 0.65))
 
     with (
         patch(
@@ -181,15 +157,7 @@ async def test_concurrent_search_weight_isolation():
         mock_state.return_value.current_project = "/test"
         mock_state.return_value.searcher = None
 
-        app_cfg = Mock()
-        app_cfg.intent.enabled = True
-        app_cfg.intent.semantic_enabled = False
-        app_cfg.intent.confidence_threshold = 0.0
-        app_cfg.intent.log_classifications = False
-        app_cfg.performance.use_parallel_search = False
-        app_cfg.output.max_context_tokens = 0
-        mock_app_cfg.return_value = app_cfg
-
+        mock_app_cfg.return_value = make_app_config_mock()
         mock_cfg.return_value = SearchConfig()
         mock_cm.return_value.get_search_mode_for_query.return_value = "hybrid"
 
