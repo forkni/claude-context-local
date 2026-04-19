@@ -1967,3 +1967,74 @@ class TestCacheKeyInstructionMode:
         assert np.allclose(single, batch[0]), (
             "cached result must match original embedding"
         )
+
+    @patch(
+        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
+    )
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_prompt_name_mode_does_not_collide_with_custom(
+        self, mock_st, mock_loader_st
+    ):
+        """Same raw query under prompt_name vs custom must not share a cache entry.
+
+        Regression test: before the cache-key fix, a custom-mode caller could
+        receive an embedding produced with a sentence-transformers prompt_name
+        injection (or vice-versa).
+        """
+        encode_count = [0]
+        dim = 1024
+
+        def mock_encode(
+            sentences,
+            show_progress_bar=False,
+            convert_to_tensor=False,
+            device=None,
+            **kwargs,
+        ):
+            encode_count[0] += 1
+            n = len(sentences) if isinstance(sentences, (list, tuple)) else 1
+            return np.ones((n, dim), dtype=np.float32) * float(encode_count[0])
+
+        mock_model = MagicMock()
+        mock_model.encode.side_effect = mock_encode
+        mock_model.device = "cpu"
+        mock_st.return_value = mock_model
+        mock_loader_st.return_value = mock_model
+
+        embedder = CodeEmbedder(model_name="Qwen/Qwen3-Embedding-0.6B")
+        _ = embedder.model  # trigger warm-up
+        count_after_load = encode_count[0]
+
+        # Seed cache in custom mode
+        embedder._model_config = {
+            "dimension": dim,
+            "instruction_mode": "custom",
+            "query_instruction": "Represent this query: ",
+        }
+        _ = embedder.embed_query("shared text")
+        count_after_custom = encode_count[0]
+        assert count_after_custom == count_after_load + 1
+
+        # Switch to prompt_name mode with same raw query — must NOT hit custom cache entry
+        embedder._model_config = {
+            "dimension": dim,
+            "instruction_mode": "prompt_name",
+            "prompt_name": "query",
+        }
+        _ = embedder.embed_query("shared text")
+        count_after_prompt = encode_count[0]
+        assert count_after_prompt == count_after_custom + 1, (
+            "prompt_name mode must not reuse the custom-mode cache entry"
+        )
+
+        # And back to custom: must hit the seeded cache entry (no new encode)
+        embedder._model_config = {
+            "dimension": dim,
+            "instruction_mode": "custom",
+            "query_instruction": "Represent this query: ",
+        }
+        _ = embedder.embed_query("shared text")
+        assert encode_count[0] == count_after_prompt, (
+            "custom-mode second call must hit the original cache entry"
+        )

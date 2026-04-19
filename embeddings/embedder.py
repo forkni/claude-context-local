@@ -1522,7 +1522,10 @@ class CodeEmbedder:
                 )
                 results[orig_i] = emb
 
-        return np.stack(results)  # type: ignore[arg-type]
+        assert all(r is not None for r in results), (
+            "BUG: cache miss left a result slot unfilled"
+        )
+        return np.stack(results)
 
     def get_model_info(self) -> dict[str, Any]:
         """Get information about the loaded model."""

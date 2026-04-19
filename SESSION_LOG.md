@@ -77,8 +77,8 @@ All 59 embedder tests and 740 search tests pass.
 - **`docs/INSTALLATION_GUIDE.md:858`** — "15 MCP tools" → "19"
 - **`docs/CLAUDE_MD_TEMPLATE.md:49`** — "Available MCP Tools (18)" → "(19)"
 - **`docs/VERSION_HISTORY.md`** — replaced stale SSCG MRR=0.94 / Recall@4=0.89 (12/13) with canonical numbers from `evaluation/benchmark_results/` (BM25 MRR 0.846, Hybrid R@10 0.833, all modes 13/13 Hit@5); updated header date
-- **MCP search-tool skill** (`C:\Users\INTER\.claude\skills\mcp-search-tool\SKILL.md`) — added "Concurrent Search" section explaining parallel `search_code` calls are safe/efficient post-2ba03f5 via `asyncio.to_thread`
-- **MEMORY.md seeded** — created 6 memory files + index at canonical path `C:\Users\INTER\.claude\projects\D--claude-context-local\memory\`
+- **MCP search-tool skill** (`~/.claude/skills/mcp-search-tool/SKILL.md`, outside repo) — added "Concurrent Search" section explaining parallel `search_code` calls are safe/efficient post-2ba03f5 via `asyncio.to_thread`
+- **MEMORY.md seeded** — created 6 memory files + index under `~/.claude/projects/<project>/memory/` (outside repo)
 
 #### Audit Items Verified Clean (No Changes Made)
 
@@ -95,8 +95,8 @@ All 59 embedder tests and 740 search tests pass.
 - `docs/INSTALLATION_GUIDE.md` — "15" → "19" MCP tools
 - `docs/CLAUDE_MD_TEMPLATE.md` — "(18)" → "(19)"
 - `docs/VERSION_HISTORY.md` — SSCG numbers + header date
-- `C:\Users\INTER\.claude\skills\mcp-search-tool\SKILL.md` — Concurrent Search section (outside repo)
-- `C:\Users\INTER\.claude\projects\D--claude-context-local\memory\` — MEMORY.md index + 6 memory files (outside repo)
+- MCP search-tool skill (`~/.claude/skills/mcp-search-tool/SKILL.md`, outside repo) — Concurrent Search section
+- User memory store (`~/.claude/projects/<project>/memory/`, outside repo) — MEMORY.md index + 6 memory files
 
 #### Commits
 
@@ -112,7 +112,7 @@ All 59 embedder tests and 740 search tests pass.
 
 #### Key Accomplishments
 
-- **Event loop no longer blocks on search work** — 7 `asyncio.to_thread` wraps added across MCP tool handlers (5 in `mcp_server/tools/search_handlers.py`, 2 in `mcp_server/tools/index_handlers.py`). The GIL-releasing FAISS and CrossEncoder C/CUDA sections now run truly in parallel under concurrent MCP requests
+- **Event loop no longer blocks on search work** — 5 `asyncio.to_thread` wraps added to `mcp_server/tools/search_handlers.py`. The GIL-releasing FAISS and CrossEncoder C/CUDA sections now run truly in parallel under concurrent MCP requests. (Note: `mcp_server/tools/index_handlers.py` already had 2 wraps from commit `2e1e4a2` on main; those are not part of this work)
 - **Cold-start reranker race eliminated** — `NeuralReranker.model` property now uses double-checked locking with `threading.Lock`, mirroring `JinaRerankerV3`. Live-verified: 6 concurrent cold-start queries produced exactly 1 `Loading reranker model` and 1 `Reranker loaded on cuda`
 - **FAISS batched-query support** — `FaissVectorIndex.search()` extended to accept `[N, d]` and return `[N, k]`; added `query.copy()` guard before `faiss.normalize_L2` to prevent in-place mutation
 - **Dead `SearchBatchCoordinator` deleted** (`mcp_server/search_coordinator.py`, ~200 lines) — its batched fast-path always raised `TypeError` due to signature mismatch with `HybridSearcher.search` and was silently swallowed by `except Exception`. Removed along with `ApplicationState.search_coordinator`, startup block in `server.py`, and `concurrency` section of `search_config.json`

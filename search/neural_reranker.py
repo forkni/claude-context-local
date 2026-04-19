@@ -190,6 +190,13 @@ class NeuralReranker:
         Under concurrent load this is significantly cheaper than N separate
         rerank() calls because the GPU sees one large batch instead of N small ones.
 
+        Warning:
+            Scoring mutates each candidate in-place (``metadata["original_score"]``,
+            ``metadata["reranker_score"]``, ``score``). Callers must not share a
+            single candidate object across multiple batch entries — the second
+            mutation would overwrite ``original_score`` with the first entry's
+            reranker score rather than the true pre-rerank score.
+
         Args:
             batch: List of (query_str, candidates_list) tuples.
             top_k: Number of results to return per query.
