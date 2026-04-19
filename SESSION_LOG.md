@@ -2,7 +2,7 @@
 
 ## Project: General-Purpose Semantic Search MCP Integration System
 
-## Initialized: 2025-09-22 | Updated: 2026-02-16
+## Initialized: 2025-09-22 | Updated: 2026-04-18
 
 This file maintains session memory and context for the Claude-context-MCP semantic search system development and improvements.
 
@@ -33,6 +33,191 @@ This file maintains session memory and context for the Claude-context-MCP semant
 ---
 
 ## Session History
+
+### 2026-04-18: v0.11.1 Release — concurrent search + embed_queries_batch fixes
+
+**Primary Achievement**: Merged PR #25 (`feat: concurrent search + docs alignment`) into `main` and cut the `v0.11.1` patch release.
+
+#### What Shipped
+
+- `asyncio.to_thread` wraps on 5 blocking search-handler calls (`mcp_server/tools/search_handlers.py`) — event loop no longer serializes concurrent MCP requests
+- `NeuralReranker` double-checked locking, `rerank_batch`, batched FAISS `[N, d] → [N, k]`, `embed_queries_batch`, helper extractions
+- `embed_queries_batch` empty-batch shape fix `(0,)` → `(0, dim)` (PR #25 review round 1)
+- Query cache key extended with `instruction_mode` + `query_instruction` in both `embed_query` and `embed_queries_batch` (PR #25 review round 1)
+- `np.stack` guard assert, `rerank_batch` in-place mutation docstring warning, prompt_name cache test, SESSION_LOG path scrub (PR #25 review round 2)
+- `SearchBatchCoordinator` deleted (~200 lines dead code)
+
+#### Commits
+
+| Hash | Message |
+|------|---------|
+| `2ba03f5` | feat: concurrent search — asyncio.to_thread wraps, NeuralReranker load lock, FAISS batched queries, embed/rerank helpers |
+| `26acb0e` | docs: align CHANGELOG, SESSION_LOG, and docs to 2ba03f5 concurrency changes |
+| `7ea488e` | docs: add 2026-04-18 documentation alignment session log entry |
+| `1b912de` | fix: embed_queries_batch empty shape (0,dim) + cache key includes instruction_mode/query_instruction (PR #25 review) |
+| `d438de5` | fix: assert no None slots before np.stack, rerank_batch in-place docstring, prompt_name cache test, scrub SESSION_LOG machine paths (PR #25 review round 2) |
+
+#### Release
+
+- Tag `v0.11.1` at merge commit on `main`
+- GitHub Release: <https://github.com/forkni/claude-context-local/releases/tag/v0.11.1>
+
+---
+
+### 2026-04-18: PR #25 Review Response — embed_queries_batch Bug Fixes
+
+**Primary Achievement**: Addressed two bugs flagged in code review of PR #25 (`feat: concurrent search + docs alignment`).
+
+#### Bugs Fixed
+
+- **Empty-batch shape** (`embeddings/embedder.py:embed_queries_batch`) — `np.empty((0,), ...)` replaced with `np.empty((0, dim), ...)` where `dim = model_config.get("dimension", 768)`. Matches the `(N, embedding_dim)` contract; the old `(0,)` shape would raise `IndexError` on `.shape[1]` or FAISS ingestion
+- **Cache key scope** (`embeddings/query_cache.py`, `embeddings/embedder.py`) — `QueryEmbeddingCache._generate_cache_key` / `get` / `put` now accept `instruction_mode` and `query_instruction` kwargs (backward-compatible default `""`). Both `embed_query` and `embed_queries_batch` pass these fields, fixing the cross-mode collision where a `"custom"`-mode result could be returned to a `"prompt_name"` caller. The fix also makes `embed_query` + `embed_queries_batch` correctly share cache entries for identical queries under the same config
+
+#### Tests Added
+
+6 new unit tests in `tests/unit/embeddings/test_embedder.py`:
+- `TestEmbedQueriesBatch::test_empty_input_returns_2d_zero_shape`
+- `TestEmbedQueriesBatch::test_single_query_shape`
+- `TestEmbedQueriesBatch::test_multi_query_shape`
+- `TestCacheKeyInstructionMode::test_key_differs_across_instruction_modes`
+- `TestCacheKeyInstructionMode::test_same_mode_same_key`
+- `TestCacheKeyInstructionMode::test_embed_query_and_batch_share_cache`
+
+All 59 embedder tests and 740 search tests pass.
+
+#### Files Modified
+
+- `embeddings/query_cache.py` — extend `_generate_cache_key`, `get`, `put`
+- `embeddings/embedder.py` — shape fix + cache kwargs in `embed_query` + `embed_queries_batch`
+- `tests/unit/embeddings/test_embedder.py` — 6 new tests
+- `CHANGELOG.md` — Fixed entries under `[Unreleased]`
+- `SESSION_LOG.md` — this entry
+
+---
+
+### 2026-04-18: Documentation Alignment Audit and Update
+
+**Primary Achievement**: Audited all documentation, the MCP search-tool skill, and the user memory store for drift from commit `2ba03f5`, then executed a full alignment pass across 7 artifacts plus MEMORY.md seeding.
+
+#### Key Accomplishments
+
+- **Documentation audit** (3-agent parallel exploration) — found 14+ drift points across `CHANGELOG.md`, `SESSION_LOG.md`, `docs/INSTALLATION_GUIDE.md`, `docs/CLAUDE_MD_TEMPLATE.md`, `docs/VERSION_HISTORY.md`, the MCP search-tool skill, and the user memory store; cross-checked against actual code, config, and benchmark files to separate real drift from audit false-positives
+- **CHANGELOG.md** — populated empty `[Unreleased]` section with full 2ba03f5 surface (Added: `embed_queries_batch`, `rerank_batch`, batched FAISS; Changed: load lock, extracted helpers; Fixed: `asyncio.to_thread` wraps; Removed: `SearchBatchCoordinator`)
+- **SESSION_LOG.md** — added 2026-04-18 entry for Part 1 + Part 1.5 concurrency work; updated header date
+- **`docs/INSTALLATION_GUIDE.md:858`** — "15 MCP tools" → "19"
+- **`docs/CLAUDE_MD_TEMPLATE.md:49`** — "Available MCP Tools (18)" → "(19)"
+- **`docs/VERSION_HISTORY.md`** — replaced stale SSCG MRR=0.94 / Recall@4=0.89 (12/13) with canonical numbers from `evaluation/benchmark_results/` (BM25 MRR 0.846, Hybrid R@10 0.833, all modes 13/13 Hit@5); updated header date
+- **MCP search-tool skill** (`~/.claude/skills/mcp-search-tool/SKILL.md`, outside repo) — added "Concurrent Search" section explaining parallel `search_code` calls are safe/efficient post-2ba03f5 via `asyncio.to_thread`
+- **MEMORY.md seeded** — created 6 memory files + index under `~/.claude/projects/<project>/memory/` (outside repo)
+
+#### Audit Items Verified Clean (No Changes Made)
+
+- `README.md` test count — 1,987 is correct (audit agent had only counted 3 of 6 `tests/unit/` subdirectories)
+- `docs/ADVANCED_FEATURES_GUIDE.md` pool default — already correctly states `lightweight-speed` as default
+- `references/performance.md` benchmark data — 2026-04-10 three-mode data is canonical
+- `references/tool-index.md` EmbeddingGemma / `c2llm` key — already consistent
+- SKILL.md reranker name — no specific reranker model name stated in any skill file
+
+#### Files Modified
+
+- `CHANGELOG.md` — populated `[Unreleased]` with 2ba03f5 content
+- `SESSION_LOG.md` — 2026-04-18 entry + header date
+- `docs/INSTALLATION_GUIDE.md` — "15" → "19" MCP tools
+- `docs/CLAUDE_MD_TEMPLATE.md` — "(18)" → "(19)"
+- `docs/VERSION_HISTORY.md` — SSCG numbers + header date
+- MCP search-tool skill (`~/.claude/skills/mcp-search-tool/SKILL.md`, outside repo) — Concurrent Search section
+- User memory store (`~/.claude/projects/<project>/memory/`, outside repo) — MEMORY.md index + 6 memory files
+
+#### Commits
+
+| Commit | Description |
+|--------|-------------|
+| `26acb0e` | docs: align CHANGELOG, SESSION_LOG, and docs to 2ba03f5 concurrency changes |
+
+---
+
+### 2026-04-18: Concurrency Fix — Part 1 + Part 1.5 (commit 2ba03f5)
+
+**Primary Achievement**: Resolved the primary concurrency pain — 5+ parallel MCP `search_code` calls serializing on the event loop and racing on cold-start reranker load. Landed via commit `2ba03f5` on `development` branch.
+
+#### Key Accomplishments
+
+- **Event loop no longer blocks on search work** — 5 `asyncio.to_thread` wraps added to `mcp_server/tools/search_handlers.py`. The GIL-releasing FAISS and CrossEncoder C/CUDA sections now run truly in parallel under concurrent MCP requests. (Note: `mcp_server/tools/index_handlers.py` already had 2 wraps from commit `2e1e4a2` on main; those are not part of this work)
+- **Cold-start reranker race eliminated** — `NeuralReranker.model` property now uses double-checked locking with `threading.Lock`, mirroring `JinaRerankerV3`. Live-verified: 6 concurrent cold-start queries produced exactly 1 `Loading reranker model` and 1 `Reranker loaded on cuda`
+- **FAISS batched-query support** — `FaissVectorIndex.search()` extended to accept `[N, d]` and return `[N, k]`; added `query.copy()` guard before `faiss.normalize_L2` to prevent in-place mutation
+- **Dead `SearchBatchCoordinator` deleted** (`mcp_server/search_coordinator.py`, ~200 lines) — its batched fast-path always raised `TypeError` due to signature mismatch with `HybridSearcher.search` and was silently swallowed by `except Exception`. Removed along with `ApplicationState.search_coordinator`, startup block in `server.py`, and `concurrency` section of `search_config.json`
+- **Extracted helpers** — `_format_query_text` + `_tensor_to_numpy` in `embeddings/embedder.py`; `_apply_rerank_score` in `search/neural_reranker.py`
+- **New batch APIs** — `CodeEmbedder.embed_queries_batch` and `NeuralReranker.rerank_batch` as infrastructure for future coalescing (not yet wired into the hot path)
+- **1,987 unit tests pass** — zero regressions
+
+#### Live Verification
+
+MCP debug stream (server start 09:39:34, burst 09:43:39–09:44:21): 10 tool calls (6 `search_code`, 2 `find_path`, 2 `find_connections`); 22 `Reranked N candidates → K results` log lines; exactly 1 `Loading reranker model` + 1 `Reranker loaded on cuda`; 0 `Traceback`, 0 coordinator references.
+
+#### Files Modified
+
+- `mcp_server/tools/search_handlers.py` — 5 `asyncio.to_thread` wraps
+- `mcp_server/tools/index_handlers.py` — 2 `asyncio.to_thread` wraps
+- `search/neural_reranker.py` — `_load_lock`, `_apply_rerank_score`, `rerank_batch`
+- `search/faiss_index.py` — batched search support, normalize_L2 mutation guard
+- `embeddings/embedder.py` — `_format_query_text`, `_tensor_to_numpy`, `embed_queries_batch`
+- `SESSION_LOG.md` — this entry
+
+#### Commits
+
+| Commit | Description |
+|--------|-------------|
+| `2ba03f5` | feat: asyncio.to_thread wraps, batched FAISS/reranker APIs, load lock, delete dead SearchBatchCoordinator |
+
+---
+
+### 2026-04-16: Docs Alignment, PR #24 Merge, and v0.11.0 Release
+
+**Primary Achievement**: Closed the PR #24 cycle with documentation alignment, merged `pr/05-ci-review-fixes` into `development`, cut the `development → main` release merge, and published GitHub Release `v0.11.0` covering the full ONNX Runtime backend + VRAM robustness stack.
+
+#### Key Accomplishments
+
+- **Documentation alignment commit** (`f4fcf54`) — added `### Security` and `### Tests` sections to the `[0.11.0]` CHANGELOG entry (4 CVE patch upgrades, orphan cleanup, 1,987-test count); fixed package-count typo (`124 → 122` → `127 → 124`); synced README status line to `1,987+ passing tests`; bumped `docs/VERSION_HISTORY.md` test count (1,985 → 1,987, lines 9 + 46) and package count (125 → 124, line 10)
+- **Charlie CI items verified** — Item #6 (CodeRankEmbed pooling) confirmed clean: `search/config.py:83-94` carries no stale `onnx_pooling` key, defaults to `cls` via `.get("onnx_pooling", "cls")`, and ONNX path is blocked by `trust_remote_code=True` regardless. Item #7 (NVML guard for ONNX activation path) confirmed clean: `_get_nvml_used_bytes()` at `embeddings/model_loader.py:46-75` wraps the full `import pynvml` + NVML call chain in `try/except Exception: return 0`, so pynvml-missing or NVML-failure paths resolve to a safe `0.0` activation estimate with no exception propagation
+- **PR #24 merged into development** — `pr/05-ci-review-fixes → development` via `merge_with_validation.sh --non-interactive` with `CGW_TARGET_BRANCH="development"` env override (script default targets `main`). Merge commit `07d8da3`, backup tag `pre-merge-backup-20260416_225022`; PR auto-closed by GitHub on push, state = `MERGED`
+- **`development → main` release merge** — 41-commit merge via `merge_with_validation.sh --non-interactive` using default config (`CGW_SOURCE_BRANCH=development`, `CGW_TARGET_BRANCH=main`). Merge commit `60ba0ba`, backup tag `pre-merge-backup-20260416_225317`. Brought the full ONNX Runtime backend stack (PR #04) + CI review follow-ups (PR #05) + docs into `main` in one merge commit
+- **v0.11.0 release published** — annotated tag `v0.11.0` created at `60ba0ba` via `create_release.sh v0.11.0 --push --non-interactive`; GitHub Release published at `https://github.com/forkni/claude-context-local/releases/tag/v0.11.0` with full `[0.11.0]` CHANGELOG body as release notes (no `release.yml` workflow exists, so `gh release create --verify-tag --notes-file` was used manually)
+
+#### Technical Details
+
+The session began in plan mode resumed from the prior conversation's summarization boundary. Working-tree state at resume: `pr/05-ci-review-fixes` with two uncommitted doc edits (README.md + CHANGELOG.md). A read-only audit revealed three remaining inconsistencies: (1) a `124 → 122` package-count claim that did not match the actual `.venv/Scripts/pip list` count of 124 (true drop was 127 → 124 after removing `cryptography`, `typer-slim`, `shellingham`); (2) `docs/VERSION_HISTORY.md` lines 9 + 46 still citing `1,985 unit tests`; (3) line 10 still citing `125 packages`.
+
+The release flow required one detour: the first invocation of `merge_with_validation.sh` from branch `development` targeted `main` (per `.cgw.conf` defaults), not the intended PR merge target. The fix was to switch back to `pr/05-ci-review-fixes` and run with an inline env override `CGW_TARGET_BRANCH=development`.
+
+The `create_release.sh` script emits "GitHub Release workflow triggered" on tag push, but no `release.yml` exists under `.github/workflows/`. The release body was populated manually by extracting the `[0.11.0]` CHANGELOG slice with `awk` and passing it to `gh release create --notes-file`.
+
+#### Files Modified
+
+- `CHANGELOG.md` — `### Security` + `### Tests` sections added to `[0.11.0]`; package-count typo corrected
+- `README.md` — status line `1,985+ passing tests` → `1,987+ passing tests`
+- `docs/VERSION_HISTORY.md` — test count 1,985 → 1,987 (lines 9 + 46); package count 125 → 124 (line 10)
+
+#### Commits
+
+| Commit | Description |
+|--------|-------------|
+| `f4fcf54` | docs: add 0.11.0 Security/Tests sections, sync test count (1987) and package count (124) |
+| `07d8da3` | Merge pr/05-ci-review-fixes into development |
+| `60ba0ba` | Merge development into main |
+| `v0.11.0` | Annotated release tag at `60ba0ba` |
+
+#### Release Artifacts
+
+- GitHub Release: <https://github.com/forkni/claude-context-local/releases/tag/v0.11.0>
+- Backup tags: `pre-merge-backup-20260416_225022` (PR #24 merge), `pre-merge-backup-20260416_225317` (release merge)
+
+#### Post-Release Follow-ups
+
+- Bump `pyproject.toml` to `0.12.0-dev` on `development` and open a fresh `[Unreleased]` CHANGELOG section
+- Delete merged `pr/05-ci-review-fixes` branch via `./scripts/git/branch_cleanup.sh --execute`
+- Consider adding `release.yml` workflow so future tag pushes auto-publish GitHub Releases without manual `gh release create`
+
+---
 
 ### 2026-04-16: CI Review Fixes Applied to Development
 

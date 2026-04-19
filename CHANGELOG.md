@@ -9,9 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.11.1] - 2026-04-18
+
+### Added
+
+- **`CodeEmbedder.embed_queries_batch(queries)`** (`embeddings/embedder.py:1461-1513`) — batch query embedding in one model forward pass; reuses `_format_query_text` formatting and `embed_chunks` batching machinery. Infrastructure for future coalesced search; not yet wired into the hot path
+- **`NeuralReranker.rerank_batch(batch, top_k)`** (`search/neural_reranker.py`) — flattens all `(query, doc)` pairs across N queries into one `CrossEncoder.predict` call, splits results back per-query using offsets. Infrastructure for future batched reranking; not yet wired into the hot path
+- **Batched FAISS search** (`search/faiss_index.py`) — `FaissVectorIndex.search()` now accepts `[N, d]` input and returns `[N, k]` output, preserving the batch dimension when N > 1. Adds a `query.copy()` guard before `faiss.normalize_L2` to prevent in-place mutation of caller-owned arrays
+
 ### Changed
 
-- No unreleased changes
+- **`NeuralReranker.model` lazy-load** (`search/neural_reranker.py`) — now uses double-checked locking with `threading.Lock`. Previously, two concurrent requests on a cold cache could both enter the bare `if self._model is None` branch and instantiate duplicate `CrossEncoder` objects (duplicate VRAM allocation, wasted load latency). Mirrors the existing locking pattern in `JinaRerankerV3`
+- **Extracted `_format_query_text(query, model_config)`** (`embeddings/embedder.py`) — replaces a ~40-line instruction-mode formatting ladder that was duplicated between `embed_query` and `embed_queries_batch`. Future `instruction_mode` branches can no longer silently diverge between single-query and batch paths
+- **Extracted `_tensor_to_numpy(emb)`** (`embeddings/embedder.py`) — deduplicates the tensor→numpy conversion used at two call sites
+- **Extracted `_apply_rerank_score(candidate, score)`** (`search/neural_reranker.py`) — the `original_score`/`reranker_score`/`candidate.score = float(score)` triple previously appeared 5× in the file; now called from both `rerank` and `rerank_batch`
+
+### Fixed
+
+- **`embed_queries_batch` empty-batch shape** (`embeddings/embedder.py`) — empty input now returns `np.empty((0, dim), dtype=float32)` matching the `(N, embedding_dim)` contract; previously returned `(0,)` which would raise `IndexError` on `.shape[1]` or FAISS ingestion
+- **Query cache key includes `instruction_mode` and `query_instruction`** (`embeddings/query_cache.py`, `embeddings/embedder.py`) — cache keys in both `embed_query` and `embed_queries_batch` now incorporate these fields; previously a query cached in `"custom"` mode could be returned to a `"prompt_name"` caller with the wrong instruction prepended. `embed_query` and `embed_queries_batch` now share cache entries correctly when called with identical configs
+- **Search handlers no longer block the event loop** (`mcp_server/tools/search_handlers.py`) — 5 blocking search calls are now wrapped in `asyncio.to_thread`. Previously, every inbound `search_code` / `find_path` / `find_connections` call held the event loop for the full pipeline (embed → FAISS → BM25 → RRF → neural rerank), serializing N concurrent MCP requests. The GIL-releasing FAISS and CrossEncoder C/CUDA sections now run truly in parallel. (`mcp_server/tools/index_handlers.py` already had its 2 index wraps from commit `2e1e4a2` on main; those are not part of this PR diff)
+
+### Removed
+
+- **`SearchBatchCoordinator`** (`mcp_server/search_coordinator.py`, ~200 lines) — deleted along with `ApplicationState.search_coordinator`, the startup block in `server.py`, and the `concurrency` section of `search_config.json`. The coordinator's batched fast-path always raised `TypeError` (because `HybridSearcher.search` does not accept `query_embedding`), which was silently swallowed by `except Exception` — every request fell through to serial execution. It was pure overhead with zero benefit
 
 ---
 

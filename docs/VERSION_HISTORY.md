@@ -2,13 +2,13 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-04-16)
+## Current Status: All Features Operational (2026-04-18)
 
-- **Version**: 0.11.0
+- **Version**: 0.11.0+ (development; unreleased: concurrency fixes, batch APIs, coordinator removal)
 - **Status**: Production-ready
 - **Test Coverage**: 1,987 unit tests + 8 integration tests (100% pass rate)
 - **Dependencies**: 124 packages (38% reduction from 201) + optional `onnxruntime-gpu` for ONNX backend
-- **SSCG Benchmark**: MRR=0.94, Recall@4=0.89 (12/13 queries)
+- **SSCG Benchmark**: Best MRR=0.846 (BM25), Hybrid Recall@10=0.833, all modes 13/13 Hit@5 (2026-04-10, k=10; see `evaluation/benchmark_results/`)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
 - **Recent Features**: ONNX Runtime backend (opt-in), ORT CUDA arena cap, BFCArena OOM recovery, dtype-aware activation estimate, `onnx_supported` registry flag, lightweight-speed default pool (BGE-M3 + gte-reranker-modernbert-base)
 

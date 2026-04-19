@@ -3,6 +3,7 @@
 Handlers for code search, similarity finding, and connection analysis.
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -763,7 +764,9 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
                     # Get searcher if not already initialized
                     if "searcher" not in locals():
                         searcher = get_searcher(model_key=selected_model_key)
-                    search_result = searcher.search(symbol_name, k=1)
+                    search_result = await asyncio.to_thread(
+                        searcher.search, symbol_name, k=1
+                    )
                     if search_result:
                         return await handle_find_similar_code(
                             {
@@ -1025,18 +1028,20 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
             )
 
     if isinstance(searcher, HybridSearcher):
-        results = searcher.search(
+        results = await asyncio.to_thread(
+            searcher.search,
             query=query,
             k=k,
             search_mode=actual_search_mode,
             min_bm25_score=0.1,
             use_parallel=get_config().performance.use_parallel_search,
             filters=filters if filters else None,
-            config=search_config,  # Pass config with ego-graph settings
+            config=search_config,
         )
     else:
         context_depth = 1 if include_context else 0
-        results = searcher.search(
+        results = await asyncio.to_thread(
+            searcher.search,
             query=query,
             k=k,
             search_mode=actual_search_mode,
@@ -1445,7 +1450,7 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
 
         # Fall back to semantic search if all lookups failed
         if not resolved_source:
-            results = searcher.search(source, k=5)
+            results = await asyncio.to_thread(searcher.search, source, k=5)
             # Prefer chunks whose name matches the symbol over module-level chunks
             for r in results:
                 meta = r.metadata if hasattr(r, "metadata") else {}
@@ -1509,7 +1514,7 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
 
         # Fall back to semantic search if all lookups failed
         if not resolved_target:
-            results = searcher.search(target, k=5)
+            results = await asyncio.to_thread(searcher.search, target, k=5)
             # Prefer chunks whose name matches the symbol over module-level chunks
             for r in results:
                 meta = r.metadata if hasattr(r, "metadata") else {}

@@ -19,6 +19,11 @@ CGW_SOURCE_BRANCH="development"
 # Default: main
 CGW_TARGET_BRANCH="main"
 
+# Remote name used for fetch, push, and remote-tracking-ref resolution.
+# Override with CGW_REMOTE=upstream for fork workflows.
+# Default: origin
+CGW_REMOTE="origin"
+
 # ============================================================================
 # LOCAL-ONLY FILES
 # ============================================================================

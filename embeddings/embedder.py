@@ -668,6 +668,28 @@ class CodeEmbedder:
         device_str = str(self.device).lower()
         return "cuda" in device_str or "mps" in device_str
 
+    def _format_query_text(self, query: str, model_config: dict) -> str:
+        """Apply instruction/prefix formatting for a single query string."""
+        instruction_mode = model_config.get("instruction_mode")
+        if instruction_mode == "prompt_name":
+            return query
+        if instruction_mode == "custom":
+            return model_config.get("query_instruction", "") + query
+        task_instruction = model_config.get("task_instruction", "")
+        query_prefix = model_config.get("query_prefix", "")
+        if task_instruction:
+            sep = ": " if not task_instruction.endswith(": ") else ""
+            return task_instruction + sep + query
+        if query_prefix:
+            return query_prefix + query
+        return query
+
+    def _tensor_to_numpy(self, emb: Any) -> np.ndarray:
+        """Convert a tensor or array to a float32 numpy array."""
+        if torch.is_tensor(emb):
+            return emb.cpu().float().numpy()
+        return emb
+
     def _check_vram_status(self) -> tuple[float, bool, bool]:
         """Check VRAM usage and return (usage_pct, should_warn, should_abort).
 
@@ -1396,6 +1418,8 @@ class CodeEmbedder:
         """
         # Get model-specific configuration
         model_config = self._get_model_config()
+        instruction_mode = model_config.get("instruction_mode") or ""
+        query_instruction = model_config.get("query_instruction", "")
 
         # Try to get from cache
         cached_embedding = self._query_cache.get(
@@ -1403,65 +1427,29 @@ class CodeEmbedder:
             model_name=self.model_name,
             task_instruction=model_config.get("task_instruction", ""),
             query_prefix=model_config.get("query_prefix", ""),
+            instruction_mode=instruction_mode,
+            query_instruction=query_instruction,
         )
 
         if cached_embedding is not None:
             return cached_embedding
-
-        # Cache miss - generate embedding
-        # Priority: instruction_mode > task_instruction > query_prefix
-        instruction_mode = model_config.get("instruction_mode")
-
-        # Prepare encoding kwargs
-        encode_kwargs = {
-            "show_progress_bar": False,
-        }
-
-        # Use convert_to_tensor for GPU to avoid CPU<->GPU transfers
-        use_tensor = self._is_gpu_device()
-        if use_tensor:
+        encode_kwargs: dict[str, Any] = {"show_progress_bar": False}
+        if self._is_gpu_device():
             encode_kwargs["convert_to_tensor"] = True
             encode_kwargs["device"] = self.device
-
-        # Determine query formatting based on instruction mode
         if instruction_mode == "prompt_name":
-            # Option A: Use sentence-transformers built-in prompt
             prompt_name_value = model_config.get("prompt_name", "query")
             encode_kwargs["prompt_name"] = prompt_name_value
-            query_to_embed = query
             self._logger.debug(
                 f"Using prompt_name='{prompt_name_value}' for query encoding"
             )
         elif instruction_mode == "custom":
-            # Option B: Custom Qwen3-style instruction format
-            query_instruction = model_config.get("query_instruction", "")
-            query_to_embed = query_instruction + query
             self._logger.debug("Using custom instruction for query encoding")
-        else:
-            # Fallback to legacy behavior for other models
-            task_instruction = model_config.get("task_instruction")
-            query_prefix = model_config.get("query_prefix", "")
+        query_to_embed = self._format_query_text(query, model_config)
 
-            if task_instruction:
-                # Task instructions need ": " separator (e.g., CodeRankEmbed)
-                separator = ": " if not task_instruction.endswith(": ") else ""
-                query_to_embed = task_instruction + separator + query
-            elif query_prefix:
-                # Simple prefix (e.g., "Retrieval-document: ")
-                query_to_embed = query_prefix + query
-            else:
-                query_to_embed = query
-
-        # Generate embedding
-        embedding = self.model.encode(
-            [query_to_embed],
-            **encode_kwargs,
-        )[0]
-
-        # Convert back to numpy if tensor
-        # Note: bf16 tensors must be converted to float32 first (numpy doesn't support bf16)
-        if torch and torch.is_tensor(embedding):
-            embedding = embedding.cpu().float().numpy()
+        embedding = self.model.encode([query_to_embed], **encode_kwargs)[0]
+        # bf16 tensors must be cast to float32 before numpy conversion
+        embedding = self._tensor_to_numpy(embedding)
 
         # Add to cache
         self._query_cache.put(
@@ -1470,9 +1458,74 @@ class CodeEmbedder:
             embedding=embedding,
             task_instruction=model_config.get("task_instruction", ""),
             query_prefix=model_config.get("query_prefix", ""),
+            instruction_mode=instruction_mode,
+            query_instruction=query_instruction,
         )
 
         return embedding
+
+    def embed_queries_batch(self, queries: list[str]) -> np.ndarray:
+        """Embed N queries in one forward pass; cache hits skip the model call.
+
+        Returns:
+            np.ndarray of shape (N, embedding_dim), dtype float32.
+        """
+        model_config = self._get_model_config()
+        if not queries:
+            dim = int(model_config.get("dimension", 768))
+            return np.empty((0, dim), dtype=np.float32)
+
+        task_instruction = model_config.get("task_instruction", "")
+        query_prefix = model_config.get("query_prefix", "")
+        instruction_mode = model_config.get("instruction_mode") or ""
+        query_instruction = model_config.get("query_instruction", "")
+
+        results: list[np.ndarray | None] = [None] * len(queries)
+        uncached_indices: list[int] = []
+        uncached_texts: list[str] = []
+
+        for i, query in enumerate(queries):
+            cached = self._query_cache.get(
+                query=query,
+                model_name=self.model_name,
+                task_instruction=task_instruction,
+                query_prefix=query_prefix,
+                instruction_mode=instruction_mode,
+                query_instruction=query_instruction,
+            )
+            if cached is not None:
+                results[i] = cached
+            else:
+                uncached_indices.append(i)
+                uncached_texts.append(self._format_query_text(query, model_config))
+
+        if uncached_texts:
+            encode_kwargs: dict[str, Any] = {"show_progress_bar": False}
+            if instruction_mode == "prompt_name":
+                encode_kwargs["prompt_name"] = model_config.get("prompt_name", "query")
+            if self._is_gpu_device():
+                encode_kwargs["convert_to_tensor"] = True
+                encode_kwargs["device"] = self.device
+
+            raw = self.model.encode(uncached_texts, **encode_kwargs)
+
+            for local_i, orig_i in enumerate(uncached_indices):
+                emb = self._tensor_to_numpy(raw[local_i])
+                self._query_cache.put(
+                    query=queries[orig_i],
+                    model_name=self.model_name,
+                    embedding=emb,
+                    task_instruction=task_instruction,
+                    query_prefix=query_prefix,
+                    instruction_mode=instruction_mode,
+                    query_instruction=query_instruction,
+                )
+                results[orig_i] = emb
+
+        assert all(r is not None for r in results), (
+            "BUG: cache miss left a result slot unfilled"
+        )
+        return np.stack(results)
 
     def get_model_info(self) -> dict[str, Any]:
         """Get information about the loaded model."""
