@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.11.2] - 2026-04-19
+
+### Fixed
+
+- **Request-scoped weight overrides no longer race under concurrent search** (`mcp_server/tools/search_handlers.py`, `search/hybrid_searcher.py`, `search/search_executor.py`) — `handle_search_code` previously mutated `searcher.bm25_weight`, `searcher.dense_weight`, and their `SearchExecutor` mirrors before `asyncio.to_thread`; concurrent requests could overwrite each other's intent-driven weights, causing nondeterministic RRF ranking. Weights are now threaded as per-call kwargs from `handle_search_code` → `HybridSearcher.search` → `_single_hop_search` → `SearchExecutor.execute_single_hop` → `RRFReranker.rerank_simple` (which already accepted per-call weights). Instance state is never mutated
+- **`SearchConfig` singleton no longer mutated per request** (`mcp_server/tools/search_handlers.py`) — `get_search_config()` returns a cached process-wide singleton; five sites in `handle_search_code` wrote to `search_config.ego_graph`, `search_config.ego_graph.min_similarity_threshold`, `search_config.parent_retrieval`, `search_config.multi_hop.edge_weights`, and `search_config.ego_graph.edge_weights` at request time. The handler now takes a single `copy.deepcopy` of the singleton before any mutations so all per-request changes stay request-local
+
+---
+
 ## [0.11.1] - 2026-04-18
 
 ### Added

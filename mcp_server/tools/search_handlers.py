@@ -4,6 +4,7 @@ Handlers for code search, similarity finding, and connection analysis.
 """
 
 import asyncio
+import copy
 import logging
 from typing import Any
 
@@ -22,6 +23,7 @@ from mcp_server.utils.config_helpers import temporary_ram_fallback_off
 from search.config import (
     EgoGraphConfig,
     ParentRetrievalConfig,
+    SearchConfig,
     get_config_manager,
     get_search_config,
 )
@@ -940,19 +942,27 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     config_manager = get_config_manager()
     actual_search_mode = config_manager.get_search_mode_for_query(query, search_mode)
 
+    # get_search_config() returns a process-wide cached singleton. Requests that
+    # don't apply ego-graph / parent-retrieval / intent-edge overrides can pass the
+    # singleton straight through. Requests that do mutate lazily deep-copy once,
+    # so the singleton is never written and concurrent requests don't race.
+    config_singleton = get_search_config()
+    config_copy: SearchConfig | None = None
+
+    def mutable_config() -> SearchConfig:
+        """Deep-copy the singleton on first call; return the same copy thereafter."""
+        nonlocal config_copy
+        if config_copy is None:
+            config_copy = copy.deepcopy(config_singleton)
+        return config_copy
+
     # Build SearchConfig with ego-graph settings if enabled
-    search_config = None
     if isinstance(searcher, HybridSearcher) and ego_graph_enabled:
-        # Get base config and override ego-graph settings
-        base_config = get_search_config()
-        ego_config = EgoGraphConfig(
+        mutable_config().ego_graph = EgoGraphConfig(
             enabled=ego_graph_enabled,
             k_hops=ego_graph_k_hops,
             max_neighbors_per_hop=ego_graph_max_neighbors,
         )
-        # Create modified config with ego-graph enabled
-        search_config = base_config
-        search_config.ego_graph = ego_config
         logger.info(
             f"[EGO_GRAPH] Enabled with k_hops={ego_graph_k_hops}, "
             f"max_neighbors_per_hop={ego_graph_max_neighbors}"
@@ -961,8 +971,6 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     # QW5: apply intent-adaptive similarity threshold to ego-graph expansion
     # Different query intents benefit from different neighbor precision/recall trade-offs
     if isinstance(searcher, HybridSearcher) and ego_graph_enabled and intent_decision:
-        if search_config is None:
-            search_config = get_search_config()
         _intent_ego_thresholds = {
             "local": 0.25,  # Higher precision for specific symbol lookups
             "global": 0.10,  # Broader coverage for architecture queries
@@ -980,33 +988,26 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
                 f"[EGO_GRAPH] Intent-adaptive threshold: "
                 f"{intent_decision.intent.value} -> {intent_threshold}"
             )
-        search_config.ego_graph.min_similarity_threshold = intent_threshold
+        mutable_config().ego_graph.min_similarity_threshold = intent_threshold
 
     # Build SearchConfig with parent-retrieval settings if enabled
     if isinstance(searcher, HybridSearcher) and include_parent:
-        # Get base config if not already set
-        if search_config is None:
-            search_config = get_search_config()
-        # Override parent-retrieval settings
-        parent_config = ParentRetrievalConfig(enabled=include_parent)
-        search_config.parent_retrieval = parent_config
+        mutable_config().parent_retrieval = ParentRetrievalConfig(
+            enabled=include_parent
+        )
         logger.info("[PARENT_RETRIEVAL] Enabled")
 
-    # Apply intent-driven weight overrides
+    # Apply intent-driven weight overrides (per-request kwargs — no shared-state mutation)
+    suggested_bm25: float | None = None
+    suggested_dense: float | None = None
     if isinstance(searcher, HybridSearcher) and intent_decision:
         suggested_bm25 = intent_decision.suggested_params.get("bm25_weight")
         suggested_dense = intent_decision.suggested_params.get("dense_weight")
         if suggested_bm25 is not None and suggested_dense is not None:
-            orig_bm25, orig_dense = searcher.bm25_weight, searcher.dense_weight
-            searcher.bm25_weight = suggested_bm25
-            searcher.dense_weight = suggested_dense
-            # Propagate weights to SearchExecutor (has its own weight copies)
-            if hasattr(searcher, "search_executor"):
-                searcher.search_executor.bm25_weight = suggested_bm25
-                searcher.search_executor.dense_weight = suggested_dense
             logger.info(
                 f"[INTENT] Weight override for {intent_decision.intent.value}: "
-                f"BM25={orig_bm25:.2f}→{suggested_bm25:.2f}, Dense={orig_dense:.2f}→{suggested_dense:.2f}"
+                f"BM25={searcher.bm25_weight:.2f}→{suggested_bm25:.2f}, "
+                f"Dense={searcher.dense_weight:.2f}→{suggested_dense:.2f}"
             )
 
     # Apply intent-driven edge weights for graph traversal (A1)
@@ -1016,16 +1017,19 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
         intent_key = intent_decision.intent.value  # e.g. "local", "global"
         edge_profile = INTENT_EDGE_WEIGHT_PROFILES.get(intent_key)
         if edge_profile:
-            if search_config is None:
-                search_config = get_search_config()
-            search_config.multi_hop.edge_weights = edge_profile
+            cfg = mutable_config()
+            cfg.multi_hop.edge_weights = edge_profile
             # Also set for ego-graph path (EgoGraphConfig already has edge_weights field)
-            if hasattr(search_config, "ego_graph") and search_config.ego_graph:
-                search_config.ego_graph.edge_weights = edge_profile
+            if cfg.ego_graph:
+                cfg.ego_graph.edge_weights = edge_profile
             logger.info(
                 f"[INTENT] Edge weight profile set for {intent_key}: "
                 f"calls={edge_profile.get('calls', 'N/A')}, imports={edge_profile.get('imports', 'N/A')}"
             )
+
+    # Hand the copy to downstream only if we actually made one; otherwise the
+    # read-only singleton is safe to share.
+    effective_config = config_copy if config_copy is not None else config_singleton
 
     if isinstance(searcher, HybridSearcher):
         results = await asyncio.to_thread(
@@ -1036,7 +1040,9 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
             min_bm25_score=0.1,
             use_parallel=get_config().performance.use_parallel_search,
             filters=filters if filters else None,
-            config=search_config,
+            config=effective_config,
+            bm25_weight=suggested_bm25,
+            dense_weight=suggested_dense,
         )
     else:
         context_depth = 1 if include_context else 0
@@ -1060,9 +1066,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
 
     # === Centrality annotation/reranking ===
     centrality_scores = None
-    if search_config is None:
-        search_config = get_search_config()
-    graph_config = getattr(search_config, "graph_enhanced", None)
+    graph_config = getattr(effective_config, "graph_enhanced", None)
 
     if (
         graph_config
@@ -1086,7 +1090,12 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
             centrality_scores = ranker._get_centrality_scores()
 
             # QW1: pass centrality scores to ego-graph retriever so neighbors
-            # are ranked by architectural importance before truncation
+            # are ranked by architectural importance before truncation.
+            # NOTE(v0.11.2 follow-up): set_centrality_scores mutates shared retriever
+            # state, but centrality is graph-derived (not query-derived), so all
+            # concurrent requests compute the same scores — races here are benign.
+            # If centrality ever becomes query-aware, isolate this via per-request kwargs
+            # the same way bm25_weight/dense_weight were isolated in v0.11.2.
             if (
                 isinstance(searcher, HybridSearcher)
                 and hasattr(searcher, "ego_graph_retriever")
