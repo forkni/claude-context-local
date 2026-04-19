@@ -600,6 +600,8 @@ class HybridSearcher(BaseSearcher):
         min_bm25_score: float = 0.0,
         filters: dict[str, Any] | None = None,
         config: Optional["SearchConfig"] = None,
+        bm25_weight: float | None = None,
+        dense_weight: float | None = None,
     ) -> list[SearchResult]:
         """
         Search using configurable approach (hybrid, semantic-only, or BM25-only).
@@ -669,6 +671,8 @@ class HybridSearcher(BaseSearcher):
                 use_parallel=use_parallel,
                 min_bm25_score=min_bm25_score,
                 filters=filters,
+                bm25_weight=bm25_weight,
+                dense_weight=dense_weight,
             )
 
         # Apply ego-graph expansion if enabled
@@ -708,6 +712,8 @@ class HybridSearcher(BaseSearcher):
         min_bm25_score: float = 0.0,
         filters: dict[str, Any] | None = None,
         query_embedding: np.ndarray | None = None,
+        bm25_weight: float | None = None,
+        dense_weight: float | None = None,
     ) -> list[SearchResult]:
         """
         Internal single-hop search implementation (direct query matching).
@@ -734,6 +740,8 @@ class HybridSearcher(BaseSearcher):
             min_bm25_score=min_bm25_score,
             filters=filters,
             query_embedding=query_embedding,
+            bm25_weight=bm25_weight,
+            dense_weight=dense_weight,
         )
 
     def _apply_ego_graph_expansion(

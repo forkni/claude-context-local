@@ -89,6 +89,8 @@ class SearchExecutor:
         min_bm25_score: float = 0.0,
         filters: dict[str, Any] | None = None,
         query_embedding: np.ndarray | None = None,
+        bm25_weight: float | None = None,
+        dense_weight: float | None = None,
     ) -> list[SearchResult]:
         """
         Execute single-hop search (direct query matching).
@@ -142,16 +144,18 @@ class SearchExecutor:
 
             # Rerank results
             rerank_start = time.time()
+            eff_bm25 = bm25_weight if bm25_weight is not None else self.bm25_weight
+            eff_dense = dense_weight if dense_weight is not None else self.dense_weight
             self._logger.debug(
-                f"[RERANK] Using weights: BM25={self.bm25_weight}, Dense={self.dense_weight}, "
+                f"[RERANK] Using weights: BM25={eff_bm25}, Dense={eff_dense}, "
                 f"BM25_results={len(bm25_results)}, Dense_results={len(dense_results)}"
             )
             final_results = self.reranker.rerank_simple(
                 bm25_results=bm25_results,
                 dense_results=dense_results,
                 max_results=k,
-                bm25_weight=self.bm25_weight,
-                dense_weight=self.dense_weight,
+                bm25_weight=eff_bm25,
+                dense_weight=eff_dense,
             )
             rerank_time = time.time() - rerank_start
             self._logger.debug(

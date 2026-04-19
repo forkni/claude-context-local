@@ -4,6 +4,7 @@ Handlers for code search, similarity finding, and connection analysis.
 """
 
 import asyncio
+import copy
 import logging
 from typing import Any
 
@@ -940,17 +941,19 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     config_manager = get_config_manager()
     actual_search_mode = config_manager.get_search_mode_for_query(query, search_mode)
 
+    # Deep-copy the config singleton so all per-request mutations are request-local.
+    # get_search_config() returns a cached singleton; mutating it directly races with
+    # concurrent requests. The deep copy is cheap (<1 ms for 12 nested dataclasses).
+    base_config = copy.deepcopy(get_search_config())
+
     # Build SearchConfig with ego-graph settings if enabled
     search_config = None
     if isinstance(searcher, HybridSearcher) and ego_graph_enabled:
-        # Get base config and override ego-graph settings
-        base_config = get_search_config()
         ego_config = EgoGraphConfig(
             enabled=ego_graph_enabled,
             k_hops=ego_graph_k_hops,
             max_neighbors_per_hop=ego_graph_max_neighbors,
         )
-        # Create modified config with ego-graph enabled
         search_config = base_config
         search_config.ego_graph = ego_config
         logger.info(
@@ -962,7 +965,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     # Different query intents benefit from different neighbor precision/recall trade-offs
     if isinstance(searcher, HybridSearcher) and ego_graph_enabled and intent_decision:
         if search_config is None:
-            search_config = get_search_config()
+            search_config = base_config
         _intent_ego_thresholds = {
             "local": 0.25,  # Higher precision for specific symbol lookups
             "global": 0.10,  # Broader coverage for architecture queries
@@ -984,29 +987,23 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
 
     # Build SearchConfig with parent-retrieval settings if enabled
     if isinstance(searcher, HybridSearcher) and include_parent:
-        # Get base config if not already set
         if search_config is None:
-            search_config = get_search_config()
-        # Override parent-retrieval settings
+            search_config = base_config
         parent_config = ParentRetrievalConfig(enabled=include_parent)
         search_config.parent_retrieval = parent_config
         logger.info("[PARENT_RETRIEVAL] Enabled")
 
-    # Apply intent-driven weight overrides
+    # Apply intent-driven weight overrides (per-request kwargs — no shared-state mutation)
+    suggested_bm25: float | None = None
+    suggested_dense: float | None = None
     if isinstance(searcher, HybridSearcher) and intent_decision:
         suggested_bm25 = intent_decision.suggested_params.get("bm25_weight")
         suggested_dense = intent_decision.suggested_params.get("dense_weight")
         if suggested_bm25 is not None and suggested_dense is not None:
-            orig_bm25, orig_dense = searcher.bm25_weight, searcher.dense_weight
-            searcher.bm25_weight = suggested_bm25
-            searcher.dense_weight = suggested_dense
-            # Propagate weights to SearchExecutor (has its own weight copies)
-            if hasattr(searcher, "search_executor"):
-                searcher.search_executor.bm25_weight = suggested_bm25
-                searcher.search_executor.dense_weight = suggested_dense
             logger.info(
                 f"[INTENT] Weight override for {intent_decision.intent.value}: "
-                f"BM25={orig_bm25:.2f}→{suggested_bm25:.2f}, Dense={orig_dense:.2f}→{suggested_dense:.2f}"
+                f"BM25={searcher.bm25_weight:.2f}→{suggested_bm25:.2f}, "
+                f"Dense={searcher.dense_weight:.2f}→{suggested_dense:.2f}"
             )
 
     # Apply intent-driven edge weights for graph traversal (A1)
@@ -1017,7 +1014,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
         edge_profile = INTENT_EDGE_WEIGHT_PROFILES.get(intent_key)
         if edge_profile:
             if search_config is None:
-                search_config = get_search_config()
+                search_config = base_config
             search_config.multi_hop.edge_weights = edge_profile
             # Also set for ego-graph path (EgoGraphConfig already has edge_weights field)
             if hasattr(search_config, "ego_graph") and search_config.ego_graph:
@@ -1037,6 +1034,8 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
             use_parallel=get_config().performance.use_parallel_search,
             filters=filters if filters else None,
             config=search_config,
+            bm25_weight=suggested_bm25,
+            dense_weight=suggested_dense,
         )
     else:
         context_depth = 1 if include_context else 0
@@ -1061,7 +1060,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     # === Centrality annotation/reranking ===
     centrality_scores = None
     if search_config is None:
-        search_config = get_search_config()
+        search_config = base_config
     graph_config = getattr(search_config, "graph_enhanced", None)
 
     if (

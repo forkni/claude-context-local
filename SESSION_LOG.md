@@ -34,6 +34,42 @@ This file maintains session memory and context for the Claude-context-MCP semant
 
 ## Session History
 
+### 2026-04-19: v0.11.2 Hotfix — search-handler concurrency races
+
+**Primary Achievement**: Fixed all request-scoped shared-state races in `handle_search_code` flagged by Charlie's second code review of PR #25.
+
+#### Root Cause
+
+`asyncio.to_thread` (added in v0.11.1) removed event-loop serialization of search calls. Two pre-existing mutation patterns became races:
+
+1. **Weight mutations**: `searcher.bm25_weight`, `searcher.dense_weight`, and their `SearchExecutor` mirrors were overwritten with per-request intent weights on a **shared** `HybridSearcher` instance. Concurrent requests could clobber each other's weights between assignment and the `to_thread` call, producing nondeterministic RRF ranking.
+2. **Config singleton mutations**: `get_search_config()` returns a process-wide cached singleton. Five sites in `handle_search_code` wrote to `search_config.ego_graph.*`, `search_config.parent_retrieval`, and `search_config.multi_hop.edge_weights` at request time — all racing with concurrent requests.
+
+#### Fix
+
+- **Weights**: threaded as per-call kwargs (`bm25_weight: float | None`, `dense_weight: float | None`) from `handle_search_code` → `HybridSearcher.search` → `_single_hop_search` → `SearchExecutor.execute_single_hop` → `RRFReranker.rerank_simple` (already accepted per-call weights). Four instance-mutation lines deleted.
+- **Config**: single `copy.deepcopy(get_search_config())` at the top of `handle_search_code`; all five mutation sites now write to the request-local copy. `import copy` added. Global admin path (`configure_search_mode` → `reset_searcher`) unaffected.
+
+#### Tests Added (3)
+
+- `tests/unit/search/test_hybrid_search.py::test_search_accepts_per_call_weights` — confirms weight kwargs propagate to `execute_single_hop` without touching instance attrs
+- `tests/unit/mcp_server/test_search_handlers_isolation.py::test_handle_search_code_does_not_mutate_config_singleton` — exercises all 5 mutation paths, asserts singleton unchanged
+- `tests/fast_integration/test_critical_fixes.py::test_concurrent_search_weight_isolation` — 5 concurrent calls with distinct weights, asserts each `searcher.search` call received its own `(bm25_weight, dense_weight)` pair as kwargs
+
+All 2081 unit + fast-integration tests pass.
+
+#### Files Modified
+
+- `search/search_executor.py` — `execute_single_hop` accepts `bm25_weight` / `dense_weight` kwargs; resolves with `or self.*` fallback
+- `search/hybrid_searcher.py` — same kwargs on `search()` and `_single_hop_search()`; plumbed through
+- `mcp_server/tools/search_handlers.py` — `import copy`; single deepcopy at handler entry; weight kwargs passed to `to_thread`; 4 mutation lines removed
+- `tests/unit/search/test_hybrid_search.py` — 1 new test
+- `tests/unit/mcp_server/test_search_handlers_isolation.py` — new file, 1 test
+- `tests/fast_integration/test_critical_fixes.py` — 1 new test
+- `CHANGELOG.md`, `SESSION_LOG.md`, `pyproject.toml` — docs + version bump
+
+---
+
 ### 2026-04-18: v0.11.1 Release — concurrent search + embed_queries_batch fixes
 
 **Primary Achievement**: Merged PR #25 (`feat: concurrent search + docs alignment`) into `main` and cut the `v0.11.1` patch release.
