@@ -904,6 +904,7 @@ for %%t in (!dedup_choice!) do (
     set "matched=0"
     for /f "usebackq tokens=1,2,3,4 delims=|" %%a in ("%TEMP_PROJECTS%") do (
         if "%%a"=="%%t" (
+            REM Inner-loop vars %%m/%%n (slug/dim) are distinct from outer %%a-%%d; safe to reference both.
             for /f "tokens=3,4 delims=_" %%m in ("%%d") do (
                 >> "%TEMP_SELECTED%" echo %%a^|%%b^|%%c^|%%d^|%%m^|%%n
             )
@@ -1030,8 +1031,10 @@ if "!INDEX_RESULT!"=="0" (
     ) else (
         echo [OK] Index cleared, snapshot partial ^(non-critical^)
     )
-    REM Reset project selection if this was the last index for this path
-    ".\.venv\Scripts\python.exe" -c "import os; from mcp_server.storage_manager import get_storage_dir; from mcp_server.project_persistence import load_project_selection, clear_project_selection; from pathlib import Path; proj_path = os.environ['CGW_PROJ_PATH']; storage = get_storage_dir(); projects_dir = storage / 'projects'; remaining = [p for p in projects_dir.glob('*/project_info.json') if Path(p.parent.name).exists()]; import json; project_paths = [json.load(open(p))['project_path'] for p in remaining]; selection = load_project_selection(); if selection and selection.get('last_project_path') == proj_path and proj_path not in project_paths: clear_project_selection(); print('[INFO] Current project reset to None (all indices cleared)')" 2>nul
+    REM Reset project selection if this was the last index for this path.
+    REM stderr intentionally NOT suppressed: happy path is silent (print is gated by the if),
+    REM so any traceback here signals a real bug (API drift, missing import) worth surfacing.
+    ".\.venv\Scripts\python.exe" -c "import os; from mcp_server.storage_manager import get_storage_dir; from mcp_server.project_persistence import load_project_selection, clear_project_selection; from pathlib import Path; proj_path = os.environ['CGW_PROJ_PATH']; storage = get_storage_dir(); projects_dir = storage / 'projects'; remaining = [p for p in projects_dir.glob('*/project_info.json') if Path(p.parent.name).exists()]; import json; project_paths = [json.load(open(p))['project_path'] for p in remaining]; selection = load_project_selection(); if selection and selection.get('last_project_path') == proj_path and proj_path not in project_paths: clear_project_selection(); print('[INFO] Current project reset to None (all indices cleared)')"
     set "LAST_RESULT=0"
 ) else (
     echo [ERROR] Failed to clear %PROJECT_NAME%
