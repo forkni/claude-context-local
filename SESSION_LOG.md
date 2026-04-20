@@ -2,7 +2,7 @@
 
 ## Project: General-Purpose Semantic Search MCP Integration System
 
-## Initialized: 2025-09-22 | Updated: 2026-04-18
+## Initialized: 2025-09-22 | Updated: 2026-04-19
 
 This file maintains session memory and context for the Claude-context-MCP semantic search system development and improvements.
 
@@ -33,6 +33,108 @@ This file maintains session memory and context for the Claude-context-MCP semant
 ---
 
 ## Session History
+
+### 2026-04-19: v0.11.3 — Multi-Select in `:clear_project_indexes` Menu
+
+**Primary Achievement**: Extended the "Project Management → Clear Project Indexes" prompt in `start_mcp_server.cmd` to accept multiple project numbers separated by commas or spaces, clearing each sequentially in one operation. No Python/MCP changes — pure cmd batch refactor.
+
+#### Key Accomplishments
+- New prompt: `Select project number(s) (comma/space separated, 0 to cancel, X for all):` — accepts `1,3`, `1 3`, `1, 3`, ` 1 , 3 ` (whitespace tolerant); dedupes repeats (`1,1,3` → `1,3`)
+- Sentinel guard: `X` and `0` honored only as the sole token; mixed inputs like `1,X` / `0,2` rejected with error + re-prompt
+- Token validation: invalid numbers warned (`[WARNING] Ignoring invalid selection(s): 99`) and skipped; no-valid-selections exits with error
+- Single confirmation per invocation: `y/N` for 1 item (preserves existing muscle memory), literal `YES` for 2+ items (mirrors `:clear_all_indices` strong-confirm)
+- Pre-loop server check: netstat :8765 + "Make sure MCP server is NOT running" warning runs once up front, not per item
+- Per-item delete body extracted into `:delete_one_index` subroutine — keeps non-delayed `%PROJECT_HASH%` expansion semantics identical to pre-refactor
+- Auto-retry on locked index: on `rmtree` failure, script auto-retries once with `ignore_errors=True` after 2s wait; no interactive prompt in the loop
+- Post-loop `=== Clear Summary ===` block: `Cleared: N of M`, failed items listed with reasons, invalid tokens listed
+
+#### Technical Details
+cmd's `for %%i in (list)` splits on both commas and whitespace by default, so no manual splitter was needed. Dedup uses a bracket-tagged running string (`[1] [3] `) with `findstr /L /C:"[%%i]"` to avoid `1` matching `10`. The four existing Python one-liners from the single-select path (index rmtree, force-retry rmtree, snapshot delete, selection reset) are reused verbatim inside `:delete_one_index` — no duplicated logic.
+
+#### Bug Found & Fixed During Implementation
+Initial implementation suffered a cmd parser bug: line 1038 read `echo [OK] Index cleared, snapshot partial (non-critical)` inside a nested `) else (` block. cmd's parser counts unescaped `(` and `)` as block-nesting markers even inside `echo` arguments, which corrupted the outer `if/else` structure — both the success and error branches fired per item, producing `Cleared: 0 of 2` despite visible success messages. Fixed by escaping with `^`: `echo [OK] Index cleared, snapshot partial ^(non-critical^)`.
+
+#### Verification
+Tested end-to-end with input `3 4` (two `cuda-link` dims): both cleared, `Cleared: 2 of 2`, no spurious `[ERROR]` lines. Temp files `%TEMP%\mcp_projects.txt` and `%TEMP%\mcp_projects_selected.txt` correctly removed on all exit paths.
+
+#### Files Modified
+- `start_mcp_server.cmd` — label `:clear_project_indexes` rewritten; new `:delete_one_index` subroutine; new `:clear_project_indexes_summary` label
+- `pyproject.toml` — version `0.11.2` → `0.11.3`
+- `CHANGELOG.md` — `[0.11.3] - 2026-04-19` entry with Added/Changed sections
+
+#### Charlie CI Review Follow-Up (PR #27)
+
+Charlie flagged 10 items; four addressed in a patch commit on the same branch:
+
+**#4 — fail_list newline collapse**: `set "fail_list=..."` in cmd silently flattens all items to one line; switched to `>> "%TEMP_FAIL%"` per-item + `type "%TEMP_FAIL%"` in summary.
+
+**#7 — Python shell injection via PROJECT_PATH**: `r'%PROJECT_PATH%'` in the snapshot-delete and selection-reset one-liners would `SyntaxError` (or inject) on paths containing `'`. Both now receive the path via `os.environ['CGW_PROJ_PATH']`; env var set from `%PROJECT_PATH%` before each call and cleared on `exit /b`.
+
+**#6 — unquoted temp-file paths in `for /f`**: four sites updated to `"usebackq tokens=... delims=|" ... in ("%TEMP_PROJECTS%")` / `in ("%TEMP_SELECTED%")`.
+
+**#9 — bracket-dedup opaque**: added `REM Brackets prevent substring match (e.g. "1" matching "10" in "[10]")` above the `findstr` dedup line.
+
+Not fixed per Charlie's guidance: #1 `LAST_REASON=unknown` fallback (acceptable), #2 `1]` literal edge case (minimal real-world risk).
+
+#### Charlie CI Review Follow-Up Round 2
+
+Charlie posted a second review pass with 7 items. Three addressed:
+
+**#1 — `LAST_REASON=locked` inaccuracy**: previously every first-attempt failure was reported as `locked` even when the root cause was an `rmtree` error on a sub-path. Now set `LAST_REASON=rmtree error` tentatively when the first attempt fails, overwrite to `locked` only if the directory still exists after the auto-retry.
+
+**#3 — hardcoded `%USERPROFILE%\.claude_code_search` in retry check**: replaced the cmd `if exist` test with a Python call that uses `storage_manager.get_storage_dir()` and propagates via `sys.exit(0/1)` → `if errorlevel 1`. Honors any customized `STORAGE_DIR`.
+
+**#5 — `invalid_tokens` cross-label dependency**: added a linking `REM` comment above `:clear_project_indexes_summary` enumerating the vars it consumes from `:clear_project_indexes`.
+
+Not fixed: #2 (LAST_RESULT cross-block ordering — stylistic), #4 (case-sensitive token match — no bug), #6 (TEMP_FAIL Ctrl+C leftover — ephemeral `%TEMP%`), #7 (y/N `/i` case-insensitivity — confirmed intentional).
+
+#### Charlie CI Blocking Bug — Duplicate Token Double-Processing
+
+Charlie flagged a blocking bug on 2026-04-20: the tokenizer at line 867 built a deduped bracket-tagged `!tokens!` string for counting, but the resolver loop at line 911 still iterated `!project_choice!` (raw input). Input like `1,1,3` thus queued project `1` twice → deleted twice, inflated `valid_count` to 3 instead of 2, and could wrongly escalate the single-item `y/N` prompt to the multi-item `YES` prompt.
+
+Fix: built a plain (non-bracketed) `!dedup_choice!=1 3 ` alongside `!tokens!=[1] [3] ` inside the tokenizer loop; changed `for %%t in (!project_choice!)` → `for %%t in (!dedup_choice!)` in the resolver. `!tokens!` is still used for its `findstr /L /C:"[%%i]"` exact-match dedup check.
+
+The plan's documented test case `1,1,3 → dedup to 1,3 → Cleared: 2 of 2` was never actually verified in the initial PR; this commit makes the observed behavior match the plan.
+
+#### `/simplify` Cleanup
+
+Ran `/simplify` after all Charlie CI rounds resolved. Three parallel review agents (reuse, quality, efficiency) found two worthwhile changes:
+
+1. Removed three narrative WHAT-comments (`REM Get list of projects and store in temp file`, `REM Display projects`, `REM Process each selected project`) — the surrounding code already communicates the what.
+2. Consolidated five duplicated cancel paths (`del "%TEMP_PROJECTS%/TEMP_SELECTED%" 2>nul` + `goto project_management_menu`) into a single `:cancel_and_return` label at the end of the summary block.
+
+Python subprocess consolidation (2-5 interpreter spawns per cleared index, ~10-40s for bulk 10-item clear) flagged by efficiency agent — deferred to a separate issue to avoid wider blast radius at merge time.
+
+---
+
+### 2026-04-19: v0.11.2 Follow-Up — Lazy CoW, Shared Mocks, CI Fixes, Release
+
+**Primary Achievement**: Addressed all Charlie CI review findings, implemented lazy copy-on-write for SearchConfig, extracted shared test mock builders, and shipped the v0.11.2 GitHub Release.
+
+#### Key Accomplishments
+- Added `ego_graph.edge_weights` assertion to isolation test (Charlie round 2)
+- Documented `set_centrality_scores` as benign-race at `search_handlers.py:1096` with follow-up guidance
+- Implemented lazy copy-on-write (`mutable_config()` closure) — defers `deepcopy` until a mutation branch actually fires
+- Extracted `make_hybrid_searcher_mock`, `make_intent_decision_mock`, `make_app_config_mock` to `tests/fixtures/mcp_mocks.py`; removed inline duplicates from 3 test files
+- Fixed missing `_check_auto_reindex` patch in isolation test (Charlie round 3)
+- Replaced bare `fake_execute` function with `Mock(side_effect=...)` for call-count assertion (Charlie round 3)
+- Merged `development → main` via `merge_with_validation.sh` (direct mode, backup tag created, PR #26 auto-closed)
+- Cut `v0.11.2` GitHub Release via `gh release create` (no `release.yml` workflow exists — manual path)
+- Added `search_config.json` to `CGW_LOCAL_FILES` in `.cgw.conf:10`; memory saved with escalation options
+
+#### Technical Details
+`mutable_config()` is a closure capturing `config_singleton = get_search_config()` and `config_copy: SearchConfig | None = None`. On first call it deep-copies the singleton and caches it; subsequent mutation sites reuse the same copy. `effective_config` at handler exit picks `config_copy if config_copy is not None else config_singleton` — the zero-mutation path never pays the copy cost.
+
+`tests/fixtures/mcp_mocks.py` uses `Mock(spec=HybridSearcher)` to pass `is_ready` and `dense_index` shape checks in the handler without loading real models or FAISS indexes.
+
+#### Files Modified
+- `mcp_server/tools/search_handlers.py` — lazy CoW closure, centrality-race documentation comment
+- `tests/fixtures/mcp_mocks.py` — **new file**: shared mock builders
+- `tests/unit/mcp_server/test_search_handlers_isolation.py` — `ego_graph.edge_weights` assertion, `_check_auto_reindex` patch, switched to shared mocks
+- `tests/fast_integration/test_critical_fixes.py` — switched to shared mocks
+- `tests/unit/search/test_hybrid_search.py` — `fake_execute` → `Mock(side_effect=...)`
+
+---
 
 ### 2026-04-19: v0.11.2 Hotfix — search-handler concurrency races
 

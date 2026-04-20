@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.11.3] - 2026-04-19
+
+### Added
+
+- **Multi-select in "Clear Project Indexes" menu** (`start_mcp_server.cmd`, label `:clear_project_indexes`) — the prompt now accepts multiple selections separated by commas or spaces (e.g. `1,3`, `1 3`, `1, 3`). Useful when a project has multiple indexed model dimensions (e.g. BGE-M3 1024d + gte-modernbert 768d) that previously required re-entering the menu once per index. Duplicates are deduped (`1,1,3` → `1,3`); invalid tokens are warned about and skipped. Confirmation is `y/N` for a single selection (preserves existing muscle memory) and `YES` for 2+ selections — matched case-insensitively via `if /i`, consistent with the `:clear_all_indices` strong-confirm at line 1094. Sentinels `X` and `0` are honored only as the sole token — mixed inputs like `1,X` or `0,2` are rejected with an error and re-prompt
+
+### Changed
+
+- **Locked-index auto-retry** (`start_mcp_server.cmd`, `:delete_one_index`) — when `shutil.rmtree` fails on a locked index directory, the script now automatically retries once with `ignore_errors=True` after a 2s wait instead of prompting per item. The previous per-item `Try force cleanup? (y/N)` prompt has been removed from the loop path; a single pre-loop "Make sure MCP server is NOT running" warning + netstat check runs once up front. Failed items are accumulated and listed in the post-loop `=== Clear Summary ===` block
+- **Per-item delete body extracted to `:delete_one_index` subroutine** — called once per selected index from the outer `for /f` loop. Keeps non-delayed `%PROJECT_HASH%` expansion semantics identical to the pre-refactor single-select path; all four existing Python one-liners (index rmtree, force-retry rmtree, snapshot delete, selection reset) are reused verbatim
+
+### Fixed
+
+- **Multi-failure summary now prints one line per failure** (`start_mcp_server.cmd`, `:clear_project_indexes_summary`) — failures were previously accumulated in a `set` variable, which collapses to a single line because cmd variables cannot contain newlines. Failures are now written to `%TEMP%\mcp_fail_list.txt` (one `echo >> ...` per item) and displayed with `type` in the summary
+- **`%PROJECT_PATH%` no longer shell-interpolated into Python raw-string literals** (`start_mcp_server.cmd`, `:delete_one_index`) — paths with apostrophes could terminate the `r'...'` literal and inject arbitrary Python. The two affected one-liners (snapshot delete, selection reset) now receive the path via `os.environ['CGW_PROJ_PATH']`, which is set from `%PROJECT_PATH%` just before each python call and cleared (`set "CGW_PROJ_PATH="`) on `exit /b`
+- **`for /f` loops reading temp files now use `usebackq` and quoted paths** (`start_mcp_server.cmd`, `:clear_project_indexes`) — unquoted `%TEMP_PROJECTS%` / `%TEMP_SELECTED%` would silently break if `%TEMP%` contains spaces. Four sites updated to `"usebackq tokens=... delims=|" ... in ("%TEMP_PROJECTS%")` / `in ("%TEMP_SELECTED%")`
+- **Auto-retry `LAST_REASON` now attributed accurately** (`start_mcp_server.cmd`, `:delete_one_index`) — the retry path previously reported every first-attempt failure as `locked` in the summary, even when the actual cause was an `rmtree` error on a sub-path. `LAST_REASON` is now set tentatively to `rmtree error` when the first attempt fails and only overwritten to `locked` if the directory still exists after the auto-retry
+- **Auto-retry existence check no longer hardcodes `%USERPROFILE%\.claude_code_search`** (`start_mcp_server.cmd`, `:delete_one_index`) — the post-retry `if exist` check used a hardcoded path that ignored any customized `STORAGE_DIR`, which would have produced a false `[OK] Force cleanup successful` when the index actually still existed elsewhere. The check now calls `storage_manager.get_storage_dir()` and propagates the result via `sys.exit(0/1)` → `if errorlevel 1`
+- **Duplicate token input no longer double-processes** (`start_mcp_server.cmd`, `:clear_project_indexes`) — the tokenizer produced a deduped `!tokens!` string (bracket-tagged) but the resolver loop still iterated `!project_choice!` (raw input). Input like `1,1,3` wrote index `1` twice to `%TEMP_SELECTED%`, ran deletion twice, inflated `valid_count`, and could incorrectly escalate the single-item `y/N` confirmation to the multi-item `YES` prompt. A new plain `!dedup_choice!` variable is built alongside `!tokens!` and drives the resolver loop
+
+---
+
 ## [0.11.2] - 2026-04-19
 
 ### Fixed
