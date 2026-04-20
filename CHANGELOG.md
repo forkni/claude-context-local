@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.11.3] - 2026-04-19
+
+### Added
+
+- **Multi-select in "Clear Project Indexes" menu** (`start_mcp_server.cmd`, label `:clear_project_indexes`) — the prompt now accepts multiple selections separated by commas or spaces (e.g. `1,3`, `1 3`, `1, 3`). Useful when a project has multiple indexed model dimensions (e.g. BGE-M3 1024d + gte-modernbert 768d) that previously required re-entering the menu once per index. Duplicates are deduped (`1,1,3` → `1,3`); invalid tokens are warned about and skipped. Confirmation is `y/N` for a single selection (preserves existing muscle memory) and literal `YES` for 2+ selections (mirrors the `:clear_all_indices` strong-confirm). Sentinels `X` and `0` are honored only as the sole token — mixed inputs like `1,X` or `0,2` are rejected with an error and re-prompt
+
+### Changed
+
+- **Locked-index auto-retry** (`start_mcp_server.cmd`, `:delete_one_index`) — when `shutil.rmtree` fails on a locked index directory, the script now automatically retries once with `ignore_errors=True` after a 2s wait instead of prompting per item. The previous per-item `Try force cleanup? (y/N)` prompt has been removed from the loop path; a single pre-loop "Make sure MCP server is NOT running" warning + netstat check runs once up front. Failed items are accumulated and listed in the post-loop `=== Clear Summary ===` block
+- **Per-item delete body extracted to `:delete_one_index` subroutine** — called once per selected index from the outer `for /f` loop. Keeps non-delayed `%PROJECT_HASH%` expansion semantics identical to the pre-refactor single-select path; all four existing Python one-liners (index rmtree, force-retry rmtree, snapshot delete, selection reset) are reused verbatim
+
+---
+
 ## [0.11.2] - 2026-04-19
 
 ### Fixed

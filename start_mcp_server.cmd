@@ -847,9 +847,9 @@ echo   0. Cancel
 
 echo.
 set "project_choice="
-set /p project_choice="Select project number (0 to cancel, X for all): "
+set /p project_choice="Select project number(s) (comma/space separated, 0 to cancel, X for all): "
 
-REM Handle cancel or empty input
+REM Handle empty input
 if not defined project_choice (
     del "%TEMP_PROJECTS%" 2>nul
     goto project_management_menu
@@ -858,68 +858,117 @@ if "!project_choice!"=="" (
     del "%TEMP_PROJECTS%" 2>nul
     goto project_management_menu
 )
-if "!project_choice!"=="0" (
+
+REM Tokenize, dedupe, and detect sentinel tokens (cmd for splits on commas and spaces)
+set "HAS_X=0"
+set "HAS_ZERO=0"
+set "tokens="
+set "token_count=0"
+for %%i in (!project_choice!) do (
+    if "%%i"=="0" set "HAS_ZERO=1"
+    if /i "%%i"=="X" set "HAS_X=1"
+    echo.!tokens! | findstr /L /C:"[%%i]" >nul 2>&1 || (
+        set "tokens=!tokens![%%i] "
+        set /a token_count+=1
+    )
+)
+
+REM Enforce sole-token rule: X and 0 cannot be combined with other selections
+if "!HAS_X!"=="1" if !token_count! NEQ 1 (
+    echo.
+    echo [ERROR] "X" cannot be combined with other selections.
+    echo.
+    del "%TEMP_PROJECTS%" 2>nul
+    pause
+    goto clear_project_indexes
+)
+if "!HAS_ZERO!"=="1" if !token_count! NEQ 1 (
+    echo.
+    echo [ERROR] "0" cannot be combined with other selections.
+    echo.
+    del "%TEMP_PROJECTS%" 2>nul
+    pause
+    goto clear_project_indexes
+)
+
+REM Sole-token short-circuits: combination guards above ensure token_count==1 here
+if "!HAS_ZERO!"=="1" (
     del "%TEMP_PROJECTS%" 2>nul
     goto project_management_menu
 )
-
-REM Handle "Remove All Indices" option
-if /i "!project_choice!"=="X" (
+if "!HAS_X!"=="1" (
     del "%TEMP_PROJECTS%" 2>nul
     goto clear_all_indices
 )
 
-REM Find the selected project
-set "PROJECT_HASH="
-set "PROJECT_NAME="
-set "PROJECT_PATH="
-for /f "tokens=1,2,3,4 delims=|" %%a in (%TEMP_PROJECTS%) do (
-    if "%%a"=="!project_choice!" (
-        set "PROJECT_NAME=%%b"
-        set "PROJECT_PATH=%%c"
-        set "PROJECT_HASH=%%d"
+REM Resolve selected tokens against project list -> TEMP_SELECTED
+set "TEMP_SELECTED=%TEMP%\mcp_projects_selected.txt"
+del "%TEMP_SELECTED%" 2>nul
+set "invalid_tokens="
+set "valid_count=0"
+
+for %%t in (!project_choice!) do (
+    set "matched=0"
+    for /f "tokens=1,2,3,4 delims=|" %%a in (%TEMP_PROJECTS%) do (
+        if "%%a"=="%%t" (
+            for /f "tokens=3,4 delims=_" %%m in ("%%d") do (
+                >> "%TEMP_SELECTED%" echo %%a^|%%b^|%%c^|%%d^|%%m^|%%n
+            )
+            set "matched=1"
+            set /a valid_count+=1
+        )
     )
+    if "!matched!"=="0" set "invalid_tokens=!invalid_tokens! %%t"
 )
 
-REM Clean up temp file
 del "%TEMP_PROJECTS%" 2>nul
 
-REM Validate selection
-if not defined PROJECT_HASH (
-    echo [ERROR] Invalid selection
+if defined invalid_tokens echo [WARNING] Ignoring invalid selection(s):!invalid_tokens!
+if !valid_count! EQU 0 (
+    echo [ERROR] No valid selections.
+    del "%TEMP_SELECTED%" 2>nul
+    echo.
     pause
     goto project_management_menu
 )
 
-REM Confirm deletion
 echo.
-echo [WARNING] You are about to delete the index for:
-echo   Project: %PROJECT_NAME%
-echo   Hash: %PROJECT_HASH%
+echo [WARNING] You are about to clear the following indices:
+for /f "tokens=1,2,3,4,5,6 delims=|" %%a in (%TEMP_SELECTED%) do (
+    echo   %%a. %%b [%%e %%f]
+    echo      Hash: %%d
+)
 echo.
 set "confirm_delete="
-set /p confirm_delete="Are you sure? (y/N): "
+set "expected_confirm=y"
+set "confirm_prompt=Are you sure? (y/N): "
+if !valid_count! GTR 1 (
+    set "expected_confirm=YES"
+    set "confirm_prompt=Type YES to confirm clearing !valid_count! indices: "
+)
+set /p confirm_delete=!confirm_prompt!
+if /i not "!confirm_delete!"=="!expected_confirm!" (
+    del "%TEMP_SELECTED%" 2>nul
+    goto project_management_menu
+)
 
-if not defined confirm_delete goto project_management_menu
-if "!confirm_delete!"=="" goto project_management_menu
-if /i not "!confirm_delete!"=="y" goto project_management_menu
-
-REM Delete the specific project
-echo.
-
-REM Check if MCP server is running (SSE mode on port 8765)
+REM Check if MCP server is running (once, before the loop)
 netstat -an 2>nul | findstr ":8765" | findstr "LISTENING" >nul 2>&1
 if not errorlevel 1 (
+    echo.
     echo [WARNING] MCP Server detected running on port 8765
     echo.
     echo [RECOMMENDED] Use MCP tool for safe deletion:
-    echo   /delete_project "%PROJECT_PATH%"
+    echo   /delete_project "[project path]"
     echo.
     echo Direct deletion may fail due to database locks.
     echo.
     set "continue_choice="
     set /p continue_choice="Continue with direct deletion anyway? (y/N): "
-    if /i not "!continue_choice!"=="y" goto project_management_menu
+    if /i not "!continue_choice!"=="y" (
+        del "%TEMP_SELECTED%" 2>nul
+        goto project_management_menu
+    )
     echo.
 )
 
@@ -928,73 +977,89 @@ echo [WARNING] Close Claude Code or any processes using this project
 echo.
 pause
 
+REM Process each selected project
+set "success_count=0"
+set "fail_count=0"
+set "fail_list="
+
+for /f "tokens=1,2,3,4,5,6 delims=|" %%a in (%TEMP_SELECTED%) do (
+    call :delete_one_index "%%a" "%%b" "%%c" "%%d" "%%e" "%%f"
+    if "!LAST_RESULT!"=="0" (
+        set /a success_count+=1
+    ) else (
+        set /a fail_count+=1
+        set "fail_list=!fail_list!  - %%b [%%e %%f]: !LAST_REASON!"
+    )
+)
+
+del "%TEMP_SELECTED%" 2>nul
+goto clear_project_indexes_summary
+
+:delete_one_index
+set "PROJECT_NAME=%~2"
+set "PROJECT_PATH=%~3"
+set "PROJECT_HASH=%~4"
+set "MODEL_SLUG=%~5"
+set "MODEL_DIM=%~6"
+set "LAST_RESULT=0"
+set "LAST_REASON="
+
 echo.
-echo [INFO] Clearing index for %PROJECT_NAME%...
+echo [INFO] Clearing index for %PROJECT_NAME% [%MODEL_SLUG% %MODEL_DIM%]...
 echo.
 
 REM Clear the index directory with DB cleanup
 ".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; import shutil, time, gc; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; gc.collect(); time.sleep(0.5); shutil.rmtree(project_dir, ignore_errors=False) if project_dir.exists() else None; print('Index: cleared')"
 set "INDEX_RESULT=!ERRORLEVEL!"
 
-REM Handle locked files
-if "!INDEX_RESULT!" neq "0" (
-    echo.
-    echo [ERROR] Index is locked by another process
-    echo.
-    set "retry="
-    set /p retry="Try force cleanup? (Will close Python processes) (y/N): "
-    if /i "!retry!"=="y" (
-        echo [INFO] Attempting force cleanup...
-        timeout /t 2 /nobreak >nul
-        ".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; import shutil, time; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; time.sleep(1); shutil.rmtree(project_dir, ignore_errors=True)"
-
-        if exist "%USERPROFILE%\.claude_code_search\projects\%PROJECT_HASH%" (
-            echo [WARNING] Force cleanup partially successful
-            set "INDEX_RESULT=1"
-        ) else (
-            echo [OK] Force cleanup successful
-            set "INDEX_RESULT=0"
-        )
+REM Auto-retry once if locked (no prompt inside the loop)
+if "!INDEX_RESULT!" NEQ "0" (
+    echo [WARN] Index locked; auto-retrying with ignore_errors...
+    timeout /t 2 /nobreak >nul
+    ".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; import shutil, time; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; time.sleep(1); shutil.rmtree(project_dir, ignore_errors=True)"
+    if exist "%USERPROFILE%\.claude_code_search\projects\%PROJECT_HASH%" (
+        set "INDEX_RESULT=1"
+        set "LAST_REASON=locked"
+    ) else (
+        echo [OK] Force cleanup successful
+        set "INDEX_RESULT=0"
     )
 )
 
 REM Clear the Merkle snapshot (matching model/dimension only)
-REM Parse model_slug and dimension from PROJECT_HASH
 ".\.venv\Scripts\python.exe" -c "project_hash = '%PROJECT_HASH%'; parts = project_hash.rsplit('_', 2); model_slug = parts[-2]; dimension = int(parts[-1].rstrip('d')); from merkle.snapshot_manager import SnapshotManager; sm = SnapshotManager(); deleted = sm.delete_snapshot_by_slug(r'%PROJECT_PATH%', model_slug, dimension); print(f'Snapshot: cleared {deleted} files ({model_slug} {dimension}d)')" 2>&1
 set "SNAPSHOT_RESULT=!ERRORLEVEL!"
 
-echo.
-REM Report results
 if "!INDEX_RESULT!"=="0" (
     if "!SNAPSHOT_RESULT!"=="0" (
-        echo [OK] Project index cleared: %PROJECT_NAME%
+        echo [OK] %PROJECT_NAME% cleared
         echo [OK] Merkle snapshot cleared
     ) else (
-        echo [OK] Index cleared but snapshot clearing failed
-        echo [INFO] This is usually not critical
+        echo [OK] Index cleared, snapshot partial ^(non-critical^)
     )
-
-    REM Check if this was the last index for this project path
-    REM If so, clear the current project selection
+    REM Reset project selection if this was the last index for this path
     ".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; from mcp_server.project_persistence import load_project_selection, clear_project_selection; from pathlib import Path; storage = get_storage_dir(); projects_dir = storage / 'projects'; remaining = [p for p in projects_dir.glob('*/project_info.json') if Path(p.parent.name).exists()]; import json; project_paths = [json.load(open(p))['project_path'] for p in remaining]; selection = load_project_selection(); if selection and selection.get('last_project_path') == r'%PROJECT_PATH%' and r'%PROJECT_PATH%' not in project_paths: clear_project_selection(); print('[INFO] Current project reset to None (all indices cleared)')" 2>nul
-
-    echo [INFO] Re-index via: Project Management ^> Index New Project
+    set "LAST_RESULT=0"
 ) else (
-    echo.
-    echo [ERROR] Failed to clear index for %PROJECT_NAME%
-    echo.
-    echo [SOLUTION] If MCP server is running:
-    echo   Use: /delete_project "%PROJECT_PATH%"
-    echo.
-    echo If MCP server is stopped:
-    echo   1. Close Claude Code completely
-    echo   2. Close this window and any terminal windows
-    echo   3. Wait 5 seconds for processes to release files
-    echo   4. Restart and try again, or use repair tool
-    echo.
-    echo Repair tool: scripts\batch\repair_installation.bat
-    echo Manual delete: %USERPROFILE%\.claude_code_search\projects\%PROJECT_HASH%
+    echo [ERROR] Failed to clear %PROJECT_NAME%
+    set "LAST_RESULT=1"
+    if not defined LAST_REASON set "LAST_REASON=unknown"
 )
+exit /b
+
+:clear_project_indexes_summary
+echo.
+echo === Clear Summary ===
+echo   Cleared: !success_count! of !valid_count!
+if !fail_count! GTR 0 (
+    echo   Failed:  !fail_count!
+    echo.
+    echo !fail_list!
+    echo.
+    echo [SOLUTION] If MCP server is running: /delete_project "[path]"
+    echo Repair tool: scripts\batch\repair_installation.bat
+)
+if defined invalid_tokens echo   Skipped invalid tokens:!invalid_tokens!
 echo.
 echo Press any key to return to the menu...
 pause >nul

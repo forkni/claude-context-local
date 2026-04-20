@@ -2,7 +2,7 @@
 
 ## Project: General-Purpose Semantic Search MCP Integration System
 
-## Initialized: 2025-09-22 | Updated: 2026-04-18
+## Initialized: 2025-09-22 | Updated: 2026-04-19
 
 This file maintains session memory and context for the Claude-context-MCP semantic search system development and improvements.
 
@@ -33,6 +33,65 @@ This file maintains session memory and context for the Claude-context-MCP semant
 ---
 
 ## Session History
+
+### 2026-04-19: v0.11.3 — Multi-Select in `:clear_project_indexes` Menu
+
+**Primary Achievement**: Extended the "Project Management → Clear Project Indexes" prompt in `start_mcp_server.cmd` to accept multiple project numbers separated by commas or spaces, clearing each sequentially in one operation. No Python/MCP changes — pure cmd batch refactor.
+
+#### Key Accomplishments
+- New prompt: `Select project number(s) (comma/space separated, 0 to cancel, X for all):` — accepts `1,3`, `1 3`, `1, 3`, ` 1 , 3 ` (whitespace tolerant); dedupes repeats (`1,1,3` → `1,3`)
+- Sentinel guard: `X` and `0` honored only as the sole token; mixed inputs like `1,X` / `0,2` rejected with error + re-prompt
+- Token validation: invalid numbers warned (`[WARNING] Ignoring invalid selection(s): 99`) and skipped; no-valid-selections exits with error
+- Single confirmation per invocation: `y/N` for 1 item (preserves existing muscle memory), literal `YES` for 2+ items (mirrors `:clear_all_indices` strong-confirm)
+- Pre-loop server check: netstat :8765 + "Make sure MCP server is NOT running" warning runs once up front, not per item
+- Per-item delete body extracted into `:delete_one_index` subroutine — keeps non-delayed `%PROJECT_HASH%` expansion semantics identical to pre-refactor
+- Auto-retry on locked index: on `rmtree` failure, script auto-retries once with `ignore_errors=True` after 2s wait; no interactive prompt in the loop
+- Post-loop `=== Clear Summary ===` block: `Cleared: N of M`, failed items listed with reasons, invalid tokens listed
+
+#### Technical Details
+cmd's `for %%i in (list)` splits on both commas and whitespace by default, so no manual splitter was needed. Dedup uses a bracket-tagged running string (`[1] [3] `) with `findstr /L /C:"[%%i]"` to avoid `1` matching `10`. The four existing Python one-liners from the single-select path (index rmtree, force-retry rmtree, snapshot delete, selection reset) are reused verbatim inside `:delete_one_index` — no duplicated logic.
+
+#### Bug Found & Fixed During Implementation
+Initial implementation suffered a cmd parser bug: line 1038 read `echo [OK] Index cleared, snapshot partial (non-critical)` inside a nested `) else (` block. cmd's parser counts unescaped `(` and `)` as block-nesting markers even inside `echo` arguments, which corrupted the outer `if/else` structure — both the success and error branches fired per item, producing `Cleared: 0 of 2` despite visible success messages. Fixed by escaping with `^`: `echo [OK] Index cleared, snapshot partial ^(non-critical^)`.
+
+#### Verification
+Tested end-to-end with input `3 4` (two `cuda-link` dims): both cleared, `Cleared: 2 of 2`, no spurious `[ERROR]` lines. Temp files `%TEMP%\mcp_projects.txt` and `%TEMP%\mcp_projects_selected.txt` correctly removed on all exit paths.
+
+#### Files Modified
+- `start_mcp_server.cmd` — label `:clear_project_indexes` rewritten; new `:delete_one_index` subroutine; new `:clear_project_indexes_summary` label
+- `pyproject.toml` — version `0.11.2` → `0.11.3`
+- `CHANGELOG.md` — `[0.11.3] - 2026-04-19` entry with Added/Changed sections
+
+---
+
+### 2026-04-19: v0.11.2 Follow-Up — Lazy CoW, Shared Mocks, CI Fixes, Release
+
+**Primary Achievement**: Addressed all Charlie CI review findings, implemented lazy copy-on-write for SearchConfig, extracted shared test mock builders, and shipped the v0.11.2 GitHub Release.
+
+#### Key Accomplishments
+- Added `ego_graph.edge_weights` assertion to isolation test (Charlie round 2)
+- Documented `set_centrality_scores` as benign-race at `search_handlers.py:1096` with follow-up guidance
+- Implemented lazy copy-on-write (`mutable_config()` closure) — defers `deepcopy` until a mutation branch actually fires
+- Extracted `make_hybrid_searcher_mock`, `make_intent_decision_mock`, `make_app_config_mock` to `tests/fixtures/mcp_mocks.py`; removed inline duplicates from 3 test files
+- Fixed missing `_check_auto_reindex` patch in isolation test (Charlie round 3)
+- Replaced bare `fake_execute` function with `Mock(side_effect=...)` for call-count assertion (Charlie round 3)
+- Merged `development → main` via `merge_with_validation.sh` (direct mode, backup tag created, PR #26 auto-closed)
+- Cut `v0.11.2` GitHub Release via `gh release create` (no `release.yml` workflow exists — manual path)
+- Added `search_config.json` to `CGW_LOCAL_FILES` in `.cgw.conf:10`; memory saved with escalation options
+
+#### Technical Details
+`mutable_config()` is a closure capturing `config_singleton = get_search_config()` and `config_copy: SearchConfig | None = None`. On first call it deep-copies the singleton and caches it; subsequent mutation sites reuse the same copy. `effective_config` at handler exit picks `config_copy if config_copy is not None else config_singleton` — the zero-mutation path never pays the copy cost.
+
+`tests/fixtures/mcp_mocks.py` uses `Mock(spec=HybridSearcher)` to pass `is_ready` and `dense_index` shape checks in the handler without loading real models or FAISS indexes.
+
+#### Files Modified
+- `mcp_server/tools/search_handlers.py` — lazy CoW closure, centrality-race documentation comment
+- `tests/fixtures/mcp_mocks.py` — **new file**: shared mock builders
+- `tests/unit/mcp_server/test_search_handlers_isolation.py` — `ego_graph.edge_weights` assertion, `_check_auto_reindex` patch, switched to shared mocks
+- `tests/fast_integration/test_critical_fixes.py` — switched to shared mocks
+- `tests/unit/search/test_hybrid_search.py` — `fake_execute` → `Mock(side_effect=...)`
+
+---
 
 ### 2026-04-19: v0.11.2 Hotfix — search-handler concurrency races
 
