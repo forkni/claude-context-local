@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Multi-select in "Clear Project Indexes" menu** (`start_mcp_server.cmd`, label `:clear_project_indexes`) — the prompt now accepts multiple selections separated by commas or spaces (e.g. `1,3`, `1 3`, `1, 3`). Useful when a project has multiple indexed model dimensions (e.g. BGE-M3 1024d + gte-modernbert 768d) that previously required re-entering the menu once per index. Duplicates are deduped (`1,1,3` → `1,3`); invalid tokens are warned about and skipped. Confirmation is `y/N` for a single selection (preserves existing muscle memory) and literal `YES` for 2+ selections (mirrors the `:clear_all_indices` strong-confirm). Sentinels `X` and `0` are honored only as the sole token — mixed inputs like `1,X` or `0,2` are rejected with an error and re-prompt
+- **Multi-select in "Clear Project Indexes" menu** (`start_mcp_server.cmd`, label `:clear_project_indexes`) — the prompt now accepts multiple selections separated by commas or spaces (e.g. `1,3`, `1 3`, `1, 3`). Useful when a project has multiple indexed model dimensions (e.g. BGE-M3 1024d + gte-modernbert 768d) that previously required re-entering the menu once per index. Duplicates are deduped (`1,1,3` → `1,3`); invalid tokens are warned about and skipped. Confirmation is `y/N` for a single selection (preserves existing muscle memory) and `YES` for 2+ selections — matched case-insensitively via `if /i`, consistent with the `:clear_all_indices` strong-confirm at line 1094. Sentinels `X` and `0` are honored only as the sole token — mixed inputs like `1,X` or `0,2` are rejected with an error and re-prompt
 
 ### Changed
 
