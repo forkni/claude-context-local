@@ -62,6 +62,20 @@ Tested end-to-end with input `3 4` (two `cuda-link` dims): both cleared, `Cleare
 - `pyproject.toml` — version `0.11.2` → `0.11.3`
 - `CHANGELOG.md` — `[0.11.3] - 2026-04-19` entry with Added/Changed sections
 
+#### Charlie CI Review Follow-Up (PR #27)
+
+Charlie flagged 10 items; four addressed in a patch commit on the same branch:
+
+**#4 — fail_list newline collapse**: `set "fail_list=..."` in cmd silently flattens all items to one line; switched to `>> "%TEMP_FAIL%"` per-item + `type "%TEMP_FAIL%"` in summary.
+
+**#7 — Python shell injection via PROJECT_PATH**: `r'%PROJECT_PATH%'` in the snapshot-delete and selection-reset one-liners would `SyntaxError` (or inject) on paths containing `'`. Both now receive the path via `os.environ['CGW_PROJ_PATH']`; env var set from `%PROJECT_PATH%` before each call and cleared on `exit /b`.
+
+**#6 — unquoted temp-file paths in `for /f`**: four sites updated to `"usebackq tokens=... delims=|" ... in ("%TEMP_PROJECTS%")` / `in ("%TEMP_SELECTED%")`.
+
+**#9 — bracket-dedup opaque**: added `REM Brackets prevent substring match (e.g. "1" matching "10" in "[10]")` above the `findstr` dedup line.
+
+Not fixed per Charlie's guidance: #1 `LAST_REASON=unknown` fallback (acceptable), #2 `1]` literal edge case (minimal real-world risk).
+
 ---
 
 ### 2026-04-19: v0.11.2 Follow-Up — Lazy CoW, Shared Mocks, CI Fixes, Release

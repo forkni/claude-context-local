@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Locked-index auto-retry** (`start_mcp_server.cmd`, `:delete_one_index`) — when `shutil.rmtree` fails on a locked index directory, the script now automatically retries once with `ignore_errors=True` after a 2s wait instead of prompting per item. The previous per-item `Try force cleanup? (y/N)` prompt has been removed from the loop path; a single pre-loop "Make sure MCP server is NOT running" warning + netstat check runs once up front. Failed items are accumulated and listed in the post-loop `=== Clear Summary ===` block
 - **Per-item delete body extracted to `:delete_one_index` subroutine** — called once per selected index from the outer `for /f` loop. Keeps non-delayed `%PROJECT_HASH%` expansion semantics identical to the pre-refactor single-select path; all four existing Python one-liners (index rmtree, force-retry rmtree, snapshot delete, selection reset) are reused verbatim
 
+### Fixed
+
+- **Multi-failure summary now prints one line per failure** (`start_mcp_server.cmd`, `:clear_project_indexes_summary`) — failures were previously accumulated in a `set` variable, which collapses to a single line because cmd variables cannot contain newlines. Failures are now written to `%TEMP%\mcp_fail_list.txt` (one `echo >> ...` per item) and displayed with `type` in the summary
+- **`%PROJECT_PATH%` no longer shell-interpolated into Python raw-string literals** (`start_mcp_server.cmd`, `:delete_one_index`) — paths with apostrophes could terminate the `r'...'` literal and inject arbitrary Python. The two affected one-liners (snapshot delete, selection reset) now receive the path via `os.environ['CGW_PROJ_PATH']`, which is set from `%PROJECT_PATH%` just before each python call and cleared (`set "CGW_PROJ_PATH="`) on `exit /b`
+- **`for /f` loops reading temp files now use `usebackq` and quoted paths** (`start_mcp_server.cmd`, `:clear_project_indexes`) — unquoted `%TEMP_PROJECTS%` / `%TEMP_SELECTED%` would silently break if `%TEMP%` contains spaces. Four sites updated to `"usebackq tokens=... delims=|" ... in ("%TEMP_PROJECTS%")` / `in ("%TEMP_SELECTED%")`
+
 ---
 
 ## [0.11.2] - 2026-04-19

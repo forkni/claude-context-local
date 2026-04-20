@@ -834,7 +834,7 @@ if errorlevel 1 (
 REM Display projects
 echo Select project to clear index:
 echo.
-for /f "tokens=1,2,3,4 delims=|" %%a in (%TEMP_PROJECTS%) do (
+for /f "usebackq tokens=1,2,3,4 delims=|" %%a in ("%TEMP_PROJECTS%") do (
     REM Parse model_slug and dimension from PROJECT_HASH (format: name_hash_slug_NNNd)
     for /f "tokens=3,4 delims=_" %%m in ("%%d") do (
         echo   %%a. %%b [%%m %%n]
@@ -867,6 +867,7 @@ set "token_count=0"
 for %%i in (!project_choice!) do (
     if "%%i"=="0" set "HAS_ZERO=1"
     if /i "%%i"=="X" set "HAS_X=1"
+    REM Brackets prevent substring match (e.g. "1" matching "10" in "[10]")
     echo.!tokens! | findstr /L /C:"[%%i]" >nul 2>&1 || (
         set "tokens=!tokens![%%i] "
         set /a token_count+=1
@@ -909,7 +910,7 @@ set "valid_count=0"
 
 for %%t in (!project_choice!) do (
     set "matched=0"
-    for /f "tokens=1,2,3,4 delims=|" %%a in (%TEMP_PROJECTS%) do (
+    for /f "usebackq tokens=1,2,3,4 delims=|" %%a in ("%TEMP_PROJECTS%") do (
         if "%%a"=="%%t" (
             for /f "tokens=3,4 delims=_" %%m in ("%%d") do (
                 >> "%TEMP_SELECTED%" echo %%a^|%%b^|%%c^|%%d^|%%m^|%%n
@@ -934,7 +935,7 @@ if !valid_count! EQU 0 (
 
 echo.
 echo [WARNING] You are about to clear the following indices:
-for /f "tokens=1,2,3,4,5,6 delims=|" %%a in (%TEMP_SELECTED%) do (
+for /f "usebackq tokens=1,2,3,4,5,6 delims=|" %%a in ("%TEMP_SELECTED%") do (
     echo   %%a. %%b [%%e %%f]
     echo      Hash: %%d
 )
@@ -978,17 +979,18 @@ echo.
 pause
 
 REM Process each selected project
+set "TEMP_FAIL=%TEMP%\mcp_fail_list.txt"
+del "%TEMP_FAIL%" 2>nul
 set "success_count=0"
 set "fail_count=0"
-set "fail_list="
 
-for /f "tokens=1,2,3,4,5,6 delims=|" %%a in (%TEMP_SELECTED%) do (
+for /f "usebackq tokens=1,2,3,4,5,6 delims=|" %%a in ("%TEMP_SELECTED%") do (
     call :delete_one_index "%%a" "%%b" "%%c" "%%d" "%%e" "%%f"
     if "!LAST_RESULT!"=="0" (
         set /a success_count+=1
     ) else (
         set /a fail_count+=1
-        set "fail_list=!fail_list!  - %%b [%%e %%f]: !LAST_REASON!"
+        >> "%TEMP_FAIL%" echo   - %%b [%%e %%f]: !LAST_REASON!
     )
 )
 
@@ -1027,7 +1029,8 @@ if "!INDEX_RESULT!" NEQ "0" (
 )
 
 REM Clear the Merkle snapshot (matching model/dimension only)
-".\.venv\Scripts\python.exe" -c "project_hash = '%PROJECT_HASH%'; parts = project_hash.rsplit('_', 2); model_slug = parts[-2]; dimension = int(parts[-1].rstrip('d')); from merkle.snapshot_manager import SnapshotManager; sm = SnapshotManager(); deleted = sm.delete_snapshot_by_slug(r'%PROJECT_PATH%', model_slug, dimension); print(f'Snapshot: cleared {deleted} files ({model_slug} {dimension}d)')" 2>&1
+set "CGW_PROJ_PATH=%PROJECT_PATH%"
+".\.venv\Scripts\python.exe" -c "import os; project_hash = '%PROJECT_HASH%'; parts = project_hash.rsplit('_', 2); model_slug = parts[-2]; dimension = int(parts[-1].rstrip('d')); from merkle.snapshot_manager import SnapshotManager; sm = SnapshotManager(); deleted = sm.delete_snapshot_by_slug(os.environ['CGW_PROJ_PATH'], model_slug, dimension); print(f'Snapshot: cleared {deleted} files ({model_slug} {dimension}d)')" 2>&1
 set "SNAPSHOT_RESULT=!ERRORLEVEL!"
 
 if "!INDEX_RESULT!"=="0" (
@@ -1038,13 +1041,14 @@ if "!INDEX_RESULT!"=="0" (
         echo [OK] Index cleared, snapshot partial ^(non-critical^)
     )
     REM Reset project selection if this was the last index for this path
-    ".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; from mcp_server.project_persistence import load_project_selection, clear_project_selection; from pathlib import Path; storage = get_storage_dir(); projects_dir = storage / 'projects'; remaining = [p for p in projects_dir.glob('*/project_info.json') if Path(p.parent.name).exists()]; import json; project_paths = [json.load(open(p))['project_path'] for p in remaining]; selection = load_project_selection(); if selection and selection.get('last_project_path') == r'%PROJECT_PATH%' and r'%PROJECT_PATH%' not in project_paths: clear_project_selection(); print('[INFO] Current project reset to None (all indices cleared)')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "import os; from mcp_server.storage_manager import get_storage_dir; from mcp_server.project_persistence import load_project_selection, clear_project_selection; from pathlib import Path; proj_path = os.environ['CGW_PROJ_PATH']; storage = get_storage_dir(); projects_dir = storage / 'projects'; remaining = [p for p in projects_dir.glob('*/project_info.json') if Path(p.parent.name).exists()]; import json; project_paths = [json.load(open(p))['project_path'] for p in remaining]; selection = load_project_selection(); if selection and selection.get('last_project_path') == proj_path and proj_path not in project_paths: clear_project_selection(); print('[INFO] Current project reset to None (all indices cleared)')" 2>nul
     set "LAST_RESULT=0"
 ) else (
     echo [ERROR] Failed to clear %PROJECT_NAME%
     set "LAST_RESULT=1"
     if not defined LAST_REASON set "LAST_REASON=unknown"
 )
+set "CGW_PROJ_PATH="
 exit /b
 
 :clear_project_indexes_summary
@@ -1054,11 +1058,12 @@ echo   Cleared: !success_count! of !valid_count!
 if !fail_count! GTR 0 (
     echo   Failed:  !fail_count!
     echo.
-    echo !fail_list!
+    type "%TEMP_FAIL%"
     echo.
     echo [SOLUTION] If MCP server is running: /delete_project "[path]"
     echo Repair tool: scripts\batch\repair_installation.bat
 )
+del "%TEMP_FAIL%" 2>nul
 if defined invalid_tokens echo   Skipped invalid tokens:!invalid_tokens!
 echo.
 echo Press any key to return to the menu...
