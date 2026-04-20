@@ -88,6 +88,14 @@ Charlie posted a second review pass with 7 items. Three addressed:
 
 Not fixed: #2 (LAST_RESULT cross-block ordering — stylistic), #4 (case-sensitive token match — no bug), #6 (TEMP_FAIL Ctrl+C leftover — ephemeral `%TEMP%`), #7 (y/N `/i` case-insensitivity — confirmed intentional).
 
+#### Charlie CI Blocking Bug — Duplicate Token Double-Processing
+
+Charlie flagged a blocking bug on 2026-04-20: the tokenizer at line 867 built a deduped bracket-tagged `!tokens!` string for counting, but the resolver loop at line 911 still iterated `!project_choice!` (raw input). Input like `1,1,3` thus queued project `1` twice → deleted twice, inflated `valid_count` to 3 instead of 2, and could wrongly escalate the single-item `y/N` prompt to the multi-item `YES` prompt.
+
+Fix: built a plain (non-bracketed) `!dedup_choice!=1 3 ` alongside `!tokens!=[1] [3] ` inside the tokenizer loop; changed `for %%t in (!project_choice!)` → `for %%t in (!dedup_choice!)` in the resolver. `!tokens!` is still used for its `findstr /L /C:"[%%i]"` exact-match dedup check.
+
+The plan's documented test case `1,1,3 → dedup to 1,3 → Cleared: 2 of 2` was never actually verified in the initial PR; this commit makes the observed behavior match the plan.
+
 ---
 
 ### 2026-04-19: v0.11.2 Follow-Up — Lazy CoW, Shared Mocks, CI Fixes, Release

@@ -863,6 +863,7 @@ REM Tokenize, dedupe, and detect sentinel tokens (cmd for splits on commas and s
 set "HAS_X=0"
 set "HAS_ZERO=0"
 set "tokens="
+set "dedup_choice="
 set "token_count=0"
 for %%i in (!project_choice!) do (
     if "%%i"=="0" set "HAS_ZERO=1"
@@ -870,6 +871,7 @@ for %%i in (!project_choice!) do (
     REM Brackets prevent substring match (e.g. "1" matching "10" in "[10]")
     echo.!tokens! | findstr /L /C:"[%%i]" >nul 2>&1 || (
         set "tokens=!tokens![%%i] "
+        set "dedup_choice=!dedup_choice!%%i "
         set /a token_count+=1
     )
 )
@@ -908,7 +910,8 @@ del "%TEMP_SELECTED%" 2>nul
 set "invalid_tokens="
 set "valid_count=0"
 
-for %%t in (!project_choice!) do (
+REM Iterate the deduped token set so repeats like "1,1,3" process each index once
+for %%t in (!dedup_choice!) do (
     set "matched=0"
     for /f "usebackq tokens=1,2,3,4 delims=|" %%a in ("%TEMP_PROJECTS%") do (
         if "%%a"=="%%t" (
