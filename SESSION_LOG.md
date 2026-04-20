@@ -96,6 +96,15 @@ Fix: built a plain (non-bracketed) `!dedup_choice!=1 3 ` alongside `!tokens!=[1]
 
 The plan's documented test case `1,1,3 → dedup to 1,3 → Cleared: 2 of 2` was never actually verified in the initial PR; this commit makes the observed behavior match the plan.
 
+#### `/simplify` Cleanup
+
+Ran `/simplify` after all Charlie CI rounds resolved. Three parallel review agents (reuse, quality, efficiency) found two worthwhile changes:
+
+1. Removed three narrative WHAT-comments (`REM Get list of projects and store in temp file`, `REM Display projects`, `REM Process each selected project`) — the surrounding code already communicates the what.
+2. Consolidated five duplicated cancel paths (`del "%TEMP_PROJECTS%/TEMP_SELECTED%" 2>nul` + `goto project_management_menu`) into a single `:cancel_and_return` label at the end of the summary block.
+
+Python subprocess consolidation (2-5 interpreter spawns per cleared index, ~10-40s for bulk 10-item clear) flagged by efficiency agent — deferred to a separate issue to avoid wider blast radius at merge time.
+
 ---
 
 ### 2026-04-19: v0.11.2 Follow-Up — Lazy CoW, Shared Mocks, CI Fixes, Release

@@ -817,7 +817,6 @@ echo.
 echo === Clear Project Indexes ===
 echo.
 
-REM Get list of projects and store in temp file
 set "TEMP_PROJECTS=%TEMP%\mcp_projects.txt"
 ".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; from pathlib import Path; import json; storage = get_storage_dir(); projects = list((storage / 'projects').glob('*/project_info.json')); [print(f'{i+1}|{json.load(open(p))[\"project_name\"]}|{json.load(open(p))[\"project_path\"]}|{p.parent.name}') for i, p in enumerate(projects)]" > "%TEMP_PROJECTS%" 2>nul
 
@@ -831,7 +830,6 @@ if errorlevel 1 (
     goto project_management_menu
 )
 
-REM Display projects
 echo Select project to clear index:
 echo.
 for /f "usebackq tokens=1,2,3,4 delims=|" %%a in ("%TEMP_PROJECTS%") do (
@@ -850,14 +848,8 @@ set "project_choice="
 set /p project_choice="Select project number(s) (comma/space separated, 0 to cancel, X for all): "
 
 REM Handle empty input
-if not defined project_choice (
-    del "%TEMP_PROJECTS%" 2>nul
-    goto project_management_menu
-)
-if "!project_choice!"=="" (
-    del "%TEMP_PROJECTS%" 2>nul
-    goto project_management_menu
-)
+if not defined project_choice goto :cancel_and_return
+if "!project_choice!"=="" goto :cancel_and_return
 
 REM Tokenize, dedupe, and detect sentinel tokens (cmd for splits on commas and spaces)
 set "HAS_X=0"
@@ -895,10 +887,7 @@ if "!HAS_ZERO!"=="1" if !token_count! NEQ 1 (
 )
 
 REM Sole-token short-circuits: combination guards above ensure token_count==1 here
-if "!HAS_ZERO!"=="1" (
-    del "%TEMP_PROJECTS%" 2>nul
-    goto project_management_menu
-)
+if "!HAS_ZERO!"=="1" goto :cancel_and_return
 if "!HAS_X!"=="1" (
     del "%TEMP_PROJECTS%" 2>nul
     goto clear_all_indices
@@ -951,10 +940,7 @@ if !valid_count! GTR 1 (
     set "confirm_prompt=Type YES to confirm clearing !valid_count! indices: "
 )
 set /p confirm_delete=!confirm_prompt!
-if /i not "!confirm_delete!"=="!expected_confirm!" (
-    del "%TEMP_SELECTED%" 2>nul
-    goto project_management_menu
-)
+if /i not "!confirm_delete!"=="!expected_confirm!" goto :cancel_and_return
 
 REM Check if MCP server is running (once, before the loop)
 netstat -an 2>nul | findstr ":8765" | findstr "LISTENING" >nul 2>&1
@@ -969,10 +955,7 @@ if not errorlevel 1 (
     echo.
     set "continue_choice="
     set /p continue_choice="Continue with direct deletion anyway? (y/N): "
-    if /i not "!continue_choice!"=="y" (
-        del "%TEMP_SELECTED%" 2>nul
-        goto project_management_menu
-    )
+    if /i not "!continue_choice!"=="y" goto :cancel_and_return
     echo.
 )
 
@@ -981,7 +964,6 @@ echo [WARNING] Close Claude Code or any processes using this project
 echo.
 pause
 
-REM Process each selected project
 set "TEMP_FAIL=%TEMP%\mcp_fail_list.txt"
 del "%TEMP_FAIL%" 2>nul
 set "success_count=0"
@@ -1078,6 +1060,11 @@ if defined invalid_tokens echo   Skipped invalid tokens:!invalid_tokens!
 echo.
 echo Press any key to return to the menu...
 pause >nul
+goto project_management_menu
+
+:cancel_and_return
+del "%TEMP_PROJECTS%" 2>nul
+del "%TEMP_SELECTED%" 2>nul
 goto project_management_menu
 
 :clear_all_indices
