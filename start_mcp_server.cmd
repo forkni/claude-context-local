@@ -1014,17 +1014,22 @@ REM Clear the index directory with DB cleanup
 ".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; import shutil, time, gc; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; gc.collect(); time.sleep(0.5); shutil.rmtree(project_dir, ignore_errors=False) if project_dir.exists() else None; print('Index: cleared')"
 set "INDEX_RESULT=!ERRORLEVEL!"
 
-REM Auto-retry once if locked (no prompt inside the loop)
+REM Auto-retry once (no prompt inside the loop). Tentatively attribute to
+REM rmtree error; if the dir still exists after the retry, it's a genuine lock.
 if "!INDEX_RESULT!" NEQ "0" (
-    echo [WARN] Index locked; auto-retrying with ignore_errors...
+    set "LAST_REASON=rmtree error"
+    echo [WARN] First rmtree failed; auto-retrying with ignore_errors...
     timeout /t 2 /nobreak >nul
     ".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; import shutil, time; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; time.sleep(1); shutil.rmtree(project_dir, ignore_errors=True)"
-    if exist "%USERPROFILE%\.claude_code_search\projects\%PROJECT_HASH%" (
+    REM Verify via storage_manager (honors custom STORAGE_DIR), not hardcoded %USERPROFILE%
+    ".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; import sys; sys.exit(1 if (get_storage_dir() / 'projects' / '%PROJECT_HASH%').exists() else 0)"
+    if errorlevel 1 (
         set "INDEX_RESULT=1"
         set "LAST_REASON=locked"
     ) else (
         echo [OK] Force cleanup successful
         set "INDEX_RESULT=0"
+        set "LAST_REASON="
     )
 )
 
@@ -1051,6 +1056,8 @@ if "!INDEX_RESULT!"=="0" (
 set "CGW_PROJ_PATH="
 exit /b
 
+REM :clear_project_indexes_summary consumes vars set in :clear_project_indexes:
+REM   success_count, fail_count, valid_count, invalid_tokens, TEMP_FAIL
 :clear_project_indexes_summary
 echo.
 echo === Clear Summary ===

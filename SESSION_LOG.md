@@ -76,6 +76,18 @@ Charlie flagged 10 items; four addressed in a patch commit on the same branch:
 
 Not fixed per Charlie's guidance: #1 `LAST_REASON=unknown` fallback (acceptable), #2 `1]` literal edge case (minimal real-world risk).
 
+#### Charlie CI Review Follow-Up Round 2
+
+Charlie posted a second review pass with 7 items. Three addressed:
+
+**#1 — `LAST_REASON=locked` inaccuracy**: previously every first-attempt failure was reported as `locked` even when the root cause was an `rmtree` error on a sub-path. Now set `LAST_REASON=rmtree error` tentatively when the first attempt fails, overwrite to `locked` only if the directory still exists after the auto-retry.
+
+**#3 — hardcoded `%USERPROFILE%\.claude_code_search` in retry check**: replaced the cmd `if exist` test with a Python call that uses `storage_manager.get_storage_dir()` and propagates via `sys.exit(0/1)` → `if errorlevel 1`. Honors any customized `STORAGE_DIR`.
+
+**#5 — `invalid_tokens` cross-label dependency**: added a linking `REM` comment above `:clear_project_indexes_summary` enumerating the vars it consumes from `:clear_project_indexes`.
+
+Not fixed: #2 (LAST_RESULT cross-block ordering — stylistic), #4 (case-sensitive token match — no bug), #6 (TEMP_FAIL Ctrl+C leftover — ephemeral `%TEMP%`), #7 (y/N `/i` case-insensitivity — confirmed intentional).
+
 ---
 
 ### 2026-04-19: v0.11.2 Follow-Up — Lazy CoW, Shared Mocks, CI Fixes, Release
