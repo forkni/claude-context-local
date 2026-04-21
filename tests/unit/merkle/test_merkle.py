@@ -534,6 +534,47 @@ class TestChangeDetector(TestCase):
             "Exclude dirs should be inherited from snapshot"
         )
 
+    def test_supported_extensions_propagated_to_built_dag(self):
+        """ChangeDetector should pass supported_extensions through to the DAG it
+        builds, so stat-based hashing applies to non-code files during
+        incremental change detection."""
+        supported = {".py"}
+        detector = ChangeDetector(self.snapshot_manager, supported_extensions=supported)
+
+        # No prior snapshot → treats every file as added but still builds a
+        # live DAG whose supported_extensions matches what we passed in.
+        _, current_dag = detector.detect_changes_from_snapshot(str(self.test_path))
+
+        assert current_dag.supported_extensions == supported
+
+    def test_incremental_consistent_with_new_scheme_snapshot(self):
+        """Regression for the 'Modified: 1076' bug: when the stored snapshot
+        was built with supported_extensions set (stat-based hashing for
+        non-code assets), the incremental change-detection DAG must use the
+        same scheme, otherwise every non-code file gets mis-classified as
+        modified on every incremental run."""
+        # Add a binary-ish asset the indexer won't chunk.
+        (self.test_path / "asset.bin").write_bytes(b"\x00\x01" * 1024)
+
+        supported = {".py"}
+
+        # Snapshot built with the new (extension-aware) scheme.
+        initial_dag = MerkleDAG(str(self.test_path), supported_extensions=supported)
+        initial_dag.build()
+        self.snapshot_manager.save_snapshot(initial_dag)
+
+        # Now run change detection. With supported_extensions threaded through,
+        # the asset should match and not show up as modified.
+        detector = ChangeDetector(self.snapshot_manager, supported_extensions=supported)
+        changes, _ = detector.detect_changes_from_snapshot(str(self.test_path))
+
+        assert not changes.has_changes(), (
+            f"Expected clean diff, but got "
+            f"added={changes.added}, modified={changes.modified}, "
+            f"removed={changes.removed}. The DAG built during change "
+            f"detection is using a different hash scheme than the snapshot."
+        )
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

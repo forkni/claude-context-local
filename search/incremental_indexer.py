@@ -116,9 +116,22 @@ class IncrementalIndexer:
         self.include_dirs = include_dirs
         self.exclude_dirs = exclude_dirs
 
-        # Create change detector with filters
+        # Cache supported extensions once — used by both full reindex and change
+        # detection to skip content-hashing non-code assets (~95% I/O reduction
+        # on asset-heavy projects). Must be stable across passes so the hash
+        # scheme of a stored snapshot matches any DAG we rebuild from it.
+        from chunking.tree_sitter import TreeSitterChunker
+
+        self.supported_extensions: set[str] = set(
+            TreeSitterChunker.get_supported_extensions()
+        )
+
+        # Create change detector with filters + extension-aware hashing
         self.change_detector = ChangeDetector(
-            self.snapshot_manager, include_dirs, exclude_dirs
+            self.snapshot_manager,
+            include_dirs,
+            exclude_dirs,
+            supported_extensions=self.supported_extensions,
         )
 
         # Load parallel chunking configuration
@@ -636,14 +649,11 @@ class IncrementalIndexer:
                     "[FULL_INDEX] Reusing prebuilt MerkleDAG (shared across models)"
                 )
             else:
-                from chunking.tree_sitter import TreeSitterChunker
-
-                supported_exts = set(TreeSitterChunker.get_supported_extensions())
                 dag = MerkleDAG(
                     project_path,
                     self.include_dirs,
                     self.exclude_dirs,
-                    supported_extensions=supported_exts,
+                    supported_extensions=self.supported_extensions,
                 )
                 dag.build()
                 self.built_dag = dag  # Expose for multi-model caller to reuse

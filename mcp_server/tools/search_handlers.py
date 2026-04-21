@@ -285,11 +285,17 @@ def _check_auto_reindex(
             )
 
     # Phase 1: Lightweight freshness check (no HybridSearcher/embedder needed)
+    from chunking.tree_sitter import TreeSitterChunker
     from merkle.change_detector import ChangeDetector
     from merkle.snapshot_manager import SnapshotManager
 
     snapshot_mgr = SnapshotManager()
-    change_detector = ChangeDetector(snapshot_mgr, include_dirs, exclude_dirs)
+    change_detector = ChangeDetector(
+        snapshot_mgr,
+        include_dirs,
+        exclude_dirs,
+        supported_extensions=set(TreeSitterChunker.get_supported_extensions()),
+    )
 
     # Check if snapshot exists and is fresh
     if snapshot_mgr.has_snapshot(project_path):

@@ -11,6 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.11.6] - 2026-04-21
+
+### Performance
+
+- **~100-second incremental-index stall eliminated** (`merkle/change_detector.py`, `search/incremental_indexer.py`, `mcp_server/tools/search_handlers.py`) — companion fix to v0.11.5. `ChangeDetector.detect_changes_from_snapshot` and `quick_check` build a fresh `MerkleDAG` on every incremental run and auto-reindex freshness check, but the constructor was called without `supported_extensions`, so it fell back to content-hashing every file — hitting the exact same ~103 s / 1134-file cost the full-index path just got rid of.
+  - `ChangeDetector.__init__` now accepts `supported_extensions: set[str] | None` and threads it to both `MerkleDAG(...)` sites. `IncrementalIndexer.__init__` computes the set once from `TreeSitterChunker.get_supported_extensions()` and caches it on `self.supported_extensions` so both the incremental path and `_full_index` reuse it (no more redundant `TreeSitterChunker` import inside `_full_index`). `mcp_server/tools/search_handlers.py` passes the same set when constructing its lightweight `ChangeDetector` for the auto-reindex freshness check.
+  - Also fixes a correctness bug: v0.11.5 snapshots stored stat-hashes for non-code files, but the next incremental run's DAG used content-hashes — every non-code file appeared as "modified" (log: `Modified: 1076` out of 1080 unsupported assets). Consistent hashing across snapshot save / incremental compare is now enforced by test `test_incremental_consistent_with_new_scheme_snapshot` in `tests/unit/merkle/test_merkle.py`, which reproduces the failure mode.
+
+### Fixed
+
+- **Snapshot/incremental hash-scheme drift** — see Performance section above. Without the fix, users on v0.11.5 would see every unsupported file classified as "modified" on every incremental run, triggering unnecessary `Batch removing chunks` work for files that have no chunks to remove.
+
+---
+
 ## [0.11.5] - 2026-04-21
 
 ### Performance
