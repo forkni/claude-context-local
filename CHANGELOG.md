@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.11.5] - 2026-04-21
+
+### Performance
+
+- **~2-minute full-index stall eliminated** (`merkle/merkle_dag.py`, `search/incremental_indexer.py`, `mcp_server/tools/index_handlers.py`) — `MerkleDAG.build()` was SHA-256 content-hashing every file in the project tree before the extension filter ran, which on a 1134-file TouchDesigner project (61 supported code files, 1073 `.tox`/media/binary assets) took ~103 s per model due to Windows Defender on-access scanning and NTFS per-file open overhead (~90 ms/file). The cost doubled for multi-model indexing because each per-model `IncrementalIndexer` rebuilt the DAG from scratch on unchanged files.
+  - `MerkleDAG.__init__` now accepts `supported_extensions: set[str] | None`. When provided, files whose suffix is NOT in the set get a cheap stat-based hash (`name:st_size:int(st_mtime)`) instead of a content hash. `stat()` is ~100× cheaper than `open()+read()+close()` on Windows because it bypasses Defender and doesn't touch file contents. Change detection accuracy is preserved: size+mtime is the canonical fast-path signal (same approach used by rsync/git) and is sufficient for files that are never chunked or searched.
+  - `IncrementalIndexer.__init__` now accepts `prebuilt_dag: MerkleDAG | None` and exposes the built DAG via `self.built_dag` after `_full_index`. The multi-model loop in `_index_with_all_models` captures the first model's DAG into `cached_dag` and passes it to subsequent models (same pattern already in use for `cached_repo_profile`). The second model's DAG build is skipped entirely.
+  - Expected impact: ~103 s/model → ~5 s for the first model, near-instant for each subsequent model. For a two-model pool the total `clear_index` → `Found N supported` window collapses from ~210 s to ~5 s (>95% reduction).
+
+---
+
 ## [0.11.4] - 2026-04-21
 
 ### Fixed

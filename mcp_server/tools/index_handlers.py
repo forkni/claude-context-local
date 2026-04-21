@@ -301,6 +301,7 @@ def _index_with_all_models(
     cached_repo_profile = (
         None  # Captured after first model; reused by subsequent models
     )
+    cached_dag = None  # Built MerkleDAG shared across models (avoids re-hashing)
 
     try:
         # Use pool from manager (respects config file setting)
@@ -430,6 +431,7 @@ def _index_with_all_models(
                 include_dirs=include_dirs,
                 exclude_dirs=exclude_dirs,
                 precomputed_repo_profile=cached_repo_profile,
+                prebuilt_dag=cached_dag if not incremental else None,
             )
 
             start_time = datetime.now()
@@ -441,9 +443,11 @@ def _index_with_all_models(
                 )
             elapsed = (datetime.now() - start_time).total_seconds()
 
-            # Capture repo profile after first model pass to reuse for subsequent models
+            # Capture repo profile and built DAG after first model pass for reuse
             if cached_repo_profile is None:
                 cached_repo_profile = incremental_indexer.repo_profile
+            if cached_dag is None and not incremental:
+                cached_dag = incremental_indexer.built_dag
 
             results.append(
                 {

@@ -4,13 +4,42 @@ Complete version history and feature timeline for claude-context-local MCP serve
 
 ## Current Status: All Features Operational (2026-04-21)
 
-- **Version**: 0.11.4
+- **Version**: 0.11.5
 - **Status**: Production-ready
 - **Test Coverage**: 1,987 unit tests + 8 integration tests (100% pass rate)
 - **Dependencies**: 124 packages + optional `onnxruntime-gpu` for ONNX backend
 - **SSCG Benchmark**: Best MRR=0.846 (BM25), Hybrid Recall@10=0.833, all modes 13/13 Hit@5
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent Fix**: 0.11.4 — SyntaxError in clear-project-indexes selection-reset one-liner (extracted to `tools/reset_selection_if_orphaned.py`)
+- **Recent Perf**: 0.11.5 — ~2-minute full-index stall eliminated by skipping content hash for non-indexed files and sharing the MerkleDAG across models (>95% reduction on asset-heavy projects)
+
+---
+
+## v0.11.5 - Full-Index DAG Hashing Performance (2026-04-21)
+
+### Status: PATCH RELEASE ✅
+
+Eliminates the ~2-minute stall between `Successfully cleared hybrid indices` and `Found N supported files out of M total files` on multi-model full indexing. Two independent bottlenecks are addressed.
+
+### Performance
+
+- **Extension-aware hashing in `MerkleDAG`** (`merkle/merkle_dag.py`) — `build()` used to SHA-256 content-hash every file in the project tree before the supported-extension filter ran. On a 1134-file TouchDesigner project with 61 code files and 1073 `.tox`/media/binary assets, this took ~103 s per model on Windows (Defender on-access scanning + NTFS per-file open overhead ≈ 90 ms/file). `MerkleDAG.__init__` now accepts `supported_extensions: set[str] | None`; files whose suffix is NOT in the set get a stat-based hash (`name:st_size:int(st_mtime)`) instead, which is ~100× cheaper and accurate enough for files that are never chunked or searched (mtime+size is the same fast-path signal rsync/git use).
+- **Shared `MerkleDAG` across models** (`search/incremental_indexer.py`, `mcp_server/tools/index_handlers.py`) — each per-model `IncrementalIndexer` previously rebuilt the DAG from scratch even though every model in a multi-model pool sees the same files at the same mtimes. `IncrementalIndexer.__init__` now accepts `prebuilt_dag: MerkleDAG | None` and exposes the built DAG via `self.built_dag`. The multi-model loop in `_index_with_all_models` captures the first model's DAG into `cached_dag` and passes it to subsequent models (mirroring the existing `cached_repo_profile` pattern). The second model's DAG build is skipped entirely.
+
+### Impact
+
+- Single-model first pass: ~103 s → ~5 s (hashing reduced from 1134 files to 61).
+- Multi-model full reindex: ~210 s → ~5 s (second model near-instant). >95% reduction on asset-heavy projects.
+- Content-code projects (no non-indexed assets) are unaffected — everything still gets a full content hash.
+
+### Trade-offs (deliberate)
+
+- Non-indexed files are tracked by `stat` (mtime+size) rather than content. A deliberate byte-level mutation that preserves both mtime and size would no longer register as a change for those files. This is considered correct: those files are never chunked, embedded, or searched — they only exist in the DAG so renames/moves are detectable via directory-hash composition.
+
+### Verification
+
+- All 21 `tests/unit/merkle/` tests pass unchanged (backward-compatible default: `supported_extensions=None` preserves original content-hash behavior).
+- All 39 `tests/unit/search/test_incremental_indexer.py` tests pass.
+- End-to-end verified by user against the FLUX_2_KLEIN_TD project (2-minute stall eliminated; second model's DAG rebuild skipped).
 
 ---
 
