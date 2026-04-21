@@ -2,15 +2,36 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-04-18)
+## Current Status: All Features Operational (2026-04-21)
 
-- **Version**: 0.11.0+ (development; unreleased: concurrency fixes, batch APIs, coordinator removal)
+- **Version**: 0.11.4
 - **Status**: Production-ready
 - **Test Coverage**: 1,987 unit tests + 8 integration tests (100% pass rate)
-- **Dependencies**: 124 packages (38% reduction from 201) + optional `onnxruntime-gpu` for ONNX backend
-- **SSCG Benchmark**: Best MRR=0.846 (BM25), Hybrid Recall@10=0.833, all modes 13/13 Hit@5 (2026-04-10, k=10; see `evaluation/benchmark_results/`)
+- **Dependencies**: 124 packages + optional `onnxruntime-gpu` for ONNX backend
+- **SSCG Benchmark**: Best MRR=0.846 (BM25), Hybrid Recall@10=0.833, all modes 13/13 Hit@5
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent Features**: ONNX Runtime backend (opt-in), ORT CUDA arena cap, BFCArena OOM recovery, dtype-aware activation estimate, `onnx_supported` registry flag, lightweight-speed default pool (BGE-M3 + gte-reranker-modernbert-base)
+- **Recent Fix**: 0.11.4 — SyntaxError in clear-project-indexes selection-reset one-liner (extracted to `tools/reset_selection_if_orphaned.py`)
+
+---
+
+## v0.11.4 - Selection-Reset Helper Fix (2026-04-21)
+
+### Status: PATCH RELEASE ✅
+
+Fixes a SyntaxError in the `Clear Project Indexes` menu workflow that was silently hidden by `2>nul` in earlier commits and surfaced by the `1b818b2` refactor.
+
+### Fixed
+
+- `start_mcp_server.cmd:1037` — the embedded `python -c "..."` one-liner had an inline `if` compound statement after `;`-chained simple statements, which Python rejects at parse time. None of the reset logic ever ran; every clear printed a traceback and left stale `last_project_path` entries in `project_selection.json`.
+
+### Changed
+
+- Extracted reset logic to `tools/reset_selection_if_orphaned.py` — a 45-line helper that reads `CGW_PROJ_PATH` from env, checks the active selection first (cheap early-exit), and short-circuits the projects-dir glob on first match. Also drops a latent filter bug where `Path(p.parent.name).exists()` compared a bare hash string against CWD instead of the projects directory.
+
+### Verification
+
+- Helper syntax-checked: `.venv\Scripts\python.exe -m py_compile tools/reset_selection_if_orphaned.py`
+- Commit `68686ad` passed pre-push hook and ruff/isort checks
 
 ---
 

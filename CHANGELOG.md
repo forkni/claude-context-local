@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.11.4] - 2026-04-21
+
+### Fixed
+
+- **Selection-reset one-liner SyntaxError** (`start_mcp_server.cmd:1037`, new helper `tools/reset_selection_if_orphaned.py`) — the embedded `python -c "..."` call that resets `project_selection.json` after clearing the last index for a path had a Python grammar error: an inline `if` compound statement after `;`-chained simple statements (Python forbids compound statements after `;`). The error was hidden by `2>nul` in earlier commits; `1b818b2` removed the suppression to surface real bugs and correctly exposed this one. Every `Clear Project Indexes` run since that refactor printed a SyntaxError traceback per cleared index, and the reset logic never ran — leaving stale `last_project_path` values in `project_selection.json`. Logic extracted to `tools/reset_selection_if_orphaned.py`: reads `CGW_PROJ_PATH` from env (already set at line 1023), checks selection first (cheap early-exit), short-circuits the projects-dir glob on first matching `project_info.json`. Also drops a latent filter bug where `Path(p.parent.name).exists()` checked a bare hash string against CWD instead of `projects_dir`
+
+---
+
 ## [0.11.3] - 2026-04-19
 
 ### Added
