@@ -9,7 +9,11 @@ import os
 from embeddings.embedder import CodeEmbedder
 from mcp_server.services import get_config, get_state
 from mcp_server.storage_manager import get_storage_dir
-from search.config import MODEL_POOL_CONFIG, MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED
+from search.config import (
+    ALL_POOL_MODELS,
+    MODEL_POOL_CONFIG,
+    MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -142,13 +146,19 @@ class ModelPoolManager:
                 f"Model pool loaded: {loaded_count}/{len(pool_config)} models ready"
             )
 
-    def get_embedder(self, model_key: str | None = None) -> CodeEmbedder:
+    def get_embedder(
+        self, model_key: str | None = None, allow_cross_pool: bool = False
+    ) -> CodeEmbedder:
         """Get embedder from multi-model pool or single-model fallback.
 
         Args:
             model_key: Model key from pool config ("qwen3", "bge_m3", "coderankembed",
                       "gte_modernbert", "c2llm", or "code_model" for lightweight pools).
                       If None, uses config default or falls back to BGE-M3.
+            allow_cross_pool: When True and model_key belongs to a pool other than the
+                      active one, load it anyway to preserve an existing index. The
+                      caller is responsible for understanding the VRAM implications.
+                      Defaults to False so routing-selected loads stay pool-disciplined.
 
         Returns:
             CodeEmbedder instance for the specified model.
@@ -163,6 +173,32 @@ class ModelPoolManager:
 
         # Get pool configuration (full or lightweight-speed)
         pool_config = self.get_pool_config()
+
+        # Cross-pool path: model_key known globally but not in the active pool.
+        # Only attempted when the caller explicitly opts in (index-preservation path).
+        if (
+            allow_cross_pool
+            and model_key is not None
+            and model_key not in pool_config
+            and model_key in ALL_POOL_MODELS
+        ):
+            model_name = ALL_POOL_MODELS[model_key]
+            active_keys = list(pool_config.keys())
+            logger.warning(
+                f"[CROSS_POOL] Loading '{model_key}' ({model_name}) outside active pool "
+                f"{active_keys} to preserve existing index (may exceed pool VRAM budget)"
+            )
+            if model_key not in state.embedders or state.embedders[model_key] is None:
+                try:
+                    embedder = CodeEmbedder(
+                        model_name=model_name, cache_dir=str(cache_dir)
+                    )
+                    state.set_embedder(model_key, embedder)
+                    logger.info(f"✓ {model_key} loaded successfully (cross-pool)")
+                except Exception as e:
+                    logger.error(f"✗ Failed to load cross-pool model {model_key}: {e}")
+                    raise
+            return state.embedders[model_key]
 
         # PRIORITY: Explicit model_key override takes precedence over multi_model_enabled setting
         # This ensures model_key parameter works even when multi-model mode is disabled
@@ -327,12 +363,16 @@ def initialize_model_pool(lazy_load: bool = True) -> None:
     return get_model_pool_manager().initialize_pool(lazy_load)
 
 
-def get_embedder(model_key: str | None = None) -> CodeEmbedder:
+def get_embedder(
+    model_key: str | None = None, allow_cross_pool: bool = False
+) -> CodeEmbedder:
     """Get embedder from multi-model pool or single-model fallback.
 
     Backward-compatible wrapper for ModelPoolManager.get_embedder().
     """
-    return get_model_pool_manager().get_embedder(model_key)
+    return get_model_pool_manager().get_embedder(
+        model_key, allow_cross_pool=allow_cross_pool
+    )
 
 
 def get_model_key_from_name(model_name: str) -> str | None:
@@ -341,20 +381,34 @@ def get_model_key_from_name(model_name: str) -> str | None:
     This is used to ensure incremental indexing uses the same model that
     was used to create the index (read from project_info.json).
 
+    Performs a two-tier lookup: active pool first (fast path), then all
+    known pool dicts (ALL_POOL_MODELS) so that an index built with a model
+    from a different pool can still be identified after the active pool changes.
+
     Args:
         model_name: Full model name (e.g., "Alibaba-NLP/gte-modernbert-base")
 
     Returns:
-        Model key (e.g., "gte_modernbert") or None if not found
+        Model key (e.g., "gte_modernbert") or None if not found in any pool
     """
     pool_config = get_model_pool_manager().get_pool_config()
 
-    # Reverse lookup: model_name -> model_key
+    # Tier 1: active pool — fast path, no extra log noise
     for key, name in pool_config.items():
         if name == model_name:
             return key
 
-    # Special case: Qwen3 variants
+    # Tier 2: any other known pool — index-preservation path
+    for key, name in ALL_POOL_MODELS.items():
+        if name == model_name:
+            active_pool_name = next(iter(pool_config.keys()), "unknown")
+            logger.info(
+                f"[CROSS_POOL] Stored model '{model_name}' resolved to key '{key}' "
+                f"(outside active pool containing '{active_pool_name}')"
+            )
+            return key
+
+    # Special case: Qwen3 variants (various suffixes share the same key)
     if "qwen3" in model_name.lower() or "qwen-3" in model_name.lower():
         return "qwen3"
 
