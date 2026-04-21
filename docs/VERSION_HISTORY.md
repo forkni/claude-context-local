@@ -4,13 +4,38 @@ Complete version history and feature timeline for claude-context-local MCP serve
 
 ## Current Status: All Features Operational (2026-04-21)
 
-- **Version**: 0.11.5
+- **Version**: 0.11.6
 - **Status**: Production-ready
-- **Test Coverage**: 1,987 unit tests + 8 integration tests (100% pass rate)
+- **Test Coverage**: 1,989 unit tests + 8 integration tests (100% pass rate)
 - **Dependencies**: 124 packages + optional `onnxruntime-gpu` for ONNX backend
 - **SSCG Benchmark**: Best MRR=0.846 (BM25), Hybrid Recall@10=0.833, all modes 13/13 Hit@5
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent Perf**: 0.11.5 — ~2-minute full-index stall eliminated by skipping content hash for non-indexed files and sharing the MerkleDAG across models (>95% reduction on asset-heavy projects)
+- **Recent Perf**: 0.11.6 — incremental-index path now uses the same extension-aware hashing as v0.11.5's full-index path; eliminates a matching ~100 s stall and fixes a hash-scheme-drift bug that caused every non-code asset to be mis-classified as "modified" on every incremental run
+
+---
+
+## v0.11.6 - Incremental-Index Hashing Parity (2026-04-21)
+
+### Status: PATCH RELEASE ✅
+
+Companion fix to v0.11.5. The full-index path got extension-aware stat-based hashing, but `ChangeDetector` — which builds a fresh `MerkleDAG` for every incremental run and for every auto-reindex freshness check — was still constructing that DAG without `supported_extensions`. Result: same ~103 s / 1134-file cost on every incremental, plus a correctness bug where stored v0.11.5 snapshots (stat-hashes for non-code files) never matched the content-hashes the incremental DAG produced, so every non-code asset looked "modified".
+
+### Performance
+
+- **Thread `supported_extensions` through `ChangeDetector`** (`merkle/change_detector.py`) — both `detect_changes_from_snapshot` and `quick_check` now propagate it to the `MerkleDAG` they build.
+- **Cache supported extensions once in `IncrementalIndexer.__init__`** (`search/incremental_indexer.py`) — `self.supported_extensions` is computed from `TreeSitterChunker.get_supported_extensions()` and reused by both change detection and `_full_index` (eliminates a per-full-index `TreeSitterChunker` re-import that v0.11.5 accidentally left in).
+- **Auto-reindex freshness check** (`mcp_server/tools/search_handlers.py`) — constructs its lightweight `ChangeDetector` with `supported_extensions` too, so `quick_check` is as fast as the incremental path.
+
+### Fixed
+
+- **Hash-scheme drift between snapshot and incremental DAG** — v0.11.5 snapshots used stat-hashes for non-code files, but the incremental DAG on the next run used content-hashes, so diffing produced false "modified" entries (observed: `Modified: 1076` out of 1080 unsupported assets in a real user log). Now both sides use the same scheme.
+
+### Verification
+
+- `tests/unit/merkle/test_merkle.py::test_incremental_consistent_with_new_scheme_snapshot` — reproduces the exact failure mode (binary asset mis-classified as modified) and guards the fix.
+- `tests/unit/merkle/test_merkle.py::test_supported_extensions_propagated_to_built_dag` — confirms `ChangeDetector` passes `supported_extensions` through to the DAG it builds.
+- All 62 `tests/unit/merkle/` + `tests/unit/search/test_incremental_indexer.py` tests pass.
+- All 199 `tests/unit/mcp_server/` tests pass.
 
 ---
 
