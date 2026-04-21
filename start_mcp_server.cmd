@@ -1034,7 +1034,7 @@ if "!INDEX_RESULT!"=="0" (
     REM Reset project selection if this was the last index for this path.
     REM stderr intentionally NOT suppressed: happy path is silent (print is gated by the if),
     REM so any traceback here signals a real bug (API drift, missing import) worth surfacing.
-    ".\.venv\Scripts\python.exe" -c "import os; from mcp_server.storage_manager import get_storage_dir; from mcp_server.project_persistence import load_project_selection, clear_project_selection; from pathlib import Path; proj_path = os.environ['CGW_PROJ_PATH']; storage = get_storage_dir(); projects_dir = storage / 'projects'; remaining = [p for p in projects_dir.glob('*/project_info.json') if Path(p.parent.name).exists()]; import json; project_paths = [json.load(open(p))['project_path'] for p in remaining]; selection = load_project_selection(); if selection and selection.get('last_project_path') == proj_path and proj_path not in project_paths: clear_project_selection(); print('[INFO] Current project reset to None (all indices cleared)')"
+    ".\.venv\Scripts\python.exe" tools\reset_selection_if_orphaned.py
     set "LAST_RESULT=0"
 ) else (
     echo [ERROR] Failed to clear %PROJECT_NAME%
