@@ -11,6 +11,7 @@ import contextlib
 import gc
 import logging
 import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -541,6 +542,13 @@ class CodeEmbedder:
     Default model is google/embeddinggemma-300m.
     """
 
+    def __new__(cls, *args, **kwargs) -> "CodeEmbedder":
+        instance = super().__new__(cls)
+        # Initialize lock before __init__ so __new__-only construction (test mocks,
+        # unpickling, etc.) always has a functional lock.
+        instance._lifecycle_lock = threading.RLock()
+        return instance
+
     def __init__(
         self,
         model_name: str = "google/embeddinggemma-300m",
@@ -650,10 +658,17 @@ class CodeEmbedder:
 
     def _log_gpu_memory(self, stage: str) -> None:
         """Delegate to ModelLoader.log_gpu_memory()."""
+        if self._model_loader is None:
+            return
         self._model_loader.log_gpu_memory(stage)
 
     def _get_torch_dtype(self) -> "torch.dtype":
         """Delegate to ModelLoader.get_torch_dtype()."""
+        if self._model_loader is None:
+            raise RuntimeError(
+                "Embedder has been cleaned up; obtain a fresh instance "
+                "via model_pool_manager.get_embedder()."
+            )
         return self._model_loader.get_torch_dtype()
 
     def _is_gpu_device(self) -> bool:
@@ -724,10 +739,18 @@ class CodeEmbedder:
 
     @property
     def model(self) -> SentenceTransformer | None:
-        """Lazy loading of the model."""
-        if self._model is None:
-            self._load_model()
-        return self._model
+        """Lazy loading of the model. Thread-safe via double-checked lock."""
+        if self._model is not None:
+            return self._model
+        with self._lifecycle_lock:
+            if self._model is None:
+                if self._model_loader is None:
+                    raise RuntimeError(
+                        "Embedder has been cleaned up; obtain a fresh instance "
+                        "via model_pool_manager.get_embedder()."
+                    )
+                self._load_model()
+            return self._model
 
     def _load_model(self) -> None:
         """Delegate to ModelLoader.load()."""
@@ -1072,7 +1095,8 @@ class CodeEmbedder:
         # Ensure model is loaded BEFORE batch calculation (to get accurate VRAM)
         # (model loads lazily on first encode() call - causes log interference)
         if not hasattr(self, "_model_warmed_up") or not self._model_warmed_up:
-            self.model.encode(["warmup"], show_progress_bar=False)
+            with self._lifecycle_lock:
+                self.model.encode(["warmup"], show_progress_bar=False)
             self._model_warmed_up = True
 
         # Log VRAM usage after model load
@@ -1253,12 +1277,13 @@ class CodeEmbedder:
                 use_tensor = self._is_gpu_device()
 
                 try:
-                    batch_embeddings = self.model.encode(
-                        batch_contents,
-                        show_progress_bar=False,
-                        convert_to_tensor=use_tensor,
-                        device=self.device if use_tensor else None,
-                    )
+                    with self._lifecycle_lock:
+                        batch_embeddings = self.model.encode(
+                            batch_contents,
+                            show_progress_bar=False,
+                            convert_to_tensor=use_tensor,
+                            device=self.device if use_tensor else None,
+                        )
                 except RuntimeError as e:
                     # OOM recovery: halve current_batch_size and retry the same chunk
                     # position with a smaller batch.  Applies to both PyTorch CUDA OOM
@@ -1447,7 +1472,8 @@ class CodeEmbedder:
             self._logger.debug("Using custom instruction for query encoding")
         query_to_embed = self._format_query_text(query, model_config)
 
-        embedding = self.model.encode([query_to_embed], **encode_kwargs)[0]
+        with self._lifecycle_lock:
+            embedding = self.model.encode([query_to_embed], **encode_kwargs)[0]
         # bf16 tensors must be cast to float32 before numpy conversion
         embedding = self._tensor_to_numpy(embedding)
 
@@ -1507,7 +1533,8 @@ class CodeEmbedder:
                 encode_kwargs["convert_to_tensor"] = True
                 encode_kwargs["device"] = self.device
 
-            raw = self.model.encode(uncached_texts, **encode_kwargs)
+            with self._lifecycle_lock:
+                raw = self.model.encode(uncached_texts, **encode_kwargs)
 
             for local_i, orig_i in enumerate(uncached_indices):
                 emb = self._tensor_to_numpy(raw[local_i])
@@ -1652,58 +1679,59 @@ class CodeEmbedder:
             # Python interpreter is shutting down; imports are unavailable.
             # Skip cleanup to avoid spurious errors from gc/torch teardown.
             return
-        if self._model is not None:
-            try:
-                import gc
+        with self._lifecycle_lock:
+            if self._model is not None:
+                try:
+                    import gc
 
-                # Step 1: Free GPU memory.
-                # ONNX path: call cleanup() to explicitly destroy the ORT CUDA session,
-                # which is the only way to release CUDA memory allocated by ORT's
-                # CUDAExecutionProvider (not tracked by torch.cuda.memory_allocated).
-                # PyTorch path: move to CPU first to free VRAM, then delete.
-                if hasattr(self._model, "cleanup"):
-                    self._logger.info("Releasing ONNX Runtime CUDA session...")
-                    self._model.cleanup()
-                    self._logger.info("ONNX VRAM freed")
-                elif (
-                    torch is not None
-                    and torch.cuda.is_available()
-                    and hasattr(self._model, "cpu")
-                ):
-                    self._logger.info("Moving model from GPU to CPU...")
-                    self._model = self._model.cpu()
-                    torch.cuda.synchronize()  # Wait for GPU operations
-                    torch.cuda.empty_cache()
-                    self._logger.info("VRAM freed")
+                    # Step 1: Free GPU memory.
+                    # ONNX path: call cleanup() to explicitly destroy the ORT CUDA session,
+                    # which is the only way to release CUDA memory allocated by ORT's
+                    # CUDAExecutionProvider (not tracked by torch.cuda.memory_allocated).
+                    # PyTorch path: move to CPU first to free VRAM, then delete.
+                    if hasattr(self._model, "cleanup"):
+                        self._logger.info("Releasing ONNX Runtime CUDA session...")
+                        self._model.cleanup()
+                        self._logger.info("ONNX VRAM freed")
+                    elif (
+                        torch is not None
+                        and torch.cuda.is_available()
+                        and hasattr(self._model, "cpu")
+                    ):
+                        self._logger.info("Moving model from GPU to CPU...")
+                        self._model = self._model.cpu()
+                        torch.cuda.synchronize()  # Wait for GPU operations
+                        torch.cuda.empty_cache()
+                        self._logger.info("VRAM freed")
 
-                # Step 2: Delete model reference (allows RAM to be freed)
-                del self._model
-                self._model = None
-                self._logger.info("Model reference deleted")
+                    # Step 2: Delete model reference (allows RAM to be freed)
+                    del self._model
+                    self._model = None
+                    self._logger.info("Model reference deleted")
 
-                # Step 3: Clear query cache (numpy arrays)
-                if hasattr(self, "_query_cache"):
-                    self._query_cache.clear()
-                    self._logger.info("Query cache cleared")
+                    # Step 3: Clear query cache (numpy arrays)
+                    if hasattr(self, "_query_cache"):
+                        self._query_cache.clear()
+                        self._logger.info("Query cache cleared")
 
-                # Step 4: Clear model loader to prevent lazy reload (CRITICAL for VRAM cleanup)
-                # Preserving model loader causes immediate reload when .model is accessed
-                # This defeats cleanup purpose - forces creation of fresh embedder instead
-                if hasattr(self, "_model_loader"):
-                    self._model_loader = None
-                    self._logger.info("Model loader cleared - lazy reload disabled")
+                    # Step 4: Clear model loader to prevent lazy reload (CRITICAL for VRAM cleanup)
+                    # Preserving model loader causes immediate reload when .model is accessed
+                    # This defeats cleanup purpose - forces creation of fresh embedder instead
+                    if hasattr(self, "_model_loader"):
+                        self._model_loader = None
+                        self._logger.info("Model loader cleared - lazy reload disabled")
 
-                # Step 5: Force garbage collection (frees RAM)
-                gc.collect()
-                self._logger.info("RAM freed via garbage collection")
+                    # Step 5: Force garbage collection (frees RAM)
+                    gc.collect()
+                    self._logger.info("RAM freed via garbage collection")
 
-                # Step 6: Final CUDA cache clear
-                if torch is not None and torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                    # Step 6: Final CUDA cache clear
+                    if torch is not None and torch.cuda.is_available():
+                        torch.cuda.empty_cache()
 
-                self._logger.info("Model cleanup complete - VRAM and RAM freed")
-            except Exception as e:
-                self._logger.warning(f"Error during model cleanup: {e}")
+                    self._logger.info("Model cleanup complete - VRAM and RAM freed")
+                except Exception as e:
+                    self._logger.warning(f"Error during model cleanup: {e}")
 
     def __enter__(self) -> "CodeEmbedder":
         """Context manager entry - ensure model is loaded."""
@@ -1718,10 +1746,14 @@ class CodeEmbedder:
 
     def __del__(self):
         """Ensure cleanup when object is destroyed."""
-        # Intentional: cleanup during interpreter shutdown may fail
-        # Logging is unreliable in __del__, so suppress is acceptable
         with contextlib.suppress(Exception):
-            self.cleanup()
+            # Non-blocking acquire: if another thread holds the lock, skip cleanup
+            # rather than stalling the GC thread indefinitely.
+            if self._lifecycle_lock.acquire(blocking=False):
+                try:
+                    self.cleanup()
+                finally:
+                    self._lifecycle_lock.release()
 
     # ===== Cache Management Methods (delegated to ModelCacheManager) =====
 
@@ -1771,4 +1803,9 @@ class CodeEmbedder:
 
     def _resolve_device(self, requested: str | None) -> str:
         """Delegate to ModelLoader.resolve_device()."""
+        if self._model_loader is None:
+            raise RuntimeError(
+                "Embedder has been cleaned up; obtain a fresh instance "
+                "via model_pool_manager.get_embedder()."
+            )
         return self._model_loader.resolve_device(requested)
