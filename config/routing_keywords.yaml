@@ -262,6 +262,18 @@ full_pool:
         - type definition
         - type system
         - type annotation
+        # GPU/systems vocabulary (general, non-project-specific)
+        - stream
+        - synchronize
+        - synchronization
+        - event
+        - barrier
+        - cuda
+        - gpu
+        - tensor
+        - buffer
+        - allocation
+        - kernel
 
 # ============================================================================
 # Lightweight Model Pool Configuration (8GB VRAM GPUs)
