@@ -2,7 +2,7 @@
 
 ## Project: General-Purpose Semantic Search MCP Integration System
 
-## Initialized: 2025-09-22 | Updated: 2026-04-19
+## Initialized: 2025-09-22 | Updated: 2026-04-21
 
 This file maintains session memory and context for the Claude-context-MCP semantic search system development and improvements.
 
@@ -33,6 +33,66 @@ This file maintains session memory and context for the Claude-context-MCP semant
 ---
 
 ## Session History
+
+### 2026-04-21: Embedder Race Fix + bge_code GPU Routing Keywords
+
+**Primary Achievement**: Fixed a concurrency race where `search_code` + auto-reindex on the same project caused `AttributeError: 'NoneType' object has no attribute 'load'` by adding a per-instance `RLock` to `CodeEmbedder` and a null-safe `model` property; also broadened `bge_code` routing keywords with general GPU/systems vocabulary.
+
+#### Key Accomplishments
+- Added `threading.RLock` (`_lifecycle_lock`) to `CodeEmbedder` guarding `cleanup()`, `model` property, `embed_query`, and `embed_chunks` against concurrent access
+- Made `model` property null-safe: raises `RuntimeError("Embedder has been cleaned up…")` instead of propagating `AttributeError` when `_model_loader` is `None` post-cleanup
+- `state.clear_embedders()` now unconditionally nulls `state.searcher` to invalidate stale embedder refs in `HybridSearcher`/`SearchExecutor`/`RerankingEngine`
+- Reordered `_check_auto_reindex` (search_handlers.py) to bind `state.searcher` only AFTER `auto_reindex_if_needed` completes, eliminating the one-cycle window where `state.searcher` pointed at a to-be-cleaned embedder
+- 4 concurrency unit tests in `tests/unit/embeddings/test_embedder_concurrency.py`: race reproducer, cleanup-then-access, double-cleanup idempotency, RLock type assertion
+- Verified fix in production via 2,251-line debug log: zero `AttributeError`, zero `[RERANK] Failed` warnings, two clean `clear_embedders` events (auto-reindex + project switch)
+- Added 11 general GPU/systems keywords to `bge_code` in `config/routing_keywords.yaml`: `stream, synchronize, synchronization, event, barrier, cuda, gpu, tensor, buffer, allocation, kernel`
+- Verified routing: "cuda stream synchronization event record" → `bge_code` @ 0.40; "how does cuda kernel implement async copy" → `qwen3` @ 0.48 (negative control preserved)
+
+#### Technical Details
+
+**Race root cause**: `handle_search_code` called `auto_reindex_if_needed` which internally called `state.clear_embedders()` → `CodeEmbedder.cleanup()`, nulling `self._model` and `self._model_loader` in-place. Any concurrent coroutine or thread-pool task holding a reference to the same `CodeEmbedder` object would then hit `self._model_loader.load()` on `None` → `AttributeError`. No locks existed anywhere guarding embedder lifecycle.
+
+**Fix design** (four changes): (A) null-safe `model` property raises `RuntimeError` instead of `AttributeError`; (B) `RLock` wraps cleanup and encode paths to prevent mid-encode tear-down; (D) `state.clear_embedders()` nulls `state.searcher`; (E) `_check_auto_reindex` binds `state.searcher` after reindex, not before.
+
+**Routing gap**: GPU/CUDA vocabulary (`stream`, `cuda`, `tensor`, `barrier`, etc.) was absent from both `qwen3` and `bge_code` keyword lists. GPU-heavy project queries scored 0.00/0.00 and fell back to `qwen3` by default. Added 11 general terms (explicitly non-project-specific per user scope) to `bge_code`; `memory` was already present so skipped.
+
+#### Files Modified
+- `embeddings/embedder.py` — `_lifecycle_lock` RLock; null-safe `model` property; `cleanup`/`embed_query`/`embed_chunks` locked; `__del__` non-blocking acquire
+- `mcp_server/state.py` — `clear_embedders()` sets `self.searcher = None`
+- `mcp_server/tools/search_handlers.py` — bind `state.searcher` after `auto_reindex_if_needed`, not before
+- `config/routing_keywords.yaml` — 11 GPU/systems keywords added to `full_pool.models.bge_code`
+- `tests/unit/embeddings/test_embedder_concurrency.py` — **new file**: 4 concurrency tests
+
+---
+
+### 2026-04-21: Cross-Pool Model Mapping — Index Preservation Fix
+
+**Primary Achievement**: Fixed a destructive silent bug where switching `multi_model_pool` away from the pool used to build an existing index caused the index to be thrown away and rebuilt with the wrong model, without any visible ERROR-level log.
+
+#### Key Accomplishments
+- Added `ALL_POOL_MODELS` union constant (both pool dicts merged) as single source of truth for cross-pool lookups
+- Fixed `get_model_key_from_name` to perform a two-tier lookup: active pool first, then `ALL_POOL_MODELS`, so any registered model resolves regardless of active pool
+- Added `allow_cross_pool: bool = False` to `get_embedder`; the auto-reindex path passes `True` to load a stored model outside the active pool and preserve the index
+- Upgraded the "could not map stored model" log from WARNING → ERROR with an actionable message including the consequence and remediation step
+- Upgraded `DimensionMismatchError` catch from WARNING → ERROR, including the storage directory name and both dimensions
+- 7 new unit tests covering cross-pool resolution, opt-in embedder loading, regression guard for unknown models
+- Installed `onnxruntime-1.24.4` to fix pre-existing `test_onnx_loader` failure (missing optional dependency)
+
+#### Technical Details
+
+**Root cause**: `search_config.json` had `embedding.model_name = "BAAI/bge-code-v1"` (from the `full` pool) but `routing.multi_model_pool = "lightweight-speed"`. The reverse-lookup in `get_model_key_from_name` only searched the active pool — returning `None` for `BAAI/bge-code-v1`. This caused `get_embedder` to fall back to the first active-pool model (1024d), triggering a `DimensionMismatchError` against the existing 1536d index, which then silently rebuilt the index with the wrong model.
+
+**Fix design**: Pool config is now treated as a VRAM-budgeting hint for routing only, not a gate on index preservation. The `allow_cross_pool=True` path in `get_embedder` searches `ALL_POOL_MODELS` when the requested key isn't in the active pool, constructs `CodeEmbedder` normally, and caches it in `state.embedders[model_key]`. All existing callers default to `allow_cross_pool=False` — no behavior change for the routing pipeline.
+
+**Test results**: 7 new tests pass; 1,961 existing unit tests pass (pre-existing onnx_loader failure resolved by installing `onnxruntime`).
+
+#### Files Modified
+- `search/config.py` — added `ALL_POOL_MODELS: dict[str, str]` after the two pool dicts
+- `mcp_server/model_pool_manager.py` — `get_model_key_from_name` two-tier lookup; `get_embedder`/wrapper `allow_cross_pool` param; import `ALL_POOL_MODELS`
+- `mcp_server/tools/search_handlers.py` — pass `allow_cross_pool=True` at call site (`:314`); WARNING → ERROR for unmapped model (`:279`) and dim-mismatch (`:320`)
+- `tests/unit/test_model_pool_manager.py` — **new file**: 7 unit tests
+
+---
 
 ### 2026-04-19: v0.11.3 — Multi-Select in `:clear_project_indexes` Menu
 

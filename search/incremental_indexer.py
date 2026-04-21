@@ -77,6 +77,7 @@ class IncrementalIndexer:
         include_dirs: list | None = None,
         exclude_dirs: list | None = None,
         precomputed_repo_profile: object | None = None,
+        prebuilt_dag: MerkleDAG | None = None,
     ):
         """Initialize incremental indexer.
 
@@ -89,6 +90,8 @@ class IncrementalIndexer:
             exclude_dirs: Optional list of directories to exclude
             precomputed_repo_profile: Optional pre-computed RepoProfile to skip
                 profiling (used in multi-model indexing to avoid redundant AST scans)
+            prebuilt_dag: Optional already-built MerkleDAG to skip the filesystem
+                walk (used in multi-model indexing to avoid redundant I/O)
         """
         if indexer is None:
             # Create indexer with temporary storage directory for testing
@@ -133,6 +136,8 @@ class IncrementalIndexer:
         self.repo_profile: object | None = (
             None  # Set after full index for caller capture
         )
+        self.prebuilt_dag = prebuilt_dag
+        self.built_dag: MerkleDAG | None = None  # Captured for multi-model reuse
 
     def _get_symbol_cache(self) -> Optional["SymbolHashCache"]:
         """Get symbol cache, handling both CodeIndexManager and HybridSearcher.
@@ -624,9 +629,24 @@ class IncrementalIndexer:
             # Clear existing index
             self.indexer.clear_index()
 
-            # Build DAG for all files
-            dag = MerkleDAG(project_path, self.include_dirs, self.exclude_dirs)
-            dag.build()
+            # Build DAG for all files (or reuse from a previous model pass)
+            if self.prebuilt_dag is not None:
+                dag = self.prebuilt_dag
+                logger.info(
+                    "[FULL_INDEX] Reusing prebuilt MerkleDAG (shared across models)"
+                )
+            else:
+                from chunking.tree_sitter import TreeSitterChunker
+
+                supported_exts = set(TreeSitterChunker.get_supported_extensions())
+                dag = MerkleDAG(
+                    project_path,
+                    self.include_dirs,
+                    self.exclude_dirs,
+                    supported_extensions=supported_exts,
+                )
+                dag.build()
+                self.built_dag = dag  # Expose for multi-model caller to reuse
             all_files = dag.get_all_files()
 
             # Filter supported files
