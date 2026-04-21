@@ -175,6 +175,9 @@ class ApplicationState:
                     logger.warning(f"[CLEANUP] Failed to cleanup {model_key}: {e}")
 
         self.embedders = {}
+        # Every searcher component stashes embedder refs that are now dead.
+        # Force rebuild on next search request.
+        self.searcher = None
 
     def reset_search_components(self) -> None:
         """Reset index_manager and searcher to force re-initialization.

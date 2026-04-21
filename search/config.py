@@ -26,6 +26,14 @@ MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED = {
     "bge_m3": "BAAI/bge-m3",
 }
 
+# Union of all known pool configs — used for cross-pool reverse lookups so that
+# an index built with one pool's model can still be identified when the active
+# pool changes.  Update this whenever a new pool dict is added.
+ALL_POOL_MODELS: dict[str, str] = {
+    **MODEL_POOL_CONFIG,
+    **MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED,
+}
+
 # MODEL_REGISTRY convention for ONNX support:
 # - "onnx_supported": False  -> ONNX path is skipped in _should_use_onnx().
 #   Use this when the upstream pooling mode is not handled by

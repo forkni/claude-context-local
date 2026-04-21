@@ -276,9 +276,12 @@ def _check_auto_reindex(
                 f"(key: {stored_model_key}) instead of routing selection"
             )
         else:
-            logger.warning(
-                f"[AUTO_REINDEX] Could not map stored model '{stored_model_name}' to key, "
-                f"falling back to routing selection: {selected_model_key}"
+            logger.error(
+                f"[AUTO_REINDEX] Stored model '{stored_model_name}' is not registered in "
+                f"MODEL_POOL_CONFIG or MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED. Existing index "
+                f"will be discarded and rebuilt with routing-selected model "
+                f"'{selected_model_key}'. Update search/config.py:ALL_POOL_MODELS to "
+                f"register this model and prevent data loss."
             )
 
     # Phase 1: Lightweight freshness check (no HybridSearcher/embedder needed)
@@ -311,14 +314,17 @@ def _check_auto_reindex(
     # Validate dimension compatibility BEFORE creating searcher
     from search.dimension_validator import validate_embedder_index_compatibility
 
-    embedder = get_embedder(model_key_for_embedder)
+    embedder = get_embedder(model_key_for_embedder, allow_cross_pool=True)
 
     try:
         validate_embedder_index_compatibility(
             embedder, project_storage, raise_on_mismatch=True
         )
     except DimensionMismatchError as e:
-        logger.warning(f"Dimension mismatch detected, will trigger full reindex: {e}")
+        logger.error(
+            f"Dimension mismatch detected for index '{project_storage.name}': {e}. "
+            f"Existing index will be discarded and rebuilt."
+        )
         # Continue - the incremental_indexer will handle reindex
 
     config = get_config()
@@ -336,9 +342,9 @@ def _check_auto_reindex(
             project_id=project_id,
             config=config,
         )
-        # Cache searcher so get_searcher() in handle_search_code reuses it (avoids double init).
-        # Only store when no valid searcher is cached — preserves an existing searcher (with
-        # its already-loaded Jina model) to avoid reloading GPU weights on every stale check.
+        # Track project/model key eagerly (used by downstream get_searcher() routing).
+        # Searcher bind is deferred until after auto_reindex_if_needed so we never
+        # cache a HybridSearcher whose embedder was just nulled by clear_embedders().
         state = get_state()
         if (
             state.searcher is None
@@ -347,7 +353,6 @@ def _check_auto_reindex(
         ):
             state.current_project = project_path
             state.current_model_key = model_key_for_embedder
-            state.searcher = indexer
     else:
         indexer = get_index_manager(project_path, model_key=selected_model_key)
     chunker = MultiLanguageChunker(
@@ -368,6 +373,21 @@ def _check_auto_reindex(
         )
 
     reindexed = reindex_result.files_modified > 0 or reindex_result.files_added > 0
+
+    # Bind the local indexer as the cached searcher only if its embedder is still alive.
+    # clear_embedders() (called during needs_reindex paths) resets state.searcher=None AND
+    # replaces the pool entry with a fresh CodeEmbedder. The identity check (is embedder)
+    # confirms the pool still holds the same object we built indexer with — if clear_embedders
+    # ran, a new object will be in the pool and we skip the bind, letting get_searcher()
+    # construct a fresh HybridSearcher from the new embedder.
+    if (
+        config.search_mode.enable_hybrid
+        and model_key_for_embedder
+        and get_state().searcher is None
+        and get_state().embedders.get(model_key_for_embedder) is embedder
+    ):
+        get_state().searcher = indexer
+
     # Return stored model key for searcher cache consistency
     return reindexed, model_key_for_embedder
 

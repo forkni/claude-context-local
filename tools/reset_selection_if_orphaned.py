@@ -5,6 +5,7 @@ Reads CGW_PROJ_PATH from env (set by start_mcp_server.cmd before calling).
 Silent on the happy path; prints one [INFO] line when a reset occurs.
 Tracebacks propagate — any import error signals a real bug worth surfacing.
 """
+
 import json
 import os
 import sys
