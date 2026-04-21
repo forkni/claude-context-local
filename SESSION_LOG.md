@@ -516,6 +516,155 @@ Not covered (documented in `set_vram_limit()` docstring): FAISS GPU allocator an
 
 ---
 
+### 2026-04-11: Charlie CI Round 5, Python Style Audit, v0.10.1 Release
+
+**Primary Achievement**: Fixed 3 internal doc inconsistencies surfaced by Charlie CI round 5, implemented Python style guide audit recommendations 1-4 across 26 files, fixed a PEP 639 setuptools incompatibility, and shipped v0.10.1 via PR #18.
+
+#### Key Accomplishments
+- Round 5 (commit `8979257`): Fixed 3 of 4 Charlie findings — SKILL.md diagram positional-arg inconsistency → all named args, README `k≥5` scope → `k=10; cutoffs @5/@10`, `tool-index.md` Python `None` → "omit the field" guidance; skipped `performance.md` k-stability claim per user decision
+- Style audit (commit `53f8b34`): 4 recommendations implemented — ML shape/dtype docstrings on `embed_query`/`embed_chunks`, `-> None` on 17 private helpers across 14 files, expanded Args/Returns docstrings on 4 public `searcher.py` methods, no `Optional[X]` changes needed (all found occurrences were forward-string refs or docstring text)
+- Version bump (commit `aaeade5`): `pyproject.toml` `0.10.0` → `0.10.1`
+- PEP 639 fix (commit `d629a49`): removed deprecated `License :: OSI Approved :: Apache Software License` classifier that newer setuptools rejects when an SPDX `license` expression is present — this was blocking CI's `pip install -e .`
+- Merged PR #18 (`development → main`) and pushed tag `v0.10.1`
+
+#### Technical Details
+
+**Charlie round 5 verification**: Confirmed all 4 claims by reading the actual files before applying fixes. Claim 3 (`performance.md` k-stability over-assertion) was deferred by user; `performance.md` left untouched.
+
+**`Optional[X]` audit result**: All `Optional[...]` occurrences in the 9 target production files were forward-string refs (`Optional["CodeEmbedder"]`) or docstring text — none were real PEP 604-upgradeable annotations. The `search/hybrid_searcher.py` forward-string refs remain deferred (requires `from __future__ import annotations`).
+
+**`-> None` skips**: `tree_sitter.py::_get_chunking_config` returns `ChunkingConfig` (not `None`); `neural_reranker.py::_load_model` returns `AutoModel.from_pretrained()`. Agent correctly identified these and left them unannotated rather than annotating wrong.
+
+**CI failure**: Pre-existing issue where `setuptools>=77` enforces PEP 639 — rejects `License :: OSI Approved :: Apache Software License` classifier if `license = "Apache-2.0"` SPDX expression is present. Fixed in `d629a49` before merge.
+
+#### Files Modified
+- `.claude/skills/mcp-search-tool/SKILL.md` — named-arg consistency in Quick Start diagram + CRITICAL block
+- `.claude/skills/mcp-search-tool/references/tool-index.md` — `None` → "omit the field" guidance
+- `README.md` — `k≥5` → `k=10; cutoffs @5/@10` in 4 locations
+- `embeddings/embedder.py` — `embed_query`/`embed_chunks` shape/dtype docstrings; `_configure_cuda_allocator`/`_log_vram_usage` `-> None`
+- `search/searcher.py` — expanded docstrings on `search_by_file_pattern`, `search_by_chunk_type`, `find_similar_to_chunk`, `get_search_suggestions`
+- `search/metadata.py`, `search/config.py` — `-> None` on private helpers
+- `mcp_server/state.py`, `mcp_server/resource_manager.py` — `-> None`
+- `chunking/languages/base.py` — `traverse()` typed params + `-> None`
+- `graph/relationship_extractors/base_extractor.py`, `constant_extractor.py`, `enum_extractor.py`, `exception_extractor.py`, `context_manager_extractor.py`, `default_param_extractor.py`, `instantiation_extractor.py` — `-> None` on extract/reset methods
+- `merkle/merkle_dag.py` — nested `add_to_nodes` `-> None`
+- `pyproject.toml` — version `0.10.1`, removed deprecated license classifier
+
+#### Commits
+- `8979257` — docs: address Charlie CI round 5 review on mcp-search-tool skill and README
+- `53f8b34` — style: address Python style guide audit recommendations 1-4
+- `aaeade5` — chore: bump version to 0.10.1
+- `d629a49` — fix: remove deprecated license classifier (PEP 639 setuptools compat)
+
+#### Release
+- PR forkni/claude-context-local#18 merged → `main` (merge commit `d577dc3`)
+- Tag `v0.10.1` pushed to remote
+
+---
+
+### 2026-04-11: Charlie CI Rounds 2–4 — mcp-search-tool Doc Precision Hardening
+
+**Primary Achievement**: Resolved 18 additional Charlie CI review findings across Rounds 2, 3, and 4, hardening mcp-search-tool skill documentation for accuracy, benchmark-scope honesty, boolean-literal correctness, and stable-surface / implementation-notes separation.
+
+#### Key Accomplishments
+- Round 2 (commit `cb38861`): Fixed 7 findings — overclaim scoping, unsubstantiated miss-rate claim, Common Mistakes table invalid examples, `k=5` baseline in 2-step workflow, file:line reference removal from `advanced-features.md`, bare `search_code` → `code-search:search_code` naming
+- Round 3 (commit `054f79c`): Fixed 5 findings — residual "always present" in `performance.md` Result Reliability, misleading SKILL.md link label ("Full parameter reference" → tool-index.md), `advanced-features.md` internal refs fenced into "Implementation notes (may drift — 2026-04-11)" blockquotes, "known registry inconsistency" → actionable usage note, README Highlights bullets scoped to SSCG benchmark
+- Round 4 (commit `a609b4b`): Fixed 6 findings — BM25 Quick Start row missing `k=5`, `True`/`False` Python booleans → `true`/`false` JSON booleans everywhere in skill tree, pseudocode disclaimer notes added to SKILL.md and parameters.md, ambiguous "neural rerank gated by ego_graph_enabled" clarified with code verification, `_k10_` filename vs `@5` metric ambiguity in performance.md, tool-index.md stripped of pseudo-signatures to become pure catalog with link to parameters.md, README Search Modes table scoped to SSCG benchmark
+
+#### Technical Details
+
+**Charlie CI verification pattern used throughout**: before applying any fix, grep/read the actual file to confirm the claim. Two findings required no change:
+- Round 2 AN1 (boolean style): already consistent — no change needed
+- Round 4 neural reranker gating: confirmed via `hybrid_searcher.py:688-698` that the secondary post-expansion rerank IS gated by `ego_graph_enabled` — but the primary `RerankingEngine` is independent. Clarified text to distinguish the two rather than removing the note.
+
+**Boolean standardization**: complete sweep of all user-facing call snippets, parameter default columns, control examples, and table entries across all 5 skill files. Exception: Python config references inside "Implementation notes (may drift)" blockquotes retained Python syntax (`True`, `False`) since they explicitly describe internal Python dataclass values.
+
+**tool-index.md as pure catalog**: removed all pseudo-signatures like `switch_project(path)`, `index_directory(path, incremental=True)`, `delete_project(path, force=False)` from table entries. Added catalog disclaimer and forward-link to `parameters.md` for authoritative schema.
+
+#### Files Modified
+- `.claude/skills/mcp-search-tool/SKILL.md` — `k=5` added to BM25 Quick Start row; `True`→`true` for `ego_graph_enabled`; pseudocode disclaimer note above Quick Start
+- `.claude/skills/mcp-search-tool/references/advanced-features.md` — all user-facing booleans → JSON style; ego-graph neural rerank gating clarified; internal file-symbol refs fenced into "Implementation notes (may drift — 2026-04-11)" blockquotes on all 3 subsections
+- `.claude/skills/mcp-search-tool/references/parameters.md` — pseudocode disclaimer note at top; all default-column booleans → `true`/`false`; `ego_graph_enabled=true` in example
+- `.claude/skills/mcp-search-tool/references/performance.md` — `Hit@5=100%` scoped to benchmark; k-clarification note above Source files explaining `k=10` run vs `@5`/`@10` cutoffs
+- `.claude/skills/mcp-search-tool/references/tool-index.md` — stripped pseudo-signatures from all table entries; catalog disclaimer added; boolean defaults → `true`/`false`; "known registry inconsistency" → usage guidance
+- `README.md` — Highlights bullets scoped to SSCG benchmark with date/dataset/k; Search Modes table column renamed "SSCG Quality (2026-04-10, k≥5)" with scope disclaimer above table
+
+#### Commits
+- `cb38861` — docs: address Charlie CI round 2 review on mcp-search-tool skill
+- `054f79c` — docs: address Charlie CI round 3 review on mcp-search-tool skill and README
+- `a609b4b` — docs: address Charlie CI round 4 review on mcp-search-tool skill and README
+
+#### PR
+- forkni/claude-context-local#18 — `development → main`, open, awaiting Charlie CI re-review after `a609b4b`
+
+---
+
+### 2026-04-11: mcp-search-tool Skill Restructure, Benchmark Doc Alignment & Charlie CI Round 1
+
+**Primary Achievement**: Restructured the `mcp-search-tool` skill per Anthropic progressive-disclosure guidelines, aligned README/skill benchmark numbers with the 2026-04-10 three-mode SSCG data, opened PR #18 for Charlie CI review, and corrected all 7 review findings in a follow-up commit — including a real doc-vs-code bug where I had conflated three separate graph subsystems.
+
+#### Key Accomplishments
+- Trimmed `.claude/skills/mcp-search-tool/SKILL.md` from 372 → ~140 lines by moving reference content into a new `references/` subdirectory (progressive disclosure)
+- Created 4 new reference files: `tool-index.md`, `parameters.md`, `advanced-features.md`, `performance.md`
+- Added missing skill frontmatter (`user-invocable`, `argument-hint`, `allowed-tools` with `code-search:` MCP prefix)
+- Replaced stale SSCG benchmark numbers (v0.9.2: `MRR=0.94`, `Recall@4=92.3%`, `12/13`) across README and skill with 2026-04-10 three-mode data
+- Updated `.gitignore` with new exceptions to track `references/` subdirectory while ignoring non-`.md` files
+- Moved 2 erroneously-on-`main` docs commits to `development` via cherry-pick + reset, then pushed and opened PR forkni/claude-context-local#18 for Charlie CI auto-review
+- Addressed all 7 Charlie CI findings in commit `22bb31c` — every finding was verified against source before applying
+
+#### Technical Details
+
+**Skill restructure** (Anthropic progressive-disclosure pattern):
+- `SKILL.md` body: On Activation ritual, Purpose, Critical behavioral rule, Quick Start decision tree, Common Mistakes table, 19-tool compact summary, Troubleshooting, Status Check workflow
+- `references/tool-index.md` — full 19-tool inventory with parameters
+- `references/parameters.md` — deep parameter tables for `search_code`, `find_connections`, `find_path`
+- `references/advanced-features.md` — Multi-Hop / Ego-Graph / Centrality / BM25 / A1–A2–B1
+- `references/performance.md` — canonical 2026-04-10 three-mode benchmark table
+
+**Branch repair** (commits landed on wrong branch initially):
+1. `git checkout development && git reset --hard origin/main` (fast-forward, 5e072dd is ancestor of bd3798f via merge)
+2. `git cherry-pick 5fe963c f353a41` — replay docs commits onto development with new hashes
+3. `git checkout main && git reset --hard origin/main` — drop unpushed docs commits from main (preserved on development)
+4. `push_validated.sh` → fast-forward from stale origin/development (8bb2aed)
+5. `create_pr.sh --non-interactive` → PR #18 opens, Charlie auto-reviews
+
+**Charlie CI review findings — all verified against code, all fixed**:
+
+| # | Finding | Verification | Fix |
+|---|---|---|---|
+| 1 | Default `k=4` contradicts `Hit@5=100%` claim | `mcp_server/tool_registry.py:40` → `"default": 4` | Added "use k=5 baseline" rule to SKILL.md Purpose + Workflow; k=5 in Quick Start examples; annotated `k` parameter row in parameters.md |
+| 2 | `allowed-tools` lists 10 of 19 documented tools | Visible frontmatter vs. body | Expanded to all 19 `code-search:` tools |
+| 3 | `argument-hint` advertises `status` but no Status section exists | Confirmed missing | Added `## Status Check` section: 4-tool sequence (`list_projects` → `get_index_status` → `get_search_config_status` → `get_memory_status`) with summary format |
+| 4 | `chunk_type="function"` for "class/function definition" excludes classes | Review correct | Split into two Quick Start lines — one for function, one for class |
+| 5 | **"Multi-hop always-on" vs "ego_graph opt-in" contradiction** | Subagent code-trace: there are **three** distinct subsystems — always-on `MultiHopSearcher` (`hybrid_searcher.py:650`, tags `multi_hop`/`graph_hop`), **opt-in** ego-graph expansion (`tool_registry.py:120-124`, default `False`, gated at `hybrid_searcher.py:675`), always-on centrality reranking (`search_handlers.py:1062-1098`) | Rewrote `advanced-features.md` to separate all three with file:line citations; added `source`-value disambiguation table; updated parameters.md Source values line with all 4 possible values |
+| 6 | Hard-coded `F:/RD_PROJECTS/...` path in benchmark rerun command | Confirmed | Replaced with `<project-path>` placeholder + note that `.` works for self-evaluation |
+| 7 | `` ```python `` fences around `code-search:...(...)` pseudo-calls aren't valid Python | 4 fences confirmed | Changed all 4 from `python` → `text` |
+
+**Key finding on #5**: my original text said *"Multi-Hop Search: Always-on. Cannot be disabled, but controlled via `ego_graph_*` parameters."* This conflated three unrelated subsystems. The subagent traced the actual code and established:
+- `MultiHopSearcher` is always-on (`hybrid_searcher.py:650`), tags expansion chunks `source="multi_hop"` (semantic) or `source="graph_hop"` (call/import graph)
+- Ego-graph is **opt-in** — default `ego_graph_enabled=False` at `tool_registry.py:120-124`, gate at `hybrid_searcher.py:675`, post-expansion rerank at `:688`
+- Centrality reranking runs **independent** of ego-graph when `graph_storage` exists (`search_handlers.py:1062-1098`)
+
+#### Files Modified
+- `README.md` — SSCG benchmark section (L31, L33, L224–226, L418–427) updated with 2026-04-10 three-mode data
+- `.gitignore` — new exceptions for `.claude/skills/mcp-search-tool/references/` subdirectory
+- `.claude/skills/mcp-search-tool/SKILL.md` — rewritten body 372 → ~140 lines; added frontmatter (user-invocable, argument-hint, allowed-tools with 19-tool code-search: prefix); added Status Check section; k=5 baseline rule
+- `.claude/skills/mcp-search-tool/references/tool-index.md` — new (19-tool inventory)
+- `.claude/skills/mcp-search-tool/references/parameters.md` — new (deep parameter tables for 3 essential tools)
+- `.claude/skills/mcp-search-tool/references/advanced-features.md` — new; rewritten Multi-Hop / Ego-Graph / Centrality separation after Charlie review
+- `.claude/skills/mcp-search-tool/references/performance.md` — new; placeholder for project-path
+
+#### Commits
+- `5fe963c` — docs: update SSCG benchmarks, restructure mcp-search-tool skill with references/
+- `f353a41` — docs: add mcp-search-tool references/ and update gitignore exceptions
+- `b5e12a4`, `d11739a` — cherry-pick hashes (same content, cherry-picked onto development)
+- `22bb31c` — docs: address Charlie CI review on mcp-search-tool skill (+77 −27 across 4 files)
+
+#### PR
+- forkni/claude-context-local#18 — `development → main`, open, awaiting Charlie CI re-review after `22bb31c`
+
+---
+
 ### 2026-04-10: SSCG Three-Mode Evaluation & Golden Dataset Fix
 
 **Primary Achievement**: Completed three-mode (hybrid/BM25/semantic) SSCG evaluation via live MCP server, identified 4 broken golden labels and 3 oversized expected sets, fixed all issues — benchmark now passes all thresholds with 13/13 Hit Rate across all modes.
