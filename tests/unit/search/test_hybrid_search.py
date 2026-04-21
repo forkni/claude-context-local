@@ -894,3 +894,48 @@ class TestCallEdgeResolution:
         import shutil
 
         shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+
+@patch("search.hybrid_searcher.CodeIndexManager")
+@patch("search.hybrid_searcher.BM25Index")
+def test_search_accepts_per_call_weights(mock_bm25, mock_dense):
+    """Per-call bm25_weight/dense_weight flow through to SearchExecutor without mutating instance state."""
+    import tempfile
+
+    temp_dir = tempfile.mkdtemp()
+    try:
+        # Make indices appear ready
+        mock_bm25.return_value.is_empty = False
+        mock_dense_inst = Mock()
+        mock_dense_inst.ntotal = 10
+        mock_dense.return_value.index = mock_dense_inst
+
+        searcher = HybridSearcher(temp_dir)
+
+        exec_mock = Mock(return_value=[])
+        searcher.search_executor.execute_single_hop = exec_mock
+
+        with patch(
+            "search.hybrid_searcher._get_config_via_service_locator"
+        ) as mock_cfg:
+            cfg = Mock()
+            cfg.multi_hop.enabled = False
+            cfg.ego_graph.enabled = False
+            cfg.parent_retrieval.enabled = False
+            mock_cfg.return_value = cfg
+            searcher.search("test query", bm25_weight=0.9, dense_weight=0.1)
+
+        exec_mock.assert_called_once()
+        call_kwargs = exec_mock.call_args.kwargs
+        # Per-call weights forwarded
+        assert call_kwargs.get("bm25_weight") == 0.9
+        assert call_kwargs.get("dense_weight") == 0.1
+        # Instance state untouched
+        assert searcher.bm25_weight == 0.35
+        assert searcher.dense_weight == 0.65
+        assert searcher.search_executor.bm25_weight == 0.35
+        assert searcher.search_executor.dense_weight == 0.65
+    finally:
+        import shutil
+
+        shutil.rmtree(temp_dir, ignore_errors=True)

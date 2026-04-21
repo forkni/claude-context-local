@@ -9,9 +9,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.11.4] - 2026-04-21
+
+### Fixed
+
+- **Selection-reset one-liner SyntaxError** (`start_mcp_server.cmd:1037`, new helper `tools/reset_selection_if_orphaned.py`) — the embedded `python -c "..."` call that resets `project_selection.json` after clearing the last index for a path had a Python grammar error: an inline `if` compound statement after `;`-chained simple statements (Python forbids compound statements after `;`). The error was hidden by `2>nul` in earlier commits; `1b818b2` removed the suppression to surface real bugs and correctly exposed this one. Every `Clear Project Indexes` run since that refactor printed a SyntaxError traceback per cleared index, and the reset logic never ran — leaving stale `last_project_path` values in `project_selection.json`. Logic extracted to `tools/reset_selection_if_orphaned.py`: reads `CGW_PROJ_PATH` from env (already set at line 1023), checks selection first (cheap early-exit), short-circuits the projects-dir glob on first matching `project_info.json`. Also drops a latent filter bug where `Path(p.parent.name).exists()` checked a bare hash string against CWD instead of `projects_dir`
+
+---
+
+## [0.11.3] - 2026-04-19
+
+### Added
+
+- **Multi-select in "Clear Project Indexes" menu** (`start_mcp_server.cmd`, label `:clear_project_indexes`) — the prompt now accepts multiple selections separated by commas or spaces (e.g. `1,3`, `1 3`, `1, 3`). Useful when a project has multiple indexed model dimensions (e.g. BGE-M3 1024d + gte-modernbert 768d) that previously required re-entering the menu once per index. Duplicates are deduped (`1,1,3` → `1,3`); invalid tokens are warned about and skipped. Confirmation is `y/N` for a single selection (preserves existing muscle memory) and `YES` for 2+ selections — matched case-insensitively via `if /i`, consistent with the `:clear_all_indices` strong-confirm at line 1094. Sentinels `X` and `0` are honored only as the sole token — mixed inputs like `1,X` or `0,2` are rejected with an error and re-prompt
+
 ### Changed
 
-- No unreleased changes
+- **Locked-index auto-retry** (`start_mcp_server.cmd`, `:delete_one_index`) — when `shutil.rmtree` fails on a locked index directory, the script now automatically retries once with `ignore_errors=True` after a 2s wait instead of prompting per item. The previous per-item `Try force cleanup? (y/N)` prompt has been removed from the loop path; a single pre-loop "Make sure MCP server is NOT running" warning + netstat check runs once up front. Failed items are accumulated and listed in the post-loop `=== Clear Summary ===` block
+- **Per-item delete body extracted to `:delete_one_index` subroutine** — called once per selected index from the outer `for /f` loop. Keeps non-delayed `%PROJECT_HASH%` expansion semantics identical to the pre-refactor single-select path; all four existing Python one-liners (index rmtree, force-retry rmtree, snapshot delete, selection reset) are reused verbatim
+
+### Fixed
+
+- **Multi-failure summary now prints one line per failure** (`start_mcp_server.cmd`, `:clear_project_indexes_summary`) — failures were previously accumulated in a `set` variable, which collapses to a single line because cmd variables cannot contain newlines. Failures are now written to `%TEMP%\mcp_fail_list.txt` (one `echo >> ...` per item) and displayed with `type` in the summary
+- **`%PROJECT_PATH%` no longer shell-interpolated into Python raw-string literals** (`start_mcp_server.cmd`, `:delete_one_index`) — paths with apostrophes could terminate the `r'...'` literal and inject arbitrary Python. The two affected one-liners (snapshot delete, selection reset) now receive the path via `os.environ['CGW_PROJ_PATH']`, which is set from `%PROJECT_PATH%` just before each python call and cleared (`set "CGW_PROJ_PATH="`) on `exit /b`
+- **`for /f` loops reading temp files now use `usebackq` and quoted paths** (`start_mcp_server.cmd`, `:clear_project_indexes`) — unquoted `%TEMP_PROJECTS%` / `%TEMP_SELECTED%` would silently break if `%TEMP%` contains spaces. Four sites updated to `"usebackq tokens=... delims=|" ... in ("%TEMP_PROJECTS%")` / `in ("%TEMP_SELECTED%")`
+- **Auto-retry `LAST_REASON` now attributed accurately** (`start_mcp_server.cmd`, `:delete_one_index`) — the retry path previously reported every first-attempt failure as `locked` in the summary, even when the actual cause was an `rmtree` error on a sub-path. `LAST_REASON` is now set tentatively to `rmtree error` when the first attempt fails and only overwritten to `locked` if the directory still exists after the auto-retry
+- **Auto-retry existence check no longer hardcodes `%USERPROFILE%\.claude_code_search`** (`start_mcp_server.cmd`, `:delete_one_index`) — the post-retry `if exist` check used a hardcoded path that ignored any customized `STORAGE_DIR`, which would have produced a false `[OK] Force cleanup successful` when the index actually still existed elsewhere. The check now calls `storage_manager.get_storage_dir()` and propagates the result via `sys.exit(0/1)` → `if errorlevel 1`
+- **Duplicate token input no longer double-processes** (`start_mcp_server.cmd`, `:clear_project_indexes`) — the tokenizer produced a deduped `!tokens!` string (bracket-tagged) but the resolver loop still iterated `!project_choice!` (raw input). Input like `1,1,3` wrote index `1` twice to `%TEMP_SELECTED%`, ran deletion twice, inflated `valid_count`, and could incorrectly escalate the single-item `y/N` confirmation to the multi-item `YES` prompt. A new plain `!dedup_choice!` variable is built alongside `!tokens!` and drives the resolver loop
+
+---
+
+## [0.11.2] - 2026-04-19
+
+### Fixed
+
+- **Request-scoped weight overrides no longer race under concurrent search** (`mcp_server/tools/search_handlers.py`, `search/hybrid_searcher.py`, `search/search_executor.py`) — `handle_search_code` previously mutated `searcher.bm25_weight`, `searcher.dense_weight`, and their `SearchExecutor` mirrors before `asyncio.to_thread`; concurrent requests could overwrite each other's intent-driven weights, causing nondeterministic RRF ranking. Weights are now threaded as per-call kwargs from `handle_search_code` → `HybridSearcher.search` → `_single_hop_search` → `SearchExecutor.execute_single_hop` → `RRFReranker.rerank_simple` (which already accepted per-call weights). Instance state is never mutated
+- **`SearchConfig` singleton no longer mutated per request** (`mcp_server/tools/search_handlers.py`) — `get_search_config()` returns a cached process-wide singleton; five sites in `handle_search_code` wrote to `search_config.ego_graph`, `search_config.ego_graph.min_similarity_threshold`, `search_config.parent_retrieval`, `search_config.multi_hop.edge_weights`, and `search_config.ego_graph.edge_weights` at request time. The handler now takes a single `copy.deepcopy` of the singleton before any mutations so all per-request changes stay request-local
+
+---
+
+## [0.11.1] - 2026-04-18
+
+### Added
+
+- **`CodeEmbedder.embed_queries_batch(queries)`** (`embeddings/embedder.py:1461-1513`) — batch query embedding in one model forward pass; reuses `_format_query_text` formatting and `embed_chunks` batching machinery. Infrastructure for future coalesced search; not yet wired into the hot path
+- **`NeuralReranker.rerank_batch(batch, top_k)`** (`search/neural_reranker.py`) — flattens all `(query, doc)` pairs across N queries into one `CrossEncoder.predict` call, splits results back per-query using offsets. Infrastructure for future batched reranking; not yet wired into the hot path
+- **Batched FAISS search** (`search/faiss_index.py`) — `FaissVectorIndex.search()` now accepts `[N, d]` input and returns `[N, k]` output, preserving the batch dimension when N > 1. Adds a `query.copy()` guard before `faiss.normalize_L2` to prevent in-place mutation of caller-owned arrays
+
+### Changed
+
+- **`NeuralReranker.model` lazy-load** (`search/neural_reranker.py`) — now uses double-checked locking with `threading.Lock`. Previously, two concurrent requests on a cold cache could both enter the bare `if self._model is None` branch and instantiate duplicate `CrossEncoder` objects (duplicate VRAM allocation, wasted load latency). Mirrors the existing locking pattern in `JinaRerankerV3`
+- **Extracted `_format_query_text(query, model_config)`** (`embeddings/embedder.py`) — replaces a ~40-line instruction-mode formatting ladder that was duplicated between `embed_query` and `embed_queries_batch`. Future `instruction_mode` branches can no longer silently diverge between single-query and batch paths
+- **Extracted `_tensor_to_numpy(emb)`** (`embeddings/embedder.py`) — deduplicates the tensor→numpy conversion used at two call sites
+- **Extracted `_apply_rerank_score(candidate, score)`** (`search/neural_reranker.py`) — the `original_score`/`reranker_score`/`candidate.score = float(score)` triple previously appeared 5× in the file; now called from both `rerank` and `rerank_batch`
+
+### Fixed
+
+- **`embed_queries_batch` empty-batch shape** (`embeddings/embedder.py`) — empty input now returns `np.empty((0, dim), dtype=float32)` matching the `(N, embedding_dim)` contract; previously returned `(0,)` which would raise `IndexError` on `.shape[1]` or FAISS ingestion
+- **Query cache key includes `instruction_mode` and `query_instruction`** (`embeddings/query_cache.py`, `embeddings/embedder.py`) — cache keys in both `embed_query` and `embed_queries_batch` now incorporate these fields; previously a query cached in `"custom"` mode could be returned to a `"prompt_name"` caller with the wrong instruction prepended. `embed_query` and `embed_queries_batch` now share cache entries correctly when called with identical configs
+- **Search handlers no longer block the event loop** (`mcp_server/tools/search_handlers.py`) — 5 blocking search calls are now wrapped in `asyncio.to_thread`. Previously, every inbound `search_code` / `find_path` / `find_connections` call held the event loop for the full pipeline (embed → FAISS → BM25 → RRF → neural rerank), serializing N concurrent MCP requests. The GIL-releasing FAISS and CrossEncoder C/CUDA sections now run truly in parallel. (`mcp_server/tools/index_handlers.py` already had its 2 index wraps from commit `2e1e4a2` on main; those are not part of this PR diff)
+
+### Removed
+
+- **`SearchBatchCoordinator`** (`mcp_server/search_coordinator.py`, ~200 lines) — deleted along with `ApplicationState.search_coordinator`, the startup block in `server.py`, and the `concurrency` section of `search_config.json`. The coordinator's batched fast-path always raised `TypeError` (because `HybridSearcher.search` does not accept `query_embedding`), which was silently swallowed by `except Exception` — every request fell through to serial execution. It was pure overhead with zero benefit
+
+---
+
+## [0.11.0] - 2026-04-16
+
+### Added
+
+- **ONNX Runtime backend** (`embeddings/onnx_loader.py`, `embeddings/onnx_wrapper.py`) — opt-in inference path (`performance.use_onnx`) that loads eligible models via `ORTModelForFeatureExtraction` with the `CUDAExecutionProvider`. Auto-converts HuggingFace models to ONNX on first use, caches under `~/.cache/huggingface/hub/onnx/`. Supported pooling strategies: `cls`, `mean` (declared via `onnx_pooling` in `MODEL_REGISTRY`). Backend selection is per-model via `_should_use_onnx()` in `embeddings/model_loader.py`
+- **ORT CUDA arena cap** (`performance.onnx_gpu_mem_limit`, default `true`) — constrains ORT's CUDAExecutionProvider memory arena via the `gpu_mem_limit` provider option, using the same effective VRAM cap as the PyTorch `set_per_process_memory_fraction()` path. Prevents WDDM shared-memory spillover on Windows when external processes (browsers, games) hold GPU memory. Check `[ONNX_VRAM]` log lines for the computed cap
+- **BFCArena OOM recovery** (`CodeEmbedder.embed_chunks`) — when ORT raises a `BFCArena` OOM, the embedder now halves the dynamic batch size and retries (same flow as PyTorch `torch.cuda.OutOfMemoryError`). Detection uses `isinstance(e, torch.cuda.OutOfMemoryError)` with a string fallback for ORT-specific errors (`"bfcarena"`, `"available memory" + "smaller than requested"`)
+- **`onnx_supported` registry flag** — opt-out field on `MODEL_REGISTRY` entries whose upstream pooling is not representable in `onnx_wrapper.py` (currently `cls` / `mean` only). Set on `BAAI/bge-code-v1` (`lasttoken`) to prevent silent semantic drift. Gate lives in `_should_use_onnx()`
+- **Per-model activation measurement** (`ModelLoader._measure_activation_per_item`) — Tier-1 runtime measurement of peak VRAM delta per batch item via PyTorch memory stats (torch path) or NVML snapshots (ONNX path). Feeds dynamic batch sizing and replaces hardcoded per-model constants for models without explicit floors
+
+### Changed
+
+- **Default embedding pool: lightweight-speed** — `search_config.json` ships with `routing.multi_model_pool: "lightweight-speed"` (`BAAI/bge-m3` + `Alibaba-NLP/gte-modernbert-base`) and `routing.default_model: "bge_m3"`. Targeted at 8 GB laptop GPUs with zero shared-memory spillover under the ORT cap. Existing users with Qwen3 + BGE-Code indexes must re-index when switching pools
+- **Default reranker: `Alibaba-NLP/gte-reranker-modernbert-base`** — replaces `BAAI/bge-reranker-v2-m3` in the default config. Lighter VRAM footprint, comparable quality on the SSCG benchmark
+- **dtype-aware activation estimate** (`estimate_activation_gb_from_config`) — reads `config.torch_dtype` and uses 4 bytes for fp32 / 2 bytes for fp16/bf16. Previously hardcoded 2 bytes; fp32 models (rare in embeddings) were 2× under-estimated
+- **ORT-aware activation floors** (`MODEL_ACTIVATION_COST_OVERRIDES_ONNX`) — empirically calibrated per-item floors for BGE-M3 (0.28 GB) and GTE-ModernBERT (0.25 GB) prevent Tier-1 warmup undercounting (single-op peaks that warmup batches miss) from causing OOM at real batch sizes
+- **`_measure_activation_per_item` accepts `cuda:N`** — previously the device gate only accepted bare `"cuda"`; `cuda:0`/`cuda:1` silently skipped measurement and fell through to lower tiers
+
+### Fixed
+
+- **Duplicated ORT provider-options block** (`embeddings/onnx_loader.py`) — two near-identical 54-line blocks computed the same `provider_options`; only the second reached `from_pretrained` because the first was reset to `None`. The dead block has been removed
+- **OOM type detection** (`CodeEmbedder.embed_chunks`) — replaces string-only `"out of memory"` substring check with `isinstance(e, torch.cuda.OutOfMemoryError)` + a dedicated ORT BFCArena string fallback. Non-OOM `RuntimeError`s now propagate correctly without triggering batch halving
+- **`validate()` docstring** (`tools/convert_onnx.py`) — previously claimed "max cosine diff < 0.001"; code computes `abs(pt - onnx).max()` on L2-normalised embeddings. Docstring updated to match
+- **Narrowed exception tuples** (`CodeEmbedder`) — `(RuntimeError, ValueError, AssertionError, TypeError)` → `(RuntimeError, ValueError, AssertionError)` on paths where `TypeError` would mask real bugs
+- **Silent excepts logged at DEBUG** — VRAM-cap re-apply and ORT-cap compute paths previously swallowed errors silently. Now emit a DEBUG log line with the exception type for diagnostics
+
+### Breaking changes
+
+- **`handle_get_memory_status()` field rename**: GPU entries now expose `non_torch_gb` instead of `ort_untracked_gb`. The old name was misleading — the computed value is device-wide NVML usage minus per-process PyTorch allocations, which conflates other processes + drivers + ORT, not just ORT. Any external dashboard or monitor reading the old key will receive `None`
+
+### Security
+
+- **Transitive dependency patch upgrades** (4 CVEs fixed) — `pygments` 2.19.2 → 2.20.0 (CVE-2026-4539, ReDoS in `AdlLexer`), `pyjwt` 2.10.1 → 2.12.0 (CVE-2026-32597, missing `crit` header validation per RFC 7515), `python-multipart` 0.0.22 → 0.0.26 (CVE-2026-40347, DoS via large multipart preamble/epilogue), `requests` 2.32.5 → 2.33.0 (CVE-2026-25645, predictable tempfile name in `extract_zipped_paths()`)
+- **Orphan dependency cleanup** — uninstalled `cryptography` (no dependents after `authlib` was removed upstream; eliminated CVE-2026-34073 + CVE-2026-39892), `typer-slim` and `shellingham` (pulled in by unused `mcp[cli]`/`huggingface_hub[mcp]` extras). Venv dropped from 127 → 124 packages; open CVE count dropped from 8 → 2 (remaining: `sqlitedict` CVE-2024-35515 mitigated via JSON serialization in `metadata.py`; `transformers` CVE-2026-1839 blocked by `optimum-onnx <4.58.0` pin)
+- **pyproject.toml security-comments block refreshed** — stale `cryptography`/`authlib` references removed; new transitive-dep CVE fixes documented; last-audit date bumped to 2026-04-16
+
+### Tests
+
+- Unit test count: **1,987** (up from 1,985). Additions cover narrowed OOM string fallback propagation, ONNX `cuda:1` device parametrization, and key-rename assertions (`non_torch_gb` present, `ort_untracked_gb` absent)
 
 ---
 

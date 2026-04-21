@@ -246,7 +246,9 @@ def run_benchmark(
             # Line-overlap metrics (when line_lookup is available)
             line_metrics: dict[str, float] = {}
             if line_lookup:
-                golden_ranges = resolve_chunk_ids_to_ranges(expected_primary, line_lookup)
+                golden_ranges = resolve_chunk_ids_to_ranges(
+                    expected_primary, line_lookup
+                )
                 if golden_ranges:
                     retrieved_ranges = _extract_ranges_from_results(raw_results[:k])
                     line_metrics = {
@@ -360,12 +362,17 @@ def print_leaderboard(
             )
         if has_line:
             n = next(
-                (agg.get("line_recall_count") for run in runs
-                 if (agg := run.get("aggregate", {})) and "line_recall_count" in agg),
+                (
+                    agg.get("line_recall_count")
+                    for run in runs
+                    if (agg := run.get("aggregate", {})) and "line_recall_count" in agg
+                ),
                 None,
             )
             if n is not None:
-                print(f"  (LR/LP/LIoU = line-overlap metrics, averaged over {n} queries)")
+                print(
+                    f"  (LR/LP/LIoU = line-overlap metrics, averaged over {n} queries)"
+                )
         print(sep)
     else:
         width = 80

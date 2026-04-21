@@ -2,7 +2,7 @@
 
 ## Project: General-Purpose Semantic Search MCP Integration System
 
-## Initialized: 2025-09-22 | Updated: 2026-02-16
+## Initialized: 2025-09-22 | Updated: 2026-04-19
 
 This file maintains session memory and context for the Claude-context-MCP semantic search system development and improvements.
 
@@ -33,6 +33,637 @@ This file maintains session memory and context for the Claude-context-MCP semant
 ---
 
 ## Session History
+
+### 2026-04-19: v0.11.3 — Multi-Select in `:clear_project_indexes` Menu
+
+**Primary Achievement**: Extended the "Project Management → Clear Project Indexes" prompt in `start_mcp_server.cmd` to accept multiple project numbers separated by commas or spaces, clearing each sequentially in one operation. No Python/MCP changes — pure cmd batch refactor.
+
+#### Key Accomplishments
+- New prompt: `Select project number(s) (comma/space separated, 0 to cancel, X for all):` — accepts `1,3`, `1 3`, `1, 3`, ` 1 , 3 ` (whitespace tolerant); dedupes repeats (`1,1,3` → `1,3`)
+- Sentinel guard: `X` and `0` honored only as the sole token; mixed inputs like `1,X` / `0,2` rejected with error + re-prompt
+- Token validation: invalid numbers warned (`[WARNING] Ignoring invalid selection(s): 99`) and skipped; no-valid-selections exits with error
+- Single confirmation per invocation: `y/N` for 1 item (preserves existing muscle memory), literal `YES` for 2+ items (mirrors `:clear_all_indices` strong-confirm)
+- Pre-loop server check: netstat :8765 + "Make sure MCP server is NOT running" warning runs once up front, not per item
+- Per-item delete body extracted into `:delete_one_index` subroutine — keeps non-delayed `%PROJECT_HASH%` expansion semantics identical to pre-refactor
+- Auto-retry on locked index: on `rmtree` failure, script auto-retries once with `ignore_errors=True` after 2s wait; no interactive prompt in the loop
+- Post-loop `=== Clear Summary ===` block: `Cleared: N of M`, failed items listed with reasons, invalid tokens listed
+
+#### Technical Details
+cmd's `for %%i in (list)` splits on both commas and whitespace by default, so no manual splitter was needed. Dedup uses a bracket-tagged running string (`[1] [3] `) with `findstr /L /C:"[%%i]"` to avoid `1` matching `10`. The four existing Python one-liners from the single-select path (index rmtree, force-retry rmtree, snapshot delete, selection reset) are reused verbatim inside `:delete_one_index` — no duplicated logic.
+
+#### Bug Found & Fixed During Implementation
+Initial implementation suffered a cmd parser bug: line 1038 read `echo [OK] Index cleared, snapshot partial (non-critical)` inside a nested `) else (` block. cmd's parser counts unescaped `(` and `)` as block-nesting markers even inside `echo` arguments, which corrupted the outer `if/else` structure — both the success and error branches fired per item, producing `Cleared: 0 of 2` despite visible success messages. Fixed by escaping with `^`: `echo [OK] Index cleared, snapshot partial ^(non-critical^)`.
+
+#### Verification
+Tested end-to-end with input `3 4` (two `cuda-link` dims): both cleared, `Cleared: 2 of 2`, no spurious `[ERROR]` lines. Temp files `%TEMP%\mcp_projects.txt` and `%TEMP%\mcp_projects_selected.txt` correctly removed on all exit paths.
+
+#### Files Modified
+- `start_mcp_server.cmd` — label `:clear_project_indexes` rewritten; new `:delete_one_index` subroutine; new `:clear_project_indexes_summary` label
+- `pyproject.toml` — version `0.11.2` → `0.11.3`
+- `CHANGELOG.md` — `[0.11.3] - 2026-04-19` entry with Added/Changed sections
+
+#### Charlie CI Review Follow-Up (PR #27)
+
+Charlie flagged 10 items; four addressed in a patch commit on the same branch:
+
+**#4 — fail_list newline collapse**: `set "fail_list=..."` in cmd silently flattens all items to one line; switched to `>> "%TEMP_FAIL%"` per-item + `type "%TEMP_FAIL%"` in summary.
+
+**#7 — Python shell injection via PROJECT_PATH**: `r'%PROJECT_PATH%'` in the snapshot-delete and selection-reset one-liners would `SyntaxError` (or inject) on paths containing `'`. Both now receive the path via `os.environ['CGW_PROJ_PATH']`; env var set from `%PROJECT_PATH%` before each call and cleared on `exit /b`.
+
+**#6 — unquoted temp-file paths in `for /f`**: four sites updated to `"usebackq tokens=... delims=|" ... in ("%TEMP_PROJECTS%")` / `in ("%TEMP_SELECTED%")`.
+
+**#9 — bracket-dedup opaque**: added `REM Brackets prevent substring match (e.g. "1" matching "10" in "[10]")` above the `findstr` dedup line.
+
+Not fixed per Charlie's guidance: #1 `LAST_REASON=unknown` fallback (acceptable), #2 `1]` literal edge case (minimal real-world risk).
+
+#### Charlie CI Review Follow-Up Round 2
+
+Charlie posted a second review pass with 7 items. Three addressed:
+
+**#1 — `LAST_REASON=locked` inaccuracy**: previously every first-attempt failure was reported as `locked` even when the root cause was an `rmtree` error on a sub-path. Now set `LAST_REASON=rmtree error` tentatively when the first attempt fails, overwrite to `locked` only if the directory still exists after the auto-retry.
+
+**#3 — hardcoded `%USERPROFILE%\.claude_code_search` in retry check**: replaced the cmd `if exist` test with a Python call that uses `storage_manager.get_storage_dir()` and propagates via `sys.exit(0/1)` → `if errorlevel 1`. Honors any customized `STORAGE_DIR`.
+
+**#5 — `invalid_tokens` cross-label dependency**: added a linking `REM` comment above `:clear_project_indexes_summary` enumerating the vars it consumes from `:clear_project_indexes`.
+
+Not fixed: #2 (LAST_RESULT cross-block ordering — stylistic), #4 (case-sensitive token match — no bug), #6 (TEMP_FAIL Ctrl+C leftover — ephemeral `%TEMP%`), #7 (y/N `/i` case-insensitivity — confirmed intentional).
+
+#### Charlie CI Blocking Bug — Duplicate Token Double-Processing
+
+Charlie flagged a blocking bug on 2026-04-20: the tokenizer at line 867 built a deduped bracket-tagged `!tokens!` string for counting, but the resolver loop at line 911 still iterated `!project_choice!` (raw input). Input like `1,1,3` thus queued project `1` twice → deleted twice, inflated `valid_count` to 3 instead of 2, and could wrongly escalate the single-item `y/N` prompt to the multi-item `YES` prompt.
+
+Fix: built a plain (non-bracketed) `!dedup_choice!=1 3 ` alongside `!tokens!=[1] [3] ` inside the tokenizer loop; changed `for %%t in (!project_choice!)` → `for %%t in (!dedup_choice!)` in the resolver. `!tokens!` is still used for its `findstr /L /C:"[%%i]"` exact-match dedup check.
+
+The plan's documented test case `1,1,3 → dedup to 1,3 → Cleared: 2 of 2` was never actually verified in the initial PR; this commit makes the observed behavior match the plan.
+
+#### `/simplify` Cleanup
+
+Ran `/simplify` after all Charlie CI rounds resolved. Three parallel review agents (reuse, quality, efficiency) found two worthwhile changes:
+
+1. Removed three narrative WHAT-comments (`REM Get list of projects and store in temp file`, `REM Display projects`, `REM Process each selected project`) — the surrounding code already communicates the what.
+2. Consolidated five duplicated cancel paths (`del "%TEMP_PROJECTS%/TEMP_SELECTED%" 2>nul` + `goto project_management_menu`) into a single `:cancel_and_return` label at the end of the summary block.
+
+Python subprocess consolidation (2-5 interpreter spawns per cleared index, ~10-40s for bulk 10-item clear) flagged by efficiency agent — deferred to a separate issue to avoid wider blast radius at merge time.
+
+---
+
+### 2026-04-19: v0.11.2 Follow-Up — Lazy CoW, Shared Mocks, CI Fixes, Release
+
+**Primary Achievement**: Addressed all Charlie CI review findings, implemented lazy copy-on-write for SearchConfig, extracted shared test mock builders, and shipped the v0.11.2 GitHub Release.
+
+#### Key Accomplishments
+- Added `ego_graph.edge_weights` assertion to isolation test (Charlie round 2)
+- Documented `set_centrality_scores` as benign-race at `search_handlers.py:1096` with follow-up guidance
+- Implemented lazy copy-on-write (`mutable_config()` closure) — defers `deepcopy` until a mutation branch actually fires
+- Extracted `make_hybrid_searcher_mock`, `make_intent_decision_mock`, `make_app_config_mock` to `tests/fixtures/mcp_mocks.py`; removed inline duplicates from 3 test files
+- Fixed missing `_check_auto_reindex` patch in isolation test (Charlie round 3)
+- Replaced bare `fake_execute` function with `Mock(side_effect=...)` for call-count assertion (Charlie round 3)
+- Merged `development → main` via `merge_with_validation.sh` (direct mode, backup tag created, PR #26 auto-closed)
+- Cut `v0.11.2` GitHub Release via `gh release create` (no `release.yml` workflow exists — manual path)
+- Added `search_config.json` to `CGW_LOCAL_FILES` in `.cgw.conf:10`; memory saved with escalation options
+
+#### Technical Details
+`mutable_config()` is a closure capturing `config_singleton = get_search_config()` and `config_copy: SearchConfig | None = None`. On first call it deep-copies the singleton and caches it; subsequent mutation sites reuse the same copy. `effective_config` at handler exit picks `config_copy if config_copy is not None else config_singleton` — the zero-mutation path never pays the copy cost.
+
+`tests/fixtures/mcp_mocks.py` uses `Mock(spec=HybridSearcher)` to pass `is_ready` and `dense_index` shape checks in the handler without loading real models or FAISS indexes.
+
+#### Files Modified
+- `mcp_server/tools/search_handlers.py` — lazy CoW closure, centrality-race documentation comment
+- `tests/fixtures/mcp_mocks.py` — **new file**: shared mock builders
+- `tests/unit/mcp_server/test_search_handlers_isolation.py` — `ego_graph.edge_weights` assertion, `_check_auto_reindex` patch, switched to shared mocks
+- `tests/fast_integration/test_critical_fixes.py` — switched to shared mocks
+- `tests/unit/search/test_hybrid_search.py` — `fake_execute` → `Mock(side_effect=...)`
+
+---
+
+### 2026-04-19: v0.11.2 Hotfix — search-handler concurrency races
+
+**Primary Achievement**: Fixed all request-scoped shared-state races in `handle_search_code` flagged by Charlie's second code review of PR #25.
+
+#### Root Cause
+
+`asyncio.to_thread` (added in v0.11.1) removed event-loop serialization of search calls. Two pre-existing mutation patterns became races:
+
+1. **Weight mutations**: `searcher.bm25_weight`, `searcher.dense_weight`, and their `SearchExecutor` mirrors were overwritten with per-request intent weights on a **shared** `HybridSearcher` instance. Concurrent requests could clobber each other's weights between assignment and the `to_thread` call, producing nondeterministic RRF ranking.
+2. **Config singleton mutations**: `get_search_config()` returns a process-wide cached singleton. Five sites in `handle_search_code` wrote to `search_config.ego_graph.*`, `search_config.parent_retrieval`, and `search_config.multi_hop.edge_weights` at request time — all racing with concurrent requests.
+
+#### Fix
+
+- **Weights**: threaded as per-call kwargs (`bm25_weight: float | None`, `dense_weight: float | None`) from `handle_search_code` → `HybridSearcher.search` → `_single_hop_search` → `SearchExecutor.execute_single_hop` → `RRFReranker.rerank_simple` (already accepted per-call weights). Four instance-mutation lines deleted.
+- **Config**: single `copy.deepcopy(get_search_config())` at the top of `handle_search_code`; all five mutation sites now write to the request-local copy. `import copy` added. Global admin path (`configure_search_mode` → `reset_searcher`) unaffected.
+
+#### Tests Added (3)
+
+- `tests/unit/search/test_hybrid_search.py::test_search_accepts_per_call_weights` — confirms weight kwargs propagate to `execute_single_hop` without touching instance attrs
+- `tests/unit/mcp_server/test_search_handlers_isolation.py::test_handle_search_code_does_not_mutate_config_singleton` — exercises all 5 mutation paths, asserts singleton unchanged
+- `tests/fast_integration/test_critical_fixes.py::test_concurrent_search_weight_isolation` — 5 concurrent calls with distinct weights, asserts each `searcher.search` call received its own `(bm25_weight, dense_weight)` pair as kwargs
+
+All 2081 unit + fast-integration tests pass.
+
+#### Files Modified
+
+- `search/search_executor.py` — `execute_single_hop` accepts `bm25_weight` / `dense_weight` kwargs; resolves with `or self.*` fallback
+- `search/hybrid_searcher.py` — same kwargs on `search()` and `_single_hop_search()`; plumbed through
+- `mcp_server/tools/search_handlers.py` — `import copy`; single deepcopy at handler entry; weight kwargs passed to `to_thread`; 4 mutation lines removed
+- `tests/unit/search/test_hybrid_search.py` — 1 new test
+- `tests/unit/mcp_server/test_search_handlers_isolation.py` — new file, 1 test
+- `tests/fast_integration/test_critical_fixes.py` — 1 new test
+- `CHANGELOG.md`, `SESSION_LOG.md`, `pyproject.toml` — docs + version bump
+
+---
+
+### 2026-04-18: v0.11.1 Release — concurrent search + embed_queries_batch fixes
+
+**Primary Achievement**: Merged PR #25 (`feat: concurrent search + docs alignment`) into `main` and cut the `v0.11.1` patch release.
+
+#### What Shipped
+
+- `asyncio.to_thread` wraps on 5 blocking search-handler calls (`mcp_server/tools/search_handlers.py`) — event loop no longer serializes concurrent MCP requests
+- `NeuralReranker` double-checked locking, `rerank_batch`, batched FAISS `[N, d] → [N, k]`, `embed_queries_batch`, helper extractions
+- `embed_queries_batch` empty-batch shape fix `(0,)` → `(0, dim)` (PR #25 review round 1)
+- Query cache key extended with `instruction_mode` + `query_instruction` in both `embed_query` and `embed_queries_batch` (PR #25 review round 1)
+- `np.stack` guard assert, `rerank_batch` in-place mutation docstring warning, prompt_name cache test, SESSION_LOG path scrub (PR #25 review round 2)
+- `SearchBatchCoordinator` deleted (~200 lines dead code)
+
+#### Commits
+
+| Hash | Message |
+|------|---------|
+| `2ba03f5` | feat: concurrent search — asyncio.to_thread wraps, NeuralReranker load lock, FAISS batched queries, embed/rerank helpers |
+| `26acb0e` | docs: align CHANGELOG, SESSION_LOG, and docs to 2ba03f5 concurrency changes |
+| `7ea488e` | docs: add 2026-04-18 documentation alignment session log entry |
+| `1b912de` | fix: embed_queries_batch empty shape (0,dim) + cache key includes instruction_mode/query_instruction (PR #25 review) |
+| `d438de5` | fix: assert no None slots before np.stack, rerank_batch in-place docstring, prompt_name cache test, scrub SESSION_LOG machine paths (PR #25 review round 2) |
+
+#### Release
+
+- Tag `v0.11.1` at merge commit on `main`
+- GitHub Release: <https://github.com/forkni/claude-context-local/releases/tag/v0.11.1>
+
+---
+
+### 2026-04-18: PR #25 Review Response — embed_queries_batch Bug Fixes
+
+**Primary Achievement**: Addressed two bugs flagged in code review of PR #25 (`feat: concurrent search + docs alignment`).
+
+#### Bugs Fixed
+
+- **Empty-batch shape** (`embeddings/embedder.py:embed_queries_batch`) — `np.empty((0,), ...)` replaced with `np.empty((0, dim), ...)` where `dim = model_config.get("dimension", 768)`. Matches the `(N, embedding_dim)` contract; the old `(0,)` shape would raise `IndexError` on `.shape[1]` or FAISS ingestion
+- **Cache key scope** (`embeddings/query_cache.py`, `embeddings/embedder.py`) — `QueryEmbeddingCache._generate_cache_key` / `get` / `put` now accept `instruction_mode` and `query_instruction` kwargs (backward-compatible default `""`). Both `embed_query` and `embed_queries_batch` pass these fields, fixing the cross-mode collision where a `"custom"`-mode result could be returned to a `"prompt_name"` caller. The fix also makes `embed_query` + `embed_queries_batch` correctly share cache entries for identical queries under the same config
+
+#### Tests Added
+
+6 new unit tests in `tests/unit/embeddings/test_embedder.py`:
+- `TestEmbedQueriesBatch::test_empty_input_returns_2d_zero_shape`
+- `TestEmbedQueriesBatch::test_single_query_shape`
+- `TestEmbedQueriesBatch::test_multi_query_shape`
+- `TestCacheKeyInstructionMode::test_key_differs_across_instruction_modes`
+- `TestCacheKeyInstructionMode::test_same_mode_same_key`
+- `TestCacheKeyInstructionMode::test_embed_query_and_batch_share_cache`
+
+All 59 embedder tests and 740 search tests pass.
+
+#### Files Modified
+
+- `embeddings/query_cache.py` — extend `_generate_cache_key`, `get`, `put`
+- `embeddings/embedder.py` — shape fix + cache kwargs in `embed_query` + `embed_queries_batch`
+- `tests/unit/embeddings/test_embedder.py` — 6 new tests
+- `CHANGELOG.md` — Fixed entries under `[Unreleased]`
+- `SESSION_LOG.md` — this entry
+
+---
+
+### 2026-04-18: Documentation Alignment Audit and Update
+
+**Primary Achievement**: Audited all documentation, the MCP search-tool skill, and the user memory store for drift from commit `2ba03f5`, then executed a full alignment pass across 7 artifacts plus MEMORY.md seeding.
+
+#### Key Accomplishments
+
+- **Documentation audit** (3-agent parallel exploration) — found 14+ drift points across `CHANGELOG.md`, `SESSION_LOG.md`, `docs/INSTALLATION_GUIDE.md`, `docs/CLAUDE_MD_TEMPLATE.md`, `docs/VERSION_HISTORY.md`, the MCP search-tool skill, and the user memory store; cross-checked against actual code, config, and benchmark files to separate real drift from audit false-positives
+- **CHANGELOG.md** — populated empty `[Unreleased]` section with full 2ba03f5 surface (Added: `embed_queries_batch`, `rerank_batch`, batched FAISS; Changed: load lock, extracted helpers; Fixed: `asyncio.to_thread` wraps; Removed: `SearchBatchCoordinator`)
+- **SESSION_LOG.md** — added 2026-04-18 entry for Part 1 + Part 1.5 concurrency work; updated header date
+- **`docs/INSTALLATION_GUIDE.md:858`** — "15 MCP tools" → "19"
+- **`docs/CLAUDE_MD_TEMPLATE.md:49`** — "Available MCP Tools (18)" → "(19)"
+- **`docs/VERSION_HISTORY.md`** — replaced stale SSCG MRR=0.94 / Recall@4=0.89 (12/13) with canonical numbers from `evaluation/benchmark_results/` (BM25 MRR 0.846, Hybrid R@10 0.833, all modes 13/13 Hit@5); updated header date
+- **MCP search-tool skill** (`~/.claude/skills/mcp-search-tool/SKILL.md`, outside repo) — added "Concurrent Search" section explaining parallel `search_code` calls are safe/efficient post-2ba03f5 via `asyncio.to_thread`
+- **MEMORY.md seeded** — created 6 memory files + index under `~/.claude/projects/<project>/memory/` (outside repo)
+
+#### Audit Items Verified Clean (No Changes Made)
+
+- `README.md` test count — 1,987 is correct (audit agent had only counted 3 of 6 `tests/unit/` subdirectories)
+- `docs/ADVANCED_FEATURES_GUIDE.md` pool default — already correctly states `lightweight-speed` as default
+- `references/performance.md` benchmark data — 2026-04-10 three-mode data is canonical
+- `references/tool-index.md` EmbeddingGemma / `c2llm` key — already consistent
+- SKILL.md reranker name — no specific reranker model name stated in any skill file
+
+#### Files Modified
+
+- `CHANGELOG.md` — populated `[Unreleased]` with 2ba03f5 content
+- `SESSION_LOG.md` — 2026-04-18 entry + header date
+- `docs/INSTALLATION_GUIDE.md` — "15" → "19" MCP tools
+- `docs/CLAUDE_MD_TEMPLATE.md` — "(18)" → "(19)"
+- `docs/VERSION_HISTORY.md` — SSCG numbers + header date
+- MCP search-tool skill (`~/.claude/skills/mcp-search-tool/SKILL.md`, outside repo) — Concurrent Search section
+- User memory store (`~/.claude/projects/<project>/memory/`, outside repo) — MEMORY.md index + 6 memory files
+
+#### Commits
+
+| Commit | Description |
+|--------|-------------|
+| `26acb0e` | docs: align CHANGELOG, SESSION_LOG, and docs to 2ba03f5 concurrency changes |
+
+---
+
+### 2026-04-18: Concurrency Fix — Part 1 + Part 1.5 (commit 2ba03f5)
+
+**Primary Achievement**: Resolved the primary concurrency pain — 5+ parallel MCP `search_code` calls serializing on the event loop and racing on cold-start reranker load. Landed via commit `2ba03f5` on `development` branch.
+
+#### Key Accomplishments
+
+- **Event loop no longer blocks on search work** — 5 `asyncio.to_thread` wraps added to `mcp_server/tools/search_handlers.py`. The GIL-releasing FAISS and CrossEncoder C/CUDA sections now run truly in parallel under concurrent MCP requests. (Note: `mcp_server/tools/index_handlers.py` already had 2 wraps from commit `2e1e4a2` on main; those are not part of this work)
+- **Cold-start reranker race eliminated** — `NeuralReranker.model` property now uses double-checked locking with `threading.Lock`, mirroring `JinaRerankerV3`. Live-verified: 6 concurrent cold-start queries produced exactly 1 `Loading reranker model` and 1 `Reranker loaded on cuda`
+- **FAISS batched-query support** — `FaissVectorIndex.search()` extended to accept `[N, d]` and return `[N, k]`; added `query.copy()` guard before `faiss.normalize_L2` to prevent in-place mutation
+- **Dead `SearchBatchCoordinator` deleted** (`mcp_server/search_coordinator.py`, ~200 lines) — its batched fast-path always raised `TypeError` due to signature mismatch with `HybridSearcher.search` and was silently swallowed by `except Exception`. Removed along with `ApplicationState.search_coordinator`, startup block in `server.py`, and `concurrency` section of `search_config.json`
+- **Extracted helpers** — `_format_query_text` + `_tensor_to_numpy` in `embeddings/embedder.py`; `_apply_rerank_score` in `search/neural_reranker.py`
+- **New batch APIs** — `CodeEmbedder.embed_queries_batch` and `NeuralReranker.rerank_batch` as infrastructure for future coalescing (not yet wired into the hot path)
+- **1,987 unit tests pass** — zero regressions
+
+#### Live Verification
+
+MCP debug stream (server start 09:39:34, burst 09:43:39–09:44:21): 10 tool calls (6 `search_code`, 2 `find_path`, 2 `find_connections`); 22 `Reranked N candidates → K results` log lines; exactly 1 `Loading reranker model` + 1 `Reranker loaded on cuda`; 0 `Traceback`, 0 coordinator references.
+
+#### Files Modified
+
+- `mcp_server/tools/search_handlers.py` — 5 `asyncio.to_thread` wraps
+- `mcp_server/tools/index_handlers.py` — 2 `asyncio.to_thread` wraps
+- `search/neural_reranker.py` — `_load_lock`, `_apply_rerank_score`, `rerank_batch`
+- `search/faiss_index.py` — batched search support, normalize_L2 mutation guard
+- `embeddings/embedder.py` — `_format_query_text`, `_tensor_to_numpy`, `embed_queries_batch`
+- `SESSION_LOG.md` — this entry
+
+#### Commits
+
+| Commit | Description |
+|--------|-------------|
+| `2ba03f5` | feat: asyncio.to_thread wraps, batched FAISS/reranker APIs, load lock, delete dead SearchBatchCoordinator |
+
+---
+
+### 2026-04-16: Docs Alignment, PR #24 Merge, and v0.11.0 Release
+
+**Primary Achievement**: Closed the PR #24 cycle with documentation alignment, merged `pr/05-ci-review-fixes` into `development`, cut the `development → main` release merge, and published GitHub Release `v0.11.0` covering the full ONNX Runtime backend + VRAM robustness stack.
+
+#### Key Accomplishments
+
+- **Documentation alignment commit** (`f4fcf54`) — added `### Security` and `### Tests` sections to the `[0.11.0]` CHANGELOG entry (4 CVE patch upgrades, orphan cleanup, 1,987-test count); fixed package-count typo (`124 → 122` → `127 → 124`); synced README status line to `1,987+ passing tests`; bumped `docs/VERSION_HISTORY.md` test count (1,985 → 1,987, lines 9 + 46) and package count (125 → 124, line 10)
+- **Charlie CI items verified** — Item #6 (CodeRankEmbed pooling) confirmed clean: `search/config.py:83-94` carries no stale `onnx_pooling` key, defaults to `cls` via `.get("onnx_pooling", "cls")`, and ONNX path is blocked by `trust_remote_code=True` regardless. Item #7 (NVML guard for ONNX activation path) confirmed clean: `_get_nvml_used_bytes()` at `embeddings/model_loader.py:46-75` wraps the full `import pynvml` + NVML call chain in `try/except Exception: return 0`, so pynvml-missing or NVML-failure paths resolve to a safe `0.0` activation estimate with no exception propagation
+- **PR #24 merged into development** — `pr/05-ci-review-fixes → development` via `merge_with_validation.sh --non-interactive` with `CGW_TARGET_BRANCH="development"` env override (script default targets `main`). Merge commit `07d8da3`, backup tag `pre-merge-backup-20260416_225022`; PR auto-closed by GitHub on push, state = `MERGED`
+- **`development → main` release merge** — 41-commit merge via `merge_with_validation.sh --non-interactive` using default config (`CGW_SOURCE_BRANCH=development`, `CGW_TARGET_BRANCH=main`). Merge commit `60ba0ba`, backup tag `pre-merge-backup-20260416_225317`. Brought the full ONNX Runtime backend stack (PR #04) + CI review follow-ups (PR #05) + docs into `main` in one merge commit
+- **v0.11.0 release published** — annotated tag `v0.11.0` created at `60ba0ba` via `create_release.sh v0.11.0 --push --non-interactive`; GitHub Release published at `https://github.com/forkni/claude-context-local/releases/tag/v0.11.0` with full `[0.11.0]` CHANGELOG body as release notes (no `release.yml` workflow exists, so `gh release create --verify-tag --notes-file` was used manually)
+
+#### Technical Details
+
+The session began in plan mode resumed from the prior conversation's summarization boundary. Working-tree state at resume: `pr/05-ci-review-fixes` with two uncommitted doc edits (README.md + CHANGELOG.md). A read-only audit revealed three remaining inconsistencies: (1) a `124 → 122` package-count claim that did not match the actual `.venv/Scripts/pip list` count of 124 (true drop was 127 → 124 after removing `cryptography`, `typer-slim`, `shellingham`); (2) `docs/VERSION_HISTORY.md` lines 9 + 46 still citing `1,985 unit tests`; (3) line 10 still citing `125 packages`.
+
+The release flow required one detour: the first invocation of `merge_with_validation.sh` from branch `development` targeted `main` (per `.cgw.conf` defaults), not the intended PR merge target. The fix was to switch back to `pr/05-ci-review-fixes` and run with an inline env override `CGW_TARGET_BRANCH=development`.
+
+The `create_release.sh` script emits "GitHub Release workflow triggered" on tag push, but no `release.yml` exists under `.github/workflows/`. The release body was populated manually by extracting the `[0.11.0]` CHANGELOG slice with `awk` and passing it to `gh release create --notes-file`.
+
+#### Files Modified
+
+- `CHANGELOG.md` — `### Security` + `### Tests` sections added to `[0.11.0]`; package-count typo corrected
+- `README.md` — status line `1,985+ passing tests` → `1,987+ passing tests`
+- `docs/VERSION_HISTORY.md` — test count 1,985 → 1,987 (lines 9 + 46); package count 125 → 124 (line 10)
+
+#### Commits
+
+| Commit | Description |
+|--------|-------------|
+| `f4fcf54` | docs: add 0.11.0 Security/Tests sections, sync test count (1987) and package count (124) |
+| `07d8da3` | Merge pr/05-ci-review-fixes into development |
+| `60ba0ba` | Merge development into main |
+| `v0.11.0` | Annotated release tag at `60ba0ba` |
+
+#### Release Artifacts
+
+- GitHub Release: <https://github.com/forkni/claude-context-local/releases/tag/v0.11.0>
+- Backup tags: `pre-merge-backup-20260416_225022` (PR #24 merge), `pre-merge-backup-20260416_225317` (release merge)
+
+#### Post-Release Follow-ups
+
+- Bump `pyproject.toml` to `0.12.0-dev` on `development` and open a fresh `[Unreleased]` CHANGELOG section
+- Delete merged `pr/05-ci-review-fixes` branch via `./scripts/git/branch_cleanup.sh --execute`
+- Consider adding `release.yml` workflow so future tag pushes auto-publish GitHub Releases without manual `gh release create`
+
+---
+
+### 2026-04-16: CI Review Fixes Applied to Development
+
+**Primary Achievement**: Verified CI review agent findings against code and applied all valid fixes in 3 logical commits (ONNX correctness, VRAM/OOM robustness, cosmetics).
+
+#### Key Fixes
+
+- **A: ONNX correctness** — deleted duplicated ORT provider-options block (L304-357 of `onnx_loader.py`; the second copy was the one wired to `from_pretrained`); fixed `_measure_activation_per_item` to accept `cuda:N` device strings (was `!= "cuda"`, now `startswith`); ONNX path no longer requires torch for NVML-based measurement; updated `validate()` docstring to say "max abs diff" not "cosine diff".
+- **B: VRAM/OOM robustness** — OOM detection now prefers `isinstance(e, torch.cuda.OutOfMemoryError)` with string-match fallback; `estimate_activation_gb_from_config` is now dtype-aware (fp32 → 4 bytes, fp16/bf16 → 2 bytes, unknown → 2); `ort_untracked_gb` key in status handler renamed to `non_torch_gb` (was mathematically wrong: subtracted per-process from device-wide NVML); added missing test for non-OOM RuntimeError propagation.
+- **C: Cosmetics** — added `onnx_pooling: "mean"` to `BAAI/bge-code-v1` and `nomic-ai/CodeRankEmbed` in `MODEL_REGISTRY`; narrowed `TypeError` from except tuples in `compute_effective_vram_cap`/`set_vram_limit`; DEBUG-logged previously silent excepts; fixed `onnx_gpu_mem_limit` field style; added `mem_get_info(0)` explicit index for consistency; added comment explaining ORT cap computed once before batch loop.
+
+#### Config Default Switch (intentional)
+
+`search_config.json` defaults were updated when the multi-model pool was switched to `lightweight-speed` for this laptop target:
+- `model_name`: Qwen3-Embedding-0.6B → `BAAI/bge-m3`
+- `default_model`: `qwen3` → `bge_m3`
+- `reranker`: `jinaai/jina-reranker-v3` → `Alibaba-NLP/gte-reranker-modernbert-base`
+- `multi_model_pool`: `full` → `lightweight-speed`
+
+**Existing users must re-index** if upgrading from a Qwen3-based index (dimension unchanged at 1024, but model weights differ).
+
+#### CI False Positives (not fixed — already correct)
+
+- `_resolve_provider` already uses `device.startswith("cuda")` (CI claimed literal match).
+- ONNX fast-path fallback already catches both `ImportError` and `RuntimeError` (CI said only `ImportError`).
+- `allow_ram_fallback` in `search_config.json` is `true` (CI claimed `false`).
+
+---
+
+### 2026-04-16: ONNX Stack Merged Into Development
+
+**Primary Achievement**: Finalized the 4-PR ONNX Runtime stack by resolving merge conflicts, committing the merge into `development`, pushing to origin, and closing all 4 stacked PRs with a reference to the merge commit.
+
+#### Key Accomplishments
+
+- Completed in-progress merge of `pr/04-wddm-vram-fix` → `development` that had stopped at content conflicts in `embeddings/embedder.py` and `embeddings/model_loader.py`
+- Resolved both conflicts via `git checkout --theirs` (verified pr/04 is a strict superset of `development`'s prior state — no code discarded)
+- Staged all 5 modified files, finalized merge commit `52f33fb` (two parents: `aa75b73` + `7ded10c`)
+- Pushed 12 commits to `origin/development` (`aa75b73..52f33fb`)
+- Closed PRs forkni/claude-context-local#20, #21, #22, #23 with a note pointing to `52f33fb`
+
+#### Technical Details
+
+The merge brought 11 stack commits into `development` via a single merge commit:
+
+| Commit | Description |
+|--------|-------------|
+| `87d76cc` | Scope activation-cost overrides by backend (ONNX vs PyTorch) |
+| `290b56d` | Log debug on `convert_meta.json` parse failure |
+| `4dc15ab` | 6-fix bundle: `cuda:N` device handling, RuntimeError fallback, tokenizer save, unsupported-optimizer fallback, abs-diff label, NVML comment |
+| `a29f896` | Replace tier-based batch sizing with architecture-derived formula |
+| `4c058bb` | Pass `device` to `_get_nvml_used_bytes` in activation measurement |
+| `4f5fd19` | ONNX activation cost floor to prevent BFCArena OOM on first-try batches |
+| `23e2bb3` | Route PyTorch warmup through `_measure_activation_per_item` |
+| `b8a3de1` | Account for other-process VRAM in hard limit |
+| `480a1fb` | Constrain ORT CUDAExecutionProvider arena |
+| `054d9c1` | ORT-aware batch sizing + BFCArena OOM recovery |
+| `7ded10c` | SESSION_LOG update |
+
+PRs #20–#23 were closed (not merged via GitHub) because their bases targeted each other in a stack, not `development`. They can be re-opened against `main` when `development` is promoted.
+
+#### Files Modified
+
+All modifications were brought in via the incoming commits — no new code was written during the merge session itself.
+
+- `embeddings/embedder.py` — ONNX cost floor, backend-scoped overrides, OOM backoff, VRAM cap
+- `embeddings/model_loader.py` — PyTorch warmup unified method, 6-fix bundle items
+- `embeddings/onnx_loader.py` — `cuda:N` provider fix, tokenizer save, unsupported-optimizer fallback
+- `mcp_server/tools/status_handlers.py` — NVML "this process" comment clarification
+- `tools/convert_onnx.py` — abs-diff label correction
+
+#### Commits
+
+- `52f33fb` — Merge pr/04-wddm-vram-fix into development
+
+---
+
+### 2026-04-16: ONNX Runtime VRAM Cap + OOM Recovery (Fixes A & B)
+
+**Primary Achievement**: Extended the WDDM spillover fix to the active ONNX Runtime backend by capping ORT's CUDA arena and adding BFCArena-aware OOM recovery with batch-size backoff, eliminating VRAM spillover end-to-end on 8 GB laptop GPUs.
+
+#### Key Accomplishments
+
+- Constrained ORT `CUDAExecutionProvider` allocator via `gpu_mem_limit` + `arena_extend_strategy="kSameAsRequested"` — the critical missing piece, since `torch.cuda.set_per_process_memory_fraction` does not govern ORT's allocator
+- Extracted `compute_effective_vram_cap(fraction)` as a shared helper returning `(effective_fraction, cap_bytes, free_gb, us_gb, other_gb, headroom_gb)` so PyTorch and ORT compute identical caps
+- **Fix A (budget-aware batch sizing)**: `calculate_optimal_batch_size()` now accepts `ort_cap_gb` and constrains `available_gb = min(free_gb, ort_cap_gb − model_vram_gb)` so dynamic batching respects the ORT session arena, not just raw free VRAM
+- **Fix B (OOM backoff)**: Converted `embed_chunks()` batch loop from `for` to `while` with mutable `current_batch_size`; on BFCArena/RuntimeError OOM, halve the batch, `empty_cache()`, re-sync `progress.update(total=...)`, and retry — no user-visible failure
+- Added `onnx_gpu_mem_limit: bool = True` config flag; documented ORT cap behavior and updated 8 GB tier guidance in `INSTALLATION_GUIDE.md`
+- 6 new unit tests: `TestCalculateOptimalBatchSizeOrtCap` (3) + `TestOomRecoveryBackoff` (3); full suite 1975/1975 pass
+- Live validation on RTX 4060 Laptop: gte-modernbert 32→16, bge-m3 16→8 after OOM, 3120 chunks in 143.80s, **zero shared-memory spillover**
+
+#### Technical Details
+
+**ORT cap plumbing** (`onnx_loader.py`): on `CUDAExecutionProvider`, build `provider_options=[{"gpu_mem_limit": int(cap_bytes), "arena_extend_strategy": "kSameAsRequested"}]` from `compute_effective_vram_cap()` and pass to `ORTModelForFeatureExtraction.from_pretrained(...)`. Gated behind `performance.onnx_gpu_mem_limit`; decoupled from `allow_ram_fallback` so the ORT cap applies even when PyTorch fallback is permitted. New `[ONNX_VRAM]` log line mirrors `[VRAM_LIMIT]` format.
+
+**OOM recovery pattern** (`embedder.py`): `except RuntimeError as e:` checks `"out of memory" | "bfcarena" | ("available memory" & "smaller than requested")` substrings. On match with `current_batch_size > 1`: halve, recompute `remaining_batches = ceil((len−i) / new_size)`, `progress.update(task, total=completed + remaining_batches)`, `empty_cache()`, `gc.collect()`, `batch_num -= 1`, `continue`. Reduced batch size persists for subsequent batches, so cost is paid once per file. `torch.cuda.OutOfMemoryError` is a `RuntimeError` subclass, so listing both caused `TypeError` when `torch` was mocked — fixed by catching `RuntimeError` only.
+
+**ORT cap detection at call site**: `embed_chunks()` reads `ort_cap_gb` via `compute_effective_vram_cap()` when the model has an `ort_model` attribute, then passes it to `calculate_optimal_batch_size()` for the initial size guess.
+
+#### Files Modified
+
+- `embeddings/embedder.py` — extracted `compute_effective_vram_cap()`; added `ort_cap_gb` param to `calculate_optimal_batch_size()`; converted `embed_chunks()` batch loop to while+mutable size with BFCArena-aware OOM handler
+- `embeddings/onnx_loader.py` — provider_options with `gpu_mem_limit` + `kSameAsRequested` for `CUDAExecutionProvider`; gated by `onnx_gpu_mem_limit` config flag
+- `search/config.py` — `onnx_gpu_mem_limit: bool = True` added to `PerformanceConfig`
+- `search_config.json` — `"onnx_gpu_mem_limit": true` under `"performance"`
+- `tests/unit/embeddings/test_embedder.py` — `TestComputeEffectiveVramCap`, `TestCalculateOptimalBatchSizeOrtCap`, `TestOomRecoveryBackoff` classes
+- `tests/unit/embeddings/test_onnx_loader.py` — provider_options assertions (CUDA + CPU + flag-disabled cases)
+- `docs/INSTALLATION_GUIDE.md` — ORT cap documentation in VRAM Limit Fraction section; revised 8 GB tier guidance
+
+#### Commits
+
+- `457648b` — fix: constrain ORT CUDAExecutionProvider arena to prevent WDDM VRAM spillover
+- `7b90388` — fix: ORT-aware batch sizing + BFCArena OOM recovery (fix B+A)
+
+---
+
+### 2026-04-16: VRAM Hard-Limit Fix — Account for Other-Process Allocation
+
+**Primary Achievement**: Fixed Windows WDDM shared-memory spillover bug where `set_vram_limit()` applied the process cap against total GPU memory without subtracting VRAM already held by other processes, causing embedding streams to spill to system RAM when other apps occupied VRAM.
+
+#### Key Accomplishments
+
+- Diagnosed root cause: `torch.cuda.set_per_process_memory_fraction(fraction, device=0)` was using `fraction × total_memory` as the cap, so a 10 GB external allocation on a 24 GB GPU was invisible to the 19.2 GB cap — combined demand 29.2 GB triggered WDDM shared-memory eviction
+- Rewrote `set_vram_limit()` to compute an *effective* fraction from live `mem_get_info()` + `memory_allocated()` readings, capping our process at `min(user_cap, A_us + F − headroom)` so the hard limit respects physically available VRAM
+- Added automatic re-application of the cap at the start of `embed_chunks()` so mid-session VRAM pressure (browser, game, reranker loading) is accounted for at embedding time
+- Added re-apply before each of the three reranker lazy-load sites (`NeuralReranker`, `GenerativeReranker`, `JinaRerankerV3`) so model loads also see current free VRAM
+- 8 new unit tests covering: no-pressure baseline, 10 GB other-process scenario (the bug), mid-run re-apply, clamp-up when physical cap < current usage, `allow_ram_fallback` short-circuit, no CUDA, raise, idempotency
+- All 964 unit tests (224 embeddings + 740 search) pass; lint clean
+
+#### Technical Details
+
+**Formula** (`T`=total, `F`=free, `A_us`=our allocated, `A_other = max(0, T−F−A_us)`, `r`=requested fraction):
+```
+headroom     = (1 − r) × T
+physical_cap = A_us + F − headroom   (== T − A_other − headroom)
+cap          = max(min(r×T, physical_cap), A_us)
+effective_fraction = clamp(cap / T, 0.05, r)
+```
+
+Example — 24 GB GPU, `r=0.8`, other process holds 10 GB: `effective_fraction ≈ 0.383` instead of 0.80. Combined usage at saturation: 9.2 + 10 = 19.2 GB ≤ 24 GB physical. No WDDM spill.
+
+New log format: `[VRAM_LIMIT] Requested=80%, effective=38% (free=14.0GB, us=0.0GB, other=10.0GB, headroom=4.8GB)`
+
+The `allow_ram_fallback=True` short-circuit is preserved verbatim — cap is skipped entirely in that mode.
+
+Not covered (documented in `set_vram_limit()` docstring): FAISS GPU allocator and ORT CUDAExecutionProvider both use separate CUDA allocators that `set_per_process_memory_fraction` does not govern.
+
+#### Files Modified
+
+- `embeddings/embedder.py` — `set_vram_limit()` rewritten with effective-fraction formula; re-apply call inserted at top of `embed_chunks()` after model warmup
+- `search/neural_reranker.py` — VRAM cap re-applied before lazy load in `NeuralReranker.model`, `GenerativeReranker._ensure_loaded()`, `JinaRerankerV3._load_or_fetch()`
+- `tests/unit/embeddings/test_embedder.py` — `TestSetVramLimitEffective` class (8 tests)
+- `docs/INSTALLATION_GUIDE.md` — Windows VRAM auto-adjustment note in VRAM Limit Fraction section
+
+#### Commit
+
+- `a209849` — fix: account for other-process VRAM allocation in hard limit to prevent WDDM spillover
+
+---
+
+### 2026-04-11: Charlie CI Round 5, Python Style Audit, v0.10.1 Release
+
+**Primary Achievement**: Fixed 3 internal doc inconsistencies surfaced by Charlie CI round 5, implemented Python style guide audit recommendations 1-4 across 26 files, fixed a PEP 639 setuptools incompatibility, and shipped v0.10.1 via PR #18.
+
+#### Key Accomplishments
+- Round 5 (commit `8979257`): Fixed 3 of 4 Charlie findings — SKILL.md diagram positional-arg inconsistency → all named args, README `k≥5` scope → `k=10; cutoffs @5/@10`, `tool-index.md` Python `None` → "omit the field" guidance; skipped `performance.md` k-stability claim per user decision
+- Style audit (commit `53f8b34`): 4 recommendations implemented — ML shape/dtype docstrings on `embed_query`/`embed_chunks`, `-> None` on 17 private helpers across 14 files, expanded Args/Returns docstrings on 4 public `searcher.py` methods, no `Optional[X]` changes needed (all found occurrences were forward-string refs or docstring text)
+- Version bump (commit `aaeade5`): `pyproject.toml` `0.10.0` → `0.10.1`
+- PEP 639 fix (commit `d629a49`): removed deprecated `License :: OSI Approved :: Apache Software License` classifier that newer setuptools rejects when an SPDX `license` expression is present — this was blocking CI's `pip install -e .`
+- Merged PR #18 (`development → main`) and pushed tag `v0.10.1`
+
+#### Technical Details
+
+**Charlie round 5 verification**: Confirmed all 4 claims by reading the actual files before applying fixes. Claim 3 (`performance.md` k-stability over-assertion) was deferred by user; `performance.md` left untouched.
+
+**`Optional[X]` audit result**: All `Optional[...]` occurrences in the 9 target production files were forward-string refs (`Optional["CodeEmbedder"]`) or docstring text — none were real PEP 604-upgradeable annotations. The `search/hybrid_searcher.py` forward-string refs remain deferred (requires `from __future__ import annotations`).
+
+**`-> None` skips**: `tree_sitter.py::_get_chunking_config` returns `ChunkingConfig` (not `None`); `neural_reranker.py::_load_model` returns `AutoModel.from_pretrained()`. Agent correctly identified these and left them unannotated rather than annotating wrong.
+
+**CI failure**: Pre-existing issue where `setuptools>=77` enforces PEP 639 — rejects `License :: OSI Approved :: Apache Software License` classifier if `license = "Apache-2.0"` SPDX expression is present. Fixed in `d629a49` before merge.
+
+#### Files Modified
+- `.claude/skills/mcp-search-tool/SKILL.md` — named-arg consistency in Quick Start diagram + CRITICAL block
+- `.claude/skills/mcp-search-tool/references/tool-index.md` — `None` → "omit the field" guidance
+- `README.md` — `k≥5` → `k=10; cutoffs @5/@10` in 4 locations
+- `embeddings/embedder.py` — `embed_query`/`embed_chunks` shape/dtype docstrings; `_configure_cuda_allocator`/`_log_vram_usage` `-> None`
+- `search/searcher.py` — expanded docstrings on `search_by_file_pattern`, `search_by_chunk_type`, `find_similar_to_chunk`, `get_search_suggestions`
+- `search/metadata.py`, `search/config.py` — `-> None` on private helpers
+- `mcp_server/state.py`, `mcp_server/resource_manager.py` — `-> None`
+- `chunking/languages/base.py` — `traverse()` typed params + `-> None`
+- `graph/relationship_extractors/base_extractor.py`, `constant_extractor.py`, `enum_extractor.py`, `exception_extractor.py`, `context_manager_extractor.py`, `default_param_extractor.py`, `instantiation_extractor.py` — `-> None` on extract/reset methods
+- `merkle/merkle_dag.py` — nested `add_to_nodes` `-> None`
+- `pyproject.toml` — version `0.10.1`, removed deprecated license classifier
+
+#### Commits
+- `8979257` — docs: address Charlie CI round 5 review on mcp-search-tool skill and README
+- `53f8b34` — style: address Python style guide audit recommendations 1-4
+- `aaeade5` — chore: bump version to 0.10.1
+- `d629a49` — fix: remove deprecated license classifier (PEP 639 setuptools compat)
+
+#### Release
+- PR forkni/claude-context-local#18 merged → `main` (merge commit `d577dc3`)
+- Tag `v0.10.1` pushed to remote
+
+---
+
+### 2026-04-11: Charlie CI Rounds 2–4 — mcp-search-tool Doc Precision Hardening
+
+**Primary Achievement**: Resolved 18 additional Charlie CI review findings across Rounds 2, 3, and 4, hardening mcp-search-tool skill documentation for accuracy, benchmark-scope honesty, boolean-literal correctness, and stable-surface / implementation-notes separation.
+
+#### Key Accomplishments
+- Round 2 (commit `cb38861`): Fixed 7 findings — overclaim scoping, unsubstantiated miss-rate claim, Common Mistakes table invalid examples, `k=5` baseline in 2-step workflow, file:line reference removal from `advanced-features.md`, bare `search_code` → `code-search:search_code` naming
+- Round 3 (commit `054f79c`): Fixed 5 findings — residual "always present" in `performance.md` Result Reliability, misleading SKILL.md link label ("Full parameter reference" → tool-index.md), `advanced-features.md` internal refs fenced into "Implementation notes (may drift — 2026-04-11)" blockquotes, "known registry inconsistency" → actionable usage note, README Highlights bullets scoped to SSCG benchmark
+- Round 4 (commit `a609b4b`): Fixed 6 findings — BM25 Quick Start row missing `k=5`, `True`/`False` Python booleans → `true`/`false` JSON booleans everywhere in skill tree, pseudocode disclaimer notes added to SKILL.md and parameters.md, ambiguous "neural rerank gated by ego_graph_enabled" clarified with code verification, `_k10_` filename vs `@5` metric ambiguity in performance.md, tool-index.md stripped of pseudo-signatures to become pure catalog with link to parameters.md, README Search Modes table scoped to SSCG benchmark
+
+#### Technical Details
+
+**Charlie CI verification pattern used throughout**: before applying any fix, grep/read the actual file to confirm the claim. Two findings required no change:
+- Round 2 AN1 (boolean style): already consistent — no change needed
+- Round 4 neural reranker gating: confirmed via `hybrid_searcher.py:688-698` that the secondary post-expansion rerank IS gated by `ego_graph_enabled` — but the primary `RerankingEngine` is independent. Clarified text to distinguish the two rather than removing the note.
+
+**Boolean standardization**: complete sweep of all user-facing call snippets, parameter default columns, control examples, and table entries across all 5 skill files. Exception: Python config references inside "Implementation notes (may drift)" blockquotes retained Python syntax (`True`, `False`) since they explicitly describe internal Python dataclass values.
+
+**tool-index.md as pure catalog**: removed all pseudo-signatures like `switch_project(path)`, `index_directory(path, incremental=True)`, `delete_project(path, force=False)` from table entries. Added catalog disclaimer and forward-link to `parameters.md` for authoritative schema.
+
+#### Files Modified
+- `.claude/skills/mcp-search-tool/SKILL.md` — `k=5` added to BM25 Quick Start row; `True`→`true` for `ego_graph_enabled`; pseudocode disclaimer note above Quick Start
+- `.claude/skills/mcp-search-tool/references/advanced-features.md` — all user-facing booleans → JSON style; ego-graph neural rerank gating clarified; internal file-symbol refs fenced into "Implementation notes (may drift — 2026-04-11)" blockquotes on all 3 subsections
+- `.claude/skills/mcp-search-tool/references/parameters.md` — pseudocode disclaimer note at top; all default-column booleans → `true`/`false`; `ego_graph_enabled=true` in example
+- `.claude/skills/mcp-search-tool/references/performance.md` — `Hit@5=100%` scoped to benchmark; k-clarification note above Source files explaining `k=10` run vs `@5`/`@10` cutoffs
+- `.claude/skills/mcp-search-tool/references/tool-index.md` — stripped pseudo-signatures from all table entries; catalog disclaimer added; boolean defaults → `true`/`false`; "known registry inconsistency" → usage guidance
+- `README.md` — Highlights bullets scoped to SSCG benchmark with date/dataset/k; Search Modes table column renamed "SSCG Quality (2026-04-10, k≥5)" with scope disclaimer above table
+
+#### Commits
+- `cb38861` — docs: address Charlie CI round 2 review on mcp-search-tool skill
+- `054f79c` — docs: address Charlie CI round 3 review on mcp-search-tool skill and README
+- `a609b4b` — docs: address Charlie CI round 4 review on mcp-search-tool skill and README
+
+#### PR
+- forkni/claude-context-local#18 — `development → main`, open, awaiting Charlie CI re-review after `a609b4b`
+
+---
+
+### 2026-04-11: mcp-search-tool Skill Restructure, Benchmark Doc Alignment & Charlie CI Round 1
+
+**Primary Achievement**: Restructured the `mcp-search-tool` skill per Anthropic progressive-disclosure guidelines, aligned README/skill benchmark numbers with the 2026-04-10 three-mode SSCG data, opened PR #18 for Charlie CI review, and corrected all 7 review findings in a follow-up commit — including a real doc-vs-code bug where I had conflated three separate graph subsystems.
+
+#### Key Accomplishments
+- Trimmed `.claude/skills/mcp-search-tool/SKILL.md` from 372 → ~140 lines by moving reference content into a new `references/` subdirectory (progressive disclosure)
+- Created 4 new reference files: `tool-index.md`, `parameters.md`, `advanced-features.md`, `performance.md`
+- Added missing skill frontmatter (`user-invocable`, `argument-hint`, `allowed-tools` with `code-search:` MCP prefix)
+- Replaced stale SSCG benchmark numbers (v0.9.2: `MRR=0.94`, `Recall@4=92.3%`, `12/13`) across README and skill with 2026-04-10 three-mode data
+- Updated `.gitignore` with new exceptions to track `references/` subdirectory while ignoring non-`.md` files
+- Moved 2 erroneously-on-`main` docs commits to `development` via cherry-pick + reset, then pushed and opened PR forkni/claude-context-local#18 for Charlie CI auto-review
+- Addressed all 7 Charlie CI findings in commit `22bb31c` — every finding was verified against source before applying
+
+#### Technical Details
+
+**Skill restructure** (Anthropic progressive-disclosure pattern):
+- `SKILL.md` body: On Activation ritual, Purpose, Critical behavioral rule, Quick Start decision tree, Common Mistakes table, 19-tool compact summary, Troubleshooting, Status Check workflow
+- `references/tool-index.md` — full 19-tool inventory with parameters
+- `references/parameters.md` — deep parameter tables for `search_code`, `find_connections`, `find_path`
+- `references/advanced-features.md` — Multi-Hop / Ego-Graph / Centrality / BM25 / A1–A2–B1
+- `references/performance.md` — canonical 2026-04-10 three-mode benchmark table
+
+**Branch repair** (commits landed on wrong branch initially):
+1. `git checkout development && git reset --hard origin/main` (fast-forward, 5e072dd is ancestor of bd3798f via merge)
+2. `git cherry-pick 5fe963c f353a41` — replay docs commits onto development with new hashes
+3. `git checkout main && git reset --hard origin/main` — drop unpushed docs commits from main (preserved on development)
+4. `push_validated.sh` → fast-forward from stale origin/development (8bb2aed)
+5. `create_pr.sh --non-interactive` → PR #18 opens, Charlie auto-reviews
+
+**Charlie CI review findings — all verified against code, all fixed**:
+
+| # | Finding | Verification | Fix |
+|---|---|---|---|
+| 1 | Default `k=4` contradicts `Hit@5=100%` claim | `mcp_server/tool_registry.py:40` → `"default": 4` | Added "use k=5 baseline" rule to SKILL.md Purpose + Workflow; k=5 in Quick Start examples; annotated `k` parameter row in parameters.md |
+| 2 | `allowed-tools` lists 10 of 19 documented tools | Visible frontmatter vs. body | Expanded to all 19 `code-search:` tools |
+| 3 | `argument-hint` advertises `status` but no Status section exists | Confirmed missing | Added `## Status Check` section: 4-tool sequence (`list_projects` → `get_index_status` → `get_search_config_status` → `get_memory_status`) with summary format |
+| 4 | `chunk_type="function"` for "class/function definition" excludes classes | Review correct | Split into two Quick Start lines — one for function, one for class |
+| 5 | **"Multi-hop always-on" vs "ego_graph opt-in" contradiction** | Subagent code-trace: there are **three** distinct subsystems — always-on `MultiHopSearcher` (`hybrid_searcher.py:650`, tags `multi_hop`/`graph_hop`), **opt-in** ego-graph expansion (`tool_registry.py:120-124`, default `False`, gated at `hybrid_searcher.py:675`), always-on centrality reranking (`search_handlers.py:1062-1098`) | Rewrote `advanced-features.md` to separate all three with file:line citations; added `source`-value disambiguation table; updated parameters.md Source values line with all 4 possible values |
+| 6 | Hard-coded `F:/RD_PROJECTS/...` path in benchmark rerun command | Confirmed | Replaced with `<project-path>` placeholder + note that `.` works for self-evaluation |
+| 7 | `` ```python `` fences around `code-search:...(...)` pseudo-calls aren't valid Python | 4 fences confirmed | Changed all 4 from `python` → `text` |
+
+**Key finding on #5**: my original text said *"Multi-Hop Search: Always-on. Cannot be disabled, but controlled via `ego_graph_*` parameters."* This conflated three unrelated subsystems. The subagent traced the actual code and established:
+- `MultiHopSearcher` is always-on (`hybrid_searcher.py:650`), tags expansion chunks `source="multi_hop"` (semantic) or `source="graph_hop"` (call/import graph)
+- Ego-graph is **opt-in** — default `ego_graph_enabled=False` at `tool_registry.py:120-124`, gate at `hybrid_searcher.py:675`, post-expansion rerank at `:688`
+- Centrality reranking runs **independent** of ego-graph when `graph_storage` exists (`search_handlers.py:1062-1098`)
+
+#### Files Modified
+- `README.md` — SSCG benchmark section (L31, L33, L224–226, L418–427) updated with 2026-04-10 three-mode data
+- `.gitignore` — new exceptions for `.claude/skills/mcp-search-tool/references/` subdirectory
+- `.claude/skills/mcp-search-tool/SKILL.md` — rewritten body 372 → ~140 lines; added frontmatter (user-invocable, argument-hint, allowed-tools with 19-tool code-search: prefix); added Status Check section; k=5 baseline rule
+- `.claude/skills/mcp-search-tool/references/tool-index.md` — new (19-tool inventory)
+- `.claude/skills/mcp-search-tool/references/parameters.md` — new (deep parameter tables for 3 essential tools)
+- `.claude/skills/mcp-search-tool/references/advanced-features.md` — new; rewritten Multi-Hop / Ego-Graph / Centrality separation after Charlie review
+- `.claude/skills/mcp-search-tool/references/performance.md` — new; placeholder for project-path
+
+#### Commits
+- `5fe963c` — docs: update SSCG benchmarks, restructure mcp-search-tool skill with references/
+- `f353a41` — docs: add mcp-search-tool references/ and update gitignore exceptions
+- `b5e12a4`, `d11739a` — cherry-pick hashes (same content, cherry-picked onto development)
+- `22bb31c` — docs: address Charlie CI review on mcp-search-tool skill (+77 −27 across 4 files)
+
+#### PR
+- forkni/claude-context-local#18 — `development → main`, open, awaiting Charlie CI re-review after `22bb31c`
+
+---
 
 ### 2026-04-10: SSCG Three-Mode Evaluation & Golden Dataset Fix
 

@@ -26,6 +26,14 @@ MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED = {
     "bge_m3": "BAAI/bge-m3",
 }
 
+# MODEL_REGISTRY convention for ONNX support:
+# - "onnx_supported": False  -> ONNX path is skipped in _should_use_onnx().
+#   Use this when the upstream pooling mode is not handled by
+#   embeddings/onnx_wrapper.py (which supports only "cls" and "mean").
+# - Key absent (or True)     -> ONNX path allowed, subject to other gates
+#   (trust_remote_code, performance.use_onnx, etc.).
+# New models with non-cls/mean pooling (lasttoken, weightedmean, etc.) MUST
+# set onnx_supported: False explicitly until onnx_wrapper.py gains support.
 MODEL_REGISTRY = {
     "google/embeddinggemma-300m": {
         "dimension": 768,
@@ -34,6 +42,7 @@ MODEL_REGISTRY = {
         "description": "Default model, fast and efficient",
         "vram_gb": "4-8GB",
         "fallback_batch_size": 128,  # Used when dynamic sizing disabled
+        "onnx_pooling": "mean",  # Gemma uses mean pooling
     },
     "BAAI/bge-m3": {
         "dimension": 1024,
@@ -41,6 +50,7 @@ MODEL_REGISTRY = {
         "description": "Recommended upgrade, hybrid search support",
         "vram_gb": "1-1.5GB",  # Updated from "3-4GB" (actual measured: 1.07GB)
         "fallback_batch_size": 256,  # Used when dynamic sizing disabled
+        "onnx_pooling": "cls",  # BGE uses CLS pooling (confirmed by Optimum notebook)
     },
     "BAAI/bge-code-v1": {
         "dimension": 1536,
@@ -49,6 +59,9 @@ MODEL_REGISTRY = {
         "vram_gb": "4GB",  # ~4GB in FP16
         "fallback_batch_size": 32,  # Conservative batch size for 2B model
         "trust_remote_code": False,
+        # Upstream uses lasttoken pooling, which the ONNX wrapper does not yet support.
+        # Gate ONNX off for this model until lasttoken support lands in onnx_wrapper.py.
+        "onnx_supported": False,
     },
     "Qwen/Qwen3-Embedding-0.6B": {
         "dimension": 1024,
@@ -57,6 +70,7 @@ MODEL_REGISTRY = {
         "vram_gb": "2.3GB",
         "fallback_batch_size": 256,
         "vram_tier": "minimal",  # Usable on all GPUs
+        "onnx_pooling": "mean",  # Qwen3-Embedding uses mean pooling
         # Matryoshka Representation Learning (MRL) support
         "mrl_dimensions": [1024, 512, 256, 128, 64, 32],  # Supported MRL dimensions
         "truncate_dim": None,  # Optional: Set to reduce output dimension (e.g., 512)
@@ -75,6 +89,8 @@ MODEL_REGISTRY = {
         "model_type": "code-specific",
         "task_instruction": "Represent this query for searching relevant code",  # Required query prefix
         "trust_remote_code": True,
+        # Upstream pooling is CLS; `.get("onnx_pooling", "cls")` in model_loader
+        # defaults correctly. ONNX is blocked anyway via trust_remote_code=True.
     },
     "Alibaba-NLP/gte-modernbert-base": {
         "dimension": 768,
@@ -83,6 +99,7 @@ MODEL_REGISTRY = {
         "vram_gb": "0.28GB",
         "fallback_batch_size": 256,
         "model_type": "code-optimized",
+        "onnx_pooling": "cls",  # GTE-ModernBERT uses CLS pooling
     },
 }
 
@@ -225,6 +242,14 @@ class PerformanceConfig:
         16  # Minimum batch size (lowered for fragmentation headroom)
     )
     dynamic_batch_max: int = 384  # Maximum batch size (safer for 8-16GB GPUs)
+
+    # ONNX Runtime inference (optional — requires uv pip install -e .[onnx])
+    use_onnx: bool = (
+        False  # When True, loads eligible models via ORTModelForFeatureExtraction
+    )
+    # Constrain ORT CUDAExecutionProvider arena (same formula as set_vram_limit()).
+    # Disable only for debugging — prevents WDDM spillover for ONNX sessions.
+    onnx_gpu_mem_limit: bool = True
 
     # Auto-reindexing
     enable_auto_reindex: bool = True
@@ -523,6 +548,8 @@ class SearchConfig:
                 "dynamic_batch_max": self.performance.dynamic_batch_max,
                 "enable_auto_reindex": self.performance.enable_auto_reindex,
                 "max_index_age_minutes": self.performance.max_index_age_minutes,
+                "use_onnx": self.performance.use_onnx,
+                "onnx_gpu_mem_limit": self.performance.onnx_gpu_mem_limit,
             },
             "multi_hop": {
                 "enabled": self.multi_hop.enabled,
@@ -700,6 +727,8 @@ class SearchConfig:
                 max_index_age_minutes=performance_data.get(
                     "max_index_age_minutes", 5.0
                 ),
+                use_onnx=performance_data.get("use_onnx", False),
+                onnx_gpu_mem_limit=performance_data.get("onnx_gpu_mem_limit", True),
             )
 
             multi_hop = MultiHopConfig(
@@ -869,6 +898,8 @@ class SearchConfig:
                 dynamic_batch_max=data.get("dynamic_batch_max", 384),
                 enable_auto_reindex=data.get("enable_auto_reindex", True),
                 max_index_age_minutes=data.get("max_index_age_minutes", 5.0),
+                use_onnx=data.get("use_onnx", False),
+                onnx_gpu_mem_limit=data.get("onnx_gpu_mem_limit", True),
             )
 
             multi_hop = MultiHopConfig(

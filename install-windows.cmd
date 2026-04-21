@@ -564,7 +564,7 @@ REM Test current authentication status
 ".venv\Scripts\python.exe" -c "from huggingface_hub import whoami; info = whoami(); print('[OK] Authenticated as:', info['name'])" 2>nul
 if %ERRORLEVEL% equ 0 (
     echo [OK] HuggingFace authentication already configured
-    goto end
+    goto :eof
 )
 
 echo.
@@ -585,7 +585,7 @@ set /p "hf_token=Enter your HuggingFace token (starts with hf_): "
 if "!hf_token!"=="" (
     echo [WARNING] No token provided. You can authenticate later using:
     echo   scripts\powershell\hf_auth.ps1 -Token "your_token_here"
-    goto end
+    goto :eof
 )
 
 REM Validate and test the token
@@ -601,7 +601,7 @@ if %ERRORLEVEL% neq 0 (
     echo [OK] HuggingFace authentication configured successfully!
 )
 
-goto end
+goto :eof
 
 :end
 echo.

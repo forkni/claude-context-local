@@ -295,7 +295,7 @@ set CLAUDE_MULTI_MODEL_ENABLED=false
 /configure_query_routing
 {
   "multi_model_enabled": true,
-  "default_model": "qwen3",
+  "default_model": "bge_m3",
   "confidence_threshold": 0.35
 }
 ```
@@ -303,7 +303,7 @@ set CLAUDE_MULTI_MODEL_ENABLED=false
 **Routing Parameters**:
 
 - `multi_model_enabled`: Toggle multi-model routing (default: true)
-- `default_model`: Fallback model for low-confidence queries (default: "qwen3")
+- `default_model`: Fallback model for low-confidence queries (default: `"bge_m3"` for the `lightweight-speed` pool, `"qwen3"` for the full pool)
 - `confidence_threshold`: Minimum confidence to use non-default model (default: 0.35, benchmark-verified)
 
 ### Usage Examples
@@ -353,16 +353,16 @@ set CLAUDE_MULTI_MODEL_ENABLED=false
 **Model Pool Configuration**:
 
 ```python
-# Full pool (10GB+ VRAM) - Default for desktop/workstation
-MODEL_POOL_CONFIG = {
-    "qwen3": "Qwen/Qwen3-Embedding-0.6B",  # Logic & implementation specialist
-    "bge_code": "BAAI/bge-code-v1",         # Workflow & code structure specialist
-}
-
-# Lightweight pool (6-10GB VRAM) - Laptop tier
+# Lightweight pool (6-10GB VRAM) - Default (8 GB laptop tier, ships in search_config.json)
 MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED = {
     "gte_modernbert": "Alibaba-NLP/gte-modernbert-base",  # Code-specific queries
-    "bge_m3": "BAAI/bge-m3",                             # General queries
+    "bge_m3": "BAAI/bge-m3",                              # General queries
+}
+
+# Full pool (10GB+ VRAM) - Opt-in for desktop/workstation (set routing.multi_model_pool: "full")
+MODEL_POOL_CONFIG = {
+    "qwen3": "Qwen/Qwen3-Embedding-0.6B",  # Logic & implementation specialist
+    "bge_code": "BAAI/bge-code-v1",        # Workflow & code structure specialist
 }
 ```
 

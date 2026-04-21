@@ -400,11 +400,12 @@ class FaissVectorIndex:
         """Search for k nearest neighbors.
 
         Args:
-            query: Query embedding vector (1D or 2D array)
-            k: Number of nearest neighbors to return
+            query: Query embedding — 1D (single query) or 2D [n, d] (batch).
+            k: Number of nearest neighbors to return.
 
         Returns:
-            Tuple of (distances, indices) arrays
+            Single query (1D input): (distances[k], indices[k])
+            Batch (2D input [n, d]):  (distances[n, k], indices[n, k])
 
         Raises:
             ValueError: If no index exists or index is empty
@@ -416,11 +417,12 @@ class FaissVectorIndex:
         if self.ntotal == 0:
             raise ValueError("Index is empty")
 
-        # Normalize query for cosine similarity
+        # batched=True only when caller passes [N>1, d] — preserves existing
+        # 1D return contract for single-query callers (including [1, d] inputs)
+        batched = query.ndim == 2 and query.shape[0] > 1
         if query.ndim == 1:
             query = query.reshape(1, -1)
 
-        # Dimension validation before FAISS search
         query_dim = query.shape[1]
         if query_dim != self._index.d:
             raise ValueError(
@@ -429,10 +431,12 @@ class FaissVectorIndex:
                 f"a different embedding model. Clear the index and re-index the project."
             )
 
+        query = query.copy()  # normalize_L2 is in-place
         faiss.normalize_L2(query)
 
-        # Search
         distances, indices = self._index.search(query, k)
+        if batched:
+            return distances, indices
         return distances[0], indices[0]
 
     def reconstruct(self, idx: int) -> np.ndarray:
