@@ -818,7 +818,7 @@ echo === Clear Project Indexes ===
 echo.
 
 set "TEMP_PROJECTS=%TEMP%\mcp_projects.txt"
-".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; from pathlib import Path; import json; storage = get_storage_dir(); projects = list((storage / 'projects').glob('*/project_info.json')); [print(f'{i+1}|{json.load(open(p))[\"project_name\"]}|{json.load(open(p))[\"project_path\"]}|{p.parent.name}') for i, p in enumerate(projects)]" > "%TEMP_PROJECTS%" 2>nul
+".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; from pathlib import Path; import json; storage = get_storage_dir(); projects = list((storage / 'projects').glob('*/project_info.json')); [print(f'{i+1}|{(d:=json.load(open(p)))[\"project_name\"]}|{d[\"project_path\"]}|{p.parent.name}|{d.get(\"embedding_model\",\"unknown\").split(\"/\")[-1]}|{d.get(\"model_dimension\",0)}') for i, p in enumerate(projects)]" > "%TEMP_PROJECTS%" 2>nul
 
 REM Check if any projects exist
 findstr /R "." "%TEMP_PROJECTS%" >nul 2>&1
@@ -832,11 +832,8 @@ if errorlevel 1 (
 
 echo Select project to clear index:
 echo.
-for /f "usebackq tokens=1,2,3,4 delims=|" %%a in ("%TEMP_PROJECTS%") do (
-    REM Parse model_slug and dimension from PROJECT_HASH (format: name_hash_slug_NNNd)
-    for /f "tokens=3,4 delims=_" %%m in ("%%d") do (
-        echo   %%a. %%b [%%m %%n]
-    )
+for /f "usebackq tokens=1,2,3,4,5,6 delims=|" %%a in ("%TEMP_PROJECTS%") do (
+    echo   %%a. %%b [%%e %%fd]
     echo      Path: %%c
     echo.
 )
@@ -902,12 +899,9 @@ set "valid_count=0"
 REM Iterate the deduped token set so repeats like "1,1,3" process each index once
 for %%t in (!dedup_choice!) do (
     set "matched=0"
-    for /f "usebackq tokens=1,2,3,4 delims=|" %%a in ("%TEMP_PROJECTS%") do (
+    for /f "usebackq tokens=1,2,3,4,5,6 delims=|" %%a in ("%TEMP_PROJECTS%") do (
         if "%%a"=="%%t" (
-            REM Inner-loop vars %%m/%%n (slug/dim) are distinct from outer %%a-%%d; safe to reference both.
-            for /f "tokens=3,4 delims=_" %%m in ("%%d") do (
-                >> "%TEMP_SELECTED%" echo %%a^|%%b^|%%c^|%%d^|%%m^|%%n
-            )
+            >> "%TEMP_SELECTED%" echo %%a^|%%b^|%%c^|%%d^|%%e^|%%f
             set "matched=1"
             set /a valid_count+=1
         )
@@ -929,7 +923,7 @@ if !valid_count! EQU 0 (
 echo.
 echo [WARNING] You are about to clear the following indices:
 for /f "usebackq tokens=1,2,3,4,5,6 delims=|" %%a in ("%TEMP_SELECTED%") do (
-    echo   %%a. %%b [%%e %%f]
+    echo   %%a. %%b [%%e %%fd]
     echo      Hash: %%d
 )
 echo.
@@ -976,7 +970,7 @@ for /f "usebackq tokens=1,2,3,4,5,6 delims=|" %%a in ("%TEMP_SELECTED%") do (
         set /a success_count+=1
     ) else (
         set /a fail_count+=1
-        >> "%TEMP_FAIL%" echo   - %%b [%%e %%f]: !LAST_REASON!
+        >> "%TEMP_FAIL%" echo   - %%b [%%e %%fd]: !LAST_REASON!
     )
 )
 
@@ -993,11 +987,11 @@ set "LAST_RESULT=0"
 set "LAST_REASON="
 
 echo.
-echo [INFO] Clearing index for %PROJECT_NAME% [%MODEL_SLUG% %MODEL_DIM%]...
+echo [INFO] Clearing index for %PROJECT_NAME% [%MODEL_SLUG% %MODEL_DIM%d]...
 echo.
 
-REM Clear the index directory with DB cleanup
-".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; import shutil, time, gc; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; gc.collect(); time.sleep(0.5); shutil.rmtree(project_dir, ignore_errors=False) if project_dir.exists() else None; print('Index: cleared')"
+REM Clear the index directory with DB cleanup (stderr suppressed; retry path handles lock errors)
+".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; import shutil, time, gc; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; gc.collect(); time.sleep(0.5); shutil.rmtree(project_dir, ignore_errors=False) if project_dir.exists() else None; print('Index: cleared')" 2>nul
 set "INDEX_RESULT=!ERRORLEVEL!"
 
 REM Auto-retry once (no prompt inside the loop). Tentatively attribute to
@@ -1005,13 +999,15 @@ REM rmtree error; if the dir still exists after the retry, it's a genuine lock.
 if "!INDEX_RESULT!" NEQ "0" (
     set "LAST_REASON=rmtree error"
     echo [WARN] First rmtree failed; auto-retrying with ignore_errors...
-    timeout /t 2 /nobreak >nul
+    timeout /t 3 /nobreak >nul
     ".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; import shutil, time; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; time.sleep(1); shutil.rmtree(project_dir, ignore_errors=True)"
     REM Verify via storage_manager (honors custom STORAGE_DIR), not hardcoded %USERPROFILE%
     ".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; import sys; sys.exit(1 if (get_storage_dir() / 'projects' / '%PROJECT_HASH%').exists() else 0)"
     if errorlevel 1 (
         set "INDEX_RESULT=1"
         set "LAST_REASON=locked"
+        echo [HINT] Index file is held by a running process.
+        echo [HINT] Use /delete_project "%PROJECT_PATH%" from Claude Code, or stop the MCP server and retry.
     ) else (
         echo [OK] Force cleanup successful
         set "INDEX_RESULT=0"
