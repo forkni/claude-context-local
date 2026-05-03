@@ -102,7 +102,7 @@ Issues = "https://github.com/forkni/claude-context-local/issues"
 Changelog = "https://github.com/forkni/claude-context-local/blob/main/docs/VERSION_HISTORY.md"
 
 [tool.setuptools.packages.find]
-include = ["chunking*", "embeddings*", "mcp_server*", "search*", "merkle*"]
+include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "search*", "utils*"]
 
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above

@@ -12,7 +12,7 @@ from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from search.filters import normalize_path
+from utils.path_utils import normalize_path
 
 
 if TYPE_CHECKING:

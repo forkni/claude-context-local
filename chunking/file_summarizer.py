@@ -4,6 +4,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from utils.path_utils import normalize_path
+
 
 if TYPE_CHECKING:
     from chunking.python_ast_chunker import CodeChunk
@@ -94,7 +96,7 @@ def _build_file_summary(rel_path: str, file_chunks: list["CodeChunk"]) -> "CodeC
         if c.docstring and c.name
     )[:500]
 
-    chunk_id = f"{_normalize_path(rel_path)}:0-0:module:{module_name}"
+    chunk_id = f"{normalize_path(rel_path)}:0-0:module:{module_name}"
 
     return CodeChunk(
         content=content,
@@ -109,8 +111,3 @@ def _build_file_summary(rel_path: str, file_chunks: list["CodeChunk"]) -> "CodeC
         language=file_chunks[0].language,
         chunk_id=chunk_id,
     )
-
-
-def _normalize_path(path: str) -> str:
-    """Normalize path separators to forward slashes."""
-    return path.replace("\\", "/")

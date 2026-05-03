@@ -14,17 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
-def normalize_path(path: str) -> str:
-    """Normalize path separators for consistent matching.
-
-    Args:
-        path: File path with any separator style
-
-    Returns:
-        Path with forward slashes only
-    """
-    return path.replace("\\", "/")
+from utils.path_utils import normalize_path
 
 
 def extract_drive_agnostic_path(path: str) -> str:
