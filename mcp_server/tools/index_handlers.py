@@ -238,6 +238,15 @@ def _clear_index_files_before_create(index_dir: Path) -> None:
     """
     import shutil
 
+    from mcp_server.storage_manager import get_storage_dir
+
+    storage_root = get_storage_dir().resolve()
+    if not index_dir.resolve().is_relative_to(storage_root):
+        raise ValueError(
+            f"_clear_index_files_before_create refused: {index_dir} is outside "
+            f"storage root {storage_root}"
+        )
+
     logger.info(
         f"[PRE-CLEAR] Deleting index files before HybridSearcher creation: {index_dir}"
     )

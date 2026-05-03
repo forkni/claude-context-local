@@ -844,9 +844,23 @@ echo.
 set "project_choice="
 set /p project_choice="Select project number(s) (comma/space separated, 0 to cancel, X for all): "
 
+REM DIAGNOSTIC: log raw input to trace unexpected behavior (see %TEMP%\mcp_clear_diag.log)
+>> "%TEMP%\mcp_clear_diag.log" echo [%DATE% %TIME%] choice="!project_choice!" temp="%TEMP%" cwd="%CD%"
+
 REM Handle empty input
 if not defined project_choice goto :cancel_and_return
 if "!project_choice!"=="" goto :cancel_and_return
+
+REM Reject wildcard characters that cmd expands in for-loop token sets
+echo.!project_choice! | findstr /R "[*?]" >nul 2>&1 && (
+    echo.
+    echo [ERROR] Invalid input. Use digits, comma/space separated, X, or 0.
+    echo.
+    pause
+    goto clear_project_indexes
+)
+REM Defensive early-out: exact "0" cancels without entering the tokenizer
+if "!project_choice!"=="0" goto :cancel_and_return
 
 REM Tokenize, dedupe, and detect sentinel tokens (cmd for splits on commas and spaces)
 set "HAS_X=0"
@@ -864,6 +878,9 @@ for %%i in (!project_choice!) do (
         set /a token_count+=1
     )
 )
+
+REM DIAGNOSTIC: log tokenizer state
+>> "%TEMP%\mcp_clear_diag.log" echo [%DATE% %TIME%] HAS_ZERO=!HAS_ZERO! HAS_X=!HAS_X! count=!token_count! dedup="!dedup_choice!"
 
 REM Enforce sole-token rule: X and 0 cannot be combined with other selections
 if "!HAS_X!"=="1" if !token_count! NEQ 1 (
@@ -990,8 +1007,8 @@ echo.
 echo [INFO] Clearing index for %PROJECT_NAME% [%MODEL_SLUG% %MODEL_DIM%d]...
 echo.
 
-REM Clear the index directory with DB cleanup (stderr suppressed; retry path handles lock errors)
-".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; import shutil, time, gc; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; gc.collect(); time.sleep(0.5); shutil.rmtree(project_dir, ignore_errors=False) if project_dir.exists() else None; print('Index: cleared')" 2>nul
+REM Clear the index directory via path-safe helper (validates hash before rmtree)
+".\.venv\Scripts\python.exe" tools\safe_clear_index.py project "%PROJECT_HASH%" 2>nul
 set "INDEX_RESULT=!ERRORLEVEL!"
 
 REM Auto-retry once (no prompt inside the loop). Tentatively attribute to
@@ -1000,7 +1017,7 @@ if "!INDEX_RESULT!" NEQ "0" (
     set "LAST_REASON=rmtree error"
     echo [WARN] First rmtree failed; auto-retrying with ignore_errors...
     timeout /t 3 /nobreak >nul
-    ".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; import shutil, time; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; time.sleep(1); shutil.rmtree(project_dir, ignore_errors=True)"
+    ".\.venv\Scripts\python.exe" tools\safe_clear_index.py project "%PROJECT_HASH%" --retry
     REM Verify via storage_manager (honors custom STORAGE_DIR), not hardcoded %USERPROFILE%
     ".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; import sys; sys.exit(1 if (get_storage_dir() / 'projects' / '%PROJECT_HASH%').exists() else 0)"
     if errorlevel 1 (
@@ -1062,8 +1079,8 @@ pause >nul
 goto project_management_menu
 
 :cancel_and_return
-del "%TEMP_PROJECTS%" 2>nul
-del "%TEMP_SELECTED%" 2>nul
+if defined TEMP_PROJECTS if exist "%TEMP_PROJECTS%" del "%TEMP_PROJECTS%" 2>nul
+if defined TEMP_SELECTED if exist "%TEMP_SELECTED%" del "%TEMP_SELECTED%" 2>nul
 goto project_management_menu
 
 :clear_all_indices
@@ -1089,8 +1106,8 @@ echo.
 echo [INFO] Clearing all project indices...
 echo.
 
-REM Delete all project directories
-".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; import shutil, gc, time; storage = get_storage_dir(); projects_dir = storage / 'projects'; gc.collect(); time.sleep(0.5); shutil.rmtree(projects_dir, ignore_errors=True) if projects_dir.exists() else None; projects_dir.mkdir(exist_ok=True); print('[OK] All project indices cleared')"
+REM Delete all project directories via path-safe helper
+".\.venv\Scripts\python.exe" tools\safe_clear_index.py all
 set "CLEAR_RESULT=!ERRORLEVEL!"
 
 REM Clear all Merkle snapshots

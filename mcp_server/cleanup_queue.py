@@ -6,6 +6,7 @@ queueing them for retry on next server startup.
 
 import json
 import logging
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -81,8 +82,6 @@ class CleanupQueue:
                 - failed: List of directories that failed after 3 attempts
                 - remaining: Number of items still pending in queue
         """
-        import shutil
-
         if not self._queue:
             return {"processed": 0, "failed": [], "remaining": 0}
 
@@ -92,8 +91,24 @@ class CleanupQueue:
         failed = []
         remaining = []
 
+        projects_root = (get_storage_dir() / "projects").resolve()
+
         for item in self._queue:
             path = Path(item["directory"])
+
+            # Re-validate every queued path is under the storage projects root.
+            # Protects against a tampered cleanup_queue.json targeting arbitrary paths.
+            try:
+                path.resolve().relative_to(projects_root)
+            except ValueError:
+                logger.error(
+                    "Refusing queued cleanup: %s is not under %s — "
+                    "possible tampered cleanup_queue.json; skipping",
+                    path,
+                    projects_root,
+                )
+                failed.append(item["directory"])
+                continue
 
             # If path doesn't exist, cleanup was already done (externally)
             if not path.exists():

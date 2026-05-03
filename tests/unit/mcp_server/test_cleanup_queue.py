@@ -53,9 +53,11 @@ def test_cleanup_queue_process_success(mock_storage_dir):
     with patch(
         "mcp_server.cleanup_queue.get_storage_dir", return_value=mock_storage_dir
     ):
-        # Create test directories
-        dir1 = mock_storage_dir / "to_delete_1"
-        dir2 = mock_storage_dir / "to_delete_2"
+        # Directories must be under storage/projects/ (validated by process())
+        projects = mock_storage_dir / "projects"
+        projects.mkdir()
+        dir1 = projects / "proj1_abc12345_bge_1536d"
+        dir2 = projects / "proj2_def67890_bge_1536d"
         dir1.mkdir()
         dir2.mkdir()
 
@@ -83,15 +85,20 @@ def test_cleanup_queue_process_already_deleted(mock_storage_dir):
     with patch(
         "mcp_server.cleanup_queue.get_storage_dir", return_value=mock_storage_dir
     ):
-        # Add non-existent directory to queue
+        # Paths must be under storage/projects/ even if they no longer exist
+        projects = mock_storage_dir / "projects"
+        projects.mkdir()
+        ghost1 = str(projects / "ghost1_aaa_bge_512d")
+        ghost2 = str(projects / "ghost2_bbb_bge_512d")
+
         queue = CleanupQueue()
-        queue.add("/nonexistent/dir1", "Already deleted")
-        queue.add("/nonexistent/dir2", "Cleaned up externally")
+        queue.add(ghost1, "Already deleted")
+        queue.add(ghost2, "Cleaned up externally")
 
         # Process queue
         result = queue.process()
 
-        # Verify processed (skipped)
+        # Verify processed (skipped, dirs didn't exist)
         assert result["processed"] == 2
         assert result["failed"] == []
         assert result["remaining"] == 0
@@ -103,8 +110,10 @@ def test_cleanup_queue_process_permission_error_retry(mock_storage_dir):
     with patch(
         "mcp_server.cleanup_queue.get_storage_dir", return_value=mock_storage_dir
     ):
-        # Create test directory
-        test_dir = mock_storage_dir / "locked_dir"
+        # Directory must be under storage/projects/ to pass validation
+        projects = mock_storage_dir / "projects"
+        projects.mkdir()
+        test_dir = projects / "locked_proj_abc_bge_512d"
         test_dir.mkdir()
 
         # Add to queue
@@ -191,6 +200,28 @@ def test_cleanup_queue_handles_corrupted_json(mock_storage_dir):
         # Should handle gracefully and start with empty queue
         queue = CleanupQueue()
         assert len(queue.get_pending()) == 0
+
+
+def test_cleanup_queue_refuses_path_outside_projects(mock_storage_dir):
+    """process() must refuse to delete paths not under storage/projects/."""
+    with patch(
+        "mcp_server.cleanup_queue.get_storage_dir", return_value=mock_storage_dir
+    ):
+        # Create a directory that exists but is not under projects/
+        outside = mock_storage_dir / "outside_dir"
+        outside.mkdir()
+
+        queue = CleanupQueue()
+        queue.add(str(outside), "Should be refused")
+
+        result = queue.process()
+
+        # Path validation rejects it → lands in failed
+        assert result["processed"] == 0
+        assert len(result["failed"]) == 1
+        assert str(outside) in result["failed"]
+        # The directory must NOT have been deleted
+        assert outside.exists()
 
 
 if __name__ == "__main__":
