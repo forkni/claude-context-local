@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from graph.relationship_types import RelationshipEdge, RelationshipType
-from search.filters import normalize_path
+from utils.path_utils import normalize_path
 
 
 class BaseRelationshipExtractor(ABC):

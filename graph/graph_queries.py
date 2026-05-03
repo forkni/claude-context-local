@@ -7,6 +7,7 @@ Provides high-level query operations on code graphs.
 import logging
 from typing import Any
 
+from utils.path_utils import normalize_path
 
 try:
     import networkx as nx
@@ -106,9 +107,6 @@ class GraphQueryEngine:
         Returns:
             Dict with path nodes, edges, and metadata, or None if no path
         """
-        # Import normalize_path here to avoid circular import
-        from search.filters import normalize_path
-
         # Normalize paths
         source_id = normalize_path(source_id)
         target_id = normalize_path(target_id)
