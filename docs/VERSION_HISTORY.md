@@ -2,15 +2,38 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-04-21)
+## Current Status: All Features Operational (2026-05-03)
 
-- **Version**: 0.11.6
+- **Version**: 0.11.7
 - **Status**: Production-ready
-- **Test Coverage**: 1,989 unit tests + 8 integration tests (100% pass rate)
+- **Test Coverage**: 2,044 unit tests + 8 integration tests (100% pass rate)
 - **Dependencies**: 124 packages + optional `onnxruntime-gpu` for ONNX backend
 - **SSCG Benchmark**: Best MRR=0.846 (BM25), Hybrid Recall@10=0.833, all modes 13/13 Hit@5
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent Perf**: 0.11.6 — incremental-index path now uses the same extension-aware hashing as v0.11.5's full-index path; eliminates a matching ~100 s stall and fixes a hash-scheme-drift bug that caused every non-code asset to be mis-classified as "modified" on every incremental run
+- **Recent Security**: 0.11.7 — defense-in-depth for all destructive filesystem operations; storage sentinel guard; `validate_storage_path()` blocks `CODE_SEARCH_STORAGE` pointing at source trees; cleanup queue re-validation; `safe_clear_index.py` tool
+
+---
+
+## v0.11.7 - Defense-in-Depth for Destructive Operations (2026-05-03)
+
+### Status: PATCH RELEASE ✅
+
+Hardens every `shutil.rmtree` call in the codebase with layered path-containment guards. Fixes a regression where selecting "0" (Cancel) in the `start_mcp_server.cmd` "Clear Project Indexes" menu could delete project source files instead of cancelling.
+
+### Security
+
+- **`validate_storage_path()`** (`mcp_server/storage_manager.py`) — refuses any `CODE_SEARCH_STORAGE` path that has a project marker (`.git`, `pyproject.toml`, `Cargo.toml`, `package.json`, `go.mod`, `pom.xml`) as an ancestor up to the home directory. Falls back to `~/.claude_code_search` with a logged error.
+- **Storage sentinel** — `get_storage_dir()` writes `.claude_code_search_storage` on first init. `safe_rmtree_all()` returns exit code 6 if the sentinel is absent and exit code 7 if the directory contains a project marker.
+- **`tools/safe_clear_index.py`** (new) — standalone helper with `safe_rmtree_project()` (5-guard chain) and `safe_rmtree_all()`.
+- **Cleanup queue re-validation** — paths from `cleanup_queue.json` are checked against `projects_root` before `rmtree` at server startup.
+- **Index handler assertion** — `_clear_index_files_before_create` verifies the target is under the storage root.
+- **Single source of truth** — `snapshot_manager.py`, `cleanup_orphaned_projects.py`, `cleanup_stale_snapshots.py` all route through `get_storage_dir()` instead of hardcoding `~/.claude_code_search`.
+- **ONNX `--force` guard** — refuses to `rmtree` directories that lack `*.onnx` / ONNX meta artifacts.
+- **`repair_installation.bat`** — routes through `safe_clear_index.py`; `Type YES to confirm` prompts.
+
+### Verification
+
+- 97 new/updated tests across 6 modules (all 2,044 unit tests pass).
 
 ---
 

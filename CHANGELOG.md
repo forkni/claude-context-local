@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.11.7] - 2026-05-03
+
+### Security
+
+- **Defense-in-depth for all destructive filesystem operations** — every `shutil.rmtree` call in the codebase is now gated by layered path-containment guards. Fixes a regression where selecting "0" (Cancel) in the `start_mcp_server.cmd` "Clear Project Indexes" menu could delete project source files instead of cancelling.
+- **`validate_storage_path()`** (`mcp_server/storage_manager.py`) — new helper that refuses any `CODE_SEARCH_STORAGE` path that sits inside a project source tree (`.git`, `pyproject.toml`, `Cargo.toml`, etc. as ancestors). Falls back to `~/.claude_code_search` with a logged error rather than raising, keeping the MCP server runnable under misconfiguration.
+- **Storage sentinel file** — `get_storage_dir()` now writes `.claude_code_search_storage` on first init. `safe_rmtree_all()` refuses with exit code 6 if the sentinel is absent, and with exit code 7 if the storage directory contains a project marker.
+- **`tools/safe_clear_index.py`** (new) — standalone path-safe rmtree helper with `safe_rmtree_project()` (5-guard chain: empty hash, target==root, `relative_to` containment, traversal, underscore presence) and `safe_rmtree_all()` (sentinel + project-marker guards).
+- **Cleanup queue re-validation** (`mcp_server/cleanup_queue.py`) — paths read from persisted `cleanup_queue.json` are re-validated against `projects_root` before `rmtree`, preventing a tampered queue from triggering arbitrary deletion at server startup.
+- **Index handler assertion** (`mcp_server/tools/index_handlers.py`) — `_clear_index_files_before_create` now asserts the target directory is under the storage root before clearing any files.
+- **Snapshot manager** (`merkle/snapshot_manager.py`) — default `storage_dir` is now resolved via `get_storage_dir()` instead of the hardcoded `~/.claude_code_search/merkle` path, so `CODE_SEARCH_STORAGE` is honoured.
+- **Cleanup tools** (`tools/cleanup_orphaned_projects.py`, `tools/cleanup_stale_snapshots.py`) — replaced hardcoded `~/.claude_code_search/projects` with `get_storage_dir() / "projects"`.
+- **ONNX conversion guard** (`tools/convert_onnx.py`) — `--force` now refuses to `rmtree` directories that lack `*.onnx` / ONNX meta artifacts, preventing accidental deletion of arbitrary user-supplied paths.
+- **`scripts/batch/repair_installation.bat`** — destructive operations now route through `safe_clear_index.py`; confirmation prompts changed from `y/N` to `Type YES to confirm`.
+
+### Tests
+
+- 97 new/updated tests across 6 modules: `test_storage_manager_validation.py` (10), `test_safe_clear_index.py` (12), `test_cleanup_queue.py` (4), `test_index_handlers.py` (2), `test_merkle.py` (3).
+- All 2,044 unit tests pass.
+
+---
+
 ## [0.11.6] - 2026-04-21
 
 ### Performance
