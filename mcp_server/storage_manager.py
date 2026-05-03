@@ -3,6 +3,7 @@
 Manages project storage directories, metadata persistence, and path resolution.
 """
 
+import contextlib
 import json
 import logging
 import os
@@ -24,6 +25,51 @@ from search.filters import (
 
 logger = logging.getLogger(__name__)
 
+# Filename written into every legitimate storage root on first init.
+# Downstream guards use its presence to verify a directory is a real
+# storage root before performing destructive operations.
+STORAGE_SENTINEL = ".claude_code_search_storage"
+
+# Project-root markers — if any ancestor of the candidate path contains
+# one of these (excluding the home dir itself), the path is inside a
+# source tree and must be refused as storage location.
+_PROJECT_MARKERS = (
+    ".git",
+    "pyproject.toml",
+    "package.json",
+    "Cargo.toml",
+    "go.mod",
+    "pom.xml",
+)
+
+
+def validate_storage_path(path: Path) -> tuple[bool, str]:
+    """Check that *path* is a safe location for an index storage root.
+
+    Refuses:
+    - The user's home directory itself or a filesystem root
+    - Any path whose directory tree (up to home) contains a project-root marker
+
+    Returns ``(True, "ok")`` when safe, ``(False, reason)`` when refused.
+    """
+    p = path.resolve()
+    home = Path.home()
+
+    if p == home or p == Path(p.anchor):
+        return False, f"refusing home dir or filesystem root: {p}"
+
+    for ancestor in (p, *p.parents):
+        if ancestor == home or ancestor == ancestor.parent:
+            break
+        for marker in _PROJECT_MARKERS:
+            if (ancestor / marker).exists():
+                return (
+                    False,
+                    f"path is inside a project tree ({marker} found at {ancestor})",
+                )
+
+    return True, "ok"
+
 
 class StorageManager:
     """Manages storage paths and project directories."""
@@ -39,17 +85,43 @@ class StorageManager:
     def get_storage_dir(self) -> Path:
         """Get or create base storage directory.
 
+        Reads CODE_SEARCH_STORAGE env var if set; falls back to
+        ``~/.claude_code_search``.  Refuses paths that sit inside a project
+        source tree (have a .git / pyproject.toml ancestor) and falls back to
+        the default rather than using the unsafe path.
+
         Returns:
             Path to the base storage directory
         """
         state = get_state()
 
         if state.storage_dir is None:
-            storage_path = os.getenv(
-                "CODE_SEARCH_STORAGE", str(Path.home() / ".claude_code_search")
-            )
-            state.storage_dir = Path(storage_path)
-            state.storage_dir.mkdir(parents=True, exist_ok=True)
+            env_val = os.getenv("CODE_SEARCH_STORAGE")
+            if env_val:
+                candidate = Path(env_val).expanduser()
+                ok, reason = validate_storage_path(candidate)
+                if not ok:
+                    logger.error(
+                        "CODE_SEARCH_STORAGE=%r is unsafe (%s); "
+                        "falling back to ~/.claude_code_search",
+                        env_val,
+                        reason,
+                    )
+                    candidate = Path.home() / ".claude_code_search"
+            else:
+                candidate = Path.home() / ".claude_code_search"
+
+            candidate.mkdir(parents=True, exist_ok=True)
+
+            sentinel = candidate / STORAGE_SENTINEL
+            if not sentinel.exists():
+                with contextlib.suppress(OSError):
+                    sentinel.write_text(
+                        "claude-context-local storage root\n", encoding="utf-8"
+                    )
+
+            state.storage_dir = candidate
+
         return state.storage_dir
 
     def set_current_project(self, project_path: str) -> None:

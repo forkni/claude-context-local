@@ -2,7 +2,7 @@
 
 ## Project: General-Purpose Semantic Search MCP Integration System
 
-## Initialized: 2025-09-22 | Updated: 2026-04-21
+## Initialized: 2025-09-22 | Updated: 2026-04-22
 
 This file maintains session memory and context for the Claude-context-MCP semantic search system development and improvements.
 
@@ -164,6 +164,20 @@ Ran `/simplify` after all Charlie CI rounds resolved. Three parallel review agen
 2. Consolidated five duplicated cancel paths (`del "%TEMP_PROJECTS%/TEMP_SELECTED%" 2>nul` + `goto project_management_menu`) into a single `:cancel_and_return` label at the end of the summary block.
 
 Python subprocess consolidation (2-5 interpreter spawns per cleared index, ~10-40s for bulk 10-item clear) flagged by efficiency agent — deferred to a separate issue to avoid wider blast radius at merge time.
+
+#### Charlie CI Final Round — 5 Remaining Minor Items
+
+Charlie posted a final pass with 5 items after the `/simplify` cleanup; 2 addressed, 3 acknowledged:
+
+**#1 — %%n inner-loop collision risk**: Added `REM Inner-loop vars %%m/%%n (slug/dim) are distinct from outer %%a-%%d; safe to reference both.` above the inner `for /f ... %%m` to pre-empt a future reader mistaking `%%n` for a bug.
+
+**#2 — 2>nul on selection-reset one-liner**: Removed `2>nul` suppression. Happy path is silent (the Python `print()` is gated by a conditional); any traceback now surfaces, flagging real bugs (ImportError, API drift) rather than swallowing them.
+
+Not changed: #3 (`LAST_REASON` leak — flow already correct; verified multi-item scenario), #4 (Ctrl+C temp-file survival — low risk, `%TEMP%` is ephemeral), #5 (long Python one-liners — deferred, "if complexity grows further").
+
+#### Release: v0.11.3 Shipped
+
+Merged `development → main` (merge commit `d3c6be1`, 8 commits total) and pushed both branches. PR #27 auto-closed on push to `main`.
 
 ---
 

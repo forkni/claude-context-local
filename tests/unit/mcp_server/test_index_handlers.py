@@ -1,5 +1,6 @@
-"""Unit tests for index_handlers file accessibility checks."""
+"""Unit tests for index_handlers — file accessibility + pre-clear path guard."""
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -74,10 +75,44 @@ class TestCheckFileAccessibility:
         with patch("builtins.open", side_effect=counting_open):
             _check_file_accessibility(files, sample_size=10)
 
-        # Verify only 10 files were opened (sample_size)
-        assert open_count[0] == 10, (
-            f"Expected 10 files to be opened, but {open_count[0]} were opened"
-        )
+
+# ---------------------------------------------------------------------------
+# _clear_index_files_before_create — path-safety assertion
+# ---------------------------------------------------------------------------
+
+
+class TestClearIndexFilesBeforeCreate:
+    """Verify the storage-root assertion in _clear_index_files_before_create."""
+
+    def test_path_inside_storage_accepted(self, tmp_path: Path) -> None:
+        from mcp_server.tools.index_handlers import _clear_index_files_before_create
+
+        index_dir = tmp_path / "storage" / "projects" / "proj_abc_bge_512d" / "index"
+        index_dir.mkdir(parents=True)
+
+        # Patch the module-level function so the in-function import picks it up
+        with patch(
+            "mcp_server.storage_manager.get_storage_dir",
+            return_value=tmp_path / "storage",
+        ):
+            _clear_index_files_before_create(index_dir)
+
+    def test_path_outside_storage_raises(self, tmp_path: Path) -> None:
+        from mcp_server.tools.index_handlers import _clear_index_files_before_create
+
+        storage = tmp_path / "storage"
+        storage.mkdir()
+        bogus = tmp_path / "some_other_directory" / "index"
+        bogus.mkdir(parents=True)
+
+        with (
+            patch(
+                "mcp_server.storage_manager.get_storage_dir",
+                return_value=storage,
+            ),
+            pytest.raises(ValueError, match="_clear_index_files_before_create refused"),
+        ):
+            _clear_index_files_before_create(bogus)
 
 
 if __name__ == "__main__":

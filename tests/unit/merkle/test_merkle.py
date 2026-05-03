@@ -576,5 +576,62 @@ class TestChangeDetector(TestCase):
         )
 
 
+class TestSnapshotManagerStorageDir:
+    """Verify SnapshotManager storage_dir defaulting and explicit-arg behavior."""
+
+    def test_explicit_storage_dir_used(self, tmp_path: Path) -> None:
+        sm = SnapshotManager(storage_dir=tmp_path)
+        assert sm.storage_dir == tmp_path
+        assert sm.storage_dir.exists()
+
+    def test_default_is_merkle_subdir_of_get_storage_dir(self, tmp_path: Path) -> None:
+        """Default storage_dir must be get_storage_dir() / 'merkle', not hardcoded home."""
+
+        fake_storage = tmp_path / "fake_storage"
+        fake_storage.mkdir()
+
+        # Patch the lazy import path inside __init__
+        import types
+
+        fake_module = types.ModuleType("mcp_server.storage_manager")
+        fake_module.get_storage_dir = lambda: fake_storage  # type: ignore[attr-defined]
+
+        import sys
+
+        orig = sys.modules.get("mcp_server.storage_manager")
+        sys.modules["mcp_server.storage_manager"] = fake_module
+        try:
+            sm = SnapshotManager()
+        finally:
+            if orig is None:
+                del sys.modules["mcp_server.storage_manager"]
+            else:
+                sys.modules["mcp_server.storage_manager"] = orig
+
+        assert sm.storage_dir == fake_storage / "merkle"
+
+    def test_default_without_storage_manager_falls_back(self) -> None:
+        """If mcp_server.storage_manager can't be imported, falls back to ~/.claude_code_search/merkle."""
+        import sys
+        import types
+
+        # Replace mcp_server.storage_manager with a module whose get_storage_dir raises
+        broken = types.ModuleType("mcp_server.storage_manager")
+        broken.get_storage_dir = None  # type: ignore[attr-defined]  # will raise TypeError on call
+
+        orig = sys.modules.get("mcp_server.storage_manager")
+        sys.modules["mcp_server.storage_manager"] = broken
+        try:
+            sm = SnapshotManager()
+        finally:
+            if orig is None:
+                del sys.modules["mcp_server.storage_manager"]
+            else:
+                sys.modules["mcp_server.storage_manager"] = orig
+
+        expected = Path.home() / ".claude_code_search" / "merkle"
+        assert sm.storage_dir == expected
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

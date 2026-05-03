@@ -37,6 +37,12 @@ CGW_REMOTE="origin"
 
 CGW_LOCAL_FILES="CLAUDE.md MEMORY.md .claude/ logs/"
 
+# Specific files exempted from CGW_LOCAL_FILES protection (space-separated exact paths).
+# Use when a tracked file lives inside a blocked directory.
+# Example: .claude/settings.json is a shared project config inside the blocked .claude/ dir.
+# CGW_LOCAL_FILES_EXEMPT=".claude/settings.json"
+CGW_LOCAL_FILES_EXEMPT=""
+
 # ============================================================================
 # COMMIT MESSAGE PREFIXES
 # ============================================================================

@@ -16,10 +16,18 @@ class SnapshotManager:
         """Initialize snapshot manager.
 
         Args:
-            storage_dir: Directory to store snapshots (default: ~/.claude_code_search/merkle)
+            storage_dir: Directory to store snapshots. Defaults to
+                ``get_storage_dir() / "merkle"`` (honoring CODE_SEARCH_STORAGE),
+                falling back to ``~/.claude_code_search/merkle`` if the import
+                fails (e.g. when running outside the installed package).
         """
         if storage_dir is None:
-            storage_dir = Path.home() / ".claude_code_search" / "merkle"
+            try:
+                from mcp_server.storage_manager import get_storage_dir
+
+                storage_dir = get_storage_dir() / "merkle"
+            except Exception:
+                storage_dir = Path.home() / ".claude_code_search" / "merkle"
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 

@@ -79,27 +79,19 @@ echo.
 echo [WARNING] This will delete ALL indexed projects!
 echo [WARNING] You will need to reindex your projects.
 echo.
-set /p confirm="Are you sure? (y/N): "
-if /i not "!confirm!"=="y" (
+set "confirm_idx="
+set /p confirm_idx="Type YES to confirm: "
+if not "!confirm_idx!"=="YES" (
     echo [INFO] Cancelled
     goto main_menu
 )
 
-set "INDEX_DIR=%USERPROFILE%\.claude_code_search\projects"
-
-if not exist "%INDEX_DIR%" (
-    echo [INFO] No index directory found: %INDEX_DIR%
-    echo [OK] Nothing to clear
-    goto repair_complete
-)
-
-echo [INFO] Deleting all project indexes...
-rmdir /s /q "%INDEX_DIR%" 2>nul
+echo [INFO] Deleting all project indexes via path-safe helper...
+".\.venv\Scripts\python.exe" tools\safe_clear_index.py all
 if %ERRORLEVEL% equ 0 (
     echo [OK] Project indexes cleared successfully
-    mkdir "%INDEX_DIR%"
 ) else (
-    echo [WARNING] Some indexes could not be deleted - check permissions
+    echo [WARNING] Index clear failed or was refused - see output above
 )
 goto repair_complete
 
@@ -110,8 +102,9 @@ echo.
 echo [WARNING] This will delete ALL snapshots and indexes!
 echo [WARNING] You will need to reindex your projects.
 echo.
-set /p confirm_full="Are you absolutely sure? (y/N): "
-if /i not "!confirm_full!"=="y" (
+set "confirm_full="
+set /p confirm_full="Type YES to confirm full reset: "
+if not "!confirm_full!"=="YES" (
     echo [INFO] Cancelled
     goto main_menu
 )
