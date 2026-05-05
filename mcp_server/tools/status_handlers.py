@@ -210,8 +210,10 @@ async def handle_get_memory_status(arguments: dict[str, Any]) -> dict:
 
             pynvml.nvmlInit()
             nvml_available = True
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(
+                "pynvml unavailable, falling back to torch-only VRAM metrics: %s", e
+            )
 
         for i in range(torch.cuda.device_count()):
             torch_allocated = torch.cuda.memory_allocated(i) / (1024**3)
