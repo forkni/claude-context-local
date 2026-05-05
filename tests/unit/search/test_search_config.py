@@ -122,6 +122,27 @@ class TestSearchConfigManager:
         assert saved_data["search_mode"]["default_mode"] == "bm25"
         assert saved_data["search_mode"]["bm25_weight"] == 0.7
 
+    def test_save_config_syncs_cache_mtime(self):
+        """save_config must update _config_mtime so the next load_config() short-circuits."""
+        manager = SearchConfigManager(self.config_file)
+        config = manager.load_config()
+        config.search_mode.bm25_weight = 0.99
+
+        manager.save_config(config)
+
+        # Cache mtime must match the on-disk mtime after save
+        disk_mtime = os.path.getmtime(self.config_file)
+        assert manager._config_mtime == disk_mtime, (
+            "save_config must sync _config_mtime to the post-write disk mtime"
+        )
+
+        # And the next load_config() must return the cached object (no re-parse)
+        second = manager.load_config()
+        assert second is config, (
+            "load_config after save_config should return the cached object, "
+            "not a fresh parse from disk"
+        )
+
     def test_auto_mode_detection(self):
         """Test automatic search mode detection."""
         # Create config with auto mode
