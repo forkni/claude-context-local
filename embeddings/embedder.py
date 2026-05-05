@@ -1682,8 +1682,6 @@ class CodeEmbedder:
         with self._lifecycle_lock:
             if self._model is not None:
                 try:
-                    import gc
-
                     # Step 1: Free GPU memory.
                     # ONNX path: call cleanup() to explicitly destroy the ORT CUDA session,
                     # which is the only way to release CUDA memory allocated by ORT's
