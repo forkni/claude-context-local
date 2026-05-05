@@ -151,7 +151,7 @@ class VRAMTierManager:
             logger.warning("PyTorch not available, cannot detect VRAM")
             return 0.0
         except Exception as e:
-            logger.error(f"Error detecting VRAM: {e}")
+            logger.error(f"Error detecting VRAM: {e}", exc_info=True)
             return 0.0
 
     def get_model_for_tier(self, tier_name: str) -> str:

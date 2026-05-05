@@ -275,7 +275,7 @@ class SearchExecutor:
             return results
 
         except Exception as e:
-            self._logger.error(f"BM25 search failed: {e}")
+            self._logger.error(f"BM25 search failed: {e}", exc_info=True)
             return []
 
     @timed("dense_search")
@@ -323,7 +323,7 @@ class SearchExecutor:
             return results
 
         except Exception as e:
-            self._logger.error(f"Dense search failed: {e}")
+            self._logger.error(f"Dense search failed: {e}", exc_info=True)
             import traceback
 
             self._logger.error(

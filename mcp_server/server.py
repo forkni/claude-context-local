@@ -9,11 +9,14 @@ Migrated from FastMCP to official MCP SDK for:
 - Better production reliability
 """
 
+import argparse
 import asyncio
 import json
 import logging
 import os
+import platform
 import sys
+import time
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
@@ -288,8 +291,6 @@ For more information, see the project documentation.
 # ============================================================================
 
 if __name__ == "__main__":
-    import argparse
-
     parser = argparse.ArgumentParser(
         description="Code Search MCP Server (Low-Level SDK)"
     )
@@ -299,8 +300,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Enable MCP debug logging
-    import logging
-
     logging.getLogger("mcp").setLevel(logging.DEBUG)
     logging.getLogger("mcp.server").setLevel(logging.DEBUG)
 
@@ -308,8 +307,6 @@ if __name__ == "__main__":
     logger.info("MCP Server Starting (Low-Level SDK)")
     logger.info("=" * 60)
     if debug_mode:
-        import time
-
         global _startup_time
         _startup_time = time.perf_counter()
         logger.info(f"[DEBUG] Startup timer started at {time.strftime('%H:%M:%S')}")
@@ -334,8 +331,6 @@ if __name__ == "__main__":
                 logger.info("=" * 60)
                 logger.info("SERVER READY - Accepting connections")
                 if debug_mode:
-                    import time
-
                     startup_duration = time.perf_counter() - _startup_time
                     logger.info(
                         f"[DEBUG] Startup completed in {startup_duration:.2f} seconds"
@@ -361,8 +356,6 @@ if __name__ == "__main__":
             asyncio.run(run_stdio_server())
         elif args.transport == "sse":
             # SSE transport using Starlette + SseServerTransport + uvicorn
-            import platform
-
             import uvicorn
             from mcp.server.sse import SseServerTransport
             from starlette.applications import Starlette
@@ -404,7 +397,7 @@ if __name__ == "__main__":
                         }
                     )
                 except Exception as e:
-                    logger.error(f"[HTTP CLEANUP] Cleanup failed: {e}")
+                    logger.error(f"[HTTP CLEANUP] Cleanup failed: {e}", exc_info=True)
                     return JSONResponse(
                         {"success": False, "error": str(e)}, status_code=500
                     )
@@ -445,7 +438,7 @@ if __name__ == "__main__":
                         }
                     )
                 except Exception as e:
-                    logger.error(f"[HTTP CONFIG] Reload failed: {e}")
+                    logger.error(f"[HTTP CONFIG] Reload failed: {e}", exc_info=True)
                     return JSONResponse({"error": str(e)}, status_code=500)
 
             # Project switch endpoint - switch active project
@@ -477,7 +470,7 @@ if __name__ == "__main__":
                     return JSONResponse(result)
 
                 except Exception as e:
-                    logger.error(f"[HTTP SWITCH] Failed: {e}")
+                    logger.error(f"[HTTP SWITCH] Failed: {e}", exc_info=True)
                     return JSONResponse({"error": str(e)}, status_code=500)
 
             # Starlette app with lifespan integration
@@ -511,8 +504,6 @@ if __name__ == "__main__":
                     logger.info("=" * 60)
                     logger.info("APPLICATION READY - Accepting connections")
                     if debug_mode:
-                        import time
-
                         startup_duration = time.perf_counter() - _startup_time
                         logger.info(
                             f"[DEBUG] Startup completed in {startup_duration:.2f} seconds"
