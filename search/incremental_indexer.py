@@ -537,8 +537,6 @@ class IncrementalIndexer:
                 f"[FULL_INDEX] Initial verification failed: {warnings}. "
                 "Attempting secondary cleanup..."
             )
-            import gc
-
             gc.collect()
             try:
                 import torch
@@ -1296,8 +1294,6 @@ class IncrementalIndexer:
             log_prefix: Prefix for log messages (e.g., "INCREMENTAL" or "FULL_INDEX")
         """
         try:
-            import gc
-
             import torch
 
             gc.collect()  # Free Python wrapper objects first
@@ -1364,8 +1360,6 @@ class IncrementalIndexer:
         Returns:
             IncrementalIndexResult with statistics
         """
-        import time
-
         start_time = time.time()
 
         if self.needs_reindex(project_path, max_age_minutes):
