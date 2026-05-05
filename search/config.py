@@ -1172,6 +1172,9 @@ class SearchConfigManager:
 
             self.logger.info(f"Saved search config to {self.config_file}")
             self._config = config  # Update cached config
+            # Sync mtime so the next load_config() short-circuits to the cache
+            # instead of re-reading and re-parsing the file we just wrote.
+            self._config_mtime = Path(self.config_file).stat().st_mtime
 
         except Exception as e:
             self.logger.error(f"Failed to save config to {self.config_file}: {e}")
