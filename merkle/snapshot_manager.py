@@ -1,12 +1,16 @@
 """Manages Merkle tree snapshots for persistent change tracking."""
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 
 from search.filters import compute_drive_agnostic_hash, compute_legacy_hash
 
 from .merkle_dag import MerkleDAG
+
+
+logger = logging.getLogger(__name__)
 
 
 class SnapshotManager:
@@ -221,8 +225,8 @@ class SnapshotManager:
 
             return MerkleDAG.from_dict(snapshot_data["dag"])
 
-        except (json.JSONDecodeError, KeyError, Exception) as e:
-            print(f"Error loading snapshot: {e}")
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.error("Error loading snapshot: %s", e, exc_info=True)
             return None
 
     def load_metadata(self, project_path: str) -> dict | None:
@@ -242,8 +246,8 @@ class SnapshotManager:
         try:
             with open(metadata_path) as f:
                 return json.load(f)
-        except (json.JSONDecodeError, Exception) as e:
-            print(f"Error loading metadata: {e}")
+        except json.JSONDecodeError as e:
+            logger.error("Error loading metadata: %s", e, exc_info=True)
             return None
 
     def has_snapshot(self, project_path: str) -> bool:
