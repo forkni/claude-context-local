@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 # Import DEFAULT_EDGE_WEIGHTS for ego-graph weighted BFS
@@ -131,8 +132,6 @@ def resolve_qwen3_variant_for_lookup(project_hash: str, project_name: str) -> st
         >>> resolve_qwen3_variant_for_lookup("abc123", "my-project")
         "Qwen/Qwen3-Embedding-0.6B"  # If 0.6B variant is indexed
     """
-    from pathlib import Path
-
     storage_dir = Path.home() / ".claude_code_search" / "projects"
 
     # Check for existing Qwen3 index
@@ -1016,11 +1015,11 @@ class SearchConfigManager:
         candidates = [
             "search_config.json",
             ".search_config.json",
-            os.path.expanduser("~/.claude_code_search/search_config.json"),
+            str(Path.home() / ".claude_code_search" / "search_config.json"),
         ]
 
         for candidate in candidates:
-            if os.path.exists(candidate):
+            if Path(candidate).exists():
                 return candidate
 
         # Return first candidate as default
@@ -1030,8 +1029,9 @@ class SearchConfigManager:
         """Load configuration from file and environment variables."""
         # Check if file changed since last load
         current_mtime = None
-        if os.path.exists(self.config_file):
-            current_mtime = os.path.getmtime(self.config_file)
+        _config_path = Path(self.config_file)
+        if _config_path.exists():
+            current_mtime = _config_path.stat().st_mtime
 
         # Return cache only if file hasn't changed
         if self._config is not None and current_mtime == self._config_mtime:
@@ -1041,7 +1041,7 @@ class SearchConfigManager:
         config_dict = {}
 
         # Load from file if exists
-        if os.path.exists(self.config_file):
+        if _config_path.exists():
             try:
                 with open(self.config_file) as f:
                     config_dict = json.load(f)
@@ -1152,10 +1152,8 @@ class SearchConfigManager:
                     model_config.get("truncate_dim") or model_config["dimension"]
                 )
 
-            # Create directory if needed (only if not current directory)
-            config_dir = os.path.dirname(self.config_file)
-            if config_dir:  # Only create if not empty (not current directory)
-                os.makedirs(config_dir, exist_ok=True)
+            # Create directory if needed (pathlib handles the current-dir no-op case)
+            Path(self.config_file).parent.mkdir(parents=True, exist_ok=True)
 
             # ATOMIC WRITE: Write to temp file first, then rename
             # This prevents data loss if exception occurs during write
@@ -1179,8 +1177,7 @@ class SearchConfigManager:
             self.logger.error(f"Failed to save config to {self.config_file}: {e}")
             # Clean up temp file if it exists
             temp_file = self.config_file + ".tmp"
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
+            Path(temp_file).unlink(missing_ok=True)
             raise  # Re-raise so caller knows save failed
 
     def get_search_mode_for_query(
