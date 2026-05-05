@@ -7,12 +7,13 @@ Provides high-level query operations on code graphs.
 import logging
 from typing import Any
 
-from utils.path_utils import normalize_path
 
 try:
     import networkx as nx
 except ImportError:
     nx = None
+
+from utils.path_utils import normalize_path
 
 from .graph_storage import CodeGraphStorage
 
