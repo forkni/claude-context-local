@@ -172,7 +172,7 @@ class CommunityDetector:
                 undirected, resolution=resolution, seed=42
             )
         except Exception as e:
-            self.logger.error(f"Louvain algorithm failed: {e}")
+            self.logger.error(f"Louvain algorithm failed: {e}", exc_info=True)
             return {}
 
         # Convert list of sets to chunk_id -> community_id mapping

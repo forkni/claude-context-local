@@ -259,6 +259,8 @@ class FaissVectorIndex:
             self.move_to_gpu()
 
             # Load chunk IDs
+            # SECURITY: pickle.load is safe here — chunk_id_path lives under
+            # ~/.claude_code_search/ which is exclusively written by this process.
             if self.chunk_id_path.exists():
                 with open(self.chunk_id_path, "rb") as f:
                     self._chunk_ids = pickle.load(f)
@@ -290,7 +292,7 @@ class FaissVectorIndex:
             return True
 
         except (OSError, RuntimeError) as e:
-            self._logger.error(f"Failed to load index: {e}")
+            self._logger.error(f"Failed to load index: {e}", exc_info=True)
             self._index = None
             self._chunk_ids = []
             return False

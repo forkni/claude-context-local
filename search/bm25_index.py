@@ -572,6 +572,8 @@ class BM25Index:
                 return False
 
             # Load BM25 index
+            # SECURITY: pickle.load is safe here — index_path lives under
+            # ~/.claude_code_search/ which is exclusively written by this process.
             with open(self.index_path, "rb") as f:
                 self._bm25 = pickle.load(f)
 
@@ -617,7 +619,7 @@ class BM25Index:
             return True
 
         except (OSError, ValueError) as e:
-            self._logger.error(f"Failed to load BM25 index: {e}")
+            self._logger.error(f"Failed to load BM25 index: {e}", exc_info=True)
             # Reset state on load failure
             self._bm25 = None
             self._documents = []

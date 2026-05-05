@@ -138,7 +138,7 @@ class ModelPoolManager:
                     state.set_embedder(model_key, embedder)
                     logger.info(f"✓ {model_key} loaded successfully")
                 except Exception as e:
-                    logger.error(f"✗ Failed to load {model_key}: {e}")
+                    logger.error(f"✗ Failed to load {model_key}: {e}", exc_info=True)
                     state.embedders[model_key] = None
 
             loaded_count = sum(1 for e in state.embedders.values() if e is not None)
@@ -221,7 +221,7 @@ class ModelPoolManager:
                         f"✓ {model_key} loaded successfully (explicit override)"
                     )
                 except Exception as e:
-                    logger.error(f"✗ Failed to load {model_key}: {e}")
+                    logger.error(f"✗ Failed to load {model_key}: {e}", exc_info=True)
                     # Fallback to first available model in pool
                     pool_config = self.get_pool_config()
                     fallback_key = next(iter(pool_config.keys()))
@@ -303,7 +303,7 @@ class ModelPoolManager:
                     else:
                         logger.info(f"✓ {model_key} loaded successfully")
                 except Exception as e:
-                    logger.error(f"✗ Failed to load {model_key}: {e}")
+                    logger.error(f"✗ Failed to load {model_key}: {e}", exc_info=True)
                     # Fallback to first available model in pool
                     pool_config = self.get_pool_config()
                     fallback_key = next(iter(pool_config.keys()))
