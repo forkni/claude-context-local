@@ -116,6 +116,38 @@ CGW_FORMAT_EXCLUDES="--exclude logs --exclude .venv"
 # CGW_FORMAT_CMD=""
 
 # ============================================================================
+# TYPECHECK CONFIGURATION
+# ============================================================================
+# Optional non-blocking typecheck step run by the pre-commit hook.
+# Set CGW_TYPECHECK_CMD="" to disable (default).
+#
+# ── Python / pyrefly (recommended for new Python projects) ───────────────────
+# CGW_TYPECHECK_CMD="pyrefly"
+# CGW_TYPECHECK_CHECK_ARGS="check"
+# CGW_TYPECHECK_EXCLUDES=""
+#
+# ── Python / pyright ─────────────────────────────────────────────────────────
+# CGW_TYPECHECK_CMD="pyright"
+# CGW_TYPECHECK_CHECK_ARGS=""
+# CGW_TYPECHECK_EXCLUDES=""
+#
+# ── Python / mypy ────────────────────────────────────────────────────────────
+# CGW_TYPECHECK_CMD="mypy"
+# CGW_TYPECHECK_CHECK_ARGS="."
+# CGW_TYPECHECK_EXCLUDES=""
+#
+# ── TypeScript / tsc ─────────────────────────────────────────────────────────
+# CGW_TYPECHECK_CMD="tsc"
+# CGW_TYPECHECK_CHECK_ARGS="--noEmit"
+# CGW_TYPECHECK_EXCLUDES=""
+#
+# Skip at runtime with CGW_SKIP_TYPECHECK=1.
+
+CGW_TYPECHECK_CMD=""
+CGW_TYPECHECK_CHECK_ARGS="check"
+CGW_TYPECHECK_EXCLUDES=""
+
+# ============================================================================
 # MODIFIED-ONLY LINT FILE EXTENSIONS (check_lint.sh, fix_lint.sh)
 # ============================================================================
 # Space-separated glob patterns controlling which files are matched in
@@ -217,3 +249,22 @@ CGW_CLEANUP_TESTS="0"
 #
 CGW_MERGE_MODE="direct"
 # CGW_MERGE_MODE="pr"
+
+# ── Stale index.lock auto-recovery ────────────────────────────────────────────
+# CGW scripts detect and remove abandoned .git/index.lock files left by crashed
+# or killed git processes (the most common Claude Code failure mode).
+#
+# Auto-remove is refused when a rebase/merge/cherry-pick/revert/bisect operation
+# is currently in progress (detected via state dirs/sentinels in .git/).
+#
+# Set to 0 to disable auto-removal; the script will warn and exit instead.
+# CGW_AUTO_REMOVE_INDEX_LOCK=1
+#
+# Locks older than this many seconds are treated as stale and removed.
+# Increase (e.g. 300) if you regularly pause git rebase -i in an editor for
+# more than the default 30 seconds.
+# CGW_INDEX_LOCK_MAX_AGE_SECONDS=30
+#
+# When a fresh lock is present, poll up to this many seconds for it to clear
+# before escalating. Set to 0 to skip waiting.
+# CGW_INDEX_LOCK_WAIT_SECONDS=10
