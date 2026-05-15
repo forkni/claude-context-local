@@ -81,6 +81,7 @@ dev = [
     "pip-licenses>=5.5.5",
     "pipdeptree>=2.34.0",
     "pre-commit>=4.5.1",
+    "pyrefly>=1.0",
 ]
 profile = [
     "snoop>=0.6.0",
@@ -204,3 +205,64 @@ quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
+
+[tool.pyrefly]
+project-includes = [
+    "search/**/*.py",
+    "mcp_server/**/*.py",
+    "chunking/**/*.py",
+    "graph/**/*.py",
+    "embeddings/**/*.py",
+    "merkle/**/*.py",
+    "utils/**/*.py",
+    "evaluation/**/*.py",
+]
+project-excludes = [
+    "**/__pycache__",
+    "**/.venv/**",
+    "**/site-packages/**",
+    "_archive/**",
+    "tests/**",
+    "scripts/**",
+    "tools/**",
+    ".claude/**",
+    "profiler_logs/**",
+    "logs/**",
+]
+
+python-version = "3.11"
+python-platform = "win32"
+
+check-unannotated-defs = true
+infer-return-types = "checked"
+preset = "default"
+permissive-ignores = true
+
+replace-imports-with-any = [
+    "faiss",
+    "torch", "torch.*",
+    "transformers", "transformers.*",
+    "sentence_transformers", "sentence_transformers.*",
+    "tree_sitter", "tree_sitter.*",
+    "tree_sitter_python", "tree_sitter_javascript", "tree_sitter_typescript",
+    "tree_sitter_go", "tree_sitter_rust", "tree_sitter_c", "tree_sitter_cpp",
+    "tree_sitter_c_sharp", "tree_sitter_glsl",
+    "rank_bm25", "rank_bm25.*",
+    "tiktoken",
+    "onnxruntime", "onnxruntime.*",
+    "networkx", "networkx.*",
+    "optimum", "optimum.*",
+    "snoop", "py_heat",
+]
+
+[[tool.pyrefly.sub-config]]
+matches = "chunking/languages/**"
+errors = { missing-attribute = "warn", missing-import = "warn", bad-argument-type = "warn" }
+
+[[tool.pyrefly.sub-config]]
+matches = "graph/relationship_extractors/**"
+errors = { missing-attribute = "warn", bad-argument-type = "warn" }
+
+[[tool.pyrefly.sub-config]]
+matches = "mcp_server/tools/**"
+errors = { missing-attribute = "warn", bad-argument-type = "warn" }
