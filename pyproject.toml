@@ -266,3 +266,8 @@ errors = { missing-attribute = "warn", bad-argument-type = "warn" }
 [[tool.pyrefly.sub-config]]
 matches = "mcp_server/tools/**"
 errors = { missing-attribute = "warn", bad-argument-type = "warn" }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

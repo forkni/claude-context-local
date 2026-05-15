@@ -339,6 +339,33 @@ class StorageManager:
                 json.dump(project_info, f, indent=2)
         return project_dir
 
+    def get_canonical_project_info(self, project_path: str) -> Path | None:
+        """Find the first existing project_info.json across all model dirs for this project.
+
+        Searches all model-specific storage dirs for this project hash and returns the
+        first project_info.json found. Use this instead of get_project_storage_dir() when
+        reading stored filters, so the result is independent of the current config model.
+
+        Args:
+            project_path: Path to the project
+
+        Returns:
+            Path to an existing project_info.json, or None if no model dir has one yet.
+        """
+        base_dir = self.get_storage_dir()
+        projects_dir = base_dir / "projects"
+        resolved = Path(project_path).resolve()
+        project_name = resolved.name
+        new_hash = compute_drive_agnostic_hash(str(resolved))
+        legacy_hash = compute_legacy_hash(str(resolved))
+
+        for hash_val in (new_hash, legacy_hash):
+            for model_dir in sorted(projects_dir.glob(f"{project_name}_{hash_val}_*")):
+                info = model_dir / "project_info.json"
+                if info.exists():
+                    return info
+        return None
+
     def update_project_filters(
         self,
         project_path: str,
@@ -376,8 +403,28 @@ class StorageManager:
                 MultiLanguageChunker.DEFAULT_IGNORED_DIRS
             )
 
-            # Update user-defined filter fields
+            # Guard against silently clearing user-defined filters.
+            # None means "caller didn't specify", not "user wants to clear".
+            # Pass [] to explicitly clear a filter.
+            stored_include = project_info.get("user_included_dirs")
+            stored_exclude = project_info.get("user_excluded_dirs")
+
+            if include_dirs is None and stored_include is not None:
+                logger.warning(
+                    "[PROJECT_INFO] refusing to clear user_included_dirs %r with None; "
+                    "pass [] to clear explicitly",
+                    stored_include,
+                )
+                include_dirs = stored_include
             project_info["user_included_dirs"] = include_dirs
+
+            if exclude_dirs is None and stored_exclude is not None:
+                logger.warning(
+                    "[PROJECT_INFO] refusing to clear user_excluded_dirs %r with None; "
+                    "pass [] to clear explicitly",
+                    stored_exclude,
+                )
+                exclude_dirs = stored_exclude
             project_info["user_excluded_dirs"] = exclude_dirs
 
             # Clean up obsolete field names
@@ -441,6 +488,14 @@ def get_project_storage_dir(
     return get_storage_manager().get_project_storage_dir(
         project_path, model_key, include_dirs, exclude_dirs
     )
+
+
+def get_canonical_project_info(project_path: str) -> Path | None:
+    """Find the first existing project_info.json across all model dirs.
+
+    Backward-compatible wrapper for StorageManager.get_canonical_project_info().
+    """
+    return get_storage_manager().get_canonical_project_info(project_path)
 
 
 def update_project_filters(

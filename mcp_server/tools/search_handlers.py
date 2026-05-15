@@ -362,7 +362,10 @@ def _check_auto_reindex(
     else:
         indexer = get_index_manager(project_path, model_key=selected_model_key)
     chunker = MultiLanguageChunker(
-        project_path, enable_entity_tracking=config.performance.enable_entity_tracking
+        project_path,
+        include_dirs,
+        exclude_dirs,
+        enable_entity_tracking=config.performance.enable_entity_tracking,
     )
     incremental_indexer = IncrementalIndexer(
         indexer=indexer,
