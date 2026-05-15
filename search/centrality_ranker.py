@@ -315,6 +315,7 @@ class CentralityRanker:
                     result["blended_score"] = round(result["blended_score"] * 0.5, 4)
                     logger.debug(
                         f"[CENTRALITY] Zero-centrality synthetic chunk demotion: "
+                        # pyrefly: ignore [unbound-name]
                         f"{chunk_id} ({chunk_type}) → 0.5x multiplier"
                     )
 

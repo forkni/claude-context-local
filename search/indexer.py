@@ -92,6 +92,7 @@ class CodeIndexManager:
             )
 
     @property
+    # pyrefly: ignore [missing-attribute]
     def index(self) -> Optional["faiss.Index"]:
         """Access to underlying FAISS index."""
         return self._faiss_index.index
@@ -404,6 +405,7 @@ class CodeIndexManager:
 
         # Perform batched search
         query_embeddings = np.array(embeddings, dtype=np.float32)
+        # pyrefly: ignore [missing-attribute]
         faiss.normalize_L2(query_embeddings)
 
         # Search for k+1 to account for excluding the query chunk itself
@@ -769,6 +771,7 @@ class CodeIndexManager:
         # Close metadata store - do NOT reopen yet
         if self._metadata_store is not None:
             self._metadata_store.close()
+            # pyrefly: ignore [bad-assignment]
             self._metadata_store = None
 
         # Clear BatchOperations reference to prevent lingering file handles (Windows)

@@ -546,6 +546,7 @@ class CodeEmbedder:
         instance = super().__new__(cls)
         # Initialize lock before __init__ so __new__-only construction (test mocks,
         # unpickling, etc.) always has a functional lock.
+        # pyrefly: ignore [missing-attribute]
         instance._lifecycle_lock = threading.RLock()
         return instance
 
@@ -662,6 +663,7 @@ class CodeEmbedder:
             return
         self._model_loader.log_gpu_memory(stage)
 
+    # pyrefly: ignore [missing-attribute]
     def _get_torch_dtype(self) -> "torch.dtype":
         """Delegate to ModelLoader.get_torch_dtype()."""
         if self._model_loader is None:
@@ -701,6 +703,7 @@ class CodeEmbedder:
 
     def _tensor_to_numpy(self, emb: Any) -> np.ndarray:
         """Convert a tensor or array to a float32 numpy array."""
+        # pyrefly: ignore [missing-attribute]
         if torch.is_tensor(emb):
             return emb.cpu().float().numpy()
         return emb
@@ -742,6 +745,7 @@ class CodeEmbedder:
         """Lazy loading of the model. Thread-safe via double-checked lock."""
         if self._model is not None:
             return self._model
+        # pyrefly: ignore [missing-attribute]
         with self._lifecycle_lock:
             if self._model is None:
                 if self._model_loader is None:
@@ -1004,6 +1008,7 @@ class CodeEmbedder:
 
         # Use convert_to_tensor for GPU to avoid CPU<->GPU transfers
         use_tensor = self._is_gpu_device()
+        # pyrefly: ignore [missing-attribute]
         embedding = self.model.encode(
             [content_to_embed],
             show_progress_bar=False,
@@ -1095,7 +1100,9 @@ class CodeEmbedder:
         # Ensure model is loaded BEFORE batch calculation (to get accurate VRAM)
         # (model loads lazily on first encode() call - causes log interference)
         if not hasattr(self, "_model_warmed_up") or not self._model_warmed_up:
+            # pyrefly: ignore [missing-attribute]
             with self._lifecycle_lock:
+                # pyrefly: ignore [missing-attribute]
                 self.model.encode(["warmup"], show_progress_bar=False)
             self._model_warmed_up = True
 
@@ -1277,7 +1284,9 @@ class CodeEmbedder:
                 use_tensor = self._is_gpu_device()
 
                 try:
+                    # pyrefly: ignore [missing-attribute]
                     with self._lifecycle_lock:
+                        # pyrefly: ignore [missing-attribute]
                         batch_embeddings = self.model.encode(
                             batch_contents,
                             show_progress_bar=False,
@@ -1472,7 +1481,9 @@ class CodeEmbedder:
             self._logger.debug("Using custom instruction for query encoding")
         query_to_embed = self._format_query_text(query, model_config)
 
+        # pyrefly: ignore [missing-attribute]
         with self._lifecycle_lock:
+            # pyrefly: ignore [missing-attribute]
             embedding = self.model.encode([query_to_embed], **encode_kwargs)[0]
         # bf16 tensors must be cast to float32 before numpy conversion
         embedding = self._tensor_to_numpy(embedding)
@@ -1533,7 +1544,9 @@ class CodeEmbedder:
                 encode_kwargs["convert_to_tensor"] = True
                 encode_kwargs["device"] = self.device
 
+            # pyrefly: ignore [missing-attribute]
             with self._lifecycle_lock:
+                # pyrefly: ignore [missing-attribute]
                 raw = self.model.encode(uncached_texts, **encode_kwargs)
 
             for local_i, orig_i in enumerate(uncached_indices):
@@ -1552,6 +1565,7 @@ class CodeEmbedder:
         assert all(r is not None for r in results), (
             "BUG: cache miss left a result slot unfilled"
         )
+        # pyrefly: ignore [no-matching-overload]
         return np.stack(results)
 
     def get_model_info(self) -> dict[str, Any]:
@@ -1679,6 +1693,7 @@ class CodeEmbedder:
             # Python interpreter is shutting down; imports are unavailable.
             # Skip cleanup to avoid spurious errors from gc/torch teardown.
             return
+        # pyrefly: ignore [missing-attribute]
         with self._lifecycle_lock:
             if self._model is not None:
                 try:
@@ -1716,6 +1731,7 @@ class CodeEmbedder:
                     # Preserving model loader causes immediate reload when .model is accessed
                     # This defeats cleanup purpose - forces creation of fresh embedder instead
                     if hasattr(self, "_model_loader"):
+                        # pyrefly: ignore [bad-assignment]
                         self._model_loader = None
                         self._logger.info("Model loader cleared - lazy reload disabled")
 
@@ -1740,6 +1756,7 @@ class CodeEmbedder:
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Context manager exit - cleanup resources."""
         self.cleanup()
+        # pyrefly: ignore [bad-return]
         return False  # Don't suppress exceptions
 
     def __del__(self):
@@ -1747,10 +1764,12 @@ class CodeEmbedder:
         with contextlib.suppress(Exception):
             # Non-blocking acquire: if another thread holds the lock, skip cleanup
             # rather than stalling the GC thread indefinitely.
+            # pyrefly: ignore [missing-attribute]
             if self._lifecycle_lock.acquire(blocking=False):
                 try:
                     self.cleanup()
                 finally:
+                    # pyrefly: ignore [missing-attribute]
                     self._lifecycle_lock.release()
 
     # ===== Cache Management Methods (delegated to ModelCacheManager) =====

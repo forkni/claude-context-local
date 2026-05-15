@@ -35,6 +35,7 @@ class GPUMemoryMonitor:
             except Exception as e:
                 self._logger.warning(f"Failed to get GPU memory info: {e}")
 
+        # pyrefly: ignore [bad-return]
         return memory_info
 
     def can_use_gpu(self, required_memory: int = 1024 * 1024 * 1024) -> bool:

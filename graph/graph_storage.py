@@ -714,6 +714,7 @@ class CodeGraphStorage:
         try:
             # Convert graph to JSON-serializable format
             # Using edges="edges" for NetworkX 3.6+ forward compatibility
+            # pyrefly: ignore [missing-attribute]
             data = nx.node_link_data(self.graph, edges="edges")
 
             # Save to file
@@ -746,6 +747,7 @@ class CodeGraphStorage:
 
             # Reconstruct graph from JSON
             # Using edges="edges" for NetworkX 3.6+ forward compatibility
+            # pyrefly: ignore [missing-attribute]
             self.graph = nx.node_link_graph(data, directed=True, edges="edges")
 
             # Rebuild name index from loaded graph so get_nodes_by_name() works.
@@ -768,6 +770,7 @@ class CodeGraphStorage:
         except Exception as e:
             self.logger.error(f"Failed to load graph: {e}")
             # Initialize empty graph on error
+            # pyrefly: ignore [missing-attribute]
             self.graph = nx.DiGraph()
             return False
 
@@ -825,6 +828,7 @@ class CodeGraphStorage:
                 return json.load(f)
         return None
 
+    # pyrefly: ignore [missing-attribute]
     def get_graph(self) -> "nx.DiGraph":
         """Expose raw NetworkX DiGraph for external algorithms (e.g., PPR).
 

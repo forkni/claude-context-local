@@ -66,9 +66,11 @@ def _to_compact_format(data: dict[str, Any]) -> dict[str, Any]:
                 # Filter out empty dicts
                 compacted_list = [d for d in compacted_list if d]
                 if compacted_list:
+                    # pyrefly: ignore [unsupported-operation]
                     result[key] = compacted_list
             else:
                 # For lists of primitives, keep as-is
+                # pyrefly: ignore [unsupported-operation]
                 result[key] = value
         else:
             # For primitives, keep as-is
@@ -195,12 +197,14 @@ def _to_toon_format(data: dict[str, Any]) -> dict[str, Any]:
                         if entries:
                             sparse_data[sf] = entries
                     if sparse_data:
+                        # pyrefly: ignore [unsupported-operation]
                         result[f"{key}_sparse"] = sparse_data
 
         elif isinstance(value, dict):
             # For nested dicts, compact (don't convert to tabular)
             compacted = _compact_dict(value)
             if compacted:
+                # pyrefly: ignore [unsupported-operation]
                 result[key] = compacted
 
         else:

@@ -206,6 +206,7 @@ async def handle_get_memory_status(arguments: dict[str, Any]) -> dict:
         # non_torch_gb approximates non-PyTorch usage but includes other processes.
         nvml_available = False
         try:
+            # pyrefly: ignore [missing-import]
             import pynvml
 
             pynvml.nvmlInit()
@@ -223,6 +224,7 @@ async def handle_get_memory_status(arguments: dict[str, Any]) -> dict:
             # Real VRAM from nvml (includes ORT, reranker, all CUDA allocators)
             if nvml_available:
                 try:
+                    # pyrefly: ignore [unbound-name]
                     handle = pynvml.nvmlDeviceGetHandleByIndex(i)
                     mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
                     real_used_gb = round(mem_info.used / (1024**3), 2)
@@ -266,6 +268,7 @@ async def handle_get_memory_status(arguments: dict[str, Any]) -> dict:
 
         if nvml_available:
             with contextlib.suppress(Exception):
+                # pyrefly: ignore [unbound-name]
                 pynvml.nvmlShutdown()
 
     # Index memory estimate

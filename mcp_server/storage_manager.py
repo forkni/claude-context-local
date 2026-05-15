@@ -225,7 +225,9 @@ class StorageManager:
         """
         base_dir = self.get_storage_dir()
 
+        # pyrefly: ignore [bad-assignment]
         project_path = Path(project_path).resolve()
+        # pyrefly: ignore [missing-attribute]
         project_name = project_path.name
 
         # Compute both hashes for backward compatibility
@@ -282,7 +284,13 @@ class StorageManager:
         # Check for existing project directory (handles drive letter changes)
         projects_dir = base_dir / "projects"
         existing_dir = self._find_existing_project_dir(
-            projects_dir, project_name, new_hash, legacy_hash, model_slug, dimension
+            # pyrefly: ignore [bad-argument-type]
+            projects_dir,
+            project_name,
+            new_hash,
+            legacy_hash,
+            model_slug,
+            dimension,
         )
 
         if existing_dir:

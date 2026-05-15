@@ -754,6 +754,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
         intent_decision = intent_classifier.classify(query)
 
         logger.info(
+            # pyrefly: ignore [unsupported-operation]
             f"[INTENT] query='{query[:50]}...' -> {intent_decision.intent.value} "
             f"(conf={intent_decision.confidence:.2f}, reason={intent_decision.reason})"
         )
@@ -793,7 +794,10 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
                     if "searcher" not in locals():
                         searcher = get_searcher(model_key=selected_model_key)
                     search_result = await asyncio.to_thread(
-                        searcher.search, symbol_name, k=1
+                        # pyrefly: ignore [unbound-name]
+                        searcher.search,
+                        symbol_name,
+                        k=1,
                     )
                     if search_result:
                         return await handle_find_similar_code(
@@ -1646,6 +1650,7 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
         path_len = response["path_length"]
         src_name = response["source"].get("name", "source")
         tgt_name = response["target"].get("name", "target")
+        # pyrefly: ignore [no-matching-overload]
         edge_summary = ", ".join(response.get("edge_types_traversed", [])) or "various"
         response["system_message"] = (
             f"Found path of length {path_len} from {src_name} to {tgt_name} "

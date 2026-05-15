@@ -189,6 +189,7 @@ class PythonCallGraphExtractor(CallGraphExtractor):
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 self._type_annotations = self._type_resolver.extract_type_annotations(
+                    # pyrefly: ignore [bad-argument-type]
                     node
                 )
                 break  # Only process the top-level function

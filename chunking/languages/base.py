@@ -510,6 +510,7 @@ class LanguageChunker(ABC):
 
         # Step 2: Convert CodeChunk → TreeSitterChunk for merge algorithm
         # The merge algorithm works on TreeSitterChunk
+        # pyrefly: ignore [missing-module-attribute]
         from chunking.languages.base import TreeSitterChunk
 
         ts_chunks = []
