@@ -17,6 +17,7 @@ from mcp_server.server import (
 )
 from mcp_server.services import get_config, get_state
 from mcp_server.storage_manager import (
+    get_canonical_project_info,
     get_project_storage_dir,
     get_storage_dir,
     set_current_project,
@@ -801,10 +802,13 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
         # Don't fail indexing if accessibility check fails
         logger.debug(f"[ACCESSIBILITY] Check failed (non-critical): {e}")
 
-    # Check if project already exists and handle filter immutability
-    # First call without filters to check existence
-    project_dir = get_project_storage_dir(str(directory_path))
-    project_info_file = project_dir / "project_info.json"
+    # Check if project already exists and handle filter immutability.
+    # Use get_canonical_project_info() so filter reads work regardless of which
+    # model the current config default points to (prevents H1: null-overwrite when
+    # the config model's dir has no project_info.json but another model's dir does).
+    project_info_file = get_canonical_project_info(str(directory_path)) or (
+        get_project_storage_dir(str(directory_path)) / "project_info.json"
+    )
 
     # Load stored filters if project exists
     stored_include = None
