@@ -363,10 +363,9 @@ class GraphQueryEngine:
         return callees_by_depth
 
     def find_related_functions(
-        # pyrefly: ignore [bad-function-definition]
         self,
         chunk_id: str,
-        relation_types: list[str] = None,
+        relation_types: list[str] | None = None,
         max_depth: int = 2,
     ) -> list[dict[str, Any]]:
         """

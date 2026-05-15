@@ -77,7 +77,7 @@ class ModelCacheManager:
 
         return cache_root / expected_model_dir_name
 
-    def get_default_hf_cache_path(self) -> Path | None:
+    def get_default_hf_cache_path(self) -> Path:
         """Get the default HuggingFace cache directory path for this model.
 
         This is used as a fallback when trust_remote_code models ignore cache_folder.
@@ -204,10 +204,11 @@ class ModelCacheManager:
             custom_cache_path = self.get_model_cache_path()
             default_cache_path = self.get_default_hf_cache_path()
 
+            if custom_cache_path is None:
+                return False
+
             # Check for split cache scenario
-            # pyrefly: ignore [bad-argument-type]
             custom_has_config = self.check_config_at_location(custom_cache_path)
-            # pyrefly: ignore [bad-argument-type]
             default_has_weights = self.check_weights_at_location(default_cache_path)
 
             if not (custom_has_config and default_has_weights):
@@ -215,16 +216,10 @@ class ModelCacheManager:
 
             # Get snapshot directories
             custom_snapshots = [
-                # pyrefly: ignore [missing-attribute]
-                s
-                for s in custom_cache_path.glob("snapshots/*")
-                if list(s.iterdir())
+                s for s in custom_cache_path.glob("snapshots/*") if list(s.iterdir())
             ]
             default_snapshots = [
-                # pyrefly: ignore [missing-attribute]
-                s
-                for s in default_cache_path.glob("snapshots/*")
-                if list(s.iterdir())
+                s for s in default_cache_path.glob("snapshots/*") if list(s.iterdir())
             ]
 
             if not custom_snapshots or not default_snapshots:
