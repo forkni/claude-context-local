@@ -54,6 +54,7 @@ def deprecated(
             warnings.warn(msg, DeprecationWarning, stacklevel=2)
             return func(*args, **kwargs)
 
+        # pyrefly: ignore [missing-attribute]
         wrapper.__deprecated__ = True  # Mark for introspection
         return wrapper
 

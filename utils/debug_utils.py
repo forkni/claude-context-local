@@ -72,8 +72,10 @@ def snoop_decorator(
         if not enabled:
             decorator = _noop
         elif watch:
+            # pyrefly: ignore [not-callable]
             decorator = _snoop(depth=depth, watch=watch)
         else:
+            # pyrefly: ignore [not-callable]
             decorator = _snoop(depth=depth)
 
     if fn is not None:

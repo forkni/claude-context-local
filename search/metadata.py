@@ -88,14 +88,18 @@ class MetadataStore:
 
         # Fast path: Try hash cache lookup (O(1))
         cached_chunk_id = self._symbol_cache.get_by_chunk_id(chunk_id)
+        # pyrefly: ignore [not-iterable]
         if cached_chunk_id and cached_chunk_id in self._db:
+            # pyrefly: ignore [unsupported-operation]
             return self._db[cached_chunk_id]
 
         # Slow path: Try variants (backward compatibility)
         for variant in self.get_chunk_id_variants(chunk_id):
+            # pyrefly: ignore [not-iterable]
             if variant in self._db:
                 # Cache the successful variant for future lookups
                 self._symbol_cache.add(variant)
+                # pyrefly: ignore [unsupported-operation]
                 return self._db[variant]
 
         return None
@@ -136,6 +140,7 @@ class MetadataStore:
             ... })
         """
         self._ensure_open()
+        # pyrefly: ignore [unsupported-operation]
         self._db[chunk_id] = {"index_id": index_id, "metadata": metadata}
 
         # Add to symbol cache for O(1) lookups
@@ -151,7 +156,9 @@ class MetadataStore:
             True if chunk was deleted, False if not found
         """
         self._ensure_open()
+        # pyrefly: ignore [not-iterable]
         if chunk_id in self._db:
+            # pyrefly: ignore [unsupported-operation]
             del self._db[chunk_id]
             # Remove from symbol cache
             self._symbol_cache.remove(chunk_id)
@@ -188,6 +195,7 @@ class MetadataStore:
         entry = self.get(chunk_id)
         if entry:
             entry["index_id"] = new_id
+            # pyrefly: ignore [unsupported-operation]
             self._db[chunk_id] = entry
             return True
         return False
@@ -220,6 +228,7 @@ class MetadataStore:
             True if chunk exists, False otherwise
         """
         self._ensure_open()
+        # pyrefly: ignore [not-iterable]
         return chunk_id in self._db
 
     def __len__(self) -> int:
@@ -229,6 +238,7 @@ class MetadataStore:
             Count of chunks
         """
         self._ensure_open()
+        # pyrefly: ignore [bad-argument-type]
         return len(self._db)
 
     def __contains__(self, chunk_id: str) -> bool:
@@ -241,6 +251,7 @@ class MetadataStore:
             True if chunk exists, False otherwise
         """
         self._ensure_open()
+        # pyrefly: ignore [not-iterable]
         return chunk_id in self._db
 
     def keys(self) -> Iterator[str]:
@@ -250,6 +261,7 @@ class MetadataStore:
             Iterator over chunk_id strings
         """
         self._ensure_open()
+        # pyrefly: ignore [missing-attribute]
         return iter(self._db.keys())
 
     def items(self) -> Iterator[tuple[str, dict[str, Any]]]:
@@ -259,6 +271,7 @@ class MetadataStore:
             Iterator over (chunk_id, metadata_entry) tuples
         """
         self._ensure_open()
+        # pyrefly: ignore [missing-attribute]
         return iter(self._db.items())
 
     # Transaction Control
@@ -269,6 +282,7 @@ class MetadataStore:
         Should be called after batch operations to persist changes.
         """
         self._ensure_open()
+        # pyrefly: ignore [missing-attribute]
         self._db.commit()
 
         # Save symbol cache

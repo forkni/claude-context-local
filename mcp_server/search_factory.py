@@ -104,7 +104,10 @@ class SearchFactory:
         return state.index_manager
 
     def get_searcher(
-        self, project_path: str = None, model_key: str = None
+        # pyrefly: ignore [bad-function-definition]
+        self,
+        project_path: str = None,
+        model_key: str = None,
     ) -> "BaseSearcher":
         """Get searcher for specific project or current project.
 
@@ -157,7 +160,9 @@ class SearchFactory:
             )
             if config.search_mode.enable_hybrid:
                 project_storage = get_project_storage_dir(
-                    state.current_project, model_key=effective_model_key
+                    # pyrefly: ignore [bad-argument-type]
+                    state.current_project,
+                    model_key=effective_model_key,
                 )
                 storage_dir = project_storage / "index"
                 logger.info(f"[GET_SEARCHER] Using storage directory: {storage_dir}")
@@ -247,6 +252,7 @@ def get_index_manager(
     return get_search_factory().get_index_manager(project_path, model_key)
 
 
+# pyrefly: ignore [bad-function-definition]
 def get_searcher(project_path: str = None, model_key: str = None) -> "BaseSearcher":
     """Get searcher for specific project or current project.
 

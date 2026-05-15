@@ -274,6 +274,7 @@ class HybridSearcher(BaseSearcher):
                     self._graph_storage = CodeGraphStorage(
                         project_id=project_id, storage_dir=graph_dir
                     )
+                # pyrefly: ignore [bad-argument-type]
                 self.ego_graph_retriever = EgoGraphRetriever(self._graph_storage)
                 self._logger.info(
                     f"[INIT] Ego-graph retrieval initialized for project: {project_id}"
@@ -467,6 +468,7 @@ class HybridSearcher(BaseSearcher):
             This property delegates to reranking_engine.neural_reranker.
             The neural reranker is lazily initialized when first needed.
         """
+        # pyrefly: ignore [bad-return]
         return self.reranking_engine.neural_reranker
 
     def get_stats(self) -> dict[str, Any]:
@@ -591,6 +593,7 @@ class HybridSearcher(BaseSearcher):
             f"Hybrid indexing complete: BM25 {bm25_time:.2f}s, Dense {dense_time:.2f}s"
         )
 
+    # pyrefly: ignore [bad-override]
     def search(
         self,
         query: str,
@@ -684,7 +687,10 @@ class HybridSearcher(BaseSearcher):
         # Apply parent expansion if enabled (limit to primary k results to prevent bloat)
         if effective_config.parent_retrieval.enabled and results:
             results = self._apply_parent_expansion(
-                results, effective_config.parent_retrieval, max_results_to_expand=k
+                # pyrefly: ignore [bad-argument-type]
+                results,
+                effective_config.parent_retrieval,
+                max_results_to_expand=k,
             )
 
         # Post-expansion neural reranking: unify scoring across primary + ego results
@@ -776,6 +782,7 @@ class HybridSearcher(BaseSearcher):
 
             # Expand via ego-graph
             expanded_chunk_ids, ego_graphs = (
+                # pyrefly: ignore [missing-attribute]
                 self.ego_graph_retriever.expand_search_results(
                     search_results_dict, ego_config
                 )
@@ -798,6 +805,7 @@ class HybridSearcher(BaseSearcher):
 
             # Compute query embedding once for all neighbor scoring
             try:
+                # pyrefly: ignore [missing-attribute]
                 query_embedding = self.embedder.embed_query(query)
                 query_embedding_available = True
             except Exception as e:
@@ -831,6 +839,7 @@ class HybridSearcher(BaseSearcher):
                             )
                             # Compute cosine similarity (embeddings are L2-normalized)
                             similarity = float(
+                                # pyrefly: ignore [bad-argument-type]
                                 np.dot(query_embedding, neighbor_embedding)
                             )
                             # QW5: configurable similarity threshold (intent-adaptive)
@@ -928,6 +937,7 @@ class HybridSearcher(BaseSearcher):
         Returns:
             Expanded search results (original + parent chunks)
         """
+        # pyrefly: ignore [missing-attribute]
         if not results or not config.enabled:
             return results
 

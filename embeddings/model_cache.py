@@ -205,7 +205,9 @@ class ModelCacheManager:
             default_cache_path = self.get_default_hf_cache_path()
 
             # Check for split cache scenario
+            # pyrefly: ignore [bad-argument-type]
             custom_has_config = self.check_config_at_location(custom_cache_path)
+            # pyrefly: ignore [bad-argument-type]
             default_has_weights = self.check_weights_at_location(default_cache_path)
 
             if not (custom_has_config and default_has_weights):
@@ -213,10 +215,16 @@ class ModelCacheManager:
 
             # Get snapshot directories
             custom_snapshots = [
-                s for s in custom_cache_path.glob("snapshots/*") if list(s.iterdir())
+                # pyrefly: ignore [missing-attribute]
+                s
+                for s in custom_cache_path.glob("snapshots/*")
+                if list(s.iterdir())
             ]
             default_snapshots = [
-                s for s in default_cache_path.glob("snapshots/*") if list(s.iterdir())
+                # pyrefly: ignore [missing-attribute]
+                s
+                for s in default_cache_path.glob("snapshots/*")
+                if list(s.iterdir())
             ]
 
             if not custom_snapshots or not default_snapshots:
@@ -412,6 +420,7 @@ class ModelCacheManager:
         """
         # First, check custom cache location
         custom_cache_path = self.get_model_cache_path()
+        # pyrefly: ignore [bad-argument-type]
         custom_valid, custom_reason = self.check_cache_at_location(custom_cache_path)
 
         if custom_valid:
@@ -429,7 +438,9 @@ class ModelCacheManager:
             default_cache_path = self.get_default_hf_cache_path()
 
             # Check what exists in each location
+            # pyrefly: ignore [bad-argument-type]
             custom_has_config = self.check_config_at_location(custom_cache_path)
+            # pyrefly: ignore [bad-argument-type]
             default_has_weights = self.check_weights_at_location(default_cache_path)
 
             if custom_has_config and default_has_weights:
@@ -448,6 +459,7 @@ class ModelCacheManager:
 
             # Full fallback: Check if complete cache exists in default location
             default_valid, default_reason = self.check_cache_at_location(
+                # pyrefly: ignore [bad-argument-type]
                 default_cache_path
             )
 
@@ -603,7 +615,9 @@ class ModelCacheManager:
                 default_cache_path = self.get_default_hf_cache_path()
 
                 # Check for split cache: config in custom, weights in default
+                # pyrefly: ignore [bad-argument-type]
                 custom_has_config = self.check_config_at_location(custom_cache_path)
+                # pyrefly: ignore [bad-argument-type]
                 default_has_weights = self.check_weights_at_location(default_cache_path)
 
                 if custom_has_config and default_has_weights:
@@ -612,6 +626,7 @@ class ModelCacheManager:
                     # Return custom snapshot path
                     custom_snapshots = [
                         s
+                        # pyrefly: ignore [missing-attribute]
                         for s in custom_cache_path.glob("snapshots/*")
                         if list(s.iterdir())
                     ]
@@ -635,6 +650,7 @@ class ModelCacheManager:
 
             # First try custom cache location
             model_cache_path = self.get_model_cache_path()
+            # pyrefly: ignore [bad-argument-type]
             custom_snapshot = get_latest_snapshot_if_valid(model_cache_path)
             if custom_snapshot:
                 return custom_snapshot
@@ -642,6 +658,7 @@ class ModelCacheManager:
             # Fallback: Check default HuggingFace cache for trust_remote_code models
             if requires_trust_remote_code:
                 default_cache_path = self.get_default_hf_cache_path()
+                # pyrefly: ignore [bad-argument-type]
                 default_snapshot = get_latest_snapshot_if_valid(default_cache_path)
                 if default_snapshot:
                     return default_snapshot

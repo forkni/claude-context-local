@@ -346,6 +346,7 @@ def _index_with_all_models(
                 or config.embedding.dimension != new_dimension
             ):
                 config.embedding.model_name = new_model_name
+                # pyrefly: ignore [bad-assignment]
                 config.embedding.dimension = new_dimension
                 config_mgr.save_config(config)
             else:
@@ -353,6 +354,7 @@ def _index_with_all_models(
                     f"Config already set to {new_model_name} ({new_dimension}d), skipping save"
                 )
                 config.embedding.model_name = new_model_name
+                # pyrefly: ignore [bad-assignment]
                 config.embedding.dimension = new_dimension
 
             # Invalidate global config cache to force reload from disk
@@ -584,6 +586,7 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
     }
     # Only include snapshot count when non-zero (token optimization)
     if snapshots_cleared > 0:
+        # pyrefly: ignore [bad-typed-dict-key]
         result["snapshots_cleared"] = snapshots_cleared
     return result
 
@@ -711,12 +714,15 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
     }
     # Only include snapshot count when non-zero (token optimization)
     if deleted_snapshots > 0:
+        # pyrefly: ignore [bad-typed-dict-key]
         result["deleted_snapshots"] = deleted_snapshots
 
     if errors:
         result["errors"] = errors
+        # pyrefly: ignore [bad-typed-dict-key]
         result["queued_for_retry"] = len(errors)
         result["hint"] = (
+            # pyrefly: ignore [bad-typed-dict-key]
             "Some files couldn't be deleted (locked). They'll be retried on next server startup."
         )
 

@@ -70,6 +70,7 @@ class IntelligentSearcher(BaseSearcher):
             self.index_manager.index is not None and self.index_manager.index.ntotal > 0
         )
 
+    # pyrefly: ignore [bad-override]
     def search(
         self,
         query: str,
@@ -175,6 +176,7 @@ class IntelligentSearcher(BaseSearcher):
             ]
 
             # Add file context
+            # pyrefly: ignore [unsupported-operation]
             context_info["file_context"] = {
                 "total_chunks_in_file": self._count_chunks_in_file(relative_path),
                 "folder_path": "/".join(folder_structure) if folder_structure else None,
@@ -483,6 +485,7 @@ class IntelligentSearcher(BaseSearcher):
         # Fast path: Check in-memory cache first
         if chunk_id in self._metadata_cache:
             self._cache_hits += 1
+            # pyrefly: ignore [bad-return]
             return self._metadata_cache[chunk_id]
 
         # Slow path: Load from SQLite
@@ -503,6 +506,7 @@ class IntelligentSearcher(BaseSearcher):
         )
 
         # Store in cache for future lookups
+        # pyrefly: ignore [unsupported-operation]
         self._metadata_cache[chunk_id] = result
         self._evict_cache_if_needed()
 

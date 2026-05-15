@@ -71,6 +71,7 @@ class GraphIntegration:
             try:
                 # Store graph in same directory as vector index
                 graph_dir = storage_dir.parent
+                # pyrefly: ignore [not-callable]
                 self.storage = CodeGraphStorage(
                     project_id=project_id, storage_dir=graph_dir
                 )
@@ -314,6 +315,7 @@ class GraphIntegration:
                             self.storage.add_relationship_edge(rel)
                         elif isinstance(rel, dict):
                             edge = RelationshipEdge(
+                                # pyrefly: ignore [bad-argument-type]
                                 source_id=rel.get("source_id", chunk.chunk_id),
                                 target_name=rel.get("target_name", "unknown"),
                                 relationship_type=RelationshipType(

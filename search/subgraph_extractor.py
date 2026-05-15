@@ -70,6 +70,7 @@ class SubgraphResult:
             "topology_order": self.topology_order,
         }
         if self.communities:
+            # pyrefly: ignore [bad-typed-dict-key]
             result["communities"] = self.communities
         return result
 
@@ -77,8 +78,10 @@ class SubgraphResult:
         """Serialize a node, omitting optional empty fields."""
         d = {"id": n.chunk_id, "name": n.name, "kind": n.kind, "file": n.file}
         if n.community_id is not None:
+            # pyrefly: ignore [bad-typed-dict-key]
             d["community"] = n.community_id
         if n.centrality is not None:
+            # pyrefly: ignore [bad-typed-dict-key]
             d["centrality"] = round(n.centrality, 4)
         if not n.is_search_result:
             d["source"] = "ego_graph"
@@ -88,8 +91,10 @@ class SubgraphResult:
         """Serialize an edge, omitting optional empty fields."""
         d = {"src": e.source, "tgt": e.target, "rel": e.rel_type}
         if e.line:
+            # pyrefly: ignore [bad-typed-dict-key]
             d["line"] = e.line
         if e.is_boundary:
+            # pyrefly: ignore [bad-typed-dict-key]
             d["boundary"] = True
         return d
 

@@ -65,6 +65,7 @@ class GraphQueryEngine:
 
         try:
             # Use NetworkX shortest path
+            # pyrefly: ignore [missing-attribute]
             path = nx.shortest_path(
                 self.storage.graph, source=start_chunk_id, target=end_chunk_id
             )
@@ -77,6 +78,7 @@ class GraphQueryEngine:
 
             return path
 
+        # pyrefly: ignore [missing-attribute]
         except nx.NetworkXNoPath:
             self.logger.debug(f"No call chain from {start_chunk_id} to {end_chunk_id}")
             return None
@@ -140,14 +142,17 @@ class GraphQueryEngine:
         # Strategy 1: Direct chunk_id → chunk_id (if target exists as node)
         if target_exists:
             try:
+                # pyrefly: ignore [missing-attribute]
                 path_nodes = nx.bidirectional_shortest_path(graph, source_id, target_id)
                 self.logger.debug(f"Found direct path: {source_id} → {target_id}")
+            # pyrefly: ignore [missing-attribute]
             except (nx.NetworkXNoPath, nx.NodeNotFound):
                 pass
 
         # Strategy 2: chunk_id → symbol_name (edges point to symbol names)
         if path_nodes is None and target_symbol in self.storage.graph:
             try:
+                # pyrefly: ignore [missing-attribute]
                 path_nodes = nx.bidirectional_shortest_path(
                     graph, source_id, target_symbol
                 )
@@ -156,12 +161,14 @@ class GraphQueryEngine:
                 self.logger.debug(
                     f"Found path via symbol name: {source_id} → {target_symbol}"
                 )
+            # pyrefly: ignore [missing-attribute]
             except (nx.NetworkXNoPath, nx.NodeNotFound):
                 pass
 
         # Strategy 3: chunk_id → bare_method_name (for qualified names)
         if path_nodes is None and bare_target and bare_target in self.storage.graph:
             try:
+                # pyrefly: ignore [missing-attribute]
                 path_nodes = nx.bidirectional_shortest_path(
                     graph, source_id, bare_target
                 )
@@ -170,6 +177,7 @@ class GraphQueryEngine:
                 self.logger.debug(
                     f"Found path via bare name: {source_id} → {bare_target}"
                 )
+            # pyrefly: ignore [missing-attribute]
             except (nx.NetworkXNoPath, nx.NodeNotFound):
                 pass
 
@@ -206,6 +214,7 @@ class GraphQueryEngine:
 
         return result
 
+    # pyrefly: ignore [missing-attribute]
     def _create_filtered_subgraph(self, edge_types: list[str]) -> nx.DiGraph:
         """
         Create subgraph containing only edges of specified types.
@@ -354,7 +363,11 @@ class GraphQueryEngine:
         return callees_by_depth
 
     def find_related_functions(
-        self, chunk_id: str, relation_types: list[str] = None, max_depth: int = 2
+        # pyrefly: ignore [bad-function-definition]
+        self,
+        chunk_id: str,
+        relation_types: list[str] = None,
+        max_depth: int = 2,
     ) -> list[dict[str, Any]]:
         """
         Find all related functions with metadata.
@@ -455,10 +468,13 @@ class GraphQueryEngine:
         if method == "degree":
             return dict(self.storage.graph.degree())
         elif method == "betweenness":
+            # pyrefly: ignore [missing-attribute]
             return nx.betweenness_centrality(self.storage.graph)
         elif method == "closeness":
+            # pyrefly: ignore [missing-attribute]
             return nx.closeness_centrality(self.storage.graph)
         elif method == "pagerank":
+            # pyrefly: ignore [missing-attribute]
             return nx.pagerank(self.storage.graph)
         else:
             raise ValueError(

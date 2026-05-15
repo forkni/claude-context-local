@@ -167,6 +167,7 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
         # MCP SDK 1.25.0+ supports structuredContent - clients can choose which to read
         from mcp import types as mcp_types
 
+        # pyrefly: ignore [bad-return]
         return mcp_types.CallToolResult(
             content=[TextContent(type="text", text=result_text)],
             structuredContent=formatted_result
@@ -202,6 +203,7 @@ async def handle_list_resources() -> list[Resource]:
     ]
 
 
+# pyrefly: ignore [bad-argument-type]
 @server.read_resource()
 async def handle_read_resource(uri: str) -> str:
     """Read a resource by URI."""
@@ -237,6 +239,7 @@ async def handle_list_prompts() -> list[Prompt]:
     ]
 
 
+# pyrefly: ignore [bad-argument-type]
 @server.get_prompt()
 async def handle_get_prompt(name: str, arguments: dict[str, str]) -> GetPromptResult:
     """Get a prompt by name."""
@@ -307,6 +310,7 @@ if __name__ == "__main__":
     logger.info("MCP Server Starting (Low-Level SDK)")
     logger.info("=" * 60)
     if debug_mode:
+        # pyrefly: ignore [unknown-name]
         global _startup_time
         _startup_time = time.perf_counter()
         logger.info(f"[DEBUG] Startup timer started at {time.strftime('%H:%M:%S')}")
@@ -418,6 +422,7 @@ if __name__ == "__main__":
                     config_manager.load_config()  # Re-reads search_config.json
 
                     # Get updated values for response
+                    # pyrefly: ignore [missing-attribute]
                     config = config_manager.config
 
                     logger.info(
@@ -542,6 +547,7 @@ if __name__ == "__main__":
                 Mount("/messages/", app=sse.handle_post_message),
             ]
 
+            # pyrefly: ignore [bad-argument-type]
             starlette_app = Starlette(routes=routes, lifespan=app_lifespan)
 
             # Run server with Windows-specific event loop handling

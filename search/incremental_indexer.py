@@ -585,6 +585,7 @@ class IncrementalIndexer:
         if hasattr(self.indexer, "_is_shutdown") and self.indexer._is_shutdown:
             from mcp_server.search_factory import get_searcher
 
+            # pyrefly: ignore [bad-assignment]
             self.indexer = get_searcher(project_path)
             logger.info("[FULL_INDEX] Fresh indexer/searcher acquired for reindex")
         else:
@@ -741,6 +742,7 @@ class IncrementalIndexer:
                     # NetworkX native (no external dependencies: igraph/leidenalg)
                     from graph.community_detector import CommunityDetector
 
+                    # pyrefly: ignore [bad-argument-type]
                     detector = CommunityDetector(temp_graph.storage)
                     community_map = detector.detect_communities(
                         resolution=config.chunking.community_resolution,
@@ -754,6 +756,7 @@ class IncrementalIndexer:
 
                     # NEW: Persist community_map to graph storage for future use
                     if community_map and temp_graph:
+                        # pyrefly: ignore [missing-attribute]
                         temp_graph.storage.store_community_map(community_map)
                         logger.info(
                             "[COMMUNITY_DETECT] Community map persisted to graph storage"
@@ -784,6 +787,7 @@ class IncrementalIndexer:
                         try:
                             from graph.graph_queries import GraphQueryEngine
 
+                            # pyrefly: ignore [bad-argument-type]
                             gqe = GraphQueryEngine(temp_graph.storage)
                             centrality_scores_for_summaries = gqe.compute_centrality(
                                 method="pagerank"
@@ -1138,13 +1142,21 @@ class IncrementalIndexer:
 
         # Cache repo profile for incremental indexing reuse
         if repo_profile is not None:
+            # pyrefly: ignore [bad-typed-dict-key]
             metadata["repo_profile"] = {
+                # pyrefly: ignore [missing-attribute]
                 "function_count": repo_profile.function_count,
+                # pyrefly: ignore [missing-attribute]
                 "p25_chars": repo_profile.p25_chars,
+                # pyrefly: ignore [missing-attribute]
                 "p50_chars": repo_profile.p50_chars,
+                # pyrefly: ignore [missing-attribute]
                 "p75_chars": repo_profile.p75_chars,
+                # pyrefly: ignore [missing-attribute]
                 "p90_chars": repo_profile.p90_chars,
+                # pyrefly: ignore [missing-attribute]
                 "mean_chars": repo_profile.mean_chars,
+                # pyrefly: ignore [missing-attribute]
                 "max_complexity": repo_profile.max_complexity,
             }
 

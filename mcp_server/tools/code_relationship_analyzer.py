@@ -180,16 +180,22 @@ class ImpactReport:
 
         # Only include non-empty core fields
         if self.direct_callers:
+            # pyrefly: ignore [bad-typed-dict-key]
             result["direct_callers"] = self.direct_callers
         if self.indirect_callers:
+            # pyrefly: ignore [bad-typed-dict-key]
             result["indirect_callers"] = self.indirect_callers
         if self.similar_code:
+            # pyrefly: ignore [bad-typed-dict-key]
             result["similar_code"] = self.similar_code
 
+        # pyrefly: ignore [bad-typed-dict-key]
         result["total_impacted"] = self.total_impacted
+        # pyrefly: ignore [bad-typed-dict-key]
         result["file_count"] = len(self.unique_files)
 
         if self.unique_files:
+            # pyrefly: ignore [bad-typed-dict-key]
             result["affected_files"] = sorted(self.unique_files)
         if self.dependency_graph:
             result["dependency_graph"] = self.dependency_graph
@@ -223,9 +229,11 @@ class ImpactReport:
 
         for name, value in relationship_fields:
             if value:  # Only include non-empty relationship fields
+                # pyrefly: ignore [unsupported-operation]
                 result[name] = value
 
         if self.stale_chunk_count > 0:
+            # pyrefly: ignore [bad-typed-dict-key]
             result["stale_chunk_count"] = self.stale_chunk_count
 
         return result
@@ -277,10 +285,14 @@ class CodeRelationshipAnalyzer:
 
     def analyze_impact(
         self,
+        # pyrefly: ignore [bad-function-definition]
         chunk_id: str = None,
+        # pyrefly: ignore [bad-function-definition]
         symbol_name: str = None,
         max_depth: int = 3,
+        # pyrefly: ignore [bad-function-definition]
         exclude_dirs: list = None,
+        # pyrefly: ignore [bad-function-definition]
         relationship_types: list[str] = None,
     ) -> ImpactReport:
         """
