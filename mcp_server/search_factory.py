@@ -104,10 +104,9 @@ class SearchFactory:
         return state.index_manager
 
     def get_searcher(
-        # pyrefly: ignore [bad-function-definition]
         self,
-        project_path: str = None,
-        model_key: str = None,
+        project_path: str | None = None,
+        model_key: str | None = None,
     ) -> "BaseSearcher":
         """Get searcher for specific project or current project.
 
@@ -252,8 +251,9 @@ def get_index_manager(
     return get_search_factory().get_index_manager(project_path, model_key)
 
 
-# pyrefly: ignore [bad-function-definition]
-def get_searcher(project_path: str = None, model_key: str = None) -> "BaseSearcher":
+def get_searcher(
+    project_path: str | None = None, model_key: str | None = None
+) -> "BaseSearcher":
     """Get searcher for specific project or current project.
 
     Args:

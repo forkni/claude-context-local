@@ -9,6 +9,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 from mcp_server.services import get_state
 from search.config import (
@@ -278,13 +279,14 @@ class StorageManager:
                 f"To add this model, update search/config.py:MODEL_REGISTRY"
             )
         # Use effective dimension (truncate_dim for MRL, else native dimension)
-        dimension = model_config.get("truncate_dim") or model_config["dimension"]
+        dimension = cast(
+            int, model_config.get("truncate_dim") or model_config["dimension"]
+        )
         model_slug = get_model_slug(model_name)
 
         # Check for existing project directory (handles drive letter changes)
         projects_dir = base_dir / "projects"
         existing_dir = self._find_existing_project_dir(
-            # pyrefly: ignore [bad-argument-type]
             projects_dir,
             project_name,
             new_hash,

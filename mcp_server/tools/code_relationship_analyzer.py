@@ -285,15 +285,11 @@ class CodeRelationshipAnalyzer:
 
     def analyze_impact(
         self,
-        # pyrefly: ignore [bad-function-definition]
-        chunk_id: str = None,
-        # pyrefly: ignore [bad-function-definition]
-        symbol_name: str = None,
+        chunk_id: str | None = None,
+        symbol_name: str | None = None,
         max_depth: int = 3,
-        # pyrefly: ignore [bad-function-definition]
-        exclude_dirs: list = None,
-        # pyrefly: ignore [bad-function-definition]
-        relationship_types: list[str] = None,
+        exclude_dirs: list | None = None,
+        relationship_types: list[str] | None = None,
     ) -> ImpactReport:
         """
         Analyze the impact radius of changes to a symbol.

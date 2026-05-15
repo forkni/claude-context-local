@@ -13,7 +13,7 @@ import numpy as np
 if TYPE_CHECKING:
     from embeddings.embedder import CodeEmbedder, EmbeddingResult
 
-    from .config import EgoGraphConfig, SearchConfig
+    from .config import EgoGraphConfig, ParentRetrievalConfig, SearchConfig
 
 try:
     import torch
@@ -687,7 +687,6 @@ class HybridSearcher(BaseSearcher):
         # Apply parent expansion if enabled (limit to primary k results to prevent bloat)
         if effective_config.parent_retrieval.enabled and results:
             results = self._apply_parent_expansion(
-                # pyrefly: ignore [bad-argument-type]
                 results,
                 effective_config.parent_retrieval,
                 max_results_to_expand=k,
@@ -922,7 +921,7 @@ class HybridSearcher(BaseSearcher):
     def _apply_parent_expansion(
         self,
         results: list[SearchResult],
-        config: "SearchConfig",
+        config: "ParentRetrievalConfig",
         max_results_to_expand: int = 0,
     ) -> list[SearchResult]:
         """Apply parent chunk expansion to search results.
@@ -937,7 +936,6 @@ class HybridSearcher(BaseSearcher):
         Returns:
             Expanded search results (original + parent chunks)
         """
-        # pyrefly: ignore [missing-attribute]
         if not results or not config.enabled:
             return results
 
