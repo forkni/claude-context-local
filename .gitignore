@@ -290,6 +290,10 @@ docs/PRE_COMMIT_HOOKS.md
 !docs/Call_Graph_Implementation/
 !docs/Call_Graph_Implementation/**
 
+# Architecture Decision Records (tracked in repo)
+!docs/adr/
+!docs/adr/**
+
 # Evaluation and test results (temporary/generated files)
 custom_evaluation_results/
 evaluation_results/
