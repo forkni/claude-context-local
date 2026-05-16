@@ -11,6 +11,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.11.8] - 2026-05-16
+
+### Fixed
+
+- **`safe_clear_index.py` crash on startup** (`tools/safe_clear_index.py`) — `ModuleNotFoundError: No module named 'graph'` when `start_mcp_server.cmd` invoked the script. Root cause: the editable install (v0.9.3-era) predated `graph` and `utils` being added to `[tool.setuptools.packages.find]`, so the custom editable finder's hard-coded `MAPPING` omitted both packages. Added the `_PROJECT_ROOT / sys.path.insert` bootstrap matching all five sibling tools; refreshed the editable install to v0.11.8 so `graph` and `utils` are now exposed to any Python process using the venv.
+- **Silent loss of user-defined index exclusions on re-index** — user-configured `exclude_dirs` were dropped when triggering an incremental re-index via auto-reindex or explicit re-index calls.
+- **Config cache bypass** (`search/config.py`) — `save_config()` did not update `_config_mtime` after writing, so `load_config()` never short-circuited to cache on the next call; every read re-parsed the file from disk.
+- **`snapshot_manager.py` logging** — replaced bare `print()` calls with structured `logger` output; tightened bare `except` clauses to preserve exception context.
+- **Circular graph–search import** — broke a circular import between `graph` and `search` packages that surfaced when importing from a bare `python` process (no editable-install finder active).
+- **Pyrefly type suppressions replaced** (`search/`, `graph/`, `mcp_server/`, `utils/`) — 165 `# type: ignore` / pyrefly-suppress comments replaced with correct type annotations across 29 files; pyrefly 1.0 now reports 0 errors on the full codebase (155 pre-existing errors remain suppressed via baseline).
+
+### Added
+
+- **Pyrefly 1.0 type checker integrated** — `pyrefly check` runs as a non-blocking step in the CGW pre-commit hook (`CGW_TYPECHECK_CMD="pyrefly"`). `[tool.pyrefly]` config in `pyproject.toml`; suppress baseline at `.pyrefly_suppress` covers 155 pre-existing errors across 29 files. ADR-0002 records the pyrefly-over-pyright decision.
+- **ADR-0001** (`docs/adr/0001-faiss-as-vector-index-backend.md`) — records the FAISS-vs-turbovec evaluation and re-evaluation triggers.
+- **ADR-0002** (`docs/adr/0002-pyrefly-over-pyright.md`) — records the static type-checker selection rationale.
+- **`utils/path_utils.py`** — shared path-normalisation helpers extracted from scattered inline usage.
+- **`cgw.conf.example`** — documents new `CGW_TYPECHECK_*` and `CGW_INDEX_LOCK_*` options added in the latest claude-git-workflow release.
+
+### Refactored
+
+- **`search/config.py`** — migrated from `os.path` to `pathlib` throughout.
+- **Silent `except` blocks in critical paths** — added `logger.exception` / `logger.error` with `exc_info=True` to previously-silent exception handlers across `mcp_server/`, `search/`, and `graph/` so errors surface in logs instead of being swallowed.
+- **Traceback preservation** (`mcp_server/server.py`) — `except` blocks now pass `exc_info=True`; top-level imports hoisted out of function bodies; pickle trust boundary documented.
+- **Lazy imports removed** (`search/incremental_indexer.py`, `embeddings/embedder.py`) — redundant deferred imports converted to module-level imports.
+
+### Tests
+
+- **2,045 unit tests** (up from 2,044 in v0.11.7).
+- New integration test: `tests/integration/test_auto_reindex_fixes.py` (166 lines) — covers the index-exclusion loss regression end-to-end.
+- New unit tests: `tests/unit/search/test_search_config.py` (+21 tests) — covers `save_config` / `load_config` cache round-trips.
+
+---
+
 ## [0.11.7] - 2026-05-03
 
 ### Security
