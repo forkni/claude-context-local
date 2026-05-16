@@ -286,12 +286,16 @@ class TestUserFilterPreservation:
             project_dir = tmp_path / "projects" / "myproject_abc123_bge-v1_1536d"
             project_dir.mkdir(parents=True)
             info_file = project_dir / "project_info.json"
-            info_file.write_text(json.dumps({
-                "project_name": "myproject",
-                "project_path": str(project_path),
-                "user_included_dirs": None,
-                "user_excluded_dirs": ["secret"],
-            }))
+            info_file.write_text(
+                json.dumps(
+                    {
+                        "project_name": "myproject",
+                        "project_path": str(project_path),
+                        "user_included_dirs": None,
+                        "user_excluded_dirs": ["secret"],
+                    }
+                )
+            )
 
             # Patch get_project_storage_dir to return the seeded dir
             with patch.object(mgr, "get_project_storage_dir", return_value=project_dir):
@@ -319,9 +323,7 @@ class TestUserFilterPreservation:
             bge_dir = tmp_path / "projects" / f"myproject_{h}_bge-v1_1536d"
             bge_dir.mkdir(parents=True)
             bge_info = bge_dir / "project_info.json"
-            bge_info.write_text(
-                '{"user_excluded_dirs":["assets"]}'
-            )
+            bge_info.write_text('{"user_excluded_dirs":["assets"]}')
             # qwen3 dir exists but has NO project_info.json
             qwen_dir = tmp_path / "projects" / f"myproject_{h}_qwen3-0.6b_1024d"
             qwen_dir.mkdir()
@@ -378,30 +380,52 @@ class TestUserFilterPreservation:
         cfg.performance.enable_entity_tracking = False
 
         _patches = [
-            patch("mcp_server.tools.search_handlers.get_project_storage_dir", return_value=project_dir),
-            patch("mcp_server.tools.search_handlers.MultiLanguageChunker", CapturingChunker),
-            patch("mcp_server.tools.search_handlers.get_embedder", return_value=MagicMock()),
-            patch("mcp_server.tools.search_handlers.IncrementalIndexer", return_value=ii_instance),
+            patch(
+                "mcp_server.tools.search_handlers.get_project_storage_dir",
+                return_value=project_dir,
+            ),
+            patch(
+                "mcp_server.tools.search_handlers.MultiLanguageChunker",
+                CapturingChunker,
+            ),
+            patch(
+                "mcp_server.tools.search_handlers.get_embedder",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "mcp_server.tools.search_handlers.IncrementalIndexer",
+                return_value=ii_instance,
+            ),
             patch("mcp_server.tools.search_handlers.get_config", return_value=cfg),
-            patch("mcp_server.tools.search_handlers.get_state", return_value=MagicMock()),
+            patch(
+                "mcp_server.tools.search_handlers.get_state", return_value=MagicMock()
+            ),
             # SnapshotManager / ChangeDetector are locally imported inside the function
-            patch("merkle.snapshot_manager.SnapshotManager", return_value=snap_instance),
+            patch(
+                "merkle.snapshot_manager.SnapshotManager", return_value=snap_instance
+            ),
             patch("merkle.change_detector.ChangeDetector"),
             # TreeSitterChunker.get_supported_extensions() is called to compute the ChangeDetector arg
             patch("chunking.tree_sitter.TreeSitterChunker", ts_mock),
             patch("search.dimension_validator.validate_embedder_index_compatibility"),
-            patch("mcp_server.model_pool_manager.get_model_key_from_name", return_value="bge_code"),
+            patch(
+                "mcp_server.model_pool_manager.get_model_key_from_name",
+                return_value="bge_code",
+            ),
         ]
 
         with ExitStack() as stack:
             for p in _patches:
                 stack.enter_context(p)
             from mcp_server.tools.search_handlers import _check_auto_reindex
+
             _check_auto_reindex("/fake/project", "bge_code", max_age_minutes=0)
 
         assert chunker_calls, "MultiLanguageChunker was never constructed"
         args, kwargs = chunker_calls[0]
-        exclude_passed = kwargs.get("exclude_dirs") or (args[2] if len(args) > 2 else None)
+        exclude_passed = kwargs.get("exclude_dirs") or (
+            args[2] if len(args) > 2 else None
+        )
         # get_effective_filters merges user exclusions with default dirs, so the result is a
         # superset of ["assets"] — verify "assets" is present rather than checking exact equality
         assert exclude_passed is not None and "assets" in exclude_passed, (
