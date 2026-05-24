@@ -174,6 +174,24 @@ class TestMerkleDAG(TestCase):
         # Regular files should be present
         assert "README.md" in all_files
 
+    def test_logs_directory_is_ignored(self):
+        """logs/ must be excluded so a growing mcp_server.log inside the indexed project
+        does not flip the Merkle hash and trigger spurious incremental re-indexing."""
+        self.create_test_files()
+
+        (self.test_path / "logs").mkdir()
+        (self.test_path / "logs" / "mcp_server.log").write_text("server log content")
+
+        dag = MerkleDAG(self.temp_dir)
+        dag.build()
+
+        all_files = dag.get_all_files()
+
+        assert not any("logs" in f for f in all_files), (
+            f"logs/ should be excluded from DAG, but found: "
+            f"{[f for f in all_files if 'logs' in f]}"
+        )
+
     def test_dag_serialization(self):
         """Test DAG to/from dict conversion."""
         self.create_test_files()

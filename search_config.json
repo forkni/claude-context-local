@@ -87,6 +87,8 @@
     "max_split_chars": 3000,
     "enable_file_summaries": true,
     "enable_community_summaries": true,
+    "enable_incremental_community_summaries": true,
+    "incremental_community_redetect_threshold": 0.3,
     "sizing_mode": "adaptive",
     "adaptive_multiplier_max": 1.3,
     "adaptive_multiplier_min": 0.5,
@@ -109,5 +111,13 @@
     "enable_size_normalization": true,
     "size_norm_target_lines": 200,
     "size_norm_alpha": 0.1
+  },
+  "observability": {
+    "enabled": false,
+    "service_name": "claude-context-local",
+    "exporter": "otlp",
+    "otlp_endpoint": "http://localhost:4318",
+    "sample_ratio": 1.0,
+    "capture_query_text": false
   }
 }

@@ -6,7 +6,6 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from rich.console import Console
 from rich.progress import (
     BarColumn,
     Progress,
@@ -14,6 +13,8 @@ from rich.progress import (
     TaskProgressColumn,
     TextColumn,
 )
+
+from utils.console import get_progress_console
 
 
 if TYPE_CHECKING:
@@ -76,7 +77,7 @@ class ParallelChunker:
                     future_to_path[future] = file_path
 
                 # Collect results as they complete with progress bar
-                console = Console(force_terminal=True)
+                console = get_progress_console()
 
                 # Suppress INFO logs during progress bar to prevent line mixing
                 root_logger = logging.getLogger()
@@ -153,7 +154,7 @@ class ParallelChunker:
                 )
         else:
             # Sequential chunking (fallback or single file)
-            console = Console(force_terminal=True)
+            console = get_progress_console()
 
             # Suppress INFO logs during progress bar to prevent line mixing
             root_logger = logging.getLogger()

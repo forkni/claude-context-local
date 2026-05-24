@@ -367,6 +367,14 @@ class ChunkingConfig:
     # Community-level summaries (B1: thematic grouping via Louvain communities)
     enable_community_summaries: bool = True  # Generate community-summary chunks
 
+    # Incremental community-summary refresh (subordinate to enable_community_summaries)
+    enable_incremental_community_summaries: bool = (
+        True  # Refresh stale community summaries on incremental index
+    )
+    incremental_community_redetect_threshold: float = (
+        0.3  # Cumulative changed-file fraction that triggers full redetect
+    )
+
     # Adaptive chunk sizing (research: P75 baseline + complexity modulation)
     sizing_mode: str = "fixed"  # "fixed" (static) or "adaptive" (repo-profiled)
     adaptive_multiplier_max: float = 1.3  # T_max = P75_baseline × this (low-complexity)
@@ -441,6 +449,18 @@ class GraphEnhancedConfig:
     centrality_boost_cap: float = 0.15  # Maximum boost added to blended_score
 
 
+@dataclass
+class ObservabilityConfig:
+    """OTel tracing configuration (traces-only v1; metrics deferred to v2)."""
+
+    enabled: bool = False
+    service_name: str = "claude-context-local"
+    exporter: str = "otlp"  # otlp | console(->stderr) | none
+    otlp_endpoint: str = "http://localhost:4318"
+    sample_ratio: float = 1.0
+    capture_query_text: bool = False  # off by default (query text can be sensitive)
+
+
 class SearchConfig:
     """Root configuration with nested sub-configs.
 
@@ -466,6 +486,7 @@ class SearchConfig:
         ego_graph: EgoGraphConfig | None = None,
         parent_retrieval: ParentRetrievalConfig | None = None,
         graph_enhanced: GraphEnhancedConfig | None = None,
+        observability: ObservabilityConfig | None = None,
     ):
         """Initialize SearchConfig with nested sub-configs.
 
@@ -505,6 +526,9 @@ class SearchConfig:
         )
         self.graph_enhanced = (
             graph_enhanced if graph_enhanced is not None else GraphEnhancedConfig()
+        )
+        self.observability = (
+            observability if observability is not None else ObservabilityConfig()
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -602,6 +626,8 @@ class SearchConfig:
                 "max_split_chars": self.chunking.max_split_chars,
                 "enable_file_summaries": self.chunking.enable_file_summaries,
                 "enable_community_summaries": self.chunking.enable_community_summaries,
+                "enable_incremental_community_summaries": self.chunking.enable_incremental_community_summaries,
+                "incremental_community_redetect_threshold": self.chunking.incremental_community_redetect_threshold,
                 "sizing_mode": self.chunking.sizing_mode,
                 "adaptive_multiplier_max": self.chunking.adaptive_multiplier_max,
                 "adaptive_multiplier_min": self.chunking.adaptive_multiplier_min,
@@ -624,6 +650,14 @@ class SearchConfig:
                 "enable_size_normalization": self.graph_enhanced.enable_size_normalization,
                 "size_norm_target_lines": self.graph_enhanced.size_norm_target_lines,
                 "size_norm_alpha": self.graph_enhanced.size_norm_alpha,
+            },
+            "observability": {
+                "enabled": self.observability.enabled,
+                "service_name": self.observability.service_name,
+                "exporter": self.observability.exporter,
+                "otlp_endpoint": self.observability.otlp_endpoint,
+                "sample_ratio": self.observability.sample_ratio,
+                "capture_query_text": self.observability.capture_query_text,
             },
         }
 
@@ -796,6 +830,12 @@ class SearchConfig:
                 enable_community_summaries=chunking_data.get(
                     "enable_community_summaries", True
                 ),
+                enable_incremental_community_summaries=chunking_data.get(
+                    "enable_incremental_community_summaries", True
+                ),
+                incremental_community_redetect_threshold=chunking_data.get(
+                    "incremental_community_redetect_threshold", 0.3
+                ),
                 sizing_mode=chunking_data.get("sizing_mode", "fixed"),
                 adaptive_multiplier_max=chunking_data.get(
                     "adaptive_multiplier_max", 1.3
@@ -846,6 +886,20 @@ class SearchConfig:
                 centrality_boost_cap=graph_enhanced_data.get(
                     "centrality_boost_cap", 0.15
                 ),
+            )
+
+            observability_data = data.get("observability", {})
+            observability = ObservabilityConfig(
+                enabled=observability_data.get("enabled", False),
+                service_name=observability_data.get(
+                    "service_name", "claude-context-local"
+                ),
+                exporter=observability_data.get("exporter", "otlp"),
+                otlp_endpoint=observability_data.get(
+                    "otlp_endpoint", "http://localhost:4318"
+                ),
+                sample_ratio=observability_data.get("sample_ratio", 1.0),
+                capture_query_text=observability_data.get("capture_query_text", False),
             )
 
         else:
@@ -985,6 +1039,15 @@ class SearchConfig:
                 centrality_boost_cap=data.get("centrality_boost_cap", 0.15),
             )
 
+            observability = ObservabilityConfig(
+                enabled=data.get("otel_enabled", False),
+                service_name=data.get("otel_service_name", "claude-context-local"),
+                exporter=data.get("otel_exporter", "otlp"),
+                otlp_endpoint=data.get("otel_endpoint", "http://localhost:4318"),
+                sample_ratio=data.get("otel_sample_ratio", 1.0),
+                capture_query_text=data.get("otel_capture_query_text", False),
+            )
+
         return cls(
             embedding=embedding,
             search_mode=search_mode,
@@ -997,6 +1060,7 @@ class SearchConfig:
             chunking=chunking,
             ego_graph=ego_graph,
             graph_enhanced=graph_enhanced,
+            observability=observability,
         )
 
 
@@ -1119,6 +1183,15 @@ class SearchConfigManager:
             "CLAUDE_RERANKER_TOP_K": ("reranker_top_k_candidates", int),
             "CLAUDE_RERANKER_MIN_VRAM_GB": ("reranker_min_vram_gb", float),
             "CLAUDE_RERANKER_BATCH_SIZE": ("reranker_batch_size", int),
+            # Observability (OTel tracing) env vars
+            "CLAUDE_OTEL_ENABLED": ("otel_enabled", self._bool_from_env),
+            "CLAUDE_OTEL_EXPORTER": ("otel_exporter", str),
+            "CLAUDE_OTEL_ENDPOINT": ("otel_endpoint", str),
+            "CLAUDE_OTEL_SAMPLE": ("otel_sample_ratio", float),
+            "CLAUDE_OTEL_CAPTURE_QUERY": (
+                "otel_capture_query_text",
+                self._bool_from_env,
+            ),
         }
 
         config_dict = {}
@@ -1135,6 +1208,20 @@ class SearchConfigManager:
                     self.logger.warning(
                         f"Invalid value for {env_var}: {env_value} ({e})"
                     )
+
+        # Auto-detect: if standard OTEL_* vars are present without CLAUDE_OTEL_ENABLED,
+        # treat as opted-in with OTLP (network exporter — never touches stdio).
+        if (
+            "CLAUDE_OTEL_ENABLED" not in os.environ
+            and "otel_enabled" not in config_dict
+            and any(k.startswith("OTEL_") for k in os.environ)
+        ):
+            config_dict["otel_enabled"] = True
+            if "otel_exporter" not in config_dict:
+                config_dict["otel_exporter"] = "otlp"
+            self.logger.info(
+                "[OTEL] Auto-detected OTEL_* env vars — enabling OTLP tracing"
+            )
 
         return config_dict
 

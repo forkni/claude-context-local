@@ -177,4 +177,5 @@ def _build_community_summary(
         docstring=agg_docstring or None,
         language=community_chunks[0].language if community_chunks else "python",
         chunk_id=chunk_id,
+        tags=[f"community:{community_id}"],
     )

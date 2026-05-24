@@ -11,13 +11,16 @@ Migrated from FastMCP to official MCP SDK for:
 
 import argparse
 import asyncio
+import contextlib
 import json
 import logging
+import logging.handlers
 import os
 import platform
 import sys
 import time
 from collections.abc import AsyncGenerator
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -48,16 +51,74 @@ from mcp_server.model_pool_manager import (  # noqa: E402
 from mcp_server.output_formatter import format_response  # noqa: E402
 
 
-# Configure logging
+# Configure logging — dual-handler: console (existing behavior) + rotating file
 debug_mode = os.getenv("MCP_DEBUG", "").lower() in ("1", "true", "yes")
 log_level = logging.DEBUG if debug_mode else logging.INFO
-log_format = (
+console_format = (
     "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     if debug_mode
     else "%(asctime)s - %(message)s"
 )
-logging.basicConfig(level=log_level, format=log_format, datefmt="%H:%M:%S")
+file_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+_log_dir = PROJECT_ROOT / "logs"
+_log_path = _log_dir / "mcp_server.log"
+_SESSION_START = datetime.now().strftime("%m%d%y%H%M%S")
+
+
+class _SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """RotatingFileHandler that tolerates Windows file locks during rollover.
+
+    Swallows WinError 32 (another process holds the file open) so rotation skips
+    gracefully rather than spamming stderr with logging-error tracebacks.
+
+    Backup files are named ``mcp_server_<mmddyyhhmmss>.log`` where the timestamp
+    is fixed at session start — unique per server run, no numeric suffix needed.
+    """
+
+    def rotate(self, source: str, dest: str) -> None:
+        with contextlib.suppress(PermissionError, OSError):
+            super().rotate(source, dest)
+
+    def doRollover(self) -> None:  # noqa: N802
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+        stem = Path(self.baseFilename).stem  # "mcp_server"
+        dfn = str(Path(self.baseFilename).parent / f"{stem}_{_SESSION_START}.log")
+        self.rotate(self.baseFilename, dfn)  # suppresses PermissionError/OSError
+        if not self.delay:
+            self.stream = self._open()
+
+
+def _configure_logging() -> None:
+    """Configure root-logger handlers exactly once regardless of how many times this
+    module body executes (guards against the -m double-import trap)."""
+    root = logging.getLogger()
+    if getattr(root, "_code_search_logging_configured", False):
+        return
+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(logging.Formatter(console_format, datefmt="%H:%M:%S"))
+
+    _log_dir.mkdir(parents=True, exist_ok=True)
+    file_handler = _SafeRotatingFileHandler(
+        _log_path, maxBytes=5_000_000, backupCount=3, encoding="utf-8", delay=True
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(file_format, datefmt="%H:%M:%S"))
+
+    root.setLevel(logging.DEBUG)
+    root.addHandler(console_handler)
+    root.addHandler(file_handler)
+    root._code_search_logging_configured = True
+
+
+_configure_logging()
+
 logger = logging.getLogger(__name__)
+logger.info("File logging -> %s", _log_path)
 
 if debug_mode:
     logging.getLogger("mcp").setLevel(logging.DEBUG)
@@ -583,13 +644,20 @@ if __name__ == "__main__":
                 # Set exception handler for residual socket errors
                 def handle_win_socket_error(loop: Any, context: dict[str, Any]) -> None:
                     exc = context.get("exception")
-                    # Handle Windows socket errors
+                    # Swallow common transient SSE-disconnect codes; these are
+                    # normal client disconnects, not server faults.
+                    _transient_winerrors = {
+                        64,  # The specified network name is no longer available
+                        995,  # Operation aborted
+                        10053,  # Connection aborted by software
+                        10054,  # Connection reset by peer
+                    }
                     if (
                         isinstance(exc, OSError)
-                        and getattr(exc, "winerror", None) == 64
+                        and getattr(exc, "winerror", None) in _transient_winerrors
                     ):
                         logger.debug(
-                            f"Client disconnect (WinError 64): {context.get('message', '')}"
+                            f"Client disconnect (WinError {exc.winerror}): {context.get('message', '')}"
                         )
                         return
                     # Handle anyio stream errors (SSE disconnections)

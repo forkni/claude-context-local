@@ -243,7 +243,8 @@ __marimo__/
 _archive/
 benchmark_results/
 analysis/
-/logs/                   # Workflow execution logs and analysis reports (entire directory)
+# Workflow execution logs and analysis reports
+/logs/
 scripts/git
 CLAUDE.md
 MEMORY.md
@@ -275,6 +276,7 @@ docs/*
 !docs/TESTING_GUIDE.md
 !docs/VSCODE_SETUP.md
 !docs/VERSION_HISTORY.md
+!docs/OBSERVABILITY.md
 
 # Development-only documentation (local-only)
 # - AUTOMATED_GIT_WORKFLOW.md (Claude orchestration guide - development only)

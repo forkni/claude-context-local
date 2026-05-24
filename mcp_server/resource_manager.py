@@ -131,6 +131,17 @@ class ResourceManager:
         except Exception as e:
             logger.warning(f"Error during GPU cache cleanup: {e}")
 
+        # Component 7: OTel force-flush — drain pending spans before resource teardown.
+        # Do NOT call shutdown_observability() here: shutdown permanently disables the
+        # global TracerProvider and belongs at server exit, not at per-request cleanup.
+        try:
+            import utils.observability as _obs
+
+            if _obs._enabled and _obs._tracer_provider is not None:
+                _obs._tracer_provider.force_flush()
+        except Exception as e:
+            logger.warning(f"Error flushing OTel spans: {e}")
+
     def close_project_resources(self, project_path: str) -> bool:
         """Close all resources associated with a specific project.
 
@@ -194,6 +205,9 @@ def initialize_server_state() -> None:
         config = config_manager.load_config()
         state.sync_from_config(config)
         logger.info("[INIT] Config synced from file")
+        from utils.observability import init_observability
+
+        init_observability(config.observability)
     except Exception as e:
         logger.warning(f"[INIT] Config sync failed (using defaults): {e}")
 
