@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from rich.console import Console
 from rich.progress import (
     BarColumn,
     Progress,
@@ -25,6 +24,8 @@ from rich.progress import (
     TaskProgressColumn,
     TextColumn,
 )
+
+from utils.console import get_progress_console
 
 from chunking.python_ast_chunker import CodeChunk
 from embeddings.model_cache import ModelCacheManager
@@ -1225,7 +1226,7 @@ class CodeEmbedder:
             )
 
         # Process in batches for efficiency with progress bar
-        console = Console(force_terminal=True)
+        console = get_progress_console()
         # current_batch_size tracks the live batch size — may be halved on OOM.
         current_batch_size = batch_size
         total_batches = (len(chunks) + current_batch_size - 1) // current_batch_size

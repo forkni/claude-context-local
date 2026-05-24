@@ -62,6 +62,7 @@ for /f "tokens=1-4 delims=:.," %%a in ("%TIME%") do (
     set /a "END_TIME=(((%%a*60)+1%%b %% 100)*60+1%%c %% 100)*100+1%%d %% 100"
 )
 set /a "DURATION=(END_TIME-START_TIME)/100"
+if %DURATION% LSS 0 set /a "DURATION+=86400"
 
 echo.
 echo [DEBUG] =======================================

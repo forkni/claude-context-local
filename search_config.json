@@ -87,6 +87,8 @@
     "max_split_chars": 3000,
     "enable_file_summaries": true,
     "enable_community_summaries": true,
+    "enable_incremental_community_summaries": true,
+    "incremental_community_redetect_threshold": 0.3,
     "sizing_mode": "adaptive",
     "adaptive_multiplier_max": 1.3,
     "adaptive_multiplier_min": 0.5,
