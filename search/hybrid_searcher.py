@@ -26,9 +26,12 @@ from mcp_server.utils.config_helpers import (
     get_config_via_service_locator as _get_config_via_service_locator,
 )
 from search.graph_integration import SEMANTIC_TYPES
-
 from utils.observability import traced_block
-from utils.otel_attributes import ATTR_INTENT, ATTR_K, ATTR_RESULT_COUNT, ATTR_SEARCH_MODE
+from utils.otel_attributes import (
+    ATTR_K,
+    ATTR_RESULT_COUNT,
+    ATTR_SEARCH_MODE,
+)
 
 from .base_searcher import BaseSearcher
 from .bm25_index import BM25Index
@@ -631,11 +634,15 @@ class HybridSearcher(BaseSearcher):
         if hasattr(self, "reranking_engine") and self.reranking_engine:
             self.reranking_engine.reset_session_state()
 
-        with traced_block("search.hybrid", **{ATTR_SEARCH_MODE: search_mode, ATTR_K: k}) as span:
+        with traced_block(
+            "search.hybrid", **{ATTR_SEARCH_MODE: search_mode, ATTR_K: k}
+        ) as span:
             # Check if indices are ready based on search mode
             if search_mode == "bm25":
                 if self.bm25_index.is_empty:
-                    self._logger.warning("BM25 search requested but BM25 index is empty")
+                    self._logger.warning(
+                        "BM25 search requested but BM25 index is empty"
+                    )
                     span.set_attribute(ATTR_RESULT_COUNT, 0)
                     return []
             elif search_mode == "semantic":
@@ -647,7 +654,9 @@ class HybridSearcher(BaseSearcher):
                     return []
             else:  # hybrid
                 if not self.is_ready:
-                    self._logger.warning("Hybrid search not ready - indices may be empty")
+                    self._logger.warning(
+                        "Hybrid search not ready - indices may be empty"
+                    )
                     span.set_attribute(ATTR_RESULT_COUNT, 0)
                     return []
 
@@ -686,7 +695,11 @@ class HybridSearcher(BaseSearcher):
                 )
 
             # Apply ego-graph expansion if enabled
-            if effective_config.ego_graph.enabled and self.ego_graph_retriever and results:
+            if (
+                effective_config.ego_graph.enabled
+                and self.ego_graph_retriever
+                and results
+            ):
                 results = self._apply_ego_graph_expansion(
                     results, effective_config.ego_graph, k, query
                 )

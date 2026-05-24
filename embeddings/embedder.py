@@ -25,8 +25,6 @@ from rich.progress import (
     TextColumn,
 )
 
-from utils.console import get_progress_console
-
 from chunking.python_ast_chunker import CodeChunk
 from embeddings.model_cache import ModelCacheManager
 from embeddings.model_loader import ModelLoader
@@ -36,6 +34,7 @@ from mcp_server.utils.config_helpers import (
 )
 from search.exceptions import VRAMExhaustedError
 from search.filters import normalize_path
+from utils.console import get_progress_console
 from utils.timing import timed
 
 

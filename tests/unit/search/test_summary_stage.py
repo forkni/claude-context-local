@@ -11,8 +11,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from chunking.python_ast_chunker import CodeChunk
 from search.summary_stage import SummaryStage
 
@@ -88,8 +86,12 @@ class TestComputeCommunitySummaries:
         chunks, community_map = self._two_chunk_map()
         mock_graph = MagicMock()
         with patch("graph.graph_queries.GraphQueryEngine") as mock_gqe_cls:
-            mock_gqe_cls.return_value.compute_centrality.side_effect = RuntimeError("unavailable")
-            result = self.stage.compute_community_summaries(chunks, community_map, mock_graph)
+            mock_gqe_cls.return_value.compute_centrality.side_effect = RuntimeError(
+                "unavailable"
+            )
+            result = self.stage.compute_community_summaries(
+                chunks, community_map, mock_graph
+            )
         assert len(result) == 1  # fell back, still generated
 
     def test_centrality_enriches_hub_annotation(self):
@@ -102,7 +104,9 @@ class TestComputeCommunitySummaries:
         centrality = {chunks[0].chunk_id: 0.9, chunks[1].chunk_id: 0.1}
         with patch("graph.graph_queries.GraphQueryEngine") as mock_gqe_cls:
             mock_gqe_cls.return_value.compute_centrality.return_value = centrality
-            result = self.stage.compute_community_summaries(chunks, community_map, mock_graph)
+            result = self.stage.compute_community_summaries(
+                chunks, community_map, mock_graph
+            )
         assert "Hub function: small" in result[0].content
         assert "centrality: 0.9000" in result[0].content
 

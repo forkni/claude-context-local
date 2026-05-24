@@ -11,14 +11,17 @@ sites pick up spans for free when tracing is enabled.
 Console exporter always routes to stderr to avoid corrupting the MCP
 stdio protocol channel (stdout).
 """
+
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import sys
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
+
 
 if TYPE_CHECKING:
     from search.config import ObservabilityConfig
@@ -41,7 +44,7 @@ class _NoopSpan:
     def set_attribute(self, key: str, value: object) -> None:  # noqa: ARG002
         pass
 
-    def __enter__(self) -> "_NoopSpan":
+    def __enter__(self) -> _NoopSpan:
         return self
 
     def __exit__(self, *args: object) -> None:
@@ -121,10 +124,8 @@ def traced_block(name: str, **attrs: Any) -> Generator[Any, None, None]:
     with tracer.start_as_current_span(name) as span:
         for k, v in attrs.items():
             if v is not None:
-                try:
+                with contextlib.suppress(Exception):
                     span.set_attribute(k, v)
-                except Exception:
-                    pass
         yield span
 
 
@@ -161,7 +162,7 @@ def wrap_in_context(fn: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def init_observability(cfg: "ObservabilityConfig") -> None:
+def init_observability(cfg: ObservabilityConfig) -> None:
     """Initialize OTel tracing from config. Call once at server startup.
 
     Safe to call multiple times; subsequent calls after successful init are
@@ -180,13 +181,16 @@ def init_observability(cfg: "ObservabilityConfig") -> None:
 
     # Auto-detect: if any standard OTEL_* env var is set and CLAUDE_OTEL_ENABLED
     # is absent, treat as enabled with OTLP (network — never touches stdio).
-    if not effective_enabled and "CLAUDE_OTEL_ENABLED" not in os.environ:
-        if any(k.startswith("OTEL_") for k in os.environ):
-            effective_enabled = True
-            effective_exporter = "otlp"
-            logger.info(
-                "[OTEL] Auto-detected OTEL_* env vars — enabling tracing with OTLP exporter"
-            )
+    if (
+        not effective_enabled
+        and "CLAUDE_OTEL_ENABLED" not in os.environ
+        and any(k.startswith("OTEL_") for k in os.environ)
+    ):
+        effective_enabled = True
+        effective_exporter = "otlp"
+        logger.info(
+            "[OTEL] Auto-detected OTEL_* env vars — enabling tracing with OTLP exporter"
+        )
 
     if not effective_enabled:
         return
@@ -227,10 +231,12 @@ def init_observability(cfg: "ObservabilityConfig") -> None:
             "Install with: pip install 'claude-context-local[otel]'"
         )
     except Exception as exc:
-        logger.warning(f"[OTEL] Failed to initialize tracing: {exc} — continuing without")
+        logger.warning(
+            f"[OTEL] Failed to initialize tracing: {exc} — continuing without"
+        )
 
 
-def _build_exporter(cfg: "ObservabilityConfig", exporter_name: str) -> Any:
+def _build_exporter(cfg: ObservabilityConfig, exporter_name: str) -> Any:
     """Build the configured span exporter."""
     name = exporter_name.lower()
 

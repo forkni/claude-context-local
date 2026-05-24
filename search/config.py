@@ -368,8 +368,12 @@ class ChunkingConfig:
     enable_community_summaries: bool = True  # Generate community-summary chunks
 
     # Incremental community-summary refresh (subordinate to enable_community_summaries)
-    enable_incremental_community_summaries: bool = True  # Refresh stale community summaries on incremental index
-    incremental_community_redetect_threshold: float = 0.3  # Cumulative changed-file fraction that triggers full redetect
+    enable_incremental_community_summaries: bool = (
+        True  # Refresh stale community summaries on incremental index
+    )
+    incremental_community_redetect_threshold: float = (
+        0.3  # Cumulative changed-file fraction that triggers full redetect
+    )
 
     # Adaptive chunk sizing (research: P75 baseline + complexity modulation)
     sizing_mode: str = "fixed"  # "fixed" (static) or "adaptive" (repo-profiled)
@@ -1184,7 +1188,10 @@ class SearchConfigManager:
             "CLAUDE_OTEL_EXPORTER": ("otel_exporter", str),
             "CLAUDE_OTEL_ENDPOINT": ("otel_endpoint", str),
             "CLAUDE_OTEL_SAMPLE": ("otel_sample_ratio", float),
-            "CLAUDE_OTEL_CAPTURE_QUERY": ("otel_capture_query_text", self._bool_from_env),
+            "CLAUDE_OTEL_CAPTURE_QUERY": (
+                "otel_capture_query_text",
+                self._bool_from_env,
+            ),
         }
 
         config_dict = {}
@@ -1204,14 +1211,17 @@ class SearchConfigManager:
 
         # Auto-detect: if standard OTEL_* vars are present without CLAUDE_OTEL_ENABLED,
         # treat as opted-in with OTLP (network exporter — never touches stdio).
-        if "CLAUDE_OTEL_ENABLED" not in os.environ and "otel_enabled" not in config_dict:
-            if any(k.startswith("OTEL_") for k in os.environ):
-                config_dict["otel_enabled"] = True
-                if "otel_exporter" not in config_dict:
-                    config_dict["otel_exporter"] = "otlp"
-                self.logger.info(
-                    "[OTEL] Auto-detected OTEL_* env vars — enabling OTLP tracing"
-                )
+        if (
+            "CLAUDE_OTEL_ENABLED" not in os.environ
+            and "otel_enabled" not in config_dict
+            and any(k.startswith("OTEL_") for k in os.environ)
+        ):
+            config_dict["otel_enabled"] = True
+            if "otel_exporter" not in config_dict:
+                config_dict["otel_exporter"] = "otlp"
+            self.logger.info(
+                "[OTEL] Auto-detected OTEL_* env vars — enabling OTLP tracing"
+            )
 
         return config_dict
 

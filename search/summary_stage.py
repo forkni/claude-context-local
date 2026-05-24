@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+
 if TYPE_CHECKING:
     from chunking.python_ast_chunker import CodeChunk
     from search.graph_integration import GraphIntegration
@@ -32,10 +33,10 @@ class SummaryStage:
 
     def compute_community_summaries(
         self,
-        all_chunks: list["CodeChunk"],
+        all_chunks: list[CodeChunk],
         community_map: dict[str, int],
-        temp_graph: "GraphIntegration | None",
-    ) -> list["CodeChunk"]:
+        temp_graph: GraphIntegration | None,
+    ) -> list[CodeChunk]:
         """Compute community-summary CodeChunks with centrality-weighted hub detection.
 
         Must be called BEFORE community remerge (chunk_ids must match community_map).
@@ -76,8 +77,8 @@ class SummaryStage:
 
     def generate_module_summaries(
         self,
-        all_chunks: list["CodeChunk"],
-    ) -> list["CodeChunk"]:
+        all_chunks: list[CodeChunk],
+    ) -> list[CodeChunk]:
         """Generate per-file module-summary CodeChunks.
 
         Must be called AFTER community remerge (chunk_ids must be stable).
