@@ -29,6 +29,7 @@ from .config import get_search_config
 from .graph_integration import GraphIntegration
 from .indexer import CodeIndexManager as Indexer
 from .parallel_chunker import ParallelChunker
+from .summary_stage import SummaryStage
 
 
 logger = logging.getLogger(__name__)
@@ -149,6 +150,7 @@ class IncrementalIndexer:
             max_workers=self.max_chunking_workers,
         )
         self._bm25_sync = BM25SyncManager(indexer=self.indexer)
+        self._summary_stage = SummaryStage()
         self.precomputed_repo_profile = precomputed_repo_profile
         self.repo_profile: object | None = (
             None  # Set after full index for caller capture
@@ -304,6 +306,36 @@ class IncrementalIndexer:
                 f"Removed: {len(changes.removed)}, Modified: {len(changes.modified)}"
             )
 
+            # ========== Community drift check ==========
+            # Track cumulative changed-file fraction since last full index.
+            # When it exceeds the threshold, promote to full reindex for community redetection.
+            _config = get_search_config()
+            _should_refresh_communities = (
+                _config.chunking.enable_community_summaries
+                and _config.chunking.enable_incremental_community_summaries
+            )
+            _prev_meta = self.snapshot_manager.load_metadata(project_path)
+            _prev_meta_dict = _prev_meta if isinstance(_prev_meta, dict) else {}
+            _has_prior_tracking = "cumulative_changed_files" in _prev_meta_dict
+            _prev_cumulative = int(_prev_meta_dict.get("cumulative_changed_files", 0))
+            _this_change_count = len(changes.added) + len(changes.modified) + len(changes.removed)
+            _new_cumulative = _prev_cumulative + _this_change_count
+            if _should_refresh_communities and _has_prior_tracking:
+                _prev_supported = max(1, int(_prev_meta_dict.get("supported_files", 1)))
+                _drift_fraction = _new_cumulative / _prev_supported
+                if _drift_fraction > _config.chunking.incremental_community_redetect_threshold:
+                    logger.info(
+                        f"[INCREMENTAL] Community drift {_drift_fraction:.0%} exceeds "
+                        f"threshold {_config.chunking.incremental_community_redetect_threshold:.0%}; "
+                        "promoting to full reindex for community redetection"
+                    )
+                    with traced_block(
+                        "index.full",
+                        **{ATTR_PROJECT_ID: project_name, ATTR_INDEX_TYPE: "full"},
+                    ):
+                        return self._full_index(project_path, project_name, start_time)
+            # ========== END Community drift check ==========
+
             # Process changes
             chunks_removed = self._remove_old_chunks(changes, project_name)
 
@@ -334,6 +366,11 @@ class IncrementalIndexer:
                     )
 
             chunks_added = self._add_new_chunks(changes, project_path, project_name)
+
+            # ========== Community summary refresh (approximate, below redetect threshold) ==========
+            if _should_refresh_communities:
+                self._refresh_affected_community_summaries(changes, project_name)
+            # ========== END Community summary refresh ==========
 
             # Validate index consistency after operations
             if hasattr(self.indexer, "validate_index_consistency"):
@@ -366,6 +403,7 @@ class IncrementalIndexer:
                 files_added=len(changes.added),
                 files_removed=len(changes.removed),
                 files_modified=len(changes.modified),
+                cumulative_changed_files=_new_cumulative,
             )
             self.snapshot_manager.save_snapshot(current_dag, metadata)
 
@@ -778,46 +816,18 @@ class IncrementalIndexer:
                     )
                     community_map = None
 
-            # ========== Community Summaries (B1) — PHASE 1: Compute ==========
-            # CRITICAL: Compute BEFORE remerge (chunk_ids match community_map)
+            # ========== Community Summaries — PHASE 1: Compute (before remerge) ==========
+            # chunk_ids must match community_map keys, which are pre-remerge.
+            # Phase 2 (append) happens after remerge below; see SummaryStage docstring.
             community_summaries = []
             if (
                 config.chunking.enable_community_summaries
                 and community_map
                 and all_chunks
             ):
-                try:
-                    from graph.community_summarizer import generate_community_summaries
-
-                    # Compute PageRank centrality for hub detection (QW4)
-                    centrality_scores_for_summaries: dict[str, float] | None = None
-                    if community_map and temp_graph is not None:
-                        try:
-                            from graph.graph_queries import GraphQueryEngine
-
-                            # pyrefly: ignore [bad-argument-type]
-                            gqe = GraphQueryEngine(temp_graph.storage)
-                            centrality_scores_for_summaries = gqe.compute_centrality(
-                                method="pagerank"
-                            )
-                            logger.info(
-                                f"[COMMUNITY_SUMMARIES] Computed centrality for "
-                                f"{len(centrality_scores_for_summaries)} nodes"
-                            )
-                        except Exception as ce:
-                            logger.debug(
-                                f"[COMMUNITY_SUMMARIES] Centrality unavailable, "
-                                f"using line-count fallback: {ce}"
-                            )
-
-                    community_summaries = generate_community_summaries(
-                        all_chunks, community_map, centrality_scores_for_summaries
-                    )
-                    logger.info(
-                        f"[COMMUNITY_SUMMARIES] Computed {len(community_summaries)} community summary chunks"
-                    )
-                except Exception as e:
-                    logger.warning(f"[COMMUNITY_SUMMARIES] Failed to compute: {e}")
+                community_summaries = self._summary_stage.compute_community_summaries(
+                    all_chunks, community_map, temp_graph
+                )
             # ========== END Community Summaries Phase 1 ==========
 
             # Step B: Community-based Remerge (Full index only)
@@ -856,27 +866,18 @@ class IncrementalIndexer:
                     )
             # ========== END Community Detection & Remerge ==========
 
-            # ========== File-Level Module Summaries (A2) ==========
+            # ========== File-Level Module Summaries ==========
             config = get_search_config()
             if config.chunking.enable_file_summaries and all_chunks:
-                try:
-                    from chunking.file_summarizer import generate_file_summaries
-
-                    file_summaries = generate_file_summaries(all_chunks)
-                    if file_summaries:
-                        logger.info(
-                            f"[FILE_SUMMARIES] Generated {len(file_summaries)} module summary chunks"
-                        )
-                        all_chunks.extend(file_summaries)
-                        logger.info(
-                            f"[FILE_SUMMARIES] Appended {len(file_summaries)} module summaries to chunk list"
-                        )
-                except Exception as e:
-                    logger.warning(f"[FILE_SUMMARIES] Failed: {e}")
+                module_summaries = self._summary_stage.generate_module_summaries(all_chunks)
+                if module_summaries:
+                    all_chunks.extend(module_summaries)
+                    logger.info(
+                        f"[FILE_SUMMARIES] Appended {len(module_summaries)} module summaries to chunk list"
+                    )
             # ========== END File-Level Module Summaries ==========
 
-            # ========== Community Summaries (B1) — PHASE 2: Append ==========
-            # CRITICAL: Append AFTER remerge (avoid being processed by remerge)
+            # ========== Community Summaries — PHASE 2: Append (after remerge) ==========
             if community_summaries:
                 all_chunks.extend(community_summaries)
                 logger.info(
@@ -913,7 +914,7 @@ class IncrementalIndexer:
 
             chunks_added = len(all_embedding_results)
 
-            # Save snapshot
+            # Save snapshot (reset cumulative_changed_files on full index)
             metadata = self._build_snapshot_metadata(
                 project_name=project_name,
                 all_files=all_files,
@@ -921,6 +922,7 @@ class IncrementalIndexer:
                 total_chunks=chunks_added,
                 is_full=True,
                 repo_profile=repo_profile,
+                cumulative_changed_files=0,
             )
             self.snapshot_manager.save_snapshot(dag, metadata)
 
@@ -1107,6 +1109,184 @@ class IncrementalIndexer:
         logger.info(f"[COMMUNITY_MERGE] Regenerated chunk_ids for {len(result)} chunks")
 
         return result
+
+    def _get_metadata_store(self):
+        """Return the MetadataStore from the indexer, handling both CodeIndexManager and HybridSearcher."""
+        if hasattr(self.indexer, "metadata_store"):
+            return self.indexer.metadata_store
+        if hasattr(self.indexer, "dense_index"):
+            dense_index = self.indexer.dense_index
+            if hasattr(dense_index, "metadata_store"):
+                return dense_index.metadata_store
+        return None
+
+    def _chunk_from_metadata(self, chunk_id: str, meta: dict) -> CodeChunk:
+        """Reconstruct a partial CodeChunk from a MetadataStore metadata dict.
+
+        Carries the fields that generate_community_summaries reads: chunk_type,
+        name, parent_name, relative_path, docstring, imports, start/end_line,
+        content, language. Language defaults to 'python' when absent.
+        """
+        return CodeChunk(
+            content=meta.get("content", ""),
+            chunk_type=meta.get("chunk_type", "function"),
+            start_line=int(meta.get("start_line") or 0),
+            end_line=int(meta.get("end_line") or 0),
+            file_path=meta.get("file_path", ""),
+            relative_path=meta.get("relative_path", ""),
+            folder_structure=meta.get("folder_structure") or [],
+            name=meta.get("name"),
+            parent_name=meta.get("parent_name"),
+            docstring=meta.get("docstring"),
+            imports=meta.get("imports") or [],
+            language=meta.get("language", "python"),
+            chunk_id=chunk_id,
+        )
+
+    def _refresh_affected_community_summaries(
+        self, changes: "FileChanges", project_name: str
+    ) -> None:
+        """Approximately refresh community summaries for communities touched by changed files.
+
+        Uses the persisted community_map (pre-remerge file→community assignments) to find
+        which communities are affected, removes their stale summary chunks, and regenerates
+        summaries from the surviving MetadataStore chunks. New-file chunks have no community
+        assignment until the next full redetect (the accepted approximation).
+        """
+        # Locate graph storage to load the persisted community_map
+        storage_dir: Path | None = None
+        try:
+            if hasattr(self.indexer, "storage_dir"):
+                storage_dir = Path(self.indexer.storage_dir)
+            elif hasattr(self.indexer, "dense_index") and hasattr(
+                self.indexer.dense_index, "storage_dir"
+            ):
+                storage_dir = Path(self.indexer.dense_index.storage_dir)
+        except (TypeError, ValueError):
+            storage_dir = None
+
+        if storage_dir is None:
+            logger.debug(
+                "[INCR_COMM] Cannot locate storage_dir for community_map; skipping refresh"
+            )
+            return
+
+        project_id = (
+            storage_dir.parent.name.rsplit("_", 1)[0]
+            if storage_dir.exists()
+            else None
+        )
+        if project_id is None:
+            logger.debug(
+                "[INCR_COMM] Cannot determine project_id for community_map; skipping refresh"
+            )
+            return
+
+        graph = GraphIntegration(project_id=project_id, storage_dir=storage_dir)
+        community_map = graph.storage.load_community_map()
+        if community_map is None:
+            logger.debug(
+                "[INCR_COMM] No persisted community_map found; skipping refresh "
+                "(run a full index first)"
+            )
+            return
+
+        # Build file → primary community mapping from pre-remerge community_map
+        file_comm_counts: dict[str, dict[int, int]] = {}
+        for chunk_id, comm_id in community_map.items():
+            rel_path = chunk_id.split(":")[0]
+            file_comm_counts.setdefault(rel_path, {})
+            file_comm_counts[rel_path][comm_id] = (
+                file_comm_counts[rel_path].get(comm_id, 0) + 1
+            )
+        file_to_community: dict[str, int] = {
+            rel_path: max(comm_counts, key=comm_counts.__getitem__)
+            for rel_path, comm_counts in file_comm_counts.items()
+        }
+
+        # Normalise changed file paths to forward-slash relative form for comparison
+        changed_file_set = {
+            str(f).replace("\\", "/")
+            for f in (changes.added | changes.modified | changes.removed)
+        }
+
+        affected_community_ids: set[int] = {
+            comm_id
+            for rel_path, comm_id in file_to_community.items()
+            if rel_path in changed_file_set
+        }
+        if not affected_community_ids:
+            logger.debug("[INCR_COMM] No affected communities for changed files; nothing to refresh")
+            return
+
+        logger.info(
+            f"[INCR_COMM] {len(affected_community_ids)} community(ies) affected by "
+            f"{len(changed_file_set)} changed file(s); refreshing summaries"
+        )
+
+        metadata_store = self._get_metadata_store()
+        if metadata_store is None:
+            logger.warning("[INCR_COMM] Cannot access MetadataStore; skipping community refresh")
+            return
+
+        # Remove stale community summary chunks for affected communities
+        for chunk_id, meta in list(metadata_store.items()):
+            if meta.get("chunk_type") != "community":
+                continue
+            tags = meta.get("tags") or []
+            for tag in tags:
+                if not isinstance(tag, str) or not tag.startswith("community:"):
+                    continue
+                try:
+                    comm_id = int(tag.split(":", 1)[1])
+                except (ValueError, IndexError):
+                    continue
+                if comm_id in affected_community_ids:
+                    file_path = meta.get("file_path") or meta.get("relative_path", "")
+                    if file_path:
+                        self.indexer.remove_file_chunks(file_path, project_name)
+                    break
+
+        # Rebuild member CodeChunks for affected communities from MetadataStore
+        member_chunks: list[CodeChunk] = []
+        sub_map: dict[str, int] = {}
+        for chunk_id, meta in metadata_store.items():
+            chunk_type = meta.get("chunk_type", "")
+            if chunk_type in ("community", "module"):
+                continue
+            rel_path = str(meta.get("relative_path") or "").replace("\\", "/")
+            comm_id = file_to_community.get(rel_path)
+            if comm_id is None or comm_id not in affected_community_ids:
+                continue
+            member_chunks.append(self._chunk_from_metadata(chunk_id, meta))
+            sub_map[chunk_id] = comm_id
+
+        if not member_chunks:
+            logger.info(
+                "[INCR_COMM] No surviving member chunks for affected communities; "
+                "stale summaries removed and not regenerated"
+            )
+            return
+
+        # Regenerate summaries (no centrality in incremental — approximate refresh)
+        new_summaries = self._summary_stage.compute_community_summaries(
+            member_chunks, sub_map, None
+        )
+        if not new_summaries:
+            logger.info("[INCR_COMM] No new community summaries generated")
+            return
+
+        # Embed and index the refreshed summaries
+        try:
+            embedding_results = self.embedder.embed_chunks(new_summaries)
+            for chunk, result in zip(new_summaries, embedding_results, strict=False):
+                result.metadata["project_name"] = project_name
+                result.metadata["content"] = chunk.content
+            if embedding_results:
+                self.indexer.add_embeddings(embedding_results)
+            logger.info(f"[INCR_COMM] Refreshed {len(new_summaries)} community summary chunk(s)")
+        except Exception as e:
+            logger.warning(f"[INCR_COMM] Failed to embed/index refreshed community summaries: {e}")
 
     def _build_snapshot_metadata(
         self,

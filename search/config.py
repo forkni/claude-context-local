@@ -367,6 +367,10 @@ class ChunkingConfig:
     # Community-level summaries (B1: thematic grouping via Louvain communities)
     enable_community_summaries: bool = True  # Generate community-summary chunks
 
+    # Incremental community-summary refresh (subordinate to enable_community_summaries)
+    enable_incremental_community_summaries: bool = True  # Refresh stale community summaries on incremental index
+    incremental_community_redetect_threshold: float = 0.3  # Cumulative changed-file fraction that triggers full redetect
+
     # Adaptive chunk sizing (research: P75 baseline + complexity modulation)
     sizing_mode: str = "fixed"  # "fixed" (static) or "adaptive" (repo-profiled)
     adaptive_multiplier_max: float = 1.3  # T_max = P75_baseline × this (low-complexity)
@@ -618,6 +622,8 @@ class SearchConfig:
                 "max_split_chars": self.chunking.max_split_chars,
                 "enable_file_summaries": self.chunking.enable_file_summaries,
                 "enable_community_summaries": self.chunking.enable_community_summaries,
+                "enable_incremental_community_summaries": self.chunking.enable_incremental_community_summaries,
+                "incremental_community_redetect_threshold": self.chunking.incremental_community_redetect_threshold,
                 "sizing_mode": self.chunking.sizing_mode,
                 "adaptive_multiplier_max": self.chunking.adaptive_multiplier_max,
                 "adaptive_multiplier_min": self.chunking.adaptive_multiplier_min,
@@ -819,6 +825,12 @@ class SearchConfig:
                 enable_file_summaries=chunking_data.get("enable_file_summaries", True),
                 enable_community_summaries=chunking_data.get(
                     "enable_community_summaries", True
+                ),
+                enable_incremental_community_summaries=chunking_data.get(
+                    "enable_incremental_community_summaries", True
+                ),
+                incremental_community_redetect_threshold=chunking_data.get(
+                    "incremental_community_redetect_threshold", 0.3
                 ),
                 sizing_mode=chunking_data.get("sizing_mode", "fixed"),
                 adaptive_multiplier_max=chunking_data.get(
