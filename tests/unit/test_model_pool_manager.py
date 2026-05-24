@@ -43,22 +43,22 @@ class TestGetModelKeyFromName:
             key = mpm.get_model_key_from_name("BAAI/bge-m3")
         assert key == "bge_m3"
 
-    def test_cross_pool_resolves_bge_code(self, caplog):
-        """bge-code-v1 is mapped to 'bge_code' even when active pool is lightweight-speed."""
+    def test_cross_pool_resolves_coderankembed(self, caplog):
+        """coderankembed is mapped to 'coderankembed' even when active pool is lightweight-speed."""
         import logging
 
         from mcp_server import model_pool_manager as mpm
 
-        # Active pool = lightweight-speed (does not contain bge_code)
+        # Active pool = lightweight-speed (does not contain coderankembed)
         mgr = _make_pool_manager_with_active_pool(MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED)
         with (
             patch.object(mpm, "_model_pool_manager", mgr),
             caplog.at_level(logging.INFO, logger="mcp_server.model_pool_manager"),
         ):
-            key = mpm.get_model_key_from_name("BAAI/bge-code-v1")
+            key = mpm.get_model_key_from_name("nomic-ai/CodeRankEmbed")
 
-        assert key == "bge_code", (
-            "bge-code-v1 should resolve via cross-pool fallback even when active "
+        assert key == "coderankembed", (
+            "CodeRankEmbed should resolve via cross-pool fallback even when active "
             "pool is lightweight-speed"
         )
         assert any("[CROSS_POOL]" in rec.message for rec in caplog.records), (
@@ -85,7 +85,7 @@ class TestGetModelKeyFromName:
 
     def test_all_pool_models_contains_both_pools(self):
         """ALL_POOL_MODELS is the union of both pool dicts (sanity check)."""
-        assert "bge_code" in ALL_POOL_MODELS
+        assert "coderankembed" in ALL_POOL_MODELS
         assert "qwen3" in ALL_POOL_MODELS
         assert "gte_modernbert" in ALL_POOL_MODELS
         assert "bge_m3" in ALL_POOL_MODELS
@@ -104,14 +104,14 @@ class TestGetEmbedderCrossPool:
         emb.model_name = model_name
         return emb
 
-    def test_cross_pool_opt_in_loads_bge_code(self, caplog):
-        """With allow_cross_pool=True, bge_code loads even when pool=lightweight-speed."""
+    def test_cross_pool_opt_in_loads_coderankembed(self, caplog):
+        """With allow_cross_pool=True, coderankembed loads even when pool=lightweight-speed."""
         import logging
 
         from mcp_server import model_pool_manager as mpm
 
         mgr = _make_pool_manager_with_active_pool(MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED)
-        fake_embedder = self._make_fake_embedder("BAAI/bge-code-v1")
+        fake_embedder = self._make_fake_embedder("nomic-ai/CodeRankEmbed")
 
         state_mock = MagicMock()
         state_mock.embedders = {}
@@ -133,13 +133,13 @@ class TestGetEmbedderCrossPool:
         ):
             mock_storage.return_value = MagicMock()
             mock_storage.return_value.__truediv__ = lambda self, other: MagicMock()
-            result = mpm.get_embedder("bge_code", allow_cross_pool=True)
+            result = mpm.get_embedder("coderankembed", allow_cross_pool=True)
 
         mock_embedder_cls.assert_called_once()
         call_kwargs = mock_embedder_cls.call_args
-        assert call_kwargs.kwargs.get("model_name") == "BAAI/bge-code-v1" or (
-            call_kwargs.args and call_kwargs.args[0] == "BAAI/bge-code-v1"
-        ), "CodeEmbedder should be constructed with bge-code-v1 model name"
+        assert call_kwargs.kwargs.get("model_name") == "nomic-ai/CodeRankEmbed" or (
+            call_kwargs.args and call_kwargs.args[0] == "nomic-ai/CodeRankEmbed"
+        ), "CodeEmbedder should be constructed with nomic-ai/CodeRankEmbed model name"
         assert result is fake_embedder
         assert any("[CROSS_POOL]" in rec.message for rec in caplog.records)
 

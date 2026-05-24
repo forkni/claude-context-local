@@ -79,6 +79,11 @@ class MerkleDAG:
             "*.pyo",
             ".DS_Store",
             "Thumbs.db",
+            # Exclude server-managed config files — they are not source code and their mtime
+            # changes whenever any MCP configure_* tool or reindex helper writes them, which
+            # would otherwise trigger a spurious full reindex on the next search_code call.
+            "search_config.json",
+            ".search_config.json",
         }
 
     def should_ignore(self, path: Path) -> bool:
