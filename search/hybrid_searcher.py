@@ -27,6 +27,9 @@ from mcp_server.utils.config_helpers import (
 )
 from search.graph_integration import SEMANTIC_TYPES
 
+from utils.observability import traced_block
+from utils.otel_attributes import ATTR_INTENT, ATTR_K, ATTR_RESULT_COUNT, ATTR_SEARCH_MODE
+
 from .base_searcher import BaseSearcher
 from .bm25_index import BM25Index
 from .ego_graph_retriever import EgoGraphRetriever
@@ -628,85 +631,90 @@ class HybridSearcher(BaseSearcher):
         if hasattr(self, "reranking_engine") and self.reranking_engine:
             self.reranking_engine.reset_session_state()
 
-        # Check if indices are ready based on search mode
-        if search_mode == "bm25":
-            if self.bm25_index.is_empty:
-                self._logger.warning("BM25 search requested but BM25 index is empty")
-                return []
-        elif search_mode == "semantic":
-            if not self.dense_index.index or self.dense_index.index.ntotal == 0:
-                self._logger.warning(
-                    "Semantic search requested but dense index is empty"
+        with traced_block("search.hybrid", **{ATTR_SEARCH_MODE: search_mode, ATTR_K: k}) as span:
+            # Check if indices are ready based on search mode
+            if search_mode == "bm25":
+                if self.bm25_index.is_empty:
+                    self._logger.warning("BM25 search requested but BM25 index is empty")
+                    span.set_attribute(ATTR_RESULT_COUNT, 0)
+                    return []
+            elif search_mode == "semantic":
+                if not self.dense_index.index or self.dense_index.index.ntotal == 0:
+                    self._logger.warning(
+                        "Semantic search requested but dense index is empty"
+                    )
+                    span.set_attribute(ATTR_RESULT_COUNT, 0)
+                    return []
+            else:  # hybrid
+                if not self.is_ready:
+                    self._logger.warning("Hybrid search not ready - indices may be empty")
+                    span.set_attribute(ATTR_RESULT_COUNT, 0)
+                    return []
+
+            # Check if multi-hop search is enabled
+            # Use ServiceLocator helper instead of inline import
+            # Allow config override (for ego-graph settings from MCP)
+            effective_config = (
+                config if config is not None else _get_config_via_service_locator()
+            )
+
+            # Get initial search results (multi-hop or single-hop)
+            if effective_config.multi_hop.enabled:
+                # Use multi-hop search for discovering related code
+                results = self.multi_hop_searcher.search(
+                    query=query,
+                    k=k,
+                    search_mode=search_mode,
+                    hops=effective_config.multi_hop.hop_count,
+                    expansion_factor=effective_config.multi_hop.expansion,
+                    use_parallel=use_parallel,
+                    min_bm25_score=min_bm25_score,
+                    filters=filters,
+                    edge_weights=effective_config.multi_hop.edge_weights,
                 )
-                return []
-        else:  # hybrid
-            if not self.is_ready:
-                self._logger.warning("Hybrid search not ready - indices may be empty")
-                return []
+            else:
+                # Single-hop search (direct matching only)
+                results = self._single_hop_search(
+                    query=query,
+                    k=k,
+                    search_mode=search_mode,
+                    use_parallel=use_parallel,
+                    min_bm25_score=min_bm25_score,
+                    filters=filters,
+                    bm25_weight=bm25_weight,
+                    dense_weight=dense_weight,
+                )
 
-        # Check if multi-hop search is enabled
-        # Use ServiceLocator helper instead of inline import
-        # Allow config override (for ego-graph settings from MCP)
-        effective_config = (
-            config if config is not None else _get_config_via_service_locator()
-        )
+            # Apply ego-graph expansion if enabled
+            if effective_config.ego_graph.enabled and self.ego_graph_retriever and results:
+                results = self._apply_ego_graph_expansion(
+                    results, effective_config.ego_graph, k, query
+                )
 
-        # Get initial search results (multi-hop or single-hop)
-        if effective_config.multi_hop.enabled:
-            # Use multi-hop search for discovering related code
-            results = self.multi_hop_searcher.search(
-                query=query,
-                k=k,
-                search_mode=search_mode,
-                hops=effective_config.multi_hop.hop_count,
-                expansion_factor=effective_config.multi_hop.expansion,
-                use_parallel=use_parallel,
-                min_bm25_score=min_bm25_score,
-                filters=filters,
-                edge_weights=effective_config.multi_hop.edge_weights,
-            )
-        else:
-            # Single-hop search (direct matching only)
-            results = self._single_hop_search(
-                query=query,
-                k=k,
-                search_mode=search_mode,
-                use_parallel=use_parallel,
-                min_bm25_score=min_bm25_score,
-                filters=filters,
-                bm25_weight=bm25_weight,
-                dense_weight=dense_weight,
-            )
+            # Apply parent expansion if enabled (limit to primary k results to prevent bloat)
+            if effective_config.parent_retrieval.enabled and results:
+                results = self._apply_parent_expansion(
+                    results,
+                    effective_config.parent_retrieval,
+                    max_results_to_expand=k,
+                )
 
-        # Apply ego-graph expansion if enabled
-        if effective_config.ego_graph.enabled and self.ego_graph_retriever and results:
-            results = self._apply_ego_graph_expansion(
-                results, effective_config.ego_graph, k, query
-            )
+            # Post-expansion neural reranking: unify scoring across primary + ego results
+            # Only runs when ego-graph added results, putting all on same cross-encoder scale
+            if (
+                effective_config.ego_graph.enabled
+                and self.reranking_engine
+                and len(results) > k
+            ):
+                results = self.reranking_engine.rerank_by_query(
+                    query=query,
+                    results=results,
+                    k=len(results),  # Keep all results, just re-score and re-sort
+                    search_mode=search_mode,
+                )
 
-        # Apply parent expansion if enabled (limit to primary k results to prevent bloat)
-        if effective_config.parent_retrieval.enabled and results:
-            results = self._apply_parent_expansion(
-                results,
-                effective_config.parent_retrieval,
-                max_results_to_expand=k,
-            )
-
-        # Post-expansion neural reranking: unify scoring across primary + ego results
-        # Only runs when ego-graph added results, putting all on same cross-encoder scale
-        if (
-            effective_config.ego_graph.enabled
-            and self.reranking_engine
-            and len(results) > k
-        ):
-            results = self.reranking_engine.rerank_by_query(
-                query=query,
-                results=results,
-                k=len(results),  # Keep all results, just re-score and re-sort
-                search_mode=search_mode,
-            )
-
-        return results
+            span.set_attribute(ATTR_RESULT_COUNT, len(results))
+            return results
 
     def _single_hop_search(
         self,

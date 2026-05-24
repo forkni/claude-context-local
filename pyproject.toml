@@ -94,6 +94,13 @@ onnx = [
 # transformers is pinned to >=4.51.0,<4.58.0 in the main dependencies.
 # Install: uv pip install -e .[onnx]
 # See tools/convert_onnx.py for standalone conversion usage.
+otel = [
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.20.0",
+]
+# Install: uv pip install -e .[otel]
+# Then set CLAUDE_OTEL_ENABLED=true to activate tracing.
 
 [project.urls]
 Homepage = "https://github.com/forkni/claude-context-local"

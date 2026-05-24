@@ -468,6 +468,7 @@ scripts\batch\repair_installation.bat
 ### Configuration & Performance
 
 - [Hybrid Search Configuration](docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md) - Search modes and tuning
+- [Observability](docs/OBSERVABILITY.md) - OTel tracing (Jaeger/Tempo/Grafana), env vars, overhead
 - [Benchmarks](docs/BENCHMARKS.md) - Real-world performance metrics (63% token reduction)
 
 ### Using CLAUDE.md Template in Your Projects

@@ -10,6 +10,8 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from typing import TypeVar
 
+from utils.observability import traced_block
+
 
 T = TypeVar("T")
 logger = logging.getLogger(__name__)
@@ -32,12 +34,13 @@ def timed(name: str | None = None) -> Callable[[Callable[..., T]], Callable[...,
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs) -> T:
-            start = time.perf_counter()
-            try:
-                return func(*args, **kwargs)
-            finally:
-                elapsed_ms = (time.perf_counter() - start) * 1000
-                logger.info(f"[TIMING] {operation_name}: {elapsed_ms:.2f}ms")
+            with traced_block(operation_name):
+                start = time.perf_counter()
+                try:
+                    return func(*args, **kwargs)
+                finally:
+                    elapsed_ms = (time.perf_counter() - start) * 1000
+                    logger.info(f"[TIMING] {operation_name}: {elapsed_ms:.2f}ms")
 
         return wrapper
 

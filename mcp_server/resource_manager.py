@@ -131,6 +131,13 @@ class ResourceManager:
         except Exception as e:
             logger.warning(f"Error during GPU cache cleanup: {e}")
 
+        # Component 7: OTel span flush
+        try:
+            from utils.observability import shutdown_observability
+            shutdown_observability()
+        except Exception as e:
+            logger.warning(f"Error shutting down observability: {e}")
+
     def close_project_resources(self, project_path: str) -> bool:
         """Close all resources associated with a specific project.
 
@@ -194,6 +201,8 @@ def initialize_server_state() -> None:
         config = config_manager.load_config()
         state.sync_from_config(config)
         logger.info("[INIT] Config synced from file")
+        from utils.observability import init_observability
+        init_observability(config.observability)
     except Exception as e:
         logger.warning(f"[INIT] Config sync failed (using defaults): {e}")
 

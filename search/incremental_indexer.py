@@ -20,6 +20,10 @@ from merkle.change_detector import ChangeDetector, FileChanges
 from merkle.merkle_dag import MerkleDAG
 from merkle.snapshot_manager import SnapshotManager
 
+from utils.observability import traced_block
+from utils.otel_attributes import ATTR_FILES_ADDED, ATTR_FILES_MODIFIED, ATTR_FILES_REMOVED, ATTR_INDEX_TYPE, ATTR_PROJECT_ID
+from utils.timing import timed
+
 from .bm25_sync import BM25SyncManager
 from .config import get_search_config
 from .graph_integration import GraphIntegration
@@ -256,7 +260,11 @@ class IncrementalIndexer:
                 except Exception as e:
                     logger.warning(f"VRAM cleanup failed (continuing with index): {e}")
 
-                return self._full_index(project_path, project_name, start_time)
+                with traced_block(
+                    "index.full",
+                    **{ATTR_PROJECT_ID: project_name, ATTR_INDEX_TYPE: "full"},
+                ):
+                    return self._full_index(project_path, project_name, start_time)
 
             # Detect changes
             logger.info(f"Detecting changes in {project_name}")
@@ -1204,6 +1212,7 @@ class IncrementalIndexer:
                 logger.debug(f"Removed {removed} chunks from {file_path}")
             return chunks_removed
 
+    @timed("index.incremental")
     def _add_new_chunks(
         self, changes: FileChanges, project_path: str, project_name: str
     ) -> int:
