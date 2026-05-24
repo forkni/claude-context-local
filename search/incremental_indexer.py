@@ -19,9 +19,11 @@ from embeddings.embedder import CodeEmbedder
 from merkle.change_detector import ChangeDetector, FileChanges
 from merkle.merkle_dag import MerkleDAG
 from merkle.snapshot_manager import SnapshotManager
-
 from utils.observability import traced_block
-from utils.otel_attributes import ATTR_FILES_ADDED, ATTR_FILES_MODIFIED, ATTR_FILES_REMOVED, ATTR_INDEX_TYPE, ATTR_PROJECT_ID
+from utils.otel_attributes import (
+    ATTR_INDEX_TYPE,
+    ATTR_PROJECT_ID,
+)
 from utils.timing import timed
 
 from .bm25_sync import BM25SyncManager
@@ -318,12 +320,17 @@ class IncrementalIndexer:
             _prev_meta_dict = _prev_meta if isinstance(_prev_meta, dict) else {}
             _has_prior_tracking = "cumulative_changed_files" in _prev_meta_dict
             _prev_cumulative = int(_prev_meta_dict.get("cumulative_changed_files", 0))
-            _this_change_count = len(changes.added) + len(changes.modified) + len(changes.removed)
+            _this_change_count = (
+                len(changes.added) + len(changes.modified) + len(changes.removed)
+            )
             _new_cumulative = _prev_cumulative + _this_change_count
             if _should_refresh_communities and _has_prior_tracking:
                 _prev_supported = max(1, int(_prev_meta_dict.get("supported_files", 1)))
                 _drift_fraction = _new_cumulative / _prev_supported
-                if _drift_fraction > _config.chunking.incremental_community_redetect_threshold:
+                if (
+                    _drift_fraction
+                    > _config.chunking.incremental_community_redetect_threshold
+                ):
                     logger.info(
                         f"[INCREMENTAL] Community drift {_drift_fraction:.0%} exceeds "
                         f"threshold {_config.chunking.incremental_community_redetect_threshold:.0%}; "
@@ -369,7 +376,12 @@ class IncrementalIndexer:
 
             # ========== Community summary refresh (approximate, below redetect threshold) ==========
             if _should_refresh_communities:
-                self._refresh_affected_community_summaries(changes, project_name)
+                try:
+                    self._refresh_affected_community_summaries(changes, project_name)
+                except Exception as e:
+                    logger.warning(
+                        f"[INCR_COMM] Community summary refresh failed (non-fatal): {e}"
+                    )
             # ========== END Community summary refresh ==========
 
             # Validate index consistency after operations
@@ -869,7 +881,9 @@ class IncrementalIndexer:
             # ========== File-Level Module Summaries ==========
             config = get_search_config()
             if config.chunking.enable_file_summaries and all_chunks:
-                module_summaries = self._summary_stage.generate_module_summaries(all_chunks)
+                module_summaries = self._summary_stage.generate_module_summaries(
+                    all_chunks
+                )
                 if module_summaries:
                     all_chunks.extend(module_summaries)
                     logger.info(
@@ -1172,9 +1186,7 @@ class IncrementalIndexer:
             return
 
         project_id = (
-            storage_dir.parent.name.rsplit("_", 1)[0]
-            if storage_dir.exists()
-            else None
+            storage_dir.parent.name.rsplit("_", 1)[0] if storage_dir.exists() else None
         )
         if project_id is None:
             logger.debug(
@@ -1207,7 +1219,7 @@ class IncrementalIndexer:
         # Normalise changed file paths to forward-slash relative form for comparison
         changed_file_set = {
             str(f).replace("\\", "/")
-            for f in (changes.added | changes.modified | changes.removed)
+            for f in (*changes.added, *changes.modified, *changes.removed)
         }
 
         affected_community_ids: set[int] = {
@@ -1216,7 +1228,9 @@ class IncrementalIndexer:
             if rel_path in changed_file_set
         }
         if not affected_community_ids:
-            logger.debug("[INCR_COMM] No affected communities for changed files; nothing to refresh")
+            logger.debug(
+                "[INCR_COMM] No affected communities for changed files; nothing to refresh"
+            )
             return
 
         logger.info(
@@ -1226,11 +1240,13 @@ class IncrementalIndexer:
 
         metadata_store = self._get_metadata_store()
         if metadata_store is None:
-            logger.warning("[INCR_COMM] Cannot access MetadataStore; skipping community refresh")
+            logger.warning(
+                "[INCR_COMM] Cannot access MetadataStore; skipping community refresh"
+            )
             return
 
         # Remove stale community summary chunks for affected communities
-        for chunk_id, meta in list(metadata_store.items()):
+        for _chunk_id, meta in list(metadata_store.items()):
             if meta.get("chunk_type") != "community":
                 continue
             tags = meta.get("tags") or []
@@ -1284,9 +1300,13 @@ class IncrementalIndexer:
                 result.metadata["content"] = chunk.content
             if embedding_results:
                 self.indexer.add_embeddings(embedding_results)
-            logger.info(f"[INCR_COMM] Refreshed {len(new_summaries)} community summary chunk(s)")
+            logger.info(
+                f"[INCR_COMM] Refreshed {len(new_summaries)} community summary chunk(s)"
+            )
         except Exception as e:
-            logger.warning(f"[INCR_COMM] Failed to embed/index refreshed community summaries: {e}")
+            logger.warning(
+                f"[INCR_COMM] Failed to embed/index refreshed community summaries: {e}"
+            )
 
     def _build_snapshot_metadata(
         self,

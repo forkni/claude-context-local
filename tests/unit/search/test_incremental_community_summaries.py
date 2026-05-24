@@ -14,14 +14,11 @@ from __future__ import annotations
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, call, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from chunking.python_ast_chunker import CodeChunk
 from merkle.change_detector import FileChanges
 from search.incremental_indexer import IncrementalIndexer
-from search.summary_stage import SummaryStage
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +101,12 @@ class TestChunkFromMetadata:
         assert chunk.language == "python"
 
     def test_handles_none_start_end(self):
-        meta = {"content": "", "chunk_type": "class", "start_line": None, "end_line": None}
+        meta = {
+            "content": "",
+            "chunk_type": "class",
+            "start_line": None,
+            "end_line": None,
+        }
         chunk = self.indexer._chunk_from_metadata("x.py:0-0:class:X", meta)
         assert chunk.start_line == 0
         assert chunk.end_line == 0
@@ -117,7 +119,6 @@ class TestChunkFromMetadata:
 
 class TestCommunityTag:
     def test_community_summary_chunk_carries_community_id_tag(self):
-        from chunking.python_ast_chunker import CodeChunk
         from graph.community_summarizer import generate_community_summaries
 
         chunks = [
@@ -178,10 +179,14 @@ class TestThresholdRouting:
 
         changes = self._make_changes(n_added=5)  # 5 more → 33/100 = 0.33 > 0.3
 
-        with patch.object(incr, "_full_index", return_value=MagicMock(success=True)) as mock_full:
-            with patch.object(incr, "detect_changes") as mock_dc:
-                mock_dc.return_value = (changes, MagicMock())
-                incr.incremental_index("/proj", "proj")
+        with (
+            patch.object(
+                incr, "_full_index", return_value=MagicMock(success=True)
+            ) as mock_full,
+            patch.object(incr, "detect_changes") as mock_dc,
+        ):
+            mock_dc.return_value = (changes, MagicMock())
+            incr.incremental_index("/proj", "proj")
 
         mock_full.assert_called_once()
 
@@ -198,14 +203,16 @@ class TestThresholdRouting:
 
         changes = self._make_changes(n_added=1)  # 1/1000 = 0.001 < 0.3
 
-        with patch.object(incr, "_remove_old_chunks", return_value=0):
-            with patch.object(incr, "_add_new_chunks", return_value=1):
-                with patch.object(incr, "_refresh_affected_community_summaries") as mock_refresh:
-                    with patch.object(incr, "detect_changes") as mock_dc:
-                        dag = MagicMock()
-                        dag.get_all_files.return_value = ["a.py"]
-                        mock_dc.return_value = (changes, dag)
-                        incr.incremental_index("/proj", "proj")
+        with (
+            patch.object(incr, "_remove_old_chunks", return_value=0),
+            patch.object(incr, "_add_new_chunks", return_value=1),
+            patch.object(incr, "_refresh_affected_community_summaries") as mock_refresh,
+            patch.object(incr, "detect_changes") as mock_dc,
+        ):
+            dag = MagicMock()
+            dag.get_all_files.return_value = ["a.py"]
+            mock_dc.return_value = (changes, dag)
+            incr.incremental_index("/proj", "proj")
 
         mock_refresh.assert_called_once()
 
@@ -220,15 +227,17 @@ class TestThresholdRouting:
 
         changes = self._make_changes(n_added=10)  # Would be > threshold if tracked
 
-        with patch.object(incr, "_full_index") as mock_full:
-            with patch.object(incr, "_remove_old_chunks", return_value=0):
-                with patch.object(incr, "_add_new_chunks", return_value=1):
-                    with patch.object(incr, "_refresh_affected_community_summaries"):
-                        with patch.object(incr, "detect_changes") as mock_dc:
-                            dag = MagicMock()
-                            dag.get_all_files.return_value = ["a.py"]
-                            mock_dc.return_value = (changes, dag)
-                            incr.incremental_index("/proj", "proj")
+        with (
+            patch.object(incr, "_full_index") as mock_full,
+            patch.object(incr, "_remove_old_chunks", return_value=0),
+            patch.object(incr, "_add_new_chunks", return_value=1),
+            patch.object(incr, "_refresh_affected_community_summaries"),
+            patch.object(incr, "detect_changes") as mock_dc,
+        ):
+            dag = MagicMock()
+            dag.get_all_files.return_value = ["a.py"]
+            mock_dc.return_value = (changes, dag)
+            incr.incremental_index("/proj", "proj")
 
         mock_full.assert_not_called()  # threshold check was skipped
 
@@ -271,5 +280,63 @@ class TestRefreshEarlyExits:
         community_path = tmp_path / f"{project_id}_communities.json"
         community_path.write_text(json.dumps({"other/file.py:1-5:function:foo": 0}))
 
-        incr._refresh_affected_community_summaries(_changes(added=["new/file.py"]), "proj")
+        incr._refresh_affected_community_summaries(
+            _changes(added=["new/file.py"]), "proj"
+        )
         incr.indexer.remove_file_chunks.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Regression: FileChanges fields are lists, not sets — | operator was invalid
+# ---------------------------------------------------------------------------
+
+
+class TestRefreshListTypeSafety:
+    """Regression for TypeError: unsupported operand type(s) for |: 'list' and 'list'.
+
+    The bug was in _refresh_affected_community_summaries at the changed_file_set
+    comprehension, which used the set-union operator | on list fields of FileChanges.
+    These tests reach that line by providing a real community_map via a patched
+    GraphIntegration (all early-exit guards are cleared).
+    """
+
+    def test_with_modified_files_does_not_raise(self, tmp_path):
+        """Must complete without TypeError when changes.modified is a non-empty list."""
+        incr = _make_indexer(tmp_path)
+
+        community_map = {"a.py:1-5:function:foo": 7}
+        mock_graph = MagicMock()
+        mock_graph.storage.load_community_map.return_value = community_map
+
+        # Empty metadata store — no chunks to remove/rebuild, just validate no crash
+        incr.indexer.metadata_store.items.return_value = []
+
+        with patch(
+            "search.incremental_indexer.GraphIntegration", return_value=mock_graph
+        ):
+            # Before the fix this raised TypeError on: changes.modified | changes.removed
+            incr._refresh_affected_community_summaries(
+                _changes(modified=["a.py"]), "proj"
+            )
+
+    def test_with_all_three_change_types_does_not_raise(self, tmp_path):
+        """Must handle added, modified, and removed lists simultaneously."""
+        incr = _make_indexer(tmp_path)
+
+        community_map = {
+            "a.py:1-5:function:foo": 7,
+            "b.py:1-3:function:bar": 7,
+            "c.py:1-2:function:baz": 7,
+        }
+        mock_graph = MagicMock()
+        mock_graph.storage.load_community_map.return_value = community_map
+
+        incr.indexer.metadata_store.items.return_value = []
+
+        with patch(
+            "search.incremental_indexer.GraphIntegration", return_value=mock_graph
+        ):
+            incr._refresh_affected_community_summaries(
+                _changes(added=["a.py"], modified=["b.py"], removed=["c.py"]),
+                "proj",
+            )
