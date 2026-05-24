@@ -16,7 +16,7 @@ from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
 # Maps model keys to full model names in MODEL_REGISTRY
 # Note: Using 0.6B variant for systems with limited VRAM (<18GB)
 MODEL_POOL_CONFIG = {
-    "qwen3": "Qwen/Qwen3-Embedding-0.6B",  # 2.3GB VRAM — upgrade path: Qwen3-4B via qwen3_4b key
+    "qwen3": "Qwen/Qwen3-Embedding-4B",  # ~10GB VRAM, MTEB code rank #3 (80.07), 2560d
     "coderankembed": "nomic-ai/CodeRankEmbed",  # Code localization, function-level search (CoRNStack/ICLR 2025)
 }
 
@@ -130,26 +130,25 @@ MODEL_REGISTRY = {
 def resolve_qwen3_variant_for_lookup(project_hash: str, project_name: str) -> str:
     """Resolve actual Qwen3 variant indexed for a project.
 
-    Qwen3 uses the 0.6B variant.
-
-    This function checks which Qwen3 variant is actually indexed for the given
-    project and returns the correct full model name for directory lookup.
+    Checks both the 4B (current default) and 0.6B (legacy) variants in order,
+    returning the full model name of whichever index exists on disk.
 
     Args:
         project_hash: Project hash for directory matching
         project_name: Project name for directory matching
 
     Returns:
-        Full model name of indexed Qwen3 variant ("Qwen/Qwen3-Embedding-0.6B"), or MODEL_POOL_CONFIG["qwen3"] if not found.
+        Full model name of indexed Qwen3 variant, or MODEL_POOL_CONFIG["qwen3"] if not found.
 
     Example:
         >>> resolve_qwen3_variant_for_lookup("abc123", "my-project")
-        "Qwen/Qwen3-Embedding-0.6B"  # If 0.6B variant is indexed
+        "Qwen/Qwen3-Embedding-4B"  # If 4B variant is indexed
     """
     storage_dir = Path.home() / ".claude_code_search" / "projects"
 
-    # Check for existing Qwen3 index
+    # Check for existing Qwen3 index — 4B first (current default), then 0.6B (legacy)
     qwen_variants = [
+        ("Qwen/Qwen3-Embedding-4B", "qwen3-4b", 2560),
         ("Qwen/Qwen3-Embedding-0.6B", "qwen3-0.6b", 1024),
     ]
 

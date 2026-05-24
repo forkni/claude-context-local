@@ -88,7 +88,7 @@ def main():
             if pool == "lightweight-speed":
                 print("Model: [MULTI] BGE-M3 + gte-modernbert (1.65GB total)")
             else:
-                print("Model: [MULTI] CodeRankEmbed + Qwen3 (~2.9GB total)")
+                print("Model: [MULTI] CodeRankEmbed + Qwen3-4B (~10.6GB total)")
             print(f"       Active routing - {pool} pool")
         else:
             # Single model lookup

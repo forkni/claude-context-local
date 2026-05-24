@@ -1327,8 +1327,8 @@ echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+^)
 echo   4. Qwen3-0.6B ^(1024d, 2.3GB^)
 echo      High efficiency, best value/performance
 echo.
-echo   5. Full Multi-Model Routing ^(~2.9GB^)
-echo      CodeRankEmbed + Qwen3, smart routing
+echo   5. Full Multi-Model Routing ^(~10.6GB^)
+echo      CodeRankEmbed + Qwen3-4B, smart routing
 echo.
 echo   0. Back to Search Configuration
 echo.
@@ -1377,14 +1377,14 @@ echo === Enable Multi-Model Routing ===
 echo.
 echo This will enable intelligent query routing across:
 echo   - CodeRankEmbed ^(768d, ~0.6GB^) - Function localization, navigational queries
-echo   - Qwen3-0.6B ^(1024d, 2.3GB^) - Semantic discovery, default model
+echo   - Qwen3-4B ^(2560d, ~10GB^) - Semantic discovery, MTEB rank #3 ^(80.07^)
 echo.
-echo Total VRAM: ~2.9GB
+echo Total VRAM: ~10.6GB
 echo Routing Accuracy: 100%% ^(validated^)
-echo Performance: Code localization ^(CoRNStack/ICLR 2025, 8k context^)
+echo Performance: MTEB code retrieval rank #3, 2560d embeddings
 echo.
-echo [INFO] Requires 6GB+ VRAM. Works on most modern GPUs.
-echo For 8GB GPUs, this pool fits comfortably alongside the reranker.
+echo [WARNING] Requires 12GB+ VRAM ^(RTX 3080+, RTX 4070+, RTX 4090^).
+echo For 8GB GPUs, choose option 1 ^(BGE-M3^) or option 3 ^(Lightweight^) instead.
 echo.
 set "confirm_multi="
 set /p confirm_multi="Enable multi-model routing? (y/N): "
@@ -1398,9 +1398,9 @@ if /i "!confirm_multi!"=="y" (
     ) else (
         echo.
         echo [OK] Full multi-model configuration saved
-        echo [INFO] Pool: CodeRankEmbed + Qwen3
+        echo [INFO] Pool: CodeRankEmbed + Qwen3-4B
         echo [INFO] Reranker: jina-reranker-v3
-        echo [INFO] Total VRAM: ~2.9GB ^(+reranker^)
+        echo [INFO] Total VRAM: ~10.6GB ^(+reranker^)
         echo.
         echo [WARNING] Existing indexes need to be rebuilt for multi-model pool
         echo [INFO] Next time you index a project, it will use the full pool
@@ -1974,8 +1974,8 @@ echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+^)
 echo   4. Qwen3-0.6B ^(1024d, 2.3GB^)
 echo      High efficiency, best value/performance
 echo.
-echo   5. Full Multi-Model Routing ^(~2.9GB^)
-echo      CodeRankEmbed + Qwen3, smart routing
+echo   5. Full Multi-Model Routing ^(~10.6GB^)
+echo      CodeRankEmbed + Qwen3-4B, smart routing
 echo.
 echo   0. Back to Main Menu
 echo.
