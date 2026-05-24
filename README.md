@@ -33,6 +33,7 @@
 - **SSCG Integration**: Structural-Semantic Code Graph — on the [SSCG benchmark](#benchmark-results) (2026-04-10, 13 queries, k=10; cutoffs @5/@10): **13/13 Hit@5 across all three modes (hybrid, BM25, semantic); BM25 MRR=0.846 (best overall)**
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
 - **Multi-Model Routing**: Intelligent query routing (Qwen3, BGE-M3, CodeRankEmbed) with 100% accuracy - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md)
+- **OTel Tracing** (opt-in): Zero-overhead `traced_block` / `@timed` spans across the search and index pipeline — export to Jaeger, Tempo, or any OTLP collector. See [Observability](docs/OBSERVABILITY.md).
 - **ONNX Runtime Backend** (opt-in): `performance.use_onnx` loads eligible models via `ORTModelForFeatureExtraction` with `CUDAExecutionProvider` + `gpu_mem_limit` arena cap — prevents WDDM shared-memory spillover on 8 GB laptop GPUs
 - **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
 - **19 MCP Tools**: Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
@@ -40,7 +41,16 @@
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
 - **File-Role Tagging**: Chunks tagged `role:src/test/doc/config` at index time — enables role-aware ranking and precision boosts
 
-**Status**: ✅ Production-ready | 1,987+ passing tests | All 19 MCP tools operational | Windows 10/11
+**Status**: ✅ Production-ready | 2,086+ passing tests | All 19 MCP tools operational | Windows 10/11
+
+## What's New in v0.11.9
+
+- **Opt-in OTel tracing** — zero-overhead `traced_block` / `@timed` spans across search and index pipeline; install with `pip install -e ".[otel]"`. See [Observability guide](docs/OBSERVABILITY.md).
+- **Incremental community-summary refresh** — changed-file threshold controls whether only affected community chunks are rebuilt (fast path) or a full re-index runs (redetect threshold). Eliminates silent stale summaries on incremental runs.
+- **`SummaryStage` class** — testable extraction of the two-phase community/file summary ordering invariant from `_full_index`.
+- **Persistent file logging** — crash tracebacks now survive window scroll in `logs/mcp_server_<mmddyyhhmmss>.log` (session-timestamped rotation, no numeric suffix).
+- **Spinner encoding fix** — no more `UnicodeEncodeError` on Windows when stdout is redirected to a cp1252 stream.
+- **Bug fixes** — community-summary `TypeError` that escalated every incremental run to a full re-index; duplicate `RotatingFileHandler` from the `-m` double-import trap; `WinError 32` log-rotation spam; `shutdown_observability()` permanently disabling OTel before indexing; `logs/` triggering spurious "Modified: 1" in the Merkle DAG.
 
 ## Quick Start
 
@@ -405,7 +415,7 @@ claude-context-local/
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 1,635+ tests (unit + integration)
+└── tests/             # 2,086+ tests (unit + integration)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -500,7 +510,7 @@ The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic s
 
 ### Development
 
-- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (1,635+ passing)
+- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (2,086+ passing)
 - [Git Workflow](docs/GIT_WORKFLOW.md) - Contributing guidelines
 - [Version History](docs/VERSION_HISTORY.md) - Changelog
 
