@@ -11,6 +11,7 @@ Migrated from FastMCP to official MCP SDK for:
 
 import argparse
 import asyncio
+import contextlib
 import json
 import logging
 import logging.handlers
@@ -59,23 +60,47 @@ console_format = (
 )
 file_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
-_console_handler = logging.StreamHandler()
-_console_handler.setLevel(log_level)
-_console_handler.setFormatter(logging.Formatter(console_format, datefmt="%H:%M:%S"))
-
 _log_dir = PROJECT_ROOT / "logs"
-_log_dir.mkdir(parents=True, exist_ok=True)
 _log_path = _log_dir / "mcp_server.log"
-_file_handler = logging.handlers.RotatingFileHandler(
-    _log_path, maxBytes=5_000_000, backupCount=3, encoding="utf-8"
-)
-_file_handler.setLevel(logging.DEBUG)
-_file_handler.setFormatter(logging.Formatter(file_format, datefmt="%H:%M:%S"))
 
-_root_logger = logging.getLogger()
-_root_logger.setLevel(logging.DEBUG)
-_root_logger.addHandler(_console_handler)
-_root_logger.addHandler(_file_handler)
+
+class _SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """RotatingFileHandler that tolerates Windows file locks during rollover.
+
+    Swallows WinError 32 (another process holds the file open) so rotation skips
+    gracefully rather than spamming stderr with logging-error tracebacks.
+    """
+
+    def rotate(self, source: str, dest: str) -> None:
+        with contextlib.suppress(PermissionError, OSError):
+            super().rotate(source, dest)
+
+
+def _configure_logging() -> None:
+    """Configure root-logger handlers exactly once regardless of how many times this
+    module body executes (guards against the -m double-import trap)."""
+    root = logging.getLogger()
+    if getattr(root, "_code_search_logging_configured", False):
+        return
+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(logging.Formatter(console_format, datefmt="%H:%M:%S"))
+
+    _log_dir.mkdir(parents=True, exist_ok=True)
+    file_handler = _SafeRotatingFileHandler(
+        _log_path, maxBytes=5_000_000, backupCount=3, encoding="utf-8", delay=True
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(file_format, datefmt="%H:%M:%S"))
+
+    root.setLevel(logging.DEBUG)
+    root.addHandler(console_handler)
+    root.addHandler(file_handler)
+    root._code_search_logging_configured = True
+
+
+_configure_logging()
 
 logger = logging.getLogger(__name__)
 logger.info("File logging -> %s", _log_path)
@@ -606,13 +631,16 @@ if __name__ == "__main__":
                     exc = context.get("exception")
                     # Swallow common transient SSE-disconnect codes; these are
                     # normal client disconnects, not server faults.
-                    _TRANSIENT_WINERRORS = {
-                        64,    # The specified network name is no longer available
-                        995,   # Operation aborted
-                        10053, # Connection aborted by software
-                        10054, # Connection reset by peer
+                    _transient_winerrors = {
+                        64,  # The specified network name is no longer available
+                        995,  # Operation aborted
+                        10053,  # Connection aborted by software
+                        10054,  # Connection reset by peer
                     }
-                    if isinstance(exc, OSError) and getattr(exc, "winerror", None) in _TRANSIENT_WINERRORS:
+                    if (
+                        isinstance(exc, OSError)
+                        and getattr(exc, "winerror", None) in _transient_winerrors
+                    ):
                         logger.debug(
                             f"Client disconnect (WinError {exc.winerror}): {context.get('message', '')}"
                         )

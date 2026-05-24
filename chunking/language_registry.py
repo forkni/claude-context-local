@@ -58,6 +58,7 @@ DEFAULT_IGNORED_DIRS: set[str] = {
     ".angular",
     ".astro",
     ".vite",
+    "logs",
     ".cache",
     ".parcel-cache",
     ".turbo",

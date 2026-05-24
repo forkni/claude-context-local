@@ -307,7 +307,6 @@ class IncrementalIndexer:
                 f"Changes detected - Added: {len(changes.added)}, "
                 f"Removed: {len(changes.removed)}, Modified: {len(changes.modified)}"
             )
-
             # ========== Community drift check ==========
             # Track cumulative changed-file fraction since last full index.
             # When it exceeds the threshold, promote to full reindex for community redetection.
