@@ -20,6 +20,7 @@ import platform
 import sys
 import time
 from collections.abc import AsyncGenerator
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +63,7 @@ file_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
 _log_dir = PROJECT_ROOT / "logs"
 _log_path = _log_dir / "mcp_server.log"
+_SESSION_START = datetime.now().strftime("%m%d%y%H%M%S")
 
 
 class _SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
@@ -69,11 +71,24 @@ class _SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
 
     Swallows WinError 32 (another process holds the file open) so rotation skips
     gracefully rather than spamming stderr with logging-error tracebacks.
+
+    Backup files are named ``mcp_server_<mmddyyhhmmss>.log`` where the timestamp
+    is fixed at session start — unique per server run, no numeric suffix needed.
     """
 
     def rotate(self, source: str, dest: str) -> None:
         with contextlib.suppress(PermissionError, OSError):
             super().rotate(source, dest)
+
+    def doRollover(self) -> None:  # noqa: N802
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+        stem = Path(self.baseFilename).stem  # "mcp_server"
+        dfn = str(Path(self.baseFilename).parent / f"{stem}_{_SESSION_START}.log")
+        self.rotate(self.baseFilename, dfn)  # suppresses PermissionError/OSError
+        if not self.delay:
+            self.stream = self._open()
 
 
 def _configure_logging() -> None:

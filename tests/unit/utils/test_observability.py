@@ -15,11 +15,14 @@ import pytest
 
 try:
     import opentelemetry  # noqa: F401
+
     _OTEL_AVAILABLE = True
 except ImportError:
     _OTEL_AVAILABLE = False
 
-needs_otel = pytest.mark.skipif(not _OTEL_AVAILABLE, reason="opentelemetry not installed")
+needs_otel = pytest.mark.skipif(
+    not _OTEL_AVAILABLE, reason="opentelemetry not installed"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -28,28 +31,41 @@ needs_otel = pytest.mark.skipif(not _OTEL_AVAILABLE, reason="opentelemetry not i
 
 
 def _make_in_memory_exporter():
-    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
     return InMemorySpanExporter()
 
 
 def _reset_observability():
     import utils.observability as obs
+
     obs._enabled = False
     obs._tracer_provider = None
 
 
 def _enable_with_in_memory(exporter):
-    from opentelemetry.sdk.resources import SERVICE_NAME, Resource
+    from opentelemetry import trace
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-    from opentelemetry import trace
 
     import utils.observability as obs
 
-    provider = TracerProvider(resource=Resource({SERVICE_NAME: "test"}))
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
-    trace.set_tracer_provider(provider)
-    obs._tracer_provider = provider
+    current = trace.get_tracer_provider()
+    if isinstance(current, TracerProvider):
+        # A real SDK provider is already set (e.g. by test_observability_e2e at
+        # pytest collection time — OTel >= 1.x forbids overriding it).  Add our
+        # exporter so spans reach self.exporter in addition to the existing one.
+        current.add_span_processor(SimpleSpanProcessor(exporter))
+        obs._tracer_provider = current
+    else:
+        from opentelemetry.sdk.resources import SERVICE_NAME, Resource
+
+        provider = TracerProvider(resource=Resource({SERVICE_NAME: "test"}))
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        trace.set_tracer_provider(provider)
+        obs._tracer_provider = provider
     obs._enabled = True
 
 
@@ -66,7 +82,7 @@ class TestNoopPath:
         _reset_observability()
 
     def test_traced_block_disabled_yields_noop_span(self):
-        from utils.observability import traced_block, _NoopSpan
+        from utils.observability import _NoopSpan, traced_block
 
         with traced_block("some.span") as span:
             assert isinstance(span, _NoopSpan)
@@ -80,14 +96,15 @@ class TestNoopPath:
     def test_traced_block_propagates_caller_exception_when_disabled(self):
         from utils.observability import traced_block
 
-        with pytest.raises(ValueError, match="boom"):
-            with traced_block("x"):
-                raise ValueError("boom")
+        with pytest.raises(ValueError, match="boom"), traced_block("x"):
+            raise ValueError("boom")
 
     def test_wrap_in_context_disabled_returns_fn_unchanged(self):
         from utils.observability import wrap_in_context
 
-        fn = lambda x: x * 2
+        def fn(x):
+            return x * 2
+
         wrapped = wrap_in_context(fn)
         assert wrapped is fn
 
@@ -97,7 +114,7 @@ class TestNoopPath:
         assert not is_enabled()
 
     def test_get_tracer_returns_noop_tracer_when_disabled(self):
-        from utils.observability import get_tracer, _NoopTracer
+        from utils.observability import _NoopTracer, get_tracer
 
         assert isinstance(get_tracer(), _NoopTracer)
 
@@ -134,6 +151,7 @@ class TestEnabledPath:
     @classmethod
     def teardown_class(cls):
         import utils.observability as obs
+
         obs._enabled = False
         obs._tracer_provider = None
 
@@ -164,9 +182,8 @@ class TestEnabledPath:
     def test_traced_block_propagates_exception(self):
         from utils.observability import traced_block
 
-        with pytest.raises(RuntimeError, match="expected"):
-            with traced_block("err.span"):
-                raise RuntimeError("expected")
+        with pytest.raises(RuntimeError, match="expected"), traced_block("err.span"):
+            raise RuntimeError("expected")
 
         spans = self.exporter.get_finished_spans()
         assert len(spans) == 1  # span still recorded
@@ -184,14 +201,14 @@ class TestEnabledPath:
 
     def test_is_enabled_true(self):
         from utils.observability import is_enabled
+
         assert is_enabled()
 
     def test_nested_spans_parent_child(self):
         from utils.observability import traced_block
 
-        with traced_block("parent"):
-            with traced_block("child"):
-                pass
+        with traced_block("parent"), traced_block("child"):
+            pass
 
         spans = self.exporter.get_finished_spans()
         assert len(spans) == 2
@@ -208,6 +225,7 @@ class TestEnabledPath:
 class TestStdioSafety:
     def test_build_exporter_console_uses_stderr(self):
         from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+
         from utils.observability import _build_exporter
 
         class _FakeCfg:
@@ -219,7 +237,9 @@ class TestStdioSafety:
 
         exp = _build_exporter(_FakeCfg(), "console")
         assert isinstance(exp, ConsoleSpanExporter)
-        assert exp.out is sys.stderr, "console exporter must write to stderr, not stdout"
+        assert exp.out is sys.stderr, (
+            "console exporter must write to stderr, not stdout"
+        )
 
     def test_build_exporter_none_returns_noop(self):
         from utils.observability import _build_exporter, _NoopExporter

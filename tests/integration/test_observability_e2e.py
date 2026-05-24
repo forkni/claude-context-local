@@ -14,15 +14,20 @@ from __future__ import annotations
 
 import pytest
 
-opentelemetry = pytest.importorskip("opentelemetry", reason="opentelemetry not installed")
 
-from opentelemetry import trace as otel_trace
-from opentelemetry.sdk.resources import SERVICE_NAME, Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+opentelemetry = pytest.importorskip(
+    "opentelemetry", reason="opentelemetry not installed"
+)
 
-import utils.observability as _obs
+from opentelemetry import trace as otel_trace  # noqa: E402
+from opentelemetry.sdk.resources import SERVICE_NAME, Resource  # noqa: E402
+from opentelemetry.sdk.trace import TracerProvider  # noqa: E402
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor  # noqa: E402
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import (  # noqa: E402
+    InMemorySpanExporter,
+)
+
+import utils.observability as _obs  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -52,7 +57,13 @@ def _spans(name: str | None = None) -> list:
 
 @pytest.fixture(autouse=True)
 def _clear_spans():
-    """Clear the exporter before every test."""
+    """Restore observability state and clear the exporter before every test.
+
+    Re-enables the obs module in case a prior test class (e.g. TestNoopPath /
+    TestEnabledPath in test_observability.py) reset obs._enabled to False.
+    """
+    _obs._enabled = True
+    _obs._tracer_provider = _PROVIDER
     _EXPORTER.clear()
     yield
 
@@ -73,7 +84,9 @@ def test_timed_decorator_emits_span():
     result = work()
 
     assert result == 42
-    assert len(_spans("my.op")) == 1, f"Expected 1 span named 'my.op'; got {[s.name for s in _spans()]}"
+    assert len(_spans("my.op")) == 1, (
+        f"Expected 1 span named 'my.op'; got {[s.name for s in _spans()]}"
+    )
 
 
 def test_timed_nested_inside_parent():
@@ -146,6 +159,7 @@ def test_search_hybrid_span_with_empty_index(tmp_path):
 def test_wrap_in_context_propagates_to_thread():
     """`wrap_in_context` must carry the OTel context into a worker thread."""
     import concurrent.futures
+
     from utils.observability import traced_block, wrap_in_context
     from utils.timing import timed
 
@@ -153,10 +167,12 @@ def test_wrap_in_context_propagates_to_thread():
     def work():
         return 99
 
-    with traced_block("thread.parent"):
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            fut = pool.submit(wrap_in_context(work))
-            fut.result()
+    with (
+        traced_block("thread.parent"),
+        concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool,
+    ):
+        fut = pool.submit(wrap_in_context(work))
+        fut.result()
 
     names = [s.name for s in _spans()]
     assert "thread.parent" in names
