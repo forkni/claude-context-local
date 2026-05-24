@@ -16,8 +16,8 @@ from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
 # Maps model keys to full model names in MODEL_REGISTRY
 # Note: Using 0.6B variant for systems with limited VRAM (<18GB)
 MODEL_POOL_CONFIG = {
-    "qwen3": "Qwen/Qwen3-Embedding-0.6B",  # 2.3GB VRAM - lighter than 4B variant
-    "bge_code": "BAAI/bge-code-v1",  # SOTA Code Retrieval (CoIR 81.77)
+    "qwen3": "Qwen/Qwen3-Embedding-0.6B",  # 2.3GB VRAM — upgrade path: Qwen3-4B via qwen3_4b key
+    "coderankembed": "nomic-ai/CodeRankEmbed",  # Code localization, function-level search (CoRNStack/ICLR 2025)
 }
 
 # Lightweight pool configuration for 8GB VRAM GPUs
@@ -87,6 +87,20 @@ MODEL_REGISTRY = {
         "instruction_mode": "custom",  # "custom" or "prompt_name"
         "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
         "prompt_name": "query",  # Alternative: use model's built-in prompt (generic)
+    },
+    "Qwen/Qwen3-Embedding-4B": {
+        "dimension": 2560,
+        "max_context": 32768,
+        "description": "High-performance general model, MTEB code retrieval rank #3 (80.07)",
+        "vram_gb": "~10GB",
+        "fallback_batch_size": 16,
+        "vram_tier": "high",  # Requires 12GB+ GPU
+        "onnx_pooling": "mean",
+        "mrl_dimensions": [2560, 1024, 512, 256, 128, 64, 32],
+        "truncate_dim": None,
+        "instruction_mode": "custom",
+        "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
+        "prompt_name": "query",
     },
     # Code-specific models (optimized for Python, C++, and programming languages)
     "nomic-ai/CodeRankEmbed": {
@@ -782,7 +796,7 @@ class SearchConfig:
 
             routing = RoutingConfig(
                 multi_model_enabled=routing_data.get("multi_model_enabled", True),
-                default_model=routing_data.get("default_model", "bge_code"),
+                default_model=routing_data.get("default_model", "qwen3"),
                 multi_model_pool=routing_data.get("multi_model_pool", None),
             )
 
@@ -973,7 +987,7 @@ class SearchConfig:
 
             routing = RoutingConfig(
                 multi_model_enabled=data.get("multi_model_enabled", True),
-                default_model=data.get("routing_default_model", "bge_code"),
+                default_model=data.get("routing_default_model", "qwen3"),
                 multi_model_pool=data.get("routing_multi_model_pool"),
             )
 

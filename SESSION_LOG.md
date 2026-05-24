@@ -2,7 +2,7 @@
 
 ## Project: General-Purpose Semantic Search MCP Integration System
 
-## Initialized: 2025-09-22 | Updated: 2026-04-22
+## Initialized: 2025-09-22 | Updated: 2026-05-24
 
 This file maintains session memory and context for the Claude-context-MCP semantic search system development and improvements.
 
@@ -33,6 +33,44 @@ This file maintains session memory and context for the Claude-context-MCP semant
 ---
 
 ## Session History
+
+### 2026-05-24: OTel Verification, Session-Timestamped Log Rotation, v0.11.9 Release
+
+**Primary Achievement**: Verified the three 2026-05-23 commits end-to-end, discovered and fixed two production bugs (premature OTel shutdown and WinError 32 log rotation), changed log backup naming from numeric to session-start timestamps, and shipped v0.11.9.
+
+#### Key Accomplishments
+- Installed `.[otel]` extra and ran full OTel test suite (75/75 passed including slow model tests)
+- Fixed production bug: `cleanup_previous_resources()` called `shutdown_observability()` before every index run, permanently disabling the OTel `TracerProvider`; replaced with `force_flush()`
+- Fixed OTel test isolation: OTel ≥ 1.x refuses to replace the global `TracerProvider` once set — `_enable_with_in_memory()` now detects an existing SDK provider and adds the test exporter to it; `_clear_spans` fixture restores `_obs._enabled`/`_obs._tracer_provider` before each test
+- Changed log backup naming from `mcp_server.log.1/.2/.3` to `mcp_server_<mmddyyhhmmss>.log` (session-start timestamp, no numeric suffix, unique per server run) via `doRollover()` override
+- Fixed `.gitignore` inline-comment bug breaking `logs/` exclusion (gitignore doesn't support inline `#` comments)
+- Bumped version to 0.11.9, merged development → main, pushed, tagged `v0.11.9` and triggered GitHub Actions release
+- Updated CHANGELOG.md `[Unreleased]` section, README (What's New, test count 2,086+, OTel highlight), and CLAUDE.md version history
+
+#### Technical Details
+
+**OTel shutdown bug**: `handle_index_directory` → `cleanup_previous_resources()` (before indexing starts) → `shutdown_observability()` → `TracerProvider.shutdown()`. After shutdown, all `start_as_current_span()` calls create non-recording no-op spans. `_clear_spans` fixture restored `_obs._enabled = True` and `_obs._tracer_provider`, but cannot un-shutdown the provider object — so slow tests saw empty `_spans("index.full")` despite indexing running normally. Fix: replace shutdown with `force_flush()`.
+
+**OTel test ordering**: `test_observability_e2e.py` executes `otel_trace.set_tracer_provider(_PROVIDER)` at module import time (pytest collection). When `TestEnabledPath.setup_class` later calls `trace.set_tracer_provider(new_provider)`, OTel 1.42.1 silently refuses and logs `WARNING Overriding of current TracerProvider is not allowed`. Unit tests' exporter never received spans; `teardown_class` set `obs._enabled = False`, leaving e2e tests disabled.
+
+**Log rotation naming**: `_SafeRotatingFileHandler.doRollover()` overrides the standard chained-rename logic (`log.1 → log.2 → log.3`). Instead: close stream, rename active log to `mcp_server_<_SESSION_START>.log` (suppressing `PermissionError`/`OSError` via the existing `rotate()` override), open fresh stream. `_SESSION_START = datetime.now().strftime("%m%d%y%H%M%S")` captured at module load.
+
+**`.gitignore` bug**: The entry `/logs/                   # comment` included the inline comment as part of the pattern, so the directory was never actually ignored. Fix: split comment to its own line.
+
+#### Files Modified
+- `mcp_server/resource_manager.py` — replace `shutdown_observability()` with `force_flush()` in `cleanup_previous_resources()`
+- `mcp_server/server.py` — add `_SESSION_START`; override `doRollover()` for session-timestamped log rotation; add `from datetime import datetime`
+- `tests/unit/utils/test_observability.py` — `_enable_with_in_memory()` detects existing SDK provider; lambda → def; SIM117 with-combining; ruff lint cleanup
+- `tests/integration/test_observability_e2e.py` — `_clear_spans` fixture restores `_obs._enabled`/`_obs._tracer_provider`; `# noqa: E402` on post-importorskip imports; ruff lint cleanup
+- `utils/observability.py` — add `import contextlib`; SIM105/SIM102 lint fixes
+- `search/config.py` — SIM102 nested-if combination
+- `search/hybrid_searcher.py`, `search/summary_stage.py`, `embeddings/embedder.py` — ruff format cleanup
+- `.gitignore` — fix inline-comment bug breaking `logs/` exclusion
+- `pyproject.toml` — version `0.11.8` → `0.11.9`
+- `CHANGELOG.md` — populate `[Unreleased]` with all v0.11.9 entries
+- `README.md` — What's New v0.11.9 block, OTel highlight bullet, test count 2,086+
+
+---
 
 ### 2026-04-21: Embedder Race Fix + bge_code GPU Routing Keywords
 

@@ -52,7 +52,7 @@
   },
   "routing": {
     "multi_model_enabled": true,
-    "default_model": "bge_m3",
+    "default_model": "qwen3",
     "multi_model_pool": "full"
   },
   "intent": {

@@ -107,9 +107,8 @@ WHEN NOT TO USE:
                         "bge_m3",
                         "coderankembed",
                         "gte_modernbert",
-                        "c2llm",
                     ],
-                    "description": 'Override model selection. Full pool: "qwen3", "bge_m3", "coderankembed". Lightweight: "gte_modernbert", "c2llm". If None, uses routing or config default.',
+                    "description": 'Override model selection. Full pool: "qwen3", "coderankembed". Lightweight: "bge_m3", "gte_modernbert". If None, uses routing or config default.',
                 },
                 "output_format": {
                     "type": "string",
@@ -373,12 +372,10 @@ Args:
                     "enum": [
                         "qwen3",
                         "bge_m3",
-                        "bge_code",
                         "coderankembed",
                         "gte_modernbert",
-                        "c2llm",
                     ],
-                    "description": 'Set default model key. Full pool: "qwen3", "bge_code", "coderankembed". Lightweight: "gte_modernbert", "bge_m3", "c2llm".',
+                    "description": 'Set default model key. Full pool: "qwen3", "coderankembed". Lightweight: "bge_m3", "gte_modernbert".',
                 },
                 "confidence_threshold": {
                     "type": "number",
