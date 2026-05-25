@@ -1313,8 +1313,8 @@ echo   3. Lightweight Multi-Model ^(1.65GB^)
 echo      BGE-M3 + gte-modernbert, smart routing
 echo.
 echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+, RTX 4090^)
-echo   4. jina-embeddings-v5-small ^(1024d, ~1.5GB^)
-echo      Single model + Jina v3 reranker ^(distilled from Qwen3-4B^)
+echo   4. Qwen3-Embedding-0.6B ^(1024d, ~1.1GB^)
+echo      Single model + Jina v3 reranker ^(MRR 0.94 SSCG baseline^)
 echo.
 echo   0. Back to Search Configuration
 echo.
@@ -1329,7 +1329,7 @@ set "SELECTED_MODEL="
 if "!model_choice!"=="1" set "SELECTED_MODEL=BAAI/bge-m3"
 if "!model_choice!"=="2" set "SELECTED_MODEL=google/embeddinggemma-300m"
 if "!model_choice!"=="3" goto enable_lightweight_speed
-if "!model_choice!"=="4" set "SELECTED_MODEL=jinaai/jina-embeddings-v5-text-small-retrieval"
+if "!model_choice!"=="4" set "SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B"
 
 if defined SELECTED_MODEL (
     echo.
@@ -1917,8 +1917,8 @@ echo   3. Lightweight Multi-Model ^(1.65GB^)
 echo      BGE-M3 + gte-modernbert, smart routing
 echo.
 echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+, RTX 4090^)
-echo   4. jina-embeddings-v5-small ^(1024d, ~1.5GB^)
-echo      Single model + Jina v3 reranker ^(distilled from Qwen3-4B^)
+echo   4. Qwen3-Embedding-0.6B ^(1024d, ~1.1GB^)
+echo      Single model + Jina v3 reranker ^(MRR 0.94 SSCG baseline^)
 echo.
 echo   0. Back to Main Menu
 echo.
@@ -1935,7 +1935,7 @@ set "SELECTED_MODEL="
 if "!model_choice!"=="1" set "SELECTED_MODEL=BAAI/bge-m3"
 if "!model_choice!"=="2" set "SELECTED_MODEL=google/embeddinggemma-300m"
 if "!model_choice!"=="3" goto enable_lightweight_speed
-if "!model_choice!"=="4" set "SELECTED_MODEL=jinaai/jina-embeddings-v5-text-small-retrieval"
+if "!model_choice!"=="4" set "SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B"
 
 REM Perform model switch
 if defined SELECTED_MODEL (
@@ -2852,7 +2852,7 @@ echo.
 echo Key Features:
 echo   - 18 MCP Tools: Index, search, configure, manage projects
 echo   - Low-Level MCP SDK: Official Anthropic implementation
-echo   - Single-Model: jina-embeddings-v5-small + Jina v3 reranker ^(workstation^)
+echo   - Single-Model: Qwen3-Embedding-0.6B + Jina v3 reranker ^(workstation^)
 echo   - Neural Reranking: Cross-encoder model ^(5-15%% quality boost^)
 echo   - Hybrid Search: BM25 + Semantic for optimal accuracy
 echo   - 85-95%% Token Reduction: Validated benchmark results

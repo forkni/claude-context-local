@@ -35,8 +35,8 @@ class VRAMTier:
 # VRAM tier definitions based on GPU capabilities
 # RTX 3060/4060 (8GB) → laptop tier → BGE-M3 with lightweight multi-model option
 # RTX 3060 12GB (12GB) → desktop tier → Qwen3-0.6B (full multi-model pool, OOM safety)
-# RTX 3090 (24GB) → workstation tier → jina-embeddings-v5-small (single-model + reranker, ~3GB)
-# RTX 4090 (24GB) → workstation tier → jina-embeddings-v5-small (single-model + reranker, ~3GB)
+# RTX 3090 (24GB) → workstation tier → Qwen3-0.6B (single-model + reranker, ~2.5GB)
+# RTX 4090 (24GB) → workstation tier → Qwen3-0.6B (single-model + reranker, ~2.5GB)
 VRAM_TIERS: list[VRAMTier] = [
     VRAMTier(
         name="minimal",
@@ -72,7 +72,7 @@ VRAM_TIERS: list[VRAMTier] = [
         name="workstation",
         min_vram_gb=18,
         max_vram_gb=999,  # No upper limit
-        recommended_model="jinaai/jina-embeddings-v5-text-small-retrieval",  # 0.6B distilled from Qwen3-4B (~1.5GB)
+        recommended_model="Qwen/Qwen3-Embedding-0.6B",  # 1024d, ~1.1GB VRAM; baseline MRR 0.94
         multi_model_enabled=False,  # Single-model + reranker mode; no multi-model routing
         neural_reranking_enabled=True,
         multi_model_pool=None,  # Single-model only
@@ -91,7 +91,7 @@ class VRAMTierManager:
         >>> manager = VRAMTierManager()
         >>> tier = manager.detect_tier()
         >>> print(f"Tier: {tier.name}, Model: {tier.recommended_model}")
-        Tier: workstation, Model: jinaai/jina-embeddings-v5-text-small-retrieval
+        Tier: workstation, Model: Qwen/Qwen3-Embedding-0.6B
     """
 
     def __init__(self) -> None:
