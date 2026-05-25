@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.11.10] - 2026-05-25
+
+### Changed
+
+- **Workstation VRAM tier (18 GB+) switched to single-model + reranker mode** (`search/vram_manager.py`) — Qwen3-0.6B (1024d, ~2.5 GB VRAM), `multi_model_enabled=False`, `multi_model_pool=None`. The full 3-model pool (~6.8 GB) was replaced after the jina-v5 / Qwen3-4B experiments revealed no quality uplift over the 0.6B baseline (MRR 0.94). Resolves OOM headroom concerns on 24 GB cards.
+- **Default routing model** `bge_m3` → `qwen3_0.6b`; `routing.multi_model_enabled` → `false` in `search_config.json`.
+
+### Fixed
+
+- **Embedding pool key disambiguation** (`mcp_server/model_pool_manager.py`) — pool key renamed `qwen3` → `qwen3_0.6b` (now parameter-specific) to stop the 4B/0.6B query-vs-index 2560d/1024d dimension mismatch.
+- **Config `multi_model_enabled:false` now wins over `CLAUDE_MULTI_MODEL_ENABLED` env var** in `sync_from_config` — the env var was overriding an explicit `false` in the JSON config.
+- **Configured model not in active pool loads directly as single-model** instead of silently falling back to the first pool key (`mcp_server/model_pool_manager.py`).
+- **Auto-reindex loop caused by `search_config.json` mtime changes** — every config read was touching the file's mtime, triggering an immediate re-index on the next request.
+
+### Added
+
+- **Phase-A model-comparison harness** (`scripts/benchmark/compare_models.py` + `compare_models.sh`) — side-by-side SSCG benchmark runner for evaluating multiple embedding models in a single pass. Outputs a leaderboard table with per-query and aggregate MRR, Recall@k, and Hit@k.
+
+### Evaluation / Tests
+
+- **Golden-dataset label corrections** for Q01 (`CodeEmbedder._get_model_config` / `get_model_config` grade-3), Q05 (`utils/path_utils.normalize_path` grade-3), Q19 (`ONNXEmbeddingModel.encode` grade-2); added `recommended_k=7` (`evaluation/golden_dataset.json`).
+- **SSCG benchmark re-run at k=7** (hybrid mode): MRR **0.806**, Recall@5 **0.646**, Recall@7 **0.700**, Hit@7 **1.00** (post-label-fix; +0.203 MRR, +0.108 Recall@5 vs the pre-fix k=5 baseline).
+- **Model-key test assertions updated** `qwen3` → `qwen3_0.6b` across the unit-test suite.
+
+---
+
+## [0.11.9] - 2026-05-24
+
 ### Added
 
 - **Opt-in OTel tracing across search and index pipeline** (`utils/observability.py`, `utils/otel_attributes.py`) — zero-overhead when disabled (one boolean check per `traced_block` call); degrades silently to no-op when the `opentelemetry` package is not installed. Instrumented sites: `@timed` decorator (all 5 existing timing sites gain spans automatically), `error_handler` (emits `mcp.tool.<name>` span per MCP tool call), `incremental_indexer` (`index.full` + `index.incremental` spans), `hybrid_searcher` (`search.hybrid` span with mode/result-count attributes). `init_observability()` reads `ObservabilityConfig` (env: `CLAUDE_OTEL_ENABLED`, `CLAUDE_OTEL_EXPORTER`, `CLAUDE_OTEL_ENDPOINT`); console exporter always routes to **stderr** to avoid corrupting the MCP stdio channel. `wrap_in_context()` propagates the OTel context into worker threads. Install with `pip install -e ".[otel]"`. New docs: `docs/OBSERVABILITY.md`, ADR-0003 (decline LLM hierarchical summaries), ADR-0004 (scoped tracing only). New domain glossary: `CONTEXT.md`.
