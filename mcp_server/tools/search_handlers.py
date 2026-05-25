@@ -17,7 +17,6 @@ from mcp_server.server import (
 )
 from mcp_server.services import get_config, get_state
 from mcp_server.storage_manager import get_project_storage_dir
-from mcp_server.tools.code_relationship_analyzer import CodeRelationshipAnalyzer
 from mcp_server.tools.decorators import error_handler
 from mcp_server.utils.config_helpers import temporary_ram_fallback_off
 from search.config import (
@@ -35,6 +34,7 @@ from search.indexer import CodeIndexManager
 from search.intent_classifier import IntentClassifier, QueryIntent
 from search.metadata import MetadataStore
 from search.query_router import QueryRouter
+from search.relationship_analyzer import RelationshipAnalyzer
 
 
 logger = logging.getLogger(__name__)
@@ -1376,7 +1376,7 @@ async def handle_find_connections(arguments: dict[str, Any]) -> dict:
     searcher = get_searcher()
 
     # Create analyzer
-    analyzer = CodeRelationshipAnalyzer(searcher)
+    analyzer = RelationshipAnalyzer.from_searcher(searcher)
 
     # Run analysis - raises ValueError for validation errors
     report = analyzer.analyze_impact(
