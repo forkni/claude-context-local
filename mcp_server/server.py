@@ -425,7 +425,7 @@ if __name__ == "__main__":
             from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
             from starlette.applications import Starlette
             from starlette.responses import JSONResponse
-            from starlette.routing import Mount, Route
+            from starlette.routing import Route
 
             # Create StreamableHTTP session manager (stateless: one transport per request,
             # no mcp-session-id bookkeeping; json_response: plain JSON body, no SSE framing)
@@ -593,9 +593,13 @@ if __name__ == "__main__":
                     _cleanup_previous_resources()
                     logger.info("[SHUTDOWN] Cleanup complete")
 
-            # Define routes: /mcp (StreamableHTTP) + POST /cleanup + POST /reload_config + POST /switch_project
+            # Define routes: POST /cleanup + POST /reload_config + POST /switch_project
+            # NOTE: /mcp is intentionally NOT in the Starlette routes list.
+            # Mount("/mcp", ...) causes Starlette's redirect_slashes Router logic to
+            # issue a 307 on exact "POST /mcp" (no trailing slash), because the Mount
+            # regex /mcp/{path:path} requires trailing content. We bypass this by
+            # intercepting /mcp at the ASGI level in asgi_app below.
             routes = [
-                Mount("/mcp", app=handle_mcp),
                 Route("/cleanup", endpoint=handle_cleanup, methods=["POST"]),
                 Route(
                     "/reload_config", endpoint=handle_reload_config, methods=["POST"]
@@ -610,6 +614,17 @@ if __name__ == "__main__":
             # pyrefly: ignore [bad-argument-type]
             starlette_app = Starlette(routes=routes, lifespan=app_lifespan)
 
+            # Top-level ASGI app: routes /mcp directly to StreamableHTTP before
+            # Starlette routing sees it (avoids the 307 redirect described above).
+            # Lifespan events fall through to starlette_app which owns the context.
+            async def asgi_app(scope: Any, receive: Any, send: Any) -> None:
+                if scope.get("type") == "http":
+                    path = scope.get("path", "")
+                    if path == "/mcp" or path.startswith("/mcp/"):
+                        await handle_mcp(scope, receive, send)
+                        return
+                await starlette_app(scope, receive, send)
+
             # Run server with Windows-specific event loop handling
             logger.info(f"Starting HTTP server on {args.host}:{args.port}")
             logger.info(f"HTTP endpoint: http://{args.host}:{args.port}/mcp")
@@ -623,7 +638,7 @@ if __name__ == "__main__":
 
             # Uvicorn config (explicit asyncio loop, not uvloop)
             config = uvicorn.Config(
-                starlette_app,
+                asgi_app,
                 host=args.host,
                 port=args.port,
                 timeout_keep_alive=120,  # 2 minutes (default: 5s)
