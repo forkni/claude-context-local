@@ -550,7 +550,9 @@ class RelationshipAnalyzer:
                     continue
                 score_value = getattr(result, "score", result.similarity_score)
                 try:
-                    final_score = round(float(score_value), 2)
+                    final_score = (
+                        round(float(score_value), 2) if score_value is not None else 0.0
+                    )
                 except (TypeError, ValueError):
                     final_score = 0.0
                 similar.append(
