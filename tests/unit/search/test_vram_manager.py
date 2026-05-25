@@ -42,7 +42,7 @@ class TestVRAMTiers:
             assert tier.recommended_model in [
                 "BAAI/bge-m3",
                 "Qwen/Qwen3-Embedding-0.6B",
-                "Qwen/Qwen3-Embedding-4B",
+                "jinaai/jina-embeddings-v5-text-small-retrieval",
             ]
             assert len(tier.recommended_model) > 5
 
@@ -70,9 +70,9 @@ class TestVRAMTiers:
         assert desktop.neural_reranking_enabled is True
         assert desktop.multi_model_pool == "full"
         assert desktop.reranker_model == "full"
-        assert workstation.multi_model_enabled is True
+        assert workstation.multi_model_enabled is False
         assert workstation.neural_reranking_enabled is True
-        assert workstation.multi_model_pool == "full"
+        assert workstation.multi_model_pool is None
         assert workstation.reranker_model == "full"
 
 
@@ -158,8 +158,11 @@ class TestVRAMTierManager:
             tier = manager.detect_tier()
 
             assert tier.name == "workstation"
-            assert tier.recommended_model == "Qwen/Qwen3-Embedding-4B"
-            assert tier.multi_model_enabled is True
+            assert (
+                tier.recommended_model
+                == "jinaai/jina-embeddings-v5-text-small-retrieval"
+            )
+            assert tier.multi_model_enabled is False
             assert tier.neural_reranking_enabled is True
 
     def test_detect_tier_caching(self):
@@ -212,7 +215,10 @@ class TestVRAMTierManager:
         assert manager.get_model_for_tier("minimal") == "BAAI/bge-m3"
         assert manager.get_model_for_tier("laptop") == "BAAI/bge-m3"
         assert manager.get_model_for_tier("desktop") == "Qwen/Qwen3-Embedding-0.6B"
-        assert manager.get_model_for_tier("workstation") == "Qwen/Qwen3-Embedding-4B"
+        assert (
+            manager.get_model_for_tier("workstation")
+            == "jinaai/jina-embeddings-v5-text-small-retrieval"
+        )
 
     def test_get_model_for_invalid_tier(self):
         """Test getting model for invalid tier name."""
@@ -320,11 +326,17 @@ class TestVRAMTierManager:
             manager_3090 = VRAMTierManager()
             tier_3090 = manager_3090.detect_tier()
             assert tier_3090.name == "workstation"
-            assert tier_3090.recommended_model == "Qwen/Qwen3-Embedding-4B"
+            assert (
+                tier_3090.recommended_model
+                == "jinaai/jina-embeddings-v5-text-small-retrieval"
+            )
 
             # RTX 4090 (24GB)
             mock_props.total_memory = 24 * (1024**3)
             manager_4090 = VRAMTierManager()
             tier_4090 = manager_4090.detect_tier()
             assert tier_4090.name == "workstation"
-            assert tier_4090.recommended_model == "Qwen/Qwen3-Embedding-4B"
+            assert (
+                tier_4090.recommended_model
+                == "jinaai/jina-embeddings-v5-text-small-retrieval"
+            )

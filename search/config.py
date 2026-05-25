@@ -124,6 +124,19 @@ MODEL_REGISTRY = {
         "model_type": "code-optimized",
         "onnx_pooling": "cls",  # GTE-ModernBERT uses CLS pooling
     },
+    "jinaai/jina-embeddings-v5-text-small-retrieval": {
+        "dimension": 1024,
+        "max_context": 32768,
+        "description": "0.6B distilled from Qwen3-Embedding-4B; near-4B quality at 0.6B size (1.2-1.5GB VRAM)",
+        "vram_gb": "1.2-1.5GB",
+        "fallback_batch_size": 256,
+        "trust_remote_code": True,
+        # Last-token pooling: ONNX wrapper supports only cls/mean — gate ONNX off.
+        "onnx_supported": False,
+        "instruction_mode": "prompt_name",  # passes prompt_name="query" to encode for queries
+        "prompt_name": "query",
+        "passage_prefix": "",  # -retrieval task adapter merged in; no explicit doc prefix needed
+    },
 }
 
 

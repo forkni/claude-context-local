@@ -1,7 +1,7 @@
 {
   "embedding": {
-    "model_name": "Qwen/Qwen3-Embedding-4B",
-    "dimension": 2560,
+    "model_name": "jinaai/jina-embeddings-v5-text-small-retrieval",
+    "dimension": 1024,
     "batch_size": 128,
     "query_cache_size": 128,
     "enable_import_context": true,
@@ -51,7 +51,7 @@
     "multi_hop_mode": "hybrid"
   },
   "routing": {
-    "multi_model_enabled": true,
+    "multi_model_enabled": false,
     "default_model": "qwen3",
     "multi_model_pool": "full"
   },
