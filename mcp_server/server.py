@@ -51,7 +51,7 @@ from mcp_server.model_pool_manager import (  # noqa: E402
 from mcp_server.output_formatter import format_response  # noqa: E402
 
 
-# Configure logging — dual-handler: console (existing behavior) + rotating file
+# Configure logging — dual-handler: console (colored) + rotating file (plain)
 debug_mode = os.getenv("MCP_DEBUG", "").lower() in ("1", "true", "yes")
 log_level = logging.DEBUG if debug_mode else logging.INFO
 console_format = (
@@ -64,6 +64,73 @@ file_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 _log_dir = PROJECT_ROOT / "logs"
 _log_path = _log_dir / "mcp_server.log"
 _SESSION_START = datetime.now().strftime("%m%d%y%H%M%S")
+
+# ANSI color codes
+_ANSI_RED = "\033[91m"
+_ANSI_YELLOW = "\033[93m"
+_ANSI_BLUE = "\033[94m"
+_ANSI_RESET = "\033[0m"
+
+# Stage-completion keywords → blue in console output
+_STAGE_KEYWORDS: frozenset[str] = frozenset(
+    [
+        "✓",
+        "ready",
+        "complete",
+        "loaded",
+        "startup",
+        "starting",
+        "shutdown",
+        "initialized",
+        "indexed",
+        "built",
+        "preload",
+        "pre-load",
+        "[tool_call]",
+        "[tool_cancelled]",
+        "[resource_read]",
+        "[prompt_get]",
+        "[init]",
+        "[http cleanup]",
+        "[http config]",
+        "[shutdown]",
+        "[switch_project]",
+    ]
+)
+
+
+def _enable_windows_ansi() -> None:
+    """Enable ANSI Virtual Terminal Processing on Windows CMD."""
+    if platform.system() != "Windows":
+        return
+    try:
+        import ctypes
+
+        # STD_OUTPUT_HANDLE=-11, STD_ERROR_HANDLE=-12; ENABLE_VIRTUAL_TERMINAL_PROCESSING=0x0004
+        kernel32 = ctypes.windll.kernel32
+        for std_handle in (-11, -12):
+            handle = kernel32.GetStdHandle(std_handle)
+            mode = ctypes.c_ulong(0)
+            if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+                kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+    except Exception:
+        pass
+
+
+class _ColorFormatter(logging.Formatter):
+    """Console formatter: ERROR/CRITICAL→red, WARNING→yellow, stage INFO→blue."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        text = super().format(record)
+        if record.levelno >= logging.ERROR:
+            return f"{_ANSI_RED}{text}{_ANSI_RESET}"
+        if record.levelno == logging.WARNING:
+            return f"{_ANSI_YELLOW}{text}{_ANSI_RESET}"
+        if record.levelno == logging.INFO:
+            msg_lower = record.getMessage().lower()
+            if any(kw in msg_lower for kw in _STAGE_KEYWORDS):
+                return f"{_ANSI_BLUE}{text}{_ANSI_RESET}"
+        return text
 
 
 class _SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
@@ -98,9 +165,11 @@ def _configure_logging() -> None:
     if getattr(root, "_code_search_logging_configured", False):
         return
 
+    _enable_windows_ansi()
+
     console_handler = logging.StreamHandler()
     console_handler.setLevel(log_level)
-    console_handler.setFormatter(logging.Formatter(console_format, datefmt="%H:%M:%S"))
+    console_handler.setFormatter(_ColorFormatter(console_format, datefmt="%H:%M:%S"))
 
     _log_dir.mkdir(parents=True, exist_ok=True)
     file_handler = _SafeRotatingFileHandler(
