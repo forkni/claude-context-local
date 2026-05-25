@@ -21,10 +21,11 @@
       "note": "Baseline from first system version evaluated 2026-01-30"
     },
     "current_metrics": {
-      "mrr": 0.603,
-      "recall_at_5": 0.538,
-      "hit_rate_at_5": 1.00,
-      "note": "Manual MCP hybrid k=5 run 2026-05-24 post-qwen3_0.6b key fix. Pre-label-fix baseline. Labels for Q01/Q05/Q19 corrected in this session — re-run needed."
+      "mrr": 0.806,
+      "recall_at_5": 0.646,
+      "recall_at_7": 0.700,
+      "hit_rate_at_7": 1.00,
+      "note": "Manual MCP hybrid k=7 run 2026-05-25 post-Q01/Q05/Q19 label fix. Score-sorted top-7 (all sources). MRR+0.203 and Recall@5+0.108 vs pre-label-fix baseline."
     },
     "recommended_k": 7,
     "changelog": [
