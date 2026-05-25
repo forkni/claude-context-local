@@ -181,7 +181,7 @@ def _configure_logging() -> None:
     root.setLevel(logging.DEBUG)
     root.addHandler(console_handler)
     root.addHandler(file_handler)
-    root._code_search_logging_configured = True
+    root._code_search_logging_configured = True  # type: ignore[attr-defined]
 
 
 _configure_logging()
