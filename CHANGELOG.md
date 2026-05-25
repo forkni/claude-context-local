@@ -11,6 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.12.0] - 2026-05-25
+
+### Changed
+
+- **Transport: SSE → StreamableHTTP** (`mcp_server/server.py`) — replaced `SseServerTransport` (two-endpoint: GET `/sse` + POST `/messages/`) with `StreamableHTTPSessionManager(stateless=True, json_response=True)` (single `/mcp` endpoint). Port 8765 unchanged.
+- **`--transport` flag**: `sse` → `http`; `scripts/manual_configure.py` now emits `{"type": "http", "url": "http://localhost:8765/mcp"}`.
+- **Batch launchers**: `start_mcp_sse.bat` → `start_mcp_http.bat`, `start_mcp_sse_cli.bat` → `start_mcp_http_cli.bat`, `start_both_sse_servers.bat` → `start_both_http_servers.bat`; `start_mcp_debug.bat` updated in-place.
+- **Gemini skill health check** (`gemini-skills/.../start_mcp_sse.py`): switched from `GET /sse` HTTP poll to TCP port probe (stateless StreamableHTTP doesn't respond to bare GET).
+- **Regression test** (`tests/regression/test_mcp_configuration.ps1`): expects `type == "http"`, URL pattern `http://host:port/mcp`.
+- **`start_mcp_server.cmd`**: menu labels, batch file references, help text updated.
+
+### Migration
+
+Update `.claude.json` MCP entry: `{"type": "sse", "url": "...8765/sse"}` → `{"type": "http", "url": "http://localhost:8765/mcp"}`. Re-run `scripts\batch\manual_configure.bat` to apply automatically.
+
+---
+
 ## [0.11.10] - 2026-05-25
 
 ### Changed

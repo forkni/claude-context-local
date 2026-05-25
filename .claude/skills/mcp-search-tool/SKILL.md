@@ -1,6 +1,6 @@
 ---
 name: mcp-search-tool
-description: "Guides semantic code search via the code-search MCP server. Provides correct workflows for code-search:search_code, code-search:find_connections, and code-search:find_path. Triggers when searching for code definitions, callers, dependencies, or tracing code flow in indexed projects."
+description: "Guides semantic code search via the code-search MCP server. Use when searching for code definitions, callers, dependencies, or tracing code flow in indexed projects. Provides correct workflows for search_code, find_connections, find_path, find_similar_code. Invoke /mcp-search-tool status to run a health check."
 user-invocable: true
 argument-hint: "search query or 'status' for index health"
 allowed-tools: "Bash, Read, Grep, code-search:search_code, code-search:find_connections, code-search:find_path, code-search:find_similar_code, code-search:index_directory, code-search:list_projects, code-search:switch_project, code-search:get_index_status, code-search:clear_index, code-search:delete_project, code-search:configure_search_mode, code-search:get_search_config_status, code-search:configure_query_routing, code-search:configure_reranking, code-search:configure_chunking, code-search:list_embedding_models, code-search:switch_embedding_model, code-search:get_memory_status, code-search:cleanup_resources"
@@ -45,6 +45,24 @@ MCP search returns **ranked candidates**, not definitive answers. On the 2026-05
 **When rank-1 is most reliable:** small function discovery ("get X", "validate Y"), exact symbol lookup via `chunk_id`
 
 **When you MUST scan all results:** class overview queries, sibling context ("encode and decode"), queries where module/community chunks may surface at rank-1
+
+---
+
+## Prerequisites
+
+- MCP server running and connected in Claude Code (`/mcp` → Reconnect next to `code-search`)
+- At least one project indexed: `code-search:index_directory(path="<your-project>")`
+
+**Offline smoke test** (verifies imports, config, and tool registry without a running server):
+
+```powershell
+# From repo root — 2>nul suppresses torch INFO noise
+.venv/Scripts/python .claude/skills/mcp-search-tool/smoke.py 2>nul
+```
+
+Driver: `.claude/skills/mcp-search-tool/smoke.py`
+
+What it checks: core imports, `get_search_config()` (mode/model/ego_graph), all 19 tools in `TOOL_REGISTRY`, stale model-key guard (`qwen3`/`c2llm` absent), and a live search if the server is active.
 
 ---
 
@@ -119,6 +137,30 @@ What are you trying to do?
 Full parameter reference for essential tools (search_code, find_connections, find_path): [references/parameters.md](references/parameters.md)
 Advanced features (multi-hop, intent routing, summaries): [references/advanced-features.md](references/advanced-features.md)
 Benchmark data & mode selection guide: [references/performance.md](references/performance.md)
+
+---
+
+## Gotchas
+
+These are non-obvious traps from real session experience — not things the docs mention.
+
+**Results are NOT sorted by blended_score.** The returned array is ordered by internal file/community grouping, not by score. When you need a true ranking (e.g. for MRR/Recall evaluation), sort by `blended_score` descending yourself:
+```python
+ranked = sorted(results, key=lambda r: r.get("blended_score", 0), reverse=True)
+```
+Failing to sort is why a result at array position 0 isn't always rank-1.
+
+**`source="ego_graph"` items appear in the main results array.** When `ego_graph_enabled=true` (or when the live config has it on), expansion neighbors are interleaved with direct hits and carry their own `blended_score`. They count toward your top-k window. Don't filter them out before ranking — they are legitimate ranked candidates.
+
+**`ego_graph.enabled=True` in the live config even though the EgoGraphConfig dataclass default is `False`.** The server reads `search_config.json`, which ships with `"ego_graph": {"enabled": true}`. The Python default is irrelevant once the JSON is loaded. Verify with `get_search_config().ego_graph.enabled`.
+
+**`split_block` variants of the same function are one logical hit.** A long function chunked into `split_block` pieces (e.g. `file.py:10-40:split_block:fn` and `file.py:41-80:split_block:fn`) should count as one unique chunk in Recall/Hit metrics. Normalize and deduplicate by stripping the line-range portion: `file.py:10-40:type:name` → `file.py:type:name`.
+
+**Community and module summary chunks surface at rank-1 on class-overview queries.** They have IDs like `__community__/label:0-0:community:label` or `file.py:0-0:module:name`. Add `chunk_type="function"` or `chunk_type="class"` to filter them when you need a specific implementation.
+
+**Unicode symbols crash on Windows cp1252 terminals.** `✓`/`✗` cause `UnicodeEncodeError` in any script that writes to stdout in a cmd/PowerShell window without UTF-8. Use plain ASCII (`PASS`/`FAIL`) or run with `PYTHONUTF8=1`. The smoke test in this skill uses plain ASCII for this reason.
+
+**Torch dynamo INFO logs spam stderr** when importing `search.hybrid_searcher`. Suppress with `2>nul` (Windows) or `2>/dev/null` (Linux/WSL).
 
 ---
 
