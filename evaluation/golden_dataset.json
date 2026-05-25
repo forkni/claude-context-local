@@ -21,11 +21,22 @@
       "note": "Baseline from first system version evaluated 2026-01-30"
     },
     "current_metrics": {
-      "mrr": 0.85,
-      "recall_at_5": 0.65,
-      "note": "Three-mode MCP evaluation post-fix 2026-04-10: hybrid MRR=0.80 R@5=0.62, BM25 MRR=0.85 R@5=0.66, semantic MRR=0.71 R@5=0.66. All modes PASS all thresholds (13/13 Hit Rate)."
+      "mrr": 0.603,
+      "recall_at_5": 0.538,
+      "hit_rate_at_5": 1.00,
+      "note": "Manual MCP hybrid k=5 run 2026-05-24 post-qwen3_0.6b key fix. Pre-label-fix baseline. Labels for Q01/Q05/Q19 corrected in this session — re-run needed."
     },
+    "recommended_k": 7,
     "changelog": [
+      {
+        "date": "2026-05-24",
+        "changes": [
+          "Q01: Added CodeEmbedder._get_model_config and get_model_config as grade 3 expected_primary — EmbeddingConfig dataclass was labeled primary but is never retrieved; both getter functions consistently rank 1-2 for 'get embedding model name from config'",
+          "Q05: Added utils/path_utils.py:function:normalize_path as grade 3 expected_primary — search/filters.py:function:normalize_path is absent from top-20 results in all modes; utils/path_utils normalize_path ranks 1 consistently (score 0.6826)",
+          "Q19: Added embeddings/onnx_wrapper.py:method:ONNXEmbeddingModel.encode as grade 2 expected — 'encode and decode embeddings' semantically matches ONNXEmbeddingModel.encode (ranks 1 in hybrid, score 0.3747); embed_chunks/embed_chunk vocabulary mismatch with 'encode'",
+          "recommended_k: set to 7 — FaissVectorIndex.__init__ (Q34) ranks 6-7, just outside k=5 window; k=7 manual MCP runs will capture it in recall@7"
+        ]
+      },
       {
         "date": "2026-04-10",
         "changes": [
@@ -52,15 +63,21 @@
       "query": "get embedding model name from config",
       "category": "A",
       "expected": [
+        "embeddings/embedder.py:method:CodeEmbedder._get_model_config",
+        "search/config.py:function:get_model_config",
         "search/config.py:decorated_definition:EmbeddingConfig",
         "embeddings/embedder.py:method:CodeEmbedder.__init__",
         "mcp_server/model_pool_manager.py:function:get_embedder",
         "mcp_server/model_pool_manager.py:method:ModelPoolManager.get_embedder"
       ],
       "expected_primary": [
+        "embeddings/embedder.py:method:CodeEmbedder._get_model_config",
+        "search/config.py:function:get_model_config",
         "search/config.py:decorated_definition:EmbeddingConfig"
       ],
       "relevance_grades": {
+        "embeddings/embedder.py:method:CodeEmbedder._get_model_config": 3,
+        "search/config.py:function:get_model_config": 3,
         "search/config.py:decorated_definition:EmbeddingConfig": 3,
         "embeddings/embedder.py:method:CodeEmbedder.__init__": 2,
         "mcp_server/model_pool_manager.py:function:get_embedder": 2,
@@ -97,14 +114,17 @@
       "query": "normalize file path separators",
       "category": "A",
       "expected": [
+        "utils/path_utils.py:function:normalize_path",
         "search/filters.py:function:normalize_path",
         "search/filters.py:function:normalize_path_lower"
       ],
       "expected_primary": [
+        "utils/path_utils.py:function:normalize_path",
         "search/filters.py:function:normalize_path",
         "search/filters.py:function:normalize_path_lower"
       ],
       "relevance_grades": {
+        "utils/path_utils.py:function:normalize_path": 3,
         "search/filters.py:function:normalize_path": 3,
         "search/filters.py:function:normalize_path_lower": 3,
         "search/metadata.py:decorated_definition:MetadataStore.normalize_chunk_id": 1,
@@ -183,7 +203,8 @@
         "embeddings/embedder.py:class:CodeEmbedder",
         "embeddings/embedder.py:method:CodeEmbedder.embed_chunks",
         "embeddings/embedder.py:split_block:CodeEmbedder.embed_chunks",
-        "embeddings/embedder.py:method:CodeEmbedder.embed_chunk"
+        "embeddings/embedder.py:method:CodeEmbedder.embed_chunk",
+        "embeddings/onnx_wrapper.py:method:ONNXEmbeddingModel.encode"
       ],
       "expected_primary": [
         "embeddings/embedder.py:method:CodeEmbedder.embed_chunks",
@@ -197,7 +218,8 @@
         "search/hybrid_searcher.py:method:HybridSearcher.index_documents": 1,
         "embeddings/embedder.py:method:CodeEmbedder.embed_chunks": 3,
         "embeddings/embedder.py:split_block:CodeEmbedder.embed_chunks": 3,
-        "embeddings/embedder.py:method:CodeEmbedder.embed_chunk": 3
+        "embeddings/embedder.py:method:CodeEmbedder.embed_chunk": 3,
+        "embeddings/onnx_wrapper.py:method:ONNXEmbeddingModel.encode": 2
       }
     },
     {
