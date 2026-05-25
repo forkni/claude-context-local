@@ -367,7 +367,8 @@ class MultiLanguageChunker:
         if (
             self.call_graph_extractor is None
             or tchunk.language != "python"
-            or chunk.chunk_type not in ("function", "method", "decorated_definition")
+            or chunk.chunk_type
+            not in ("function", "method", "decorated_definition", "split_block")
         ):
             return
 
