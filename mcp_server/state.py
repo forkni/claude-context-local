@@ -135,7 +135,7 @@ class ApplicationState:
         may remain if it supports the new model's dimension.
 
         Args:
-            model_key: Model key (e.g., 'qwen3', 'bge_m3')
+            model_key: Model key (e.g., 'qwen3_0.6b', 'bge_m3')
         """
         self.current_model_key = model_key
         self.current_index_model_key = None  # Force index reload on model switch

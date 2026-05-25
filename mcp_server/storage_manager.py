@@ -249,14 +249,6 @@ class StorageManager:
                 )
                 config = get_search_config()
                 model_name = config.embedding.model_name
-            elif model_key == "qwen3":
-                # Qwen3 uses adaptive selection - check which variant is actually indexed
-                from search.config import resolve_qwen3_variant_for_lookup
-
-                model_name = resolve_qwen3_variant_for_lookup(new_hash, project_name)
-                logger.info(
-                    f"[ROUTING] Resolved qwen3 to actual variant: {model_name} (key: {model_key})"
-                )
             else:
                 model_name = pool_config[model_key]
                 logger.info(

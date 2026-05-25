@@ -16,7 +16,7 @@ from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
 # Maps model keys to full model names in MODEL_REGISTRY
 # Note: Using 0.6B variant for systems with limited VRAM (<18GB)
 MODEL_POOL_CONFIG = {
-    "qwen3": "Qwen/Qwen3-Embedding-4B",  # ~10GB VRAM, MTEB code rank #3 (80.07), 2560d
+    "qwen3_0.6b": "Qwen/Qwen3-Embedding-0.6B",  # 1024d, ~1.1GB VRAM, MRR 0.94 on SSCG benchmark
     "coderankembed": "nomic-ai/CodeRankEmbed",  # Code localization, function-level search (CoRNStack/ICLR 2025)
 }
 
@@ -140,55 +140,6 @@ MODEL_REGISTRY = {
 }
 
 
-def resolve_qwen3_variant_for_lookup(project_hash: str, project_name: str) -> str:
-    """Resolve actual Qwen3 variant indexed for a project.
-
-    Checks both the 4B (current default) and 0.6B (legacy) variants in order,
-    returning the full model name of whichever index exists on disk.
-
-    Args:
-        project_hash: Project hash for directory matching
-        project_name: Project name for directory matching
-
-    Returns:
-        Full model name of indexed Qwen3 variant, or MODEL_POOL_CONFIG["qwen3"] if not found.
-
-    Example:
-        >>> resolve_qwen3_variant_for_lookup("abc123", "my-project")
-        "Qwen/Qwen3-Embedding-4B"  # If 4B variant is indexed
-    """
-    storage_dir = Path.home() / ".claude_code_search" / "projects"
-
-    # Check for existing Qwen3 index — 4B first (current default), then 0.6B (legacy)
-    qwen_variants = [
-        ("Qwen/Qwen3-Embedding-4B", "qwen3-4b", 2560),
-        ("Qwen/Qwen3-Embedding-0.6B", "qwen3-0.6b", 1024),
-    ]
-
-    for model_name, slug, dim in qwen_variants:
-        # Check for both hash variants (drive-agnostic and legacy)
-        pattern = f"{project_name}_{project_hash}_{slug}_{dim}d"
-        index_path = storage_dir / pattern / "index" / "code.index"
-        if index_path.exists():
-            logging.getLogger(__name__).debug(
-                f"[QWEN3_RESOLUTION] Found {model_name} index at {pattern}"
-            )
-            return model_name
-
-    # No index found → use VRAM-based selection for creation context
-    # (During search lookups, this will find existing index above)
-    # (During index creation, this selects correct variant for hardware)
-    from search.vram_manager import VRAMTierManager
-
-    tier = VRAMTierManager().detect_tier()
-    logger = logging.getLogger(__name__)
-
-    logger.debug(
-        f"[QWEN3_RESOLUTION] No Qwen3 index found, using VRAM tier '{tier.name}': {tier.recommended_model}"
-    )
-    return tier.recommended_model  # e.g., "Qwen/Qwen3-Embedding-0.6B"
-
-
 # Multi-hop search configuration
 # Based on empirical testing: 2 hops with 0.3 expansion provides optimal balance
 # of discovery quality and performance (+25-35ms overhead, 93%+ queries benefit)
@@ -308,7 +259,7 @@ class RoutingConfig:
     """Multi-model routing settings (3 fields)."""
 
     multi_model_enabled: bool = True  # Enable intelligent query routing across models
-    default_model: str = "qwen3"  # Default model key for routing (best quality)
+    default_model: str = "qwen3_0.6b"  # Default model key for routing (best quality)
     multi_model_pool: str | None = (
         None  # Pool type: "full", "lightweight-speed", or "lightweight-accuracy"
     )
@@ -808,7 +759,7 @@ class SearchConfig:
 
             routing = RoutingConfig(
                 multi_model_enabled=routing_data.get("multi_model_enabled", True),
-                default_model=routing_data.get("default_model", "qwen3"),
+                default_model=routing_data.get("default_model", "qwen3_0.6b"),
                 multi_model_pool=routing_data.get("multi_model_pool", None),
             )
 
@@ -999,7 +950,7 @@ class SearchConfig:
 
             routing = RoutingConfig(
                 multi_model_enabled=data.get("multi_model_enabled", True),
-                default_model=data.get("routing_default_model", "qwen3"),
+                default_model=data.get("routing_default_model", "qwen3_0.6b"),
                 multi_model_pool=data.get("routing_multi_model_pool"),
             )
 

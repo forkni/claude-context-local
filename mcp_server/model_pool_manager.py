@@ -152,7 +152,7 @@ class ModelPoolManager:
         """Get embedder from multi-model pool or single-model fallback.
 
         Args:
-            model_key: Model key from pool config ("qwen3", "bge_m3", "coderankembed",
+            model_key: Model key from pool config ("qwen3_0.6b", "bge_m3", "coderankembed",
                       "gte_modernbert", "c2llm", or "code_model" for lightweight pools).
                       If None, uses config default or falls back to BGE-M3.
             allow_cross_pool: When True and model_key belongs to a pool other than the
@@ -425,10 +425,6 @@ def get_model_key_from_name(model_name: str) -> str | None:
                 f"(outside active pool containing '{active_pool_name}')"
             )
             return key
-
-    # Special case: Qwen3 variants (various suffixes share the same key)
-    if "qwen3" in model_name.lower() or "qwen-3" in model_name.lower():
-        return "qwen3"
 
     return None
 

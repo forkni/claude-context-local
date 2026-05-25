@@ -103,12 +103,12 @@ WHEN NOT TO USE:
                 "model_key": {
                     "type": "string",
                     "enum": [
-                        "qwen3",
+                        "qwen3_0.6b",
                         "bge_m3",
                         "coderankembed",
                         "gte_modernbert",
                     ],
-                    "description": 'Override model selection. Full pool: "qwen3", "coderankembed". Lightweight: "bge_m3", "gte_modernbert". If None, uses routing or config default.',
+                    "description": 'Override model selection. Full pool: "qwen3_0.6b", "coderankembed". Lightweight: "bge_m3", "gte_modernbert". If None, uses routing or config default.',
                 },
                 "output_format": {
                     "type": "string",
@@ -358,7 +358,7 @@ Shows available RAM/VRAM, current index memory usage, and whether GPU accelerati
 
 Args:
     enable_multi_model: Enable/disable multi-model mode (default: True via env var)
-    default_model: Set default model key ("qwen3", "bge_m3", "coderankembed")
+    default_model: Set default model key ("qwen3_0.6b", "bge_m3", "coderankembed")
     confidence_threshold: Minimum confidence for routing (0.0-1.0, default: 0.35)""",
         "input_schema": {
             "type": "object",
@@ -370,12 +370,12 @@ Args:
                 "default_model": {
                     "type": "string",
                     "enum": [
-                        "qwen3",
+                        "qwen3_0.6b",
                         "bge_m3",
                         "coderankembed",
                         "gte_modernbert",
                     ],
-                    "description": 'Set default model key. Full pool: "qwen3", "coderankembed". Lightweight: "bge_m3", "gte_modernbert".',
+                    "description": 'Set default model key. Full pool: "qwen3_0.6b", "coderankembed". Lightweight: "bge_m3", "gte_modernbert".',
                 },
                 "confidence_threshold": {
                     "type": "number",

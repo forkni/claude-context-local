@@ -1,9 +1,9 @@
 """Query routing system for multi-model semantic search.
 
 Routes queries to the optimal embedding model based on query characteristics.
-Based on empirical verification results comparing Qwen3, BGE-M3, and CodeRankEmbed.
+Based on empirical verification results comparing Qwen3-0.6B, BGE-M3, and CodeRankEmbed.
 
-Note: Qwen3 uses Qwen3-0.6B across all VRAM tiers for safety and compatibility.
+Note: Qwen3-0.6B (key: qwen3_0.6b) is used across all VRAM tiers for safety and compatibility.
 """
 
 import contextlib
@@ -55,13 +55,13 @@ class QueryRouter:
     """Routes queries to optimal embedding model based on query characteristics.
 
     # Routing strategy:
-    - Qwen3 (default): Semantic discovery, implementation logic, validation, and algorithms.
+    - Qwen3-0.6B (default): Semantic discovery, implementation logic, validation, and algorithms.
     - CodeRankEmbed (navigational): find/locate queries, caller/callee lookups, docstring-behavioral.
     """
 
     # Routing rules based on verification results (analysis/model_relevance_verification_results.md)
     ROUTING_RULES = {
-        "qwen3": {
+        "qwen3_0.6b": {
             "keywords": [
                 # Logic and Validation (Qwen3 strength)
                 "validate",
@@ -161,10 +161,10 @@ class QueryRouter:
     # Explicit precedence for tie-breaking
     # 1. Qwen3 (semantic discovery, implementation logic)
     # 2. CodeRankEmbed (function localization, navigational queries)
-    PRECEDENCE = ["qwen3", "coderankembed"]
+    PRECEDENCE = ["qwen3_0.6b", "coderankembed"]
 
     # Default fallback model
-    DEFAULT_MODEL = "qwen3"
+    DEFAULT_MODEL = "qwen3_0.6b"
 
     # Confidence threshold for routing (below this, use default)
     # Updated to 0.35 to align with config/routing_keywords.yaml (2026-02-06)
@@ -535,7 +535,7 @@ class QueryRouter:
         """Get routing rule details for a specific model.
 
         Args:
-            model_key: Model identifier ("qwen3", "bge_m3", "coderankembed")
+            model_key: Model identifier ("qwen3_0.6b", "bge_m3", "coderankembed")
 
         Returns:
             Dictionary with keywords, weight, and description, or None if invalid
@@ -560,7 +560,7 @@ def route_query(query: str, confidence_threshold: float = 0.35) -> str:
         confidence_threshold: Minimum confidence for non-default model
 
     Returns:
-        Model key string ("qwen3", "bge_m3", or "coderankembed")
+        Model key string ("qwen3_0.6b", "bge_m3", or "coderankembed")
     """
     router = QueryRouter(enable_logging=False)
     decision = router.route(query, confidence_threshold)
