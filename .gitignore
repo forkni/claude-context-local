@@ -8,7 +8,6 @@
 !.claude/skills/mcp-search-tool/
 .claude/skills/mcp-search-tool/*
 !.claude/skills/mcp-search-tool/SKILL.md
-!.claude/skills/mcp-search-tool/smoke.py
 !.claude/skills/mcp-search-tool/references/
 .claude/skills/mcp-search-tool/references/*
 !.claude/skills/mcp-search-tool/references/*.md
@@ -390,3 +389,8 @@ gha-creds-*.json
 
 # claude-git-workflow local config (use cgw.conf.example as template)
 .cgw.conf
+cgw.conf.example
+
+# Local-only project files (not for version control)
+SESSION_LOG.md
+CONTEXT.md
