@@ -25,18 +25,18 @@ allowed-tools: "Bash, Read, Grep, code-search:search_code, code-search:find_conn
 
 Ensures all MCP semantic search operations follow correct workflows for accurate results. The key behavioral rule: **search results are ranked candidates, not definitive answers — always scan all returned results.**
 
-**SSCG benchmark (2026-04-10, 13 queries, 3 modes):** **100% Hit@5** across all modes — but only when `k≥5`. Default is `k=4`. Best MRR: BM25 0.846. See [references/performance.md](references/performance.md) for full results.
+**SSCG benchmark:** 100% Hit@7 (k=7 hybrid, 2026-05-25): MRR 0.806, Recall@5 0.646, Recall@7 0.700. Recommended operating k: **7** (some targets rank 6–7; k=5 misses them). Default is `k=4`. See [references/performance.md](references/performance.md) for full results.
 
 ---
 
 ## Critical: Results Are Candidates, Not Answers
 
-MCP search returns **ranked candidates**, not definitive answers. On the 2026-04-10 13-query SSCG benchmark the target appeared in the top 5 for every query (Hit@5 = 100% at `k≥5`) — but the correct result is **not always ranked first**, and that benchmark is not a general reliability guarantee for arbitrary queries or codebases.
+MCP search returns **ranked candidates**, not definitive answers. On the 2026-05-25 13-query SSCG benchmark (hybrid, k=7) Hit@7 = 100% — but the correct result is **not always ranked first**, and this is not a general reliability guarantee for arbitrary queries or codebases.
 
-**Baseline rule:** **pass `k=5` explicitly when correctness matters.** The tool default is `k=4`; the Hit@5 benchmark result only holds at `k≥5`. Use `k=10` for architectural / global queries.
+**Baseline rule:** **pass `k=7` explicitly when correctness matters.** The tool default is `k=4`; some targets rank 6–7 (e.g. `FaissVectorIndex.__init__` in the SSCG benchmark), so Hit@7 > Hit@5. Use `k=10` for architectural / global queries.
 
 **Result Interpretation Workflow:**
-1. Run `code-search:search_code(query="<your query>", k=5)` with appropriate filters
+1. Run `code-search:search_code(query="<your query>", k=7)` with appropriate filters
 2. **Scan ALL k results** — read each chunk_id and code snippet
 3. **Identify the best match** based on your actual need (not just highest score)
 4. If the best match is a module/summary chunk but you need specific code, look at lower-ranked results
@@ -63,10 +63,10 @@ What are you trying to do?
 ├─ "Find only imports/inheritance" ──► code-search:find_connections(chunk_id=<chunk_id>, relationship_types=["imports", "inherits"])
 ├─ "Find similar code to X" ─────────► code-search:find_similar_code(chunk_id=<chunk_id>)
 │
-├─ "Find function definition" ───────► code-search:search_code(query="<your query>", k=5, chunk_type="function")
-├─ "Find class definition" ──────────► code-search:search_code(query="<your query>", k=5, chunk_type="class")
-├─ "Find exact API call pattern" ────► code-search:search_code(query="<your query>", k=5, search_mode="bm25")
-├─ "Understand concept/feature" ─────► code-search:search_code(query="<your query>", k=5)  [hybrid mode]
+├─ "Find function definition" ───────► code-search:search_code(query="<your query>", k=7, chunk_type="function")
+├─ "Find class definition" ──────────► code-search:search_code(query="<your query>", k=7, chunk_type="class")
+├─ "Find exact API call pattern" ────► code-search:search_code(query="<your query>", k=7, search_mode="bm25")
+├─ "Understand concept/feature" ─────► code-search:search_code(query="<your query>", k=7)  [hybrid mode]
 ├─ "Architectural / global query" ───► code-search:search_code(query="<your query>", k=10)
 ├─ "Expand via call graph neighbors"─► code-search:search_code(..., ego_graph_enabled=true, ego_graph_k_hops=2)
 │
@@ -74,7 +74,7 @@ What are you trying to do?
 ```
 
 **CRITICAL**: For ANY query about callers, dependencies, or code flow:
-1. First: `code-search:search_code(query=..., k=5)` to get chunk_id
+1. First: `code-search:search_code(query=..., k=7)` to get chunk_id
 2. Then: `code-search:find_connections(chunk_id=<chunk_id>)` for relationships
 
 **NEVER use Grep for relationship discovery.**
@@ -85,7 +85,7 @@ What are you trying to do?
 
 | Wrong Approach | Correct Approach |
 |----------------|------------------|
-| `Grep("\.function\(")` for callers | 1. `code-search:search_code(query="<your query>", k=5)` → pick `chunk_id`. 2. `code-search:find_connections(chunk_id=<chunk_id>)` |
+| `Grep("\.function\(")` for callers | 1. `code-search:search_code(query="<your query>", k=7)` → pick `chunk_id`. 2. `code-search:find_connections(chunk_id=<chunk_id>)` |
 | Multiple Reads to trace a call chain | `code-search:find_connections(chunk_id=<chunk_id>, max_depth=5)` |
 | Manual import tracing | `code-search:find_connections(chunk_id=<chunk_id>, relationship_types=["imports"])` |
 

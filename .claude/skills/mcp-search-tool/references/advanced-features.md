@@ -60,6 +60,28 @@ You cannot disable multi-hop via tool parameters. For debugging, edit `search_co
 
 **When to use:** contextual / local-neighborhood queries ("show me everything that touches this class"). Overkill for simple symbol lookups.
 
+### `relation_types` in `ego_graph` config
+
+The `ego_graph.relation_types` field (exposed in `search_config.json`) controls which edge types the k-hop BFS walks:
+
+- **`null` (default) = traverse all 21 edge types** — no filter. BFS still applies the `edge_weights` priority ordering, so high-weight edges (`calls=1.0`, `inherits=0.9`) are favoured even when all types are eligible.
+- **List of strings** = restrict traversal to those types only, e.g. `["calls", "inherits"]`.
+
+**`relation_types` vs `edge_weights` — two separate knobs:**
+
+| Knob | Effect |
+|------|--------|
+| `relation_types` | Which edges are *walked at all* (gate) |
+| `edge_weights` | Priority / ranking within the walked edges (weight) |
+
+Setting `relation_types: ["calls"]` limits BFS to call edges only. Setting `edge_weights: {"calls": 1.0, "imports": 0.1}` still walks import edges but ranks them low. Both can be set together.
+
+**Additional import filters (independent of `relation_types`):** `exclude_stdlib_imports: true` and `exclude_third_party_imports: true` (both default `true`) drop stdlib / third-party import neighbors even when `relation_types` includes `"imports"`.
+
+**All 21 valid values** (same as `code-search:find_connections.relationship_types`):
+
+`calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`, `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`, `uses_context_manager`
+
 ---
 
 ## Centrality Reranking

@@ -1,8 +1,20 @@
 # Search Performance & Benchmark Reference
 
-## SSCG Benchmark (2026-04-10, three-mode)
+## Latest Validation (2026-05-25, hybrid k=7)
 
-Evaluated against 13 queries across 4 categories (A: Small Function Discovery, B: Sibling Context, C: Class Overview, D: Connection Queries) on this project's own codebase. All three modes pass all thresholds.
+Single-mode hybrid run after Q01/Q05/Q19 label corrections. Recommended operating point: **k=7** (some targets rank 6–7; `golden_dataset.recommended_k=7`).
+
+| MRR | Recall@5 | Recall@7 | Hit@7 |
+|-----|----------|----------|-------|
+| **0.806** | **0.646** | **0.700** | **1.00** (13/13) |
+
+All thresholds pass: MRR ≥ 0.50 ✓ | Recall@5 ≥ 0.55 ✓ | Hit@7 ≥ 0.80 ✓. Pre-label-fix baseline (k=5): MRR 0.603, Recall@5 0.538.
+
+---
+
+## SSCG Benchmark (2026-04-10, three-mode comparison)
+
+Mode-comparison baseline. Evaluated against 13 queries across 4 categories on this project's own codebase. All three modes pass all thresholds.
 
 **Thresholds:** MRR ≥ 0.50 | Recall@5 ≥ 0.55 | Hit@5 ≥ 0.80
 
@@ -51,13 +63,14 @@ Replace `<project-path>` with the path to the project you want to evaluate. From
 | `hybrid` | Concepts + exact terms combined | ~85ms |
 | `semantic` | Intent/concept queries, fuzzy matching | ~75ms |
 
-**Practical rule:** Start with `auto`. Switch to `bm25` when you know the exact symbol name. Use `k=10` for architectural/global queries.
+**Practical rule:** Start with `auto`, `k=7`. Switch to `bm25` when you know the exact symbol name. Use `k=10` for architectural/global queries.
 
 ---
 
 ## Result Reliability
 
-- **Hit@5 = 100% on this 13-query SSCG benchmark**: the labeled target appeared in the top 5 for every query at `k≥5`. This is a mode-comparison baseline, not a general reliability guarantee for arbitrary queries.
+- **Hit@7 = 100% on the 2026-05-25 13-query SSCG benchmark** (hybrid, k=7). The three-mode 2026-04-10 run also achieved 100% Hit@5 at k≥5. These are mode-comparison baselines, not general reliability guarantees for arbitrary queries.
+- **Why k=7 over k=5:** targets like `FaissVectorIndex.__init__` consistently rank 6–7; k=5 misses them. The `golden_dataset.recommended_k=7` reflects this.
 - **Rank-1 reliability:** BM25 highest (P@1 = 0.769), semantic/hybrid lower (P@1 = 0.692). Always scan all k results before concluding.
 - **When rank-1 is most reliable:** exact symbol lookup, small function discovery ("get X", "validate Y").
 - **When you must scan all results:** class overview, sibling pairs ("encode and decode", "save and load"), queries where module/community summary chunks may surface.

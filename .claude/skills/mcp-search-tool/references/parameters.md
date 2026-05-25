@@ -21,9 +21,9 @@ Covers `code-search:search_code`, `code-search:find_connections`, and `code-sear
 |-----------|---------|-------------|
 | `query` | — | Natural language description. Optional if `chunk_id` given. |
 | `chunk_id` | — | Direct chunk ID for O(1) lookup. Format: `"file:lines:type:name"` |
-| `k` | 4 | Number of results to return. **Recommended: pass `k=5` explicitly** — the engine's 100% Hit@5 benchmark only holds at `k≥5`. Use `k=10` for architectural queries. |
+| `k` | 4 | Number of results to return. **Recommended: pass `k=7` explicitly** — some targets rank 6–7 (SSCG benchmark: Hit@7=100% at k=7 vs Hit@5 misses). Use `k=10` for architectural queries. |
 | `search_mode` | "auto" | "hybrid", "semantic", "bm25", "auto" |
-| `model_key` | — | Force model: "qwen3", "bge_m3", "coderankembed", "gte_modernbert", "c2llm" |
+| `model_key` | — | Force model: "qwen3_0.6b", "bge_m3", "coderankembed", "gte_modernbert" |
 | `use_routing` | true | Enable multi-model query routing |
 | `file_pattern` | — | Filter by filename/path substring (e.g., "auth", "models") |
 | `include_dirs` | — | Whitelist directories, e.g. `["src/"]` |
@@ -95,8 +95,8 @@ code-search:search_code("how does the indexing pipeline work", k=10)
 **Standard 2-step workflow:**
 
 ```text
-# Step 1: Find the symbol (k=5 baseline — see SKILL.md for rationale)
-results = code-search:search_code("chunk_file function", k=5, chunk_type="function")
+# Step 1: Find the symbol (k=7 baseline — see SKILL.md for rationale)
+results = code-search:search_code("chunk_file function", k=7, chunk_type="function")
 chunk_id = results[0]["chunk_id"]  # scan all k results, pick best match
 
 # Step 2: Get all relationships
