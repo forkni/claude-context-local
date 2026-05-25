@@ -42,6 +42,7 @@ class TestVRAMTiers:
             assert tier.recommended_model in [
                 "BAAI/bge-m3",
                 "Qwen/Qwen3-Embedding-0.6B",
+                "jinaai/jina-embeddings-v5-text-small-retrieval",
             ]
             assert len(tier.recommended_model) > 5
 
@@ -69,9 +70,9 @@ class TestVRAMTiers:
         assert desktop.neural_reranking_enabled is True
         assert desktop.multi_model_pool == "full"
         assert desktop.reranker_model == "full"
-        assert workstation.multi_model_enabled is True
+        assert workstation.multi_model_enabled is False
         assert workstation.neural_reranking_enabled is True
-        assert workstation.multi_model_pool == "full"
+        assert workstation.multi_model_pool is None
         assert workstation.reranker_model == "full"
 
 
@@ -158,7 +159,7 @@ class TestVRAMTierManager:
 
             assert tier.name == "workstation"
             assert tier.recommended_model == "Qwen/Qwen3-Embedding-0.6B"
-            assert tier.multi_model_enabled is True
+            assert tier.multi_model_enabled is False
             assert tier.neural_reranking_enabled is True
 
     def test_detect_tier_caching(self):

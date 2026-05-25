@@ -82,7 +82,7 @@ def _create_indexer_for_model(
     """Create indexer and embedder for a specific model.
 
     Args:
-        model_key: The model key (e.g., 'qwen3', 'bge_m3') or None for default
+        model_key: The model key (e.g., 'qwen3_0.6b', 'bge_m3') or None for default
         directory_path: Path to the project directory
         index_dir: Path to store the index
 
@@ -319,14 +319,6 @@ def _index_with_all_models(
 
         pool_config = get_model_pool_manager().get_pool_config()
         for model_key, model_name in pool_config.items():
-            # Apply VRAM tier selection for qwen3 (selects 0.6B/4B/8B based on available VRAM)
-            if model_key == "qwen3":
-                from search.vram_manager import VRAMTierManager
-
-                tier = VRAMTierManager().detect_tier()
-                model_name = tier.recommended_model
-                logger.info(f"VRAM tier '{tier.name}' detected: using {model_name}")
-
             logger.info(f"Indexing with model: {model_name} ({model_key})")
 
             # Switch to this model temporarily

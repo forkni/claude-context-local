@@ -34,9 +34,9 @@ class VRAMTier:
 
 # VRAM tier definitions based on GPU capabilities
 # RTX 3060/4060 (8GB) → laptop tier → BGE-M3 with lightweight multi-model option
-# RTX 3060 12GB (12GB) → desktop tier → Qwen3-0.6B (full multi-model pool)
-# RTX 3090 (24GB) → workstation tier → Qwen3-0.6B (full multi-model pool, safety margin)
-# RTX 4090 (24GB) → workstation tier → Qwen3-0.6B (full multi-model pool, safety margin)
+# RTX 3060 12GB (12GB) → desktop tier → Qwen3-0.6B (full multi-model pool, OOM safety)
+# RTX 3090 (24GB) → workstation tier → Qwen3-0.6B (single-model + reranker, ~2.5GB)
+# RTX 4090 (24GB) → workstation tier → Qwen3-0.6B (single-model + reranker, ~2.5GB)
 VRAM_TIERS: list[VRAMTier] = [
     VRAMTier(
         name="minimal",
@@ -72,11 +72,11 @@ VRAM_TIERS: list[VRAMTier] = [
         name="workstation",
         min_vram_gb=18,
         max_vram_gb=999,  # No upper limit
-        recommended_model="Qwen/Qwen3-Embedding-0.6B",  # Use 0.6B for safety margin
-        multi_model_enabled=True,
+        recommended_model="Qwen/Qwen3-Embedding-0.6B",  # 1024d, ~1.1GB VRAM; baseline MRR 0.94
+        multi_model_enabled=False,  # Single-model + reranker mode; no multi-model routing
         neural_reranking_enabled=True,
-        multi_model_pool="full",  # Full 3-model pool (6.8GB)
-        reranker_model="full",  # Full bge-reranker-v2-m3 (1.5GB)
+        multi_model_pool=None,  # Single-model only
+        reranker_model="full",  # Full jina-reranker-v3
     ),
 ]
 
@@ -91,7 +91,7 @@ class VRAMTierManager:
         >>> manager = VRAMTierManager()
         >>> tier = manager.detect_tier()
         >>> print(f"Tier: {tier.name}, Model: {tier.recommended_model}")
-        Tier: desktop, Model: Qwen/Qwen3-Embedding-0.6B
+        Tier: workstation, Model: Qwen/Qwen3-Embedding-0.6B
     """
 
     def __init__(self) -> None:

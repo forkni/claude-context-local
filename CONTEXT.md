@@ -81,6 +81,24 @@ operates after.
 
 ---
 
+## Code model
+
+An embedding model designated for natural-language-to-function-localization retrieval, occupying a named slot in the routing pool alongside the general model. Its job: given a natural-language description of what a piece of code *does* (including long GitHub-issue-style queries), retrieve the specific function or class that matches. Trained on (docstring, function-implementation) pairs, so the query distribution is "describe the behavior → find the function", not "look up by identifier."
+
+Retained in the pool only if a head-to-head benchmark (MRR/Recall vs the general model on a labeled function-localization query set) shows a measurable win. Otherwise dropped in favour of single-model mode.
+
+Current candidate: `CodeRankEmbed` (`nomic-ai/CodeRankEmbed`, 768 d, ≈0.6 GB VRAM). Trained on CoRNStack (docstring→function pairs, 21M examples across Python/Java/JS/PHP/Go/Ruby). State-of-the-art on function localization from GitHub issues (SWE-Bench-Lite Top-10 73.7% retriever+reranker).
+
+---
+
+## General model
+
+The primary embedding model. Handles all queries by default; receives queries that fail to meet the code-model routing threshold. Co-resides with the code model in GPU memory within a project session — no eviction or reload on route switch.
+
+Current model: `Qwen3-Embedding-4B` (`Qwen/Qwen3-Embedding-4B`, 2560 d, ≈10 GB VRAM).
+
+---
+
 ## Merkle-DAG incremental indexing
 
 The indexing strategy that tracks file content via a Merkle DAG

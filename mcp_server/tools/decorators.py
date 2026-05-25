@@ -46,7 +46,7 @@ def error_handler(
 
         >>> @error_handler(
         >>>     "Switch model",
-        >>>     error_context=lambda args: {"available_models": ["qwen3", "bge_m3"]}
+        >>>     error_context=lambda args: {"available_models": ["qwen3_0.6b", "bge_m3"]}
         >>> )
         >>> async def handle_switch_embedding_model(arguments: Dict[str, Any]) -> Dict:
         >>>     # ... business logic ...
