@@ -119,24 +119,41 @@ class TestApplicationStateSyncFromConfig:
             assert state.multi_model_enabled is False
 
     def test_sync_various_env_values(self):
-        """Test sync with various environment variable values."""
+        """Test sync: config False wins over env var True (config can always disable)."""
         config = SearchConfig()
         config.routing.multi_model_enabled = False  # Config says False
 
-        test_cases = [
-            ("true", True),
-            ("1", True),
-            ("yes", True),
-            ("false", False),
-            ("0", False),
-        ]
-
-        for env_value, expected in test_cases:
+        # When config is False, env var cannot override to True
+        for env_value in ("true", "1", "yes", "false", "0"):
             with patch.dict(os.environ, {"CLAUDE_MULTI_MODEL_ENABLED": env_value}):
                 state = get_state()
                 state.sync_from_config(config)
-                assert state.multi_model_enabled == expected, (
-                    f"Failed for env_value={env_value}"
+                assert state.multi_model_enabled is False, (
+                    f"Config False should win over env_value={env_value}"
+                )
+
+    def test_sync_env_enables_when_config_agrees(self):
+        """Test sync: env var True enables multi-model only when config also enables it."""
+        config = SearchConfig()
+        config.routing.multi_model_enabled = True  # Config says True
+
+        true_values = ("true", "1", "yes")
+        false_values = ("false", "0")
+
+        for env_value in true_values:
+            with patch.dict(os.environ, {"CLAUDE_MULTI_MODEL_ENABLED": env_value}):
+                state = get_state()
+                state.sync_from_config(config)
+                assert state.multi_model_enabled is True, (
+                    f"Both config=True and env={env_value} should enable multi-model"
+                )
+
+        for env_value in false_values:
+            with patch.dict(os.environ, {"CLAUDE_MULTI_MODEL_ENABLED": env_value}):
+                state = get_state()
+                state.sync_from_config(config)
+                assert state.multi_model_enabled is False, (
+                    f"env={env_value} should disable multi-model even when config=True"
                 )
 
 
