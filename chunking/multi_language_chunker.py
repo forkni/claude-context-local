@@ -367,7 +367,8 @@ class MultiLanguageChunker:
         if (
             self.call_graph_extractor is None
             or tchunk.language != "python"
-            or chunk.chunk_type not in ("function", "method", "decorated_definition")
+            or chunk.chunk_type
+            not in ("function", "method", "decorated_definition", "split_block")
         ):
             return
 
@@ -421,6 +422,15 @@ class MultiLanguageChunker:
             all_relationships = []
             # Use smart_dedent to properly dedent nested code
             dedented_content = _smart_dedent(tchunk.content)
+
+            # split_block bodies may be syntactically incomplete (dangling else/except).
+            # Restrict extraction to the signature portion, which is always valid Python.
+            if chunk.chunk_type == "split_block":
+                marker_pos = dedented_content.find("# ... (split block)")
+                if marker_pos != -1:
+                    dedented_content = (
+                        dedented_content[:marker_pos].rstrip() + "\n    pass\n"
+                    )
 
             for extractor in self.relationship_extractors:
                 edges = extractor.extract(dedented_content, chunk_metadata)

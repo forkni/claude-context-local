@@ -448,5 +448,96 @@ class TestEdgeCases:
             assert "# ... (split block)" in chunk.content
 
 
+class TestSplitBlockRelationshipExtraction:
+    """split_block chunks must extract relationship edges from their signature."""
+
+    @pytest.fixture
+    def chunker(self):
+        try:
+            from chunking.multi_language_chunker import MultiLanguageChunker
+
+            return MultiLanguageChunker()
+        except Exception:
+            pytest.skip("MultiLanguageChunker unavailable (missing deps)")
+
+    def _make_split_block_tchunk(self, signature: str, body_fragment: str):
+        from chunking.languages.base import TreeSitterChunk
+
+        content = f"{signature}\n    # ... (split block)\n{body_fragment}"
+        return TreeSitterChunk(
+            content=content,
+            start_line=10,
+            end_line=50,
+            node_type="split_block",
+            language="python",
+            metadata={},
+        )
+
+    def _make_code_chunk(self, name: str = "_process", chunk_type: str = "split_block"):
+        from chunking.python_ast_chunker import CodeChunk
+
+        chunk = CodeChunk.__new__(CodeChunk)
+        chunk.name = name
+        chunk.chunk_type = chunk_type
+        chunk.relative_path = "search/indexer.py"
+        chunk.parent_name = "Indexer"
+        chunk.relationships = []
+        return chunk
+
+    def test_split_block_extracts_type_annotations_from_signature(self, chunker):
+        """split_block with typed signature gets uses_type edges despite incomplete body."""
+        signature = (
+            "def _process(\n"
+            "    self,\n"
+            "    entry: RelationshipEntry,\n"
+            "    should_include: Any,\n"
+            ") -> dict[str, Any] | None:"
+        )
+        # Dangling else — would cause SyntaxError on ast.parse without the fix
+        body = "    else:\n        return None\n"
+
+        tchunk = self._make_split_block_tchunk(signature, body)
+        chunk = self._make_code_chunk()
+        chunk_id = "search/indexer.py:10-50:split_block:Indexer._process#1"
+
+        chunker._extract_phase3_relationships(chunk, tchunk, chunk_id)
+
+        rel_targets = {r.target_name for r in chunk.relationships}
+        assert rel_targets & {"RelationshipEntry", "Any"}, (
+            f"Expected type annotations in relationships, got: {rel_targets}"
+        )
+
+    def test_split_block_no_crash_on_incomplete_body(self, chunker):
+        """_extract_phase3_relationships must not raise even with broken body."""
+        signature = "def _run(self, items: list[str]) -> None:"
+        body = "    except ValueError:\n        raise\n    finally:\n"
+
+        tchunk = self._make_split_block_tchunk(signature, body)
+        chunk = self._make_code_chunk("_run")
+        chunk_id = "search/indexer.py:10-50:split_block:Indexer._run#1"
+
+        chunker._extract_phase3_relationships(chunk, tchunk, chunk_id)
+        assert isinstance(chunk.relationships, list)
+
+    def test_regular_method_extraction_unchanged(self, chunker):
+        """Non-split_block method extraction is unaffected by the fix."""
+        from chunking.languages.base import TreeSitterChunk
+
+        code = "def compute(self, value: int) -> str:\n    return str(value)\n"
+        tchunk = TreeSitterChunk(
+            content=code,
+            start_line=1,
+            end_line=3,
+            node_type="method",
+            language="python",
+            metadata={},
+        )
+        chunk = self._make_code_chunk("compute", chunk_type="method")
+        chunk_id = "search/indexer.py:1-3:method:Indexer.compute"
+
+        chunker._extract_phase3_relationships(chunk, tchunk, chunk_id)
+        assert isinstance(chunk.relationships, list)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

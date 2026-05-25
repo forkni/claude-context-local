@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.12.1] - 2026-05-25
+
+### Added
+
+- **ANSI color output in MCP server console** (`mcp_server/server.py`) — stage markers print in blue, warnings in yellow, errors in red for easier log scanning.
+
+### Fixed
+
+- **Starlette `redirect_slashes` 307 on POST `/mcp`** (`mcp_server/server.py`) — ASGI wrapper intercepts trailing-slash redirects before Starlette issues a 307, preventing clients from switching to GET and breaking the StreamableHTTP handshake.
+- **Call graph edges missing for `split_block` chunks** (`chunking/multi_language_chunker.py`) — added `"split_block"` to the call-extraction allowlist; large methods that are split at AST boundaries now generate call edges for all body fragments.
+- **Relationship edges (`uses_type`, `imports`, etc.) missing for `split_block` chunks** (`chunking/multi_language_chunker.py`) — `_extract_phase3_relationships` now restricts extraction to the signature portion (before the `# ... (split block)` marker) and appends `pass` to make it syntactically valid for `ast.parse`. Previously, incomplete body fragments (dangling `else:`/`except:`) triggered a silent `SyntaxError → return []`, leaving all split_block nodes with zero relationship edges in the graph (+584 new edges after re-index).
+
+### Changed
+
+- **`CodeRelationshipAnalyzer` moved to search layer** — business logic extracted from `mcp_server/tools/code_relationship_analyzer.py` (now a backward-compat shim re-exporting `RelationshipAnalyzer`) to `search/relationship_analyzer.py`, with a new `GraphQueryEngine` seam (`graph/graph_queries.py`) and shared types (`search/types.py`).
+
+### Security
+
+- Dependency audit 2026-05-25: `pip ≥ 26.1.1` (CVE-2026-3219, CVE-2026-6357), `pillow ≥ 12.2.0` (CVE-2026-40192, CVE-2026-42308, CVE-2026-42309, CVE-2026-42310, CVE-2026-42311), `python-multipart ≥ 0.0.27` (CVE-2026-42561). Three advisories remain deferred: sqlitedict CVE-2024-35515 (mitigated), transformers 2×RCE (blocked by optimum-onnx pin), starlette host-header injection (low risk).
+
+---
+
 ## [0.12.0] - 2026-05-25
 
 ### Changed

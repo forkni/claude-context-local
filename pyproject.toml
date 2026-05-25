@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-context-local"
-version = "0.12.0"
+version = "0.12.1"
 description = "Local semantic code search for Claude Code (MCP) using multi-model routing (Qwen3, BGE-M3, CodeRankEmbed), FAISS, and AST/tree-sitter chunking. 100% local embeddings and indexing."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -115,8 +115,8 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2026-04-16 (pip-audit - 2 advisories: sqlitedict CVE-2024-35515 mitigated,
-#             transformers CVE-2026-1839 blocked by optimum-onnx <4.58.0 pin)
+# Last audit: 2026-05-25 (pip-audit - 3 advisories remain: sqlitedict CVE-2024-35515 mitigated,
+#             transformers 2×RCE blocked by optimum-onnx <4.58.0 pin, starlette host-header injection deferred)
 #
 # Direct dependency security updates:
 # mcp>=1.27.0        # Fixes CVE-2025-66416 (DNS rebinding vulnerability)
@@ -124,25 +124,34 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # aiohttp>=3.13.5    # Fixes CVE-2025-69223 through CVE-2025-69230
 #
 # Transitive dependency security updates:
-# pip>=26.0.1              # Fixes CVE-2025-8869 (tarfile path traversal), CVE-2026-1703
-# python-multipart>=0.0.26 # Fixes CVE-2026-24486 (path traversal), CVE-2026-40347 (DoS in multipart parser)
+# pip>=26.1.1              # Fixes CVE-2025-8869, CVE-2026-1703, CVE-2026-3219, CVE-2026-6357
+# pillow>=12.2.0           # Fixes CVE-2026-40192, CVE-2026-42308, CVE-2026-42309, CVE-2026-42310, CVE-2026-42311
+# python-multipart>=0.0.27 # Fixes CVE-2026-24486, CVE-2026-40347, CVE-2026-42561 (DoS in multipart parser)
 # pygments>=2.20.0         # Fixes CVE-2026-4539 (ReDoS in AdlLexer)
 # pyjwt>=2.12.0            # Fixes CVE-2026-32597 (JWS crit header not validated)
-# requests>=2.33.0         # Fixes CVE-2026-25645 (predictable tempfile name)
-# starlette>=0.51.0        # Fixes CVE (version: 0.47.3 → 0.51.0)
+# requests>=2.34.2         # Fixes CVE-2026-25645 (predictable tempfile name)
+# starlette>=0.51.0        # Fixes CVE (0.47.3 → 0.51.0); 1.0.1 fixes PYSEC-2026-161 host-header injection (deferred: major version)
+# urllib3>=2.7.0           # Fixes CVE-2026-44431 (cross-origin redirect), CVE-2026-44432 (decompression)
 # uv>=0.11.6               # Fixes 2 CVEs (version: 0.8.21 → 0.9.6)
 # werkzeug>=3.1.4          # Fixes CVE-2025-66221 (Windows device name handling)
 # wheel>=0.46.3            # Fixes CVE-2026-24049 (path traversal in unpack)
 #
 # Verification: .venv/Scripts/pip-audit --format json | .venv/Scripts/python.exe tools/summarize_audit.py
 #
+# Safe patch updates (tested 2026-05-25):
+# * python-multipart (0.0.24 -> 0.0.27), pillow (12.1.1 -> 12.2.0), pip (26.0.1 -> 26.1.1).
+# * requests (2.33.1 -> 2.34.2), urllib3 (2.6.3 -> 2.7.0).
+# * Orphan removed: PyPDF2 3.0.1 (deprecated, unused).
+# Tested: 2089 unit tests pass, pip check passed.
+# Remaining CVEs: 3 (sqlitedict CVE-2024-35515 - no upstream fix, mitigated via JSON serialization in metadata.py;
+#                    transformers CVE-2026-1839 + PYSEC-2025-217 - fix requires 5.0.0rc3, blocked by optimum-onnx <4.58.0 pin;
+#                    starlette PYSEC-2026-161 - fix requires 1.0.1 (major version), deferred for ASGI compatibility testing).
+#
 # Safe patch updates (tested 2026-04-16):
 # * pygments (2.19.2 -> 2.20.0), pyjwt (2.10.1 -> 2.12.0), requests (2.32.5 -> 2.33.0).
 # * python-multipart (0.0.22 -> 0.0.26).
 # * Orphans removed: cryptography, typer-slim, shellingham (no dependents; eliminated 2 CVEs).
 # Tested: 1987 unit tests pass, pip check passed.
-# Remaining CVEs: 2 (sqlitedict CVE-2024-35515 - no upstream fix, mitigated via JSON serialization in metadata.py;
-#                    transformers CVE-2026-1839 - fix requires 5.0.0rc3, blocked by optimum-onnx <4.58.0 pin).
 
 [tool.uv]
 index-url = "https://pypi.org/simple"

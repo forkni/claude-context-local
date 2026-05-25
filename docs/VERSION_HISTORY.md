@@ -4,13 +4,33 @@ Complete version history and feature timeline for claude-context-local MCP serve
 
 ## Current Status: All Features Operational (2026-05-25)
 
-- **Version**: 0.12.0
+- **Version**: 0.12.1
 - **Status**: Production-ready
-- **Test Coverage**: 2,044 unit tests + 8 integration tests (100% pass rate)
+- **Test Coverage**: 2,090 unit tests + 8 integration tests (100% pass rate)
 - **Dependencies**: 124 packages + optional `onnxruntime-gpu` for ONNX backend
 - **SSCG Benchmark**: Best MRR=0.846 (BM25), Hybrid Recall@10=0.833, all modes 13/13 Hit@5
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent**: 0.12.0 — StreamableHTTP transport replaces legacy SSE; single `/mcp` endpoint; stateless mode; client config `{"type": "http", "url": "http://localhost:8765/mcp"}`
+- **Recent**: 0.12.1 — split_block graph edges fixed (+584 relationship edges), ANSI console colors, `CodeRelationshipAnalyzer` moved to search layer, security audit
+
+---
+
+## v0.12.1 - Graph Edge Fixes + Search Layer Refactor (2026-05-25)
+
+Patch release fixing missing call and relationship edges for `split_block` chunks, ASGI transport stability, and a search-layer refactor.
+
+### Added
+- ANSI color output in MCP server console (`mcp_server/server.py`): blue=stages, yellow=warnings, red=errors.
+
+### Fixed
+- **split_block call edges** (`chunking/multi_language_chunker.py`): `"split_block"` added to call-extraction allowlist — large methods split at AST boundaries now generate call edges for all fragments.
+- **split_block relationship edges** (`chunking/multi_language_chunker.py`): `_extract_phase3_relationships` extracts from signature-only content for split_blocks, making it parseable. Result: +584 `uses_type`/`imports` edges after re-index.
+- **Starlette 307 on POST `/mcp`** (`mcp_server/server.py`): ASGI wrapper blocks `redirect_slashes` before Starlette issues a 307.
+
+### Changed
+- `CodeRelationshipAnalyzer` moved from `mcp_server/tools/` to `search/relationship_analyzer.py` with `GraphQueryEngine` seam (`graph/graph_queries.py`) and shared types (`search/types.py`). Old path is a backward-compat shim.
+
+### Security
+- `pip ≥ 26.1.1`, `pillow ≥ 12.2.0`, `python-multipart ≥ 0.0.27` (2026-05-25 audit, 13 CVEs resolved).
 
 ---
 

@@ -51,7 +51,7 @@ from mcp_server.model_pool_manager import (  # noqa: E402
 from mcp_server.output_formatter import format_response  # noqa: E402
 
 
-# Configure logging — dual-handler: console (existing behavior) + rotating file
+# Configure logging — dual-handler: console (colored) + rotating file (plain)
 debug_mode = os.getenv("MCP_DEBUG", "").lower() in ("1", "true", "yes")
 log_level = logging.DEBUG if debug_mode else logging.INFO
 console_format = (
@@ -64,6 +64,73 @@ file_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 _log_dir = PROJECT_ROOT / "logs"
 _log_path = _log_dir / "mcp_server.log"
 _SESSION_START = datetime.now().strftime("%m%d%y%H%M%S")
+
+# ANSI color codes
+_ANSI_RED = "\033[91m"
+_ANSI_YELLOW = "\033[93m"
+_ANSI_BLUE = "\033[94m"
+_ANSI_RESET = "\033[0m"
+
+# Stage-completion keywords → blue in console output
+_STAGE_KEYWORDS: frozenset[str] = frozenset(
+    [
+        "✓",
+        "ready",
+        "complete",
+        "loaded",
+        "startup",
+        "starting",
+        "shutdown",
+        "initialized",
+        "indexed",
+        "built",
+        "preload",
+        "pre-load",
+        "[tool_call]",
+        "[tool_cancelled]",
+        "[resource_read]",
+        "[prompt_get]",
+        "[init]",
+        "[http cleanup]",
+        "[http config]",
+        "[shutdown]",
+        "[switch_project]",
+    ]
+)
+
+
+def _enable_windows_ansi() -> None:
+    """Enable ANSI Virtual Terminal Processing on Windows CMD."""
+    if platform.system() != "Windows":
+        return
+    try:
+        import ctypes
+
+        # STD_OUTPUT_HANDLE=-11, STD_ERROR_HANDLE=-12; ENABLE_VIRTUAL_TERMINAL_PROCESSING=0x0004
+        kernel32 = ctypes.windll.kernel32
+        for std_handle in (-11, -12):
+            handle = kernel32.GetStdHandle(std_handle)
+            mode = ctypes.c_ulong(0)
+            if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+                kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+    except Exception:
+        pass
+
+
+class _ColorFormatter(logging.Formatter):
+    """Console formatter: ERROR/CRITICAL→red, WARNING→yellow, stage INFO→blue."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        text = super().format(record)
+        if record.levelno >= logging.ERROR:
+            return f"{_ANSI_RED}{text}{_ANSI_RESET}"
+        if record.levelno == logging.WARNING:
+            return f"{_ANSI_YELLOW}{text}{_ANSI_RESET}"
+        if record.levelno == logging.INFO:
+            msg_lower = record.getMessage().lower()
+            if any(kw in msg_lower for kw in _STAGE_KEYWORDS):
+                return f"{_ANSI_BLUE}{text}{_ANSI_RESET}"
+        return text
 
 
 class _SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
@@ -98,9 +165,11 @@ def _configure_logging() -> None:
     if getattr(root, "_code_search_logging_configured", False):
         return
 
+    _enable_windows_ansi()
+
     console_handler = logging.StreamHandler()
     console_handler.setLevel(log_level)
-    console_handler.setFormatter(logging.Formatter(console_format, datefmt="%H:%M:%S"))
+    console_handler.setFormatter(_ColorFormatter(console_format, datefmt="%H:%M:%S"))
 
     _log_dir.mkdir(parents=True, exist_ok=True)
     file_handler = _SafeRotatingFileHandler(
@@ -112,7 +181,7 @@ def _configure_logging() -> None:
     root.setLevel(logging.DEBUG)
     root.addHandler(console_handler)
     root.addHandler(file_handler)
-    root._code_search_logging_configured = True
+    root._code_search_logging_configured = True  # type: ignore[attr-defined]
 
 
 _configure_logging()
@@ -425,7 +494,7 @@ if __name__ == "__main__":
             from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
             from starlette.applications import Starlette
             from starlette.responses import JSONResponse
-            from starlette.routing import Mount, Route
+            from starlette.routing import Route
 
             # Create StreamableHTTP session manager (stateless: one transport per request,
             # no mcp-session-id bookkeeping; json_response: plain JSON body, no SSE framing)
@@ -593,9 +662,13 @@ if __name__ == "__main__":
                     _cleanup_previous_resources()
                     logger.info("[SHUTDOWN] Cleanup complete")
 
-            # Define routes: /mcp (StreamableHTTP) + POST /cleanup + POST /reload_config + POST /switch_project
+            # Define routes: POST /cleanup + POST /reload_config + POST /switch_project
+            # NOTE: /mcp is intentionally NOT in the Starlette routes list.
+            # Mount("/mcp", ...) causes Starlette's redirect_slashes Router logic to
+            # issue a 307 on exact "POST /mcp" (no trailing slash), because the Mount
+            # regex /mcp/{path:path} requires trailing content. We bypass this by
+            # intercepting /mcp at the ASGI level in asgi_app below.
             routes = [
-                Mount("/mcp", app=handle_mcp),
                 Route("/cleanup", endpoint=handle_cleanup, methods=["POST"]),
                 Route(
                     "/reload_config", endpoint=handle_reload_config, methods=["POST"]
@@ -610,6 +683,17 @@ if __name__ == "__main__":
             # pyrefly: ignore [bad-argument-type]
             starlette_app = Starlette(routes=routes, lifespan=app_lifespan)
 
+            # Top-level ASGI app: routes /mcp directly to StreamableHTTP before
+            # Starlette routing sees it (avoids the 307 redirect described above).
+            # Lifespan events fall through to starlette_app which owns the context.
+            async def asgi_app(scope: Any, receive: Any, send: Any) -> None:
+                if scope.get("type") == "http":
+                    path = scope.get("path", "")
+                    if path == "/mcp" or path.startswith("/mcp/"):
+                        await handle_mcp(scope, receive, send)
+                        return
+                await starlette_app(scope, receive, send)
+
             # Run server with Windows-specific event loop handling
             logger.info(f"Starting HTTP server on {args.host}:{args.port}")
             logger.info(f"HTTP endpoint: http://{args.host}:{args.port}/mcp")
@@ -623,7 +707,7 @@ if __name__ == "__main__":
 
             # Uvicorn config (explicit asyncio loop, not uvloop)
             config = uvicorn.Config(
-                starlette_app,
+                asgi_app,
                 host=args.host,
                 port=args.port,
                 timeout_keep_alive=120,  # 2 minutes (default: 5s)

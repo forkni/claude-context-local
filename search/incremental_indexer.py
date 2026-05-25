@@ -1194,6 +1194,8 @@ class IncrementalIndexer:
             return
 
         graph = GraphIntegration(project_id=project_id, storage_dir=storage_dir)
+        if graph.storage is None:
+            return
         community_map = graph.storage.load_community_map()
         if community_map is None:
             logger.debug(

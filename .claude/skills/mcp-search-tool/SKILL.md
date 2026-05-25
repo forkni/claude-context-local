@@ -154,7 +154,7 @@ Failing to sort is why a result at array position 0 isn't always rank-1.
 
 **`ego_graph.enabled=True` in the live config even though the EgoGraphConfig dataclass default is `False`.** The server reads `search_config.json`, which ships with `"ego_graph": {"enabled": true}`. The Python default is irrelevant once the JSON is loaded. Verify with `get_search_config().ego_graph.enabled`.
 
-**`split_block` variants of the same function are one logical hit.** A long function chunked into `split_block` pieces (e.g. `file.py:10-40:split_block:fn` and `file.py:41-80:split_block:fn`) should count as one unique chunk in Recall/Hit metrics. Normalize and deduplicate by stripping the line-range portion: `file.py:10-40:type:name` → `file.py:type:name`.
+**`split_block` variants of the same function are one logical hit.** A long function chunked into `split_block` pieces (e.g. `file.py:10-40:split_block:fn` and `file.py:41-80:split_block:fn`) should count as one unique chunk in Recall/Hit metrics. Normalize and deduplicate by stripping the line-range portion: `file.py:10-40:type:name` → `file.py:type:name`. As of v0.12.1, split_block nodes carry full `uses_type`/`imports` relationship edges extracted from the method signature — `find_connections` will return these edges.
 
 **Community and module summary chunks surface at rank-1 on class-overview queries.** They have IDs like `__community__/label:0-0:community:label` or `file.py:0-0:module:name`. Add `chunk_type="function"` or `chunk_type="class"` to filter them when you need a specific implementation.
 
@@ -172,7 +172,7 @@ Failing to sort is why a result at array position 0 isn't always rank-1.
 | **Bad results** | Try different mode: hybrid → semantic → bm25. Add filters: `file_pattern`, `chunk_type`. Increase k |
 | **Wrong result at rank-1** | Scan all k results — answer likely at rank 2-4. Use `chunk_type` filter to exclude module/community summary chunks |
 | **Too slow** | Use `search_mode="bm25"` for exact symbols (fastest). Check: `code-search:get_memory_status`. Free: `code-search:cleanup_resources` |
-| **Memory issues** | `code-search:cleanup_resources`. Smaller model: `code-search:switch_embedding_model("google/embeddinggemma-300m")` |
+| **Memory issues** | `code-search:cleanup_resources`. Switch to a lighter model: `code-search:switch_embedding_model("google/embeddinggemma-300m")` (~1.2GB, default) or `code-search:switch_embedding_model("Alibaba-NLP/gte-modernbert-base")` (0.28GB, lightest) |
 
 ---
 

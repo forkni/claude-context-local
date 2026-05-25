@@ -13,7 +13,7 @@ from pathlib import Path
 MODEL_REGISTRY = {
     "google/embeddinggemma-300m": {
         "dim": 768,
-        "vram": "4-8GB",
+        "vram": "~1.2GB",
         "short": "embeddinggemma-300m",
     },
     "BAAI/bge-m3": {"dim": 1024, "vram": "1-1.5GB", "short": "bge-m3"},
