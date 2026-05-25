@@ -49,7 +49,7 @@ MODEL_REGISTRY = {
         "max_context": 2048,
         "passage_prefix": "Retrieval-document: ",
         "description": "Default model, fast and efficient",
-        "vram_gb": "4-8GB",
+        "vram_gb": "~1.2GB",  # 300M params @FP16 ≈0.6GB weights + buffers; original "4-8GB" was stale estimate
         "fallback_batch_size": 128,  # Used when dynamic sizing disabled
         "onnx_pooling": "mean",  # Gemma uses mean pooling
     },

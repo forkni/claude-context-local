@@ -172,7 +172,7 @@ Failing to sort is why a result at array position 0 isn't always rank-1.
 | **Bad results** | Try different mode: hybrid → semantic → bm25. Add filters: `file_pattern`, `chunk_type`. Increase k |
 | **Wrong result at rank-1** | Scan all k results — answer likely at rank 2-4. Use `chunk_type` filter to exclude module/community summary chunks |
 | **Too slow** | Use `search_mode="bm25"` for exact symbols (fastest). Check: `code-search:get_memory_status`. Free: `code-search:cleanup_resources` |
-| **Memory issues** | `code-search:cleanup_resources`. Switch to a lighter model — the default (`google/embeddinggemma-300m`) uses 4-8GB VRAM. Lighter options: `code-search:switch_embedding_model("BAAI/bge-m3")` (1-1.5GB) or `code-search:switch_embedding_model("Alibaba-NLP/gte-modernbert-base")` (0.28GB) |
+| **Memory issues** | `code-search:cleanup_resources`. Switch to a lighter model: `code-search:switch_embedding_model("google/embeddinggemma-300m")` (~1.2GB, default) or `code-search:switch_embedding_model("Alibaba-NLP/gte-modernbert-base")` (0.28GB, lightest) |
 
 ---
 
