@@ -72,7 +72,7 @@ class TestGetModelKeyFromName:
         mgr = _make_pool_manager_with_active_pool(MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED)
         with patch.object(mpm, "_model_pool_manager", mgr):
             key = mpm.get_model_key_from_name("Qwen/Qwen3-Embedding-0.6B")
-        assert key == "qwen3"
+        assert key == "qwen3_0.6b"
 
     def test_unknown_model_returns_none(self):
         """A model not registered in any pool returns None (no crash)."""
@@ -86,7 +86,7 @@ class TestGetModelKeyFromName:
     def test_all_pool_models_contains_both_pools(self):
         """ALL_POOL_MODELS is the union of both pool dicts (sanity check)."""
         assert "coderankembed" in ALL_POOL_MODELS
-        assert "qwen3" in ALL_POOL_MODELS
+        assert "qwen3_0.6b" in ALL_POOL_MODELS
         assert "gte_modernbert" in ALL_POOL_MODELS
         assert "bge_m3" in ALL_POOL_MODELS
 

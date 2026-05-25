@@ -148,11 +148,11 @@ class TestMultiModelCleanupBeforeReindex:
 
         # Load all models in the pool by requesting them
         # Note: full pool has qwen3 + bge_code
-        embedder_qwen3 = pool_manager.get_embedder("qwen3")
+        embedder_qwen3 = pool_manager.get_embedder("qwen3_0.6b")
         pool_manager.get_embedder("bge_code")  # Load but don't need reference
 
         # Verify all models loaded
-        assert state.embedders.get("qwen3") is not None
+        assert state.embedders.get("qwen3_0.6b") is not None
         assert state.embedders.get("bge_code") is not None
         initial_count = len(state.embedders)
         assert initial_count >= 2
@@ -237,7 +237,7 @@ class TestNoOOMDuringReindex:
 
         # Load all 2 models in full pool
         pool_manager.initialize_pool(lazy_load=True)
-        embedder_qwen3 = pool_manager.get_embedder("qwen3")
+        embedder_qwen3 = pool_manager.get_embedder("qwen3_0.6b")
         _ = embedder_qwen3.model  # Force model loading into VRAM
         embedder_bge_code = pool_manager.get_embedder("bge_code")
         _ = embedder_bge_code.model  # Force model loading into VRAM

@@ -106,7 +106,7 @@ class TestSaveProjectSelection:
         project_path = str(mock_storage_env / "test_project")
         Path(project_path).mkdir(parents=True, exist_ok=True)
 
-        save_project_selection(project_path, model_key="qwen3")
+        save_project_selection(project_path, model_key="qwen3_0.6b")
 
         selection_file = get_selection_file_path()
         with open(selection_file) as f:
@@ -332,13 +332,13 @@ class TestIntegrationScenarios:
         Path(project_path).mkdir(parents=True, exist_ok=True)
 
         # Save
-        assert save_project_selection(project_path, model_key="qwen3") is True
+        assert save_project_selection(project_path, model_key="qwen3_0.6b") is True
 
         # Load
         selection = load_project_selection()
         assert selection is not None
         assert "test_project" in selection["last_project_path"]
-        assert selection["last_model_key"] == "qwen3"
+        assert selection["last_model_key"] == "qwen3_0.6b"
 
         # Clear
         assert clear_project_selection() is True
@@ -357,12 +357,12 @@ class TestIntegrationScenarios:
         save_project_selection(project1, model_key="bge_m3")
 
         # Save second project (should overwrite)
-        save_project_selection(project2, model_key="qwen3")
+        save_project_selection(project2, model_key="qwen3_0.6b")
 
         # Load should return second project
         selection = load_project_selection()
         assert "project2" in selection["last_project_path"]
-        assert selection["last_model_key"] == "qwen3"
+        assert selection["last_model_key"] == "qwen3_0.6b"
 
     def test_save_without_model_key(self, mock_storage_env):
         """Test saving without model key (None value)."""

@@ -116,8 +116,10 @@ class TestGetterFunctions:
         state.searcher = None
 
         # Step 1: Simulate routing selecting a model (like handle_search_code does)
-        searcher1 = server.get_searcher(model_key="qwen3")
-        assert state.current_model_key == "qwen3", "Routing should set model to qwen3"
+        searcher1 = server.get_searcher(model_key="qwen3_0.6b")
+        assert state.current_model_key == "qwen3_0.6b", (
+            "Routing should set model to qwen3"
+        )
         assert searcher1 is mock_searcher_instance
 
         # Step 2: Call get_searcher without model_key (like follow-up operations do)
@@ -125,7 +127,7 @@ class TestGetterFunctions:
         searcher2 = server.get_searcher()
 
         # Verify model was preserved
-        assert state.current_model_key == "qwen3", (
+        assert state.current_model_key == "qwen3_0.6b", (
             "Model should be preserved when model_key=None, not reset"
         )
 
