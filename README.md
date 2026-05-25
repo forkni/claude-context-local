@@ -28,7 +28,7 @@
 
 ## Highlights
 
-- **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-04-10, 13 queries, k=10; cutoffs @5/@10): **Hit@5 100%, MRR 0.80, R@10 0.83 (best deep recall)** - [benchmarks](docs/BENCHMARKS.md)
+- **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-05-25, 13 queries, k=7): **Hit@7 100%, MRR 0.806, Recall@7 0.700 (recommended k=7)** - [benchmarks](docs/BENCHMARKS.md)
 - **Neural Reranking**: Cross-encoder models (gte-reranker-modernbert-base OR BGE-reranker-v2-m3 OR Jina-reranker-v2) improve ranking quality by 5-15% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
 - **SSCG Integration**: Structural-Semantic Code Graph — on the [SSCG benchmark](#benchmark-results) (2026-04-10, 13 queries, k=10; cutoffs @5/@10): **13/13 Hit@5 across all three modes (hybrid, BM25, semantic); BM25 MRR=0.846 (best overall)**
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
@@ -43,14 +43,16 @@
 
 **Status**: ✅ Production-ready | 2,086+ passing tests | All 19 MCP tools operational | Windows 10/11
 
-## What's New in v0.11.9
+## What's New in v0.11.10
 
-- **Opt-in OTel tracing** — zero-overhead `traced_block` / `@timed` spans across search and index pipeline; install with `pip install -e ".[otel]"`. See [Observability guide](docs/OBSERVABILITY.md).
-- **Incremental community-summary refresh** — changed-file threshold controls whether only affected community chunks are rebuilt (fast path) or a full re-index runs (redetect threshold). Eliminates silent stale summaries on incremental runs.
-- **`SummaryStage` class** — testable extraction of the two-phase community/file summary ordering invariant from `_full_index`.
-- **Persistent file logging** — crash tracebacks now survive window scroll in `logs/mcp_server_<mmddyyhhmmss>.log` (session-timestamped rotation, no numeric suffix).
-- **Spinner encoding fix** — no more `UnicodeEncodeError` on Windows when stdout is redirected to a cp1252 stream.
-- **Bug fixes** — community-summary `TypeError` that escalated every incremental run to a full re-index; duplicate `RotatingFileHandler` from the `-m` double-import trap; `WinError 32` log-rotation spam; `shutdown_observability()` permanently disabling OTel before indexing; `logs/` triggering spurious "Modified: 1" in the Merkle DAG.
+- **Workstation tier → single-model + reranker** — Qwen3-0.6B (1024d, ~2.5 GB VRAM), `multi_model_enabled=false`, `multi_model_pool=null`. Eliminates OOM headroom concerns on 24 GB cards; baseline MRR 0.94 unchanged.
+- **Pool key disambiguation** — key renamed `qwen3` → `qwen3_0.6b` (parameter-specific), stopping the 4B/0.6B query-vs-index dimension mismatch.
+- **Auto-reindex loop fix** — `search_config.json` mtime changes no longer trigger an immediate re-index on every request.
+- **Config env-var precedence fix** — explicit `multi_model_enabled: false` in `search_config.json` now correctly wins over `CLAUDE_MULTI_MODEL_ENABLED`.
+- **Phase-A model-comparison harness** — `scripts/benchmark/compare_models.py` + `compare_models.sh` for side-by-side SSCG evaluation of multiple embedding models.
+- **Golden-dataset corrections + k=7 benchmark** — label fixes for Q01/Q05/Q19; SSCG re-run at k=7: MRR 0.806, Recall@5 0.646, Hit@7 100% (+0.203 MRR vs pre-fix baseline).
+
+Previous release notes: [CHANGELOG.md](CHANGELOG.md)
 
 ## Quick Start
 
@@ -428,9 +430,17 @@ claude-context-local/
 
 ## Benchmark Results
 
-### SSCG Evaluation (2026-04-10, three-mode)
+### Latest Validation (2026-05-25, hybrid k=7)
 
-Evaluated against 13 queries across 4 categories (A/B/C/D) on the project's own codebase. All three search modes pass all thresholds (MRR ≥ 0.50, Recall@5 ≥ 0.55, Hit@5 ≥ 0.80):
+Post-label-fix single-mode run. Recommended operating point: **k=7** (`golden_dataset.recommended_k=7`).
+
+| MRR | Recall@5 | Recall@7 | Hit@7 | vs pre-fix baseline (k=5) |
+|-----|----------|----------|-------|---------------------------|
+| **0.806** | **0.646** | **0.700** | **13/13 (100%)** | +0.203 MRR, +0.108 Recall@5 |
+
+### SSCG Mode Comparison (2026-04-10, three-mode, k=10)
+
+All three modes evaluated against 13 queries; cutoffs reported at @5/@10. All pass thresholds (MRR ≥ 0.50, Recall@5 ≥ 0.55, Hit@5 ≥ 0.80):
 
 | Mode | MRR | Recall@5 | Recall@10 | Hit@5 | NDCG@10 | Best category |
 |------|-----|----------|-----------|-------|---------|---------------|
