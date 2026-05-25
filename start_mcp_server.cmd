@@ -528,13 +528,6 @@ goto configure_summary_chunks
 echo.
 echo === Project Management ===
 echo.
-REM Check if multi-model mode is enabled
-set "MULTI_MODEL_STATUS=Disabled"
-if "%CLAUDE_MULTI_MODEL_ENABLED%"=="true" set "MULTI_MODEL_STATUS=Enabled"
-if "%CLAUDE_MULTI_MODEL_ENABLED%"=="1" set "MULTI_MODEL_STATUS=Enabled"
-
-echo [Multi-Model Mode: %MULTI_MODEL_STATUS%]
-echo.
 echo   1. Index New Project
 echo   2. Re-index Existing Project ^(Incremental^)
 echo   3. Force Re-index Existing Project ^(Full^)
@@ -544,10 +537,6 @@ echo   6. Clear Project Indexes
 echo   7. View Storage Statistics
 echo   0. Back to Main Menu
 echo.
-if "%MULTI_MODEL_STATUS%"=="Enabled" (
-    echo   Note: Indexing will update ALL models ^(Qwen3, BGE-M3, CodeRankEmbed^)
-    echo.
-)
 set "pm_choice="
 set /p pm_choice="Select option (0-7): "
 
@@ -1323,17 +1312,14 @@ echo.
 echo   3. Lightweight Multi-Model ^(1.65GB^)
 echo      BGE-M3 + gte-modernbert, smart routing
 echo.
-echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+^)
-echo   4. Qwen3-0.6B ^(1024d, 2.3GB^)
-echo      High efficiency, best value/performance
-echo.
-echo   5. Full Multi-Model Routing ^(~10.6GB^)
-echo      CodeRankEmbed + Qwen3-4B, smart routing
+echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+, RTX 4090^)
+echo   4. jina-embeddings-v5-small ^(1024d, ~1.5GB^)
+echo      Single model + Jina v3 reranker ^(distilled from Qwen3-4B^)
 echo.
 echo   0. Back to Search Configuration
 echo.
 set "model_choice="
-set /p model_choice="Select model (0-5): "
+set /p model_choice="Select model (0-4): "
 
 if not defined model_choice goto search_config_menu
 if "!model_choice!"=="" goto search_config_menu
@@ -1343,13 +1329,12 @@ set "SELECTED_MODEL="
 if "!model_choice!"=="1" set "SELECTED_MODEL=BAAI/bge-m3"
 if "!model_choice!"=="2" set "SELECTED_MODEL=google/embeddinggemma-300m"
 if "!model_choice!"=="3" goto enable_lightweight_speed
-if "!model_choice!"=="4" set "SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B"
-if "!model_choice!"=="5" goto enable_multi_model
+if "!model_choice!"=="4" set "SELECTED_MODEL=jinaai/jina-embeddings-v5-text-small-retrieval"
 
 if defined SELECTED_MODEL (
     echo.
     echo [INFO] Configuring model: !SELECTED_MODEL!
-    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding.model_name = '!SELECTED_MODEL!'; cfg.routing.multi_model_enabled = False; mgr.save_config(cfg); print('[OK] Model configuration saved')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager, MODEL_REGISTRY; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding.model_name = '!SELECTED_MODEL!'; cfg.embedding.dimension = MODEL_REGISTRY['!SELECTED_MODEL!']['dimension']; cfg.routing.multi_model_enabled = False; mgr.save_config(cfg); print('[OK] Model configuration saved')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
@@ -1368,46 +1353,7 @@ if defined SELECTED_MODEL (
 ) else (
     echo [ERROR] Invalid choice
 )
-pause
-goto search_config_menu
-
-:enable_multi_model
-echo.
-echo === Enable Multi-Model Routing ===
-echo.
-echo This will enable intelligent query routing across:
-echo   - CodeRankEmbed ^(768d, ~0.6GB^) - Function localization, navigational queries
-echo   - Qwen3-4B ^(2560d, ~10GB^) - Semantic discovery, MTEB rank #3 ^(80.07^)
-echo.
-echo Total VRAM: ~10.6GB
-echo Routing Accuracy: 100%% ^(validated^)
-echo Performance: MTEB code retrieval rank #3, 2560d embeddings
-echo.
-echo [WARNING] Requires 12GB+ VRAM ^(RTX 3080+, RTX 4070+, RTX 4090^).
-echo For 8GB GPUs, choose option 1 ^(BGE-M3^) or option 3 ^(Lightweight^) instead.
-echo.
-set "confirm_multi="
-set /p confirm_multi="Enable multi-model routing? (y/N): "
-if /i "!confirm_multi!"=="y" (
-    REM Persist to config file via Python
-    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.routing.multi_model_enabled = True; cfg.routing.multi_model_pool = 'full'; cfg.reranker.enabled = True; cfg.reranker.model_name = 'jinaai/jina-reranker-v3'; mgr.save_config(cfg); print('[OK] Full multi-model routing enabled and saved to config')" 2>nul
-    if errorlevel 1 (
-        echo [ERROR] Failed to save to config file
-        set "CLAUDE_MULTI_MODEL_ENABLED=true"
-        echo [INFO] Set as environment variable for this session only
-    ) else (
-        echo.
-        echo [OK] Full multi-model configuration saved
-        echo [INFO] Pool: CodeRankEmbed + Qwen3-4B
-        echo [INFO] Reranker: jina-reranker-v3
-        echo [INFO] Total VRAM: ~10.6GB ^(+reranker^)
-        echo.
-        echo [WARNING] Existing indexes need to be rebuilt for multi-model pool
-        echo [INFO] Next time you index a project, it will use the full pool
-    )
-) else (
-    echo [INFO] Cancelled
-)
+set "CLAUDE_MULTI_MODEL_ENABLED="
 pause
 goto search_config_menu
 
@@ -1970,17 +1916,14 @@ echo.
 echo   3. Lightweight Multi-Model ^(1.65GB^)
 echo      BGE-M3 + gte-modernbert, smart routing
 echo.
-echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+^)
-echo   4. Qwen3-0.6B ^(1024d, 2.3GB^)
-echo      High efficiency, best value/performance
-echo.
-echo   5. Full Multi-Model Routing ^(~10.6GB^)
-echo      CodeRankEmbed + Qwen3-4B, smart routing
+echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+, RTX 4090^)
+echo   4. jina-embeddings-v5-small ^(1024d, ~1.5GB^)
+echo      Single model + Jina v3 reranker ^(distilled from Qwen3-4B^)
 echo.
 echo   0. Back to Main Menu
 echo.
 set "model_choice="
-set /p model_choice="Select model (0-5): "
+set /p model_choice="Select model (0-4): "
 
 REM Handle empty input or back
 if not defined model_choice goto menu_restart
@@ -1992,8 +1935,7 @@ set "SELECTED_MODEL="
 if "!model_choice!"=="1" set "SELECTED_MODEL=BAAI/bge-m3"
 if "!model_choice!"=="2" set "SELECTED_MODEL=google/embeddinggemma-300m"
 if "!model_choice!"=="3" goto enable_lightweight_speed
-if "!model_choice!"=="4" set "SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B"
-if "!model_choice!"=="5" goto enable_multi_model
+if "!model_choice!"=="4" set "SELECTED_MODEL=jinaai/jina-embeddings-v5-text-small-retrieval"
 
 REM Perform model switch
 if defined SELECTED_MODEL (
@@ -2021,6 +1963,7 @@ if defined SELECTED_MODEL (
     echo [ERROR] Invalid choice
 )
 echo.
+set "CLAUDE_MULTI_MODEL_ENABLED="
 pause
 goto menu_restart
 
@@ -2909,7 +2852,7 @@ echo.
 echo Key Features:
 echo   - 18 MCP Tools: Index, search, configure, manage projects
 echo   - Low-Level MCP SDK: Official Anthropic implementation
-echo   - Multi-Model Routing: BGE-M3 + Qwen3 + CodeRankEmbed ^(optional^)
+echo   - Single-Model: jina-embeddings-v5-small + Jina v3 reranker ^(workstation^)
 echo   - Neural Reranking: Cross-encoder model ^(5-15%% quality boost^)
 echo   - Hybrid Search: BM25 + Semantic for optimal accuracy
 echo   - 85-95%% Token Reduction: Validated benchmark results

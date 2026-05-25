@@ -29,6 +29,11 @@ MODEL_REGISTRY = {
         "vram": "0.28GB",
         "short": "gte-modernbert",
     },
+    "jinaai/jina-embeddings-v5-text-small-retrieval": {
+        "dim": 1024,
+        "vram": "1.2-1.5GB",
+        "short": "jina-v5-small",
+    },
 }
 
 DEFAULT_STORAGE_DIR = Path.home() / ".claude_code_search"

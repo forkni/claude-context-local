@@ -254,6 +254,24 @@ class ModelPoolManager:
                             break
 
                     if model_key is None:
+                        from search.config import MODEL_REGISTRY
+
+                        if config_model_name in MODEL_REGISTRY:
+                            logger.warning(
+                                f"Config model '{config_model_name}' not in active pool "
+                                f"{list(pool_config.keys())}; loading it directly as "
+                                f"single-model (multi-model default-load bypassed)."
+                            )
+                            if (
+                                "default" not in state.embedders
+                                or state.embedders["default"] is None
+                            ):
+                                embedder = CodeEmbedder(
+                                    model_name=config_model_name,
+                                    cache_dir=str(cache_dir),
+                                )
+                                state.set_embedder("default", embedder)
+                            return state.embedders["default"]
                         pool_config = self.get_pool_config()
                         fallback_key = next(iter(pool_config.keys()))
                         logger.warning(
