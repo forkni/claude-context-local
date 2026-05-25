@@ -71,7 +71,7 @@ if "%~1"=="" (
         goto start
     )
 
-    if "!choice!"=="1" goto start_server_dual_sse
+    if "!choice!"=="1" goto start_server_http
     if "!choice!"=="2" goto installation_menu
     if "!choice!"=="3" goto search_config_menu
     if "!choice!"=="4" goto project_management_menu
@@ -107,12 +107,12 @@ echo.
 echo Select transport mode:
 echo.
 echo   1. stdio Transport ^(Default - for Claude Code MCP^)
-echo   2. SSE Transport - Single Server ^(port 8765^)
+echo   2. StreamableHTTP Transport - Single Server ^(port 8765^)
 echo   0. Back to Main Menu
 echo.
-echo NOTE: SSE Transport Options:
+echo NOTE: Transport Options:
 echo   - Option 1 ^(stdio^): Default MCP mode for Claude Code
-echo   - Option 2 ^(Single SSE^): HTTP server on port 8765 for MCP access
+echo   - Option 2 ^(Single HTTP^): HTTP server on port 8765 for MCP access
 echo.
 set "transport_choice="
 set /p transport_choice="Select transport (0-2): "
@@ -123,7 +123,7 @@ if "!transport_choice!"=="" goto menu_restart
 if "!transport_choice!"=="0" goto menu_restart
 
 if "!transport_choice!"=="1" goto start_server_stdio
-if "!transport_choice!"=="2" goto start_server_dual_sse
+if "!transport_choice!"=="2" goto start_server_http
 
 echo [ERROR] Invalid choice. Please select 0-2.
 pause
@@ -175,31 +175,31 @@ REM The dual server mode launches both VSCode (port 8765) and CLI (port 8766)
 REM servers, and you can use either or both as needed.
 REM
 REM If you need single server mode, use Option 1 (stdio transport) or manually
-REM run: scripts\batch\start_mcp_sse.bat
+REM run: scripts\batch\start_mcp_http.bat
 REM ============================================================================
 
-:start_server_dual_sse
+:start_server_http
 echo.
-echo [INFO] Starting SSE server on port 8765...
-echo [INFO] Server URL: http://localhost:8765/sse
+echo [INFO] Starting HTTP server on port 8765...
+echo [INFO] Server URL: http://localhost:8765/mcp
 echo [INFO] Press Ctrl+C to stop the server
 echo ==================================================
 echo.
 
 REM Validate batch file exists
-if not exist "scripts\batch\start_mcp_sse.bat" (
-    echo [ERROR] Batch file not found: scripts\batch\start_mcp_sse.bat
+if not exist "scripts\batch\start_mcp_http.bat" (
+    echo [ERROR] Batch file not found: scripts\batch\start_mcp_http.bat
     pause
     goto menu_restart
 )
 
-start "MCP SSE Server (8765)" cmd /k "scripts\batch\start_mcp_sse.bat"
+start "MCP HTTP Server (8765)" cmd /k "scripts\batch\start_mcp_http.bat"
 goto menu_restart
 
 :debug_mode
 echo.
-echo [INFO] Starting Debug SSE Server on port 8765...
-echo [INFO] Server URL: http://localhost:8765/sse
+echo [INFO] Starting Debug HTTP Server on port 8765...
+echo [INFO] Server URL: http://localhost:8765/mcp
 echo [INFO] Debug flags: MCP_DEBUG=1, CLAUDE_SEARCH_DEBUG=1
 echo ==================================================
 echo.
@@ -2887,8 +2887,8 @@ echo     - MCP_TOOLS_REFERENCE.md: MCP tools documentation
 echo     - TESTING_GUIDE.md: Test suite documentation
 echo     - GIT_WORKFLOW.md: Git automation scripts
 echo.
-echo The MCP server runs on http://localhost:8765/sse by default.
-echo Use menu option 1 to start the SSE server for Claude Code.
+echo The MCP server runs on http://localhost:8765/mcp by default.
+echo Use menu option 1 to start the HTTP server for Claude Code.
 echo.
 pause
 goto menu_restart

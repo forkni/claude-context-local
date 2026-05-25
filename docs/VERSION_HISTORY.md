@@ -2,15 +2,50 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-05-03)
+## Current Status: All Features Operational (2026-05-25)
 
-- **Version**: 0.11.7
+- **Version**: 0.12.0
 - **Status**: Production-ready
 - **Test Coverage**: 2,044 unit tests + 8 integration tests (100% pass rate)
 - **Dependencies**: 124 packages + optional `onnxruntime-gpu` for ONNX backend
 - **SSCG Benchmark**: Best MRR=0.846 (BM25), Hybrid Recall@10=0.833, all modes 13/13 Hit@5
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent Security**: 0.11.7 — defense-in-depth for all destructive filesystem operations; storage sentinel guard; `validate_storage_path()` blocks `CODE_SEARCH_STORAGE` pointing at source trees; cleanup queue re-validation; `safe_clear_index.py` tool
+- **Recent**: 0.12.0 — StreamableHTTP transport replaces legacy SSE; single `/mcp` endpoint; stateless mode; client config `{"type": "http", "url": "http://localhost:8765/mcp"}`
+
+---
+
+## v0.12.0 - StreamableHTTP Transport Migration (2026-05-25)
+
+Replaced the legacy SSE transport (`SseServerTransport`, two-endpoint GET `/sse` + POST `/messages/`) with the MCP-standard StreamableHTTP transport (`StreamableHTTPSessionManager`, single bidirectional `/mcp` endpoint).
+
+### Transport Changes
+
+- **`mcp_server/server.py`**: `--transport sse` → `--transport http`; imports `StreamableHTTPSessionManager(stateless=True, json_response=True)`; lifespan wrapped in `session_manager.run()`; routes now `Mount("/mcp", app=handle_mcp)` without `/messages/` back-channel
+- **`scripts/manual_configure.py`**: default transport `"http"`; emits `{"type": "http", "url": "http://localhost:8765/mcp"}`
+- **Batch launchers**: `start_mcp_http.bat` (port 8765), `start_mcp_http_cli.bat` (port 8766), `start_both_http_servers.bat`, `start_mcp_debug.bat` all updated
+- **`gemini-skills/.../start_mcp_sse.py`**: health check changed from `GET /sse` polling to TCP port probe; `--transport http`
+- **`tests/regression/test_mcp_configuration.ps1`**: expects `type == "http"`, URL ending `/mcp`
+- **`start_mcp_server.cmd`**: menu labels, batch file references, help text updated
+
+### Why StreamableHTTP
+
+- Single endpoint handles both request and response directions (no separate POST back-channel)
+- Stateless mode (`stateless=True`) is correct for pure request/response tools over shared process state
+- JSON response mode (`json_response=True`) — clients only need `Accept: application/json`
+- MCP Python SDK standardizing on this transport; SSE transport is legacy
+- Port 8765 unchanged; only path changes `/sse` → `/mcp`
+
+### Migration Note
+
+Update `.claude.json` MCP server config from:
+```json
+{"type": "sse", "url": "http://localhost:8765/sse"}
+```
+to:
+```json
+{"type": "http", "url": "http://localhost:8765/mcp"}
+```
+Re-run `scripts\batch\manual_configure.bat` to apply automatically.
 
 ---
 

@@ -358,7 +358,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Code Search MCP Server (Low-Level SDK)"
     )
-    parser.add_argument("--transport", choices=["stdio", "sse"], default="stdio")
+    parser.add_argument("--transport", choices=["stdio", "http"], default="stdio")
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
@@ -376,8 +376,8 @@ if __name__ == "__main__":
         _startup_time = time.perf_counter()
         logger.info(f"[DEBUG] Startup timer started at {time.strftime('%H:%M:%S')}")
     logger.info(f"Transport: {args.transport}")
-    if args.transport == "sse":
-        logger.info(f"SSE endpoint: http://{args.host}:{args.port}")
+    if args.transport == "http":
+        logger.info(f"HTTP endpoint: http://{args.host}:{args.port}/mcp")
 
     try:
         if args.transport == "stdio":
@@ -419,28 +419,26 @@ if __name__ == "__main__":
 
             # Run the async function
             asyncio.run(run_stdio_server())
-        elif args.transport == "sse":
-            # SSE transport using Starlette + SseServerTransport + uvicorn
+        elif args.transport == "http":
+            # StreamableHTTP transport using Starlette + StreamableHTTPSessionManager + uvicorn
             import uvicorn
-            from mcp.server.sse import SseServerTransport
+            from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
             from starlette.applications import Starlette
-            from starlette.responses import JSONResponse, Response
+            from starlette.responses import JSONResponse
             from starlette.routing import Mount, Route
 
-            # Create SSE transport with message endpoint
-            sse = SseServerTransport("/messages/")
+            # Create StreamableHTTP session manager (stateless: one transport per request,
+            # no mcp-session-id bookkeeping; json_response: plain JSON body, no SSE framing)
+            session_manager = StreamableHTTPSessionManager(
+                app=server,
+                event_store=None,
+                json_response=True,
+                stateless=True,
+            )
 
-            # SSE handler - establishes bidirectional streams
-            async def handle_sse(request: Any) -> Response:
-                async with sse.connect_sse(
-                    request.scope, request.receive, request._send
-                ) as streams:
-                    await server.run(
-                        streams[0],  # read_stream
-                        streams[1],  # write_stream
-                        server.create_initialization_options(),
-                    )
-                return Response()  # Prevent TypeError on disconnect
+            # ASGI adapter — session_manager.handle_request requires run() task group
+            async def handle_mcp(scope: Any, receive: Any, send: Any) -> None:
+                await session_manager.handle_request(scope, receive, send)
 
             # Cleanup endpoint - trigger resource cleanup via HTTP
             async def handle_cleanup(request: Any) -> JSONResponse:
@@ -550,8 +548,8 @@ if __name__ == "__main__":
                     # Use shared initialization logic from resource_manager
                     initialize_server_state()
 
-                    # Optional: Pre-load embedding model (SSE-specific feature)
-                    # Default: true for SSE mode (long-running servers benefit from pre-warming)
+                    # Optional: Pre-load embedding model
+                    # Default: true for HTTP mode (long-running servers benefit from pre-warming)
                     if os.getenv("MCP_PRELOAD_MODEL", "true").lower() in (
                         "true",
                         "1",
@@ -584,7 +582,9 @@ if __name__ == "__main__":
                         )
                     )
 
-                    yield  # Application runs
+                    # session_manager.run() creates the task group required by handle_request
+                    async with session_manager.run():
+                        yield  # Application runs
 
                 finally:
                     logger.info("=" * 60)
@@ -593,9 +593,9 @@ if __name__ == "__main__":
                     _cleanup_previous_resources()
                     logger.info("[SHUTDOWN] Cleanup complete")
 
-            # Define routes: GET /sse + POST /messages/ + POST /cleanup + POST /reload_config + POST /switch_project
+            # Define routes: /mcp (StreamableHTTP) + POST /cleanup + POST /reload_config + POST /switch_project
             routes = [
-                Route("/sse", endpoint=handle_sse, methods=["GET"]),
+                Mount("/mcp", app=handle_mcp),
                 Route("/cleanup", endpoint=handle_cleanup, methods=["POST"]),
                 Route(
                     "/reload_config", endpoint=handle_reload_config, methods=["POST"]
@@ -605,16 +605,14 @@ if __name__ == "__main__":
                     endpoint=handle_switch_project_http,
                     methods=["POST"],
                 ),
-                Mount("/messages/", app=sse.handle_post_message),
             ]
 
             # pyrefly: ignore [bad-argument-type]
             starlette_app = Starlette(routes=routes, lifespan=app_lifespan)
 
             # Run server with Windows-specific event loop handling
-            logger.info(f"Starting SSE server on {args.host}:{args.port}")
-            logger.info(f"SSE endpoint: http://{args.host}:{args.port}/sse")
-            logger.info(f"Message endpoint: http://{args.host}:{args.port}/messages/")
+            logger.info(f"Starting HTTP server on {args.host}:{args.port}")
+            logger.info(f"HTTP endpoint: http://{args.host}:{args.port}/mcp")
             logger.info(f"Cleanup endpoint: http://{args.host}:{args.port}/cleanup")
             logger.info(
                 f"Config reload endpoint: http://{args.host}:{args.port}/reload_config"
@@ -660,18 +658,18 @@ if __name__ == "__main__":
                             f"Client disconnect (WinError {exc.winerror}): {context.get('message', '')}"
                         )
                         return
-                    # Handle anyio stream errors (SSE disconnections)
+                    # Handle anyio stream errors (client disconnections)
                     if isinstance(
                         exc, (anyio.BrokenResourceError, anyio.ClosedResourceError)
                     ):
-                        logger.debug(f"SSE stream closed: {exc}")
+                        logger.debug(f"HTTP stream closed: {exc}")
                         return
                     loop.default_exception_handler(context)
 
                 loop.set_exception_handler(handle_win_socket_error)
 
                 logger.info(
-                    "Windows: Using SelectorEventLoop for SSE (uvicorn 0.36+ fix)"
+                    "Windows: Using SelectorEventLoop for HTTP (uvicorn 0.36+ fix)"
                 )
                 try:
                     loop.run_until_complete(uvi_server.serve())

@@ -53,8 +53,8 @@ for /f "tokens=1-4 delims=:.," %%a in ("%TIME%") do (
 echo [DEBUG] Server starting at %TIME%...
 echo.
 
-REM Start the MCP server with debug output (SSE transport)
-.\.venv\Scripts\python.exe -m mcp_server.server --transport sse --host localhost --port 8765
+REM Start the MCP server with debug output (StreamableHTTP transport)
+.\.venv\Scripts\python.exe -m mcp_server.server --transport http --host localhost --port 8765
 set "SERVER_EXIT_CODE=%ERRORLEVEL%"
 
 REM Capture end time and calculate duration

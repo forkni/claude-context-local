@@ -79,7 +79,7 @@ class ClaudeConfigManager:
 
     def create_mcp_server_config(
         self,
-        transport_type: str = "sse",
+        transport_type: str = "http",
         url: str = None,
         command: str = None,
         args: list = None,
@@ -88,14 +88,14 @@ class ClaudeConfigManager:
         """Create MCP server configuration structure.
 
         Args:
-            transport_type: "sse" or "stdio"
-            url: URL for SSE transport
+            transport_type: "http" or "stdio"
+            url: URL for HTTP transport
             command: Command path for stdio transport
             args: Arguments for stdio transport
             env: Environment variables for stdio transport
         """
-        if transport_type == "sse":
-            return {"type": "sse", "url": url or "http://localhost:8765/sse"}
+        if transport_type == "http":
+            return {"type": "http", "url": url or "http://localhost:8765/mcp"}
         else:
             # stdio mode
             config = {"type": "stdio", "command": command}
@@ -115,7 +115,7 @@ class ClaudeConfigManager:
     def add_mcp_server(
         self,
         name: str,
-        transport_type: str = "sse",
+        transport_type: str = "http",
         url: str = None,
         command: str = None,
         args: list = None,
@@ -132,8 +132,8 @@ class ClaudeConfigManager:
         print(f"Server Name: {name}")
         print(f"Transport: {transport_type.upper()}")
 
-        if transport_type == "sse":
-            print(f"URL: {url or 'http://localhost:8765/sse'}")
+        if transport_type == "http":
+            print(f"URL: {url or 'http://localhost:8765/mcp'}")
         else:
             print(f"Command: {command}")
             if args:
@@ -234,10 +234,10 @@ class ClaudeConfigManager:
         transport_type = server.get("type", "stdio")
         print(f"[INFO] Transport type: {transport_type}")
 
-        if transport_type == "sse":
-            # Validate SSE configuration
+        if transport_type in ("http", "sse"):
+            # Validate HTTP/SSE configuration (url required for both)
             if not server.get("url"):
-                print("[ERROR] Missing 'url' field for SSE transport")
+                print(f"[ERROR] Missing 'url' field for {transport_type} transport")
                 validation_passed = False
             else:
                 print(f"[OK] URL: {server['url']}")
@@ -337,18 +337,18 @@ def main():
         manager.validate_config(config_path)
         return
 
-    # Setup SSE configuration (matches Quick Start Server)
-    sse_url = "http://localhost:8765/sse"
+    # Setup StreamableHTTP configuration (matches Quick Start Server)
+    http_url = "http://localhost:8765/mcp"
 
-    print(f"\n[INFO] Configuring SSE transport: {sse_url}")
+    print(f"\n[INFO] Configuring StreamableHTTP transport: {http_url}")
     print("[INFO] Make sure the MCP server is running via 'Quick Start Server' menu")
     print()
 
-    # Add server with SSE transport
+    # Add server with StreamableHTTP transport
     success = manager.add_mcp_server(
         name="code-search",
-        transport_type="sse",
-        url=sse_url,
+        transport_type="http",
+        url=http_url,
         global_scope=global_scope,
         force=args.force,
         verbose=args.verbose,

@@ -836,35 +836,37 @@ uv sync  # This will install correct transformers version
 - Issue #3487: stdio buffer overflow
 - Issue #3369: stdio deadlocks
 
-**Solution**: Use SSE Transport as alternative
+**Solution**: Use StreamableHTTP Transport as alternative
 
 ```powershell
 # Option 1: Via interactive menu
 start_mcp_server.bat
-# Select: 1 - Quick Start Server (launches SSE directly)
+# Select: 1 - Quick Start Server (launches HTTP directly)
 
 # Option 2: Direct launcher
-scripts\batch\start_mcp_sse.bat
+scripts\batch\start_mcp_http.bat
 
 # Option 3: Manual start (development)
-.venv\Scripts\python.exe -m mcp_server.server --transport sse
+.venv\Scripts\python.exe -m mcp_server.server --transport http
 ```
 
-**SSE Transport Features:**
+**StreamableHTTP Transport Features:**
 
-- Runs on `http://localhost:8765/sse`
+- Runs on `http://localhost:8765/mcp`
 - Automatic port conflict detection
 - Auto-kill for processes on port 8765
 - All 19 MCP tools available
 - Identical functionality to stdio
 - <10ms latency overhead
+- Single bidirectional endpoint (no separate POST back-channel)
 
-**When to Use SSE:**
+**When to Use StreamableHTTP:**
 
 - Claude Code version 2.0.22 or later
 - Experiencing stdio connection issues
 - Need more reliable transport
 - Debugging MCP communication
+- Multiple concurrent Claude Code sessions
 
 **When to Use stdio:**
 
@@ -872,11 +874,11 @@ scripts\batch\start_mcp_sse.bat
 - No stdio bugs experienced
 - Standard MCP workflow
 
-#### 6. Port Conflicts (SSE Transport)
+#### 6. Port Conflicts (StreamableHTTP Transport)
 
 **Error**: `Port 8765 is already in use`
 
-**Automatic Resolution**: SSE launcher detects and offers to kill conflicting process
+**Automatic Resolution**: HTTP launcher detects and offers to kill conflicting process
 
 **Manual Resolution**:
 
@@ -888,15 +890,15 @@ netstat -ano | findstr :8765
 powershell -Command "Stop-Process -Id <PID> -Force"
 ```
 
-**Prevention**: Only run one SSE server instance at a time
+**Prevention**: Only run one HTTP server instance at a time
 
-#### 7. WinError 64 - SSE Transport Connection Issues
+#### 7. WinError 64 - StreamableHTTP Transport Connection Issues
 
 **Error**: `OSError: [WinError 64] The specified network name is no longer available`
 
 **Symptoms**:
 
-- SSE server starts successfully but shows WinError 64 in logs
+- HTTP server starts successfully but shows WinError 64 in logs
 - Server accepts initial connections but becomes unresponsive
 - Error occurs in asyncio event loop: `asyncio.windows_events.py`
 
@@ -904,12 +906,12 @@ powershell -Command "Stop-Process -Id <PID> -Force"
 
 **Solution**: **Automatically fixed in v0.5.2+**
 
-The MCP server now automatically detects Windows and uses SelectorEventLoop instead of ProactorEventLoop when running SSE transport. No user action required.
+The MCP server now automatically detects Windows and uses SelectorEventLoop instead of ProactorEventLoop when running HTTP transport. No user action required.
 
 **Verification**: Check server logs for confirmation message:
 
 ```
-Windows detected: Using SelectorEventLoop for SSE transport (WinError 64 fix)
+Windows: Using SelectorEventLoop for HTTP (uvicorn 0.36+ fix)
 ```
 
 **Additional Mitigation** (Windows Console QuickEdit Mode):
@@ -918,7 +920,7 @@ If you still experience connection issues, disable QuickEdit mode in Windows con
 
 1. Right-click console window title bar → Properties
 2. Uncheck "QuickEdit Mode" under "Edit Options"
-3. Click OK and restart the SSE server
+3. Click OK and restart the HTTP server
 
 **Why this helps**: QuickEdit mode can pause console output when text is selected, causing connection timeouts.
 
