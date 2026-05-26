@@ -21,11 +21,10 @@ except ImportError:
     torch = None
 
 from graph.graph_storage import CodeGraphStorage
-from graph.relationship_types import RelationshipEdge, RelationshipType
 from mcp_server.utils.config_helpers import (
     get_config_via_service_locator as _get_config_via_service_locator,
 )
-from search.graph_integration import SEMANTIC_TYPES
+from search.graph_integration import GraphIntegration
 from utils.observability import traced_block
 from utils.otel_attributes import (
     ATTR_K,
@@ -262,6 +261,7 @@ class HybridSearcher(BaseSearcher):
         """
         # Initialize to None
         self._graph_storage = None
+        self._graph: GraphIntegration | None = None
         self.ego_graph_retriever = None
 
         if project_id:
@@ -280,6 +280,7 @@ class HybridSearcher(BaseSearcher):
                     self._graph_storage = CodeGraphStorage(
                         project_id=project_id, storage_dir=graph_dir
                     )
+                self._graph = GraphIntegration.from_storage(self._graph_storage)
                 # pyrefly: ignore [bad-argument-type]
                 self.ego_graph_retriever = EgoGraphRetriever(self._graph_storage)
                 self._logger.info(
@@ -291,6 +292,7 @@ class HybridSearcher(BaseSearcher):
                     "Ego-graph expansion will be disabled."
                 )
                 self._graph_storage = None
+                self._graph = None
                 self.ego_graph_retriever = None
 
     def _load_bm25_index(self) -> bool:
@@ -417,6 +419,9 @@ class HybridSearcher(BaseSearcher):
             value: CodeGraphStorage instance or None
         """
         self._graph_storage = value
+        self._graph = (
+            GraphIntegration.from_storage(value) if value is not None else None
+        )
 
     @property
     def stats(self) -> dict[str, Any]:
@@ -1265,132 +1270,9 @@ class HybridSearcher(BaseSearcher):
 
             self.index_documents(documents, doc_ids, embeddings, metadata)
 
-            # Populate call graph with nodes and edges
-            if self._graph_storage is not None:
-                graph_nodes_added = 0
-                graph_edges_added = 0
-                relationship_edges_added = 0
-                resolved_count = 0
-                # Use canonical SEMANTIC_TYPES from graph_integration
-                semantic_types = set(SEMANTIC_TYPES)
-
-                # Build name resolution map for call target resolution
-                # Maps symbol names to their chunk_ids for resolving call targets
-                name_to_chunk_ids: dict[str, list[str]] = {}
-                for result in embedding_results:
-                    chunk_id = result.chunk_id
-                    name = result.metadata.get("name")
-                    if name:
-                        if name not in name_to_chunk_ids:
-                            name_to_chunk_ids[name] = []
-                        name_to_chunk_ids[name].append(chunk_id)
-
-                        # Also index by bare name for methods (ClassName.method → method)
-                        if "." in name:
-                            bare_name = name.split(".")[-1]
-                            if bare_name not in name_to_chunk_ids:
-                                name_to_chunk_ids[bare_name] = []
-                            name_to_chunk_ids[bare_name].append(chunk_id)
-
-                for result in embedding_results:
-                    chunk_id = result.chunk_id
-                    chunk_type = result.metadata.get("chunk_type")
-
-                    # Only add semantic types
-                    if chunk_type not in semantic_types:
-                        continue
-
-                    # Add node
-                    self._graph_storage.add_node(
-                        chunk_id=chunk_id,
-                        name=result.metadata.get("name", "unknown"),
-                        chunk_type=chunk_type,
-                        file_path=result.metadata.get("file_path", ""),
-                        language=result.metadata.get("language", "python"),
-                    )
-                    graph_nodes_added += 1
-
-                    # Add call edges with resolution
-                    calls = result.metadata.get("calls", [])
-                    for call_dict in calls:
-                        callee_name = call_dict.get("callee_name", "unknown")
-
-                        # Try to resolve call target to full chunk_id
-                        # Conservative approach with same-file preference and split_block disambiguation
-                        resolved_target = None
-                        candidates = name_to_chunk_ids.get(callee_name, [])
-                        if len(candidates) == 1:
-                            resolved_target = candidates[0]
-                        elif len(candidates) > 1:
-                            # Same-file preference
-                            caller_file = result.metadata.get("file_path", "")
-                            same_file = [c for c in candidates if caller_file in c]
-                            if len(same_file) == 1:
-                                resolved_target = same_file[0]
-                            else:
-                                # Split block disambiguation: all split_blocks → pick entry block (lowest start line)
-                                split_blocks = [
-                                    c for c in candidates if ":split_block:" in c
-                                ]
-                                if len(split_blocks) == len(candidates):
-
-                                    def _start_line(cid: str) -> int:
-                                        parts = cid.split(":")
-                                        if len(parts) >= 2:
-                                            try:
-                                                return int(parts[1].split("-")[0])
-                                            except (ValueError, IndexError):
-                                                pass
-                                        return 2**31  # Sentinel for sort ordering
-
-                                    split_blocks.sort(key=_start_line)
-                                    resolved_target = split_blocks[0]
-                        if resolved_target:
-                            resolved_count += 1
-
-                        # Use resolved chunk_id if available, otherwise use bare name
-                        self._graph_storage.add_call_edge(
-                            caller_id=chunk_id,
-                            callee_name=(
-                                resolved_target if resolved_target else callee_name
-                            ),
-                            line_number=call_dict.get("line_number", 0),
-                            is_method_call=call_dict.get("is_method_call", False),
-                            is_resolved=resolved_target is not None,
-                        )
-                        graph_edges_added += 1
-
-                    # Add relationship edges (inherits, imports, decorates, etc.)
-                    relationships = result.metadata.get("relationships", [])
-                    for rel_dict in relationships:
-                        try:
-                            # Reconstruct RelationshipEdge from dict
-                            edge = RelationshipEdge(
-                                source_id=rel_dict.get("source_id", chunk_id),
-                                target_name=rel_dict.get("target_name", "unknown"),
-                                relationship_type=RelationshipType(
-                                    rel_dict.get("relationship_type", "calls")
-                                ),
-                                line_number=rel_dict.get("line_number", 0),
-                                confidence=rel_dict.get("confidence", 1.0),
-                                metadata=rel_dict.get("metadata", {}),
-                            )
-
-                            # Add to graph storage
-                            self._graph_storage.add_relationship_edge(edge)
-                            relationship_edges_added += 1
-
-                        except (ValueError, KeyError, TypeError) as e:
-                            self._logger.debug(
-                                f"Failed to add relationship edge from {chunk_id}: {e}"
-                            )
-
-                self._logger.info(
-                    f"[ADD_EMBEDDINGS] Populated graph: {graph_nodes_added} nodes, "
-                    f"{graph_edges_added} call edges ({resolved_count} resolved, "
-                    f"{graph_edges_added - resolved_count} phantom), "
-                    f"{relationship_edges_added} relationship edges"
-                )
+            # Populate call graph via the GraphIntegration seam
+            if self._graph is not None:
+                self._graph.populate_from_embeddings(embedding_results)
 
             self._logger.info(
                 f"[ADD_EMBEDDINGS] Successfully added {len(embedding_results)} embeddings to hybrid index"
@@ -1443,6 +1325,7 @@ class HybridSearcher(BaseSearcher):
         # Update graph_storage reference to match new dense_index (prevents stale references)
         if hasattr(self.dense_index, "_graph") and self.dense_index._graph:
             self._graph_storage = self.dense_index._graph.storage
+            self._graph = GraphIntegration.from_storage(self._graph_storage)
             self._logger.debug(
                 "[CLEAR] Updated graph_storage reference after clear_index()"
             )

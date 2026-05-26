@@ -120,6 +120,18 @@ class ONNXEmbeddingModel:
             return_tensors="pt",
         )
 
+        # optimum 2.x synthesizes token_type_ids but NOT position_ids; decoder-family
+        # embedding exports (e.g. Qwen3) declare position_ids, so supply it here or
+        # IO binding crashes on None.shape when iterating self.input_names.
+        if (
+            "position_ids" in self.ort_model.input_names
+            and "position_ids" not in encoded
+        ):
+            mask = encoded["attention_mask"]
+            position_ids = mask.long().cumsum(-1) - 1
+            position_ids = position_ids.masked_fill(mask == 0, 1)
+            encoded["position_ids"] = position_ids
+
         # Move to target device
         if target_device == "cuda":
             encoded = {k: v.cuda() for k, v in encoded.items()}

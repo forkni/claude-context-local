@@ -2038,3 +2038,148 @@ class TestCacheKeyInstructionMode:
         assert encode_count[0] == count_after_prompt, (
             "custom-mode second call must hit the original cache entry"
         )
+
+
+class TestBuildChunkId:
+    """Unit tests for CodeEmbedder._build_chunk_id — no model load required."""
+
+    def _make_chunk(
+        self,
+        relative_path,
+        start_line,
+        end_line,
+        chunk_type,
+        name=None,
+        parent_name=None,
+    ):
+        from unittest.mock import Mock
+
+        chunk = Mock()
+        chunk.relative_path = relative_path
+        chunk.start_line = start_line
+        chunk.end_line = end_line
+        chunk.chunk_type = chunk_type
+        chunk.name = name
+        chunk.parent_name = parent_name
+        return chunk
+
+    def test_basic_function(self):
+        chunk = self._make_chunk("src/foo.py", 10, 20, "function", name="bar")
+        assert CodeEmbedder._build_chunk_id(chunk) == "src/foo.py:10-20:function:bar"
+
+    def test_method_qualified_name(self):
+        chunk = self._make_chunk(
+            "src/foo.py", 5, 15, "method", name="run", parent_name="MyClass"
+        )
+        assert (
+            CodeEmbedder._build_chunk_id(chunk) == "src/foo.py:5-15:method:MyClass.run"
+        )
+
+    def test_no_name_omits_suffix(self):
+        chunk = self._make_chunk(
+            "pkg/mod.py", 1, 50, "module", name=None, parent_name=None
+        )
+        assert CodeEmbedder._build_chunk_id(chunk) == "pkg/mod.py:1-50:module"
+
+    def test_windows_path_normalized(self):
+        chunk = self._make_chunk(
+            "src\\utils\\helper.py", 3, 8, "function", name="do_thing"
+        )
+        result = CodeEmbedder._build_chunk_id(chunk)
+        assert "\\" not in result
+        assert result == "src/utils/helper.py:3-8:function:do_thing"
+
+
+class TestBuildChunkMetadata:
+    """Unit tests for CodeEmbedder._build_chunk_metadata — no model load required."""
+
+    def _make_chunk(self, **kwargs):
+        from unittest.mock import Mock
+
+        defaults = {
+            "file_path": "/abs/src/foo.py",
+            "relative_path": "src/foo.py",
+            "folder_structure": "src",
+            "chunk_type": "function",
+            "start_line": 1,
+            "end_line": 10,
+            "name": "my_func",
+            "parent_name": None,
+            "parent_chunk_id": None,
+            "docstring": "Does a thing.",
+            "decorators": [],
+            "imports": [],
+            "complexity_score": 3,
+            "tags": ["python"],
+            "content": "def my_func(): pass",
+            "calls": [],
+            "relationships": [],
+        }
+        defaults.update(kwargs)
+        chunk = Mock()
+        for k, v in defaults.items():
+            setattr(chunk, k, v)
+        return chunk
+
+    def test_required_keys_present(self):
+        chunk = self._make_chunk()
+        meta = CodeEmbedder._build_chunk_metadata(chunk)
+        for key in (
+            "file_path",
+            "relative_path",
+            "chunk_type",
+            "start_line",
+            "end_line",
+            "name",
+            "content",
+            "calls",
+            "relationships",
+            "language",
+        ):
+            assert key in meta, f"missing key: {key}"
+
+    def test_language_default(self):
+        chunk = self._make_chunk()
+        del chunk.language  # force getattr fallback
+        meta = CodeEmbedder._build_chunk_metadata(chunk)
+        assert meta["language"] == "python"
+
+    def test_language_override(self):
+        chunk = self._make_chunk()
+        chunk.language = "go"
+        meta = CodeEmbedder._build_chunk_metadata(chunk)
+        assert meta["language"] == "go"
+
+    def test_content_preview_truncated(self):
+        chunk = self._make_chunk(content="x" * 300)
+        meta = CodeEmbedder._build_chunk_metadata(chunk)
+        assert meta["content_preview"].endswith("...")
+        assert len(meta["content_preview"]) == 203  # 200 + "..."
+
+    def test_content_preview_short(self):
+        chunk = self._make_chunk(content="short")
+        meta = CodeEmbedder._build_chunk_metadata(chunk)
+        assert meta["content_preview"] == "short"
+
+    def test_calls_serialized(self):
+        from unittest.mock import Mock
+
+        call_mock = Mock()
+        call_mock.to_dict.return_value = {"target": "bar"}
+        chunk = self._make_chunk(calls=[call_mock])
+        meta = CodeEmbedder._build_chunk_metadata(chunk)
+        assert meta["calls"] == [{"target": "bar"}]
+
+    def test_empty_calls(self):
+        chunk = self._make_chunk(calls=[])
+        meta = CodeEmbedder._build_chunk_metadata(chunk)
+        assert meta["calls"] == []
+
+    def test_relationships_serialized(self):
+        from unittest.mock import Mock
+
+        rel_mock = Mock()
+        rel_mock.to_dict.return_value = {"rel": "imports"}
+        chunk = self._make_chunk(relationships=[rel_mock])
+        meta = CodeEmbedder._build_chunk_metadata(chunk)
+        assert meta["relationships"] == [{"rel": "imports"}]
