@@ -995,6 +995,55 @@ class CodeEmbedder:
 
         return "\n".join(content_parts)
 
+    @staticmethod
+    def _build_chunk_id(chunk: CodeChunk) -> str:
+        """Build the unique chunk identifier from a CodeChunk."""
+        normalized_path = normalize_path(str(chunk.relative_path))
+        chunk_id = (
+            f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
+        )
+        qualified_name = (
+            f"{chunk.parent_name}.{chunk.name}"
+            if chunk.parent_name and chunk.name
+            else chunk.name
+        )
+        if qualified_name:
+            chunk_id += f":{qualified_name}"
+        return chunk_id
+
+    @staticmethod
+    def _build_chunk_metadata(chunk: CodeChunk) -> dict[str, Any]:
+        """Build the metadata dict for an EmbeddingResult from a CodeChunk."""
+        return {
+            "file_path": chunk.file_path,
+            "relative_path": chunk.relative_path,
+            "folder_structure": chunk.folder_structure,
+            "chunk_type": chunk.chunk_type,
+            "start_line": chunk.start_line,
+            "end_line": chunk.end_line,
+            "name": chunk.name,
+            "parent_name": chunk.parent_name,
+            "parent_chunk_id": chunk.parent_chunk_id,
+            "docstring": chunk.docstring,
+            "decorators": chunk.decorators,
+            "imports": chunk.imports,
+            "complexity_score": chunk.complexity_score,
+            "tags": chunk.tags,
+            "content": chunk.content,  # Full content for accurate token counting
+            "content_preview": (
+                chunk.content[:200] + "..."
+                if len(chunk.content) > 200
+                else chunk.content
+            ),
+            "calls": ([call.to_dict() for call in chunk.calls] if chunk.calls else []),
+            "relationships": (
+                [rel.to_dict() for rel in chunk.relationships]
+                if chunk.relationships
+                else []
+            ),
+            "language": getattr(chunk, "language", "python"),
+        }
+
     def embed_chunk(self, chunk: CodeChunk) -> EmbeddingResult:
         """Generate embedding for a single code chunk."""
         content = self.create_embedding_content(chunk)
@@ -1021,52 +1070,8 @@ class CodeEmbedder:
         if torch and torch.is_tensor(embedding):
             embedding = embedding.cpu().float().numpy()
 
-        # Create unique chunk ID with normalized path separators
-        normalized_path = normalize_path(str(chunk.relative_path))
-        chunk_id = (
-            f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
-        )
-        # Build qualified name for methods/functions inside classes
-        qualified_name = (
-            f"{chunk.parent_name}.{chunk.name}"
-            if chunk.parent_name and chunk.name
-            else chunk.name
-        )
-        if qualified_name:
-            chunk_id += f":{qualified_name}"
-
-        # Prepare metadata
-        metadata = {
-            "file_path": chunk.file_path,
-            "relative_path": chunk.relative_path,
-            "folder_structure": chunk.folder_structure,
-            "chunk_type": chunk.chunk_type,
-            "start_line": chunk.start_line,
-            "end_line": chunk.end_line,
-            "name": chunk.name,
-            "parent_name": chunk.parent_name,
-            "parent_chunk_id": chunk.parent_chunk_id,
-            "docstring": chunk.docstring,
-            "decorators": chunk.decorators,
-            "imports": chunk.imports,
-            "complexity_score": chunk.complexity_score,
-            "tags": chunk.tags,
-            "content": chunk.content,  # Full content for accurate token counting
-            "content_preview": (
-                chunk.content[:200] + "..."
-                if len(chunk.content) > 200
-                else chunk.content
-            ),
-            # Call graph data
-            "calls": [call.to_dict() for call in chunk.calls] if chunk.calls else [],
-            # Relationship edges
-            "relationships": (
-                [rel.to_dict() for rel in chunk.relationships]
-                if chunk.relationships
-                else []
-            ),
-            "language": getattr(chunk, "language", "python"),
-        }
+        chunk_id = self._build_chunk_id(chunk)
+        metadata = self._build_chunk_metadata(chunk)
 
         return EmbeddingResult(
             embedding=embedding, chunk_id=chunk_id, metadata=metadata
@@ -1357,53 +1362,8 @@ class CodeEmbedder:
                 for _j, (chunk, embedding) in enumerate(
                     zip(batch, batch_embeddings, strict=False)
                 ):
-                    # Normalize path separators for cross-platform consistency
-                    normalized_path = normalize_path(str(chunk.relative_path))
-                    chunk_id = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
-                    # Build qualified name for methods/functions inside classes
-                    qualified_name = (
-                        f"{chunk.parent_name}.{chunk.name}"
-                        if chunk.parent_name and chunk.name
-                        else chunk.name
-                    )
-                    if qualified_name:
-                        chunk_id += f":{qualified_name}"
-
-                    metadata = {
-                        "file_path": chunk.file_path,
-                        "relative_path": chunk.relative_path,
-                        "folder_structure": chunk.folder_structure,
-                        "chunk_type": chunk.chunk_type,
-                        "start_line": chunk.start_line,
-                        "end_line": chunk.end_line,
-                        "name": chunk.name,
-                        "parent_name": chunk.parent_name,
-                        "parent_chunk_id": chunk.parent_chunk_id,
-                        "docstring": chunk.docstring,
-                        "decorators": chunk.decorators,
-                        "imports": chunk.imports,
-                        "complexity_score": chunk.complexity_score,
-                        "tags": chunk.tags,
-                        "content": chunk.content,  # Full content for accurate token counting
-                        "content_preview": (
-                            chunk.content[:200] + "..."
-                            if len(chunk.content) > 200
-                            else chunk.content
-                        ),
-                        # Call graph data (Python)
-                        "calls": (
-                            [call.to_dict() for call in chunk.calls]
-                            if chunk.calls
-                            else []
-                        ),
-                        # Relationship edges (all relationship types)
-                        "relationships": (
-                            [rel.to_dict() for rel in chunk.relationships]
-                            if chunk.relationships
-                            else []
-                        ),
-                        "language": getattr(chunk, "language", "python"),
-                    }
+                    chunk_id = self._build_chunk_id(chunk)
+                    metadata = self._build_chunk_metadata(chunk)
 
                     results.append(
                         EmbeddingResult(
