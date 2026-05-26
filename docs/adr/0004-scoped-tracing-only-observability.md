@@ -93,23 +93,23 @@ Two architecture improvements surfaced during this investigation.
 
 - **Improvement A** — Decompose the `_full_index` god-method
   (`search/incremental_indexer.py:666-978`, ~312 lines, complexity 38) into
-  named pipeline stages. Status: **in progress**.
+  named pipeline stages. Status: **done** (completed in v0.12.1).
   - `SummaryStage` (`search/summary_stage.py`) — **done** (extracted in
     v0.11.10; handles community + module summary generation with the ordering
     constraint documented in its module docstring).
-  - `CommunityStage` (`search/community_stage.py`) — **pending**: encapsulates
+  - `CommunityStage` (`search/community_stage.py`) — **done**: encapsulates
     community detection (build temp graph, Louvain detect, persist
     `community_map`), `SummaryStage` Phase 1 call, community remerge,
     chunk_id regeneration, `SummaryStage` Phase 2 call, and summary append.
     Interface: `CommunityStage(build_graph_fn, regenerate_ids_fn,
     summary_stage).run(all_chunks, project_path, config) -> list[CodeChunk]`.
-  - `IndexWriteStage` (`search/index_write_stage.py`) — **pending**: encapsulates
+  - `IndexWriteStage` (`search/index_write_stage.py`) — **done**: encapsulates
     embedding, index write, snapshot save, BM25 sync, GPU cache clear.
+    `IncrementalIndexResult` now lives here (moved from `incremental_indexer.py`).
     Interface: `IndexWriteStage(embedder, indexer, snapshot_manager, bm25_sync,
     build_metadata_fn, clear_gpu_fn).run(...) -> IncrementalIndexResult`.
-  - After extraction `_full_index` becomes a ~50-line driver: prologue
-    (resource release, DAG build, chunking) → `CommunityStage.run()` →
-    `IndexWriteStage.run()`.
+  - `_full_index` is now a ~14-line driver: prologue (resource release, DAG
+    build, chunking) → `CommunityStage.run()` → `IndexWriteStage.run()`.
   - Sibling candidate: `_refresh_affected_community_summaries:1162-1310`
     (complexity 34) has the same shape and may follow the same treatment.
 
