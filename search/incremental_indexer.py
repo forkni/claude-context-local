@@ -5,7 +5,6 @@ import logging
 import tempfile
 import time
 import traceback
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -27,8 +26,10 @@ from utils.otel_attributes import (
 from utils.timing import timed
 
 from .bm25_sync import BM25SyncManager
+from .community_stage import CommunityStage
 from .config import get_search_config
 from .graph_integration import GraphIntegration
+from .index_write_stage import IncrementalIndexResult, IndexWriteStage
 from .indexer import CodeIndexManager as Indexer
 from .parallel_chunker import ParallelChunker
 from .summary_stage import SummaryStage
@@ -39,37 +40,6 @@ logger = logging.getLogger(__name__)
 # Minimum GPU memory (MB) considered "still allocated" after cleanup.
 # Below this threshold, residual allocations are expected (PyTorch runtime overhead ~50MB).
 GPU_CLEANUP_THRESHOLD_MB = 100
-
-
-@dataclass
-class IncrementalIndexResult:
-    """Result of incremental indexing operation."""
-
-    files_added: int
-    files_removed: int
-    files_modified: int
-    chunks_added: int
-    chunks_removed: int
-    time_taken: float
-    success: bool
-    error: str | None = None
-    bm25_resynced: bool = False
-    bm25_resync_count: int = 0
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "files_added": self.files_added,
-            "files_removed": self.files_removed,
-            "files_modified": self.files_modified,
-            "chunks_added": self.chunks_added,
-            "chunks_removed": self.chunks_removed,
-            "time_taken": self.time_taken,
-            "success": self.success,
-            "error": self.error,
-            "bm25_resynced": self.bm25_resynced,
-            "bm25_resync_count": self.bm25_resync_count,
-        }
 
 
 class IncrementalIndexer:
@@ -153,6 +123,19 @@ class IncrementalIndexer:
         )
         self._bm25_sync = BM25SyncManager(indexer=self.indexer)
         self._summary_stage = SummaryStage()
+        self._community_stage = CommunityStage(
+            build_graph_fn=self._build_temp_graph,
+            regenerate_ids_fn=self._regenerate_chunk_ids,
+            summary_stage=self._summary_stage,
+        )
+        self._index_write_stage = IndexWriteStage(
+            embedder=self.embedder,
+            indexer=self.indexer,
+            snapshot_manager=self.snapshot_manager,
+            bm25_sync=self._bm25_sync,
+            build_metadata_fn=self._build_snapshot_metadata,
+            clear_gpu_fn=self._clear_gpu_cache,
+        )
         self.precomputed_repo_profile = precomputed_repo_profile
         self.repo_profile: object | None = (
             None  # Set after full index for caller capture
@@ -776,190 +759,19 @@ class IncrementalIndexer:
 
             logger.info(f"Total chunks collected: {len(all_chunks)}")
 
-            # ========== Community Detection & Remerge ==========
-            # Community merge flow: Chunk → Build graph → Detect communities → (Optional) Remerge → Embed
-            # Community detection runs independently of chunk merging
+            # Stage 1: community detection, summarisation, remerge
             config = get_search_config()
-            community_map = None  # Will be populated if community detection runs
-            temp_graph = None  # Will be set if community detection succeeds
+            all_chunks = self._community_stage.run(all_chunks, project_path, config)
 
-            # Step A: Community Detection (Independent - can run without merging)
-            if config.chunking.enable_community_detection and all_chunks:
-                logger.info("[COMMUNITY_DETECT] Running community detection")
-                logger.info(
-                    f"[COMMUNITY_DETECT] Starting with {len(all_chunks)} chunks"
-                )
-
-                try:
-                    # Build graph from chunks (NetworkX DiGraph)
-                    # Uses GraphIntegration.build_graph_from_chunks() - no embeddings needed
-                    temp_graph = self._build_temp_graph(all_chunks)
-
-                    # Detect communities using native Louvain algorithm
-                    # NetworkX native (no external dependencies: igraph/leidenalg)
-                    from graph.community_detector import CommunityDetector
-
-                    # pyrefly: ignore [bad-argument-type]
-                    detector = CommunityDetector(temp_graph.storage)
-                    community_map = detector.detect_communities(
-                        resolution=config.chunking.community_resolution,
-                        max_phantom_degree=getattr(
-                            config.chunking, "max_phantom_degree", 20
-                        ),
-                    )
-                    logger.info(
-                        f"[COMMUNITY_DETECT] Detected {len(set(community_map.values()))} communities from {len(community_map)} nodes"
-                    )
-
-                    # NEW: Persist community_map to graph storage for future use
-                    if community_map and temp_graph:
-                        # pyrefly: ignore [missing-attribute]
-                        temp_graph.storage.store_community_map(community_map)
-                        logger.info(
-                            "[COMMUNITY_DETECT] Community map persisted to graph storage"
-                        )
-
-                except Exception as e:
-                    logger.error(f"[COMMUNITY_DETECT] Failed: {e}")
-                    logger.error(traceback.format_exc())
-                    logger.warning(
-                        "[COMMUNITY_DETECT] Continuing without community data"
-                    )
-                    community_map = None
-
-            # ========== Community Summaries — PHASE 1: Compute (before remerge) ==========
-            # chunk_ids must match community_map keys, which are pre-remerge.
-            # Phase 2 (append) happens after remerge below; see SummaryStage docstring.
-            community_summaries = []
-            if (
-                config.chunking.enable_community_summaries
-                and community_map
-                and all_chunks
-            ):
-                community_summaries = self._summary_stage.compute_community_summaries(
-                    all_chunks, community_map, temp_graph
-                )
-            # ========== END Community Summaries Phase 1 ==========
-
-            # Step B: Community-based Remerge (Full index only)
-            if config.chunking.enable_community_merge and community_map and all_chunks:
-                logger.info("[COMMUNITY_MERGE] Running community-based remerge")
-
-                try:
-                    # Remerge with community boundaries
-                    # Uses fixed remerge_chunks_with_communities() from base.py
-                    from chunking.languages.base import LanguageChunker
-
-                    all_chunks = LanguageChunker.remerge_chunks_with_communities(
-                        chunks=all_chunks,
-                        community_map=community_map,
-                        min_tokens=config.chunking.min_chunk_tokens,
-                        max_merged_tokens=config.chunking.max_merged_tokens,
-                        token_method=config.chunking.token_estimation,
-                        size_method=config.chunking.size_method,
-                    )
-                    logger.info(
-                        f"[COMMUNITY_MERGE] Community remerge complete: {len(all_chunks)} chunks"
-                    )
-
-                    # Regenerate proper chunk_ids (line numbers changed after merge)
-                    all_chunks = self._regenerate_chunk_ids(all_chunks, project_path)
-
-                    logger.info(
-                        f"[COMMUNITY_MERGE] Community merge complete: {len(all_chunks)} final chunks"
-                    )
-
-                except Exception as e:
-                    logger.error(f"[COMMUNITY_MERGE] Failed: {e}")
-                    logger.error(traceback.format_exc())
-                    logger.warning(
-                        "[COMMUNITY_MERGE] Continuing with unmerged chunks from Pass 1"
-                    )
-            # ========== END Community Detection & Remerge ==========
-
-            # ========== File-Level Module Summaries ==========
-            config = get_search_config()
-            if config.chunking.enable_file_summaries and all_chunks:
-                module_summaries = self._summary_stage.generate_module_summaries(
-                    all_chunks
-                )
-                if module_summaries:
-                    all_chunks.extend(module_summaries)
-                    logger.info(
-                        f"[FILE_SUMMARIES] Appended {len(module_summaries)} module summaries to chunk list"
-                    )
-            # ========== END File-Level Module Summaries ==========
-
-            # ========== Community Summaries — PHASE 2: Append (after remerge) ==========
-            if community_summaries:
-                all_chunks.extend(community_summaries)
-                logger.info(
-                    f"[COMMUNITY_SUMMARIES] Appended {len(community_summaries)} community summaries to chunk list"
-                )
-            # ========== END Community Summaries Phase 2 ==========
-
-            # Embed all chunks in one batched call
-            all_embedding_results = []
-            if all_chunks:
-                try:
-                    logger.info(f"Starting embedding for {len(all_chunks)} chunks")
-                    all_embedding_results = self.embedder.embed_chunks(all_chunks)
-                    logger.info(
-                        f"Successfully embedded {len(all_embedding_results)} chunks"
-                    )
-                    # Update metadata
-                    for chunk, embedding_result in zip(
-                        all_chunks, all_embedding_results, strict=False
-                    ):
-                        embedding_result.metadata["project_name"] = project_name
-                        embedding_result.metadata["content"] = chunk.content
-                except Exception as e:
-                    logger.error(f"Embedding failed: {e}")
-                    logger.error(traceback.format_exc())
-
-            # Add all embeddings to index at once
-            if all_embedding_results:
-                logger.info(f"Adding {len(all_embedding_results)} embeddings to index")
-                self.indexer.add_embeddings(all_embedding_results)
-                logger.info("Successfully added embeddings to index")
-            else:
-                logger.warning("No embedding results to add to index")
-
-            chunks_added = len(all_embedding_results)
-
-            # Save snapshot (reset cumulative_changed_files on full index)
-            metadata = self._build_snapshot_metadata(
-                project_name=project_name,
-                all_files=all_files,
-                supported_files=supported_files,
-                total_chunks=chunks_added,
-                is_full=True,
-                repo_profile=repo_profile,
-                cumulative_changed_files=0,
-            )
-            self.snapshot_manager.save_snapshot(dag, metadata)
-
-            # Save index
-            logger.info("[INCREMENTAL] Saving index...")
-            self.indexer.save_indices()
-            logger.info("[INCREMENTAL] Index saved")
-
-            # Auto-sync BM25 if significant desync detected (>10% difference)
-            bm25_resynced, bm25_resync_count = self._sync_bm25_if_needed("FULL_INDEX")
-
-            # Clear GPU cache to free intermediate tensors from embedding batches
-            self._clear_gpu_cache("FULL_INDEX")
-
-            return IncrementalIndexResult(
-                files_added=len(supported_files),
-                files_removed=0,
-                files_modified=0,
-                chunks_added=chunks_added,
-                chunks_removed=0,
-                time_taken=time.time() - start_time,
-                success=True,
-                bm25_resynced=bm25_resynced,
-                bm25_resync_count=bm25_resync_count,
+            # Stage 2: embed, index, snapshot, BM25, GPU
+            return self._index_write_stage.run(
+                all_chunks,
+                project_name,
+                dag,
+                all_files,
+                supported_files,
+                start_time,
+                self.repo_profile,
             )
 
         except Exception as e:
