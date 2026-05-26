@@ -121,13 +121,28 @@ class IncrementalIndexer:
             enable_parallel=self.enable_parallel_chunking,
             max_workers=self.max_chunking_workers,
         )
-        self._bm25_sync = BM25SyncManager(indexer=self.indexer)
         self._summary_stage = SummaryStage()
         self._community_stage = CommunityStage(
             build_graph_fn=self._build_temp_graph,
             regenerate_ids_fn=self._regenerate_chunk_ids,
             summary_stage=self._summary_stage,
         )
+        self._build_write_pipeline()
+        self.precomputed_repo_profile = precomputed_repo_profile
+        self.repo_profile: object | None = (
+            None  # Set after full index for caller capture
+        )
+        self.prebuilt_dag = prebuilt_dag
+        self.built_dag: MerkleDAG | None = None  # Captured for multi-model reuse
+
+    def _build_write_pipeline(self) -> None:
+        """(Re)build the resource-bound write pipeline.
+
+        Call from __init__ and again immediately after _release_and_verify_resources()
+        so IndexWriteStage and BM25SyncManager are always bound to the current
+        self.embedder / self.indexer — never to released objects.
+        """
+        self._bm25_sync = BM25SyncManager(indexer=self.indexer)
         self._index_write_stage = IndexWriteStage(
             embedder=self.embedder,
             indexer=self.indexer,
@@ -136,12 +151,6 @@ class IncrementalIndexer:
             build_metadata_fn=self._build_snapshot_metadata,
             clear_gpu_fn=self._clear_gpu_cache,
         )
-        self.precomputed_repo_profile = precomputed_repo_profile
-        self.repo_profile: object | None = (
-            None  # Set after full index for caller capture
-        )
-        self.prebuilt_dag = prebuilt_dag
-        self.built_dag: MerkleDAG | None = None  # Captured for multi-model reuse
 
     def _get_symbol_cache(self) -> Optional["SymbolHashCache"]:
         """Get symbol cache, handling both CodeIndexManager and HybridSearcher.
@@ -649,6 +658,9 @@ class IncrementalIndexer:
         try:
             # === MANDATORY: Release resources before full reindex ===
             self._release_and_verify_resources(project_path)
+            # Rebind write pipeline to freshly acquired embedder/indexer so the
+            # stage never runs against the released (stale) objects.
+            self._build_write_pipeline()
             # Defense in depth: Load filters from snapshot before deleting it
             # This handles cases where filters weren't passed during IncrementalIndexer creation
             if self.include_dirs is None or self.exclude_dirs is None:

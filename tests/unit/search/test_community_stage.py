@@ -106,7 +106,7 @@ class TestCommunityStageDetectionEnabled:
         stage, chunks, build_graph_fn, _, _, _ = self._make_stage_and_mocks()
         config = _make_config()
 
-        with patch("graph.community_detector.CommunityDetector") as mock_detector_cls:
+        with patch("search.community_stage.CommunityDetector") as mock_detector_cls:
             mock_detector_cls.return_value.detect_communities.return_value = {
                 "f.py:1-5:function:a": 0
             }
@@ -121,7 +121,7 @@ class TestCommunityStageDetectionEnabled:
         config = _make_config()
         community_map = {"f.py:1-5:function:a": 0}
 
-        with patch("graph.community_detector.CommunityDetector") as mock_detector_cls:
+        with patch("search.community_stage.CommunityDetector") as mock_detector_cls:
             mock_detector_cls.return_value.detect_communities.return_value = (
                 community_map
             )
@@ -142,7 +142,7 @@ class TestCommunityStageDetectionEnabled:
             lambda *a, **kw: call_order.append("phase1") or []
         )
 
-        with patch("graph.community_detector.CommunityDetector") as mock_detector_cls:
+        with patch("search.community_stage.CommunityDetector") as mock_detector_cls:
             mock_detector_cls.return_value.detect_communities.return_value = (
                 community_map
             )
@@ -160,7 +160,7 @@ class TestCommunityStageDetectionEnabled:
         module_summary = _make_chunk("f.py:module")
         summary_stage.generate_module_summaries.return_value = [module_summary]
 
-        with patch("graph.community_detector.CommunityDetector") as mock_detector_cls:
+        with patch("search.community_stage.CommunityDetector") as mock_detector_cls:
             mock_detector_cls.return_value.detect_communities.return_value = {
                 "f.py:1-5:function:a": 0
             }
@@ -176,7 +176,7 @@ class TestCommunityStageDetectionEnabled:
         community_summary = _make_chunk("community:0")
         summary_stage.compute_community_summaries.return_value = [community_summary]
 
-        with patch("graph.community_detector.CommunityDetector") as mock_detector_cls:
+        with patch("search.community_stage.CommunityDetector") as mock_detector_cls:
             mock_detector_cls.return_value.detect_communities.return_value = {
                 "f.py:1-5:function:a": 0
             }
@@ -185,8 +185,8 @@ class TestCommunityStageDetectionEnabled:
                 result = stage.run(chunks, "/project", config)
 
         assert community_summary in result
-        # Community summary must be at the end (after module summaries)
-        assert result[-1] == community_summary or community_summary in result
+        # Community summary must be appended last (after module summaries)
+        assert result[-1] == community_summary
 
 
 class TestCommunityStageGracefulDegradation:
@@ -227,7 +227,7 @@ class TestCommunityStageGracefulDegradation:
         )
         config = _make_config()
 
-        with patch("graph.community_detector.CommunityDetector") as mock_detector_cls:
+        with patch("search.community_stage.CommunityDetector") as mock_detector_cls:
             mock_detector_cls.return_value.detect_communities.return_value = {
                 "f.py:1-5:function:a": 0
             }

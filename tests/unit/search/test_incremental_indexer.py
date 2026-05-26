@@ -603,9 +603,12 @@ class TestIncrementalIndexer:
 
             result = indexer.incremental_index(str(self.project_path), "test_project")
 
-            # Should succeed with zero chunks added
-            assert result.success is True
+            # Embedding failure is reported as a hard failure — no bogus snapshot
+            assert result.success is False
+            assert result.error is not None
+            assert "Embedding failed" in result.error
             assert result.chunks_added == 0
+            self.mock_snapshot_manager.save_snapshot.assert_not_called()
 
     def test_batch_removal_with_validation(self):
         """Test batch removal with index consistency validation."""
@@ -863,6 +866,8 @@ class TestIncrementalIndexer:
             "total_chunks": 100,
         }
         self.mock_indexer.resync_bm25_from_dense = Mock(return_value=100)
+        # Prevent the incremental path from failing at index consistency check
+        self.mock_indexer.validate_index_consistency.return_value = (True, [])
 
         result = indexer.incremental_index(str(self.project_path), "test_project")
 
@@ -1033,6 +1038,52 @@ class TestIncrementalIndexer:
         assert saved_dag.directory_filter is not None
         assert saved_dag.directory_filter.include_dirs == include_dirs
         assert saved_dag.directory_filter.exclude_dirs == exclude_dirs
+
+    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
+    def test_write_pipeline_rebound_after_resource_refresh(self, mock_release):
+        """IndexWriteStage must use the freshly acquired embedder/indexer after
+        _release_and_verify_resources() swaps them in — not the original stale ones."""
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+        # Simulate _release_and_verify_resources replacing embedder/indexer
+        fresh_embedder = Mock()
+        fresh_embedding_result = Mock()
+        fresh_embedding_result.metadata = {}
+        fresh_embedder.embed_chunks.return_value = [fresh_embedding_result]
+        fresh_indexer = Mock()
+
+        def swap_resources(project_path):
+            indexer.embedder = fresh_embedder
+            indexer.indexer = fresh_indexer
+
+        mock_release.side_effect = swap_resources
+
+        self.mock_snapshot_manager.has_snapshot.return_value = False
+
+        with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
+            mock_dag = Mock()
+            mock_dag.get_all_files.return_value = ["main.py"]
+            mock_dag_class.return_value = mock_dag
+
+            mock_chunk = Mock()
+            mock_chunk.content = "test content"
+            self.mock_chunker.is_supported.return_value = True
+            self.mock_chunker.chunk_file.return_value = [mock_chunk]
+
+            result = indexer.incremental_index(str(self.project_path), "test_project")
+
+        assert result.success is True
+        # Fresh embedder must have been used — stale one must NOT
+        fresh_embedder.embed_chunks.assert_called()
+        self.mock_embedder.embed_chunks.assert_not_called()
+        # Fresh indexer received the embeddings — stale one must NOT
+        fresh_indexer.add_embeddings.assert_called()
+        self.mock_indexer.add_embeddings.assert_not_called()
 
     def teardown_method(self):
         """Clean up test fixtures."""

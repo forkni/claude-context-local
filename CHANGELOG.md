@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.12.2] - 2026-05-26
+
+### Fixed
+
+- **`IndexWriteStage` bound to stale resources after full reindex** (`search/incremental_indexer.py`) — `IndexWriteStage` and `BM25SyncManager` are now rebuilt via `_build_write_pipeline()` immediately after `_release_and_verify_resources()` reassigns `self.embedder`/`self.indexer`. Previously, successive full-reindex passes could silently embed against a released embedder, report `success=True`, and persist a zero-chunk snapshot.
+- **Embedding errors silently swallowed** (`search/index_write_stage.py`) — `run()` now returns `success=False` with the error message when `embed_chunks()` raises; the snapshot is no longer written, preventing a zero-chunk "success" state from corrupting the incremental index.
+- **GPU cache not cleared on embedding failure** (`search/index_write_stage.py`) — `_clear_gpu("FULL_INDEX")` is now called before the early-return on embedding failure, preventing VRAM pressure that could cause immediate OOM on the next retry.
+
+### Refactored
+
+- **`GraphIntegration` shared initializer** (`search/graph_integration.py`) — extracted `_setup_from_storage(storage)` called by both `__init__` and `from_storage()`, eliminating drift risk when `__init__` gains new instance attributes.
+- **`CommunityDetector` import hoisted to module level** (`search/community_stage.py`) — `ImportError` now surfaces at module load instead of being masked as a "community detection failed" warning. Deferred `LanguageChunker` import annotated with circular-import explanation.
+- **`RelationshipEdge`/`RelationshipType` import hoisted to module level** (`search/graph_integration.py`) — removed three per-call inline copies in `add_chunk`, `populate_from_embeddings`, and `build_graph_from_chunks`.
+
+### Changed
+
+- **Embedding model** (`search_config.json`): `Qwen/Qwen3-Embedding-0.6B` (1024-dim) → `Alibaba-NLP/gte-modernbert-base` (768-dim). **Breaking:** existing FAISS indices built at 1024-dim are dimension-incompatible and require a full reindex.
+- **Reranker** (`search_config.json`): `Alibaba-NLP/gte-reranker-modernbert-base` → `jinaai/jina-reranker-v3`; `min_vram_gb` 4.0 → 6.0 (VRAM-verified: 1.12 GB / 8 GB on RTX 4060).
+- **Routing** (`search_config.json`): `multi_model_enabled` false → true; `multi_model_pool` "full" → "lightweight-speed"; `embedding.batch_size` 128 → 64.
+
+---
+
 ## [0.12.1] - 2026-05-25
 
 ### Added

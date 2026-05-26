@@ -15,6 +15,8 @@ except ImportError:
     GRAPH_STORAGE_AVAILABLE = False
     CodeGraphStorage = None
 
+from graph.relationship_types import RelationshipEdge, RelationshipType
+
 
 def is_chunk_id(node_id: str) -> bool:
     """Check if a graph node ID is a real chunk ID (not a bare symbol name).
@@ -64,8 +66,7 @@ class GraphIntegration:
             project_id: Unique project identifier for graph storage
             storage_dir: Directory where index is stored (graph will be in parent dir)
         """
-        self._logger = logging.getLogger(__name__)
-        self.storage = None
+        self._setup_from_storage(None)
 
         if GRAPH_STORAGE_AVAILABLE and project_id:
             try:
@@ -92,9 +93,18 @@ class GraphIntegration:
             storage: An existing CodeGraphStorage instance, or None.
         """
         instance = cls.__new__(cls)
-        instance._logger = logging.getLogger(__name__)
-        instance.storage = storage
+        instance._setup_from_storage(storage)
         return instance
+
+    def _setup_from_storage(self, storage: Any) -> None:
+        """Set the instance attributes shared by __init__ and from_storage.
+
+        Keeping these in one place ensures the two construction paths never drift:
+        any attribute added here is set whether the instance was built normally or
+        via from_storage()'s cls.__new__ bypass.
+        """
+        self._logger = logging.getLogger(__name__)
+        self.storage = storage
 
     def add_chunk(self, chunk_id: str, metadata: dict[str, Any]) -> None:
         """Add chunk to call graph storage.
@@ -137,6 +147,7 @@ class GraphIntegration:
             self.storage.add_node(
                 chunk_id=chunk_id,
                 name=metadata.get("name", "unknown"),
+                # pyrefly: ignore [bad-argument-type]
                 chunk_type=chunk_type,
                 file_path=metadata.get("file_path", ""),
                 language=metadata.get("language", "python"),
@@ -160,12 +171,6 @@ class GraphIntegration:
                 )
                 for rel_dict in relationships:
                     try:
-                        # Import RelationshipEdge to reconstruct from dict
-                        from graph.relationship_types import (
-                            RelationshipEdge,
-                            RelationshipType,
-                        )
-
                         # Reconstruct RelationshipEdge from dict
                         edge = RelationshipEdge(
                             source_id=rel_dict.get("source_id", chunk_id),
@@ -232,8 +237,13 @@ class GraphIntegration:
                 name = meta.get("name")
                 if name:
                     name_to_chunk_ids[name].append(chunk_id)
+
+                    # Also index by bare name for methods (ClassName.method → method)
                     if "." in name:
                         name_to_chunk_ids[name.split(".")[-1]].append(chunk_id)
+
+                    # Index qualified name (ClassName.method) for self.method() resolution
+                    # Fixes intra-class method calls by indexing "ClassName.method"
                     parent_name = meta.get("parent_name")
                     if parent_name:
                         name_to_chunk_ids[f"{parent_name}.{name}"].append(chunk_id)
@@ -269,11 +279,6 @@ class GraphIntegration:
 
             for rel_dict in meta.get("relationships", []):
                 try:
-                    from graph.relationship_types import (
-                        RelationshipEdge,
-                        RelationshipType,
-                    )
-
                     edge = RelationshipEdge(
                         source_id=rel_dict.get("source_id", chunk_id),
                         target_name=rel_dict.get("target_name", "unknown"),
@@ -427,12 +432,6 @@ class GraphIntegration:
                 # Add relationship edges
                 for rel in chunk.relationships or []:
                     try:
-                        # Import RelationshipEdge for type handling
-                        from graph.relationship_types import (
-                            RelationshipEdge,
-                            RelationshipType,
-                        )
-
                         # Handle both RelationshipEdge objects and dicts
                         if isinstance(rel, RelationshipEdge):
                             self.storage.add_relationship_edge(rel)

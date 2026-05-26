@@ -2,15 +2,35 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-05-25)
+## Current Status: All Features Operational (2026-05-26)
 
-- **Version**: 0.12.1
+- **Version**: 0.12.2
 - **Status**: Production-ready
 - **Test Coverage**: 2,090 unit tests + 8 integration tests (100% pass rate)
 - **Dependencies**: 124 packages + optional `onnxruntime-gpu` for ONNX backend
 - **SSCG Benchmark**: Best MRR=0.846 (BM25), Hybrid Recall@10=0.833, all modes 13/13 Hit@5
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent**: 0.12.1 — split_block graph edges fixed (+584 relationship edges), ANSI console colors, `CodeRelationshipAnalyzer` moved to search layer, security audit
+- **Recent**: 0.12.2 — stale write-pipeline rebind fix, embedding-failure reporting, GPU cleanup on OOM, `GraphIntegration` shared initializer, config tuned for gte-modernbert + Jina v3
+
+---
+
+## v0.12.2 - Write-Pipeline Stability + Config Tuning (2026-05-26)
+
+Patch release fixing a root-cause stale-reference bug in `IndexWriteStage`, improving OOM recovery, refactoring `GraphIntegration` for long-term safety, and tuning `search_config.json` for 8 GB VRAM machines.
+
+### Fixed
+- **Stale embedder/indexer in `IndexWriteStage`** (`search/incremental_indexer.py`): `_build_write_pipeline()` helper now rebuilds both `IndexWriteStage` and `BM25SyncManager` after every `_release_and_verify_resources()` call — stages can no longer embed against cleaned-up objects.
+- **Embedding failure silently reported as success** (`search/index_write_stage.py`): `run()` returns `success=False` + error message when embedding raises; snapshot is not written, preventing a zero-chunk corrupt state.
+- **GPU cache not freed on OOM** (`search/index_write_stage.py`): `_clear_gpu("FULL_INDEX")` called before embedding-failure early return, avoiding cascading OOM on immediate retry.
+
+### Refactored
+- **`GraphIntegration` shared initializer** (`search/graph_integration.py`): `_setup_from_storage(storage)` called by both `__init__` and `from_storage()` — the two construction paths share one attribute-setting site.
+- **Import hoists** (`search/community_stage.py`, `search/graph_integration.py`): `CommunityDetector` and `RelationshipEdge`/`RelationshipType` moved to module level; `LanguageChunker` import annotated with circular-import reason.
+
+### Changed (breaking config)
+- **Embedding model**: `Qwen/Qwen3-Embedding-0.6B` (1024-dim) → `Alibaba-NLP/gte-modernbert-base` (768-dim). Requires full reindex if upgrading from 1024-dim index.
+- **Reranker**: `gte-reranker-modernbert-base` → `jinaai/jina-reranker-v3`; `min_vram_gb` 4.0 → 6.0.
+- **Routing**: `multi_model_enabled` false → true; pool "full" → "lightweight-speed"; `batch_size` 128 → 64.
 
 ---
 

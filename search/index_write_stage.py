@@ -94,6 +94,7 @@ class IndexWriteStage:
         """
         # Embed all chunks in one batched call
         all_embedding_results = []
+        embed_error: str | None = None
         if all_chunks:
             try:
                 logger.info(f"Starting embedding for {len(all_chunks)} chunks")
@@ -109,6 +110,20 @@ class IndexWriteStage:
             except Exception as e:
                 logger.error(f"Embedding failed: {e}")
                 logger.error(traceback.format_exc())
+                embed_error = str(e)
+
+        if embed_error is not None:
+            self._clear_gpu("FULL_INDEX")
+            return IncrementalIndexResult(
+                files_added=0,
+                files_removed=0,
+                files_modified=0,
+                chunks_added=0,
+                chunks_removed=0,
+                time_taken=time.time() - start_time,
+                success=False,
+                error=embed_error,
+            )
 
         # Add all embeddings to index at once
         if all_embedding_results:
