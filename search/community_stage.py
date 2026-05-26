@@ -97,6 +97,8 @@ class CommunityStage:
             logger.info("[COMMUNITY_MERGE] Running community-based remerge")
 
             try:
+                # Deferred import: chunking.languages.base pulls in the chunker stack,
+                # which imports graph modules — importing at module scope creates a cycle.
                 from chunking.languages.base import LanguageChunker
 
                 all_chunks = LanguageChunker.remerge_chunks_with_communities(

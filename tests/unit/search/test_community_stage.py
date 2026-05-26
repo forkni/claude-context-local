@@ -185,8 +185,8 @@ class TestCommunityStageDetectionEnabled:
                 result = stage.run(chunks, "/project", config)
 
         assert community_summary in result
-        # Community summary must be at the end (after module summaries)
-        assert result[-1] == community_summary or community_summary in result
+        # Community summary must be appended last (after module summaries)
+        assert result[-1] == community_summary
 
 
 class TestCommunityStageGracefulDegradation:

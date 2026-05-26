@@ -66,8 +66,7 @@ class GraphIntegration:
             project_id: Unique project identifier for graph storage
             storage_dir: Directory where index is stored (graph will be in parent dir)
         """
-        self._logger = logging.getLogger(__name__)
-        self.storage = None
+        self._setup_from_storage(None)
 
         if GRAPH_STORAGE_AVAILABLE and project_id:
             try:
@@ -94,9 +93,18 @@ class GraphIntegration:
             storage: An existing CodeGraphStorage instance, or None.
         """
         instance = cls.__new__(cls)
-        instance._logger = logging.getLogger(__name__)
-        instance.storage = storage
+        instance._setup_from_storage(storage)
         return instance
+
+    def _setup_from_storage(self, storage: Any) -> None:
+        """Set the instance attributes shared by __init__ and from_storage.
+
+        Keeping these in one place ensures the two construction paths never drift:
+        any attribute added here is set whether the instance was built normally or
+        via from_storage()'s cls.__new__ bypass.
+        """
+        self._logger = logging.getLogger(__name__)
+        self.storage = storage
 
     def add_chunk(self, chunk_id: str, metadata: dict[str, Any]) -> None:
         """Add chunk to call graph storage.
@@ -139,6 +147,7 @@ class GraphIntegration:
             self.storage.add_node(
                 chunk_id=chunk_id,
                 name=metadata.get("name", "unknown"),
+                # pyrefly: ignore [bad-argument-type]
                 chunk_type=chunk_type,
                 file_path=metadata.get("file_path", ""),
                 language=metadata.get("language", "python"),
