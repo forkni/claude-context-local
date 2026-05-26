@@ -1,7 +1,7 @@
 {
   "embedding": {
-    "model_name": "Qwen/Qwen3-Embedding-0.6B",
-    "dimension": 1024,
+    "model_name": "Alibaba-NLP/gte-modernbert-base",
+    "dimension": 768,
     "batch_size": 64,
     "query_cache_size": 128,
     "enable_import_context": true,
@@ -65,9 +65,9 @@
   },
   "reranker": {
     "enabled": true,
-    "model_name": "Alibaba-NLP/gte-reranker-modernbert-base",
+    "model_name": "jinaai/jina-reranker-v3",
     "top_k_candidates": 50,
-    "min_vram_gb": 4.0,
+    "min_vram_gb": 6.0,
     "batch_size": 16
   },
   "output": {
