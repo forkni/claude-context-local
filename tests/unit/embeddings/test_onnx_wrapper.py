@@ -198,6 +198,61 @@ class TestONNXEmbeddingModelEncodeReturnType:
         assert isinstance(result, torch.Tensor)
 
 
+class TestONNXPositionIdsInjection:
+    """Regression for optimum 2.x position_ids crash on Qwen3/decoder-family ONNX exports."""
+
+    def _make_ort_with_position_ids(
+        self, batch_size: int = 1, seq_len: int = 8, dim: int = 16
+    ) -> MagicMock:
+        hidden = torch.randn(batch_size, seq_len, dim)
+        output = MagicMock()
+        output.last_hidden_state = hidden
+        ort_model = MagicMock()
+        ort_model.return_value = output
+        # Real dict so `in` check works (unlike MagicMock.__contains__ which returns False)
+        ort_model.input_names = {"input_ids": 0, "attention_mask": 1, "position_ids": 2}
+        return ort_model
+
+    def test_position_ids_injected_when_declared(self):
+        """encode() must supply position_ids when ort_model.input_names declares it."""
+        ort_model = self._make_ort_with_position_ids(batch_size=1, seq_len=6, dim=16)
+        tokenizer = _make_tokenizer(batch_size=1, seq_len=6)
+        model = ONNXEmbeddingModel(ort_model, tokenizer, "cpu", "cls")
+        model.encode(["test input"])
+        assert "position_ids" in ort_model.call_args[1]
+
+    def test_position_ids_shape_matches_input_ids(self):
+        """Synthesized position_ids must have same shape as input_ids."""
+        ort_model = self._make_ort_with_position_ids(batch_size=2, seq_len=8, dim=32)
+        tokenizer = _make_tokenizer(batch_size=2, seq_len=8)
+        model = ONNXEmbeddingModel(ort_model, tokenizer, "cpu", "cls")
+        model.encode(["sentence one", "sentence two"])
+        kw = ort_model.call_args[1]
+        assert kw["position_ids"].shape == kw["input_ids"].shape
+
+    def test_position_ids_not_injected_for_encoder_models(self):
+        """Encoder models (BGE-M3, GTE) use MagicMock.input_names — branch must not fire."""
+        ort_model = _make_ort_model(batch_size=1, seq_len=6, dim=16)
+        tokenizer = _make_tokenizer(batch_size=1, seq_len=6)
+        model = ONNXEmbeddingModel(ort_model, tokenizer, "cpu", "cls")
+        model.encode(["test"])
+        assert "position_ids" not in ort_model.call_args[1]
+
+    def test_position_ids_not_overwritten_when_tokenizer_provides_it(self):
+        """If tokenizer already supplies position_ids, the existing value is preserved."""
+        ort_model = self._make_ort_with_position_ids(batch_size=1, seq_len=6, dim=16)
+        tokenizer = MagicMock()
+        existing = torch.arange(6).unsqueeze(0)
+        tokenizer.return_value = {
+            "input_ids": torch.ones(1, 6, dtype=torch.long),
+            "attention_mask": torch.ones(1, 6, dtype=torch.long),
+            "position_ids": existing,
+        }
+        model = ONNXEmbeddingModel(ort_model, tokenizer, "cpu", "cls")
+        model.encode(["test"])
+        assert torch.equal(ort_model.call_args[1]["position_ids"], existing)
+
+
 class TestONNXEmbeddingModelEncodeDevice:
     def test_encode_cpu_does_not_move_to_cuda(self):
         ort_model = _make_ort_model(batch_size=1, seq_len=4, dim=8)
