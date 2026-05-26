@@ -231,6 +231,7 @@ class TestIndexWriteStageEmbeddingFailure:
         snapshot_manager = Mock()
         bm25_sync = Mock()
         bm25_sync.sync_if_needed.return_value = (False, 0)
+        clear_gpu_fn = Mock()
 
         stage = IndexWriteStage(
             embedder=embedder,
@@ -238,7 +239,7 @@ class TestIndexWriteStageEmbeddingFailure:
             snapshot_manager=snapshot_manager,
             bm25_sync=bm25_sync,
             build_metadata_fn=Mock(return_value={}),
-            clear_gpu_fn=Mock(),
+            clear_gpu_fn=clear_gpu_fn,
         )
 
         result = stage.run(
@@ -257,6 +258,7 @@ class TestIndexWriteStageEmbeddingFailure:
         assert result.chunks_added == 0
         indexer.add_embeddings.assert_not_called()
         snapshot_manager.save_snapshot.assert_not_called()
+        clear_gpu_fn.assert_called_once_with("FULL_INDEX")
 
     def test_empty_chunks_skips_embed_and_add(self):
         stage, embedder, indexer, *_ = _make_stage()

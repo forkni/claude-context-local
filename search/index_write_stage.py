@@ -113,6 +113,7 @@ class IndexWriteStage:
                 embed_error = str(e)
 
         if embed_error is not None:
+            self._clear_gpu("FULL_INDEX")
             return IncrementalIndexResult(
                 files_added=0,
                 files_removed=0,
