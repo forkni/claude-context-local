@@ -5,6 +5,7 @@ import traceback
 from collections.abc import Callable
 
 from chunking.python_ast_chunker import CodeChunk
+from graph.community_detector import CommunityDetector
 
 from .config import SearchConfig
 from .graph_integration import GraphIntegration
@@ -57,8 +58,6 @@ class CommunityStage:
 
             try:
                 temp_graph = self._build_graph(all_chunks)
-
-                from graph.community_detector import CommunityDetector
 
                 # pyrefly: ignore [bad-argument-type]
                 detector = CommunityDetector(temp_graph.storage)

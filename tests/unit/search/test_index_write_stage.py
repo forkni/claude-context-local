@@ -221,10 +221,10 @@ class TestIndexWriteStageOrdering:
         assert embed_result.metadata["content"] == "def foo(): pass"
 
 
-class TestIndexWriteStageGracefulDegradation:
-    """Embedding failure degrades gracefully."""
+class TestIndexWriteStageEmbeddingFailure:
+    """Embedding failure is reported loudly: success=False, no snapshot written."""
 
-    def test_embedding_failure_produces_zero_chunks_added(self):
+    def test_embedding_failure_returns_failure_result(self):
         embedder = Mock()
         embedder.embed_chunks.side_effect = RuntimeError("CUDA OOM")
         indexer = Mock()
@@ -251,8 +251,12 @@ class TestIndexWriteStageGracefulDegradation:
             repo_profile=None,
         )
 
+        assert result.success is False
+        assert result.error is not None
+        assert "CUDA OOM" in result.error
         assert result.chunks_added == 0
         indexer.add_embeddings.assert_not_called()
+        snapshot_manager.save_snapshot.assert_not_called()
 
     def test_empty_chunks_skips_embed_and_add(self):
         stage, embedder, indexer, *_ = _make_stage()
