@@ -23,6 +23,8 @@ from pathlib import Path
 
 from tree_sitter import Language
 
+from .language_registry import EXT_TO_LANGUAGE
+
 # Import base classes and language chunkers from languages package
 from .languages import (
     CChunker,
@@ -186,28 +188,35 @@ def _is_binary_file(file_path: Path, sample_size: int = 8192) -> bool:
 class TreeSitterChunker:
     """Main tree-sitter chunker that delegates to language-specific implementations."""
 
-    # Map file extensions to chunker factories
-    # Each entry: (language_name, factory_function)
+    # Map file extensions to (language_name, chunker_factory).
+    # Language names come from EXT_TO_LANGUAGE (language_registry.py) — the
+    # single source of truth.  Adding a new language only requires one edit there.
     LANGUAGE_MAP = {
-        ".py": ("python", lambda lang: PythonChunker(lang)),
-        ".js": ("javascript", lambda lang: JavaScriptChunker(lang)),
-        ".ts": ("typescript", lambda lang: TypeScriptChunker(lang, use_tsx=False)),
-        ".tsx": ("tsx", lambda lang: TypeScriptChunker(lang, use_tsx=True)),
-        ".go": ("go", lambda lang: GoChunker(lang)),
-        ".rs": ("rust", lambda lang: RustChunker(lang)),
-        ".c": ("c", lambda lang: CChunker(lang)),
-        ".cpp": ("cpp", lambda lang: CppChunker(lang)),
-        ".cc": ("cpp", lambda lang: CppChunker(lang)),
-        ".cxx": ("cpp", lambda lang: CppChunker(lang)),
-        ".c++": ("cpp", lambda lang: CppChunker(lang)),
-        ".cs": ("csharp", lambda lang: CSharpChunker(lang)),
-        ".glsl": ("glsl", lambda lang: GLSLChunker(lang)),
-        ".frag": ("glsl", lambda lang: GLSLChunker(lang)),
-        ".vert": ("glsl", lambda lang: GLSLChunker(lang)),
-        ".comp": ("glsl", lambda lang: GLSLChunker(lang)),
-        ".geom": ("glsl", lambda lang: GLSLChunker(lang)),
-        ".tesc": ("glsl", lambda lang: GLSLChunker(lang)),
-        ".tese": ("glsl", lambda lang: GLSLChunker(lang)),
+        ".py": (EXT_TO_LANGUAGE[".py"], lambda lang: PythonChunker(lang)),
+        ".js": (EXT_TO_LANGUAGE[".js"], lambda lang: JavaScriptChunker(lang)),
+        ".ts": (
+            EXT_TO_LANGUAGE[".ts"],
+            lambda lang: TypeScriptChunker(lang, use_tsx=False),
+        ),
+        ".tsx": (
+            EXT_TO_LANGUAGE[".tsx"],
+            lambda lang: TypeScriptChunker(lang, use_tsx=True),
+        ),
+        ".go": (EXT_TO_LANGUAGE[".go"], lambda lang: GoChunker(lang)),
+        ".rs": (EXT_TO_LANGUAGE[".rs"], lambda lang: RustChunker(lang)),
+        ".c": (EXT_TO_LANGUAGE[".c"], lambda lang: CChunker(lang)),
+        ".cpp": (EXT_TO_LANGUAGE[".cpp"], lambda lang: CppChunker(lang)),
+        ".cc": (EXT_TO_LANGUAGE[".cc"], lambda lang: CppChunker(lang)),
+        ".cxx": (EXT_TO_LANGUAGE[".cxx"], lambda lang: CppChunker(lang)),
+        ".c++": (EXT_TO_LANGUAGE[".c++"], lambda lang: CppChunker(lang)),
+        ".cs": (EXT_TO_LANGUAGE[".cs"], lambda lang: CSharpChunker(lang)),
+        ".glsl": (EXT_TO_LANGUAGE[".glsl"], lambda lang: GLSLChunker(lang)),
+        ".frag": (EXT_TO_LANGUAGE[".frag"], lambda lang: GLSLChunker(lang)),
+        ".vert": (EXT_TO_LANGUAGE[".vert"], lambda lang: GLSLChunker(lang)),
+        ".comp": (EXT_TO_LANGUAGE[".comp"], lambda lang: GLSLChunker(lang)),
+        ".geom": (EXT_TO_LANGUAGE[".geom"], lambda lang: GLSLChunker(lang)),
+        ".tesc": (EXT_TO_LANGUAGE[".tesc"], lambda lang: GLSLChunker(lang)),
+        ".tese": (EXT_TO_LANGUAGE[".tese"], lambda lang: GLSLChunker(lang)),
     }
 
     def __init__(self) -> None:

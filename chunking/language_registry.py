@@ -4,28 +4,33 @@ Centralizes supported extensions, ignored directories, and node type mappings
 used across the chunking and indexing subsystems.
 """
 
-# Supported file extensions for code chunking
-SUPPORTED_EXTENSIONS: set[str] = {
-    ".py",  # Python
-    ".js",  # JavaScript
-    ".ts",  # TypeScript
-    ".tsx",  # TSX
-    ".go",  # Go
-    ".rs",  # Rust
-    ".c",  # C
-    ".cpp",  # C++
-    ".cc",  # C++
-    ".cxx",  # C++
-    ".c++",  # C++
-    ".cs",  # C#
-    ".glsl",  # GLSL shader
-    ".frag",  # Fragment shader
-    ".vert",  # Vertex shader
-    ".comp",  # Compute shader
-    ".geom",  # Geometry shader
-    ".tesc",  # Tessellation control shader
-    ".tese",  # Tessellation evaluation shader
+# Extension → tree-sitter grammar name.  Single source of truth for both
+# SUPPORTED_EXTENSIONS (used by the file-walker) and LANGUAGE_MAP (used by
+# TreeSitterChunker to select the grammar).  Add a new language here only.
+EXT_TO_LANGUAGE: dict[str, str] = {
+    ".py": "python",
+    ".js": "javascript",
+    ".ts": "typescript",
+    ".tsx": "tsx",
+    ".go": "go",
+    ".rs": "rust",
+    ".c": "c",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".cxx": "cpp",
+    ".c++": "cpp",
+    ".cs": "csharp",
+    ".glsl": "glsl",
+    ".frag": "glsl",
+    ".vert": "glsl",
+    ".comp": "glsl",
+    ".geom": "glsl",
+    ".tesc": "glsl",
+    ".tese": "glsl",
 }
+
+# Supported file extensions for code chunking — derived from EXT_TO_LANGUAGE.
+SUPPORTED_EXTENSIONS: set[str] = set(EXT_TO_LANGUAGE.keys())
 
 
 # Common large/build/tooling directories to skip during traversal
