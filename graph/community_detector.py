@@ -230,31 +230,3 @@ class CommunityDetector:
             "largest": max(sizes.values()) if sizes else 0,
             "smallest": min(sizes.values()) if sizes else 0,
         }
-
-    def get_hierarchical_communities(
-        self, max_levels: int = 3
-    ) -> dict[int, dict[str, int]]:
-        """Get multi-level community hierarchy.
-
-        Args:
-            max_levels: Maximum hierarchy depth (default: 3)
-
-        Returns:
-            Dict mapping level -> communities dict
-                Level 0: Fine-grained (high resolution)
-                Level 1: Intermediate
-                Level 2+: Coarse (low resolution)
-
-        Example:
-            >>> hierarchy = detector.get_hierarchical_communities(max_levels=3)
-            >>> level0 = hierarchy[0]  # Fine-grained communities
-            >>> level2 = hierarchy[2]  # Coarse architectural components
-
-        Note:
-            Future enhancement - currently returns single level.
-            Full hierarchical implementation requires iterative Leiden.
-        """
-        # TODO: Implement full hierarchical Leiden
-        # For now, return single level
-        communities = self.detect_communities(resolution=1.0)
-        return {0: communities}
