@@ -34,21 +34,21 @@ def generate_file_summaries(chunks: list["CodeChunk"]) -> list["CodeChunk"]:
     return summaries
 
 
-def _build_file_summary(rel_path: str, file_chunks: list["CodeChunk"]) -> "CodeChunk":
-    """Build a synthetic module CodeChunk from a file's chunks."""
-    from chunking.python_ast_chunker import CodeChunk
+def collect_symbol_summary(
+    chunks: list["CodeChunk"],
+) -> tuple[list[str], list[str], list[str], list[str], list[str]]:
+    """Collect symbol metadata from a list of chunks.
 
-    module_name = Path(rel_path).stem
-    folder_structure = list(Path(rel_path).parent.parts)
+    Returns:
+        (classes, functions, methods, all_imports, docstring_lines)
+    """
+    classes: list[str] = []
+    functions: list[str] = []
+    methods: list[str] = []
+    all_imports: list[str] = []
+    docstring_lines: list[str] = []
 
-    # Collect metadata
-    classes = []
-    functions = []
-    methods = []
-    all_imports = []
-    docstring_lines = []
-
-    for chunk in file_chunks:
+    for chunk in chunks:
         if chunk.chunk_type == "class":
             classes.append(chunk.name or "?")
             if chunk.docstring:
@@ -64,6 +64,20 @@ def _build_file_summary(rel_path: str, file_chunks: list["CodeChunk"]) -> "CodeC
 
         if chunk.imports:
             all_imports.extend(chunk.imports[:5])  # Cap per-chunk imports
+
+    return classes, functions, methods, all_imports, docstring_lines
+
+
+def _build_file_summary(rel_path: str, file_chunks: list["CodeChunk"]) -> "CodeChunk":
+    """Build a synthetic module CodeChunk from a file's chunks."""
+    from chunking.python_ast_chunker import CodeChunk
+
+    module_name = Path(rel_path).stem
+    folder_structure = list(Path(rel_path).parent.parts)
+
+    classes, functions, methods, all_imports, docstring_lines = collect_symbol_summary(
+        file_chunks
+    )
 
     # Build summary text
     parts = [f"# {rel_path} | module {module_name}"]

@@ -1,7 +1,7 @@
 {
   "embedding": {
-    "model_name": "Alibaba-NLP/gte-modernbert-base",
-    "dimension": 768,
+    "model_name": "BAAI/bge-m3",
+    "dimension": 1024,
     "batch_size": 64,
     "query_cache_size": 128,
     "enable_import_context": true,
