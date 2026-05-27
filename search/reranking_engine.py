@@ -97,6 +97,63 @@ class RerankingEngine:
             self._logger.warning(f"VRAM check failed, disabling neural reranking: {e}")
             return False
 
+    def _ensure_reranker(self, log_prefix: str) -> bool:
+        """Lazy-init or cleanup neural reranker based on current VRAM/config state.
+
+        Updates self._neural_reranking_enabled and self.neural_reranker.
+        Returns True if reranking is available (enabled and loaded).
+        """
+        should_enable = self.should_enable_neural_reranking()
+
+        if should_enable and self.neural_reranker is None:
+            config = get_search_config()
+            self.neural_reranker = create_reranker(
+                model_name=config.reranker.model_name,
+                batch_size=config.reranker.batch_size,
+            )
+            self._logger.debug(f"{log_prefix} Neural reranker initialized")
+        elif not should_enable and self.neural_reranker is not None:
+            self.neural_reranker.cleanup()
+            self.neural_reranker = None
+            self._logger.debug(f"{log_prefix} Neural reranker disabled and cleaned up")
+
+        self._neural_reranking_enabled = should_enable
+        return bool(should_enable and self.neural_reranker is not None)
+
+    def _run_rerank(
+        self, query_or_content: str, candidates: list, k: int, log_prefix: str
+    ) -> list:
+        """OOM-protected timed rerank call.
+
+        Returns reranked results on success, or candidates unchanged on failure.
+        """
+        config = get_search_config()
+        rerank_count = min(config.reranker.top_k_candidates, len(candidates))
+        neural_start = time.time()
+
+        try:
+            result = self.neural_reranker.rerank(
+                query_or_content, candidates[:rerank_count], k
+            )
+            neural_time = time.time() - neural_start
+            self._logger.debug(
+                f"{log_prefix} Processed {rerank_count} candidates in {neural_time:.3f}s"
+            )
+            return result
+        except Exception as e:
+            self._logger.warning(
+                f"{log_prefix} Reranking failed: {e}, using original results"
+            )
+            error_str = str(e).lower()
+            if "cuda" in error_str and (
+                "out of memory" in error_str or "oom" in error_str
+            ):
+                self._session_oom_detected = True
+                self._logger.warning(
+                    f"{log_prefix} CUDA OOM detected, disabling for session"
+                )
+            return candidates
+
     def rerank_by_query(
         self,
         query: str,
@@ -151,57 +208,11 @@ class RerankingEngine:
         # Sort by score (descending)
         sorted_results = sorted(results, key=lambda r: r.score, reverse=True)
 
-        # Neural reranking (Quality First mode)
-        # Always re-check config to pick up runtime changes
-        if len(sorted_results) > 0:
-            should_enable = self.should_enable_neural_reranking()
-
-            # Handle state transitions
-            if should_enable and self.neural_reranker is None:
-                # Initialize reranker (lazy load, auto-detects discriminative vs generative)
-                config = get_search_config()
-                self.neural_reranker = create_reranker(
-                    model_name=config.reranker.model_name,
-                    batch_size=config.reranker.batch_size,
-                )
-                self._logger.debug("[RERANK] Neural reranker initialized")
-            elif not should_enable and self.neural_reranker is not None:
-                # Cleanup when disabled
-                self.neural_reranker.cleanup()
-                self.neural_reranker = None
-                self._logger.debug("[RERANK] Neural reranker disabled and cleaned up")
-
-            self._neural_reranking_enabled = should_enable
-
-            # Proceed with reranking if enabled
-            if self._neural_reranking_enabled and self.neural_reranker:
-                neural_start = time.time()
-                config = get_search_config()
-                rerank_count = min(
-                    config.reranker.top_k_candidates, len(sorted_results)
-                )
-
-                try:
-                    sorted_results = self.neural_reranker.rerank(
-                        query, sorted_results[:rerank_count], k
-                    )
-                    neural_time = time.time() - neural_start
-                    self._logger.debug(
-                        f"[NEURAL_RERANK] Processed {rerank_count} candidates in {neural_time:.3f}s"
-                    )
-                except Exception as e:
-                    self._logger.warning(
-                        f"[NEURAL_RERANK] Reranking failed: {e}, using embedding-based ranking"
-                    )
-                    # Only mark session OOM for actual CUDA memory errors
-                    error_str = str(e).lower()
-                    if "cuda" in error_str and (
-                        "out of memory" in error_str or "oom" in error_str
-                    ):
-                        self._session_oom_detected = True
-                        self._logger.warning(
-                            "[NEURAL_RERANK] CUDA OOM detected, disabling for session"
-                        )
+        # Neural reranking (Quality First mode) — always re-check config for runtime changes
+        if sorted_results and self._ensure_reranker("[RERANK]"):
+            sorted_results = self._run_rerank(
+                query, sorted_results, k, "[NEURAL_RERANK]"
+            )
 
         return sorted_results[:k]
 
@@ -230,64 +241,11 @@ class RerankingEngine:
         """
         if not results:
             return []
-
-        # Check if neural reranking should be enabled
-        should_enable = self.should_enable_neural_reranking()
-
-        # Handle state transitions (lazy load/cleanup)
-        if should_enable and self.neural_reranker is None:
-            # Initialize reranker (lazy load, auto-detects discriminative vs generative)
-            from .config import get_search_config
-
-            config = get_search_config()
-            self.neural_reranker = create_reranker(
-                model_name=config.reranker.model_name,
-                batch_size=config.reranker.batch_size,
-            )
-            log_prefix = f"[RERANK-{context.upper()}]"
-            self._logger.debug(f"{log_prefix} Neural reranker initialized")
-        elif not should_enable and self.neural_reranker is not None:
-            # Cleanup when disabled
-            self.neural_reranker.cleanup()
-            self.neural_reranker = None
-            log_prefix = f"[RERANK-{context.upper()}]"
-            self._logger.debug(f"{log_prefix} Neural reranker disabled and cleaned up")
-
-        self._neural_reranking_enabled = should_enable
-
-        # Proceed with reranking if enabled
-        if self._neural_reranking_enabled and self.neural_reranker:
-            neural_start = time.time()
-            from .config import get_search_config
-
-            config = get_search_config()
-            rerank_count = min(config.reranker.top_k_candidates, len(results))
-
-            try:
-                results = self.neural_reranker.rerank(
-                    query_or_content, results[:rerank_count], k
-                )
-                neural_time = time.time() - neural_start
-                log_prefix = f"[NEURAL_RERANK-{context.upper()}]"
-                self._logger.debug(
-                    f"{log_prefix} Processed {rerank_count} candidates in {neural_time:.3f}s"
-                )
-            except Exception as e:
-                log_prefix = f"[NEURAL_RERANK-{context.upper()}]"
-                self._logger.warning(
-                    f"{log_prefix} Reranking failed: {e}, using original results"
-                )
-                # Only mark session OOM for actual CUDA memory errors
-                error_str = str(e).lower()
-                if "cuda" in error_str and (
-                    "out of memory" in error_str or "oom" in error_str
-                ):
-                    self._session_oom_detected = True
-                    self._logger.warning(
-                        f"{log_prefix} CUDA OOM detected, disabling for session"
-                    )
-
-        return results
+        if not self._ensure_reranker(f"[RERANK-{context.upper()}]"):
+            return results
+        return self._run_rerank(
+            query_or_content, results, k, f"[NEURAL_RERANK-{context.upper()}]"
+        )
 
     def reset_session_state(self) -> None:
         """Reset session-level OOM tracking.
