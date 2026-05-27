@@ -127,6 +127,9 @@ class RerankingEngine:
 
         Returns reranked results on success, or candidates unchanged on failure.
         """
+        assert (
+            self.neural_reranker is not None
+        )  # guaranteed by _ensure_reranker() caller gate
         config = get_search_config()
         rerank_count = min(config.reranker.top_k_candidates, len(candidates))
         neural_start = time.time()
