@@ -555,11 +555,13 @@ async def test_handle_find_similar_code():
     with (
         patch("mcp_server.tools.search_handlers.get_searcher") as mock_searcher,
         patch("mcp_server.tools.search_handlers.get_state") as mock_get_state,
+        patch("mcp_server.tools.decorators.get_state") as mock_dec_state,
     ):
         # Mock state with current_project set
         mock_state = Mock()
         mock_state.current_project = "/test/project"
         mock_get_state.return_value = mock_state
+        mock_dec_state.return_value = mock_state
 
         # Mock search results
         mock_result = Mock()
@@ -623,10 +625,12 @@ async def test_handle_search_code_hybrid_searcher_ready():
     with (
         patch("mcp_server.tools.search_handlers.get_searcher") as mock_get_searcher,
         patch("mcp_server.tools.search_handlers.get_state") as mock_get_state,
+        patch("mcp_server.tools.decorators.get_state") as mock_dec_state,
     ):
         mock_state = Mock()
         mock_state.current_project = "/test/project"
         mock_get_state.return_value = mock_state
+        mock_dec_state.return_value = mock_state
 
         # Mock HybridSearcher with is_ready property and dense_index
         mock_searcher = Mock()

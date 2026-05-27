@@ -390,7 +390,6 @@ class TestToolHandlers:
         assert "No indexed project found" in result["error"]
         assert result["current_project"] is None
         assert "index_directory" in result["message"]
-        assert "system_message" in result
 
     @pytest.mark.asyncio
     @patch("mcp_server.tools.search_handlers.get_state")

@@ -17,7 +17,7 @@ from mcp_server.server import (
 )
 from mcp_server.services import get_config, get_state
 from mcp_server.storage_manager import get_project_storage_dir
-from mcp_server.tools.decorators import error_handler
+from mcp_server.tools.decorators import error_handler, require_indexed_project
 from mcp_server.utils.config_helpers import temporary_ram_fallback_off
 from search.config import (
     EgoGraphConfig,
@@ -676,6 +676,7 @@ def _enrich_results_with_graph_data(
 
 
 @error_handler("Search")
+@require_indexed_project
 async def handle_search_code(arguments: dict[str, Any]) -> dict:
     """Search code with natural language query.
 
@@ -870,16 +871,6 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     )
 
     logger.info(f"[SEARCH] query='{query}', k={k}, mode='{search_mode}'")
-
-    # Early validation: Check if a project is indexed before routing
-    current_project = get_state().current_project
-    if not current_project:
-        return {
-            "error": "No indexed project found",
-            "message": "You must index a project before searching. Use index_directory first.",
-            "current_project": None,
-            "system_message": "No project indexed. Use index_directory(directory_path) to index a project first.",
-        }
 
     # Check and perform auto-reindex if index is stale
     current_project = get_state().current_project
@@ -1292,6 +1283,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
 
 
 @error_handler("Find similar")
+@require_indexed_project
 async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
     """Find code chunks similar to a reference chunk."""
     chunk_id = arguments["chunk_id"]
@@ -1301,14 +1293,6 @@ async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
     # Use CodeIndexManager's normalize_chunk_id for proper cross-platform handling
     if chunk_id:
         chunk_id = MetadataStore.normalize_chunk_id(chunk_id)
-
-    # Early validation: Check if a project is indexed
-    if not get_state().current_project:
-        return {
-            "error": "No indexed project found",
-            "message": "You must index a project before finding similar code. Use index_directory first.",
-            "current_project": None,
-        }
 
     searcher = get_searcher()
 
@@ -1341,6 +1325,7 @@ async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
         "symbol_name": args.get("symbol_name"),
     },
 )
+@require_indexed_project
 async def handle_find_connections(arguments: dict[str, Any]) -> dict:
     """Find all code connections to a given symbol."""
     chunk_id = arguments.get("chunk_id")
@@ -1363,14 +1348,6 @@ async def handle_find_connections(arguments: dict[str, Any]) -> dict:
     logger.info(
         f"[FIND_CONNECTIONS] chunk_id={chunk_id}, symbol_name={symbol_name}, depth={max_depth}"
     )
-
-    # Early validation: Check if a project is indexed
-    if not get_state().current_project:
-        return {
-            "error": "No indexed project found",
-            "message": "You must index a project before analyzing connections. Use index_directory first.",
-            "current_project": None,
-        }
 
     # Get searcher
     searcher = get_searcher()
@@ -1408,6 +1385,7 @@ async def handle_find_connections(arguments: dict[str, Any]) -> dict:
         "target": args.get("target") or args.get("target_chunk_id"),
     },
 )
+@require_indexed_project
 async def handle_find_path(arguments: dict[str, Any]) -> dict:
     """Find shortest path between two code entities."""
     # Extract parameters
@@ -1428,13 +1406,6 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
         return {
             "error": "Missing target",
             "message": "Provide either target (symbol name) or target_chunk_id",
-        }
-
-    # Check project indexed
-    if not get_state().current_project:
-        return {
-            "error": "No indexed project found",
-            "message": "You must index a project before finding paths. Use index_directory first.",
         }
 
     # Normalize chunk_ids
