@@ -581,6 +581,7 @@ class CodeEmbedder:
         )
         self.device = device
         self._model = None
+        self._is_onnx: bool = False
         self._logger = logging.getLogger(__name__)
         self._model_config = None
 
@@ -778,6 +779,7 @@ class CodeEmbedder:
     def _load_model(self) -> None:
         """Delegate to ModelLoader.load()."""
         self._model, self.device = self._model_loader.load()
+        self._is_onnx = hasattr(self._model, "ort_model")
         # Sync VRAM usage tracking from ModelLoader
         self._model_vram_usage.update(self._model_loader.model_vram_usage)
 
@@ -1178,9 +1180,8 @@ class CodeEmbedder:
                 if activation_gb_per_item <= 0.0:
                     hf_cfg = self._extract_hf_config()
                     if hf_cfg is not None:
-                        is_onnx = hasattr(self._model, "ort_model")
                         activation_gb_per_item = estimate_activation_gb_from_config(
-                            hf_cfg, is_onnx=is_onnx
+                            hf_cfg, is_onnx=self._is_onnx
                         )
                         self._logger.info(
                             f"[DYNAMIC_BATCH] Activation cost estimated from model config: "
@@ -1192,7 +1193,7 @@ class CodeEmbedder:
                 # (e.g. attention MatMul, residual Add) do not scale linearly
                 # with batch and can blow past the per-item × batch budget.
                 # Apply an empirically-validated floor for known ONNX models.
-                if hasattr(self._model, "ort_model"):
+                if self._is_onnx:
                     onnx_floor = _get_onnx_cost_floor(self.model_name)
                     if onnx_floor > activation_gb_per_item:
                         self._logger.info(
@@ -1213,7 +1214,7 @@ class CodeEmbedder:
                 # ORT cap: gpu_mem_limit is static (set at from_pretrained time), so
                 # computing it once here (not per-batch) is correct and sufficient.
                 ort_cap_gb = 0.0
-                if hasattr(self._model, "ort_model"):
+                if self._is_onnx:
                     try:
                         _cap_result = compute_effective_vram_cap(
                             config.performance.vram_limit_fraction
@@ -1234,7 +1235,7 @@ class CodeEmbedder:
                     model_name=self.model_name,
                     activation_gb_per_item=activation_gb_per_item,
                     ort_cap_gb=ort_cap_gb,
-                    is_onnx=hasattr(self._model, "ort_model"),
+                    is_onnx=self._is_onnx,
                 )
                 self._logger.info(
                     f"Using dynamic GPU-optimized batch size {batch_size} for {len(chunks)} chunks"
