@@ -12,6 +12,28 @@ import pytest
 
 # Import handlers
 from mcp_server import tool_handlers
+from mcp_server.tool_handlers import TOOL_DISPATCH
+from mcp_server.tool_registry import TOOL_REGISTRY
+
+
+# ============================================================================
+# PARITY: TOOL_DISPATCH must mirror TOOL_REGISTRY exactly
+# ============================================================================
+
+
+def test_tool_dispatch_registry_parity():
+    """TOOL_DISPATCH and TOOL_REGISTRY must have identical key sets.
+
+    Catches the 'added a schema but forgot to wire dispatch' class of bug
+    that the old getattr convention tolerated silently.
+    """
+    dispatch_keys = set(TOOL_DISPATCH)
+    registry_keys = set(TOOL_REGISTRY)
+    assert dispatch_keys == registry_keys, (
+        f"TOOL_DISPATCH and TOOL_REGISTRY are out of sync.\n"
+        f"  In DISPATCH but not REGISTRY: {dispatch_keys - registry_keys}\n"
+        f"  In REGISTRY but not DISPATCH: {registry_keys - dispatch_keys}"
+    )
 
 
 # ============================================================================
