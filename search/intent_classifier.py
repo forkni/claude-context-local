@@ -66,6 +66,15 @@ def _load_intent_rules() -> dict:
     Fail-fast: raises if the file is missing or malformed — the classifier
     cannot function without rules, so silent degradation is not acceptable.
 
+    This function is called at **class-body / import time** via
+    ``IntentClassifier._rules = _load_intent_rules()`` (see class body), so any
+    ``FileNotFoundError`` or ``ValueError`` surfaces during
+    ``import search.intent_classifier``, not lazily at first use.
+
+    The ``@lru_cache`` prevents repeated disk reads, but also means tests that
+    patch ``_load_intent_rules`` must call
+    ``_load_intent_rules.cache_clear()`` for the patch to take effect.
+
     Returns:
         Parsed YAML dict with keys 'intent_rules' and 'precedence'.
     """

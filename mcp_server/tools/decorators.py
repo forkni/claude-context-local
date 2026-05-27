@@ -109,6 +109,7 @@ def require_indexed_project(func: Callable) -> Callable:
                 "error": "No indexed project found",
                 "message": "Use index_directory to index a project first.",
                 "current_project": None,
+                "system_message": "No project indexed. Use index_directory to index a project first.",
             }
         return await func(arguments)
 

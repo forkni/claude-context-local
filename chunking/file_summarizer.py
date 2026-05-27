@@ -2,13 +2,21 @@
 
 from collections import defaultdict
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from utils.path_utils import normalize_path
 
 
 if TYPE_CHECKING:
     from chunking.python_ast_chunker import CodeChunk
+
+
+class SymbolSummary(NamedTuple):
+    classes: list[str]
+    functions: list[str]
+    methods: list[str]
+    all_imports: list[str]
+    docstring_lines: list[str]
 
 
 def generate_file_summaries(chunks: list["CodeChunk"]) -> list["CodeChunk"]:
@@ -36,11 +44,11 @@ def generate_file_summaries(chunks: list["CodeChunk"]) -> list["CodeChunk"]:
 
 def collect_symbol_summary(
     chunks: list["CodeChunk"],
-) -> tuple[list[str], list[str], list[str], list[str], list[str]]:
+) -> SymbolSummary:
     """Collect symbol metadata from a list of chunks.
 
     Returns:
-        (classes, functions, methods, all_imports, docstring_lines)
+        SymbolSummary(classes, functions, methods, all_imports, docstring_lines)
     """
     classes: list[str] = []
     functions: list[str] = []
@@ -65,7 +73,7 @@ def collect_symbol_summary(
         if chunk.imports:
             all_imports.extend(chunk.imports[:5])  # Cap per-chunk imports
 
-    return classes, functions, methods, all_imports, docstring_lines
+    return SymbolSummary(classes, functions, methods, all_imports, docstring_lines)
 
 
 def _build_file_summary(rel_path: str, file_chunks: list["CodeChunk"]) -> "CodeChunk":
@@ -75,31 +83,29 @@ def _build_file_summary(rel_path: str, file_chunks: list["CodeChunk"]) -> "CodeC
     module_name = Path(rel_path).stem
     folder_structure = list(Path(rel_path).parent.parts)
 
-    classes, functions, methods, all_imports, docstring_lines = collect_symbol_summary(
-        file_chunks
-    )
+    summary = collect_symbol_summary(file_chunks)
 
     # Build summary text
     parts = [f"# {rel_path} | module {module_name}"]
 
-    symbol_count = len(classes) + len(functions) + len(methods)
+    symbol_count = len(summary.classes) + len(summary.functions) + len(summary.methods)
     package = folder_structure[0] if folder_structure else "root"
     parts.append(f"# Module containing {symbol_count} symbols in the {package} package")
 
-    if classes:
-        parts.append(f"# Classes: {', '.join(classes[:10])}")
-    if functions:
-        parts.append(f"# Functions: {', '.join(functions[:10])}")
-    if methods:
-        parts.append(f"# Key methods: {', '.join(methods[:15])}")
+    if summary.classes:
+        parts.append(f"# Classes: {', '.join(summary.classes[:10])}")
+    if summary.functions:
+        parts.append(f"# Functions: {', '.join(summary.functions[:10])}")
+    if summary.methods:
+        parts.append(f"# Key methods: {', '.join(summary.methods[:15])}")
 
     # Deduplicate imports, show top-level modules
-    unique_imports = sorted(set(all_imports))[:10]
+    unique_imports = sorted(set(summary.all_imports))[:10]
     if unique_imports:
         parts.append(f"# Imports: {', '.join(unique_imports)}")
 
-    if docstring_lines:
-        parts.extend(docstring_lines[:5])
+    if summary.docstring_lines:
+        parts.extend(summary.docstring_lines[:5])
 
     content = "\n".join(parts)
 

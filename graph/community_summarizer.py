@@ -71,9 +71,7 @@ def _build_community_summary(
     directory_counts = Counter(directories)
     dominant_directory = directory_counts.most_common(1)[0][0]
 
-    classes, functions, methods, all_imports, docstring_lines = collect_symbol_summary(
-        community_chunks
-    )
+    summary = collect_symbol_summary(community_chunks)
 
     # Find hub function: prefer highest PageRank centrality, fallback to largest chunk
     if centrality_scores:
@@ -88,10 +86,10 @@ def _build_community_summary(
         )
 
     # Generate label from dominant directory + primary class/function
-    if classes:
-        primary_symbol = classes[0]
-    elif functions:
-        primary_symbol = functions[0]
+    if summary.classes:
+        primary_symbol = summary.classes[0]
+    elif summary.functions:
+        primary_symbol = summary.functions[0]
     else:
         primary_symbol = f"comm{community_id}"
 
@@ -100,21 +98,21 @@ def _build_community_summary(
     # Build summary text
     parts = [f"# Community {community_id} | {label}"]
 
-    symbol_count = len(classes) + len(functions) + len(methods)
+    symbol_count = len(summary.classes) + len(summary.functions) + len(summary.methods)
     parts.append(
         f"# Community containing {symbol_count} symbols in {len(community_chunks)} chunks"
     )
     parts.append(f"# Dominant directory: {dominant_directory}")
 
-    if classes:
-        parts.append(f"# Classes: {', '.join(classes[:10])}")
-    if functions:
-        parts.append(f"# Functions: {', '.join(functions[:10])}")
-    if methods:
-        parts.append(f"# Key methods: {', '.join(methods[:15])}")
+    if summary.classes:
+        parts.append(f"# Classes: {', '.join(summary.classes[:10])}")
+    if summary.functions:
+        parts.append(f"# Functions: {', '.join(summary.functions[:10])}")
+    if summary.methods:
+        parts.append(f"# Key methods: {', '.join(summary.methods[:15])}")
 
     # Deduplicate imports, show top-level modules
-    unique_imports = sorted(set(all_imports))[:10]
+    unique_imports = sorted(set(summary.all_imports))[:10]
     if unique_imports:
         parts.append(f"# Imports: {', '.join(unique_imports)}")
 
@@ -131,8 +129,8 @@ def _build_community_summary(
         else:
             parts.append(f"# Hub function: {hub_chunk.name}")
 
-    if docstring_lines:
-        parts.extend(docstring_lines[:5])
+    if summary.docstring_lines:
+        parts.extend(summary.docstring_lines[:5])
 
     content = "\n".join(parts)
 
