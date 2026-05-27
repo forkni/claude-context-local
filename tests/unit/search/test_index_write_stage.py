@@ -133,9 +133,9 @@ class TestIndexWriteStageOrdering:
         embed_result.metadata = {}
 
         embedder = Mock()
-        embedder.embed_chunks.side_effect = lambda *a, **kw: call_order.append(
-            "embed"
-        ) or [embed_result]
+        embedder.embed_chunks.side_effect = lambda *a, **kw: (
+            call_order.append("embed") or [embed_result]
+        )
         indexer = Mock()
         indexer.add_embeddings.side_effect = lambda *a, **kw: call_order.append("add")
         indexer.save_indices.side_effect = lambda *a, **kw: call_order.append(
@@ -146,9 +146,9 @@ class TestIndexWriteStageOrdering:
             "save_snapshot"
         )
         bm25_sync = Mock()
-        bm25_sync.sync_if_needed.side_effect = lambda *a, **kw: call_order.append(
-            "bm25"
-        ) or (False, 0)
+        bm25_sync.sync_if_needed.side_effect = lambda *a, **kw: (
+            call_order.append("bm25") or (False, 0)
+        )
         clear_gpu_fn = Mock(side_effect=lambda *a, **kw: call_order.append("gpu"))
 
         stage = IndexWriteStage(
