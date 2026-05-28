@@ -18,6 +18,7 @@ from mcp_server.server import (
 from mcp_server.services import get_config, get_state
 from mcp_server.storage_manager import get_project_storage_dir
 from mcp_server.tools.decorators import error_handler, require_indexed_project
+from mcp_server.tools.search_orchestrator import SearchPlanner
 from mcp_server.utils.config_helpers import temporary_ram_fallback_off
 from search.config import (
     EgoGraphConfig,
@@ -31,7 +32,7 @@ from search.filters import normalize_path
 from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
-from search.intent_classifier import IntentClassifier, QueryIntent
+from search.intent_classifier import QueryIntent
 from search.metadata import MetadataStore
 from search.query_router import QueryRouter
 from search.relationship_analyzer import RelationshipAnalyzer
@@ -695,14 +696,6 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     query = arguments.get("query")
     chunk_id = arguments.get("chunk_id")
 
-    # Get k from arguments, falling back to config default_k (Easy Win 2 + 3)
-    search_config = get_search_config()
-    config_default_k = search_config.search_mode.default_k
-    k = arguments.get("k", config_default_k)
-
-    # Enforce max_k limit (Easy Win 3)
-    k = min(k, search_config.search_mode.max_k)
-
     # Validate: must provide either query OR chunk_id, not both
     if not query and not chunk_id:
         return {
@@ -719,156 +712,61 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     if chunk_id:
         return _handle_chunk_id_lookup(chunk_id)
 
-    # Early extraction for model routing (needed by intent redirects)
-    use_routing = arguments.get("use_routing", True)
-    model_key = arguments.get("model_key")
+    # PLAN: classify intent, route model, decide all search parameters
+    plan = SearchPlanner().plan(arguments)
 
-    # Ego-graph defaults (may be overridden by CONTEXTUAL intent)
-    ego_graph_enabled = arguments.get("ego_graph_enabled", False)
-    ego_graph_k_hops = arguments.get("ego_graph_k_hops", 2)
-    ego_graph_max_neighbors = arguments.get("ego_graph_max_neighbors_per_hop", 10)
-
-    # Route query to optimal embedding model
-    selected_model_key, routing_info = _route_query_to_model(
-        query, use_routing, model_key
-    )
-
-    # Initialize intent_decision (may be set by intent classifier below)
-    intent_decision = None
-
-    # Intent Classification (Phase 2)
-    config = get_config()
-    if config.intent.enabled:
-        # Optionally supply the cached embedder for semantic anchor scoring.
-        # Uses the searcher cached from the previous request (get_state().searcher)
-        # so there is zero overhead on the first request (falls back to keyword-only).
-        _intent_embedder = None
-        if config.intent.semantic_enabled:
-            _cached = get_state().searcher
-            if _cached is not None and hasattr(_cached, "search_executor"):
-                _intent_embedder = getattr(_cached.search_executor, "embedder", None)
-
-        intent_classifier = IntentClassifier(
-            confidence_threshold=config.intent.confidence_threshold,
-            enable_logging=config.intent.log_classifications,
-            embedder=_intent_embedder,
-            semantic_enabled=config.intent.semantic_enabled,
-            semantic_weight=config.intent.semantic_weight,
-        )
-        intent_decision = intent_classifier.classify(query)
-
-        logger.info(
-            # pyrefly: ignore [unsupported-operation]
-            f"[INTENT] query='{query[:50]}...' -> {intent_decision.intent.value} "
-            f"(conf={intent_decision.confidence:.2f}, reason={intent_decision.reason})"
-        )
-
-        # Redirect PATH_TRACING queries to find_path
-        if (
-            intent_decision.intent == QueryIntent.PATH_TRACING
-            and intent_decision.confidence >= config.intent.confidence_threshold
-        ):
-            source = intent_decision.suggested_params.get("source")
-            target = intent_decision.suggested_params.get("target")
-            if source and target:
-                logger.info(
-                    f"[INTENT] Redirecting PATH_TRACING query to find_path: {source} → {target}"
-                )
-                return await handle_find_path(
-                    {
-                        "source": source,
-                        "target": target,
-                        "max_hops": 10,
-                    }
-                )
-
-        # Redirect SIMILARITY queries to find_similar_code
-        if (
-            intent_decision.intent == QueryIntent.SIMILARITY
-            and intent_decision.confidence >= config.intent.confidence_threshold
-        ):
-            symbol_name = intent_decision.suggested_params.get("symbol_name")
-            if symbol_name:
-                # First search to get chunk_id, then find similar
-                logger.info(
-                    f"[INTENT] Redirecting SIMILARITY query to find_similar_code: {symbol_name}"
-                )
-                try:
-                    # Get searcher if not already initialized
-                    if "searcher" not in locals():
-                        searcher = get_searcher(model_key=selected_model_key)
-                    search_result = await asyncio.to_thread(
-                        # pyrefly: ignore [unbound-name]
-                        searcher.search,
-                        symbol_name,
-                        k=1,
-                    )
-                    if search_result:
-                        return await handle_find_similar_code(
-                            {
-                                "chunk_id": search_result[0].chunk_id,
-                                "k": k,
-                            }
-                        )
-                except Exception as e:
-                    logger.warning(
-                        f"[INTENT] Failed to redirect SIMILARITY query: {e}. "
-                        f"Falling back to normal search."
-                    )
-
-        # Apply ego_graph for CONTEXTUAL queries (don't redirect, enhance search)
-        if (
-            intent_decision.intent == QueryIntent.CONTEXTUAL
-            and intent_decision.suggested_params.get("ego_graph_enabled")
-        ):
-            ego_graph_enabled = True
-            ego_graph_k_hops = intent_decision.suggested_params.get(
-                "ego_graph_k_hops", 2
-            )
+    # Execute intent redirects before normal search
+    if plan.redirect is not None:
+        redirect = plan.redirect
+        if redirect.kind == "find_path":
             logger.info(
-                f"[INTENT] Enabling ego_graph for CONTEXTUAL query "
-                f"(k_hops={ego_graph_k_hops})"
+                f"[INTENT] Redirecting PATH_TRACING query to find_path: "
+                f"{redirect.params.get('source')} → {redirect.params.get('target')}"
             )
-
-        # Adjust k parameter for GLOBAL queries
-        if intent_decision.intent == QueryIntent.GLOBAL:
-            suggested_k = intent_decision.suggested_params.get("k", k)
-            if suggested_k > k:
-                logger.info(
-                    f"[INTENT] Increasing k from {k} to {suggested_k} for GLOBAL query"
-                )
-                k = suggested_k
-
-    # NORMAL PATH: Search by query
-    search_mode = arguments.get("search_mode", "auto")
-
-    # Apply intent classifier's suggested search_mode when user specifies 'auto'
-    if intent_decision and search_mode == "auto":
-        suggested_mode = intent_decision.suggested_params.get("search_mode")
-        if suggested_mode:
+            return await handle_find_path(redirect.params)
+        if redirect.kind == "find_similar":
             logger.info(
-                f"[INTENT] Applying suggested search_mode '{suggested_mode}' for {intent_decision.intent.value} query"
+                f"[INTENT] Redirecting SIMILARITY query to find_similar_code: "
+                f"{redirect.params.get('symbol_name')}"
             )
-            search_mode = suggested_mode
+            try:
+                _redirect_searcher = get_searcher(model_key=redirect.model_key)
+                _redirect_result = await asyncio.to_thread(
+                    _redirect_searcher.search,
+                    redirect.params["symbol_name"],
+                    k=1,
+                )
+                if _redirect_result:
+                    return await handle_find_similar_code(
+                        {"chunk_id": _redirect_result[0].chunk_id, "k": redirect.k}
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"[INTENT] Failed to redirect SIMILARITY query: {e}. "
+                    f"Falling back to normal search."
+                )
+                # plan contains all normal-search parameters; fall through
 
-    file_pattern = arguments.get("file_pattern")
-    include_dirs = arguments.get("include_dirs")
-    exclude_dirs = arguments.get("exclude_dirs")
-    chunk_type = arguments.get("chunk_type")
-    include_context = arguments.get("include_context", True)
-    auto_reindex = arguments.get("auto_reindex", True)
-    # Use config default instead of hardcoded 5 (respects search_config.json)
-    max_age_minutes = arguments.get(
-        "max_age_minutes", get_config().performance.max_index_age_minutes
-    )
-
-    # Parent chunk retrieval parameter (Match Small, Retrieve Big)
-    include_parent = arguments.get("include_parent", False)
-
-    # Context budget
-    max_context_tokens = arguments.get(
-        "max_context_tokens", get_config().search_mode.default_max_context_tokens
-    )
+    # Unpack plan fields for the execute/assemble sections below
+    k = plan.k
+    selected_model_key = plan.selected_model_key
+    routing_info = plan.routing_info
+    intent_decision = plan.intent_decision
+    search_mode = plan.search_mode
+    ego_graph_enabled = plan.ego_graph_enabled
+    ego_graph_k_hops = plan.ego_graph_k_hops
+    ego_graph_max_neighbors = plan.ego_graph_max_neighbors
+    include_parent = plan.include_parent
+    file_pattern = plan.file_pattern
+    include_dirs = plan.include_dirs
+    exclude_dirs = plan.exclude_dirs
+    chunk_type = plan.chunk_type
+    include_context = plan.include_context
+    auto_reindex = plan.auto_reindex
+    max_age_minutes = plan.max_age_minutes
+    max_context_tokens = plan.max_context_tokens
+    suggested_bm25 = plan.suggested_bm25
+    suggested_dense = plan.suggested_dense
 
     logger.info(f"[SEARCH] query='{query}', k={k}, mode='{search_mode}'")
 
@@ -1220,10 +1118,8 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     # === Source-position reordering (DOS RAG technique) ===
     # Applied after subgraph extraction so [:k] / [k:] partitioning sees only real chunks.
     # Gap info is stored as gap_after on the preceding chunk (no synthetic rows injected).
-    if search_config is None:
-        search_config = get_search_config()
     if (
-        getattr(search_config.output, "source_order_output", True)
+        getattr(config_singleton.output, "source_order_output", True)
         and len(formatted_results) > 1
     ):
         formatted_results = _reorder_by_source_position(formatted_results)

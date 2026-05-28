@@ -719,6 +719,8 @@ class TestSemanticIntentClassification:
     class _MockEmbedder:
         """Minimal embedder mock returning identity-like vectors."""
 
+        model_name = "mock-model"
+
         def embed_query(self, text: str):
             import numpy as np
 
@@ -728,6 +730,15 @@ class TestSemanticIntentClassification:
             rng = np.random.default_rng(seed)
             vec = rng.standard_normal(64).astype(np.float32)
             return vec / np.linalg.norm(vec)
+
+    @pytest.fixture(autouse=True)
+    def clear_anchor_cache(self):
+        """Isolate each test from cache state left by a previous test."""
+        import search.intent_classifier as _ic
+
+        _ic._ANCHOR_EMBEDDINGS_CACHE.clear()
+        yield
+        _ic._ANCHOR_EMBEDDINGS_CACHE.clear()
 
     @pytest.fixture
     def mock_embedder(self):

@@ -43,10 +43,25 @@ async def test_handle_search_code_does_not_mutate_config_singleton():
                 "mcp_server.tools.search_handlers.get_searcher",
                 return_value=mock_searcher,
             ),
+            # get_state is used in both handler (current_project) and orchestrator (embedder)
             patch("mcp_server.tools.search_handlers.get_state") as mock_state,
+            patch("mcp_server.tools.search_orchestrator.get_state") as mock_orch_state,
+            # get_config: handler uses it for parallel_search; orchestrator uses it for intent
             patch("mcp_server.tools.search_handlers.get_config") as mock_app_cfg,
+            patch("mcp_server.tools.search_orchestrator.get_config") as mock_orch_cfg,
+            # get_search_config: orchestrator uses it for k clamping
+            patch(
+                "mcp_server.tools.search_orchestrator.get_search_config"
+            ) as mock_orch_sc,
             patch("mcp_server.tools.search_handlers.get_config_manager") as mock_cm,
-            patch("mcp_server.tools.search_handlers.IntentClassifier") as mock_ic_cls,
+            # IntentClassifier now lives in search_orchestrator
+            patch(
+                "mcp_server.tools.search_orchestrator.IntentClassifier"
+            ) as mock_ic_cls,
+            # _route_query_to_model is imported into orchestrator from search_handlers
+            patch(
+                "mcp_server.tools.search_handlers._route_query_to_model"
+            ) as mock_route,
             patch(
                 "mcp_server.tools.search_handlers._check_auto_reindex",
                 return_value=(False, None),
@@ -54,9 +69,17 @@ async def test_handle_search_code_does_not_mutate_config_singleton():
         ):
             mock_state.return_value.current_project = "/test"
             mock_state.return_value.searcher = None
+            mock_orch_state.return_value.searcher = None
 
-            mock_app_cfg.return_value = make_app_config_mock()
+            app_cfg = make_app_config_mock()
+            mock_app_cfg.return_value = app_cfg
+            mock_orch_cfg.return_value = app_cfg
+
+            sc = SearchConfig()
+            mock_orch_sc.return_value = sc
+
             mock_cm.return_value.get_search_mode_for_query.return_value = "hybrid"
+            mock_route.return_value = ("qwen3_0.6b", None)
 
             ic_instance = Mock()
             ic_instance.classify.return_value = intent_decision

@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # ~70 anchor embeddings are computed at most once per embedder lifetime.
 # Bounded to _ANCHOR_CACHE_MAXSIZE to prevent unbounded growth during
 # model switching (in practice 3–4 embedder models are ever loaded).
-_ANCHOR_EMBEDDINGS_CACHE: dict[int, dict[str, list[np.ndarray]]] = {}
+_ANCHOR_EMBEDDINGS_CACHE: dict[str, dict[str, list[np.ndarray]]] = {}
 _ANCHOR_CACHE_MAXSIZE: int = 8
 
 
@@ -238,10 +238,12 @@ class IntentClassifier:
         self._anchor_config = _load_anchor_config()
         # Reuse pre-computed anchor embeddings from the module-level cache when
         # the same embedder instance is reused across requests.
-        embedder_id = id(embedder) if embedder is not None else None
-        if embedder_id is not None and embedder_id in _ANCHOR_EMBEDDINGS_CACHE:
+        embedder_key = (
+            getattr(embedder, "model_name", None) if embedder is not None else None
+        )
+        if embedder_key is not None and embedder_key in _ANCHOR_EMBEDDINGS_CACHE:
             self._anchor_embeddings: dict[str, list[np.ndarray]] | None = (
-                _ANCHOR_EMBEDDINGS_CACHE[embedder_id]
+                _ANCHOR_EMBEDDINGS_CACHE[embedder_key]
             )
         else:
             self._anchor_embeddings = None  # computed lazily on first semantic call
@@ -442,14 +444,15 @@ class IntentClassifier:
         # sharing the same embedder skip the embedding work entirely.
         # Evict oldest entry when the cache is full to prevent unbounded growth.
         if self._embedder is not None:
-            embedder_id = id(self._embedder)
-            if (
-                embedder_id not in _ANCHOR_EMBEDDINGS_CACHE
-                and len(_ANCHOR_EMBEDDINGS_CACHE) >= _ANCHOR_CACHE_MAXSIZE
-            ):
-                # Remove the oldest entry (insertion-ordered dict, Python 3.7+)
-                _ANCHOR_EMBEDDINGS_CACHE.pop(next(iter(_ANCHOR_EMBEDDINGS_CACHE)))
-            _ANCHOR_EMBEDDINGS_CACHE[embedder_id] = self._anchor_embeddings
+            embedder_key = getattr(self._embedder, "model_name", None)
+            if embedder_key is not None:
+                if (
+                    embedder_key not in _ANCHOR_EMBEDDINGS_CACHE
+                    and len(_ANCHOR_EMBEDDINGS_CACHE) >= _ANCHOR_CACHE_MAXSIZE
+                ):
+                    # Remove the oldest entry (insertion-ordered dict, Python 3.7+)
+                    _ANCHOR_EMBEDDINGS_CACHE.pop(next(iter(_ANCHOR_EMBEDDINGS_CACHE)))
+                _ANCHOR_EMBEDDINGS_CACHE[embedder_key] = self._anchor_embeddings
 
     def _calculate_semantic_scores(self, query: str) -> dict[str, float]:
         """Compute per-intent semantic scores via cosine similarity to anchor embeddings.
