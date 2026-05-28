@@ -726,3 +726,75 @@ class SearchOrchestrator:
             response, tool_name="search_code", query=plan.query, chunk_id=None
         )
         return response
+
+    # ---------------------------------------------------------------------------
+    # Phase D: run driver
+    # ---------------------------------------------------------------------------
+
+    async def run(self, arguments: dict[str, Any]) -> dict:
+        """Full search_code pipeline: validate → plan → redirect? → execute → assemble."""
+        query = arguments.get("query")
+        chunk_id = arguments.get("chunk_id")
+
+        if not query and not chunk_id:
+            return {
+                "error": "Missing required parameter",
+                "message": "Provide either query or chunk_id parameter",
+            }
+        if query and chunk_id:
+            return {
+                "error": "Invalid parameters",
+                "message": "Provide either query OR chunk_id, not both",
+            }
+
+        if chunk_id:
+            from mcp_server.tools.search_handlers import _handle_chunk_id_lookup
+
+            return _handle_chunk_id_lookup(chunk_id)
+
+        plan = SearchPlanner().plan(arguments)
+
+        if plan.redirect is not None:
+            redirect = plan.redirect
+            if redirect.kind == "find_path":
+                logger.info(
+                    f"[INTENT] Redirecting PATH_TRACING query to find_path: "
+                    f"{redirect.params.get('source')} → {redirect.params.get('target')}"
+                )
+                from mcp_server.tools.search_handlers import handle_find_path
+
+                return await handle_find_path(redirect.params)
+            if redirect.kind == "find_similar":
+                logger.info(
+                    f"[INTENT] Redirecting SIMILARITY query to find_similar_code: "
+                    f"{redirect.params.get('symbol_name')}"
+                )
+                try:
+                    _redirect_searcher = get_searcher(model_key=redirect.model_key)
+                    _redirect_result = await asyncio.to_thread(
+                        _redirect_searcher.search,
+                        redirect.params["symbol_name"],
+                        k=1,
+                    )
+                    if _redirect_result:
+                        from mcp_server.tools.search_handlers import (
+                            handle_find_similar_code,
+                        )
+
+                        return await handle_find_similar_code(
+                            {"chunk_id": _redirect_result[0].chunk_id, "k": redirect.k}
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"[INTENT] Failed to redirect SIMILARITY query: {e}. "
+                        f"Falling back to normal search."
+                    )
+
+        logger.info(
+            f"[SEARCH] query='{plan.query}', k={plan.k}, mode='{plan.search_mode}'"
+        )
+
+        outcome = await self._execute(plan)
+        if isinstance(outcome, dict):
+            return outcome
+        return self._assemble(plan, outcome)

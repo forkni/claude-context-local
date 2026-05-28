@@ -17,7 +17,7 @@ from mcp_server.server import (
 from mcp_server.services import get_config, get_state
 from mcp_server.storage_manager import get_project_storage_dir
 from mcp_server.tools.decorators import error_handler, require_indexed_project
-from mcp_server.tools.search_orchestrator import SearchOrchestrator, SearchPlanner
+from mcp_server.tools.search_orchestrator import SearchOrchestrator
 from mcp_server.utils.config_helpers import temporary_ram_fallback_off
 from search.exceptions import DimensionMismatchError
 from search.filters import normalize_path
@@ -670,82 +670,8 @@ def _enrich_results_with_graph_data(
 @error_handler("Search")
 @require_indexed_project
 async def handle_search_code(arguments: dict[str, Any]) -> dict:
-    """Search code with natural language query.
-
-    Supports two modes:
-    1. Direct chunk_id lookup (O(1) - fast path)
-    2. Semantic/hybrid search by query (normal path)
-
-    Uses extracted helper functions for clarity:
-    - _handle_chunk_id_lookup(): Direct lookups
-    - _route_query_to_model(): Model routing decisions
-    - _check_auto_reindex(): Index freshness checks
-    - _format_search_results(): Result formatting
-    - _enrich_results_with_graph_data(): Graph relationship enrichment
-    """
-    # Extract arguments
-    query = arguments.get("query")
-    chunk_id = arguments.get("chunk_id")
-
-    # Validate: must provide either query OR chunk_id, not both
-    if not query and not chunk_id:
-        return {
-            "error": "Missing required parameter",
-            "message": "Provide either query or chunk_id parameter",
-        }
-    if query and chunk_id:
-        return {
-            "error": "Invalid parameters",
-            "message": "Provide either query OR chunk_id, not both",
-        }
-
-    # FAST PATH: Direct chunk_id lookup
-    if chunk_id:
-        return _handle_chunk_id_lookup(chunk_id)
-
-    # PLAN: classify intent, route model, decide all search parameters
-    plan = SearchPlanner().plan(arguments)
-
-    # Execute intent redirects before normal search
-    if plan.redirect is not None:
-        redirect = plan.redirect
-        if redirect.kind == "find_path":
-            logger.info(
-                f"[INTENT] Redirecting PATH_TRACING query to find_path: "
-                f"{redirect.params.get('source')} → {redirect.params.get('target')}"
-            )
-            return await handle_find_path(redirect.params)
-        if redirect.kind == "find_similar":
-            logger.info(
-                f"[INTENT] Redirecting SIMILARITY query to find_similar_code: "
-                f"{redirect.params.get('symbol_name')}"
-            )
-            try:
-                _redirect_searcher = get_searcher(model_key=redirect.model_key)
-                _redirect_result = await asyncio.to_thread(
-                    _redirect_searcher.search,
-                    redirect.params["symbol_name"],
-                    k=1,
-                )
-                if _redirect_result:
-                    return await handle_find_similar_code(
-                        {"chunk_id": _redirect_result[0].chunk_id, "k": redirect.k}
-                    )
-            except Exception as e:
-                logger.warning(
-                    f"[INTENT] Failed to redirect SIMILARITY query: {e}. "
-                    f"Falling back to normal search."
-                )
-                # plan contains all normal-search parameters; fall through
-
-    logger.info(f"[SEARCH] query='{query}', k={plan.k}, mode='{plan.search_mode}'")
-
-    # EXECUTE: auto-reindex, searcher, config assembly, search
-    outcome = await SearchOrchestrator()._execute(plan)
-    if isinstance(outcome, dict):
-        return outcome
-    # ASSEMBLE: format, enrich, centrality, subgraph, reorder, build response
-    return SearchOrchestrator()._assemble(plan, outcome)
+    """Search code with natural language query. Delegates to SearchOrchestrator.run()."""
+    return await SearchOrchestrator().run(arguments)
 
 
 @error_handler("Find similar")
