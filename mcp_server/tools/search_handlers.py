@@ -409,6 +409,79 @@ def _get_index_manager_from_searcher(searcher) -> CodeIndexManager | None:
     return None
 
 
+async def _resolve_symbol_to_chunk_id(
+    symbol_name: str,
+    searcher: Any,
+) -> tuple[str | None, dict[str, str] | None]:
+    """Resolve a symbol name to a chunk_id via a 3-tier cascade.
+
+    Returns ``(chunk_id, resolution_info)`` on success, or ``(None, None)`` when
+    the symbol cannot be resolved.  Callers are responsible for returning an
+    appropriate error response.
+
+    Tier 1: O(1) symbol_cache direct lookup
+    Tier 2: graph node name index + suffix scan (both ``:name`` and ``.name`` so
+            class-qualified names like ``ClassName.method_name`` are handled)
+    Tier 3: semantic search with name-preference filter
+    """
+    # Tier 1 — O(1) symbol cache
+    index_manager = _get_index_manager_from_searcher(searcher)
+    if (
+        index_manager
+        and hasattr(index_manager, "symbol_cache")
+        and index_manager.symbol_cache
+    ):
+        resolved = index_manager.symbol_cache.get_by_symbol_name(symbol_name)
+        if resolved:
+            return resolved, {
+                "resolved_from": symbol_name,
+                "chunk_id": resolved,
+                "resolution_method": "direct_lookup",
+            }
+
+    # Tier 2 — graph node name index + suffix scan
+    if hasattr(searcher, "dense_index"):
+        gs = getattr(searcher.dense_index, "graph_storage", None)
+        if gs:
+            matches = (
+                gs.get_nodes_by_name(symbol_name)
+                if hasattr(gs, "get_nodes_by_name")
+                else []
+            )
+            if not matches:
+                # Plain ":name" (chunk_id suffix) or class-qualified ".name"
+                matches = [
+                    n
+                    for n in gs.graph.nodes()
+                    if n.endswith(f":{symbol_name}") or n.endswith(f".{symbol_name}")
+                ]
+            if matches:
+                return matches[0], {
+                    "resolved_from": symbol_name,
+                    "chunk_id": matches[0],
+                    "resolution_method": "graph_lookup",
+                }
+
+    # Tier 3 — semantic search with name-preference filter
+    results = await asyncio.to_thread(searcher.search, symbol_name, k=5)
+    for r in results:
+        meta = r.metadata if hasattr(r, "metadata") else {}
+        if meta.get("name") == symbol_name:
+            return r.chunk_id, {
+                "resolved_from": symbol_name,
+                "chunk_id": r.chunk_id,
+                "resolution_method": "semantic_search",
+            }
+    if results:
+        return results[0].chunk_id, {
+            "resolved_from": symbol_name,
+            "chunk_id": results[0].chunk_id,
+            "resolution_method": "semantic_search",
+        }
+
+    return None, None
+
+
 # ============================================================================
 # Full Relationship Enrichment Per Result
 # ============================================================================
@@ -816,133 +889,24 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
     target_info = None
 
     if not resolved_source and source:
-        # Try direct symbol lookup first (O(1) from secondary symbol index)
-        index_manager = _get_index_manager_from_searcher(searcher)
-        if (
-            index_manager
-            and hasattr(index_manager, "symbol_cache")
-            and index_manager.symbol_cache
-        ):
-            resolved_source = index_manager.symbol_cache.get_by_symbol_name(source)
-            if resolved_source:
-                source_info = {
-                    "resolved_from": source,
-                    "chunk_id": resolved_source,
-                    "resolution_method": "direct_lookup",
-                }
-
-        # Try graph node exact-name lookup before falling back to semantic search.
-        # Uses the O(1) name index when available; falls back to a key-only scan
-        # (no attribute access) for the chunk_id suffix pattern.
-        if not resolved_source and hasattr(searcher, "dense_index"):
-            gs = getattr(searcher.dense_index, "graph_storage", None)
-            if gs:
-                matches = (
-                    gs.get_nodes_by_name(source)
-                    if hasattr(gs, "get_nodes_by_name")
-                    else []
-                )
-                if not matches:
-                    # Chunk_id suffix match (e.g. "file.py:function:my_func" ends with ":my_func")
-                    matches = [n for n in gs.graph.nodes() if n.endswith(f":{source}")]
-                if matches:
-                    resolved_source = matches[0]
-                    source_info = {
-                        "resolved_from": source,
-                        "chunk_id": resolved_source,
-                        "resolution_method": "graph_lookup",
-                    }
-
-        # Fall back to semantic search if all lookups failed
+        resolved_source, source_info = await _resolve_symbol_to_chunk_id(
+            source, searcher
+        )
         if not resolved_source:
-            results = await asyncio.to_thread(searcher.search, source, k=5)
-            # Prefer chunks whose name matches the symbol over module-level chunks
-            for r in results:
-                meta = r.metadata if hasattr(r, "metadata") else {}
-                if meta.get("name") == source:
-                    resolved_source = r.chunk_id
-                    source_info = {
-                        "resolved_from": source,
-                        "chunk_id": resolved_source,
-                        "resolution_method": "semantic_search",
-                    }
-                    break
-            if not resolved_source and results:
-                resolved_source = results[0].chunk_id
-                source_info = {
-                    "resolved_from": source,
-                    "chunk_id": resolved_source,
-                    "resolution_method": "semantic_search",
-                }
-            if not resolved_source:
-                return {
-                    "path_found": False,
-                    "error": f"Could not resolve source symbol: {source}",
-                }
+            return {
+                "path_found": False,
+                "error": f"Could not resolve source symbol: {source}",
+            }
 
     if not resolved_target and target:
-        # Try direct symbol lookup first (O(1) from secondary symbol index)
-        index_manager = _get_index_manager_from_searcher(searcher)
-        if (
-            index_manager
-            and hasattr(index_manager, "symbol_cache")
-            and index_manager.symbol_cache
-        ):
-            resolved_target = index_manager.symbol_cache.get_by_symbol_name(target)
-            if resolved_target:
-                target_info = {
-                    "resolved_from": target,
-                    "chunk_id": resolved_target,
-                    "resolution_method": "direct_lookup",
-                }
-
-        # Try graph node exact-name lookup before falling back to semantic search.
-        # Uses the O(1) name index when available; falls back to a key-only scan
-        # (no attribute access) for the chunk_id suffix pattern.
-        if not resolved_target and hasattr(searcher, "dense_index"):
-            gs = getattr(searcher.dense_index, "graph_storage", None)
-            if gs:
-                matches = (
-                    gs.get_nodes_by_name(target)
-                    if hasattr(gs, "get_nodes_by_name")
-                    else []
-                )
-                if not matches:
-                    matches = [n for n in gs.graph.nodes() if n.endswith(f":{target}")]
-                if matches:
-                    resolved_target = matches[0]
-                    target_info = {
-                        "resolved_from": target,
-                        "chunk_id": resolved_target,
-                        "resolution_method": "graph_lookup",
-                    }
-
-        # Fall back to semantic search if all lookups failed
+        resolved_target, target_info = await _resolve_symbol_to_chunk_id(
+            target, searcher
+        )
         if not resolved_target:
-            results = await asyncio.to_thread(searcher.search, target, k=5)
-            # Prefer chunks whose name matches the symbol over module-level chunks
-            for r in results:
-                meta = r.metadata if hasattr(r, "metadata") else {}
-                if meta.get("name") == target:
-                    resolved_target = r.chunk_id
-                    target_info = {
-                        "resolved_from": target,
-                        "chunk_id": resolved_target,
-                        "resolution_method": "semantic_search",
-                    }
-                    break
-            if not resolved_target and results:
-                resolved_target = results[0].chunk_id
-                target_info = {
-                    "resolved_from": target,
-                    "chunk_id": resolved_target,
-                    "resolution_method": "semantic_search",
-                }
-            if not resolved_target:
-                return {
-                    "path_found": False,
-                    "error": f"Could not resolve target symbol: {target}",
-                }
+            return {
+                "path_found": False,
+                "error": f"Could not resolve target symbol: {target}",
+            }
 
     # Get graph query engine
     graph_storage = None
