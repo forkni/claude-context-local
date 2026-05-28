@@ -523,3 +523,206 @@ class SearchOrchestrator:
             index_manager=index_manager,
             effective_config=effective_config,
         )
+
+    # ---------------------------------------------------------------------------
+    # Phase C: Assemble stage
+    # ---------------------------------------------------------------------------
+
+    def _assemble(self, plan: SearchPlan, outcome: ExecutionOutcome) -> dict:
+        """Blocks E–I: format, enrich, centrality, subgraph, reorder, build response."""
+        from mcp_server.guidance import add_system_message
+        from mcp_server.tools.search_handlers import (
+            _enrich_results_with_graph_data,
+            _format_search_results,
+            _get_index_manager_from_searcher,
+            _reorder_by_source_position,
+        )
+
+        # Block E: format + enrich
+        formatted_results = _format_search_results(outcome.results)
+        index_manager = _get_index_manager_from_searcher(outcome.searcher)
+        formatted_results = _enrich_results_with_graph_data(
+            formatted_results, index_manager
+        )
+
+        # Block F: centrality annotation/reranking
+        centrality_scores = None
+        graph_config = getattr(outcome.effective_config, "graph_enhanced", None)
+
+        if (
+            graph_config
+            and graph_config.centrality_annotation
+            and index_manager
+            and index_manager.graph_storage
+        ):
+            try:
+                from graph.graph_queries import GraphQueryEngine
+                from search.centrality_ranker import CentralityRanker
+
+                graph_query_engine = GraphQueryEngine(index_manager.graph_storage)
+                ranker = CentralityRanker(
+                    graph_query_engine=graph_query_engine,
+                    method=graph_config.centrality_method,
+                    alpha=graph_config.centrality_alpha,
+                    config=graph_config,
+                )
+
+                centrality_scores = ranker._get_centrality_scores()
+
+                # QW1: pass centrality scores to ego-graph retriever so neighbors
+                # are ranked by architectural importance before truncation.
+                # NOTE(v0.11.2 follow-up): set_centrality_scores mutates shared retriever
+                # state, but centrality is graph-derived (not query-derived), so all
+                # concurrent requests compute the same scores — races here are benign.
+                # If centrality ever becomes query-aware, isolate this via per-request kwargs
+                # the same way bm25_weight/dense_weight were isolated in v0.11.2.
+                if (
+                    isinstance(outcome.searcher, HybridSearcher)
+                    and hasattr(outcome.searcher, "ego_graph_retriever")
+                    and outcome.searcher.ego_graph_retriever is not None
+                    and centrality_scores
+                ):
+                    outcome.searcher.ego_graph_retriever.set_centrality_scores(
+                        centrality_scores
+                    )
+                    logger.debug(
+                        f"[EGO_GRAPH] Injected {len(centrality_scores)} centrality scores"
+                    )
+
+                if graph_config.centrality_reranking:
+                    formatted_results = ranker.rerank(
+                        formatted_results, query=plan.query
+                    )
+                    logger.debug(
+                        f"Reranked {len(formatted_results)} results by centrality"
+                    )
+                else:
+                    formatted_results = ranker.annotate(formatted_results)
+                    logger.debug(
+                        f"Annotated {len(formatted_results)} results with centrality"
+                    )
+
+                # Intent-aware synthetic chunk ordering (post-centrality reranking)
+                # For non-GLOBAL queries, push module/community summary chunks to end of results
+                # Research: TNO, GRACE, GraphRAG all separate summaries from code retrieval
+                if (
+                    plan.intent_decision
+                    and plan.intent_decision.intent != QueryIntent.GLOBAL
+                ):
+                    real_results = [
+                        r
+                        for r in formatted_results
+                        if r.get("kind") not in ("module", "community")
+                    ]
+                    synthetic_results = [
+                        r
+                        for r in formatted_results
+                        if r.get("kind") in ("module", "community")
+                    ]
+                    if synthetic_results:
+                        formatted_results = real_results + synthetic_results
+                        logger.debug(
+                            f"[INTENT] Moved {len(synthetic_results)} synthetic chunks "
+                            f"after {len(real_results)} real code chunks (intent: {plan.intent_decision.intent.value})"
+                        )
+
+            except (ImportError, ValueError, KeyError, RuntimeError, TypeError) as e:
+                logger.debug(f"Centrality ranking failed: {e}")
+
+        # Cap total results to prevent token bloat (k primary + up to 3k context)
+        max_total = plan.k * 4
+        if len(formatted_results) > max_total:
+            logger.info(
+                f"Capping total results: {len(formatted_results)} -> {max_total}"
+            )
+            formatted_results = formatted_results[:max_total]
+
+        # Block G: subgraph extraction
+        subgraph_data = None
+        if index_manager and index_manager.graph_storage is not None:
+            try:
+                from search.subgraph_extractor import SubgraphExtractor
+
+                extractor = SubgraphExtractor(index_manager.graph_storage)
+                result_chunk_ids = [
+                    r["chunk_id"]
+                    for r in formatted_results[: plan.k]
+                    if "chunk_id" in r
+                ]
+                ego_neighbor_ids = [
+                    r["chunk_id"]
+                    for r in formatted_results[plan.k :]
+                    if r.get("source") == "ego_graph" and "chunk_id" in r
+                ]
+                max_ego_in_subgraph = 10
+                if ego_neighbor_ids and len(ego_neighbor_ids) > max_ego_in_subgraph:
+                    ego_neighbor_ids = ego_neighbor_ids[:max_ego_in_subgraph]
+
+                if result_chunk_ids:
+                    subgraph = extractor.extract_subgraph(
+                        result_chunk_ids,
+                        include_boundary_edges=True,
+                        centrality_scores=centrality_scores,
+                        ego_neighbor_ids=ego_neighbor_ids if ego_neighbor_ids else None,
+                    )
+                    if subgraph.nodes:
+                        subgraph_data = subgraph.to_dict()
+                        ego_count = len(ego_neighbor_ids) if ego_neighbor_ids else 0
+                        logger.debug(
+                            f"[SSCG] Extracted subgraph: {len(subgraph.nodes)} nodes "
+                            f"({ego_count} ego-graph neighbors), {len(subgraph.edges)} edges"
+                        )
+                    else:
+                        logger.info(
+                            f"[SSCG] No graph nodes found for {len(result_chunk_ids)} chunk_ids"
+                        )
+            except Exception as e:
+                logger.debug(f"[SSCG] Subgraph extraction failed: {e}")
+
+        # Block H: source-position reordering + context-budget truncation
+        if (
+            getattr(outcome.effective_config.output, "source_order_output", True)
+            and len(formatted_results) > 1
+        ):
+            formatted_results = _reorder_by_source_position(formatted_results)
+            logger.debug(
+                f"[SOURCE_ORDER] Reordered {len(formatted_results)} results by file position"
+            )
+
+        if plan.max_context_tokens > 0 and formatted_results:
+            import json as _json
+
+            budget_used = 0
+            truncated = []
+            for r in formatted_results:
+                est_tokens = len(_json.dumps(r)) // 4
+                if budget_used + est_tokens <= plan.max_context_tokens:
+                    truncated.append(r)
+                    budget_used += est_tokens
+                else:
+                    logger.info(
+                        f"[CONTEXT_BUDGET] Truncated {len(formatted_results)}→{len(truncated)} results (budget={plan.max_context_tokens})"
+                    )
+                    break
+            formatted_results = truncated
+
+        # Block I: response assembly
+        response: dict = {"query": plan.query, "results": formatted_results}
+        if subgraph_data:
+            response["subgraph_nodes"] = subgraph_data["nodes"]
+            response["subgraph_edges"] = subgraph_data["edges"]
+            if subgraph_data.get("topology_order"):
+                response["subgraph_order"] = subgraph_data["topology_order"]
+            if subgraph_data.get("communities"):
+                response["subgraph_communities"] = subgraph_data["communities"]
+
+        if plan.routing_info:
+            confidence = plan.routing_info.get("confidence", 0.0)
+            reason = plan.routing_info.get("reason", "")
+            if confidence < 0.9 or "Fallback" in reason or "routed" in reason.lower():
+                response["routing"] = plan.routing_info
+
+        response = add_system_message(
+            response, tool_name="search_code", query=plan.query, chunk_id=None
+        )
+        return response

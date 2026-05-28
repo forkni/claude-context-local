@@ -654,10 +654,6 @@ async def test_handle_search_code_hybrid_searcher_ready():
             "mcp_server.tools.search_orchestrator.get_search_config",
             return_value=SearchConfig(),
         ),
-        patch(
-            "mcp_server.tools.search_handlers.get_search_config",
-            return_value=SearchConfig(),
-        ),
         patch("mcp_server.tools.search_orchestrator.get_config_manager") as mock_cm,
         patch("mcp_server.tools.search_orchestrator.get_config") as mock_cfg,
         patch("mcp_server.tools.search_orchestrator.IntentClassifier") as mock_ic,
