@@ -1,28 +1,37 @@
-"""Search request planning for handle_search_code.
+"""Search request planning and orchestration for handle_search_code.
 
-SearchPlanner is synchronous and side-effect-free: it reads application config
-and cached state, and returns a SearchPlan containing every execution parameter
-decided for a search_code request, or a PlanRedirect when intent classification
-determines a different handler is more appropriate.
+SearchPlanner (Phase A): synchronous, side-effect-free decision stage.
+SearchOrchestrator (Phases B–D): async execution + assembly + run driver.
 
-Phase A of the staged SearchOrchestrator extraction (see docs/adr/0004). Subsequent
-phases will extract _execute (auto-reindex, searcher, config assembly) and _assemble
-(centrality, subgraph, post-processing) into this module.
+Circular-import rule: never import search_handlers at module level. All helpers
+from search_handlers are imported lazily inside methods.
 """
 
 from __future__ import annotations
 
+import asyncio
+import copy
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from mcp_server.server import get_searcher
 from mcp_server.services import get_config, get_state
-from search.config import get_search_config
+from search.config import (
+    EgoGraphConfig,
+    ParentRetrievalConfig,
+    SearchConfig,
+    get_config_manager,
+    get_search_config,
+)
+from search.exceptions import DimensionMismatchError
+from search.hybrid_searcher import HybridSearcher
 from search.intent_classifier import IntentClassifier, IntentDecision, QueryIntent
 
 
 if TYPE_CHECKING:
     from embeddings.embedder import CodeEmbedder
+    from search.indexer import CodeIndexManager
 
 logger = logging.getLogger(__name__)
 
@@ -266,4 +275,251 @@ class SearchPlanner:
             suggested_bm25=suggested_bm25,
             suggested_dense=suggested_dense,
             redirect=redirect,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase B: Execute stage
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ExecutionOutcome:
+    """Result of the execute phase: raw search results + context for assembly.
+
+    Contains no formatting decisions — only I/O results and the per-request
+    config snapshot needed by _assemble.
+    """
+
+    results: list
+    searcher: Any
+    index_manager: CodeIndexManager | None
+    effective_config: SearchConfig
+
+
+class SearchOrchestrator:
+    """Orchestrates search execution and result assembly.
+
+    Phase B adds _execute. Phases C and D add _assemble and run.
+    """
+
+    async def _execute(self, plan: SearchPlan) -> ExecutionOutcome | dict:
+        """Blocks A–D: auto-reindex, searcher acquisition, config assembly, search.
+
+        Returns ExecutionOutcome on success; returns a dict (error response) when
+        a DimensionMismatchError is raised or the index is not ready.
+        """
+        from mcp_server.tools.search_handlers import (
+            _check_auto_reindex,
+            _get_index_manager_from_searcher,
+        )
+
+        # ===== Block A: Auto-reindex =====
+        current_project = get_state().current_project
+        stored_model_key = None
+        if plan.auto_reindex and current_project:
+            try:
+                reindexed, stored_model_key = _check_auto_reindex(
+                    current_project, plan.selected_model_key, plan.max_age_minutes
+                )
+                if reindexed:
+                    get_state().searcher = None
+            except DimensionMismatchError as e:
+                return {
+                    "error": "Dimension mismatch",
+                    "message": str(e),
+                    "recovery_suggestion": (
+                        f"Run index_directory with force_reindex=True to rebuild "
+                        f"the index for model {e.embedder_model}"
+                    ),
+                    "embedder_dimension": e.embedder_dim,
+                    "index_dimension": e.index_dim,
+                }
+
+        # ===== Block B: Searcher acquisition + readiness check =====
+        effective_search_model = (
+            stored_model_key if stored_model_key else plan.selected_model_key
+        )
+        if stored_model_key and stored_model_key != plan.selected_model_key:
+            logger.info(
+                f"[SEARCH] Using stored index model '{stored_model_key}' instead of "
+                f"routed model '{plan.selected_model_key}' to preserve searcher cache"
+            )
+
+        try:
+            searcher = get_searcher(model_key=effective_search_model)
+        except DimensionMismatchError as e:
+            return {
+                "error": "Dimension mismatch",
+                "message": str(e),
+                "recovery_suggestion": (
+                    f"Run index_directory with force_reindex=True to rebuild "
+                    f"the index for model {e.embedder_model}"
+                ),
+                "embedder_dimension": e.embedder_dim,
+                "index_dimension": e.index_dim,
+            }
+
+        total_chunks = 0
+        is_ready = False
+        if hasattr(searcher, "is_ready"):
+            is_ready = searcher.is_ready
+            if (
+                hasattr(searcher, "dense_index")
+                and searcher.dense_index
+                and hasattr(searcher.dense_index, "index")
+                and searcher.dense_index.index
+            ):
+                total_chunks = searcher.dense_index.index.ntotal
+        elif hasattr(searcher, "index_manager") and searcher.index_manager:
+            stats = searcher.index_manager.get_stats()
+            total_chunks = stats.get("total_chunks", 0)
+            is_ready = total_chunks > 0
+        elif hasattr(searcher, "get_stats"):
+            stats = searcher.get_stats()
+            total_chunks = stats.get("total_chunks", 0)
+            is_ready = total_chunks > 0
+
+        if not is_ready or total_chunks == 0:
+            return {
+                "error": "No indexed project found",
+                "message": "You must index a project before searching",
+                "current_project": current_project or "None",
+            }
+
+        # ===== Block C: Filter build + config assembly =====
+        filters: dict = {}
+        if plan.file_pattern:
+            filters["file_pattern"] = [plan.file_pattern]
+        if plan.include_dirs:
+            filters["include_dirs"] = plan.include_dirs
+        if plan.exclude_dirs:
+            filters["exclude_dirs"] = plan.exclude_dirs
+        if plan.chunk_type:
+            filters["chunk_type"] = plan.chunk_type
+
+        config_manager = get_config_manager()
+        actual_search_mode = config_manager.get_search_mode_for_query(
+            plan.query, plan.search_mode
+        )
+
+        # get_search_config() returns a process-wide cached singleton. Requests that
+        # don't apply ego-graph / parent-retrieval / intent-edge overrides can pass the
+        # singleton straight through. Requests that do mutate lazily deep-copy once,
+        # so the singleton is never written and concurrent requests don't race.
+        config_singleton = get_search_config()
+        config_copy: SearchConfig | None = None
+
+        def mutable_config() -> SearchConfig:
+            """Deep-copy the singleton on first call; return the same copy thereafter."""
+            nonlocal config_copy
+            if config_copy is None:
+                config_copy = copy.deepcopy(config_singleton)
+            return config_copy
+
+        if isinstance(searcher, HybridSearcher) and plan.ego_graph_enabled:
+            mutable_config().ego_graph = EgoGraphConfig(
+                enabled=plan.ego_graph_enabled,
+                k_hops=plan.ego_graph_k_hops,
+                max_neighbors_per_hop=plan.ego_graph_max_neighbors,
+            )
+            logger.info(
+                f"[EGO_GRAPH] Enabled with k_hops={plan.ego_graph_k_hops}, "
+                f"max_neighbors_per_hop={plan.ego_graph_max_neighbors}"
+            )
+
+        # QW5: apply intent-adaptive similarity threshold to ego-graph expansion
+        if (
+            isinstance(searcher, HybridSearcher)
+            and plan.ego_graph_enabled
+            and plan.intent_decision
+        ):
+            _intent_ego_thresholds = {
+                "local": 0.25,
+                "global": 0.10,
+                "contextual": 0.12,
+                "navigational": 0.20,
+                "path_tracing": 0.15,
+                "similarity": 0.10,
+                "hybrid": 0.15,
+            }
+            intent_threshold = _intent_ego_thresholds.get(
+                plan.intent_decision.intent.value, 0.15
+            )
+            if intent_threshold != 0.15:
+                logger.info(
+                    f"[EGO_GRAPH] Intent-adaptive threshold: "
+                    f"{plan.intent_decision.intent.value} -> {intent_threshold}"
+                )
+            mutable_config().ego_graph.min_similarity_threshold = intent_threshold
+
+        if isinstance(searcher, HybridSearcher) and plan.include_parent:
+            mutable_config().parent_retrieval = ParentRetrievalConfig(
+                enabled=plan.include_parent
+            )
+            logger.info("[PARENT_RETRIEVAL] Enabled")
+
+        # Apply intent-driven weight overrides (per-request kwargs — no shared-state mutation)
+        # Use plan.suggested_bm25/dense — already computed by SearchPlanner (no re-derivation needed)
+        if (
+            isinstance(searcher, HybridSearcher)
+            and plan.suggested_bm25 is not None
+            and plan.suggested_dense is not None
+            and plan.intent_decision is not None
+        ):
+            logger.info(
+                f"[INTENT] Weight override for {plan.intent_decision.intent.value}: "
+                f"BM25={searcher.bm25_weight:.2f}→{plan.suggested_bm25:.2f}, "
+                f"Dense={searcher.dense_weight:.2f}→{plan.suggested_dense:.2f}"
+            )
+
+        # Apply intent-driven edge weights for graph traversal (A1)
+        if isinstance(searcher, HybridSearcher) and plan.intent_decision:
+            from graph.graph_storage import INTENT_EDGE_WEIGHT_PROFILES
+
+            intent_key = plan.intent_decision.intent.value
+            edge_profile = INTENT_EDGE_WEIGHT_PROFILES.get(intent_key)
+            if edge_profile:
+                cfg = mutable_config()
+                cfg.multi_hop.edge_weights = edge_profile
+                if cfg.ego_graph:
+                    cfg.ego_graph.edge_weights = edge_profile
+                logger.info(
+                    f"[INTENT] Edge weight profile set for {intent_key}: "
+                    f"calls={edge_profile.get('calls', 'N/A')}, imports={edge_profile.get('imports', 'N/A')}"
+                )
+
+        effective_config = config_copy if config_copy is not None else config_singleton
+
+        # ===== Block D: Search execution =====
+        if isinstance(searcher, HybridSearcher):
+            results = await asyncio.to_thread(
+                searcher.search,
+                query=plan.query,
+                k=plan.k,
+                search_mode=actual_search_mode,
+                min_bm25_score=0.1,
+                use_parallel=get_config().performance.use_parallel_search,
+                filters=filters if filters else None,
+                config=effective_config,
+                bm25_weight=plan.suggested_bm25,
+                dense_weight=plan.suggested_dense,
+            )
+        else:
+            context_depth = 1 if plan.include_context else 0
+            results = await asyncio.to_thread(
+                searcher.search,
+                query=plan.query,
+                k=plan.k,
+                search_mode=actual_search_mode,
+                context_depth=context_depth,
+                filters=filters if filters else None,
+            )
+
+        index_manager = _get_index_manager_from_searcher(searcher)
+        return ExecutionOutcome(
+            results=results,
+            searcher=searcher,
+            index_manager=index_manager,
+            effective_config=effective_config,
         )

@@ -4,7 +4,6 @@ Handlers for code search, similarity finding, and connection analysis.
 """
 
 import asyncio
-import copy
 import logging
 from typing import Any
 
@@ -18,15 +17,8 @@ from mcp_server.server import (
 from mcp_server.services import get_config, get_state
 from mcp_server.storage_manager import get_project_storage_dir
 from mcp_server.tools.decorators import error_handler, require_indexed_project
-from mcp_server.tools.search_orchestrator import SearchPlanner
+from mcp_server.tools.search_orchestrator import SearchOrchestrator, SearchPlanner
 from mcp_server.utils.config_helpers import temporary_ram_fallback_off
-from search.config import (
-    EgoGraphConfig,
-    ParentRetrievalConfig,
-    SearchConfig,
-    get_config_manager,
-    get_search_config,
-)
 from search.exceptions import DimensionMismatchError
 from search.filters import normalize_path
 from search.hybrid_searcher import HybridSearcher
@@ -747,235 +739,23 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
                 )
                 # plan contains all normal-search parameters; fall through
 
-    # Unpack plan fields for the execute/assemble sections below
+    # Unpack the plan fields still needed by the assemble section below
     k = plan.k
-    selected_model_key = plan.selected_model_key
     routing_info = plan.routing_info
     intent_decision = plan.intent_decision
     search_mode = plan.search_mode
-    ego_graph_enabled = plan.ego_graph_enabled
-    ego_graph_k_hops = plan.ego_graph_k_hops
-    ego_graph_max_neighbors = plan.ego_graph_max_neighbors
-    include_parent = plan.include_parent
-    file_pattern = plan.file_pattern
-    include_dirs = plan.include_dirs
-    exclude_dirs = plan.exclude_dirs
-    chunk_type = plan.chunk_type
-    include_context = plan.include_context
-    auto_reindex = plan.auto_reindex
-    max_age_minutes = plan.max_age_minutes
     max_context_tokens = plan.max_context_tokens
-    suggested_bm25 = plan.suggested_bm25
-    suggested_dense = plan.suggested_dense
 
     logger.info(f"[SEARCH] query='{query}', k={k}, mode='{search_mode}'")
 
-    # Check and perform auto-reindex if index is stale
-    current_project = get_state().current_project
-    stored_model_key = None  # Track for searcher cache consistency
-    if auto_reindex and current_project:
-        try:
-            reindexed, stored_model_key = _check_auto_reindex(
-                current_project, selected_model_key, max_age_minutes
-            )
-            if reindexed:
-                get_state().searcher = None
-        except DimensionMismatchError as e:
-            # Recovery: Return helpful error with suggested action
-            return {
-                "error": "Dimension mismatch",
-                "message": str(e),
-                "recovery_suggestion": (
-                    f"Run index_directory with force_reindex=True to rebuild "
-                    f"the index for model {e.embedder_model}"
-                ),
-                "embedder_dimension": e.embedder_dim,
-                "index_dimension": e.index_dim,
-            }
-
-    # Use stored model key if available (preserves searcher cache across routing changes)
-    effective_search_model = (
-        stored_model_key if stored_model_key else selected_model_key
-    )
-    if stored_model_key and stored_model_key != selected_model_key:
-        logger.info(
-            f"[SEARCH] Using stored index model '{stored_model_key}' instead of "
-            f"routed model '{selected_model_key}' to preserve searcher cache"
-        )
-
-    # Execute search with stored model index (preserves cache)
-    try:
-        searcher = get_searcher(model_key=effective_search_model)
-    except DimensionMismatchError as e:
-        return {
-            "error": "Dimension mismatch",
-            "message": str(e),
-            "recovery_suggestion": (
-                f"Run index_directory with force_reindex=True to rebuild "
-                f"the index for model {e.embedder_model}"
-            ),
-            "embedder_dimension": e.embedder_dim,
-            "index_dimension": e.index_dim,
-        }
-
-    # Check if index ready - support both HybridSearcher and IntelligentSearcher
-    total_chunks = 0
-    is_ready = False
-
-    # Option 1: HybridSearcher (has is_ready property and dense_index)
-    if hasattr(searcher, "is_ready"):
-        is_ready = searcher.is_ready
-        if (
-            hasattr(searcher, "dense_index")
-            and searcher.dense_index
-            and hasattr(searcher.dense_index, "index")
-            and searcher.dense_index.index
-        ):
-            total_chunks = searcher.dense_index.index.ntotal
-    # Option 2: IntelligentSearcher (has index_manager)
-    elif hasattr(searcher, "index_manager") and searcher.index_manager:
-        stats = searcher.index_manager.get_stats()
-        total_chunks = stats.get("total_chunks", 0)
-        is_ready = total_chunks > 0
-    # Option 3: Direct stats method
-    elif hasattr(searcher, "get_stats"):
-        stats = searcher.get_stats()
-        total_chunks = stats.get("total_chunks", 0)
-        is_ready = total_chunks > 0
-
-    if not is_ready or total_chunks == 0:
-        return {
-            "error": "No indexed project found",
-            "message": "You must index a project before searching",
-            "current_project": current_project or "None",
-        }
-    # Build filters
-    filters = {}
-    if file_pattern:
-        filters["file_pattern"] = [file_pattern]
-    if include_dirs:
-        filters["include_dirs"] = include_dirs
-    if exclude_dirs:
-        filters["exclude_dirs"] = exclude_dirs
-    if chunk_type:
-        filters["chunk_type"] = chunk_type
-
-    # Perform search
-    config_manager = get_config_manager()
-    actual_search_mode = config_manager.get_search_mode_for_query(query, search_mode)
-
-    # get_search_config() returns a process-wide cached singleton. Requests that
-    # don't apply ego-graph / parent-retrieval / intent-edge overrides can pass the
-    # singleton straight through. Requests that do mutate lazily deep-copy once,
-    # so the singleton is never written and concurrent requests don't race.
-    config_singleton = get_search_config()
-    config_copy: SearchConfig | None = None
-
-    def mutable_config() -> SearchConfig:
-        """Deep-copy the singleton on first call; return the same copy thereafter."""
-        nonlocal config_copy
-        if config_copy is None:
-            config_copy = copy.deepcopy(config_singleton)
-        return config_copy
-
-    # Build SearchConfig with ego-graph settings if enabled
-    if isinstance(searcher, HybridSearcher) and ego_graph_enabled:
-        mutable_config().ego_graph = EgoGraphConfig(
-            enabled=ego_graph_enabled,
-            k_hops=ego_graph_k_hops,
-            max_neighbors_per_hop=ego_graph_max_neighbors,
-        )
-        logger.info(
-            f"[EGO_GRAPH] Enabled with k_hops={ego_graph_k_hops}, "
-            f"max_neighbors_per_hop={ego_graph_max_neighbors}"
-        )
-
-    # QW5: apply intent-adaptive similarity threshold to ego-graph expansion
-    # Different query intents benefit from different neighbor precision/recall trade-offs
-    if isinstance(searcher, HybridSearcher) and ego_graph_enabled and intent_decision:
-        _intent_ego_thresholds = {
-            "local": 0.25,  # Higher precision for specific symbol lookups
-            "global": 0.10,  # Broader coverage for architecture queries
-            "contextual": 0.12,  # Broad context gathering
-            "navigational": 0.20,
-            "path_tracing": 0.15,
-            "similarity": 0.10,  # Broad coverage for similarity queries
-            "hybrid": 0.15,
-        }
-        intent_threshold = _intent_ego_thresholds.get(
-            intent_decision.intent.value, 0.15
-        )
-        if intent_threshold != 0.15:  # Only log non-default values
-            logger.info(
-                f"[EGO_GRAPH] Intent-adaptive threshold: "
-                f"{intent_decision.intent.value} -> {intent_threshold}"
-            )
-        mutable_config().ego_graph.min_similarity_threshold = intent_threshold
-
-    # Build SearchConfig with parent-retrieval settings if enabled
-    if isinstance(searcher, HybridSearcher) and include_parent:
-        mutable_config().parent_retrieval = ParentRetrievalConfig(
-            enabled=include_parent
-        )
-        logger.info("[PARENT_RETRIEVAL] Enabled")
-
-    # Apply intent-driven weight overrides (per-request kwargs — no shared-state mutation)
-    suggested_bm25: float | None = None
-    suggested_dense: float | None = None
-    if isinstance(searcher, HybridSearcher) and intent_decision:
-        suggested_bm25 = intent_decision.suggested_params.get("bm25_weight")
-        suggested_dense = intent_decision.suggested_params.get("dense_weight")
-        if suggested_bm25 is not None and suggested_dense is not None:
-            logger.info(
-                f"[INTENT] Weight override for {intent_decision.intent.value}: "
-                f"BM25={searcher.bm25_weight:.2f}→{suggested_bm25:.2f}, "
-                f"Dense={searcher.dense_weight:.2f}→{suggested_dense:.2f}"
-            )
-
-    # Apply intent-driven edge weights for graph traversal (A1)
-    if isinstance(searcher, HybridSearcher) and intent_decision:
-        from graph.graph_storage import INTENT_EDGE_WEIGHT_PROFILES
-
-        intent_key = intent_decision.intent.value  # e.g. "local", "global"
-        edge_profile = INTENT_EDGE_WEIGHT_PROFILES.get(intent_key)
-        if edge_profile:
-            cfg = mutable_config()
-            cfg.multi_hop.edge_weights = edge_profile
-            # Also set for ego-graph path (EgoGraphConfig already has edge_weights field)
-            if cfg.ego_graph:
-                cfg.ego_graph.edge_weights = edge_profile
-            logger.info(
-                f"[INTENT] Edge weight profile set for {intent_key}: "
-                f"calls={edge_profile.get('calls', 'N/A')}, imports={edge_profile.get('imports', 'N/A')}"
-            )
-
-    # Hand the copy to downstream only if we actually made one; otherwise the
-    # read-only singleton is safe to share.
-    effective_config = config_copy if config_copy is not None else config_singleton
-
-    if isinstance(searcher, HybridSearcher):
-        results = await asyncio.to_thread(
-            searcher.search,
-            query=query,
-            k=k,
-            search_mode=actual_search_mode,
-            min_bm25_score=0.1,
-            use_parallel=get_config().performance.use_parallel_search,
-            filters=filters if filters else None,
-            config=effective_config,
-            bm25_weight=suggested_bm25,
-            dense_weight=suggested_dense,
-        )
-    else:
-        context_depth = 1 if include_context else 0
-        results = await asyncio.to_thread(
-            searcher.search,
-            query=query,
-            k=k,
-            search_mode=actual_search_mode,
-            context_depth=context_depth,
-            filters=filters if filters else None,
-        )
+    # EXECUTE: auto-reindex, searcher, config assembly, search
+    outcome = await SearchOrchestrator()._execute(plan)
+    if isinstance(outcome, dict):
+        return outcome
+    results = outcome.results
+    searcher = outcome.searcher
+    index_manager = outcome.index_manager
+    effective_config = outcome.effective_config
 
     # Format search results
     formatted_results = _format_search_results(results)
@@ -1119,7 +899,7 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
     # Applied after subgraph extraction so [:k] / [k:] partitioning sees only real chunks.
     # Gap info is stored as gap_after on the preceding chunk (no synthetic rows injected).
     if (
-        getattr(config_singleton.output, "source_order_output", True)
+        getattr(effective_config.output, "source_order_output", True)
         and len(formatted_results) > 1
     ):
         formatted_results = _reorder_by_source_position(formatted_results)
