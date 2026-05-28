@@ -26,6 +26,7 @@ from utils.otel_attributes import (
 from utils.timing import timed
 
 from .bm25_sync import BM25SyncManager
+from .community_refresh_stage import CommunityRefreshStage
 from .community_stage import CommunityStage
 from .config import get_search_config
 from .graph_integration import GraphIntegration
@@ -150,6 +151,11 @@ class IncrementalIndexer:
             bm25_sync=self._bm25_sync,
             build_metadata_fn=self._build_snapshot_metadata,
             clear_gpu_fn=self._clear_gpu_cache,
+        )
+        self._community_refresh_stage = CommunityRefreshStage(
+            embedder=self.embedder,
+            indexer=self.indexer,
+            summary_stage=self._summary_stage,
         )
 
     def _get_symbol_cache(self) -> Optional["SymbolHashCache"]:
@@ -368,7 +374,7 @@ class IncrementalIndexer:
             # ========== Community summary refresh (approximate, below redetect threshold) ==========
             if _should_refresh_communities:
                 try:
-                    self._refresh_affected_community_summaries(changes, project_name)
+                    self._community_refresh_stage.run(changes, project_name)
                 except Exception as e:
                     logger.warning(
                         f"[INCR_COMM] Community summary refresh failed (non-fatal): {e}"
@@ -946,192 +952,6 @@ class IncrementalIndexer:
         logger.info(f"[COMMUNITY_MERGE] Regenerated chunk_ids for {len(result)} chunks")
 
         return result
-
-    def _get_metadata_store(self):
-        """Return the MetadataStore from the indexer, handling both CodeIndexManager and HybridSearcher."""
-        if hasattr(self.indexer, "metadata_store"):
-            return self.indexer.metadata_store
-        if hasattr(self.indexer, "dense_index"):
-            dense_index = self.indexer.dense_index
-            if hasattr(dense_index, "metadata_store"):
-                return dense_index.metadata_store
-        return None
-
-    def _chunk_from_metadata(self, chunk_id: str, meta: dict) -> CodeChunk:
-        """Reconstruct a partial CodeChunk from a MetadataStore metadata dict.
-
-        Carries the fields that generate_community_summaries reads: chunk_type,
-        name, parent_name, relative_path, docstring, imports, start/end_line,
-        content, language. Language defaults to 'python' when absent.
-        """
-        return CodeChunk(
-            content=meta.get("content", ""),
-            chunk_type=meta.get("chunk_type", "function"),
-            start_line=int(meta.get("start_line") or 0),
-            end_line=int(meta.get("end_line") or 0),
-            file_path=meta.get("file_path", ""),
-            relative_path=meta.get("relative_path", ""),
-            folder_structure=meta.get("folder_structure") or [],
-            name=meta.get("name"),
-            parent_name=meta.get("parent_name"),
-            docstring=meta.get("docstring"),
-            imports=meta.get("imports") or [],
-            language=meta.get("language", "python"),
-            chunk_id=chunk_id,
-        )
-
-    def _refresh_affected_community_summaries(
-        self, changes: "FileChanges", project_name: str
-    ) -> None:
-        """Approximately refresh community summaries for communities touched by changed files.
-
-        Uses the persisted community_map (pre-remerge file→community assignments) to find
-        which communities are affected, removes their stale summary chunks, and regenerates
-        summaries from the surviving MetadataStore chunks. New-file chunks have no community
-        assignment until the next full redetect (the accepted approximation).
-        """
-        # Locate graph storage to load the persisted community_map
-        storage_dir: Path | None = None
-        try:
-            if hasattr(self.indexer, "storage_dir"):
-                storage_dir = Path(self.indexer.storage_dir)
-            elif hasattr(self.indexer, "dense_index") and hasattr(
-                self.indexer.dense_index, "storage_dir"
-            ):
-                storage_dir = Path(self.indexer.dense_index.storage_dir)
-        except (TypeError, ValueError):
-            storage_dir = None
-
-        if storage_dir is None:
-            logger.debug(
-                "[INCR_COMM] Cannot locate storage_dir for community_map; skipping refresh"
-            )
-            return
-
-        project_id = (
-            storage_dir.parent.name.rsplit("_", 1)[0] if storage_dir.exists() else None
-        )
-        if project_id is None:
-            logger.debug(
-                "[INCR_COMM] Cannot determine project_id for community_map; skipping refresh"
-            )
-            return
-
-        graph = GraphIntegration(project_id=project_id, storage_dir=storage_dir)
-        if graph.storage is None:
-            return
-        community_map = graph.storage.load_community_map()
-        if community_map is None:
-            logger.debug(
-                "[INCR_COMM] No persisted community_map found; skipping refresh "
-                "(run a full index first)"
-            )
-            return
-
-        # Build file → primary community mapping from pre-remerge community_map
-        file_comm_counts: dict[str, dict[int, int]] = {}
-        for chunk_id, comm_id in community_map.items():
-            rel_path = chunk_id.split(":")[0]
-            file_comm_counts.setdefault(rel_path, {})
-            file_comm_counts[rel_path][comm_id] = (
-                file_comm_counts[rel_path].get(comm_id, 0) + 1
-            )
-        file_to_community: dict[str, int] = {
-            rel_path: max(comm_counts, key=comm_counts.__getitem__)
-            for rel_path, comm_counts in file_comm_counts.items()
-        }
-
-        # Normalise changed file paths to forward-slash relative form for comparison
-        changed_file_set = {
-            str(f).replace("\\", "/")
-            for f in (*changes.added, *changes.modified, *changes.removed)
-        }
-
-        affected_community_ids: set[int] = {
-            comm_id
-            for rel_path, comm_id in file_to_community.items()
-            if rel_path in changed_file_set
-        }
-        if not affected_community_ids:
-            logger.debug(
-                "[INCR_COMM] No affected communities for changed files; nothing to refresh"
-            )
-            return
-
-        logger.info(
-            f"[INCR_COMM] {len(affected_community_ids)} community(ies) affected by "
-            f"{len(changed_file_set)} changed file(s); refreshing summaries"
-        )
-
-        metadata_store = self._get_metadata_store()
-        if metadata_store is None:
-            logger.warning(
-                "[INCR_COMM] Cannot access MetadataStore; skipping community refresh"
-            )
-            return
-
-        # Remove stale community summary chunks for affected communities
-        for _chunk_id, meta in list(metadata_store.items()):
-            if meta.get("chunk_type") != "community":
-                continue
-            tags = meta.get("tags") or []
-            for tag in tags:
-                if not isinstance(tag, str) or not tag.startswith("community:"):
-                    continue
-                try:
-                    comm_id = int(tag.split(":", 1)[1])
-                except (ValueError, IndexError):
-                    continue
-                if comm_id in affected_community_ids:
-                    file_path = meta.get("file_path") or meta.get("relative_path", "")
-                    if file_path:
-                        self.indexer.remove_file_chunks(file_path, project_name)
-                    break
-
-        # Rebuild member CodeChunks for affected communities from MetadataStore
-        member_chunks: list[CodeChunk] = []
-        sub_map: dict[str, int] = {}
-        for chunk_id, meta in metadata_store.items():
-            chunk_type = meta.get("chunk_type", "")
-            if chunk_type in ("community", "module"):
-                continue
-            rel_path = str(meta.get("relative_path") or "").replace("\\", "/")
-            comm_id = file_to_community.get(rel_path)
-            if comm_id is None or comm_id not in affected_community_ids:
-                continue
-            member_chunks.append(self._chunk_from_metadata(chunk_id, meta))
-            sub_map[chunk_id] = comm_id
-
-        if not member_chunks:
-            logger.info(
-                "[INCR_COMM] No surviving member chunks for affected communities; "
-                "stale summaries removed and not regenerated"
-            )
-            return
-
-        # Regenerate summaries (no centrality in incremental — approximate refresh)
-        new_summaries = self._summary_stage.compute_community_summaries(
-            member_chunks, sub_map, None
-        )
-        if not new_summaries:
-            logger.info("[INCR_COMM] No new community summaries generated")
-            return
-
-        # Embed and index the refreshed summaries
-        try:
-            embedding_results = self.embedder.embed_chunks(new_summaries)
-            for chunk, result in zip(new_summaries, embedding_results, strict=False):
-                result.metadata["project_name"] = project_name
-                result.metadata["content"] = chunk.content
-            if embedding_results:
-                self.indexer.add_embeddings(embedding_results)
-            logger.info(
-                f"[INCR_COMM] Refreshed {len(new_summaries)} community summary chunk(s)"
-            )
-        except Exception as e:
-            logger.warning(
-                f"[INCR_COMM] Failed to embed/index refreshed community summaries: {e}"
-            )
 
     def _build_snapshot_metadata(
         self,
