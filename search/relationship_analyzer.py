@@ -486,8 +486,9 @@ class RelationshipAnalyzer:
                     for n in graph_storage.graph.nodes()
                     if n.endswith(f":{symbol_name}") or n.endswith(f".{symbol_name}")
                 ]
-            if matches:
-                cid = matches[0]
+            # Try each match in order — a large method may only be present in the
+            # vector index as split_block chunks, not as the original method node.
+            for cid in matches:
                 result = self.searcher.get_by_chunk_id(cid)
                 if result:
                     logger.debug(
