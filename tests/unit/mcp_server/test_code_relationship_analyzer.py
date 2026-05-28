@@ -674,6 +674,33 @@ class TestResolveTarget:
         assert cid == "pkg/mod.py:30-50:method:Foo.bar"
         mock_searcher.search.assert_not_called()
 
+    def test_resolve_via_graph_suffix_scan_class_qualified(self, mock_searcher):
+        """Tier-2 suffix scan: chunk_id ending with '.method_name' is matched."""
+        # Symbol cache misses; graph exact-name lookup also misses (key is qualified)
+        mock_cache = Mock()
+        mock_cache.get_by_symbol_name.return_value = None
+
+        mock_gs = Mock()
+        mock_gs.get_nodes_by_name.return_value = []  # "get_project_storage_dir" not in _name_index as bare
+
+        # Graph nodes include the qualified chunk_id
+        qualified_cid = "mcp_server/storage_manager.py:206-340:method:StorageManager.get_project_storage_dir"
+        mock_gs.graph.nodes.return_value = [
+            "scripts/list_projects_parseable.py:27-78:function:main",  # caller — should NOT match
+            qualified_cid,
+        ]
+
+        mock_result = _make_mock_result(qualified_cid, "method")
+        mock_searcher.get_by_chunk_id.return_value = mock_result
+
+        analyzer = self._make_analyzer_with_caches(
+            mock_searcher, symbol_cache=mock_cache, graph_storage=mock_gs
+        )
+        result, cid = analyzer._resolve_target(None, "get_project_storage_dir", None)
+
+        assert cid == qualified_cid
+        mock_searcher.search.assert_not_called()
+
     def test_resolve_semantic_fallback_prefers_method_over_class(self, mock_searcher):
         """Tier-3 semantic: inverted type priority picks method/function before class."""
         # Both exact tiers miss

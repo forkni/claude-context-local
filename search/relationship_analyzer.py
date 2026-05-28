@@ -479,11 +479,12 @@ class RelationshipAnalyzer:
         if graph_storage is not None and hasattr(graph_storage, "get_nodes_by_name"):
             matches = graph_storage.get_nodes_by_name(symbol_name)
             if not matches:
-                # Suffix scan: chunk_ids ending with ":symbol_name"
+                # Suffix scan: ":<name>" (bare) or ".<name>" (class-qualified method,
+                # e.g. chunk_id "...StorageManager.get_project_storage_dir" ends with ".name")
                 matches = [
                     n
                     for n in graph_storage.graph.nodes()
-                    if n.endswith(f":{symbol_name}")
+                    if n.endswith(f":{symbol_name}") or n.endswith(f".{symbol_name}")
                 ]
             if matches:
                 cid = matches[0]
