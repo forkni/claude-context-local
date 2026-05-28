@@ -91,9 +91,58 @@ class TestGetModelKeyFromName:
         assert "bge_m3" in ALL_POOL_MODELS
 
 
-# ---------------------------------------------------------------------------
-# Tests: get_embedder cross-pool opt-in
-# ---------------------------------------------------------------------------
+class TestGetModelNameFromKey:
+    """Forward-lookup from pool key to full model name."""
+
+    def test_active_pool_fast_path(self):
+        """Key in the active pool resolves without cross-pool log."""
+        from mcp_server import model_pool_manager as mpm
+
+        mgr = _make_pool_manager_with_active_pool(MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED)
+        with patch.object(mpm, "_model_pool_manager", mgr):
+            name = mpm.get_model_name_from_key("bge_m3")
+        assert name == "BAAI/bge-m3"
+
+    def test_cross_pool_resolves_qwen3(self, caplog):
+        """qwen3_0.6b resolves when active pool is lightweight-speed."""
+        import logging
+
+        from mcp_server import model_pool_manager as mpm
+
+        mgr = _make_pool_manager_with_active_pool(MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED)
+        with (
+            patch.object(mpm, "_model_pool_manager", mgr),
+            caplog.at_level(logging.INFO, logger="mcp_server.model_pool_manager"),
+        ):
+            name = mpm.get_model_name_from_key("qwen3_0.6b")
+
+        assert name == "Qwen/Qwen3-Embedding-0.6B"
+        assert any("[CROSS_POOL]" in rec.message for rec in caplog.records)
+
+    def test_cross_pool_resolves_coderankembed(self, caplog):
+        """coderankembed resolves when active pool is lightweight-speed."""
+        import logging
+
+        from mcp_server import model_pool_manager as mpm
+
+        mgr = _make_pool_manager_with_active_pool(MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED)
+        with (
+            patch.object(mpm, "_model_pool_manager", mgr),
+            caplog.at_level(logging.INFO, logger="mcp_server.model_pool_manager"),
+        ):
+            name = mpm.get_model_name_from_key("coderankembed")
+
+        assert name == "nomic-ai/CodeRankEmbed"
+        assert any("[CROSS_POOL]" in rec.message for rec in caplog.records)
+
+    def test_unknown_key_returns_none(self):
+        """A key not in any pool returns None."""
+        from mcp_server import model_pool_manager as mpm
+
+        mgr = _make_pool_manager_with_active_pool(MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED)
+        with patch.object(mpm, "_model_pool_manager", mgr):
+            name = mpm.get_model_name_from_key("nonexistent_key_v99")
+        assert name is None
 
 
 class TestGetEmbedderCrossPool:

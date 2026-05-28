@@ -429,6 +429,38 @@ def get_model_key_from_name(model_name: str) -> str | None:
     return None
 
 
+def get_model_name_from_key(model_key: str) -> str | None:
+    """Get full model name from model key — symmetric counterpart to get_model_key_from_name.
+
+    Performs a two-tier lookup: active pool first (fast path), then ALL_POOL_MODELS
+    so that a key produced by get_model_key_from_name can always be resolved back
+    to a model name even when the active pool has changed.
+
+    Args:
+        model_key: Pool key (e.g., "qwen3_0.6b", "coderankembed")
+
+    Returns:
+        Full model name (e.g., "Qwen/Qwen3-Embedding-0.6B") or None if unknown
+    """
+    pool_config = get_model_pool_manager().get_pool_config()
+
+    # Tier 1: active pool — fast path, no extra log noise
+    if model_key in pool_config:
+        return pool_config[model_key]
+
+    # Tier 2: any other known pool — index-preservation path (storage resolution only)
+    if model_key in ALL_POOL_MODELS:
+        model_name = ALL_POOL_MODELS[model_key]
+        active_pool_name = next(iter(pool_config.keys()), "unknown")
+        logger.info(
+            f"[CROSS_POOL] Key '{model_key}' resolved to model '{model_name}' "
+            f"(outside active pool containing '{active_pool_name}')"
+        )
+        return model_name
+
+    return None
+
+
 def reset_pool_manager() -> None:
     """Reset the module-level ModelPoolManager singleton.
 
