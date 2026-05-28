@@ -601,3 +601,144 @@ def test_analyze_impact_filters_similar_code_by_exclude_dirs(
     report = impact_analyzer.analyze_impact(chunk_id=target_id, exclude_dirs=["tests/"])
 
     assert len(report.similar_code) == 1
+
+
+# ============================================================================
+# _resolve_target TESTS
+# ============================================================================
+
+
+def _make_mock_result(chunk_id: str, chunk_type: str = "function"):
+    r = Mock()
+    r.chunk_id = chunk_id
+    r.metadata = {"chunk_type": chunk_type, "file": chunk_id.split(":")[0]}
+    r.chunk_type = chunk_type
+    r.file_path = chunk_id.split(":")[0]
+    return r
+
+
+class TestResolveTarget:
+    """_resolve_target should prefer exact lookups over semantic search."""
+
+    def _make_analyzer_with_caches(
+        self, mock_searcher, symbol_cache=None, graph_storage=None
+    ):
+        """Build a RelationshipAnalyzer with optional pre-wired caches."""
+        from graph.graph_queries import GraphQueryEngine
+        from search.relationship_analyzer import RelationshipAnalyzer
+
+        engine = None
+        if graph_storage is not None:
+            engine = Mock(spec=GraphQueryEngine)
+            engine.storage = graph_storage
+
+        # Inject symbol_cache by patching the constructor check
+        analyzer = RelationshipAnalyzer(searcher=mock_searcher, graph_engine=engine)
+        analyzer.symbol_cache = symbol_cache
+        return analyzer
+
+    def test_resolve_via_symbol_cache_does_not_call_search(self, mock_searcher):
+        """Tier-1 exact lookup: symbol cache hit avoids calling searcher.search."""
+        mock_cache = Mock()
+        mock_cache.get_by_symbol_name.return_value = "pkg/mod.py:10-20:function:my_func"
+
+        mock_result = _make_mock_result("pkg/mod.py:10-20:function:my_func", "function")
+        mock_searcher.get_by_chunk_id.return_value = mock_result
+
+        analyzer = self._make_analyzer_with_caches(
+            mock_searcher, symbol_cache=mock_cache
+        )
+        result, cid = analyzer._resolve_target(None, "my_func", None)
+
+        assert cid == "pkg/mod.py:10-20:function:my_func"
+        mock_searcher.search.assert_not_called()
+
+    def test_resolve_via_graph_lookup_does_not_call_search(self, mock_searcher):
+        """Tier-2 exact lookup: graph name index hit avoids searcher.search."""
+        # Symbol cache misses
+        mock_cache = Mock()
+        mock_cache.get_by_symbol_name.return_value = None
+
+        # Graph storage hits
+        mock_gs = Mock()
+        mock_gs.get_nodes_by_name.return_value = ["pkg/mod.py:30-50:method:Foo.bar"]
+
+        mock_result = _make_mock_result("pkg/mod.py:30-50:method:Foo.bar", "method")
+        mock_searcher.get_by_chunk_id.return_value = mock_result
+
+        analyzer = self._make_analyzer_with_caches(
+            mock_searcher, symbol_cache=mock_cache, graph_storage=mock_gs
+        )
+        result, cid = analyzer._resolve_target(None, "bar", None)
+
+        assert cid == "pkg/mod.py:30-50:method:Foo.bar"
+        mock_searcher.search.assert_not_called()
+
+    def test_resolve_semantic_fallback_prefers_method_over_class(self, mock_searcher):
+        """Tier-3 semantic: inverted type priority picks method/function before class."""
+        # Both exact tiers miss
+        mock_cache = Mock()
+        mock_cache.get_by_symbol_name.return_value = None
+        mock_gs = Mock()
+        mock_gs.get_nodes_by_name.return_value = []
+        mock_gs.graph.nodes.return_value = []
+
+        class_result = _make_mock_result("a.py:1-200:class:SearchFactory", "class")
+        method_result = _make_mock_result(
+            "b.py:10-20:method:StorageManager.get_project_storage_dir", "method"
+        )
+        mock_searcher.search.return_value = [class_result, method_result]
+        mock_searcher.get_by_chunk_id.return_value = None
+
+        analyzer = self._make_analyzer_with_caches(
+            mock_searcher, symbol_cache=mock_cache, graph_storage=mock_gs
+        )
+        result, cid = analyzer._resolve_target(None, "get_project_storage_dir", None)
+
+        assert "method" in cid or "method_result" not in cid
+        assert result.chunk_type == "method"
+
+    def test_resolve_name_matching_handles_class_qualified_method(self, mock_searcher):
+        """Name-match filter accepts 'Foo.bar' when querying bare 'bar'."""
+        # Both exact tiers miss → falls to semantic
+        mock_cache = Mock()
+        mock_cache.get_by_symbol_name.return_value = None
+        mock_gs = Mock()
+        mock_gs.get_nodes_by_name.return_value = []
+        mock_gs.graph.nodes.return_value = []
+
+        # chunk_id last segment is qualified
+        qualified_method = _make_mock_result("file.py:10-20:method:Foo.bar", "method")
+        # class result would win under old priority
+        class_result = _make_mock_result("file.py:1-100:class:Foo", "class")
+        mock_searcher.search.return_value = [class_result, qualified_method]
+        mock_searcher.get_by_chunk_id.return_value = None
+
+        analyzer = self._make_analyzer_with_caches(
+            mock_searcher, symbol_cache=mock_cache, graph_storage=mock_gs
+        )
+        result, cid = analyzer._resolve_target(None, "bar", None)
+
+        # The qualified method matches via .split(".")[-1] == "bar"; class does not match
+        # so matching = [qualified_method], candidates = [qualified_method]
+        assert cid == "file.py:10-20:method:Foo.bar"
+
+    def test_resolve_symbol_not_found_raises(self, mock_searcher):
+        """All tiers miss → SearchError raised."""
+        from search.exceptions import SearchError
+
+        mock_cache = Mock()
+        mock_cache.get_by_symbol_name.return_value = None
+        mock_gs = Mock()
+        mock_gs.get_nodes_by_name.return_value = []
+        mock_gs.graph.nodes.return_value = []
+        mock_searcher.search.return_value = []
+
+        analyzer = self._make_analyzer_with_caches(
+            mock_searcher, symbol_cache=mock_cache, graph_storage=mock_gs
+        )
+
+        import pytest
+
+        with pytest.raises(SearchError):
+            analyzer._resolve_target(None, "nonexistent_symbol", None)
