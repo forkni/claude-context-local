@@ -10,11 +10,10 @@ from typing import Any
 
 
 def get_config_via_service_locator(key: str | None = None, default: Any = None) -> Any:
-    """Retrieve configuration via ServiceLocator to avoid circular dependencies.
+    """Retrieve the current SearchConfig (or a sub-key) without circular imports.
 
-    This helper function provides a way to access the SearchConfig without
-    creating circular import dependencies. It uses lazy importing to defer
-    the import of ServiceLocator until runtime.
+    Uses ``get_search_config()`` directly; the name is kept for backward compatibility
+    with callers in ``embeddings/`` and ``search/`` that import it by this name.
 
     Args:
         key: Optional configuration key to retrieve. If None, returns entire config.
@@ -23,16 +22,13 @@ def get_config_via_service_locator(key: str | None = None, default: Any = None) 
     Returns:
         Configuration value, entire config object, or default.
 
-    Raises:
-        AttributeError: If the requested key doesn't exist and no default provided.
-
     Example:
         >>> config = get_config_via_service_locator()
         >>> bm25_weight = get_config_via_service_locator("bm25_weight", 0.4)
     """
-    from mcp_server.services import ServiceLocator
+    from search.config import get_search_config
 
-    config = ServiceLocator.instance().get_config()
+    config = get_search_config()
 
     if config is None:
         return default

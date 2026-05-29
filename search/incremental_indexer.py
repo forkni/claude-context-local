@@ -593,10 +593,9 @@ class IncrementalIndexer:
                 )
 
         # Step 1: Release resources (same operation as UI "Release Resources" command)
-        from mcp_server.resource_manager import ResourceManager
+        from mcp_server.resource_manager import _cleanup_previous_resources
 
-        resource_manager = ResourceManager()
-        resource_manager.cleanup_previous_resources()
+        _cleanup_previous_resources()
         logger.info("[FULL_INDEX] Resource release completed")
 
         # Step 2: Verify cleanup completeness

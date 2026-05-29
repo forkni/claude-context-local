@@ -316,19 +316,14 @@ def _invalidate_config_caches() -> None:
 
     Must be called after writing an updated config to disk so that the next
     :func:`get_config` call reads the new values instead of returning stale ones.
-    Clears three caches in order:
+    Clears two caches in order:
 
-    1. ``search.config._config_manager`` (module-level singleton)
-    2. ``ServiceLocator`` config entry (forces reload on next access)
-    3. ``state.reset_for_model_switch()`` (clears embedders, index_manager, searcher)
+    1. ``search.config._config_manager`` (module-level singleton) — the real cache.
+    2. ``state.reset_for_model_switch()`` (clears embedders, index_manager, searcher)
     """
     from search import config as config_module
 
     config_module._config_manager = None
-
-    from mcp_server.services import ServiceLocator
-
-    ServiceLocator.instance().invalidate("config")
 
     state = get_state()
     state.reset_for_model_switch()
@@ -788,10 +783,9 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
 
     # Step 1: Cleanup previous resources BEFORE starting indexing
     logger.info("[INDEX] Releasing previous resources before indexing...")
-    from mcp_server.resource_manager import ResourceManager
+    from mcp_server.resource_manager import _cleanup_previous_resources
 
-    resource_manager = ResourceManager()
-    resource_manager.cleanup_previous_resources()
+    _cleanup_previous_resources()
 
     directory_path = Path(directory_path).resolve()
     if not directory_path.exists():

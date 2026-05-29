@@ -70,11 +70,9 @@ class SnapshotManager:
         """
         if dimension is None:
             try:
-                # Use ServiceLocator to avoid circular dependency
-                from mcp_server.services import ServiceLocator
-                from search.config import get_model_slug
+                from search.config import get_model_slug, get_search_config
 
-                config = ServiceLocator.instance().get_config()
+                config = get_search_config()
                 dimension = config.embedding.dimension
                 model_slug = get_model_slug(config.embedding.model_name)
             except (AttributeError, KeyError, RuntimeError):
@@ -84,11 +82,9 @@ class SnapshotManager:
         else:
             # If dimension is provided explicitly, we need to get the current model slug
             try:
-                # Use ServiceLocator to avoid circular dependency
-                from mcp_server.services import ServiceLocator
-                from search.config import get_model_slug
+                from search.config import get_model_slug, get_search_config
 
-                config = ServiceLocator.instance().get_config()
+                config = get_search_config()
                 model_slug = get_model_slug(config.embedding.model_name)
             except (AttributeError, KeyError, RuntimeError):
                 model_slug = "unknown"
