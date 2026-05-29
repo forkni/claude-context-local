@@ -1278,3 +1278,196 @@ class TestParallelChunking:
         import shutil
 
         shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Direct tests for the three private helpers extracted from incremental_index
+# ---------------------------------------------------------------------------
+
+
+class TestZeroResult:
+    """Direct tests for IncrementalIndexer._zero_result static helper."""
+
+    def test_success_result_has_all_zero_counts(self):
+        """_zero_result(success=True) returns all-zero file/chunk counts and no error."""
+        import time
+
+        before = time.time()
+        result = IncrementalIndexer._zero_result(before, success=True)
+
+        assert result.success is True
+        assert result.error is None
+        assert result.files_added == 0
+        assert result.files_removed == 0
+        assert result.files_modified == 0
+        assert result.chunks_added == 0
+        assert result.chunks_removed == 0
+        assert result.bm25_resynced is False
+        assert result.bm25_resync_count == 0
+        assert result.time_taken >= 0
+
+    def test_failure_result_carries_error_string(self):
+        """_zero_result(success=False, error=...) propagates the error message."""
+        import time
+
+        result = IncrementalIndexer._zero_result(
+            time.time(), success=False, error="something went wrong"
+        )
+
+        assert result.success is False
+        assert result.error == "something went wrong"
+        assert result.files_added == 0
+
+    def test_no_error_by_default(self):
+        """error defaults to None when not supplied."""
+        import time
+
+        result = IncrementalIndexer._zero_result(time.time(), success=True)
+        assert result.error is None
+
+
+class TestRestoreRepoProfile:
+    """Direct tests for IncrementalIndexer._restore_repo_profile."""
+
+    def _make_indexer(self):
+        indexer = IncrementalIndexer(
+            indexer=Mock(),
+            embedder=Mock(),
+            chunker=Mock(),
+            snapshot_manager=Mock(),
+        )
+        # Set up parallel_chunker mock hierarchy
+        indexer._parallel_chunker = Mock()
+        return indexer
+
+    def test_no_op_when_sizing_mode_not_adaptive(self):
+        """Does not call load_metadata when sizing_mode != 'adaptive'."""
+        indexer = self._make_indexer()
+
+        with patch("search.incremental_indexer.get_search_config") as mock_cfg:
+            mock_cfg.return_value.chunking.sizing_mode = "fixed"
+            indexer._restore_repo_profile("/some/project")
+
+        indexer.snapshot_manager.load_metadata.assert_not_called()
+
+    def test_no_op_when_no_repo_profile_in_metadata(self):
+        """Does not assign repo_profile when snapshot metadata lacks 'repo_profile'."""
+        indexer = self._make_indexer()
+        indexer.snapshot_manager.load_metadata.return_value = {"supported_files": 10}
+
+        with patch("search.incremental_indexer.get_search_config") as mock_cfg:
+            mock_cfg.return_value.chunking.sizing_mode = "adaptive"
+            # Should not raise; repo_profile on the mock is not set to a RepoProfile
+            indexer._restore_repo_profile("/some/project")
+
+        # The mock's tree_sitter_chunker.repo_profile was not called with a RepoProfile
+        # (it remains a MagicMock auto-attribute, not a RepoProfile instance)
+        from chunking.repo_profiler import RepoProfile
+
+        assigned = indexer._parallel_chunker.chunker.tree_sitter_chunker.repo_profile
+        assert not isinstance(assigned, RepoProfile)
+
+    def test_sets_repo_profile_when_present(self):
+        """Sets the chunker repo_profile from snapshot metadata when adaptive."""
+        indexer = self._make_indexer()
+        indexer.snapshot_manager.load_metadata.return_value = {
+            "repo_profile": {
+                "function_count": 42,
+                "p25_chars": 100,
+                "p50_chars": 200,
+                "p75_chars": 500,
+                "p90_chars": 800,
+                "mean_chars": 250,
+                "max_complexity": 15,
+            }
+        }
+
+        with patch("search.incremental_indexer.get_search_config") as mock_cfg:
+            mock_cfg.return_value.chunking.sizing_mode = "adaptive"
+            indexer._restore_repo_profile("/some/project")
+
+        assigned = indexer._parallel_chunker.chunker.tree_sitter_chunker.repo_profile
+        assert assigned.p75_chars == 500
+        assert assigned.max_complexity == 15
+
+
+class TestCheckCommunityDrift:
+    """Direct tests for IncrementalIndexer._check_community_drift."""
+
+    def _make_indexer(self):
+        return IncrementalIndexer(
+            indexer=Mock(),
+            embedder=Mock(),
+            chunker=Mock(),
+            snapshot_manager=Mock(),
+        )
+
+    def _make_changes(self, added=1, modified=1, removed=0):
+        changes = Mock()
+        changes.added = ["f"] * added
+        changes.modified = ["g"] * modified
+        changes.removed = ["h"] * removed
+        return changes
+
+    def test_below_threshold_returns_none_and_new_cumulative(self):
+        """When drift fraction < threshold, returns (None, new_cumulative)."""
+        indexer = self._make_indexer()
+        indexer.snapshot_manager.load_metadata.return_value = {
+            "cumulative_changed_files": 2,
+            "supported_files": 100,
+        }
+        changes = self._make_changes(added=1, modified=1, removed=0)  # 2 new → 4 total
+
+        with patch("search.incremental_indexer.get_search_config") as mock_cfg:
+            mock_cfg.return_value.chunking.incremental_community_redetect_threshold = (
+                0.5
+            )
+            result, cumulative = indexer._check_community_drift(
+                "/p", "proj", changes, 0.0, should_refresh_communities=True
+            )
+
+        assert result is None
+        assert cumulative == 4  # 2 prev + 2 new
+
+    def test_above_threshold_calls_full_index_and_returns_result(self):
+        """When drift fraction >= threshold, calls _full_index and returns its result."""
+        indexer = self._make_indexer()
+        indexer.snapshot_manager.load_metadata.return_value = {
+            "cumulative_changed_files": 80,
+            "supported_files": 100,
+        }
+        # 80 + 20 = 100 changes → 100% drift, well above 50% threshold
+        changes = self._make_changes(added=10, modified=5, removed=5)
+
+        mock_full_result = Mock()
+        with (
+            patch.object(indexer, "_full_index", return_value=mock_full_result),
+            patch("search.incremental_indexer.get_search_config") as mock_cfg,
+            patch("search.incremental_indexer.traced_block"),
+        ):
+            mock_cfg.return_value.chunking.incremental_community_redetect_threshold = (
+                0.5
+            )
+            result, cumulative = indexer._check_community_drift(
+                "/p", "proj", changes, 0.0, should_refresh_communities=True
+            )
+
+        assert result is mock_full_result
+        assert cumulative == 100  # 80 prev + 20 new
+
+    def test_no_prior_tracking_skips_drift_check(self):
+        """When 'cumulative_changed_files' absent, always returns (None, this_count)."""
+        indexer = self._make_indexer()
+        # No 'cumulative_changed_files' key → _has_prior_tracking is False
+        indexer.snapshot_manager.load_metadata.return_value = {"supported_files": 100}
+        # Would be 99% drift if tracking were applied
+        changes = self._make_changes(added=99, modified=0, removed=0)
+
+        with patch.object(indexer, "_full_index") as mock_full:
+            result, cumulative = indexer._check_community_drift(
+                "/p", "proj", changes, 0.0, should_refresh_communities=True
+            )
+
+        assert result is None
+        assert cumulative == 99  # 0 prev + 99 new
+        mock_full.assert_not_called()

@@ -288,86 +288,33 @@ class IncrementalIndexer:
                 )
                 self.snapshot_manager.save_snapshot(current_dag, metadata)
 
-                return IncrementalIndexResult(
-                    files_added=0,
-                    files_removed=0,
-                    files_modified=0,
-                    chunks_added=0,
-                    chunks_removed=0,
-                    time_taken=time.time() - start_time,
-                    success=True,
-                    bm25_resynced=False,
-                    bm25_resync_count=0,
-                )
+                return self._zero_result(start_time, success=True)
 
             # Log changes
             logger.info(
                 f"Changes detected - Added: {len(changes.added)}, "
                 f"Removed: {len(changes.removed)}, Modified: {len(changes.modified)}"
             )
-            # ========== Community drift check ==========
-            # Track cumulative changed-file fraction since last full index.
-            # When it exceeds the threshold, promote to full reindex for community redetection.
             _config = get_search_config()
             _should_refresh_communities = (
                 _config.chunking.enable_community_summaries
                 and _config.chunking.enable_incremental_community_summaries
             )
-            _prev_meta = self.snapshot_manager.load_metadata(project_path)
-            _prev_meta_dict = _prev_meta if isinstance(_prev_meta, dict) else {}
-            _has_prior_tracking = "cumulative_changed_files" in _prev_meta_dict
-            _prev_cumulative = int(_prev_meta_dict.get("cumulative_changed_files", 0))
-            _this_change_count = (
-                len(changes.added) + len(changes.modified) + len(changes.removed)
+            _drift_result, _new_cumulative = self._check_community_drift(
+                project_path,
+                project_name,
+                changes,
+                start_time,
+                _should_refresh_communities,
             )
-            _new_cumulative = _prev_cumulative + _this_change_count
-            if _should_refresh_communities and _has_prior_tracking:
-                _prev_supported = max(1, int(_prev_meta_dict.get("supported_files", 1)))
-                _drift_fraction = _new_cumulative / _prev_supported
-                if (
-                    _drift_fraction
-                    > _config.chunking.incremental_community_redetect_threshold
-                ):
-                    logger.info(
-                        f"[INCREMENTAL] Community drift {_drift_fraction:.0%} exceeds "
-                        f"threshold {_config.chunking.incremental_community_redetect_threshold:.0%}; "
-                        "promoting to full reindex for community redetection"
-                    )
-                    with traced_block(
-                        "index.full",
-                        **{ATTR_PROJECT_ID: project_name, ATTR_INDEX_TYPE: "full"},
-                    ):
-                        return self._full_index(project_path, project_name, start_time)
-            # ========== END Community drift check ==========
+            if _drift_result is not None:
+                return _drift_result
 
             # Process changes
             chunks_removed = self._remove_old_chunks(changes, project_name)
 
             # Load cached repo profile for adaptive chunk sizing (set by previous full index)
-            _incr_config = get_search_config()
-            if _incr_config.chunking.sizing_mode == "adaptive":
-                _cached_meta = self.snapshot_manager.load_metadata(project_path)
-                if isinstance(_cached_meta, dict) and "repo_profile" in _cached_meta:
-                    from chunking.repo_profiler import RepoProfile
-
-                    _rp = _cached_meta["repo_profile"]
-                    _cached_profile = RepoProfile(
-                        function_count=_rp.get("function_count", 0),
-                        p25_chars=_rp.get("p25_chars", 0),
-                        p50_chars=_rp.get("p50_chars", 0),
-                        p75_chars=_rp.get("p75_chars", 0),
-                        p90_chars=_rp.get("p90_chars", 0),
-                        mean_chars=_rp.get("mean_chars", 0),
-                        max_complexity=_rp.get("max_complexity", 0),
-                    )
-                    self._parallel_chunker.chunker.tree_sitter_chunker.repo_profile = (
-                        _cached_profile
-                    )
-                    logger.info(
-                        f"[REPO_PROFILE] Loaded cached profile for incremental update: "
-                        f"P75={_cached_profile.p75_chars} chars, "
-                        f"max_cc={_cached_profile.max_complexity}"
-                    )
+            self._restore_repo_profile(project_path)
 
             chunks_added = self._add_new_chunks(changes, project_path, project_name)
 
@@ -450,6 +397,117 @@ class IncrementalIndexer:
                 start_time,
             )
 
+    @staticmethod
+    def _zero_result(
+        start_time: float,
+        *,
+        success: bool,
+        error: str | None = None,
+    ) -> IncrementalIndexResult:
+        """Return an all-zeros IncrementalIndexResult (no file changes, no chunks moved).
+
+        Used for: no-changes detected (success=True), auto-reindex skipped (success=True),
+        full-index failure (success=False), and recovery failure (success=False, error=...).
+        ``time_taken`` is computed from ``start_time`` at the moment of the call.
+        """
+        return IncrementalIndexResult(
+            files_added=0,
+            files_removed=0,
+            files_modified=0,
+            chunks_added=0,
+            chunks_removed=0,
+            time_taken=time.time() - start_time,
+            success=success,
+            error=error,
+            bm25_resynced=False,
+            bm25_resync_count=0,
+        )
+
+    def _restore_repo_profile(self, project_path: str) -> None:
+        """Restore the cached repo profile for adaptive chunk sizing.
+
+        If the stored snapshot contains a ``repo_profile`` dict and the current chunking
+        config uses ``sizing_mode == "adaptive"``, reconstruct the ``RepoProfile`` object
+        and inject it into the parallel chunker so incremental updates use the same size
+        calibration as the original full index.  No-ops silently when the profile is
+        absent or adaptive sizing is disabled.
+        """
+        from chunking.repo_profiler import RepoProfile
+
+        _incr_config = get_search_config()
+        if _incr_config.chunking.sizing_mode != "adaptive":
+            return
+        _cached_meta = self.snapshot_manager.load_metadata(project_path)
+        if not isinstance(_cached_meta, dict) or "repo_profile" not in _cached_meta:
+            return
+        _rp = _cached_meta["repo_profile"]
+        _cached_profile = RepoProfile(
+            function_count=_rp.get("function_count", 0),
+            p25_chars=_rp.get("p25_chars", 0),
+            p50_chars=_rp.get("p50_chars", 0),
+            p75_chars=_rp.get("p75_chars", 0),
+            p90_chars=_rp.get("p90_chars", 0),
+            mean_chars=_rp.get("mean_chars", 0),
+            max_complexity=_rp.get("max_complexity", 0),
+        )
+        self._parallel_chunker.chunker.tree_sitter_chunker.repo_profile = (
+            _cached_profile
+        )
+        logger.info(
+            f"[REPO_PROFILE] Loaded cached profile for incremental update: "
+            f"P75={_cached_profile.p75_chars} chars, "
+            f"max_cc={_cached_profile.max_complexity}"
+        )
+
+    def _check_community_drift(
+        self,
+        project_path: str,
+        project_name: str,
+        changes: "FileChanges",
+        start_time: float,
+        should_refresh_communities: bool,
+    ) -> "tuple[IncrementalIndexResult | None, int]":
+        """Compute cumulative drift; promote to full reindex when threshold exceeded.
+
+        Always returns the new cumulative changed-file count so the caller can include
+        it in snapshot metadata whether or not a promotion occurred.
+
+        Returns:
+            (None, new_cumulative) — continue with incremental update.
+            (full_index_result, new_cumulative) — drift exceeded threshold; caller
+                should immediately return full_index_result.
+        """
+        _prev_meta = self.snapshot_manager.load_metadata(project_path)
+        _prev_meta_dict = _prev_meta if isinstance(_prev_meta, dict) else {}
+        _has_prior_tracking = "cumulative_changed_files" in _prev_meta_dict
+        _prev_cumulative = int(_prev_meta_dict.get("cumulative_changed_files", 0))
+        _this_change_count = (
+            len(changes.added) + len(changes.modified) + len(changes.removed)
+        )
+        _new_cumulative = _prev_cumulative + _this_change_count
+        if should_refresh_communities and _has_prior_tracking:
+            _config = get_search_config()
+            _prev_supported = max(1, int(_prev_meta_dict.get("supported_files", 1)))
+            _drift_fraction = _new_cumulative / _prev_supported
+            if (
+                _drift_fraction
+                > _config.chunking.incremental_community_redetect_threshold
+            ):
+                logger.info(
+                    f"[INCREMENTAL] Community drift {_drift_fraction:.0%} exceeds "
+                    f"threshold {_config.chunking.incremental_community_redetect_threshold:.0%}; "
+                    "promoting to full reindex for community redetection"
+                )
+                with traced_block(
+                    "index.full",
+                    **{ATTR_PROJECT_ID: project_name, ATTR_INDEX_TYPE: "full"},
+                ):
+                    return (
+                        self._full_index(project_path, project_name, start_time),
+                        _new_cumulative,
+                    )
+        return None, _new_cumulative
+
     def _attempt_recovery(
         self,
         original_error: str,
@@ -475,17 +533,10 @@ class IncrementalIndexer:
         except Exception as recovery_error:
             logger.error(f"Recovery failed: {recovery_error}")
             logger.error(traceback.format_exc())
-            return IncrementalIndexResult(
-                files_added=0,
-                files_removed=0,
-                files_modified=0,
-                chunks_added=0,
-                chunks_removed=0,
-                time_taken=time.time() - start_time,
+            return self._zero_result(
+                start_time,
                 success=False,
                 error=f"Original: {original_error}, Recovery: {recovery_error}",
-                bm25_resynced=False,
-                bm25_resync_count=0,
             )
 
     def _release_and_verify_resources(self, project_path: str) -> None:
@@ -794,18 +845,7 @@ class IncrementalIndexer:
 
         except Exception as e:
             logger.error(f"Full indexing failed: {e}")
-            return IncrementalIndexResult(
-                files_added=0,
-                files_removed=0,
-                files_modified=0,
-                chunks_added=0,
-                chunks_removed=0,
-                time_taken=time.time() - start_time,
-                success=False,
-                error=str(e),
-                bm25_resynced=False,
-                bm25_resync_count=0,
-            )
+            return self._zero_result(start_time, success=False, error=str(e))
 
     def _get_total_chunks(self) -> int:
         """Get total number of chunks currently in the index.
@@ -1321,14 +1361,4 @@ class IncrementalIndexer:
             return self.incremental_index(project_path, project_name)
         else:
             logger.debug(f"Index for {project_path} is fresh, skipping reindex")
-            return IncrementalIndexResult(
-                files_added=0,
-                files_removed=0,
-                files_modified=0,
-                chunks_added=0,
-                chunks_removed=0,
-                time_taken=time.time() - start_time,
-                success=True,
-                bm25_resynced=False,
-                bm25_resync_count=0,
-            )
+            return self._zero_result(start_time, success=True)
