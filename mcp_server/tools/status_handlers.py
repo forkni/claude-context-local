@@ -347,20 +347,21 @@ async def handle_get_search_config_status(arguments: dict[str, Any]) -> dict:
 @error_handler("List models")
 async def handle_list_embedding_models(arguments: dict[str, Any]) -> dict:
     """List all available embedding models."""
-    from mcp_server.model_pool_manager import get_model_pool_manager
     from mcp_server.state import get_state
 
     state = get_state()
 
-    # Build reverse mapping: model_name -> model_key
-    pool_config = get_model_pool_manager().get_pool_config()
-    name_to_key = {v: k for k, v in pool_config.items()}
+    # Collect full model names that are actually loaded (non-None CodeEmbedder instances).
+    # Using the embedder's .model_name attribute (set to the full registry name at init)
+    # avoids the pool-scoped reverse-lookup bug and the None-slot false-positive.
+    loaded_names: set[str] = {
+        e.model_name for e in state.embedders.values() if e is not None
+    }
 
     models = []
     for model_name, config in MODEL_REGISTRY.items():
-        # Check if model is loaded
-        model_key = name_to_key.get(model_name)
-        is_loaded = model_key in state.embedders if model_key else False
+        # Check if this model is currently loaded in VRAM
+        is_loaded = model_name in loaded_names
 
         models.append(
             {

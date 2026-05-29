@@ -4,11 +4,13 @@ Covers the validation branches in handle_configure_search_mode and
 handle_configure_chunking that each return specific error dicts on bad input.
 """
 
+import json
 from unittest.mock import Mock, patch
 
 import pytest
 
 from mcp_server.tools.config_handlers import (
+    _detect_indexed_model,
     handle_configure_chunking,
     handle_configure_search_mode,
 )
@@ -217,3 +219,98 @@ async def test_chunking_all_valid_saves_config(mock_config_manager):
     assert "error" not in result
     assert result.get("success") is True
     mock_config_manager.save_config.assert_called_once()
+
+
+# ============================================================================
+# _detect_indexed_model — cross-pool detection via project_info.json
+# ============================================================================
+
+
+def test_detect_indexed_model_reads_project_info_cross_pool(tmp_path):
+    """_detect_indexed_model returns the correct key via project_info.json
+    even when the active pool does not contain the indexing model.
+
+    Regression test: previously only scanned the active pool, causing
+    'No indexed model detected' for projects indexed with a different pool.
+    """
+    project_path = tmp_path / "myproject"
+    project_path.mkdir()
+
+    # Construct a valid project_info.json so info_path.exists() is True
+    info_file = tmp_path / "project_info.json"
+    info_file.write_text(
+        json.dumps(
+            {"embedding_model": "Qwen/Qwen3-Embedding-0.6B", "model_dimension": 1024}
+        )
+    )
+
+    # Lazy imports inside _detect_indexed_model are resolved at call time from
+    # their source modules — patch there, not on config_handlers.
+    with (
+        patch(
+            "mcp_server.storage_manager.get_canonical_project_info",
+            return_value=info_file,
+        ),
+        patch(
+            "mcp_server.model_pool_manager.get_model_key_from_name",
+            return_value="qwen3_0.6b",
+        ),
+    ):
+        result = _detect_indexed_model(str(project_path))
+
+    assert result == "qwen3_0.6b"
+
+
+def test_detect_indexed_model_fallback_when_no_project_info(tmp_path):
+    """When project_info.json is absent, falls back to active-pool dir scan."""
+    project_path = tmp_path / "myproject"
+    project_path.mkdir()
+
+    fake_storage = tmp_path / "storage"
+    (fake_storage / "index").mkdir(parents=True)
+    (fake_storage / "index" / "code.index").write_bytes(b"")
+
+    with (
+        patch(
+            "mcp_server.storage_manager.get_canonical_project_info",
+            return_value=None,
+        ),
+        patch("mcp_server.model_pool_manager.get_model_pool_manager") as mock_pool_mgr,
+        patch(
+            "mcp_server.tools.config_handlers.get_project_storage_dir",
+            return_value=fake_storage,
+        ),
+    ):
+        mock_pool_mgr.return_value.get_pool_config.return_value = {
+            "gte_modernbert": "Alibaba-NLP/gte-modernbert-base"
+        }
+        result = _detect_indexed_model(str(project_path))
+
+    assert result == "gte_modernbert"
+
+
+def test_detect_indexed_model_returns_none_when_nothing_found(tmp_path):
+    """Returns None cleanly when project_info.json is absent and no dir scan hits."""
+    project_path = tmp_path / "myproject"
+    project_path.mkdir()
+
+    empty_storage = tmp_path / "storage"
+    empty_storage.mkdir()
+
+    with (
+        patch(
+            "mcp_server.storage_manager.get_canonical_project_info",
+            return_value=None,
+        ),
+        patch("mcp_server.model_pool_manager.get_model_pool_manager") as mock_pool_mgr,
+        patch(
+            "mcp_server.tools.config_handlers.get_project_storage_dir",
+            return_value=empty_storage,
+        ),
+    ):
+        mock_pool_mgr.return_value.get_pool_config.return_value = {
+            "qwen3_0.6b": "Qwen/Qwen3-Embedding-0.6B"
+        }
+        result = _detect_indexed_model(str(project_path))
+
+    assert result is None
