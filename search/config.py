@@ -1102,22 +1102,3 @@ def get_model_slug(model_name: str) -> str:
     slug = slug.strip("-")
 
     return slug
-
-
-# Register SearchConfigManager with ServiceLocator for dependency injection
-# This allows flexible dependency resolution
-def _register_with_service_locator() -> None:
-    """Register SearchConfig with ServiceLocator on module import."""
-    try:
-        from mcp_server.services import ServiceLocator
-
-        locator = ServiceLocator.instance()
-        # Register factory for lazy loading
-        locator.register_factory("config", get_search_config)
-    except ImportError:
-        # ServiceLocator not yet available (during early initialization)
-        pass
-
-
-# Auto-register on module import
-_register_with_service_locator()

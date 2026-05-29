@@ -328,7 +328,7 @@ async def test_handle_get_search_config_status():
         mock_cfg.embedding.model_name = "BAAI/bge-m3"
         mock_config.return_value = mock_cfg
 
-        with patch("mcp_server.state.get_state") as mock_state:
+        with patch("mcp_server.tools.status_handlers.get_state") as mock_state:
             state = mock_state.return_value
             state.multi_model_enabled = True
             result = await tool_handlers.handle_get_search_config_status({})
@@ -360,6 +360,66 @@ async def test_handle_list_embedding_models():
 
         assert len(result["models"]) == 2
         assert result["current_model"] == "model1"
+
+
+@pytest.mark.asyncio
+async def test_handle_list_embedding_models_loaded_true_when_in_vram():
+    """loaded: true is returned when the embedder is in state.embedders."""
+    mock_embedder = Mock()
+    mock_embedder.model_name = "Qwen/Qwen3-Embedding-0.6B"
+
+    mock_state = Mock()
+    mock_state.embedders = {"qwen3_0.6b": mock_embedder}
+
+    with (
+        patch(
+            "mcp_server.tools.status_handlers.MODEL_REGISTRY",
+            {
+                "Qwen/Qwen3-Embedding-0.6B": {"dimension": 1024, "description": "Test"},
+                "BAAI/bge-m3": {"dimension": 1024, "description": "Other"},
+            },
+        ),
+        # get_state is imported lazily inside handle_list_embedding_models —
+        # patch at the source module so the function picks up the mock.
+        patch("mcp_server.state.get_state", return_value=mock_state),
+        patch("mcp_server.tools.status_handlers.get_config") as mock_config,
+    ):
+        mock_cfg = Mock()
+        mock_cfg.embedding.model_name = "Qwen/Qwen3-Embedding-0.6B"
+        mock_config.return_value = mock_cfg
+
+        result = await tool_handlers.handle_list_embedding_models({})
+
+    models = {m["name"]: m for m in result["models"]}
+    assert models["Qwen/Qwen3-Embedding-0.6B"]["loaded"] is True
+    assert models["BAAI/bge-m3"]["loaded"] is False
+
+
+@pytest.mark.asyncio
+async def test_handle_list_embedding_models_none_slot_is_not_loaded():
+    """A None lazy slot in state.embedders must not report loaded: true.
+
+    Regression test for the None-slot false-positive: previously
+    `model_key in state.embedders` returned True even for unloaded slots.
+    """
+    mock_state = Mock()
+    mock_state.embedders = {"qwen3_0.6b": None}  # reserved slot, nothing loaded
+
+    with (
+        patch(
+            "mcp_server.tools.status_handlers.MODEL_REGISTRY",
+            {"Qwen/Qwen3-Embedding-0.6B": {"dimension": 1024, "description": "Test"}},
+        ),
+        patch("mcp_server.state.get_state", return_value=mock_state),
+        patch("mcp_server.tools.status_handlers.get_config") as mock_config,
+    ):
+        mock_cfg = Mock()
+        mock_cfg.embedding.model_name = "Qwen/Qwen3-Embedding-0.6B"
+        mock_config.return_value = mock_cfg
+
+        result = await tool_handlers.handle_list_embedding_models({})
+
+    assert result["models"][0]["loaded"] is False
 
 
 # ============================================================================

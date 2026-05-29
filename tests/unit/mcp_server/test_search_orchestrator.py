@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from unittest.mock import Mock, patch
 
 import pytest
@@ -251,7 +252,6 @@ class TestExecuteConfigIsolation:
 
     @pytest.mark.asyncio
     async def test_config_singleton_not_mutated_by_ego_graph(self):
-
         sc = SearchConfig()
         original_ego_enabled = sc.ego_graph.enabled
         plan = _make_plan(ego_graph_enabled=True)
@@ -260,3 +260,158 @@ class TestExecuteConfigIsolation:
             mock_gs.return_value = searcher
             await SearchOrchestrator()._execute(plan)
         assert sc.ego_graph.enabled == original_ego_enabled
+
+
+# ---------------------------------------------------------------------------
+# Phase C: _assemble helpers (Blocks F–I)
+# ---------------------------------------------------------------------------
+
+
+def _make_outcome(results=None, effective_config=None):
+    """Return a minimal ExecutionOutcome for _assemble helper tests."""
+    sc = effective_config or SearchConfig()
+    return ExecutionOutcome(
+        results=results if results is not None else [],
+        searcher=Mock(),
+        index_manager=None,
+        effective_config=sc,
+    )
+
+
+def _make_formatted(chunk_id="a.py:1-5:function:foo", kind="function", score=0.9):
+    return {"chunk_id": chunk_id, "kind": kind, "blended_score": score}
+
+
+class TestBuildResponse:
+    """_build_response (Block I): response dict construction."""
+
+    def test_build_response_minimal(self):
+        plan = _make_plan(query="what is X")
+        results = [_make_formatted()]
+        with patch(
+            "mcp_server.guidance.add_system_message", side_effect=lambda r, **kw: r
+        ):
+            response = SearchOrchestrator._build_response(plan, results, None)
+        assert response["query"] == "what is X"
+        assert response["results"] is results
+        assert "subgraph_nodes" not in response
+        assert "routing" not in response
+
+    def test_build_response_includes_subgraph_keys(self):
+        plan = _make_plan()
+        results = [_make_formatted()]
+        subgraph_data = {
+            "nodes": [{"id": "a"}],
+            "edges": [{"src": "a", "tgt": "b"}],
+            "topology_order": ["a"],
+            "communities": {"1": {"label": "search", "count": 1}},
+        }
+        with patch(
+            "mcp_server.guidance.add_system_message", side_effect=lambda r, **kw: r
+        ):
+            response = SearchOrchestrator._build_response(plan, results, subgraph_data)
+        assert response["subgraph_nodes"] == subgraph_data["nodes"]
+        assert response["subgraph_edges"] == subgraph_data["edges"]
+        assert response["subgraph_order"] == subgraph_data["topology_order"]
+        assert response["subgraph_communities"] == subgraph_data["communities"]
+
+    def test_build_response_subgraph_without_optional_keys(self):
+        """subgraph_order and subgraph_communities are omitted when absent."""
+        plan = _make_plan()
+        subgraph_data = {"nodes": [{"id": "a"}], "edges": []}
+        with patch(
+            "mcp_server.guidance.add_system_message", side_effect=lambda r, **kw: r
+        ):
+            response = SearchOrchestrator._build_response(plan, [], subgraph_data)
+        assert "subgraph_nodes" in response
+        assert "subgraph_order" not in response
+        assert "subgraph_communities" not in response
+
+    def test_build_response_routing_gated_by_confidence(self):
+        """routing key included when confidence<0.9 or reason contains 'Fallback'/'routed'."""
+        plan_low = dataclasses.replace(
+            _make_plan(),
+            routing_info={"confidence": 0.7, "reason": "routed to model"},
+        )
+        plan_high = dataclasses.replace(
+            _make_plan(),
+            routing_info={"confidence": 0.95, "reason": "direct match"},
+        )
+        with patch(
+            "mcp_server.guidance.add_system_message", side_effect=lambda r, **kw: r
+        ):
+            r_low = SearchOrchestrator._build_response(plan_low, [], None)
+            r_high = SearchOrchestrator._build_response(plan_high, [], None)
+        assert "routing" in r_low
+        assert "routing" not in r_high
+
+
+class TestApplySourceOrderAndBudget:
+    """_apply_source_order_and_budget (Block H)."""
+
+    def test_source_order_applied_when_enabled(self):
+        """When source_order_output=True and len>1, reorder is called."""
+        sc = SearchConfig()
+        sc.output.source_order_output = True
+        outcome = _make_outcome(effective_config=sc)
+        results = [
+            {
+                "chunk_id": "b.py:10-20:function:b",
+                "file_path": "b.py",
+                "start_line": 10,
+            },
+            {"chunk_id": "a.py:1-5:function:a", "file_path": "a.py", "start_line": 1},
+        ]
+        with patch(
+            "mcp_server.tools.search_handlers._reorder_by_source_position",
+            return_value=list(reversed(results)),
+        ) as mock_reorder:
+            out = SearchOrchestrator._apply_source_order_and_budget(
+                _make_plan(max_context_tokens=0), outcome, list(results)
+            )
+        mock_reorder.assert_called_once()
+        assert out == list(reversed(results))
+
+    def test_source_order_skipped_when_single_result(self):
+        sc = SearchConfig()
+        sc.output.source_order_output = True
+        outcome = _make_outcome(effective_config=sc)
+        single = [_make_formatted()]
+        with patch(
+            "mcp_server.tools.search_handlers._reorder_by_source_position"
+        ) as mock_reorder:
+            out = SearchOrchestrator._apply_source_order_and_budget(
+                _make_plan(max_context_tokens=0), outcome, list(single)
+            )
+        mock_reorder.assert_not_called()
+        assert out == single
+
+    def test_context_budget_truncates(self):
+        """max_context_tokens>0 drops results that exceed the token budget."""
+        plan = _make_plan(max_context_tokens=50)  # very tight budget
+        sc = SearchConfig()
+        sc.output.source_order_output = False
+        outcome = _make_outcome(effective_config=sc)
+        # Each result is a large dict; at 50 token budget only 1 should survive.
+        big_results = [
+            {"chunk_id": f"f.py:{i}-{i + 10}:function:f{i}", "content": "x" * 150}
+            for i in range(5)
+        ]
+        out = SearchOrchestrator._apply_source_order_and_budget(
+            plan, outcome, list(big_results)
+        )
+        assert len(out) < len(big_results)
+
+    def test_context_budget_zero_keeps_all(self):
+        """max_context_tokens=0 means no truncation."""
+        plan = _make_plan(max_context_tokens=0)
+        sc = SearchConfig()
+        sc.output.source_order_output = False
+        outcome = _make_outcome(effective_config=sc)
+        results = [
+            _make_formatted(f"f.py:{i}-{i + 5}:function:f{i}") for i in range(10)
+        ]
+        out = SearchOrchestrator._apply_source_order_and_budget(
+            plan, outcome, list(results)
+        )
+        assert len(out) == 10

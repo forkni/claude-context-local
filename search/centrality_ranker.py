@@ -122,7 +122,7 @@ class CentralityRanker:
         self._cache: dict[str, float] = {}
         self._cache_key = (0, 0)  # (node_count, edge_count)
 
-    def _get_centrality_scores(self) -> dict[str, float]:
+    def get_centrality_scores(self) -> dict[str, float]:
         """Compute and cache centrality scores.
 
         Uses node+edge count for cache invalidation (graph rebuild detection).
@@ -194,7 +194,7 @@ class CentralityRanker:
         Returns:
             Results with added "centrality" field
         """
-        centrality_scores = self._get_centrality_scores()
+        centrality_scores = self.get_centrality_scores()
 
         for result in results:
             chunk_id = result.get("chunk_id")

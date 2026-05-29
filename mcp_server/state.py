@@ -239,23 +239,6 @@ def get_state() -> ApplicationState:
     return _app_state
 
 
-# Register ApplicationState with ServiceLocator for dependency injection
-def _register_with_service_locator() -> None:
-    """Register ApplicationState with ServiceLocator on module import."""
-    try:
-        from mcp_server.services import ServiceLocator
-
-        locator = ServiceLocator.instance()
-        locator.register("state", _app_state)
-    except ImportError:
-        # ServiceLocator not yet available (during early initialization)
-        pass
-
-
-# Auto-register on module import
-_register_with_service_locator()
-
-
 def reset_state() -> None:
     """Reset application state to initial values.
 

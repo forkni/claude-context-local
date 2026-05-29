@@ -11,6 +11,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.12.4] - 2026-05-29
+
+### Fixed
+
+- **`CodeGraphStorage.clear()` left stale phantom nodes after full reindex** (`graph/graph_storage.py`) — `clear()` now deletes the backing `{project_id}_call_graph.json` file in addition to clearing the in-memory graph. Previously a subsequent `CodeGraphStorage` re-initialization reloaded the old JSON (including phantom nodes for deleted methods), causing them to survive rebuild and emit `WARNING - Chunk not found` during relationship queries. New test `test_clear_persists_to_disk` verifies the file is absent after clearing and a fresh instance starts empty.
+
+- **`switch_project` always logged "No indexed model detected"** (`mcp_server/tools/config_handlers.py`) — `_detect_indexed_model` now reads `project_info.json` (pool-agnostic, written at index time) before falling back to the active-pool directory scan. Previously it only checked the active pool (e.g. `lightweight-speed`: `gte_modernbert`, `bge_m3`) and missed projects indexed with a model from a different pool (e.g. `qwen3_0.6b`). Guard added: if `project_info.json` names a model whose `code.index` is missing (stale metadata from a partial index), the function falls through to the directory scan rather than returning a stale key.
+
+- **`list_embedding_models` always returned `loaded: false`** (`mcp_server/tools/status_handlers.py`) — two bugs fixed: (1) the `name → model_key` reverse-lookup used the active pool only (2-4 models), forcing `False` for the other 4-6 registry entries regardless of actual VRAM state; (2) `model_key in state.embedders` checked key *presence*, returning `True` for `None` lazy-initialized slots. Now computes `loaded_names = {e.model_name for e in state.embedders.values() if e is not None}` for an accurate live check across all 8 registry models.
+
+### Refactored
+
+- **`GraphScoringStage` extracted from `SearchOrchestrator`** (`search/graph_scoring_stage.py`, new file) — centrality scoring (Block F: `_apply_centrality`), SSCG subgraph extraction (Block G: `_extract_subgraph`), and the k×4 candidate cap are encapsulated in a single `GraphScoringStage.run()` call. `SearchOrchestrator._assemble` is reduced from a 200-line orchestration block to a 3-call sequence. `CentralityRanker._get_centrality_scores` publicised to `get_centrality_scores`.
+
+- **`SearchOrchestrator._assemble` helpers extracted** (`mcp_server/tools/search_orchestrator.py`) — `_apply_source_order_and_budget` (Block H: source-position reorder + context-token budget truncation) and `_build_response` (Block I: response dict assembly + system guidance) extracted as `@staticmethod` decorated definitions. Cyclomatic complexity of `_assemble` reduced from ~30 to ~5.
+
+- **`ServiceLocator` / `ResourceManager` / `SearchFactory` collapsed to module-level accessors** (`mcp_server/services.py`, `mcp_server/resource_manager.py`, `mcp_server/search_factory.py`) — the `ServiceLocator` DI container (a closed auto-registration loop between `state.py` and `services.get_state()`) and the two single-method wrapper classes are deleted. `services.py` is a 2-line re-export shim; methods inlined as module-level functions. Three `ServiceLocator`-first config paths in `chunking/`, `merkle/`, and `search/config.py` collapsed. ADR-0005 recorded (`docs/adr/0005-no-di-container-module-singleton-state.md`).
+
+### Security
+
+- **idna upgraded 3.11 → 3.17** (`pyproject.toml`) — fixes CVE-2026-45409 (incomplete fix of CVE-2024-3651; DoS via crafted Unicode in `idna.encode`). Transitive dependency via `anyio`/`httpx`/`requests`/`yarl`; no direct pin required. 4 advisories remain deferred and documented in `pyproject.toml`.
+
+### Changed
+
+- **`search_config.json`** — new optional config fields (all backward-compatible, existing configs are forward-compatible): `default_max_context_tokens` (0 = unlimited), `ego_graph.edge_weights` (21 relationship-type weights for PPR traversal), `ego_graph.community_bounded` / `cross_community_penalty` / `expansion_mode` / `ppr_alpha` / `min_similarity_threshold`, `parent_retrieval` section (`enabled`, `include_parent_content`, `max_parents_per_result`), `multi_hop.edge_weights`, `graph_enhanced.centrality_bm25_boost` / `centrality_boost_threshold` / `centrality_boost_factor` / `centrality_boost_cap`, `output.source_order_output`.
+
+---
+
+## [0.12.3] - 2026-05-29
+
+### Refactored
+
+- **`chunking↔graph` import cycle eliminated** — 24 files forming a self-contained extraction cluster moved from `graph/` into `chunking/relationships/` (`call_graph_extractor.py`, `relation_filter.py`, `relationship_types.py`, `resolvers/`, `relationship_extractors/`). `git mv` history preserved. Import prefixes updated across 45 source files; `graph/__init__.py` re-exports for backward compatibility. Verified: `rg "^\s*(from|import) graph" chunking/` → 0 results. Remaining dependency direction: `graph → chunking` (architecturally correct).
+
+---
+
 ## [0.12.2] - 2026-05-26
 
 ### Fixed

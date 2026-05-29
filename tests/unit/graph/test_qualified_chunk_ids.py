@@ -9,7 +9,7 @@ This enables accurate caller/callee resolution by disambiguating
 methods with the same name in different classes.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from chunking.tree_sitter import TreeSitterChunker
@@ -21,8 +21,6 @@ class TestQualifiedChunkIdGeneration:
 
     def setup_method(self):
         """Set up test fixtures."""
-        from mcp_server.services import ServiceLocator
-
         self.chunker = MultiLanguageChunker(root_path="/test")
         self.tree_chunker = TreeSitterChunker()
 
@@ -30,14 +28,14 @@ class TestQualifiedChunkIdGeneration:
         mock_config = MagicMock()
         mock_config.chunking = ChunkingConfig()
 
-        locator = ServiceLocator.instance()
-        locator.register("config", mock_config)
+        self._config_patch = patch(
+            "search.config.get_search_config", return_value=mock_config
+        )
+        self._config_patch.start()
 
     def teardown_method(self):
         """Clean up test fixtures."""
-        from mcp_server.services import ServiceLocator
-
-        ServiceLocator.reset()
+        self._config_patch.stop()
 
     def test_method_gets_qualified_name(self):
         """Test that methods inside classes get qualified chunk_ids."""
@@ -189,22 +187,20 @@ class TestTreeSitterChunkParentClass:
 
     def setup_method(self):
         """Set up test fixtures."""
-        from mcp_server.services import ServiceLocator
-
         self.chunker = TreeSitterChunker()
 
         # Disable greedy merge for these tests to check basic chunking behavior
         mock_config = MagicMock()
         mock_config.chunking = ChunkingConfig()
 
-        locator = ServiceLocator.instance()
-        locator.register("config", mock_config)
+        self._config_patch = patch(
+            "search.config.get_search_config", return_value=mock_config
+        )
+        self._config_patch.start()
 
     def teardown_method(self):
         """Clean up test fixtures."""
-        from mcp_server.services import ServiceLocator
-
-        ServiceLocator.reset()
+        self._config_patch.stop()
 
     def test_parent_class_field_exists(self):
         """Test that TreeSitterChunk has parent_class field."""

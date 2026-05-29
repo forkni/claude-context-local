@@ -27,19 +27,53 @@ logger = logging.getLogger(__name__)
 def _detect_indexed_model(project_path: str) -> str | None:
     """Detect which model has a valid index for this project.
 
+    Reads project_info.json first (pool-agnostic path); falls back to
+    scanning the active-pool directories for legacy projects that predate
+    project_info.json or where the JSON read fails.
+
     Args:
         project_path: Path to the project directory
 
     Returns:
         Model key if found, None otherwise
     """
-    from mcp_server.model_pool_manager import get_model_pool_manager
+    import json as _json
 
+    from mcp_server.model_pool_manager import (
+        get_model_key_from_name,
+        get_model_pool_manager,
+    )
+    from mcp_server.storage_manager import get_canonical_project_info
+
+    # Primary: read the stored embedding_model from project_info.json (pool-agnostic).
+    # get_canonical_project_info returns the Path to the first project_info.json found
+    # across ALL model storage dirs, regardless of the currently active pool.
+    info_path = get_canonical_project_info(project_path)
+    if info_path and info_path.exists():
+        try:
+            with open(info_path) as f:
+                project_info = _json.load(f)
+            stored_model_name = project_info.get("embedding_model")
+            if stored_model_name:
+                model_key = get_model_key_from_name(stored_model_name)
+                if model_key:
+                    # Verify this model's index actually exists before committing to it.
+                    # A project_info.json can exist for a model whose index was later
+                    # cleared or never fully built (only the metadata file was written).
+                    project_dir = get_project_storage_dir(
+                        project_path, model_key=model_key
+                    )
+                    if (project_dir / "index" / "code.index").exists():
+                        logger.info(f"Detected indexed model for project: {model_key}")
+                        return model_key
+        except Exception as e:
+            logger.warning(f"Failed to read project_info.json at {info_path}: {e}")
+
+    # Fallback: scan active-pool dirs (legacy projects without project_info.json)
     pool_config = get_model_pool_manager().get_pool_config()
     for model_key in pool_config:
         project_dir = get_project_storage_dir(project_path, model_key=model_key)
-        code_index_file = project_dir / "index" / "code.index"
-        if code_index_file.exists():
+        if (project_dir / "index" / "code.index").exists():
             logger.info(f"Detected indexed model for project: {model_key}")
             return model_key
     return None

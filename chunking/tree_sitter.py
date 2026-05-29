@@ -335,22 +335,11 @@ class TreeSitterChunker:
             return []
 
     def _get_chunking_config(self):
-        """Get ChunkingConfig from ServiceLocator or direct config load.
+        """Get ChunkingConfig from the current search config.
 
         Returns:
             ChunkingConfig if available, None otherwise
         """
-        # Try ServiceLocator first (MCP server context)
-        try:
-            from mcp_server.services import ServiceLocator
-
-            config = ServiceLocator.instance().get_config()
-            if config and config.chunking:
-                return config.chunking
-        except (ImportError, AttributeError):
-            pass  # ServiceLocator not available, fall through to direct config
-
-        # Fallback: Load config directly (batch indexing context)
         try:
             from search.config import get_search_config
 

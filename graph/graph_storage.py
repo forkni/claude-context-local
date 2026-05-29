@@ -731,10 +731,18 @@ class CodeGraphStorage:
             return False
 
     def clear(self) -> None:
-        """Clear all nodes and edges from the graph."""
+        """Clear all nodes and edges from the graph and remove the backing JSON file.
+
+        Deletes the on-disk call_graph.json so that subsequent CodeGraphStorage
+        re-initialization does not reload stale phantom nodes from a previous index.
+        """
         self.graph.clear()
         self._name_index.clear()
-        self.logger.info("Cleared call graph")
+        if self.graph_path.exists():
+            self.graph_path.unlink()
+            self.logger.info("Cleared call graph (on-disk file deleted)")
+        else:
+            self.logger.info("Cleared call graph")
 
     def get_stats(self) -> dict[str, Any]:
         """
