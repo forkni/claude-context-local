@@ -525,27 +525,23 @@ class SearchOrchestrator:
         )
 
     # ---------------------------------------------------------------------------
-    # Phase C: Assemble stage
+    # Phase C: Assemble stage — helpers (Blocks F–I) + orchestrating _assemble
     # ---------------------------------------------------------------------------
 
-    def _assemble(self, plan: SearchPlan, outcome: ExecutionOutcome) -> dict:
-        """Blocks E–I: format, enrich, centrality, subgraph, reorder, build response."""
-        from mcp_server.guidance import add_system_message
-        from mcp_server.tools.search_handlers import (
-            _enrich_results_with_graph_data,
-            _format_search_results,
-            _get_index_manager_from_searcher,
-            _reorder_by_source_position,
-        )
+    @staticmethod
+    def _apply_centrality(
+        plan: SearchPlan,
+        outcome: ExecutionOutcome,
+        index_manager: CodeIndexManager | None,
+        formatted_results: list[dict],
+    ) -> tuple[list[dict], dict | None]:
+        """Block F: centrality annotation/reranking + intent-aware synthetic ordering.
 
-        # Block E: format + enrich
-        formatted_results = _format_search_results(outcome.results)
-        index_manager = _get_index_manager_from_searcher(outcome.searcher)
-        formatted_results = _enrich_results_with_graph_data(
-            formatted_results, index_manager
-        )
-
-        # Block F: centrality annotation/reranking
+        Returns (possibly-reranked results, centrality_scores) — centrality_scores is
+        forwarded to subgraph extraction. Returns (formatted_results, None) when the
+        graph_enhanced guard fails or any of (ImportError, ValueError, KeyError,
+        RuntimeError, TypeError) is raised inside the block.
+        """
         centrality_scores = None
         graph_config = getattr(outcome.effective_config, "graph_enhanced", None)
 
@@ -629,57 +625,67 @@ class SearchOrchestrator:
             except (ImportError, ValueError, KeyError, RuntimeError, TypeError) as e:
                 logger.debug(f"Centrality ranking failed: {e}")
 
-        # Cap total results to prevent token bloat (k primary + up to 3k context)
-        max_total = plan.k * 4
-        if len(formatted_results) > max_total:
-            logger.info(
-                f"Capping total results: {len(formatted_results)} -> {max_total}"
-            )
-            formatted_results = formatted_results[:max_total]
+        return formatted_results, centrality_scores
 
-        # Block G: subgraph extraction
-        subgraph_data = None
-        if index_manager and index_manager.graph_storage is not None:
-            try:
-                from search.subgraph_extractor import SubgraphExtractor
+    @staticmethod
+    def _extract_subgraph(
+        plan: SearchPlan,
+        index_manager: CodeIndexManager | None,
+        formatted_results: list[dict],
+        centrality_scores: dict | None,
+    ) -> dict | None:
+        """Block G: SSCG subgraph extraction. Returns subgraph.to_dict() or None."""
+        if not (index_manager and index_manager.graph_storage is not None):
+            return None
+        try:
+            from search.subgraph_extractor import SubgraphExtractor
 
-                extractor = SubgraphExtractor(index_manager.graph_storage)
-                result_chunk_ids = [
-                    r["chunk_id"]
-                    for r in formatted_results[: plan.k]
-                    if "chunk_id" in r
-                ]
-                ego_neighbor_ids = [
-                    r["chunk_id"]
-                    for r in formatted_results[plan.k :]
-                    if r.get("source") == "ego_graph" and "chunk_id" in r
-                ]
-                max_ego_in_subgraph = 10
-                if ego_neighbor_ids and len(ego_neighbor_ids) > max_ego_in_subgraph:
-                    ego_neighbor_ids = ego_neighbor_ids[:max_ego_in_subgraph]
+            extractor = SubgraphExtractor(index_manager.graph_storage)
+            result_chunk_ids = [
+                r["chunk_id"] for r in formatted_results[: plan.k] if "chunk_id" in r
+            ]
+            ego_neighbor_ids = [
+                r["chunk_id"]
+                for r in formatted_results[plan.k :]
+                if r.get("source") == "ego_graph" and "chunk_id" in r
+            ]
+            max_ego_in_subgraph = 10
+            if ego_neighbor_ids and len(ego_neighbor_ids) > max_ego_in_subgraph:
+                ego_neighbor_ids = ego_neighbor_ids[:max_ego_in_subgraph]
 
-                if result_chunk_ids:
-                    subgraph = extractor.extract_subgraph(
-                        result_chunk_ids,
-                        include_boundary_edges=True,
-                        centrality_scores=centrality_scores,
-                        ego_neighbor_ids=ego_neighbor_ids if ego_neighbor_ids else None,
+            if result_chunk_ids:
+                subgraph = extractor.extract_subgraph(
+                    result_chunk_ids,
+                    include_boundary_edges=True,
+                    centrality_scores=centrality_scores,
+                    ego_neighbor_ids=ego_neighbor_ids if ego_neighbor_ids else None,
+                )
+                if subgraph.nodes:
+                    ego_count = len(ego_neighbor_ids) if ego_neighbor_ids else 0
+                    logger.debug(
+                        f"[SSCG] Extracted subgraph: {len(subgraph.nodes)} nodes "
+                        f"({ego_count} ego-graph neighbors), {len(subgraph.edges)} edges"
                     )
-                    if subgraph.nodes:
-                        subgraph_data = subgraph.to_dict()
-                        ego_count = len(ego_neighbor_ids) if ego_neighbor_ids else 0
-                        logger.debug(
-                            f"[SSCG] Extracted subgraph: {len(subgraph.nodes)} nodes "
-                            f"({ego_count} ego-graph neighbors), {len(subgraph.edges)} edges"
-                        )
-                    else:
-                        logger.info(
-                            f"[SSCG] No graph nodes found for {len(result_chunk_ids)} chunk_ids"
-                        )
-            except Exception as e:
-                logger.debug(f"[SSCG] Subgraph extraction failed: {e}")
+                    return subgraph.to_dict()
+                else:
+                    logger.info(
+                        f"[SSCG] No graph nodes found for {len(result_chunk_ids)} chunk_ids"
+                    )
+        except Exception as e:
+            logger.debug(f"[SSCG] Subgraph extraction failed: {e}")
+        return None
 
-        # Block H: source-position reordering + context-budget truncation
+    @staticmethod
+    def _apply_source_order_and_budget(
+        plan: SearchPlan,
+        outcome: ExecutionOutcome,
+        formatted_results: list[dict],
+    ) -> list[dict]:
+        """Block H: source-position reorder (when output.source_order_output) +
+        context-token-budget truncation (when plan.max_context_tokens > 0).
+        """
+        from mcp_server.tools.search_handlers import _reorder_by_source_position
+
         if (
             getattr(outcome.effective_config.output, "source_order_output", True)
             and len(formatted_results) > 1
@@ -706,7 +712,19 @@ class SearchOrchestrator:
                     break
             formatted_results = truncated
 
-        # Block I: response assembly
+        return formatted_results
+
+    @staticmethod
+    def _build_response(
+        plan: SearchPlan,
+        formatted_results: list[dict],
+        subgraph_data: dict | None,
+    ) -> dict:
+        """Block I: assemble the response dict (results + optional subgraph keys +
+        conditional routing info), then attach the system guidance message.
+        """
+        from mcp_server.guidance import add_system_message
+
         response: dict = {"query": plan.query, "results": formatted_results}
         if subgraph_data:
             response["subgraph_nodes"] = subgraph_data["nodes"]
@@ -726,6 +744,47 @@ class SearchOrchestrator:
             response, tool_name="search_code", query=plan.query, chunk_id=None
         )
         return response
+
+    def _assemble(self, plan: SearchPlan, outcome: ExecutionOutcome) -> dict:
+        """Blocks E–I: format, enrich, centrality, subgraph, reorder, build response."""
+        from mcp_server.tools.search_handlers import (
+            _enrich_results_with_graph_data,
+            _format_search_results,
+            _get_index_manager_from_searcher,
+        )
+
+        index_manager = _get_index_manager_from_searcher(outcome.searcher)
+
+        # Block E: format + enrich
+        formatted_results = _enrich_results_with_graph_data(
+            _format_search_results(outcome.results), index_manager
+        )
+
+        # Block F: centrality annotation/reranking (+ intent-aware synthetic ordering)
+        formatted_results, centrality_scores = self._apply_centrality(
+            plan, outcome, index_manager, formatted_results
+        )
+
+        # Cap total results to prevent token bloat (k primary + up to 3k context)
+        max_total = plan.k * 4
+        if len(formatted_results) > max_total:
+            logger.info(
+                f"Capping total results: {len(formatted_results)} -> {max_total}"
+            )
+            formatted_results = formatted_results[:max_total]
+
+        # Block G: subgraph extraction
+        subgraph_data = self._extract_subgraph(
+            plan, index_manager, formatted_results, centrality_scores
+        )
+
+        # Block H: source-position reorder + context-budget truncation
+        formatted_results = self._apply_source_order_and_budget(
+            plan, outcome, formatted_results
+        )
+
+        # Block I: response assembly
+        return self._build_response(plan, formatted_results, subgraph_data)
 
     # ---------------------------------------------------------------------------
     # Phase D: run driver

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from unittest.mock import Mock, patch
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from mcp_server.tools.search_orchestrator import ExecutionOutcome, SearchOrchestrator
 from search.config import SearchConfig
 from search.exceptions import DimensionMismatchError
+from search.intent_classifier import IntentDecision, QueryIntent
 
 
 # ---------------------------------------------------------------------------
@@ -251,7 +253,6 @@ class TestExecuteConfigIsolation:
 
     @pytest.mark.asyncio
     async def test_config_singleton_not_mutated_by_ego_graph(self):
-
         sc = SearchConfig()
         original_ego_enabled = sc.ego_graph.enabled
         plan = _make_plan(ego_graph_enabled=True)
@@ -260,3 +261,364 @@ class TestExecuteConfigIsolation:
             mock_gs.return_value = searcher
             await SearchOrchestrator()._execute(plan)
         assert sc.ego_graph.enabled == original_ego_enabled
+
+
+# ---------------------------------------------------------------------------
+# Phase C: _assemble helpers (Blocks F–I)
+# ---------------------------------------------------------------------------
+
+
+def _make_outcome(results=None, effective_config=None):
+    """Return a minimal ExecutionOutcome for _assemble helper tests."""
+    sc = effective_config or SearchConfig()
+    return ExecutionOutcome(
+        results=results if results is not None else [],
+        searcher=Mock(),
+        index_manager=None,
+        effective_config=sc,
+    )
+
+
+def _make_formatted(chunk_id="a.py:1-5:function:foo", kind="function", score=0.9):
+    return {"chunk_id": chunk_id, "kind": kind, "blended_score": score}
+
+
+class TestBuildResponse:
+    """_build_response (Block I): response dict construction."""
+
+    def test_build_response_minimal(self):
+        plan = _make_plan(query="what is X")
+        results = [_make_formatted()]
+        with patch(
+            "mcp_server.guidance.add_system_message", side_effect=lambda r, **kw: r
+        ):
+            response = SearchOrchestrator._build_response(plan, results, None)
+        assert response["query"] == "what is X"
+        assert response["results"] is results
+        assert "subgraph_nodes" not in response
+        assert "routing" not in response
+
+    def test_build_response_includes_subgraph_keys(self):
+        plan = _make_plan()
+        results = [_make_formatted()]
+        subgraph_data = {
+            "nodes": [{"id": "a"}],
+            "edges": [{"src": "a", "tgt": "b"}],
+            "topology_order": ["a"],
+            "communities": {"1": {"label": "search", "count": 1}},
+        }
+        with patch(
+            "mcp_server.guidance.add_system_message", side_effect=lambda r, **kw: r
+        ):
+            response = SearchOrchestrator._build_response(plan, results, subgraph_data)
+        assert response["subgraph_nodes"] == subgraph_data["nodes"]
+        assert response["subgraph_edges"] == subgraph_data["edges"]
+        assert response["subgraph_order"] == subgraph_data["topology_order"]
+        assert response["subgraph_communities"] == subgraph_data["communities"]
+
+    def test_build_response_subgraph_without_optional_keys(self):
+        """subgraph_order and subgraph_communities are omitted when absent."""
+        plan = _make_plan()
+        subgraph_data = {"nodes": [{"id": "a"}], "edges": []}
+        with patch(
+            "mcp_server.guidance.add_system_message", side_effect=lambda r, **kw: r
+        ):
+            response = SearchOrchestrator._build_response(plan, [], subgraph_data)
+        assert "subgraph_nodes" in response
+        assert "subgraph_order" not in response
+        assert "subgraph_communities" not in response
+
+    def test_build_response_routing_gated_by_confidence(self):
+        """routing key included when confidence<0.9 or reason contains 'Fallback'/'routed'."""
+        plan_low = dataclasses.replace(
+            _make_plan(),
+            routing_info={"confidence": 0.7, "reason": "routed to model"},
+        )
+        plan_high = dataclasses.replace(
+            _make_plan(),
+            routing_info={"confidence": 0.95, "reason": "direct match"},
+        )
+        with patch(
+            "mcp_server.guidance.add_system_message", side_effect=lambda r, **kw: r
+        ):
+            r_low = SearchOrchestrator._build_response(plan_low, [], None)
+            r_high = SearchOrchestrator._build_response(plan_high, [], None)
+        assert "routing" in r_low
+        assert "routing" not in r_high
+
+
+class TestApplySourceOrderAndBudget:
+    """_apply_source_order_and_budget (Block H)."""
+
+    def test_source_order_applied_when_enabled(self):
+        """When source_order_output=True and len>1, reorder is called."""
+        sc = SearchConfig()
+        sc.output.source_order_output = True
+        outcome = _make_outcome(effective_config=sc)
+        results = [
+            {
+                "chunk_id": "b.py:10-20:function:b",
+                "file_path": "b.py",
+                "start_line": 10,
+            },
+            {"chunk_id": "a.py:1-5:function:a", "file_path": "a.py", "start_line": 1},
+        ]
+        with patch(
+            "mcp_server.tools.search_handlers._reorder_by_source_position",
+            return_value=list(reversed(results)),
+        ) as mock_reorder:
+            out = SearchOrchestrator._apply_source_order_and_budget(
+                _make_plan(max_context_tokens=0), outcome, list(results)
+            )
+        mock_reorder.assert_called_once()
+        assert out == list(reversed(results))
+
+    def test_source_order_skipped_when_single_result(self):
+        sc = SearchConfig()
+        sc.output.source_order_output = True
+        outcome = _make_outcome(effective_config=sc)
+        single = [_make_formatted()]
+        with patch(
+            "mcp_server.tools.search_handlers._reorder_by_source_position"
+        ) as mock_reorder:
+            out = SearchOrchestrator._apply_source_order_and_budget(
+                _make_plan(max_context_tokens=0), outcome, list(single)
+            )
+        mock_reorder.assert_not_called()
+        assert out == single
+
+    def test_context_budget_truncates(self):
+        """max_context_tokens>0 drops results that exceed the token budget."""
+        plan = _make_plan(max_context_tokens=50)  # very tight budget
+        sc = SearchConfig()
+        sc.output.source_order_output = False
+        outcome = _make_outcome(effective_config=sc)
+        # Each result is a large dict; at 50 token budget only 1 should survive.
+        big_results = [
+            {"chunk_id": f"f.py:{i}-{i + 10}:function:f{i}", "content": "x" * 150}
+            for i in range(5)
+        ]
+        out = SearchOrchestrator._apply_source_order_and_budget(
+            plan, outcome, list(big_results)
+        )
+        assert len(out) < len(big_results)
+
+    def test_context_budget_zero_keeps_all(self):
+        """max_context_tokens=0 means no truncation."""
+        plan = _make_plan(max_context_tokens=0)
+        sc = SearchConfig()
+        sc.output.source_order_output = False
+        outcome = _make_outcome(effective_config=sc)
+        results = [
+            _make_formatted(f"f.py:{i}-{i + 5}:function:f{i}") for i in range(10)
+        ]
+        out = SearchOrchestrator._apply_source_order_and_budget(
+            plan, outcome, list(results)
+        )
+        assert len(out) == 10
+
+
+class TestExtractSubgraph:
+    """_extract_subgraph (Block G)."""
+
+    def test_returns_none_when_no_index_manager(self):
+        plan = _make_plan()
+        result = SearchOrchestrator._extract_subgraph(plan, None, [], None)
+        assert result is None
+
+    def test_returns_none_when_graph_storage_is_none(self):
+        plan = _make_plan()
+        im = Mock()
+        im.graph_storage = None
+        result = SearchOrchestrator._extract_subgraph(plan, im, [], None)
+        assert result is None
+
+    def test_returns_subgraph_dict_when_nodes_present(self):
+        plan = _make_plan(k=2)
+        im = Mock()
+        im.graph_storage = Mock()
+        formatted = [
+            {"chunk_id": "a.py:1-5:function:foo"},
+            {"chunk_id": "b.py:1-5:function:bar"},
+        ]
+        fake_subgraph = Mock()
+        fake_subgraph.nodes = [Mock()]  # non-empty
+        fake_subgraph.edges = []  # set to list so len() works
+        fake_subgraph.to_dict.return_value = {"nodes": [{}], "edges": []}
+        with patch("search.subgraph_extractor.SubgraphExtractor") as mock_se:
+            mock_se.return_value.extract_subgraph.return_value = fake_subgraph
+            result = SearchOrchestrator._extract_subgraph(plan, im, formatted, None)
+        assert result == {"nodes": [{}], "edges": []}
+        mock_se.assert_called_once_with(im.graph_storage)
+
+    def test_returns_none_when_subgraph_empty(self):
+        plan = _make_plan(k=2)
+        im = Mock()
+        im.graph_storage = Mock()
+        fake_subgraph = Mock()
+        fake_subgraph.nodes = []  # empty → no subgraph_data
+        with patch("search.subgraph_extractor.SubgraphExtractor") as mock_se:
+            mock_se.return_value.extract_subgraph.return_value = fake_subgraph
+            result = SearchOrchestrator._extract_subgraph(
+                plan, im, [{"chunk_id": "a.py:1-5:function:foo"}], None
+            )
+        assert result is None
+
+    def test_exception_returns_none(self):
+        plan = _make_plan(k=2)
+        im = Mock()
+        im.graph_storage = Mock()
+        with patch(
+            "search.subgraph_extractor.SubgraphExtractor",
+            side_effect=RuntimeError("graph fail"),
+        ):
+            result = SearchOrchestrator._extract_subgraph(
+                plan, im, [{"chunk_id": "x.py:1-5:function:f"}], None
+            )
+        assert result is None
+
+
+class TestApplyCentrality:
+    """_apply_centrality (Block F)."""
+
+    def _make_outcome_no_graph(self):
+        sc = SearchConfig()
+        # graph_enhanced is None-ish by default — guard fails → no centrality
+        sc.graph_enhanced.centrality_annotation = False
+        return _make_outcome(effective_config=sc)
+
+    def test_guard_off_returns_results_unchanged_and_none_scores(self):
+        plan = _make_plan()
+        outcome = self._make_outcome_no_graph()
+        results = [_make_formatted()]
+        out_results, scores = SearchOrchestrator._apply_centrality(
+            plan, outcome, None, list(results)
+        )
+        assert out_results == results
+        assert scores is None
+
+    def test_centrality_reranking_calls_rerank(self):
+        plan = _make_plan()
+        sc = SearchConfig()
+        sc.graph_enhanced.centrality_annotation = True
+        sc.graph_enhanced.centrality_reranking = True
+        sc.graph_enhanced.centrality_method = "pagerank"
+        sc.graph_enhanced.centrality_alpha = 0.3
+        outcome = _make_outcome(effective_config=sc)
+        im = Mock()
+        im.graph_storage = Mock()
+        outcome = dataclasses.replace(outcome, index_manager=im)
+
+        fake_scores = {"a.py:1-5:function:foo": 0.9}
+        mock_ranker = Mock()
+        mock_ranker._get_centrality_scores.return_value = fake_scores
+        mock_ranker.rerank.return_value = [_make_formatted()]
+
+        results = [_make_formatted()]
+        with (
+            patch(
+                "search.centrality_ranker.CentralityRanker", return_value=mock_ranker
+            ),
+            patch("graph.graph_queries.GraphQueryEngine"),
+        ):
+            out_results, scores = SearchOrchestrator._apply_centrality(
+                plan, outcome, im, list(results)
+            )
+        mock_ranker.rerank.assert_called_once()
+        mock_ranker.annotate.assert_not_called()
+        assert scores == fake_scores
+
+    def test_centrality_annotation_calls_annotate_not_rerank(self):
+        plan = _make_plan()
+        sc = SearchConfig()
+        sc.graph_enhanced.centrality_annotation = True
+        sc.graph_enhanced.centrality_reranking = False
+        sc.graph_enhanced.centrality_method = "pagerank"
+        sc.graph_enhanced.centrality_alpha = 0.3
+        outcome = _make_outcome(effective_config=sc)
+        im = Mock()
+        im.graph_storage = Mock()
+        outcome = dataclasses.replace(outcome, index_manager=im)
+
+        fake_scores = {"a.py:1-5:function:foo": 0.9}
+        mock_ranker = Mock()
+        mock_ranker._get_centrality_scores.return_value = fake_scores
+        mock_ranker.annotate.return_value = [_make_formatted()]
+
+        with (
+            patch(
+                "search.centrality_ranker.CentralityRanker", return_value=mock_ranker
+            ),
+            patch("graph.graph_queries.GraphQueryEngine"),
+        ):
+            out_results, scores = SearchOrchestrator._apply_centrality(
+                plan, outcome, im, [_make_formatted()]
+            )
+        mock_ranker.annotate.assert_called_once()
+        mock_ranker.rerank.assert_not_called()
+
+    def test_intent_pushes_synthetic_chunks_last(self):
+        """Non-GLOBAL intent: module/community chunks moved after real code chunks."""
+        intent = IntentDecision(
+            intent=QueryIntent.LOCAL,
+            confidence=0.9,
+            reason="test LOCAL intent",
+            scores={},
+            suggested_params={},
+        )
+        plan = _make_plan(intent_decision=intent)
+        sc = SearchConfig()
+        sc.graph_enhanced.centrality_annotation = True
+        sc.graph_enhanced.centrality_reranking = False
+        sc.graph_enhanced.centrality_method = "pagerank"
+        sc.graph_enhanced.centrality_alpha = 0.3
+        outcome = _make_outcome(effective_config=sc)
+        im = Mock()
+        im.graph_storage = Mock()
+        outcome = dataclasses.replace(outcome, index_manager=im)
+
+        real_result = {"chunk_id": "a.py:1-5:function:foo", "kind": "function"}
+        synth_result = {"chunk_id": "a.py:0-0:module:a", "kind": "module"}
+
+        mock_ranker = Mock()
+        mock_ranker._get_centrality_scores.return_value = {}
+        mock_ranker.annotate.return_value = [synth_result, real_result]  # synth first
+
+        with (
+            patch(
+                "search.centrality_ranker.CentralityRanker", return_value=mock_ranker
+            ),
+            patch("graph.graph_queries.GraphQueryEngine"),
+        ):
+            out_results, _ = SearchOrchestrator._apply_centrality(
+                plan, outcome, im, [synth_result, real_result]
+            )
+        # real code chunk should appear before module/community chunk
+        assert out_results[0]["kind"] == "function"
+        assert out_results[1]["kind"] == "module"
+
+    def test_exception_in_centrality_returns_original_results(self):
+        """ImportError (or any guarded exception) leaves results and scores unchanged."""
+        plan = _make_plan()
+        sc = SearchConfig()
+        sc.graph_enhanced.centrality_annotation = True
+        sc.graph_enhanced.centrality_reranking = False
+        sc.graph_enhanced.centrality_method = "pagerank"
+        sc.graph_enhanced.centrality_alpha = 0.3
+        outcome = _make_outcome(effective_config=sc)
+        im = Mock()
+        im.graph_storage = Mock()
+        outcome = dataclasses.replace(outcome, index_manager=im)
+
+        results = [_make_formatted()]
+        with (
+            patch(
+                "graph.graph_queries.GraphQueryEngine",
+                side_effect=ImportError("no module"),
+            ),
+        ):
+            out_results, scores = SearchOrchestrator._apply_centrality(
+                plan, outcome, im, list(results)
+            )
+        assert out_results == results
+        assert scores is None
