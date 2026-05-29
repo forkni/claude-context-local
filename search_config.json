@@ -1,6 +1,6 @@
 {
   "embedding": {
-    "model_name": "BAAI/bge-m3",
+    "model_name": "Qwen/Qwen3-Embedding-0.6B",
     "dimension": 1024,
     "batch_size": 64,
     "query_cache_size": 128,
@@ -28,7 +28,7 @@
     "use_parallel_search": true,
     "max_parallel_workers": 2,
     "enable_parallel_chunking": true,
-    "max_chunking_workers": 4,
+    "max_chunking_workers": 8,
     "enable_entity_tracking": true,
     "prefer_gpu": true,
     "vram_limit_fraction": 0.8,
@@ -40,7 +40,7 @@
     "dynamic_batch_max": 64,
     "enable_auto_reindex": true,
     "max_index_age_minutes": 30.0,
-    "use_onnx": true,
+    "use_onnx": false,
     "onnx_gpu_mem_limit": true
   },
   "multi_hop": {
@@ -51,7 +51,7 @@
     "multi_hop_mode": "hybrid"
   },
   "routing": {
-    "multi_model_enabled": true,
+    "multi_model_enabled": false,
     "default_model": "qwen3_0.6b",
     "multi_model_pool": "lightweight-speed"
   },
