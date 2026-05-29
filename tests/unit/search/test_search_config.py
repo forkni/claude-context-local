@@ -319,3 +319,97 @@ def test_graph_enhanced_config_legacy_keys():
     assert config.graph_enhanced.centrality_alpha == 0.2
     assert config.graph_enhanced.centrality_annotation is False
     assert config.graph_enhanced.centrality_reranking is True
+
+
+# ---------------------------------------------------------------------------
+# Regression tests added to lock in the de/serialization unification:
+# - no defaults drift between SearchConfig() and from_dict({})
+# - lossless to_dict → from_dict round-trip
+# - env-var overrides apply over a nested config file
+# ---------------------------------------------------------------------------
+
+
+def test_defaults_consistency():
+    """SearchConfig() and from_dict({}) must produce identical field values.
+
+    Guards against defaults drift between the dataclass defaults and the
+    (now-removed) hard-coded literals that were in from_dict.
+    """
+    import dataclasses
+
+    from search.config import SearchConfig
+
+    direct = SearchConfig()
+    from_empty = SearchConfig.from_dict({})
+
+    for sub_name in SearchConfig._SUBCONFIG_FIELDS:
+        direct_sub = getattr(direct, sub_name)
+        loaded_sub = getattr(from_empty, sub_name)
+        assert dataclasses.asdict(direct_sub) == dataclasses.asdict(loaded_sub), (
+            f"Defaults mismatch in sub-config '{sub_name}': "
+            f"SearchConfig() != from_dict({{}})"
+        )
+
+
+def test_round_trip_lossless():
+    """to_dict() → from_dict() must be identity for a fully-populated config.
+
+    Verifies that to_dict includes every field (including previously-omitted ones
+    like parent_retrieval, output.source_order_output, graph_enhanced boost block).
+    """
+    import dataclasses
+
+    from search.config import SearchConfig
+
+    original = SearchConfig()
+    restored = SearchConfig.from_dict(original.to_dict())
+
+    for sub_name in SearchConfig._SUBCONFIG_FIELDS:
+        orig_sub = getattr(original, sub_name)
+        rest_sub = getattr(restored, sub_name)
+        assert dataclasses.asdict(orig_sub) == dataclasses.asdict(rest_sub), (
+            f"Round-trip mismatch in sub-config '{sub_name}': "
+            f"to_dict → from_dict produced different values"
+        )
+
+
+def test_to_dict_includes_all_subconfigs():
+    """to_dict must include every sub-config, including parent_retrieval."""
+    from search.config import SearchConfig
+
+    result = SearchConfig().to_dict()
+
+    for sub_name in SearchConfig._SUBCONFIG_FIELDS:
+        assert sub_name in result, f"to_dict missing sub-config '{sub_name}'"
+        assert isinstance(result[sub_name], dict), (
+            f"to_dict['{sub_name}'] should be a dict"
+        )
+
+    # Previously-omitted specific fields
+    assert "source_order_output" in result["output"]
+    assert "centrality_bm25_boost" in result["graph_enhanced"]
+    assert "enabled" in result["parent_retrieval"]
+
+
+def test_env_override_applies_over_nested_file(tmp_path):
+    """CLAUDE_* env overrides must apply over a nested JSON config file.
+
+    Previously the flat env keys were silently ignored when the config file
+    was in nested format (the nested branch never read flat keys).
+    """
+    import json
+    import os
+    from unittest.mock import patch
+
+    from search.config import SearchConfigManager
+
+    # Write a nested config file
+    config_file = tmp_path / "search_config.json"
+    config_file.write_text(json.dumps({"search_mode": {"default_mode": "hybrid"}}))
+
+    with patch.dict(os.environ, {"CLAUDE_SEARCH_MODE": "bm25"}):
+        manager = SearchConfigManager(config_file=str(config_file))
+        config = manager.load_config()
+
+    # Env must have overridden the file value
+    assert config.search_mode.default_mode == "bm25"

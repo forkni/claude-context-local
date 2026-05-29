@@ -19,7 +19,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
-from graph.relationship_types import RelationshipEdge, RelationshipType
+from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
 from utils.path_utils import normalize_path
 
 

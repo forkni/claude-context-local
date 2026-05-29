@@ -217,253 +217,255 @@ class CentralityRanker:
         Returns:
             Reranked results with "centrality" and "blended_score" fields
         """
-        # First, annotate with centrality scores
         results = self.annotate(results)
 
-        # Use provided alpha or fall back to instance alpha
         # CRITICAL: Use `if alpha is not None` to handle alpha=0.0 correctly
         blend_alpha = alpha if alpha is not None else self.alpha
+        query_lower = query.lower() if query else ""
 
-        # Compute blended scores and sort
         for result in results:
             semantic_score = result.get("score", 0.0)
             centrality = result.get("centrality", 0.0)
 
-            # Blend: (1 - alpha) * semantic + alpha * centrality
-            blended = (1 - blend_alpha) * semantic_score + blend_alpha * centrality
-            result["blended_score"] = round(blended, 4)
+            # Core blend: (1 - alpha) * semantic + alpha * centrality
+            result["blended_score"] = round(
+                (1 - blend_alpha) * semantic_score + blend_alpha * centrality, 4
+            )
 
-            # Chunk-size normalization (penalize oversized chunks)
             if self.config is not None and self.config.enable_size_normalization:
-                chunk_id = result.get("chunk_id", "")
-                chunk_lines = _extract_chunk_lines(chunk_id)
-                if chunk_lines > self.config.size_norm_target_lines:
-                    size_factor = 1.0 / (
-                        1.0
-                        + self.config.size_norm_alpha
-                        * math.log(chunk_lines / self.config.size_norm_target_lines)
-                    )
-                    result["blended_score"] = round(
-                        result["blended_score"] * size_factor, 4
-                    )
-                    logger.debug(
-                        f"[CENTRALITY] Size normalization for {chunk_id}: "
-                        f"{chunk_lines} lines → factor={size_factor:.3f}"
-                    )
+                self._apply_size_normalization(result)
 
-            # Centrality-adaptive BM25 boost (LIMIT paper, ICLR 2026)
-            # High-centrality chunks are exactly where single-vector embedding fails
-            # (sign-rank bottleneck). A small additive boost compensates.
             if (
                 self.config is not None
                 and self.config.centrality_bm25_boost
                 and centrality > self.config.centrality_boost_threshold
             ):
-                boost = min(
-                    centrality * self.config.centrality_boost_factor,
-                    self.config.centrality_boost_cap,
-                )
-                result["blended_score"] = round(result["blended_score"] + boost, 4)
-                logger.debug(
-                    f"[CENTRALITY] BM25 adaptive boost for {result.get('chunk_id', '')}: "
-                    f"centrality={centrality:.4f} → boost={boost:.4f}"
-                )
+                self._apply_bm25_boost(result, centrality)
 
-            # Query-aware boosting (ported from IntelligentSearcher)
             if query:
                 chunk_type = result.get("kind", "")
-                query_lower = query.lower()
-                is_entity_query = any(
-                    w in query_lower for w in ("class", "module", "struct", "enum")
-                )
-                if is_entity_query:
-                    type_boosts = {
-                        "class": 1.35,
-                        "function": 1.15,
-                        "method": 1.15,
-                        "decorated_definition": 1.1,
-                        "split_block": 1.1,  # Function/method fragments
-                        "module": 0.85,  # File-level summaries (A2) - strengthened demotion
-                        "community": 0.85,  # Community-level summaries (B1) - strengthened demotion
-                    }
-                else:
-                    type_boosts = {
-                        "function": 1.2,
-                        "method": 1.2,
-                        "decorated_definition": 1.0,  # Neutral — includes dataclasses, not just functions
-                        "split_block": 1.1,  # Function/method fragments
-                        "class": 1.35,
-                        "module": 0.90,  # File-level summaries (A2) - strengthened demotion
-                        "community": 0.90,  # Community-level summaries (B1) - strengthened demotion
-                    }
-                result["blended_score"] = round(
-                    result["blended_score"] * type_boosts.get(chunk_type, 1.0), 4
-                )
-
-                # Zero-centrality demotion for synthetic summary chunks
-                # Synthetic chunks (module summaries, community summaries) are not in the call graph,
-                # so they always have centrality=0. Real code chunks always have centrality > 0.
-                # When a synthetic chunk has no graph connectivity, it should rank below
-                # real code. Research: TNO, GRACE, HiChunk all keep summaries separate.
-                # Combined effect with type-based demotion above: 0.90 × 0.5 = 0.45x total
-                # (entity queries: 0.85 × 0.5 = 0.425x). This is intentional — synthetics
-                # should rank well below real code chunks.
-                if (
-                    chunk_type in ("module", "community")
-                    and result.get("centrality", 0) == 0
-                ):
-                    result["blended_score"] = round(result["blended_score"] * 0.5, 4)
-                    logger.debug(
-                        f"[CENTRALITY] Zero-centrality synthetic chunk demotion: "
-                        # pyrefly: ignore [unbound-name]
-                        f"{chunk_id} ({chunk_type}) → 0.5x multiplier"
-                    )
-
-                # Core Logic Boost: Prioritize engine internals over glue code/tools
                 chunk_id = result.get("chunk_id", "")
-                core_dirs = ("embeddings/", "search/", "graph/", "chunking/", "merkle/")
-                if any(chunk_id.startswith(d) for d in core_dirs):
-                    result["blended_score"] = round(result["blended_score"] * 1.1, 4)
-
-                # Role-based demotion/boost driven by indexed role: tags (from _classify_file_role).
-                # Using tags avoids re-detecting file role from the path — keeps both systems in sync.
-                # Fallback to path-based detection for chunks indexed before v0.10.0.
-                chunk_id = result.get("chunk_id", "")
-                file_path = chunk_id.split(":")[0] if ":" in chunk_id else ""
                 tags = result.get("tags", [])
-                indexed_role = next(
-                    (
-                        t[len("role:") :]
-                        for t in tags
-                        if isinstance(t, str) and t.startswith("role:")
-                    ),
-                    None,
-                )
-
-                # Determine role: prefer indexed tag, fall back to path heuristics
-                if indexed_role is None:
-                    # Normalize to forward slashes so patterns work on Windows paths too
-                    norm_path = file_path.replace("\\", "/").lower()
-                    if any(
-                        p in norm_path
-                        for p in (
-                            "test_",
-                            "_test.",
-                            "tests/",
-                            "verify_",
-                            "verification",
-                        )
-                    ):
-                        indexed_role = "test"
-                    elif norm_path.endswith((".md", ".rst", ".txt", ".adoc")) or any(
-                        p in norm_path
-                        for p in ("/docs/", "/doc/", "/documentation/", "/wiki/")
-                    ):
-                        indexed_role = "doc"
-                    elif any(
-                        p in norm_path
-                        for p in ("config.py", "settings.py", "constants.py")
-                    ):
-                        indexed_role = "config"
-
-                query_has_test_intent = any(
-                    w in query_lower
-                    for w in ("test", "testing", "verify", "verification")
-                )
-                query_has_doc_intent = any(
-                    w in query_lower
-                    for w in (
-                        "doc",
-                        "docs",
-                        "readme",
-                        "documentation",
-                        "guide",
-                        "tutorial",
-                    )
-                )
-                query_has_config_intent = any(
-                    w in query_lower
-                    for w in ("config", "configuration", "setting", "constant")
-                )
-
-                if indexed_role == "test":
-                    if query_has_test_intent:
-                        result["blended_score"] = round(
-                            result["blended_score"] * 1.15, 4
-                        )
-                    else:
-                        result["blended_score"] = round(
-                            result["blended_score"] * 0.85, 4
-                        )
-                elif indexed_role == "doc" and not query_has_doc_intent:
-                    result["blended_score"] = round(result["blended_score"] * 0.80, 4)
-                elif indexed_role == "config" and not query_has_config_intent:
-                    result["blended_score"] = round(result["blended_score"] * 0.88, 4)
-
-                # Name-match boost: extract name from chunk_id when field absent
-                chunk_id = result.get("chunk_id", "")
                 name = result.get("name", "") or _extract_name_from_chunk_id(chunk_id)
+                self._apply_type_boost(result, chunk_type, query_lower)
+                self._apply_synthetic_demotion(result, chunk_type, chunk_id)
+                self._apply_core_dir_boost(result, chunk_id)
+                self._apply_role_demotion(result, chunk_id, tags, query_lower)
+                self._apply_name_match_boost(result, name, query, query_lower)
 
-                # Lifecycle method demotion (e.g., __init__, __exit__)
-                # Prevents boilerplate methods from displacing core logic unless specifically requested
-                lifecycle_methods = {
-                    "__init__",
-                    "__enter__",
-                    "__exit__",
-                    "__del__",
-                    "__repr__",
-                    "__str__",
-                }
-                terminal_name = name.split(".")[-1] if "." in name else name
-                if terminal_name in lifecycle_methods:
-                    query_has_lifecycle_intent = any(
-                        w in query_lower
-                        for w in ("init", "enter", "exit", "del", "repr", "lifecycle")
-                    )
-                    if not query_has_lifecycle_intent:
-                        result["blended_score"] = round(
-                            result["blended_score"] * 0.85, 4
-                        )
-
-                if name and query_lower:
-                    query_tokens = _tokenize_for_matching(
-                        query
-                    )  # Preserve CamelCase for splitting
-                    name_tokens = _tokenize_for_matching(name)
-                    if name_tokens:
-                        # Name-centric overlap: what fraction of the NAME appears in query?
-                        # This avoids penalizing name-match for long queries
-                        overlap = len(query_tokens & name_tokens) / len(name_tokens)
-                        pre_boost_score = result["blended_score"]
-                        boost_multiplier = 1.0
-                        if overlap >= 0.8:
-                            result["blended_score"] = round(
-                                result["blended_score"] * 1.3, 4
-                            )
-                            boost_multiplier = 1.3
-                        elif overlap >= 0.5:
-                            result["blended_score"] = round(
-                                result["blended_score"] * 1.2, 4
-                            )
-                            boost_multiplier = 1.2
-                        elif overlap >= 0.3:
-                            result["blended_score"] = round(
-                                result["blended_score"] * 1.1, 4
-                            )
-                            boost_multiplier = 1.1
-
-                        if boost_multiplier > 1.0:
-                            logger.debug(
-                                f"[CENTRALITY] Name-match boost {boost_multiplier}x for '{name}': "
-                                f"overlap={overlap:.2f}, tokens={query_tokens & name_tokens}, "
-                                f"score {pre_boost_score:.4f} → {result['blended_score']:.4f}"
-                            )
-
-        # Sort by blended score descending
         results.sort(key=lambda r: r.get("blended_score", 0.0), reverse=True)
-
         logger.debug(
             f"[CENTRALITY] Reranked {len(results)} results (alpha={blend_alpha:.2f})"
         )
-
         return results
+
+    # ------------------------------------------------------------------
+    # Scoring policy helpers (each mutates result["blended_score"] in-place)
+    # ------------------------------------------------------------------
+
+    def _apply_size_normalization(self, result: dict) -> None:
+        """Log penalty for chunks exceeding config.size_norm_target_lines.
+
+        Reduces blended_score for oversized chunks to prevent large files
+        from drowning out focused, well-scoped code.
+        """
+        chunk_id = result.get("chunk_id", "")
+        chunk_lines = _extract_chunk_lines(chunk_id)
+        if chunk_lines > self.config.size_norm_target_lines:  # type: ignore[union-attr]
+            size_factor = 1.0 / (
+                1.0
+                + self.config.size_norm_alpha  # type: ignore[union-attr]
+                * math.log(chunk_lines / self.config.size_norm_target_lines)  # type: ignore[union-attr]
+            )
+            result["blended_score"] = round(result["blended_score"] * size_factor, 4)
+            logger.debug(
+                f"[CENTRALITY] Size normalization for {chunk_id}: "
+                f"{chunk_lines} lines → factor={size_factor:.3f}"
+            )
+
+    def _apply_bm25_boost(self, result: dict, centrality: float) -> None:
+        """Additive centrality-adaptive BM25 boost (LIMIT paper, ICLR 2026).
+
+        High-centrality chunks are exactly where single-vector embedding fails
+        (sign-rank bottleneck).  A capped additive boost compensates.
+        """
+        boost = min(
+            centrality * self.config.centrality_boost_factor,  # type: ignore[union-attr]
+            self.config.centrality_boost_cap,  # type: ignore[union-attr]
+        )
+        result["blended_score"] = round(result["blended_score"] + boost, 4)
+        logger.debug(
+            f"[CENTRALITY] BM25 adaptive boost for {result.get('chunk_id', '')}: "
+            f"centrality={centrality:.4f} → boost={boost:.4f}"
+        )
+
+    def _apply_type_boost(
+        self, result: dict, chunk_type: str, query_lower: str
+    ) -> None:
+        """Entity-query vs code-query type multiplier.
+
+        Entity queries (mentioning class/module/struct/enum) promote class chunks
+        and demote module/community summaries.  Code queries use a milder variant.
+        """
+        is_entity_query = any(
+            w in query_lower for w in ("class", "module", "struct", "enum")
+        )
+        if is_entity_query:
+            type_boosts = {
+                "class": 1.35,
+                "function": 1.15,
+                "method": 1.15,
+                "decorated_definition": 1.1,
+                "split_block": 1.1,  # Function/method fragments
+                "module": 0.85,  # File-level summaries (A2) - strengthened demotion
+                "community": 0.85,  # Community-level summaries (B1) - strengthened demotion
+            }
+        else:
+            type_boosts = {
+                "function": 1.2,
+                "method": 1.2,
+                "decorated_definition": 1.0,  # Neutral — includes dataclasses, not just functions
+                "split_block": 1.1,  # Function/method fragments
+                "class": 1.35,
+                "module": 0.90,  # File-level summaries (A2) - strengthened demotion
+                "community": 0.90,  # Community-level summaries (B1) - strengthened demotion
+            }
+        result["blended_score"] = round(
+            result["blended_score"] * type_boosts.get(chunk_type, 1.0), 4
+        )
+
+    def _apply_synthetic_demotion(
+        self, result: dict, chunk_type: str, chunk_id: str
+    ) -> None:
+        """×0.5 demotion for synthetic module/community chunks with zero centrality.
+
+        Synthetic chunks (module summaries, community summaries) are not in the
+        call graph so they always have centrality=0.  Real code chunks have
+        centrality > 0.  Combined with type-based demotion:
+          0.90 × 0.5 = 0.45x total (code queries)
+          0.85 × 0.5 = 0.425x total (entity queries).
+        Research: TNO, GRACE, HiChunk all keep summaries separate from code.
+        """
+        if chunk_type in ("module", "community") and result.get("centrality", 0) == 0:
+            result["blended_score"] = round(result["blended_score"] * 0.5, 4)
+            logger.debug(
+                f"[CENTRALITY] Zero-centrality synthetic chunk demotion: "
+                f"{chunk_id} ({chunk_type}) → 0.5x multiplier"
+            )
+
+    def _apply_core_dir_boost(self, result: dict, chunk_id: str) -> None:
+        """×1.1 boost for core engine directories (embeddings/search/graph/chunking/merkle).
+
+        Prioritises engine internals over glue code and tooling.
+        """
+        core_dirs = ("embeddings/", "search/", "graph/", "chunking/", "merkle/")
+        if any(chunk_id.startswith(d) for d in core_dirs):
+            result["blended_score"] = round(result["blended_score"] * 1.1, 4)
+
+    def _apply_role_demotion(
+        self, result: dict, chunk_id: str, tags: list, query_lower: str
+    ) -> None:
+        """Role-based demotion/boost: test/doc/config files suppressed unless query matches.
+
+        Role detection order: indexed ``role:`` tag (from ``_classify_file_role``)
+        → path heuristics fallback for pre-v0.10.0 chunks.
+        """
+        file_path = chunk_id.split(":")[0] if ":" in chunk_id else ""
+        indexed_role = next(
+            (
+                t[len("role:") :]
+                for t in tags
+                if isinstance(t, str) and t.startswith("role:")
+            ),
+            None,
+        )
+
+        if indexed_role is None:
+            # Normalize to forward slashes so patterns work on Windows paths too
+            norm_path = file_path.replace("\\", "/").lower()
+            if any(
+                p in norm_path
+                for p in ("test_", "_test.", "tests/", "verify_", "verification")
+            ):
+                indexed_role = "test"
+            elif norm_path.endswith((".md", ".rst", ".txt", ".adoc")) or any(
+                p in norm_path for p in ("/docs/", "/doc/", "/documentation/", "/wiki/")
+            ):
+                indexed_role = "doc"
+            elif any(
+                p in norm_path for p in ("config.py", "settings.py", "constants.py")
+            ):
+                indexed_role = "config"
+
+        query_has_test_intent = any(
+            w in query_lower for w in ("test", "testing", "verify", "verification")
+        )
+        query_has_doc_intent = any(
+            w in query_lower
+            for w in ("doc", "docs", "readme", "documentation", "guide", "tutorial")
+        )
+        query_has_config_intent = any(
+            w in query_lower for w in ("config", "configuration", "setting", "constant")
+        )
+
+        if indexed_role == "test":
+            factor = 1.15 if query_has_test_intent else 0.85
+            result["blended_score"] = round(result["blended_score"] * factor, 4)
+        elif indexed_role == "doc" and not query_has_doc_intent:
+            result["blended_score"] = round(result["blended_score"] * 0.80, 4)
+        elif indexed_role == "config" and not query_has_config_intent:
+            result["blended_score"] = round(result["blended_score"] * 0.88, 4)
+
+    def _apply_name_match_boost(
+        self, result: dict, name: str, query: str, query_lower: str
+    ) -> None:
+        """Tokenisation overlap boost ×1.1–1.3 when name tokens appear in query.
+
+        Also applies ×0.85 lifecycle-method demotion for __init__ / __exit__ etc.
+        when the query does not have explicit lifecycle intent.
+        """
+        # Lifecycle method demotion (prevents boilerplate from displacing core logic)
+        lifecycle_methods = {
+            "__init__",
+            "__enter__",
+            "__exit__",
+            "__del__",
+            "__repr__",
+            "__str__",
+        }
+        terminal_name = name.split(".")[-1] if "." in name else name
+        if terminal_name in lifecycle_methods:
+            query_has_lifecycle_intent = any(
+                w in query_lower
+                for w in ("init", "enter", "exit", "del", "repr", "lifecycle")
+            )
+            if not query_has_lifecycle_intent:
+                result["blended_score"] = round(result["blended_score"] * 0.85, 4)
+
+        if name and query_lower:
+            query_tokens = _tokenize_for_matching(
+                query
+            )  # Preserve CamelCase for splitting
+            name_tokens = _tokenize_for_matching(name)
+            if name_tokens:
+                # Name-centric overlap: fraction of the NAME appearing in the query.
+                # This avoids penalising name-match on long queries.
+                overlap = len(query_tokens & name_tokens) / len(name_tokens)
+                pre_boost_score = result["blended_score"]
+                boost_multiplier = 1.0
+                if overlap >= 0.8:
+                    result["blended_score"] = round(result["blended_score"] * 1.3, 4)
+                    boost_multiplier = 1.3
+                elif overlap >= 0.5:
+                    result["blended_score"] = round(result["blended_score"] * 1.2, 4)
+                    boost_multiplier = 1.2
+                elif overlap >= 0.3:
+                    result["blended_score"] = round(result["blended_score"] * 1.1, 4)
+                    boost_multiplier = 1.1
+
+                if boost_multiplier > 1.0:
+                    logger.debug(
+                        f"[CENTRALITY] Name-match boost {boost_multiplier}x for '{name}': "
+                        f"overlap={overlap:.2f}, tokens={query_tokens & name_tokens}, "
+                        f"score {pre_boost_score:.4f} → {result['blended_score']:.4f}"
+                    )

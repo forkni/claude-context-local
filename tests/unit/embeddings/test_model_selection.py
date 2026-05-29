@@ -31,7 +31,7 @@ class TestModelRegistry:
         assert config is not None
         assert config["dimension"] == 768
         assert config["passage_prefix"] == "Retrieval-document: "
-        assert config["vram_gb"] == "4-8GB"
+        assert config["vram_gb"] == "~1.2GB"
 
     def test_bge_m3_config(self):
         """Test BGE-M3 model configuration."""

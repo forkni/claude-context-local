@@ -11,6 +11,7 @@ from typing import Any
 
 import anyio
 
+from mcp_server.services import get_state
 from utils.observability import traced_block
 from utils.otel_attributes import ATTR_TOOL_NAME
 
@@ -88,3 +89,28 @@ def error_handler(
         return wrapper
 
     return decorator
+
+
+def require_indexed_project(func: Callable) -> Callable:
+    """Decorator that short-circuits with an error when no project is indexed.
+
+    Apply inside @error_handler so the outer handler covers any unexpected
+    failure from the state check itself:
+
+        @error_handler("Search")
+        @require_indexed_project
+        async def handle_search_code(arguments): ...
+    """
+
+    @functools.wraps(func)
+    async def wrapper(arguments: dict[str, Any]) -> dict:
+        if not get_state().current_project:
+            return {
+                "error": "No indexed project found",
+                "message": "Use index_directory to index a project first.",
+                "current_project": None,
+                "system_message": "No project indexed. Use index_directory to index a project first.",
+            }
+        return await func(arguments)
+
+    return wrapper

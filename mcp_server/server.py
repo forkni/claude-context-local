@@ -248,15 +248,11 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
     logger.info(f"[TOOL_CALL] {name}")
 
     try:
-        # Import tool handler module
-        from mcp_server import tool_handlers
+        from mcp_server.tool_handlers import TOOL_DISPATCH
 
-        # Get handler function
-        handler_name = f"handle_{name}"
-        if not hasattr(tool_handlers, handler_name):
+        handler = TOOL_DISPATCH.get(name)
+        if handler is None:
             raise ValueError(f"Unknown tool: {name}")
-
-        handler = getattr(tool_handlers, handler_name)
 
         # Call handler
         result = await handler(arguments)

@@ -5,6 +5,7 @@ Manages embedding model lifecycle, lazy loading, and memory optimization.
 
 import logging
 import os
+from pathlib import Path
 
 from embeddings.embedder import CodeEmbedder
 from mcp_server.services import get_config, get_state
@@ -146,6 +147,73 @@ class ModelPoolManager:
                 f"Model pool loaded: {loaded_count}/{len(pool_config)} models ready"
             )
 
+    def _load_pool_embedder(
+        self,
+        state,
+        model_key: str,
+        model_name: str,
+        cache_dir: Path,
+        *,
+        allow_fallback: bool,
+        exc_info: bool,
+        loading_log: str | None = None,
+        success_log: str | None = None,
+        error_label: str = "",
+    ) -> CodeEmbedder:
+        """Lazy-load ``model_key`` into ``state.embedders``; return the cached embedder.
+
+        Idempotent: if the embedder is already loaded, returns it without constructing
+        a new one.
+
+        On ``CodeEmbedder`` construction failure: when ``allow_fallback=True`` and a
+        *different* pool model is already loaded, silently return that fallback and log a
+        warning; otherwise re-raise the exception.  The ``allow_fallback`` and ``exc_info``
+        flags are the single source of truth for the load-failure policy across all three
+        lazy-load call sites in :meth:`get_embedder`.
+
+        Args:
+            state: Live ``ApplicationState`` instance (from :func:`get_state`).
+            model_key: Pool key to load (e.g. ``"bge_m3"``).
+            model_name: Full HuggingFace model identifier passed to :class:`CodeEmbedder`.
+            cache_dir: Directory where model weights are cached on disk.
+            allow_fallback: When ``True``, a load failure returns the first already-loaded
+                pool model instead of raising.  Cross-pool loads set this to ``False``.
+            exc_info: When ``True``, attaches the exception traceback to the error log
+                entry (passed through to :func:`logger.error`).
+            loading_log: Optional ``logger.info`` message emitted before construction.
+                Pass ``None`` to suppress (cross-pool path uses a prior ``logger.warning``
+                instead).
+            success_log: Optional success message.  Defaults to
+                ``"✓ {model_key} loaded successfully"``.
+            error_label: Text inserted between ``"✗ Failed to load "`` and
+                ``model_key`` in the error message.  Use ``"cross-pool model "`` for
+                Block A, empty string (default) for Blocks B and C.
+        """
+        if model_key in state.embedders and state.embedders[model_key] is not None:
+            return state.embedders[model_key]
+        if loading_log:
+            logger.info(loading_log)
+        try:
+            embedder = CodeEmbedder(model_name=model_name, cache_dir=str(cache_dir))
+            state.set_embedder(model_key, embedder)
+            logger.info(success_log or f"✓ {model_key} loaded successfully")
+            return state.embedders[model_key]
+        except Exception as e:
+            logger.error(
+                f"✗ Failed to load {error_label}{model_key}: {e}", exc_info=exc_info
+            )
+            if allow_fallback:
+                pool_config = self.get_pool_config()
+                fallback_key = next(iter(pool_config.keys()))
+                if (
+                    model_key != fallback_key
+                    and fallback_key in state.embedders
+                    and state.embedders[fallback_key] is not None
+                ):
+                    logger.warning(f"Falling back to {fallback_key}")
+                    return state.embedders[fallback_key]
+            raise
+
     def get_embedder(
         self, model_key: str | None = None, allow_cross_pool: bool = False
     ) -> CodeEmbedder:
@@ -188,53 +256,35 @@ class ModelPoolManager:
                 f"[CROSS_POOL] Loading '{model_key}' ({model_name}) outside active pool "
                 f"{active_keys} to preserve existing index (may exceed pool VRAM budget)"
             )
-            if model_key not in state.embedders or state.embedders[model_key] is None:
-                try:
-                    embedder = CodeEmbedder(
-                        model_name=model_name, cache_dir=str(cache_dir)
-                    )
-                    state.set_embedder(model_key, embedder)
-                    logger.info(f"✓ {model_key} loaded successfully (cross-pool)")
-                except Exception as e:
-                    logger.error(f"✗ Failed to load cross-pool model {model_key}: {e}")
-                    raise
-            return state.embedders[model_key]
+            return self._load_pool_embedder(
+                state,
+                model_key,
+                model_name,
+                cache_dir,
+                allow_fallback=False,
+                exc_info=False,
+                success_log=f"✓ {model_key} loaded successfully (cross-pool)",
+                error_label="cross-pool model ",
+            )
 
         # PRIORITY: Explicit model_key override takes precedence over multi_model_enabled setting
         # This ensures model_key parameter works even when multi-model mode is disabled
         if model_key is not None and model_key in pool_config:
             logger.info(f"[OVERRIDE] Explicit model_key requested: {model_key}")
 
-            # Lazy load model if not already loaded
-            if model_key not in state.embedders or state.embedders[model_key] is None:
-                model_name = pool_config[model_key]
-
-                logger.info(
+            model_name = pool_config[model_key]
+            return self._load_pool_embedder(
+                state,
+                model_key,
+                model_name,
+                cache_dir,
+                allow_fallback=True,
+                exc_info=True,
+                loading_log=(
                     f"[OVERRIDE] Loading {model_key} ({model_name}) - explicit request"
-                )
-                try:
-                    embedder = CodeEmbedder(
-                        model_name=model_name, cache_dir=str(cache_dir)
-                    )
-                    state.set_embedder(model_key, embedder)
-                    logger.info(
-                        f"✓ {model_key} loaded successfully (explicit override)"
-                    )
-                except Exception as e:
-                    logger.error(f"✗ Failed to load {model_key}: {e}", exc_info=True)
-                    # Fallback to first available model in pool
-                    pool_config = self.get_pool_config()
-                    fallback_key = next(iter(pool_config.keys()))
-                    if (
-                        model_key != fallback_key
-                        and fallback_key in state.embedders
-                        and state.embedders[fallback_key] is not None
-                    ):
-                        logger.warning(f"Falling back to {fallback_key}")
-                        return state.embedders[fallback_key]
-                    raise
-
-            return state.embedders[model_key]
+                ),
+                success_log=f"✓ {model_key} loaded successfully (explicit override)",
+            )
 
         # Multi-model mode
         if state.multi_model_enabled:
@@ -296,45 +346,30 @@ class ModelPoolManager:
                     iter(pool_config.keys())
                 )  # Fallback to first available model
 
-            # Lazy load model if not already loaded
-            if model_key not in state.embedders or state.embedders[model_key] is None:
-                model_name = pool_config[model_key]
-
-                # Check if this is the first model being loaded (cold start)
-                is_first_load = not any(state.embedders.values())
-                if is_first_load:
-                    logger.info(
-                        f"[FIRST USE] Loading embedding model {model_key} ({model_name})... "
-                        f"This is a one-time initialization (~5-10s). Subsequent searches will be fast."
-                    )
-                else:
-                    logger.info(f"Lazy loading {model_key} ({model_name})...")
-                try:
-                    embedder = CodeEmbedder(
-                        model_name=model_name, cache_dir=str(cache_dir)
-                    )
-                    state.set_embedder(model_key, embedder)
-                    if is_first_load:
-                        logger.info(
-                            f"✓ {model_key} loaded successfully. Ready for fast searches!"
-                        )
-                    else:
-                        logger.info(f"✓ {model_key} loaded successfully")
-                except Exception as e:
-                    logger.error(f"✗ Failed to load {model_key}: {e}", exc_info=True)
-                    # Fallback to first available model in pool
-                    pool_config = self.get_pool_config()
-                    fallback_key = next(iter(pool_config.keys()))
-                    if (
-                        model_key != fallback_key
-                        and fallback_key in state.embedders
-                        and state.embedders[fallback_key] is not None
-                    ):
-                        logger.warning(f"Falling back to {fallback_key}")
-                        return state.embedders[fallback_key]
-                    raise
-
-            return state.embedders[model_key]
+            model_name = pool_config[model_key]
+            # Cold-start detection for first-use messaging (computed here; used in logs)
+            is_first_load = not any(state.embedders.values())
+            loading_log = (
+                f"[FIRST USE] Loading embedding model {model_key} ({model_name})... "
+                f"This is a one-time initialization (~5-10s). Subsequent searches will be fast."
+                if is_first_load
+                else f"Lazy loading {model_key} ({model_name})..."
+            )
+            success_log = (
+                f"✓ {model_key} loaded successfully. Ready for fast searches!"
+                if is_first_load
+                else f"✓ {model_key} loaded successfully"
+            )
+            return self._load_pool_embedder(
+                state,
+                model_key,
+                model_name,
+                cache_dir,
+                allow_fallback=True,
+                exc_info=True,
+                loading_log=loading_log,
+                success_log=success_log,
+            )
 
         # Single-model mode (legacy fallback)
         else:
@@ -425,6 +460,38 @@ def get_model_key_from_name(model_name: str) -> str | None:
                 f"(outside active pool containing '{active_pool_name}')"
             )
             return key
+
+    return None
+
+
+def get_model_name_from_key(model_key: str) -> str | None:
+    """Get full model name from model key — symmetric counterpart to get_model_key_from_name.
+
+    Performs a two-tier lookup: active pool first (fast path), then ALL_POOL_MODELS
+    so that a key produced by get_model_key_from_name can always be resolved back
+    to a model name even when the active pool has changed.
+
+    Args:
+        model_key: Pool key (e.g., "qwen3_0.6b", "coderankembed")
+
+    Returns:
+        Full model name (e.g., "Qwen/Qwen3-Embedding-0.6B") or None if unknown
+    """
+    pool_config = get_model_pool_manager().get_pool_config()
+
+    # Tier 1: active pool — fast path, no extra log noise
+    if model_key in pool_config:
+        return pool_config[model_key]
+
+    # Tier 2: any other known pool — index-preservation path (storage resolution only)
+    if model_key in ALL_POOL_MODELS:
+        model_name = ALL_POOL_MODELS[model_key]
+        active_pool_name = next(iter(pool_config.keys()), "unknown")
+        logger.info(
+            f"[CROSS_POOL] Key '{model_key}' resolved to model '{model_name}' "
+            f"(outside active pool containing '{active_pool_name}')"
+        )
+        return model_name
 
     return None
 

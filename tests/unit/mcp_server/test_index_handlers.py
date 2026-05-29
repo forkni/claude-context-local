@@ -115,5 +115,95 @@ class TestClearIndexFilesBeforeCreate:
             _clear_index_files_before_create(bogus)
 
 
+class TestReleaseGpuMemory:
+    """Direct tests for _release_gpu_memory module-level helper."""
+
+    def test_calls_gc_collect(self):
+        """gc.collect() is always called regardless of CUDA availability."""
+        from mcp_server.tools.index_handlers import _release_gpu_memory
+
+        with patch("mcp_server.tools.index_handlers.gc") as mock_gc:
+            mock_gc.collect = __import__(
+                "unittest.mock", fromlist=["MagicMock"]
+            ).MagicMock()
+            with patch(
+                "mcp_server.tools.index_handlers.torch", create=True
+            ) as mock_torch:
+                mock_torch.cuda.is_available.return_value = False
+                _release_gpu_memory()
+
+        mock_gc.collect.assert_called_once()
+
+    def test_no_error_when_torch_unavailable(self):
+        """Survives gracefully when torch is not installed (ImportError)."""
+        import sys
+
+        from mcp_server.tools.index_handlers import _release_gpu_memory
+
+        with patch.dict(sys.modules, {"torch": None}):
+            _release_gpu_memory()  # Must not raise
+
+
+class TestSwitchActiveModel:
+    """Direct tests for _switch_active_model module-level helper."""
+
+    def _make_config(self):
+        cfg = __import__("unittest.mock", fromlist=["MagicMock"]).MagicMock()
+        cfg.embedding.model_name = "old-model"
+        cfg.embedding.dimension = 768
+        return cfg
+
+    def test_saves_config_when_model_changes(self):
+        """Config is saved to disk when the model name differs from current."""
+        from unittest.mock import MagicMock, patch
+
+        from mcp_server.tools.index_handlers import _switch_active_model
+
+        mock_cfg = self._make_config()
+        mock_mgr = MagicMock()
+        mock_mgr.load_config.return_value = mock_cfg
+
+        with (
+            patch(
+                "mcp_server.tools.index_handlers.SearchConfigManager",
+                return_value=mock_mgr,
+            ),
+            patch(
+                "mcp_server.tools.index_handlers.MODEL_REGISTRY",
+                {"new-model": {"dimension": 512}},
+            ),
+            patch("mcp_server.tools.index_handlers.get_state"),
+            patch("mcp_server.tools.index_handlers._invalidate_config_caches"),
+        ):
+            _switch_active_model("key_x", "new-model")
+
+        mock_mgr.save_config.assert_called_once()
+
+    def test_invalidates_caches(self):
+        """Cache invalidation helper is called after config update."""
+        from unittest.mock import MagicMock, patch
+
+        from mcp_server.tools.index_handlers import _switch_active_model
+
+        mock_cfg = self._make_config()
+        mock_mgr = MagicMock()
+        mock_mgr.load_config.return_value = mock_cfg
+
+        with (
+            patch(
+                "mcp_server.tools.index_handlers.SearchConfigManager",
+                return_value=mock_mgr,
+            ),
+            patch("mcp_server.tools.index_handlers.MODEL_REGISTRY", {}),
+            patch("mcp_server.tools.index_handlers.get_state"),
+            patch(
+                "mcp_server.tools.index_handlers._invalidate_config_caches"
+            ) as mock_inv,
+        ):
+            _switch_active_model("key_x", "old-model")
+
+        mock_inv.assert_called_once()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

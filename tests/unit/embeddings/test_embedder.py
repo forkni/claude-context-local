@@ -1502,6 +1502,109 @@ class TestCalculateOptimalBatchSizeOrtCap:
         assert r_large_cap == r_no_cap
 
 
+class TestCalculateOptimalBatchSizeOnnxCap:
+    """Regression tests for the ONNX-specific BFCArena batch-size cap.
+
+    ORT BFCArena allocates large contiguous buffers per single op whose peak
+    does not scale linearly with batch.  When available_gb is small, the linear
+    per-item budget over-predicts the safe batch.  is_onnx=True enables a
+    tighter tiered cap keyed off available_gb.
+
+    Reproduces the exact OOM seen in production:
+      available≈4.6 GB, cost=0.264 GB/item → linear batch=9, ORT OOM, safe=4.
+    """
+
+    @patch("embeddings.embedder.torch")
+    def test_onnx_low_vram_caps_batch(self, mock_torch):
+        """is_onnx=True + available≈4.6 GB → batch capped to 4 (not 9)."""
+        from embeddings.embedder import calculate_optimal_batch_size
+
+        mock_torch.cuda.is_available.return_value = True
+        # ~8 GB GPU with only 4.6 GB free after multi-model + reranker load
+        total_bytes = int(8 * 1024**3)
+        free_bytes = int(4.6 * 1024**3)
+        mock_torch.cuda.mem_get_info.return_value = (free_bytes, total_bytes)
+
+        # Without is_onnx the linear formula gives 9: floor(4.6*0.65*0.82/0.264)=9
+        result_torch = calculate_optimal_batch_size(
+            activation_gb_per_item=0.264,
+            memory_fraction=0.65,
+            min_batch=4,
+            max_batch=32,
+            is_onnx=False,
+        )
+        # With is_onnx the BFCArena cap kicks in: available<5.5 → max_batch=4
+        result_onnx = calculate_optimal_batch_size(
+            activation_gb_per_item=0.264,
+            memory_fraction=0.65,
+            min_batch=4,
+            max_batch=32,
+            is_onnx=True,
+        )
+        assert result_torch >= 9, (
+            f"Torch path should give ≥9 without ONNX cap, got {result_torch}"
+        )
+        assert result_onnx <= 4, (
+            f"ONNX path must cap batch to ≤4 at available≈4.6 GB, got {result_onnx}"
+        )
+
+    @patch("embeddings.embedder.torch")
+    def test_onnx_cap_inert_on_roomy_gpu(self, mock_torch):
+        """is_onnx=True with available≥8 GB → same batch as is_onnx=False (no regression)."""
+        from embeddings.embedder import calculate_optimal_batch_size
+
+        mock_torch.cuda.is_available.return_value = True
+        total_bytes = int(24 * 1024**3)
+        free_bytes = int(14 * 1024**3)  # roomy: well above the 8 GB ONNX threshold
+        mock_torch.cuda.mem_get_info.return_value = (free_bytes, total_bytes)
+
+        result_torch = calculate_optimal_batch_size(
+            activation_gb_per_item=0.28,
+            memory_fraction=0.65,
+            min_batch=1,
+            max_batch=256,
+            is_onnx=False,
+        )
+        result_onnx = calculate_optimal_batch_size(
+            activation_gb_per_item=0.28,
+            memory_fraction=0.65,
+            min_batch=1,
+            max_batch=256,
+            is_onnx=True,
+        )
+        assert result_onnx == result_torch, (
+            f"ONNX cap must be inert on roomy GPU: onnx={result_onnx}, torch={result_torch}"
+        )
+
+    @patch("embeddings.embedder.torch")
+    def test_non_onnx_low_vram_unaffected(self, mock_torch):
+        """is_onnx=False on a tight GPU is unchanged by this fix."""
+        from embeddings.embedder import calculate_optimal_batch_size
+
+        mock_torch.cuda.is_available.return_value = True
+        total_bytes = int(8 * 1024**3)
+        free_bytes = int(4.6 * 1024**3)
+        mock_torch.cuda.mem_get_info.return_value = (free_bytes, total_bytes)
+
+        # Pre-fix and post-fix torch path must be identical (no regression)
+        before = calculate_optimal_batch_size(
+            activation_gb_per_item=0.264,
+            memory_fraction=0.65,
+            min_batch=4,
+            max_batch=32,
+            is_onnx=False,
+        )
+        after = calculate_optimal_batch_size(
+            activation_gb_per_item=0.264,
+            memory_fraction=0.65,
+            min_batch=4,
+            max_batch=32,
+        )  # is_onnx defaults to False
+        assert before == after, (
+            f"Non-ONNX path must be unchanged: before={before}, after={after}"
+        )
+
+
 class TestOomRecoveryBackoff:
     """Tests for Fix B: OOM-recovery backoff in embed_chunks().
 

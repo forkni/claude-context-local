@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from chunking.multi_language_chunker import MultiLanguageChunker
-from graph.call_graph_extractor import PythonCallGraphExtractor
+from chunking.relationships.call_graph_extractor import PythonCallGraphExtractor
 from graph.graph_storage import CodeGraphStorage
 from mcp_server.services import ServiceLocator
 from search.config import ChunkingConfig

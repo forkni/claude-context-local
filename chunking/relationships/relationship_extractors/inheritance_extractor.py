@@ -13,8 +13,10 @@ Complexity: Low (single-pass, straightforward extraction)
 import ast
 from typing import Any
 
-from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
-from graph.relationship_types import RelationshipEdge, RelationshipType
+from chunking.relationships.relationship_extractors.base_extractor import (
+    BaseRelationshipExtractor,
+)
+from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
 
 
 class InheritanceExtractor(BaseRelationshipExtractor):

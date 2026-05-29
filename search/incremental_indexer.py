@@ -26,6 +26,7 @@ from utils.otel_attributes import (
 from utils.timing import timed
 
 from .bm25_sync import BM25SyncManager
+from .community_refresh_stage import CommunityRefreshStage
 from .community_stage import CommunityStage
 from .config import get_search_config
 from .graph_integration import GraphIntegration
@@ -150,6 +151,11 @@ class IncrementalIndexer:
             bm25_sync=self._bm25_sync,
             build_metadata_fn=self._build_snapshot_metadata,
             clear_gpu_fn=self._clear_gpu_cache,
+        )
+        self._community_refresh_stage = CommunityRefreshStage(
+            embedder=self.embedder,
+            indexer=self.indexer,
+            summary_stage=self._summary_stage,
         )
 
     def _get_symbol_cache(self) -> Optional["SymbolHashCache"]:
@@ -282,93 +288,40 @@ class IncrementalIndexer:
                 )
                 self.snapshot_manager.save_snapshot(current_dag, metadata)
 
-                return IncrementalIndexResult(
-                    files_added=0,
-                    files_removed=0,
-                    files_modified=0,
-                    chunks_added=0,
-                    chunks_removed=0,
-                    time_taken=time.time() - start_time,
-                    success=True,
-                    bm25_resynced=False,
-                    bm25_resync_count=0,
-                )
+                return self._zero_result(start_time, success=True)
 
             # Log changes
             logger.info(
                 f"Changes detected - Added: {len(changes.added)}, "
                 f"Removed: {len(changes.removed)}, Modified: {len(changes.modified)}"
             )
-            # ========== Community drift check ==========
-            # Track cumulative changed-file fraction since last full index.
-            # When it exceeds the threshold, promote to full reindex for community redetection.
             _config = get_search_config()
             _should_refresh_communities = (
                 _config.chunking.enable_community_summaries
                 and _config.chunking.enable_incremental_community_summaries
             )
-            _prev_meta = self.snapshot_manager.load_metadata(project_path)
-            _prev_meta_dict = _prev_meta if isinstance(_prev_meta, dict) else {}
-            _has_prior_tracking = "cumulative_changed_files" in _prev_meta_dict
-            _prev_cumulative = int(_prev_meta_dict.get("cumulative_changed_files", 0))
-            _this_change_count = (
-                len(changes.added) + len(changes.modified) + len(changes.removed)
+            _drift_result, _new_cumulative = self._check_community_drift(
+                project_path,
+                project_name,
+                changes,
+                start_time,
+                _should_refresh_communities,
             )
-            _new_cumulative = _prev_cumulative + _this_change_count
-            if _should_refresh_communities and _has_prior_tracking:
-                _prev_supported = max(1, int(_prev_meta_dict.get("supported_files", 1)))
-                _drift_fraction = _new_cumulative / _prev_supported
-                if (
-                    _drift_fraction
-                    > _config.chunking.incremental_community_redetect_threshold
-                ):
-                    logger.info(
-                        f"[INCREMENTAL] Community drift {_drift_fraction:.0%} exceeds "
-                        f"threshold {_config.chunking.incremental_community_redetect_threshold:.0%}; "
-                        "promoting to full reindex for community redetection"
-                    )
-                    with traced_block(
-                        "index.full",
-                        **{ATTR_PROJECT_ID: project_name, ATTR_INDEX_TYPE: "full"},
-                    ):
-                        return self._full_index(project_path, project_name, start_time)
-            # ========== END Community drift check ==========
+            if _drift_result is not None:
+                return _drift_result
 
             # Process changes
             chunks_removed = self._remove_old_chunks(changes, project_name)
 
             # Load cached repo profile for adaptive chunk sizing (set by previous full index)
-            _incr_config = get_search_config()
-            if _incr_config.chunking.sizing_mode == "adaptive":
-                _cached_meta = self.snapshot_manager.load_metadata(project_path)
-                if isinstance(_cached_meta, dict) and "repo_profile" in _cached_meta:
-                    from chunking.repo_profiler import RepoProfile
-
-                    _rp = _cached_meta["repo_profile"]
-                    _cached_profile = RepoProfile(
-                        function_count=_rp.get("function_count", 0),
-                        p25_chars=_rp.get("p25_chars", 0),
-                        p50_chars=_rp.get("p50_chars", 0),
-                        p75_chars=_rp.get("p75_chars", 0),
-                        p90_chars=_rp.get("p90_chars", 0),
-                        mean_chars=_rp.get("mean_chars", 0),
-                        max_complexity=_rp.get("max_complexity", 0),
-                    )
-                    self._parallel_chunker.chunker.tree_sitter_chunker.repo_profile = (
-                        _cached_profile
-                    )
-                    logger.info(
-                        f"[REPO_PROFILE] Loaded cached profile for incremental update: "
-                        f"P75={_cached_profile.p75_chars} chars, "
-                        f"max_cc={_cached_profile.max_complexity}"
-                    )
+            self._restore_repo_profile(project_path)
 
             chunks_added = self._add_new_chunks(changes, project_path, project_name)
 
             # ========== Community summary refresh (approximate, below redetect threshold) ==========
             if _should_refresh_communities:
                 try:
-                    self._refresh_affected_community_summaries(changes, project_name)
+                    self._community_refresh_stage.run(changes, project_name)
                 except Exception as e:
                     logger.warning(
                         f"[INCR_COMM] Community summary refresh failed (non-fatal): {e}"
@@ -444,6 +397,117 @@ class IncrementalIndexer:
                 start_time,
             )
 
+    @staticmethod
+    def _zero_result(
+        start_time: float,
+        *,
+        success: bool,
+        error: str | None = None,
+    ) -> IncrementalIndexResult:
+        """Return an all-zeros IncrementalIndexResult (no file changes, no chunks moved).
+
+        Used for: no-changes detected (success=True), auto-reindex skipped (success=True),
+        full-index failure (success=False), and recovery failure (success=False, error=...).
+        ``time_taken`` is computed from ``start_time`` at the moment of the call.
+        """
+        return IncrementalIndexResult(
+            files_added=0,
+            files_removed=0,
+            files_modified=0,
+            chunks_added=0,
+            chunks_removed=0,
+            time_taken=time.time() - start_time,
+            success=success,
+            error=error,
+            bm25_resynced=False,
+            bm25_resync_count=0,
+        )
+
+    def _restore_repo_profile(self, project_path: str) -> None:
+        """Restore the cached repo profile for adaptive chunk sizing.
+
+        If the stored snapshot contains a ``repo_profile`` dict and the current chunking
+        config uses ``sizing_mode == "adaptive"``, reconstruct the ``RepoProfile`` object
+        and inject it into the parallel chunker so incremental updates use the same size
+        calibration as the original full index.  No-ops silently when the profile is
+        absent or adaptive sizing is disabled.
+        """
+        from chunking.repo_profiler import RepoProfile
+
+        _incr_config = get_search_config()
+        if _incr_config.chunking.sizing_mode != "adaptive":
+            return
+        _cached_meta = self.snapshot_manager.load_metadata(project_path)
+        if not isinstance(_cached_meta, dict) or "repo_profile" not in _cached_meta:
+            return
+        _rp = _cached_meta["repo_profile"]
+        _cached_profile = RepoProfile(
+            function_count=_rp.get("function_count", 0),
+            p25_chars=_rp.get("p25_chars", 0),
+            p50_chars=_rp.get("p50_chars", 0),
+            p75_chars=_rp.get("p75_chars", 0),
+            p90_chars=_rp.get("p90_chars", 0),
+            mean_chars=_rp.get("mean_chars", 0),
+            max_complexity=_rp.get("max_complexity", 0),
+        )
+        self._parallel_chunker.chunker.tree_sitter_chunker.repo_profile = (
+            _cached_profile
+        )
+        logger.info(
+            f"[REPO_PROFILE] Loaded cached profile for incremental update: "
+            f"P75={_cached_profile.p75_chars} chars, "
+            f"max_cc={_cached_profile.max_complexity}"
+        )
+
+    def _check_community_drift(
+        self,
+        project_path: str,
+        project_name: str,
+        changes: "FileChanges",
+        start_time: float,
+        should_refresh_communities: bool,
+    ) -> "tuple[IncrementalIndexResult | None, int]":
+        """Compute cumulative drift; promote to full reindex when threshold exceeded.
+
+        Always returns the new cumulative changed-file count so the caller can include
+        it in snapshot metadata whether or not a promotion occurred.
+
+        Returns:
+            (None, new_cumulative) — continue with incremental update.
+            (full_index_result, new_cumulative) — drift exceeded threshold; caller
+                should immediately return full_index_result.
+        """
+        _prev_meta = self.snapshot_manager.load_metadata(project_path)
+        _prev_meta_dict = _prev_meta if isinstance(_prev_meta, dict) else {}
+        _has_prior_tracking = "cumulative_changed_files" in _prev_meta_dict
+        _prev_cumulative = int(_prev_meta_dict.get("cumulative_changed_files", 0))
+        _this_change_count = (
+            len(changes.added) + len(changes.modified) + len(changes.removed)
+        )
+        _new_cumulative = _prev_cumulative + _this_change_count
+        if should_refresh_communities and _has_prior_tracking:
+            _config = get_search_config()
+            _prev_supported = max(1, int(_prev_meta_dict.get("supported_files", 1)))
+            _drift_fraction = _new_cumulative / _prev_supported
+            if (
+                _drift_fraction
+                > _config.chunking.incremental_community_redetect_threshold
+            ):
+                logger.info(
+                    f"[INCREMENTAL] Community drift {_drift_fraction:.0%} exceeds "
+                    f"threshold {_config.chunking.incremental_community_redetect_threshold:.0%}; "
+                    "promoting to full reindex for community redetection"
+                )
+                with traced_block(
+                    "index.full",
+                    **{ATTR_PROJECT_ID: project_name, ATTR_INDEX_TYPE: "full"},
+                ):
+                    return (
+                        self._full_index(project_path, project_name, start_time),
+                        _new_cumulative,
+                    )
+        return None, _new_cumulative
+
     def _attempt_recovery(
         self,
         original_error: str,
@@ -469,17 +533,10 @@ class IncrementalIndexer:
         except Exception as recovery_error:
             logger.error(f"Recovery failed: {recovery_error}")
             logger.error(traceback.format_exc())
-            return IncrementalIndexResult(
-                files_added=0,
-                files_removed=0,
-                files_modified=0,
-                chunks_added=0,
-                chunks_removed=0,
-                time_taken=time.time() - start_time,
+            return self._zero_result(
+                start_time,
                 success=False,
                 error=f"Original: {original_error}, Recovery: {recovery_error}",
-                bm25_resynced=False,
-                bm25_resync_count=0,
             )
 
     def _release_and_verify_resources(self, project_path: str) -> None:
@@ -788,18 +845,7 @@ class IncrementalIndexer:
 
         except Exception as e:
             logger.error(f"Full indexing failed: {e}")
-            return IncrementalIndexResult(
-                files_added=0,
-                files_removed=0,
-                files_modified=0,
-                chunks_added=0,
-                chunks_removed=0,
-                time_taken=time.time() - start_time,
-                success=False,
-                error=str(e),
-                bm25_resynced=False,
-                bm25_resync_count=0,
-            )
+            return self._zero_result(start_time, success=False, error=str(e))
 
     def _get_total_chunks(self) -> int:
         """Get total number of chunks currently in the index.
@@ -946,192 +992,6 @@ class IncrementalIndexer:
         logger.info(f"[COMMUNITY_MERGE] Regenerated chunk_ids for {len(result)} chunks")
 
         return result
-
-    def _get_metadata_store(self):
-        """Return the MetadataStore from the indexer, handling both CodeIndexManager and HybridSearcher."""
-        if hasattr(self.indexer, "metadata_store"):
-            return self.indexer.metadata_store
-        if hasattr(self.indexer, "dense_index"):
-            dense_index = self.indexer.dense_index
-            if hasattr(dense_index, "metadata_store"):
-                return dense_index.metadata_store
-        return None
-
-    def _chunk_from_metadata(self, chunk_id: str, meta: dict) -> CodeChunk:
-        """Reconstruct a partial CodeChunk from a MetadataStore metadata dict.
-
-        Carries the fields that generate_community_summaries reads: chunk_type,
-        name, parent_name, relative_path, docstring, imports, start/end_line,
-        content, language. Language defaults to 'python' when absent.
-        """
-        return CodeChunk(
-            content=meta.get("content", ""),
-            chunk_type=meta.get("chunk_type", "function"),
-            start_line=int(meta.get("start_line") or 0),
-            end_line=int(meta.get("end_line") or 0),
-            file_path=meta.get("file_path", ""),
-            relative_path=meta.get("relative_path", ""),
-            folder_structure=meta.get("folder_structure") or [],
-            name=meta.get("name"),
-            parent_name=meta.get("parent_name"),
-            docstring=meta.get("docstring"),
-            imports=meta.get("imports") or [],
-            language=meta.get("language", "python"),
-            chunk_id=chunk_id,
-        )
-
-    def _refresh_affected_community_summaries(
-        self, changes: "FileChanges", project_name: str
-    ) -> None:
-        """Approximately refresh community summaries for communities touched by changed files.
-
-        Uses the persisted community_map (pre-remerge file→community assignments) to find
-        which communities are affected, removes their stale summary chunks, and regenerates
-        summaries from the surviving MetadataStore chunks. New-file chunks have no community
-        assignment until the next full redetect (the accepted approximation).
-        """
-        # Locate graph storage to load the persisted community_map
-        storage_dir: Path | None = None
-        try:
-            if hasattr(self.indexer, "storage_dir"):
-                storage_dir = Path(self.indexer.storage_dir)
-            elif hasattr(self.indexer, "dense_index") and hasattr(
-                self.indexer.dense_index, "storage_dir"
-            ):
-                storage_dir = Path(self.indexer.dense_index.storage_dir)
-        except (TypeError, ValueError):
-            storage_dir = None
-
-        if storage_dir is None:
-            logger.debug(
-                "[INCR_COMM] Cannot locate storage_dir for community_map; skipping refresh"
-            )
-            return
-
-        project_id = (
-            storage_dir.parent.name.rsplit("_", 1)[0] if storage_dir.exists() else None
-        )
-        if project_id is None:
-            logger.debug(
-                "[INCR_COMM] Cannot determine project_id for community_map; skipping refresh"
-            )
-            return
-
-        graph = GraphIntegration(project_id=project_id, storage_dir=storage_dir)
-        if graph.storage is None:
-            return
-        community_map = graph.storage.load_community_map()
-        if community_map is None:
-            logger.debug(
-                "[INCR_COMM] No persisted community_map found; skipping refresh "
-                "(run a full index first)"
-            )
-            return
-
-        # Build file → primary community mapping from pre-remerge community_map
-        file_comm_counts: dict[str, dict[int, int]] = {}
-        for chunk_id, comm_id in community_map.items():
-            rel_path = chunk_id.split(":")[0]
-            file_comm_counts.setdefault(rel_path, {})
-            file_comm_counts[rel_path][comm_id] = (
-                file_comm_counts[rel_path].get(comm_id, 0) + 1
-            )
-        file_to_community: dict[str, int] = {
-            rel_path: max(comm_counts, key=comm_counts.__getitem__)
-            for rel_path, comm_counts in file_comm_counts.items()
-        }
-
-        # Normalise changed file paths to forward-slash relative form for comparison
-        changed_file_set = {
-            str(f).replace("\\", "/")
-            for f in (*changes.added, *changes.modified, *changes.removed)
-        }
-
-        affected_community_ids: set[int] = {
-            comm_id
-            for rel_path, comm_id in file_to_community.items()
-            if rel_path in changed_file_set
-        }
-        if not affected_community_ids:
-            logger.debug(
-                "[INCR_COMM] No affected communities for changed files; nothing to refresh"
-            )
-            return
-
-        logger.info(
-            f"[INCR_COMM] {len(affected_community_ids)} community(ies) affected by "
-            f"{len(changed_file_set)} changed file(s); refreshing summaries"
-        )
-
-        metadata_store = self._get_metadata_store()
-        if metadata_store is None:
-            logger.warning(
-                "[INCR_COMM] Cannot access MetadataStore; skipping community refresh"
-            )
-            return
-
-        # Remove stale community summary chunks for affected communities
-        for _chunk_id, meta in list(metadata_store.items()):
-            if meta.get("chunk_type") != "community":
-                continue
-            tags = meta.get("tags") or []
-            for tag in tags:
-                if not isinstance(tag, str) or not tag.startswith("community:"):
-                    continue
-                try:
-                    comm_id = int(tag.split(":", 1)[1])
-                except (ValueError, IndexError):
-                    continue
-                if comm_id in affected_community_ids:
-                    file_path = meta.get("file_path") or meta.get("relative_path", "")
-                    if file_path:
-                        self.indexer.remove_file_chunks(file_path, project_name)
-                    break
-
-        # Rebuild member CodeChunks for affected communities from MetadataStore
-        member_chunks: list[CodeChunk] = []
-        sub_map: dict[str, int] = {}
-        for chunk_id, meta in metadata_store.items():
-            chunk_type = meta.get("chunk_type", "")
-            if chunk_type in ("community", "module"):
-                continue
-            rel_path = str(meta.get("relative_path") or "").replace("\\", "/")
-            comm_id = file_to_community.get(rel_path)
-            if comm_id is None or comm_id not in affected_community_ids:
-                continue
-            member_chunks.append(self._chunk_from_metadata(chunk_id, meta))
-            sub_map[chunk_id] = comm_id
-
-        if not member_chunks:
-            logger.info(
-                "[INCR_COMM] No surviving member chunks for affected communities; "
-                "stale summaries removed and not regenerated"
-            )
-            return
-
-        # Regenerate summaries (no centrality in incremental — approximate refresh)
-        new_summaries = self._summary_stage.compute_community_summaries(
-            member_chunks, sub_map, None
-        )
-        if not new_summaries:
-            logger.info("[INCR_COMM] No new community summaries generated")
-            return
-
-        # Embed and index the refreshed summaries
-        try:
-            embedding_results = self.embedder.embed_chunks(new_summaries)
-            for chunk, result in zip(new_summaries, embedding_results, strict=False):
-                result.metadata["project_name"] = project_name
-                result.metadata["content"] = chunk.content
-            if embedding_results:
-                self.indexer.add_embeddings(embedding_results)
-            logger.info(
-                f"[INCR_COMM] Refreshed {len(new_summaries)} community summary chunk(s)"
-            )
-        except Exception as e:
-            logger.warning(
-                f"[INCR_COMM] Failed to embed/index refreshed community summaries: {e}"
-            )
 
     def _build_snapshot_metadata(
         self,
@@ -1501,14 +1361,4 @@ class IncrementalIndexer:
             return self.incremental_index(project_path, project_name)
         else:
             logger.debug(f"Index for {project_path} is fresh, skipping reindex")
-            return IncrementalIndexResult(
-                files_added=0,
-                files_removed=0,
-                files_modified=0,
-                chunks_added=0,
-                chunks_removed=0,
-                time_taken=time.time() - start_time,
-                success=True,
-                bm25_resynced=False,
-                bm25_resync_count=0,
-            )
+            return self._zero_result(start_time, success=True)

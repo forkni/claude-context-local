@@ -6,8 +6,8 @@ Tests the extraction and resolution of type annotations for method calls.
 
 import ast
 
-from graph.call_graph_extractor import PythonCallGraphExtractor
-from graph.resolvers import TypeResolver
+from chunking.relationships.call_graph_extractor import PythonCallGraphExtractor
+from chunking.relationships.resolvers import TypeResolver
 
 
 class TestExtractTypeAnnotations:

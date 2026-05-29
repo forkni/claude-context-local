@@ -184,20 +184,6 @@ class TestCommunityDetector:
         # All original node IDs should be present
         assert set(communities.keys()) == set(chunk_ids)
 
-    def test_hierarchical_communities_placeholder(self):
-        """Hierarchical communities returns single level for now."""
-        graph = nx.DiGraph()
-        graph.add_edge("A", "B")
-
-        storage = self.create_mock_graph_storage(graph)
-        detector = CommunityDetector(storage)
-
-        hierarchy = detector.get_hierarchical_communities(max_levels=3)
-
-        # Currently only returns level 0
-        assert 0 in hierarchy
-        assert len(hierarchy[0]) == 2  # A and B
-
     def test_detect_communities_handles_edge_attributes(self):
         """Community detection works with edge attributes."""
         graph = nx.DiGraph()

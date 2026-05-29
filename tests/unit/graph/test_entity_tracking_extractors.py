@@ -8,12 +8,16 @@ default parameter values.
 
 import pytest
 
-from graph.relationship_extractors.constant_extractor import ConstantExtractor
-from graph.relationship_extractors.default_param_extractor import (
+from chunking.relationships.relationship_extractors.constant_extractor import (
+    ConstantExtractor,
+)
+from chunking.relationships.relationship_extractors.default_param_extractor import (
     DefaultParameterExtractor,
 )
-from graph.relationship_extractors.enum_extractor import EnumMemberExtractor
-from graph.relationship_types import RelationshipType
+from chunking.relationships.relationship_extractors.enum_extractor import (
+    EnumMemberExtractor,
+)
+from chunking.relationships.relationship_types import RelationshipType
 
 
 class TestConstantExtractor:

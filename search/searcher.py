@@ -1,7 +1,6 @@
 """Intelligent search functionality with query optimization."""
 
 import logging
-import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -9,6 +8,7 @@ from embeddings.embedder import CodeEmbedder
 
 from .base_searcher import BaseSearcher
 from .indexer import CodeIndexManager
+from .ranking_heuristics import RankingHeuristics
 
 
 if TYPE_CHECKING:
@@ -53,6 +53,8 @@ class IntelligentSearcher(BaseSearcher):
 
         # Dimension validation (safety check)
         self._validate_dimensions(self.index_manager.index, self.embedder)
+
+        self._ranking = RankingHeuristics()
 
     @property
     def graph_storage(self) -> Optional["CodeGraphStorage"]:
@@ -134,7 +136,7 @@ class IntelligentSearcher(BaseSearcher):
             search_results.append(result)
 
         # Post-process and rank results
-        ranked_results = self._rank_results(search_results, query)
+        ranked_results = self._ranking.rank(search_results, query)
 
         return ranked_results[:k]
 
@@ -206,208 +208,6 @@ class IntelligentSearcher(BaseSearcher):
         # This is a simplified implementation
         # In a real scenario, you might want to maintain this as a separate index
         return stats.get("files_indexed", 0)
-
-    def _rank_results(
-        self, results: list[SearchResult], original_query: str
-    ) -> list[SearchResult]:
-        """Advanced ranking based on multiple factors.
-
-        Args:
-            results: Search results to rank
-            original_query: Original query string
-        """
-
-        def calculate_rank_score(result: SearchResult) -> float:
-            score = result.similarity_score
-
-            # Detect if query looks like an entity/class name
-            query_tokens = self._normalize_to_tokens(original_query.lower())
-            is_entity_query = self._is_entity_like_query(original_query, query_tokens)
-            has_class_keyword = "class" in original_query.lower()
-
-            # Dynamic chunk type boosts based on query type
-            if has_class_keyword:
-                # Strong preference for classes when "class" is mentioned
-                type_boosts = {
-                    "class": 1.4,
-                    "function": 1.2,
-                    "method": 1.2,
-                    "module": 0.82,  # File-level summaries (A2) - strengthened demotion
-                    "community": 0.82,  # Community-level summaries (B1) - strengthened demotion
-                }
-            elif is_entity_query:
-                # Moderate preference for classes on entity-like queries
-                type_boosts = {
-                    "class": 1.35,
-                    "function": 1.15,
-                    "method": 1.15,
-                    "module": 0.85,  # File-level summaries (A2) - strengthened demotion
-                    "community": 0.85,  # Community-level summaries (B1) - strengthened demotion
-                }
-            else:
-                # Default boosts for general queries
-                type_boosts = {
-                    "function": 1.2,
-                    "method": 1.2,
-                    "class": 1.35,
-                    "module": 0.90,  # File-level summaries (A2) - strengthened demotion
-                    "community": 0.90,  # Community-level summaries (B1) - strengthened demotion
-                }
-
-            score *= type_boosts.get(result.chunk_type, 1.0)
-
-            # Enhanced name matching with token-based comparison
-            name_boost = self._calculate_name_boost(
-                result.name, original_query, query_tokens
-            )
-            score *= name_boost
-
-            # Path/filename relevance boost
-            path_boost = self._calculate_path_boost(result.relative_path, query_tokens)
-            score *= path_boost
-
-            # Lifecycle method demotion (e.g., __init__, __exit__)
-            # Prevents boilerplate methods from displacing core logic unless specifically requested
-            lifecycle_methods = {
-                "__init__",
-                "__enter__",
-                "__exit__",
-                "__del__",
-                "__repr__",
-                "__str__",
-            }
-            if result.name in lifecycle_methods:
-                query_has_lifecycle_intent = any(
-                    word in original_query.lower()
-                    for word in ("init", "enter", "exit", "del", "repr", "lifecycle")
-                )
-                if not query_has_lifecycle_intent:
-                    score *= 0.85
-
-            # Boost based on docstring presence (but less for module chunks on entity queries)
-            if result.docstring:
-                if is_entity_query and result.chunk_type == "module":
-                    score *= (
-                        1.02  # Smaller boost for module docstrings on entity queries
-                    )
-                else:
-                    score *= 1.05
-
-            # Slight penalty for very complex chunks (might be too specific)
-            if len(result.content_preview) > 1000:
-                score *= 0.98
-
-            return score
-
-        # Sort by calculated rank score
-        ranked_results = sorted(results, key=calculate_rank_score, reverse=True)
-        return ranked_results
-
-    def _normalize_to_tokens(self, text: str) -> list[str]:
-        """Convert text to normalized tokens, handling CamelCase."""
-
-        # Split CamelCase and snake_case
-        text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
-        text = text.replace("_", " ").replace("-", " ")
-
-        # Extract alphanumeric tokens
-        tokens = re.findall(r"\w+", text.lower())
-        return tokens
-
-    def _is_entity_like_query(self, query: str, query_tokens: list[str]) -> bool:
-        """Detect if query looks like an entity/type name."""
-        # Short queries with 1-3 tokens that don't contain action words
-        if len(query_tokens) > 3:
-            return False
-
-        action_words = {
-            "find",
-            "search",
-            "get",
-            "show",
-            "list",
-            "how",
-            "what",
-            "where",
-            "when",
-            "create",
-            "build",
-            "make",
-            "handle",
-            "process",
-            "manage",
-            "implement",
-        }
-
-        # If any token is an action word, it's not an entity query
-        if any(token in action_words for token in query_tokens):
-            return False
-
-        # If original query has CamelCase or looks like a class name, it's entity-like
-
-        if re.search(r"[A-Z][a-z]+[A-Z]", query):  # CamelCase pattern
-            return True
-
-        return len(query_tokens) <= 2  # Short noun phrases
-
-    def _calculate_name_boost(
-        self, name: str | None, original_query: str, query_tokens: list[str]
-    ) -> float:
-        """Calculate boost based on name matching with robust token comparison."""
-        if name is None:
-            return 1.0
-
-        name_tokens = self._normalize_to_tokens(name)
-
-        # Exact match (case insensitive)
-        if original_query.lower() == name.lower():
-            return 1.4
-
-        # Token overlap calculation
-        query_set = set(query_tokens)
-        name_set = set(name_tokens)
-
-        if not query_set or not name_set:
-            return 1.0
-
-        overlap = len(query_set & name_set)
-        total_query_tokens = len(query_set)
-
-        if overlap == 0:
-            return 1.0
-
-        # Strong boost for high overlap
-        overlap_ratio = overlap / total_query_tokens
-        if overlap_ratio >= 0.8:  # 80%+ of query tokens match
-            return 1.3
-        elif overlap_ratio >= 0.5:  # 50%+ match
-            return 1.2
-        elif overlap_ratio >= 0.3:  # 30%+ match
-            return 1.1
-        else:
-            return 1.05
-
-    def _calculate_path_boost(
-        self, relative_path: str, query_tokens: list[str]
-    ) -> float:
-        """Calculate boost based on path/filename relevance."""
-        if not relative_path or not query_tokens:
-            return 1.0
-
-        # Extract path components and filename
-        path_parts = relative_path.lower().replace("/", " ").replace("\\", " ")
-        path_tokens = self._normalize_to_tokens(path_parts)
-
-        # Check for token overlap with path
-        query_set = set(query_tokens)
-        path_set = set(path_tokens)
-
-        overlap = len(query_set & path_set)
-        if overlap > 0:
-            # Modest boost for path relevance
-            return 1.0 + (overlap * 0.05)  # 5% boost per matching token
-
-        return 1.0
 
     def search_by_file_pattern(
         self,

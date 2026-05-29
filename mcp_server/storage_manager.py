@@ -242,18 +242,21 @@ class StorageManager:
 
         # Determine which model to use
         if model_key:
-            # Use routing-selected model (map model_key to model_name via pool config)
-            if model_key not in pool_config:
+            # Resolve key → name: active pool first, then all known pools (cross-pool path)
+            from mcp_server.model_pool_manager import get_model_name_from_key
+
+            model_name = get_model_name_from_key(model_key)
+            if model_name is None:
                 logger.error(
                     f"Invalid model_key: {model_key}, falling back to config default"
                 )
                 config = get_search_config()
                 model_name = config.embedding.model_name
-            else:
-                model_name = pool_config[model_key]
+            elif model_key in pool_config:
                 logger.info(
                     f"[ROUTING] Using routed model: {model_name} (key: {model_key})"
                 )
+            # else: cross-pool INFO already emitted by get_model_name_from_key
         else:
             # Use config default
             config = get_search_config()

@@ -5,7 +5,7 @@ Tests import classification for stdlib, third-party, and local modules.
 
 import sys
 
-from graph.relation_filter import RepositoryRelationFilter
+from chunking.relationships.relation_filter import RepositoryRelationFilter
 
 
 class TestRelationFilter:

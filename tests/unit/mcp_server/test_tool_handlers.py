@@ -12,6 +12,29 @@ import pytest
 
 # Import handlers
 from mcp_server import tool_handlers
+from mcp_server.tool_handlers import TOOL_DISPATCH
+from mcp_server.tool_registry import TOOL_REGISTRY
+from search.config import SearchConfig
+
+
+# ============================================================================
+# PARITY: TOOL_DISPATCH must mirror TOOL_REGISTRY exactly
+# ============================================================================
+
+
+def test_tool_dispatch_registry_parity():
+    """TOOL_DISPATCH and TOOL_REGISTRY must have identical key sets.
+
+    Catches the 'added a schema but forgot to wire dispatch' class of bug
+    that the old getattr convention tolerated silently.
+    """
+    dispatch_keys = set(TOOL_DISPATCH)
+    registry_keys = set(TOOL_REGISTRY)
+    assert dispatch_keys == registry_keys, (
+        f"TOOL_DISPATCH and TOOL_REGISTRY are out of sync.\n"
+        f"  In DISPATCH but not REGISTRY: {dispatch_keys - registry_keys}\n"
+        f"  In REGISTRY but not DISPATCH: {registry_keys - dispatch_keys}"
+    )
 
 
 # ============================================================================
@@ -533,11 +556,13 @@ async def test_handle_find_similar_code():
     with (
         patch("mcp_server.tools.search_handlers.get_searcher") as mock_searcher,
         patch("mcp_server.tools.search_handlers.get_state") as mock_get_state,
+        patch("mcp_server.tools.decorators.get_state") as mock_dec_state,
     ):
         # Mock state with current_project set
         mock_state = Mock()
         mock_state.current_project = "/test/project"
         mock_get_state.return_value = mock_state
+        mock_dec_state.return_value = mock_state
 
         # Mock search results
         mock_result = Mock()
@@ -573,12 +598,34 @@ async def test_handle_find_similar_code():
 async def test_handle_search_code_no_index():
     """Test search_code fails gracefully when no index exists (backward compatibility)."""
     with (
-        patch("mcp_server.tools.search_handlers.get_searcher") as mock_searcher,
-        patch("mcp_server.tools.search_handlers.get_state") as mock_get_state,
+        patch("mcp_server.tools.search_orchestrator.get_searcher") as mock_searcher,
+        patch("mcp_server.tools.search_orchestrator.get_state") as mock_get_state,
+        patch("mcp_server.tools.search_handlers.get_state") as mock_handler_state,
+        patch("mcp_server.tools.search_orchestrator.get_search_config"),
+        patch("mcp_server.tools.search_orchestrator.get_config_manager"),
+        patch("mcp_server.tools.search_orchestrator.get_config"),
+        patch("mcp_server.tools.search_orchestrator.IntentClassifier") as mock_ic,
+        patch(
+            "mcp_server.tools.search_handlers._route_query_to_model",
+            return_value=(None, None),
+        ),
+        patch(
+            "mcp_server.tools.search_handlers._check_auto_reindex",
+            return_value=(False, None),
+        ),
     ):
         mock_state = Mock()
         mock_state.current_project = "/test/project"
+        mock_state.searcher = None
         mock_get_state.return_value = mock_state
+        mock_handler_state.return_value = mock_state
+        mock_ic.return_value.classify.return_value = Mock(
+            intent=Mock(value="hybrid"),
+            confidence=0.0,
+            reason="test",
+            scores={},
+            suggested_params={},
+        )
 
         # Mock searcher without is_ready (legacy IntelligentSearcher)
         mock_searcher_obj = Mock(spec=["index_manager"])
@@ -599,12 +646,61 @@ async def test_handle_search_code_hybrid_searcher_ready():
     that occurred when HybridSearcher was used with model routing.
     """
     with (
-        patch("mcp_server.tools.search_handlers.get_searcher") as mock_get_searcher,
-        patch("mcp_server.tools.search_handlers.get_state") as mock_get_state,
+        patch("mcp_server.tools.search_orchestrator.get_searcher") as mock_get_searcher,
+        patch("mcp_server.tools.search_orchestrator.get_state") as mock_get_state,
+        patch("mcp_server.tools.search_handlers.get_state") as mock_handler_state,
+        patch("mcp_server.tools.decorators.get_state") as mock_dec_state,
+        patch(
+            "mcp_server.tools.search_orchestrator.get_search_config",
+            return_value=SearchConfig(),
+        ),
+        patch("mcp_server.tools.search_orchestrator.get_config_manager") as mock_cm,
+        patch("mcp_server.tools.search_orchestrator.get_config") as mock_cfg,
+        patch("mcp_server.tools.search_orchestrator.IntentClassifier") as mock_ic,
+        patch(
+            "mcp_server.tools.search_handlers._route_query_to_model",
+            return_value=("qwen3_0.6b", None),
+        ),
+        patch(
+            "mcp_server.tools.search_handlers._check_auto_reindex",
+            return_value=(False, None),
+        ),
+        patch(
+            "mcp_server.tools.search_handlers._format_search_results",
+            return_value=[
+                {
+                    "chunk_id": "test.py:1-10:function:test",
+                    "score": 0.9,
+                    "kind": "function",
+                    "start_line": 1,
+                    "end_line": 10,
+                }
+            ],
+        ),
+        patch(
+            "mcp_server.tools.search_handlers._enrich_results_with_graph_data",
+            side_effect=lambda r, _im: r,
+        ),
+        patch(
+            "mcp_server.tools.search_handlers._get_index_manager_from_searcher",
+            return_value=None,
+        ),
     ):
         mock_state = Mock()
         mock_state.current_project = "/test/project"
+        mock_state.searcher = None
         mock_get_state.return_value = mock_state
+        mock_handler_state.return_value = mock_state
+        mock_dec_state.return_value = mock_state
+        mock_cm.return_value.get_search_mode_for_query.return_value = "hybrid"
+        mock_cfg.return_value.performance.use_parallel_search = False
+        mock_ic.return_value.classify.return_value = Mock(
+            intent=Mock(value="hybrid"),
+            confidence=0.0,
+            reason="test",
+            scores={},
+            suggested_params={},
+        )
 
         # Mock HybridSearcher with is_ready property and dense_index
         mock_searcher = Mock()
@@ -615,23 +711,9 @@ async def test_handle_search_code_hybrid_searcher_ready():
         mock_faiss_index = Mock()
         mock_faiss_index.ntotal = 1574  # Simulating indexed project
         mock_dense_index.index = mock_faiss_index
-        mock_dense_index.graph_storage = (
-            None  # Prevent centrality ranker from executing
-        )
+        mock_dense_index.graph_storage = None
         mock_searcher.dense_index = mock_dense_index
-
-        # Mock search results with proper SearchResult object
-        mock_result = Mock()
-        mock_result.chunk_id = "test.py:1-10:function:test"
-        mock_result.score = 0.9
-        mock_result.similarity_score = 0.9  # Needed for round() operation
-        mock_result.metadata = {
-            "relative_path": "test.py",
-            "start_line": 1,
-            "end_line": 10,
-            "chunk_type": "function",
-        }
-        mock_searcher.search.return_value = [mock_result]
+        mock_searcher.search.return_value = []
 
         mock_get_searcher.return_value = mock_searcher
 
@@ -647,12 +729,34 @@ async def test_handle_search_code_hybrid_searcher_ready():
 async def test_handle_search_code_hybrid_searcher_not_ready():
     """Test search_code with HybridSearcher correctly detects empty index."""
     with (
-        patch("mcp_server.tools.search_handlers.get_searcher") as mock_get_searcher,
-        patch("mcp_server.tools.search_handlers.get_state") as mock_get_state,
+        patch("mcp_server.tools.search_orchestrator.get_searcher") as mock_get_searcher,
+        patch("mcp_server.tools.search_orchestrator.get_state") as mock_get_state,
+        patch("mcp_server.tools.search_handlers.get_state") as mock_handler_state,
+        patch("mcp_server.tools.search_orchestrator.get_search_config"),
+        patch("mcp_server.tools.search_orchestrator.get_config_manager"),
+        patch("mcp_server.tools.search_orchestrator.get_config"),
+        patch("mcp_server.tools.search_orchestrator.IntentClassifier") as mock_ic,
+        patch(
+            "mcp_server.tools.search_handlers._route_query_to_model",
+            return_value=(None, None),
+        ),
+        patch(
+            "mcp_server.tools.search_handlers._check_auto_reindex",
+            return_value=(False, None),
+        ),
     ):
         mock_state = Mock()
         mock_state.current_project = "/test/project"
+        mock_state.searcher = None
         mock_get_state.return_value = mock_state
+        mock_handler_state.return_value = mock_state
+        mock_ic.return_value.classify.return_value = Mock(
+            intent=Mock(value="hybrid"),
+            confidence=0.0,
+            reason="test",
+            scores={},
+            suggested_params={},
+        )
 
         # Mock HybridSearcher with is_ready = False
         mock_searcher = Mock()

@@ -374,6 +374,7 @@ def calculate_optimal_batch_size(
     model_name: str | None = None,
     activation_gb_per_item: float = 0.0,
     ort_cap_gb: float = 0.0,
+    is_onnx: bool = False,
 ) -> int:
     """Calculate optimal batch size from architecture-derived activation memory cost.
 
@@ -392,6 +393,9 @@ def calculate_optimal_batch_size(
         model_name: Model identifier (used only for logging)
         activation_gb_per_item: Pre-computed activation cost per batch item in GB.
             Pass 0.0 to signal "unknown" — a 40 MB floor will be used.
+        is_onnx: True when the model is served by ONNX Runtime. Enables tighter
+            VRAM-aware caps to account for BFCArena contiguous single-op peaks
+            that do not scale linearly with batch size.
 
     Returns:
         Batch size clamped to [min_batch, max_batch]
@@ -450,6 +454,20 @@ def calculate_optimal_batch_size(
         elif free_gb < 6:
             max_batch = min(max_batch, 16)
 
+        # ONNX Runtime: BFCArena allocates large CONTIGUOUS buffers per single op
+        # (attention MatMul, residual Add). These peaks do NOT scale linearly with
+        # batch and have no Flash-Attention fallback, so the linear per-item budget
+        # over-predicts the safe batch under a small ORT arena.
+        # Keyed off available_gb (the ORT-clamped budget, not system free_gb).
+        # Calibrated from a batch=9 BFCArena OOM at available≈4.6 GB (safe batch was 4).
+        if is_onnx:
+            if available_gb < 3.5:
+                max_batch = min(max_batch, 2)
+            elif available_gb < 5.5:
+                max_batch = min(max_batch, 4)
+            elif available_gb < 8.0:
+                max_batch = min(max_batch, 8)
+
         # Clamp to safe bounds
         result = max(min_batch, min(optimal_batch, max_batch))
 
@@ -459,13 +477,14 @@ def calculate_optimal_batch_size(
             if ort_cap_gb > 0.0
             else ""
         )
+        backend = "onnx" if is_onnx else "torch"
         logger.info(
             f"[DYNAMIC_BATCH] GPU: {free_gb:.1f}GB free / {total_gb:.1f}GB total, "
             f"model: {model_vram_gb:.1f}GB ({model_name or 'unknown'}){ort_info}, "
             f"available: {available_gb:.1f}GB → "
             f"target: {target_activation_gb:.1f}GB "
             f"({memory_fraction:.0%} × {FRAGMENTATION_OVERHEAD:.0%} frag), "
-            f"cost: {gb_per_item:.3f}GB/item → batch: {result} chunks"
+            f"cost: {gb_per_item:.3f}GB/item [{backend}] → batch: {result} chunks"
         )
 
         return result
@@ -562,6 +581,7 @@ class CodeEmbedder:
         )
         self.device = device
         self._model = None
+        self._is_onnx: bool = False
         self._logger = logging.getLogger(__name__)
         self._model_config = None
 
@@ -759,6 +779,7 @@ class CodeEmbedder:
     def _load_model(self) -> None:
         """Delegate to ModelLoader.load()."""
         self._model, self.device = self._model_loader.load()
+        self._is_onnx = hasattr(self._model, "ort_model")
         # Sync VRAM usage tracking from ModelLoader
         self._model_vram_usage.update(self._model_loader.model_vram_usage)
 
@@ -1159,9 +1180,8 @@ class CodeEmbedder:
                 if activation_gb_per_item <= 0.0:
                     hf_cfg = self._extract_hf_config()
                     if hf_cfg is not None:
-                        is_onnx = hasattr(self._model, "ort_model")
                         activation_gb_per_item = estimate_activation_gb_from_config(
-                            hf_cfg, is_onnx=is_onnx
+                            hf_cfg, is_onnx=self._is_onnx
                         )
                         self._logger.info(
                             f"[DYNAMIC_BATCH] Activation cost estimated from model config: "
@@ -1173,7 +1193,7 @@ class CodeEmbedder:
                 # (e.g. attention MatMul, residual Add) do not scale linearly
                 # with batch and can blow past the per-item × batch budget.
                 # Apply an empirically-validated floor for known ONNX models.
-                if hasattr(self._model, "ort_model"):
+                if self._is_onnx:
                     onnx_floor = _get_onnx_cost_floor(self.model_name)
                     if onnx_floor > activation_gb_per_item:
                         self._logger.info(
@@ -1194,7 +1214,7 @@ class CodeEmbedder:
                 # ORT cap: gpu_mem_limit is static (set at from_pretrained time), so
                 # computing it once here (not per-batch) is correct and sufficient.
                 ort_cap_gb = 0.0
-                if hasattr(self._model, "ort_model"):
+                if self._is_onnx:
                     try:
                         _cap_result = compute_effective_vram_cap(
                             config.performance.vram_limit_fraction
@@ -1215,6 +1235,7 @@ class CodeEmbedder:
                     model_name=self.model_name,
                     activation_gb_per_item=activation_gb_per_item,
                     ort_cap_gb=ort_cap_gb,
+                    is_onnx=self._is_onnx,
                 )
                 self._logger.info(
                     f"Using dynamic GPU-optimized batch size {batch_size} for {len(chunks)} chunks"

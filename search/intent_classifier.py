@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # ~70 anchor embeddings are computed at most once per embedder lifetime.
 # Bounded to _ANCHOR_CACHE_MAXSIZE to prevent unbounded growth during
 # model switching (in practice 3–4 embedder models are ever loaded).
-_ANCHOR_EMBEDDINGS_CACHE: dict[int, dict[str, list[np.ndarray]]] = {}
+_ANCHOR_EMBEDDINGS_CACHE: dict[str, dict[str, list[np.ndarray]]] = {}
 _ANCHOR_CACHE_MAXSIZE: int = 8
 
 
@@ -57,6 +57,44 @@ def _load_anchor_config() -> dict | None:
     except Exception as exc:
         logger.warning(f"[INTENT-SEM] Failed to load intent_anchors.yaml: {exc}")
     return None
+
+
+@lru_cache(maxsize=1)
+def _load_intent_rules() -> dict:
+    """Load intent classification rules from config/intent_rules.yaml.
+
+    Fail-fast: raises if the file is missing or malformed — the classifier
+    cannot function without rules, so silent degradation is not acceptable.
+
+    This function is called at **class-body / import time** via
+    ``IntentClassifier._rules = _load_intent_rules()`` (see class body), so any
+    ``FileNotFoundError`` or ``ValueError`` surfaces during
+    ``import search.intent_classifier``, not lazily at first use.
+
+    The ``@lru_cache`` prevents repeated disk reads, but also means tests that
+    patch ``_load_intent_rules`` must call
+    ``_load_intent_rules.cache_clear()`` for the patch to take effect.
+
+    Returns:
+        Parsed YAML dict with keys 'intent_rules' and 'precedence'.
+    """
+    import yaml
+
+    config_path = Path(__file__).parent.parent / "config" / "intent_rules.yaml"
+    if not config_path.exists():
+        raise FileNotFoundError(
+            f"Intent rules config not found: {config_path}. "
+            "Reinstall or restore config/intent_rules.yaml."
+        )
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except Exception as exc:
+        raise ValueError(f"Failed to parse {config_path}: {exc}") from exc
+    missing = {"intent_rules", "precedence"} - set(data or {})
+    if missing:
+        raise ValueError(f"{config_path} is missing required keys: {missing}")
+    return data
 
 
 # Blocklist of common programming terms that shouldn't be matched as symbols
@@ -154,472 +192,11 @@ class IntentClassifier:
     Pattern: Follows QueryRouter structure for consistency.
     """
 
-    # Intent classification rules (keyword + pattern matching)
-    INTENT_RULES: dict[str, dict[str, Any]] = {
-        "local": {
-            "keywords": [
-                # Definition/implementation queries
-                "where is",
-                "find the implementation",
-                "find the definition",
-                "definition of",
-                "implementation of",
-                "locate",
-                "show me",
-                # Retrieval verbs
-                "lookup",
-                "retrieve",
-                "get the",
-                "obtain",
-                "fetch",
-                # Discovery terms
-                "discover",
-                "identify",
-                # Existence-checking query patterns
-                "check if",
-                "does",
-                "is there",
-                "exists",
-                # Symbol-specific
-                "class",
-                "function",
-                "method",
-                "variable",
-                "constant",
-                "module",
-                "file",
-                "interface",
-                "type",
-                "enum",
-                "struct",
-                # Implementation-focused verbs (added to fix Q19 intent classification failure)
-                # These verbs indicate concrete code implementation queries, not architectural queries
-                "encode",
-                "decode",
-                "parse",
-                "serialize",
-                "deserialize",
-                "convert",
-                "transform",
-                "validate",
-                "normalize",
-                "extract",
-                "process",
-                "handle",
-                "compute",
-                "calculate",
-                "render",
-                "format",
-                "generate",
-                "build",
-                # I/O and persistence verbs (added to fix Q16 zero-intent classification)
-                # These are function-level I/O operations (LOCAL), not architectural concepts (GLOBAL)
-                "save",
-                "load",
-                "store",
-                "persist",
-                "read",
-                "write",
-            ],
-            "patterns": [
-                # REMOVED: Dead CamelCase pattern (ran against lowered query, never matched)
-                # Functionality moved to _detect_code_symbols() fallback
-                (r"\bwhere\s+is\b", 1.5),
-                (r"\bfind\s+(the\s+)?(implementation|definition)\b", 1.5),
-                (r"\bshow\s+me\s+(the\s+)?", 1.2),
-                (r"\b(lookup|retrieve|fetch)\s+(\w+)\b", 1.3),  # "lookup QueryRouter"
-                (
-                    r"\bget\s+(the\s+)?(\w+)\s+(class|function|definition)\b",
-                    1.5,
-                ),  # "get the QueryRouter class"
-                (
-                    r"\bget\s+\w+(\s+\w+)*\s+from\b",
-                    1.3,
-                ),  # "get node text from tree sitter"
-                (
-                    r"\b(enum|interface|struct|type)\s+\w+\b",
-                    1.2,
-                ),  # "interface SearchResult"
-                (r"\bcheck\s+if\s+\w+\s+exists?\b", 1.4),
-                (r"\bdoes\s+\w+\s+exist\b", 1.4),
-                (r"\bis\s+there\s+(a\s+)?\w+\b", 1.3),
-            ],
-            "max_tokens": 8,  # Short, focused queries (raised for natural language function lookups)
-            "weight": 1.0,
-            "description": "Symbol/entity lookup queries",
-        },
-        "global": {
-            "keywords": [
-                # Architectural/conceptual queries
-                "how does",
-                "how do",
-                "explain",
-                "overview",
-                "architecture",
-                "design",
-                "structure",
-                "system",
-                "pipeline",
-                "workflow",
-                "flow",
-                "process",
-                "mechanism",
-                "strategy",
-                # Software patterns
-                "pattern",
-                "approach",
-                "paradigm",
-                "model",
-                "framework",
-                # Conceptual understanding
-                "concept",
-                "rationale",
-                "purpose",
-                "reasoning",
-                "logic behind",
-                # System terms
-                "component",
-                "module interaction",
-                "integration",
-                "data flow",
-                # Understanding queries
-                "understand",
-                "learn about",
-                "describe",
-                "summary",
-                "high-level",
-            ],
-            "patterns": [
-                (r"\bhow\s+does\s+.+\s+work\b", 1.8),
-                (r"\bhow\s+do\s+.+\s+work\b", 1.8),
-                (r"\b(architecture|pipeline|flow|overview)\b", 1.2),
-                (r"\bexplain\s+(the\s+)?", 1.3),
-                (r"\bwhy\s+(does|is)\b", 1.3),  # "why does search use embeddings"
-                (
-                    r"\bwhat\s+is\s+the\s+(purpose|rationale|logic)\b",
-                    1.4,
-                ),  # "what is the purpose of..."
-                (
-                    r"\b(component|layer)s?\s+(interact|work)\b",
-                    1.2,
-                ),  # "how components interact"
-                (
-                    r"\b(arrangement|organization|scheme)\s+of\b",
-                    1.2,
-                ),  # e.g., "organization of search system"
-                (
-                    r"\b(procedure|technique|methodology)\s+(for|of)\b",
-                    1.3,
-                ),  # e.g., "methodology for indexing"
-            ],
-            "weight": 1.0,
-            "description": "Architectural/conceptual queries",
-        },
-        "navigational": {
-            "keywords": [
-                # Caller/dependency queries
-                "what calls",
-                "what uses",
-                "what depends",
-                "who calls",
-                "who uses",
-                "callers",
-                "called by",
-                "used by",
-                "depends on",
-                "dependencies",
-                "dependents",
-                # Synonym coverage for dependency terminology
-                "relations",
-                "reliance",
-                "correlations",
-                # Caller/Callee terminology
-                "callee",
-                "callees",
-                "invokes",
-                "invoked by",
-                "triggers",
-                "triggered by",
-                # Upstream/Downstream
-                "upstream",
-                "downstream",
-                "upstream of",
-                "downstream of",
-                # Consumer/Provider
-                "consumer",
-                "consumers",
-                "provider",
-                "providers",
-                "client",
-                "clients",
-                "supplier",
-                "suppliers",
-                # Relationship queries
-                "imports",
-                "imported by",
-                "inherits",
-                "inherited by",
-                "extends",
-                "extended by",
-                "implements",
-                "implemented by",
-                "decorates",
-                "decorated by",
-                # Exception handling
-                "raises",
-                "throws",
-                "exception",
-                "exceptions",
-                # Instantiation
-                "creates",
-                "instantiates",
-                "instances",
-                # Flow tracing
-                "trace",
-                "flow from",
-                "flow to",
-                "call chain",
-                "call graph",
-                "call stack",
-            ],
-            "patterns": [
-                (r"\b(callers?|called\s+by)\b", 2.0),
-                (r"\bwhat\s+(calls|uses|depends)\b", 1.8),
-                (r"\b(who\s+)?(calls|uses)\b", 1.5),
-                (r"\b(imports?|inherits?|extends?|implements?)\b", 1.5),
-                (r"\b(decorates?|decorated\s+by)\b", 1.5),
-                (r"\b(raises?|throws?|exceptions?)\b", 1.5),
-                (r"\b(creates?|instantiates?|instances?)\b", 1.5),
-                (r"\b(callee|callees)\s+(of|for)\b", 1.8),  # "callees of process_query"
-                (
-                    r"\b(upstream|downstream)\s+(of|from|to)\b",
-                    1.5,
-                ),  # "upstream of QueryRouter"
-                (
-                    r"\b(consumer|provider|client|supplier)s?\s+(of|for)\b",
-                    1.5,
-                ),  # "consumers of API"
-                (r"\b(invokes?|triggers?)\s+\w+\b", 1.3),  # "invokes handle_search"
-                (r"\btrace\s+", 1.3),
-                (r"\bdependenc(y|ies)\b", 1.2),
-                (
-                    r"\b(relations|reliance|correlations)\s+(of|between)\b",
-                    1.3,
-                ),  # e.g., "relations of IntentClassifier"
-            ],
-            "weight": 1.2,  # Higher weight for strong signal
-            "description": "Relationship/dependency queries",
-        },
-        "path_tracing": {
-            "keywords": [
-                "trace",
-                "follow",
-                "path from",
-                "path to",
-                "path between",
-                "connect",
-                "connection between",
-                "how does X connect",
-                "flow from",
-                "flow to",
-                "reaches",
-                "leads to",
-                # Synonym coverage for path-tracing terminology
-                "trail",
-                "pursue",
-                # Journey metaphors
-                "route",
-                "route from",
-                "route to",
-                "journey",
-                # Linking terms
-                "link",
-                "link between",
-                "bridge",
-                "bridge to",
-                # Sequence terms
-                "traversal",
-            ],
-            "patterns": [
-                (r"\btrace\s+(path\s+)?(from|to)\b", 2.0),
-                (
-                    r"\bfollow\s+(the\s+)?(path|call|execution|flow)\b",
-                    1.8,
-                ),  # "follow the path", "follow call"
-                (r"\bpath\s+(from|to|between)\b", 2.0),
-                (r"\bhow\s+does\s+\w+\s+connect\s+to\b", 1.8),
-                (r"\bconnection\s+between\b", 1.5),
-                (r"\b(from|to)\s+\w+\s+(to|from)\s+\w+\b", 1.3),
-                (
-                    r"\b(trail|pursue)\s+(the\s+)?(path|call|flow)\b",
-                    1.5,
-                ),  # e.g., "trail the path"
-                (
-                    r"\b(route|journey)\s+(from|to|between)\b",
-                    1.8,
-                ),  # "route from login to logout"
-                (r"\blink\s+(between|from|to)\b", 1.5),  # "link between modules"
-            ],
-            "weight": 1.3,
-            "description": "Path tracing queries between code entities",
-        },
-        "similarity": {
-            "keywords": [
-                "similar to",
-                "similar code",
-                "like this",
-                "patterns like",
-                "code like",
-                "implementations like",
-                "similar implementations",
-                "same pattern",
-                "resembles",
-                "looks like",
-                # Synonym coverage for similarity terminology
-                "replicate",
-                "mimic",
-                "emulate",
-                "replica",
-                "mirror",
-                "counterpart",
-                "look-alike",
-                "parallel",
-                "twin",
-                # Clone detection terminology
-                "clone",
-                "clones",
-                "clone of",
-                "duplicate",
-                "duplicates",
-                "duplicate of",
-                "copy",
-                "copies",
-                "copy of",
-                # Comparative terms
-                "equivalent",
-                "analogous",
-                "comparable",
-                "matching",
-                "matches",
-            ],
-            "patterns": [
-                (r"\bsimilar\s+(to|code|implementations?)\b", 2.0),
-                (r"\b(code|patterns?|implementations?)\s+like\b", 1.8),
-                (r"\bfind\s+(code\s+)?similar\b", 1.8),
-                (r"\b(resembles?|looks?\s+like)\b", 1.3),
-                (
-                    r"\b(clone|duplicate|copy)\s+(of|code)\b",
-                    2.0,
-                ),  # "clone of QueryRouter"
-                (r"\bfind\s+(clones?|duplicates?|copies)\b", 1.8),  # "find clones"
-                (
-                    r"\b(equivalent|analogous|comparable)\s+to\b",
-                    1.5,
-                ),  # "equivalent to X"
-                (r"\b(matches|matching)\s+\w+\b", 1.3),  # "matches QueryRouter pattern"
-                (
-                    r"\b(replicate|mimic|emulate)s?\s+\w+\b",
-                    1.5,
-                ),  # e.g., "replicate QueryRouter"
-                (
-                    r"\b(replica|counterpart|twin)\s+(of|for)\b",
-                    1.8,
-                ),  # e.g., "replica of QueryRouter"
-                (
-                    r"\b(mirror|parallel)\s+(of|to)\b",
-                    1.5,
-                ),  # e.g., "mirror of IntentClassifier"
-                (
-                    r"\blook-alike\s+(of|for|to)\b",
-                    1.5,
-                ),  # e.g., "look-alike of QueryRouter"
-            ],
-            "weight": 1.2,
-            "description": "Code similarity queries",
-        },
-        "contextual": {
-            "keywords": [
-                "context",
-                "around",
-                "related to",
-                "connected to",
-                "neighbors",
-                "surrounding",
-                "nearby code",
-                "explore",
-                "overview of",
-                "understand",
-                # Synonym coverage for contextual exploration terminology
-                "investigate",
-                "examine",
-                "probe",
-                "inspect",
-                "survey",
-                "look into",
-                "delve into",
-                "delve",
-                "scout",
-                "scour",
-                # Spatial metaphors
-                "vicinity",
-                "vicinity of",
-                "proximity",
-                "proximity to",
-                "neighborhood",
-                "periphery",
-                # Scope terms
-                "scope",
-                "scope of",
-                "environment",
-                "ecosystem",
-                # Discovery
-                "discover related",
-                "what touches",
-            ],
-            "patterns": [
-                (r"\b(context|surrounding)\b.*\b(of|around|for)\b", 1.8),
-                (r"\brelated\s+(to|code)\b", 1.5),
-                (r"\bexplore\s+\w+\b", 1.3),
-                (r"\bunderstand\s+(how|the)\b", 1.2),
-                (
-                    r"\b(investigate|examine|inspect)\s+\w+\b",
-                    1.3,
-                ),  # e.g., "investigate handle_search_code"
-                (
-                    r"\b(delve|probe)\s+(into\s+)?\w+\b",
-                    1.5,
-                ),  # e.g., "delve into QueryRouter"
-                (
-                    r"\b(survey|scout)\s+(the\s+)?\w+\b",
-                    1.2,
-                ),  # e.g., "survey the codebase"
-                (
-                    r"\b(vicinity|proximity|neighborhood)\s+(of|around)\b",
-                    1.8,
-                ),  # "vicinity of QueryRouter"
-                (
-                    r"\bwhat\s+(touches|interacts\s+with)\b",
-                    1.5,
-                ),  # "what touches this module"
-                (
-                    r"\b(ecosystem|environment)\s+(of|around)\b",
-                    1.3,
-                ),  # "ecosystem of search"
-            ],
-            "weight": 1.0,
-            "description": "Contextual exploration queries (ego-graph beneficial)",
-        },
-    }
-
-    # Precedence order for tie-breaking (highest priority first)
-    PRECEDENCE = [
-        "path_tracing",
-        "similarity",
-        "navigational",
-        "contextual",
-        "local",
-        "global",
-    ]
+    # Intent classification rules and tie-breaking precedence — loaded from
+    # config/intent_rules.yaml so rule data stays separate from scoring logic.
+    _rules = _load_intent_rules()
+    INTENT_RULES: dict[str, dict[str, Any]] = _rules["intent_rules"]
+    PRECEDENCE: list[str] = _rules["precedence"]
 
     # Default intent when no patterns match
     DEFAULT_INTENT = QueryIntent.HYBRID
@@ -661,10 +238,12 @@ class IntentClassifier:
         self._anchor_config = _load_anchor_config()
         # Reuse pre-computed anchor embeddings from the module-level cache when
         # the same embedder instance is reused across requests.
-        embedder_id = id(embedder) if embedder is not None else None
-        if embedder_id is not None and embedder_id in _ANCHOR_EMBEDDINGS_CACHE:
+        embedder_key = (
+            getattr(embedder, "model_name", None) if embedder is not None else None
+        )
+        if embedder_key is not None and embedder_key in _ANCHOR_EMBEDDINGS_CACHE:
             self._anchor_embeddings: dict[str, list[np.ndarray]] | None = (
-                _ANCHOR_EMBEDDINGS_CACHE[embedder_id]
+                _ANCHOR_EMBEDDINGS_CACHE[embedder_key]
             )
         else:
             self._anchor_embeddings = None  # computed lazily on first semantic call
@@ -865,14 +444,15 @@ class IntentClassifier:
         # sharing the same embedder skip the embedding work entirely.
         # Evict oldest entry when the cache is full to prevent unbounded growth.
         if self._embedder is not None:
-            embedder_id = id(self._embedder)
-            if (
-                embedder_id not in _ANCHOR_EMBEDDINGS_CACHE
-                and len(_ANCHOR_EMBEDDINGS_CACHE) >= _ANCHOR_CACHE_MAXSIZE
-            ):
-                # Remove the oldest entry (insertion-ordered dict, Python 3.7+)
-                _ANCHOR_EMBEDDINGS_CACHE.pop(next(iter(_ANCHOR_EMBEDDINGS_CACHE)))
-            _ANCHOR_EMBEDDINGS_CACHE[embedder_id] = self._anchor_embeddings
+            embedder_key = getattr(self._embedder, "model_name", None)
+            if embedder_key is not None:
+                if (
+                    embedder_key not in _ANCHOR_EMBEDDINGS_CACHE
+                    and len(_ANCHOR_EMBEDDINGS_CACHE) >= _ANCHOR_CACHE_MAXSIZE
+                ):
+                    # Remove the oldest entry (insertion-ordered dict, Python 3.7+)
+                    _ANCHOR_EMBEDDINGS_CACHE.pop(next(iter(_ANCHOR_EMBEDDINGS_CACHE)))
+                _ANCHOR_EMBEDDINGS_CACHE[embedder_key] = self._anchor_embeddings
 
     def _calculate_semantic_scores(self, query: str) -> dict[str, float]:
         """Compute per-intent semantic scores via cosine similarity to anchor embeddings.

@@ -138,8 +138,8 @@ class TestCommunityStageDetectionEnabled:
         community_map = {"f.py:1-5:function:a": 0}
         call_order = []
 
-        summary_stage.compute_community_summaries.side_effect = (
-            lambda *a, **kw: call_order.append("phase1") or []
+        summary_stage.compute_community_summaries.side_effect = lambda *a, **kw: (
+            call_order.append("phase1") or []
         )
 
         with patch("search.community_stage.CommunityDetector") as mock_detector_cls:
@@ -147,8 +147,8 @@ class TestCommunityStageDetectionEnabled:
                 community_map
             )
             with patch("chunking.languages.base.LanguageChunker") as mock_lc:
-                mock_lc.remerge_chunks_with_communities.side_effect = (
-                    lambda **kw: call_order.append("remerge") or chunks
+                mock_lc.remerge_chunks_with_communities.side_effect = lambda **kw: (
+                    call_order.append("remerge") or chunks
                 )
                 stage.run(chunks, "/project", config)
 

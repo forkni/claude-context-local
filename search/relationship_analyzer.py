@@ -223,7 +223,9 @@ class RelationshipAnalyzer:
         Inbound entries  → reverse fields (child_classes, used_as_type_in, …).
         'calls' edges are handled separately (direct/indirect callers) and skipped here.
         """
-        from graph.relationship_types import get_relationship_field_mapping
+        from chunking.relationships.relationship_types import (
+            get_relationship_field_mapping,
+        )
 
         field_mapping = get_relationship_field_mapping()
 
@@ -457,30 +459,71 @@ class RelationshipAnalyzer:
                 raise SearchError(f"Chunk not found: {chunk_id}")
             return result, chunk_id
 
+        # Tier 1: O(1) exact symbol-cache lookup (populated by indexer for all indexed chunks)
+        if self.symbol_cache:
+            cid = self.symbol_cache.get_by_symbol_name(symbol_name)
+            if cid:
+                result = self.searcher.get_by_chunk_id(cid)
+                if result:
+                    logger.debug(
+                        f"[RESOLVE] symbol='{symbol_name}' → '{cid}' (symbol_cache)"
+                    )
+                    return result, cid
+
+        # Tier 2: graph exact-name lookup — resolves names not yet in the symbol cache.
+        # GraphQueryEngine stores CodeGraphStorage as .storage (graph_queries.py).
+        graph_storage = None
+        if self.graph_engine is not None:
+            graph_storage = getattr(self.graph_engine, "storage", None)
+        if graph_storage is None and hasattr(self.searcher, "dense_index"):
+            graph_storage = getattr(self.searcher.dense_index, "graph_storage", None)
+
+        if graph_storage is not None and hasattr(graph_storage, "get_nodes_by_name"):
+            matches = graph_storage.get_nodes_by_name(symbol_name)
+            if not matches:
+                # Suffix scan: ":<name>" (bare) or ".<name>" (class-qualified method,
+                # e.g. chunk_id "...StorageManager.get_project_storage_dir" ends with ".name")
+                matches = [
+                    n
+                    for n in graph_storage.graph.nodes()
+                    if n.endswith(f":{symbol_name}") or n.endswith(f".{symbol_name}")
+                ]
+            # Try each match in order — a large method may only be present in the
+            # vector index as split_block chunks, not as the original method node.
+            for cid in matches:
+                result = self.searcher.get_by_chunk_id(cid)
+                if result:
+                    logger.debug(
+                        f"[RESOLVE] symbol='{symbol_name}' → '{cid}' (graph_lookup)"
+                    )
+                    return result, cid
+
+        # Tier 3: semantic search fallback — only when both exact tiers miss.
         filters = {"exclude_dirs": exclude_dirs} if exclude_dirs else None
         results = self.searcher.search(symbol_name, k=30, filters=filters)
         if not results:
             raise SearchError(f"Symbol not found: {symbol_name}")
 
-        type_priority = {
-            "class": 0,
-            "type_definition": 1,
-            "interface": 2,
-            "struct": 3,
-            "enum": 4,
-            "trait": 5,
-            "function": 6,
-            "decorated_definition": 7,
-            "method": 8,
-        }
+        # Name-match: bare name OR class-qualified last segment (e.g. "Foo.bar")
+        def _name_matches(r: Any) -> bool:
+            last_seg = r.chunk_id.split(":")[-1] if hasattr(r, "chunk_id") else ""
+            return last_seg == symbol_name or last_seg.split(".")[-1] == symbol_name
 
-        matching = [
-            r
-            for r in results
-            if (r.chunk_id.split(":")[-1] if hasattr(r, "chunk_id") else "")
-            == symbol_name
-        ]
+        matching = [r for r in results if _name_matches(r)]
         candidates = matching if matching else results
+
+        # Prefer definitions (function/method) over container classes
+        type_priority = {
+            "function": 0,
+            "decorated_definition": 1,
+            "method": 2,
+            "class": 3,
+            "interface": 4,
+            "struct": 5,
+            "enum": 6,
+            "trait": 7,
+            "type_definition": 8,
+        }
 
         def _priority(r: Any) -> int:
             if hasattr(r, "metadata"):
@@ -500,7 +543,7 @@ class RelationshipAnalyzer:
         target_id = target_result.chunk_id
         logger.debug(
             f"[RESOLVE] symbol='{symbol_name}' → chunk_id='{target_id}' "
-            f"(from {len(candidates)} candidates)"
+            f"(semantic, from {len(candidates)} candidates)"
         )
         return target_result, target_id
 
@@ -577,7 +620,9 @@ class RelationshipAnalyzer:
         graph_relationships: dict[str, list[dict[str, Any]]],
         relationship_types: list[str],
     ) -> dict[str, list[dict[str, Any]]]:
-        from graph.relationship_types import get_relationship_field_mapping
+        from chunking.relationships.relationship_types import (
+            get_relationship_field_mapping,
+        )
 
         field_mapping = get_relationship_field_mapping()
         allowed: set[str] = set()

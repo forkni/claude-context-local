@@ -9,10 +9,16 @@ Tests:
 
 import pytest
 
-from graph.relationship_extractors.import_extractor import ImportExtractor
-from graph.relationship_extractors.inheritance_extractor import InheritanceExtractor
-from graph.relationship_extractors.type_extractor import TypeAnnotationExtractor
-from graph.relationship_types import RelationshipType
+from chunking.relationships.relationship_extractors.import_extractor import (
+    ImportExtractor,
+)
+from chunking.relationships.relationship_extractors.inheritance_extractor import (
+    InheritanceExtractor,
+)
+from chunking.relationships.relationship_extractors.type_extractor import (
+    TypeAnnotationExtractor,
+)
+from chunking.relationships.relationship_types import RelationshipType
 
 
 # ===== Test Fixtures =====

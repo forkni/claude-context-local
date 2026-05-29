@@ -19,8 +19,8 @@ Priority 2:
 import pytest
 
 from chunking.multi_language_chunker import MultiLanguageChunker
+from chunking.relationships.relationship_types import RelationshipType
 from embeddings.embedder import CodeEmbedder
-from graph.relationship_types import RelationshipType
 from search.indexer import CodeIndexManager
 
 
