@@ -336,6 +336,40 @@ class TestCodeGraphStorage:
         assert len(graph_storage) == 0
         assert graph_storage.graph.number_of_edges() == 0
 
+    def test_clear_persists_to_disk(
+        self, graph_storage: CodeGraphStorage, temp_storage_dir: Path
+    ) -> None:
+        """clear() must remove the backing JSON so re-initialization starts empty.
+
+        Regression test for the phantom-node bug: without deleting the JSON file,
+        a new CodeGraphStorage over the same directory would reload stale phantom
+        nodes (e.g. deleted methods) that survived a full re-index.
+        """
+        # Arrange: add a node and persist it to disk
+        graph_storage.add_node(
+            chunk_id="test_file.py:1-10:function:my_func",
+            name="my_func",
+            chunk_type="function",
+            file_path="test_file.py",
+        )
+        graph_storage.save()
+        assert graph_storage.graph_path.exists(), "JSON file must exist after save()"
+
+        # Act: clear (must delete the backing file)
+        graph_storage.clear()
+
+        # Assert: file is gone from disk
+        assert not graph_storage.graph_path.exists(), (
+            "clear() must delete the backing JSON file"
+        )
+
+        # Assert: fresh instance over the same directory starts empty (no phantom reload)
+        fresh = CodeGraphStorage(
+            project_id="test_project", storage_dir=temp_storage_dir
+        )
+        assert len(fresh) == 0, "Fresh instance after clear() must have 0 nodes"
+        assert fresh.graph.number_of_edges() == 0
+
     def test_get_stats(self, graph_storage):
         """Test getting graph statistics."""
         # Add some data
