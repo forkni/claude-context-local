@@ -147,7 +147,7 @@ def test_convergence_failure_returns_empty_scores():
     )
 
     ranker = CentralityRanker(engine, method="pagerank", alpha=0.3)
-    scores = ranker._get_centrality_scores()
+    scores = ranker.get_centrality_scores()
 
     assert scores == {}
 
@@ -160,7 +160,7 @@ def test_generic_exception_returns_empty_scores():
     engine.compute_centrality = MagicMock(side_effect=RuntimeError("Test error"))
 
     ranker = CentralityRanker(engine, method="pagerank", alpha=0.3)
-    scores = ranker._get_centrality_scores()
+    scores = ranker.get_centrality_scores()
 
     assert scores == {}
 
