@@ -3,6 +3,7 @@
 Handlers for creating, updating, and clearing code indices.
 """
 
+import gc
 import json
 import logging
 from datetime import datetime
@@ -291,6 +292,86 @@ def _clear_index_files_before_create(index_dir: Path) -> None:
             logger.warning(f"[PRE-CLEAR] Could not delete call graph: {e}")
 
 
+def _release_gpu_memory() -> None:
+    """Release GPU memory and run garbage collection.
+
+    Calls :func:`gc.collect` unconditionally, then clears the PyTorch CUDA cache if
+    available.  Safe to call when CUDA/torch is not installed — the :exc:`ImportError`
+    is silently swallowed.  This is the single source of truth for the GPU-memory
+    release ritual that appears in per-model indexing and cleanup paths.
+    """
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+    except ImportError:
+        pass
+
+
+def _invalidate_config_caches() -> None:
+    """Invalidate all process-wide config caches after a model switch.
+
+    Must be called after writing an updated config to disk so that the next
+    :func:`get_config` call reads the new values instead of returning stale ones.
+    Clears three caches in order:
+
+    1. ``search.config._config_manager`` (module-level singleton)
+    2. ``ServiceLocator`` config entry (forces reload on next access)
+    3. ``state.reset_for_model_switch()`` (clears embedders, index_manager, searcher)
+    """
+    from search import config as config_module
+
+    config_module._config_manager = None
+
+    from mcp_server.services import ServiceLocator
+
+    ServiceLocator.instance().invalidate("config")
+
+    state = get_state()
+    state.reset_for_model_switch()
+
+
+def _switch_active_model(model_key: str, model_name: str) -> None:
+    """Update the active embedding model in the persisted config and invalidate caches.
+
+    Loads the current config, sets ``embedding.model_name`` and the matching
+    ``embedding.dimension`` from :data:`MODEL_REGISTRY`, saves to disk only when
+    something changed, then calls :func:`_invalidate_config_caches` so the next
+    :func:`get_config` call returns fresh values.
+
+    Args:
+        model_key: Pool key (e.g. ``"qwen3_0.6b"``), unused here but passed for logging.
+        model_name: Full HuggingFace model identifier to activate.
+    """
+    config_mgr = SearchConfigManager()
+    config = config_mgr.load_config()
+    new_dimension = config.embedding.dimension
+    if model_name in MODEL_REGISTRY:
+        model_cfg = MODEL_REGISTRY[model_name]
+        new_dimension = model_cfg.get("truncate_dim") or model_cfg["dimension"]
+
+    if (
+        config.embedding.model_name != model_name
+        or config.embedding.dimension != new_dimension
+    ):
+        config.embedding.model_name = model_name
+        # pyrefly: ignore [bad-assignment]
+        config.embedding.dimension = new_dimension
+        config_mgr.save_config(config)
+    else:
+        logger.info(
+            f"Config already set to {model_name} ({new_dimension}d), skipping save"
+        )
+        config.embedding.model_name = model_name
+        # pyrefly: ignore [bad-assignment]
+        config.embedding.dimension = new_dimension
+
+    _invalidate_config_caches()
+
+
 def _index_with_all_models(
     directory_path: Path, incremental: bool, include_dirs=None, exclude_dirs=None
 ) -> list[dict]:
@@ -322,61 +403,10 @@ def _index_with_all_models(
             logger.info(f"Indexing with model: {model_name} ({model_key})")
 
             # Switch to this model temporarily
-            config_mgr = SearchConfigManager()
-            config = config_mgr.load_config()
-            new_model_name = model_name
-            new_dimension = config.embedding.dimension
-
-            # Update dimension from registry
-            if model_name in MODEL_REGISTRY:
-                model_cfg = MODEL_REGISTRY[model_name]
-                # Use truncate_dim if MRL is enabled, otherwise use native dimension
-                new_dimension = model_cfg.get("truncate_dim") or model_cfg["dimension"]
-
-            # Only write to disk if something actually changed
-            if (
-                config.embedding.model_name != new_model_name
-                or config.embedding.dimension != new_dimension
-            ):
-                config.embedding.model_name = new_model_name
-                # pyrefly: ignore [bad-assignment]
-                config.embedding.dimension = new_dimension
-                config_mgr.save_config(config)
-            else:
-                logger.info(
-                    f"Config already set to {new_model_name} ({new_dimension}d), skipping save"
-                )
-                config.embedding.model_name = new_model_name
-                # pyrefly: ignore [bad-assignment]
-                config.embedding.dimension = new_dimension
-
-            # Invalidate global config cache to force reload from disk
-            from search import config as config_module
-
-            config_module._config_manager = None
-
-            # Invalidate ServiceLocator's cached config to ensure correct snapshot naming
-            from mcp_server.services import ServiceLocator
-
-            locator = ServiceLocator.instance()
-            locator.invalidate("config")  # Force config reload with new model settings
-
-            # Clear cached components including embedders to release GPU memory
-            state = get_state()
-            state.reset_for_model_switch()  # Clears embedders + index_manager + searcher
+            _switch_active_model(model_key, model_name)
 
             # Force garbage collection and GPU memory release
-            import gc
-
-            gc.collect()
-            try:
-                import torch
-
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    torch.cuda.synchronize()
-            except ImportError:
-                pass
+            _release_gpu_memory()
 
             # Get project storage for this model
             project_dir = get_project_storage_dir(
