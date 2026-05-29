@@ -244,6 +244,11 @@ def test_detect_indexed_model_reads_project_info_cross_pool(tmp_path):
         )
     )
 
+    # Create a storage dir with code.index so the existence check passes
+    index_dir = tmp_path / "storage" / "index"
+    index_dir.mkdir(parents=True)
+    (index_dir / "code.index").write_bytes(b"")
+
     # Lazy imports inside _detect_indexed_model are resolved at call time from
     # their source modules — patch there, not on config_handlers.
     with (
@@ -255,9 +260,71 @@ def test_detect_indexed_model_reads_project_info_cross_pool(tmp_path):
             "mcp_server.model_pool_manager.get_model_key_from_name",
             return_value="qwen3_0.6b",
         ),
+        patch(
+            "mcp_server.tools.config_handlers.get_project_storage_dir",
+            return_value=tmp_path / "storage",
+        ),
     ):
         result = _detect_indexed_model(str(project_path))
 
+    assert result == "qwen3_0.6b"
+
+
+def test_detect_indexed_model_skips_stale_project_info_without_index(tmp_path):
+    """When project_info.json exists but its model has no code.index, the function
+    falls through to the active-pool directory scan instead of returning that model.
+
+    Regression test: bge-m3 had project_info.json but no index/ directory after a
+    force re-index with qwen3 only — previously caused indexed:false in switch_project.
+    """
+    project_path = tmp_path / "myproject"
+    project_path.mkdir()
+
+    # Stale project_info.json (bge_m3) — exists but has no index
+    stale_info = tmp_path / "stale_info.json"
+    stale_info.write_text(
+        json.dumps({"embedding_model": "BAAI/bge-m3", "model_dimension": 1024})
+    )
+
+    # A qwen3 storage dir that DOES have code.index (the real index)
+    qwen3_storage = tmp_path / "qwen3_storage"
+    (qwen3_storage / "index").mkdir(parents=True)
+    (qwen3_storage / "index" / "code.index").write_bytes(b"")
+
+    # bge_m3 storage dir has NO code.index — just project_info.json
+    bge_m3_storage = tmp_path / "bge_m3_storage"
+    bge_m3_storage.mkdir()
+
+    call_count = []
+
+    def fake_get_storage_dir(path, model_key=None):
+        call_count.append(model_key)
+        if model_key == "bge_m3":
+            return bge_m3_storage
+        return qwen3_storage
+
+    with (
+        patch(
+            "mcp_server.storage_manager.get_canonical_project_info",
+            return_value=stale_info,
+        ),
+        patch(
+            "mcp_server.model_pool_manager.get_model_key_from_name",
+            return_value="bge_m3",
+        ),
+        patch("mcp_server.model_pool_manager.get_model_pool_manager") as mock_pool_mgr,
+        patch(
+            "mcp_server.tools.config_handlers.get_project_storage_dir",
+            side_effect=fake_get_storage_dir,
+        ),
+    ):
+        # Active pool contains qwen3_0.6b (the one with the real index)
+        mock_pool_mgr.return_value.get_pool_config.return_value = {
+            "qwen3_0.6b": "Qwen/Qwen3-Embedding-0.6B"
+        }
+        result = _detect_indexed_model(str(project_path))
+
+    # Should fall through to dir scan and find qwen3 (not return bge_m3)
     assert result == "qwen3_0.6b"
 
 

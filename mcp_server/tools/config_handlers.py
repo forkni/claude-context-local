@@ -57,8 +57,15 @@ def _detect_indexed_model(project_path: str) -> str | None:
             if stored_model_name:
                 model_key = get_model_key_from_name(stored_model_name)
                 if model_key:
-                    logger.info(f"Detected indexed model for project: {model_key}")
-                    return model_key
+                    # Verify this model's index actually exists before committing to it.
+                    # A project_info.json can exist for a model whose index was later
+                    # cleared or never fully built (only the metadata file was written).
+                    project_dir = get_project_storage_dir(
+                        project_path, model_key=model_key
+                    )
+                    if (project_dir / "index" / "code.index").exists():
+                        logger.info(f"Detected indexed model for project: {model_key}")
+                        return model_key
         except Exception as e:
             logger.warning(f"Failed to read project_info.json at {info_path}: {e}")
 
