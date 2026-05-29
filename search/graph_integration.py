@@ -15,7 +15,7 @@ except ImportError:
     GRAPH_STORAGE_AVAILABLE = False
     CodeGraphStorage = None
 
-from graph.relationship_types import RelationshipEdge, RelationshipType
+from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
 
 
 def is_chunk_id(node_id: str) -> bool:

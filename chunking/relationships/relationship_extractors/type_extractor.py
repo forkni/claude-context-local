@@ -13,8 +13,10 @@ Complexity: Medium (recursive type extraction from complex annotations)
 import ast
 from typing import Any
 
-from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
-from graph.relationship_types import RelationshipEdge, RelationshipType
+from chunking.relationships.relationship_extractors.base_extractor import (
+    BaseRelationshipExtractor,
+)
+from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
 
 
 class TypeAnnotationExtractor(BaseRelationshipExtractor):

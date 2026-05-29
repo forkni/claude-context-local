@@ -6,8 +6,8 @@ Tests the extraction and resolution of types from local variable assignments.
 
 import ast
 
-from graph.call_graph_extractor import PythonCallGraphExtractor
-from graph.resolvers import AssignmentTracker
+from chunking.relationships.call_graph_extractor import PythonCallGraphExtractor
+from chunking.relationships.resolvers import AssignmentTracker
 
 
 class TestSimpleAssignmentTracking:

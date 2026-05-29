@@ -17,7 +17,7 @@ from utils.path_utils import normalize_path
 
 
 if TYPE_CHECKING:
-    from graph.relationship_types import RelationshipEdge
+    from chunking.relationships.relationship_types import RelationshipEdge
 
 try:
     import networkx as nx
@@ -251,7 +251,7 @@ class CodeGraphStorage:
             edge: RelationshipEdge object with all relationship data
 
         Example:
-            >>> from graph.relationship_types import RelationshipEdge, RelationshipType
+            >>> from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
             >>> edge = RelationshipEdge(
             ...     source_id="child.py:1-10:class:Child",
             ...     target_name="Parent",

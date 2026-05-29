@@ -223,7 +223,9 @@ class RelationshipAnalyzer:
         Inbound entries  → reverse fields (child_classes, used_as_type_in, …).
         'calls' edges are handled separately (direct/indirect callers) and skipped here.
         """
-        from graph.relationship_types import get_relationship_field_mapping
+        from chunking.relationships.relationship_types import (
+            get_relationship_field_mapping,
+        )
 
         field_mapping = get_relationship_field_mapping()
 
@@ -618,7 +620,9 @@ class RelationshipAnalyzer:
         graph_relationships: dict[str, list[dict[str, Any]]],
         relationship_types: list[str],
     ) -> dict[str, list[dict[str, Any]]]:
-        from graph.relationship_types import get_relationship_field_mapping
+        from chunking.relationships.relationship_types import (
+            get_relationship_field_mapping,
+        )
 
         field_mapping = get_relationship_field_mapping()
         allowed: set[str] = set()

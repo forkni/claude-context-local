@@ -6,8 +6,8 @@ Tests edge-type weighted BFS implementation for Phase 1.
 
 import pytest
 
+from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
 from graph.graph_storage import DEFAULT_EDGE_WEIGHTS, CodeGraphStorage
-from graph.relationship_types import RelationshipEdge, RelationshipType
 
 
 @pytest.fixture

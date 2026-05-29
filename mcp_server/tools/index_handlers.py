@@ -90,7 +90,7 @@ def _create_indexer_for_model(
     Returns:
         tuple: (indexer, embedder, chunker)
     """
-    from graph.relation_filter import RepositoryRelationFilter
+    from chunking.relationships.relation_filter import RepositoryRelationFilter
 
     config = get_config()
 

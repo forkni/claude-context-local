@@ -13,12 +13,14 @@ Complexity: Medium (handling relative imports, aliases, star imports)
 import ast
 from typing import TYPE_CHECKING, Any, Optional
 
-from graph.relationship_extractors.base_extractor import BaseRelationshipExtractor
-from graph.relationship_types import RelationshipEdge, RelationshipType
+from chunking.relationships.relationship_extractors.base_extractor import (
+    BaseRelationshipExtractor,
+)
+from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
 
 
 if TYPE_CHECKING:
-    from graph.relation_filter import RepositoryRelationFilter
+    from chunking.relationships.relation_filter import RepositoryRelationFilter
 
 
 class ImportExtractor(BaseRelationshipExtractor):

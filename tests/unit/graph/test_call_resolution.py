@@ -9,7 +9,7 @@ This enables accurate call graph construction by disambiguating
 method calls within classes.
 """
 
-from graph.call_graph_extractor import PythonCallGraphExtractor
+from chunking.relationships.call_graph_extractor import PythonCallGraphExtractor
 
 
 class TestSelfCallResolution:

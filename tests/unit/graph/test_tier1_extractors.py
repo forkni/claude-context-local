@@ -8,14 +8,16 @@ and context manager usage.
 
 import pytest
 
-from graph.relationship_extractors.class_attr_extractor import ClassAttributeExtractor
-from graph.relationship_extractors.context_manager_extractor import (
+from chunking.relationships.relationship_extractors.class_attr_extractor import (
+    ClassAttributeExtractor,
+)
+from chunking.relationships.relationship_extractors.context_manager_extractor import (
     ContextManagerExtractor,
 )
-from graph.relationship_extractors.dataclass_field_extractor import (
+from chunking.relationships.relationship_extractors.dataclass_field_extractor import (
     DataclassFieldExtractor,
 )
-from graph.relationship_types import RelationshipType
+from chunking.relationships.relationship_types import RelationshipType
 
 
 class TestClassAttributeExtractor:

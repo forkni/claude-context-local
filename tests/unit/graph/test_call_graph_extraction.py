@@ -11,7 +11,7 @@ Tests Python call graph extraction from AST, covering:
 
 import pytest
 
-from graph.call_graph_extractor import (
+from chunking.relationships.call_graph_extractor import (
     CallEdge,
     CallGraphExtractorFactory,
     PythonCallGraphExtractor,
