@@ -43,14 +43,16 @@
 
 **Status**: ✅ Production-ready | 2,086+ passing tests | All 19 MCP tools operational | Windows 10/11
 
-## What's New in v0.11.10
+## What's New in v0.12.3
 
-- **Workstation tier → single-model + reranker** — Qwen3-0.6B (1024d, ~2.5 GB VRAM), `multi_model_enabled=false`, `multi_model_pool=null`. Eliminates OOM headroom concerns on 24 GB cards; baseline MRR 0.94 unchanged.
-- **Pool key disambiguation** — key renamed `qwen3` → `qwen3_0.6b` (parameter-specific), stopping the 4B/0.6B query-vs-index dimension mismatch.
-- **Auto-reindex loop fix** — `search_config.json` mtime changes no longer trigger an immediate re-index on every request.
-- **Config env-var precedence fix** — explicit `multi_model_enabled: false` in `search_config.json` now correctly wins over `CLAUDE_MULTI_MODEL_ENABLED`.
-- **Phase-A model-comparison harness** — `scripts/benchmark/compare_models.py` + `compare_models.sh` for side-by-side SSCG evaluation of multiple embedding models.
-- **Golden-dataset corrections + k=7 benchmark** — label fixes for Q01/Q05/Q19; SSCG re-run at k=7: MRR 0.806, Recall@5 0.646, Hit@7 100% (+0.203 MRR vs pre-fix baseline).
+- **Broken `chunking ↔ graph` import cycle** — the extraction cluster (`relationship_extractors/`, `call_graph_extractor`, `relationship_types`, `relation_filter`, `resolvers/`) relocated from `graph/` into `chunking/relationships/`. `chunking/` now imports nothing from `graph/`; the only remaining edge is the architecturally correct `graph → chunking` direction. Zero behaviour change — `chunk_file` still populates `chunk.calls`/`chunk.relationships` inline.
+- **StreamableHTTP transport** (v0.12.0) — migrated from legacy SSE (`SseServerTransport`, two-endpoint) to `StreamableHTTPSessionManager` (stateless, single `/mcp` endpoint). Client config: `{"type": "http", "url": "http://localhost:8765/mcp"}`.
+- **`_full_index` decomposed into named pipeline stages** — `SummaryStage`, `CommunityStage`, `IndexWriteStage`, `CommunityRefreshStage` extracted from the former 312-line god-method. Incremental and full-index paths now share the same stage idiom.
+- **20+ helper extractions** — `_release_gpu_memory`, `_invalidate_config_caches`, `_switch_active_model`, `_assign_community_ids`, `_to_treesitter_chunks`, `_from_treesitter_chunks`, `_zero_result`, `_restore_repo_profile`, `_check_community_drift`, `_iter_matching_neighbors`, and others extracted across `IncrementalIndexer`, `HybridSearcher`, `CentralityRanker`, and `RelationshipAnalyzer`.
+- **`SearchOrchestrator` introduced** — `handle_search_code` thinned to a coordinator; planning, execution, and assembly extracted into `SearchOrchestrator` (Phases A–D).
+- **`SearchConfig` de/serialization unified** — single source of truth; eliminates the prior scattered per-field round-trip.
+- **Default model → Qwen3-0.6B** — `search_config.json` updated; `multi_model_enabled=false`, `use_onnx=false`, `max_chunking_workers=8`.
+- **2,319 unit tests** passing (up from 1,682 at v0.11.x baseline).
 
 Previous release notes: [CHANGELOG.md](CHANGELOG.md)
 
