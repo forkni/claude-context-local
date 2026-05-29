@@ -29,7 +29,7 @@
 ## Highlights
 
 - **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-05-25, 13 queries, k=7): **Hit@7 100%, MRR 0.806, Recall@7 0.700 (recommended k=7)** - [benchmarks](docs/BENCHMARKS.md)
-- **Neural Reranking**: Cross-encoder models (gte-reranker-modernbert-base OR BGE-reranker-v2-m3 OR Jina-reranker-v2) improve ranking quality by 5-15% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
+- **Neural Reranking**: Cross-encoder models (default: `jinaai/jina-reranker-v3`; alternatives: BGE-reranker-v2-m3, gte-reranker-modernbert-base) improve ranking quality by 5-15% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
 - **SSCG Integration**: Structural-Semantic Code Graph — on the [SSCG benchmark](#benchmark-results) (2026-04-10, 13 queries, k=10; cutoffs @5/@10): **13/13 Hit@5 across all three modes (hybrid, BM25, semantic); BM25 MRR=0.846 (best overall)**
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
 - **Multi-Model Routing**: Intelligent query routing (Qwen3, BGE-M3, CodeRankEmbed) with 100% accuracy - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md)
@@ -41,18 +41,19 @@
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
 - **File-Role Tagging**: Chunks tagged `role:src/test/doc/config` at index time — enables role-aware ranking and precision boosts
 
-**Status**: ✅ Production-ready | 2,086+ passing tests | All 19 MCP tools operational | Windows 10/11
+**Status**: ✅ Production-ready | 2,318+ passing tests | All 19 MCP tools operational | Windows 10/11
 
-## What's New in v0.12.3
+## What's New in v0.12.4
 
-- **Broken `chunking ↔ graph` import cycle** — the extraction cluster (`relationship_extractors/`, `call_graph_extractor`, `relationship_types`, `relation_filter`, `resolvers/`) relocated from `graph/` into `chunking/relationships/`. `chunking/` now imports nothing from `graph/`; the only remaining edge is the architecturally correct `graph → chunking` direction. Zero behaviour change — `chunk_file` still populates `chunk.calls`/`chunk.relationships` inline.
-- **StreamableHTTP transport** (v0.12.0) — migrated from legacy SSE (`SseServerTransport`, two-endpoint) to `StreamableHTTPSessionManager` (stateless, single `/mcp` endpoint). Client config: `{"type": "http", "url": "http://localhost:8765/mcp"}`.
-- **`_full_index` decomposed into named pipeline stages** — `SummaryStage`, `CommunityStage`, `IndexWriteStage`, `CommunityRefreshStage` extracted from the former 312-line god-method. Incremental and full-index paths now share the same stage idiom.
-- **20+ helper extractions** — `_release_gpu_memory`, `_invalidate_config_caches`, `_switch_active_model`, `_assign_community_ids`, `_to_treesitter_chunks`, `_from_treesitter_chunks`, `_zero_result`, `_restore_repo_profile`, `_check_community_drift`, `_iter_matching_neighbors`, and others extracted across `IncrementalIndexer`, `HybridSearcher`, `CentralityRanker`, and `RelationshipAnalyzer`.
-- **`SearchOrchestrator` introduced** — `handle_search_code` thinned to a coordinator; planning, execution, and assembly extracted into `SearchOrchestrator` (Phases A–D).
-- **`SearchConfig` de/serialization unified** — single source of truth; eliminates the prior scattered per-field round-trip.
-- **Default model → Qwen3-0.6B** — `search_config.json` updated; `multi_model_enabled=false`, `use_onnx=false`, `max_chunking_workers=8`.
-- **2,319 unit tests** passing (up from 1,682 at v0.11.x baseline).
+- **`switch_project` no longer logs "No indexed model detected"** — `_detect_indexed_model` now reads `project_info.json` (pool-agnostic) before falling back to the active-pool scan, correctly resolving models from any pool (e.g. `qwen3_0.6b` is found even when the active pool is `lightweight-speed`).
+- **`list_embedding_models` `loaded` field fixed** — was always `false` due to a pool-scoped reverse-lookup + `None`-slot false-positive; now accurately reports which models are in VRAM.
+- **`CodeGraphStorage.clear()` deletes backing JSON** — prevents stale phantom nodes from surviving a full reindex and emitting "Chunk not found" warnings in relationship queries.
+- **`GraphScoringStage` extracted** — centrality scoring, SSCG subgraph extraction, and the k×4 cap are encapsulated as `search/graph_scoring_stage.py`; `SearchOrchestrator._assemble` reduced to a 3-call sequence.
+- **`ServiceLocator` DI container removed** (ADR-0005) — `ResourceManager`/`SearchFactory` wrapper classes and the auto-registration loop deleted; all accessors are now plain module-level functions.
+- **Security**: idna 3.11 → 3.17 (CVE-2026-45409).
+- **2,318 unit tests** passing.
+
+**Previous (v0.12.3)**: Broken `chunking ↔ graph` import cycle — extraction cluster relocated from `graph/` into `chunking/relationships/`; `SearchOrchestrator` introduced (Phases A–D); 20+ helper extractions across `IncrementalIndexer`, `CentralityRanker`, `RelationshipAnalyzer`; default model → Qwen3-0.6B.
 
 Previous release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -350,9 +351,9 @@ Weights should sum to 1.0.
 
 | Model | VRAM | Best For |
 |-------|------|----------|
-| **BGE-M3** | 1-1.5GB | Production, hybrid search (recommended) |
-| **Qwen3-0.6B** | 2.3GB | High efficiency, excellent value |
-| **EmbeddingGemma-300m** | 4-8GB | Fast, lightweight (low-VRAM option) |
+| **Qwen3-0.6B** | 2.3GB | Default — high efficiency, excellent value |
+| **BGE-M3** | 1-1.5GB | Hybrid search, balanced quality/VRAM |
+| **EmbeddingGemma-300m** | ~1.2GB | Lightweight, low-VRAM systems |
 | **Multi-Model Routing** | 6.3GB | BGE-Code-v1 + Qwen3 |
 
 **Instant switching**: <150ms with no re-indexing required.
@@ -397,10 +398,10 @@ For automation and CI/CD, settings can be overridden via environment variables. 
 
 | Model | Dimensions | VRAM | Best For |
 |-------|------------|------|----------|
-| **EmbeddingGemma-300m** | 768 | 4-8GB | Fast, efficient, low-VRAM systems |
-| **BGE-M3** | 1024 | 8-16GB | Higher accuracy (+13.6% F1), production |
-| **Qwen3-0.6B** | 1024 | 2.3GB | Routing pool, high efficiency |
-| **CodeRankEmbed** | 768 | 2GB | Code-specific retrieval |
+| **Qwen3-0.6B** | 1024 | 2.3GB | Default — high efficiency, excellent value |
+| **BGE-M3** | 1024 | 1-1.5GB | Hybrid search, balanced quality/VRAM |
+| **EmbeddingGemma-300m** | 768 | ~1.2GB | Lightweight, low-VRAM systems |
+| **CodeRankEmbed** | 768 | 0.5-0.6GB | Code-specific retrieval |
 
 **Instant model switching**: <150ms with per-model index storage - no re-indexing needed!
 
@@ -411,15 +412,16 @@ For automation and CI/CD, settings can be overridden via environment variables. 
 ```
 claude-context-local/
 ├── chunking/          # Multi-language AST/tree-sitter parsing
+│   └── relationships/ # Call graph extraction & relationship extractors
 ├── embeddings/        # Model loading & embedding generation
-├── search/            # FAISS + BM25 hybrid search
+├── search/            # FAISS + BM25 hybrid search, graph-scoring stage
 ├── merkle/            # Incremental indexing with change detection
-├── graph/             # Call graph extraction & analysis
+├── graph/             # Graph storage, queries & community detection
 ├── mcp_server/        # MCP server implementation (19 tools)
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 2,086+ tests (unit + integration)
+└── tests/             # 2,318+ tests (unit + integration)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -522,7 +524,7 @@ The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic s
 
 ### Development
 
-- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (2,086+ passing)
+- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (2,318+ passing)
 - [Git Workflow](docs/GIT_WORKFLOW.md) - Contributing guidelines
 - [Version History](docs/VERSION_HISTORY.md) - Changelog
 
