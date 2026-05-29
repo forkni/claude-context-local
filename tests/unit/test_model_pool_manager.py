@@ -2,6 +2,9 @@
 
 Covers the fix for: index built with a model from pool A is silently discarded
 when the active pool switches to pool B (dimension mismatch → forced reindex).
+
+Also covers Block B (explicit override), Block C (multi-model lazy load), and the
+_load_pool_embedder private helper that deduplicates all three lazy-load blocks.
 """
 
 from unittest.mock import MagicMock, patch
@@ -225,3 +228,181 @@ class TestGetEmbedderCrossPool:
             "BAAI/bge-m3",
         ), "Without cross-pool, should use an active-pool model"
         assert result.model_name != "BAAI/bge-code-v1"
+
+
+# ---------------------------------------------------------------------------
+# Tests: Block B (explicit override) and Block C (multi-model lazy load)
+# ---------------------------------------------------------------------------
+
+
+class TestGetEmbedderOverride:
+    """Block B of get_embedder: explicit model_key in active pool loads it directly."""
+
+    def _make_fake_embedder(self, model_name: str):
+        emb = MagicMock()
+        emb.model_name = model_name
+        return emb
+
+    def _make_state_mock(self, embedders=None, *, multi_model_enabled=True):
+        state_mock = MagicMock()
+        state_mock.multi_model_enabled = multi_model_enabled
+        state_mock.embedders = embedders if embedders is not None else {}
+
+        def set_embedder(key, emb):
+            state_mock.embedders[key] = emb
+
+        state_mock.set_embedder.side_effect = set_embedder
+        return state_mock
+
+    def _patch_storage(self, mock_storage):
+        mock_storage.return_value = MagicMock()
+        mock_storage.return_value.__truediv__ = lambda self, other: MagicMock()
+
+    def test_override_explicit_model_key_loads_and_returns(self, caplog):
+        """Block B: explicit model_key in active pool constructs, registers, and returns it."""
+        import logging
+
+        from mcp_server import model_pool_manager as mpm
+
+        pool = MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED
+        mgr = _make_pool_manager_with_active_pool(pool)
+        first_key = next(iter(pool.keys()))
+        fake_model = self._make_fake_embedder(pool[first_key])
+        state_mock = self._make_state_mock()
+
+        with (
+            patch.object(mpm, "_model_pool_manager", mgr),
+            patch("mcp_server.model_pool_manager.get_state", return_value=state_mock),
+            patch(
+                "mcp_server.model_pool_manager.CodeEmbedder", return_value=fake_model
+            ) as mock_cls,
+            patch("mcp_server.model_pool_manager.get_storage_dir") as mock_storage,
+            caplog.at_level(logging.INFO, logger="mcp_server.model_pool_manager"),
+        ):
+            self._patch_storage(mock_storage)
+            result = mpm.get_embedder(first_key)
+
+        mock_cls.assert_called_once()
+        assert result is fake_model
+        assert any("[OVERRIDE]" in rec.message for rec in caplog.records)
+        assert any("explicit override" in rec.message for rec in caplog.records)
+
+    def test_override_falls_back_to_pool_model_on_load_failure(self):
+        """Block B: CodeEmbedder raises → falls back to an already-loaded pool model."""
+        from mcp_server import model_pool_manager as mpm
+
+        pool = MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED
+        mgr = _make_pool_manager_with_active_pool(pool)
+        first_key = next(iter(pool.keys()))
+        request_key = next(k for k in pool if k != first_key)  # any non-first key
+        fake_first = self._make_fake_embedder(pool[first_key])
+        state_mock = self._make_state_mock({first_key: fake_first})
+
+        with (
+            patch.object(mpm, "_model_pool_manager", mgr),
+            patch("mcp_server.model_pool_manager.get_state", return_value=state_mock),
+            patch(
+                "mcp_server.model_pool_manager.CodeEmbedder",
+                side_effect=RuntimeError("GPU OOM"),
+            ),
+            patch("mcp_server.model_pool_manager.get_storage_dir") as mock_storage,
+        ):
+            self._patch_storage(mock_storage)
+            result = mpm.get_embedder(request_key)
+
+        # Falls back to the first pool key, which is already loaded
+        assert result is fake_first
+
+    def test_override_raises_when_no_fallback_available(self):
+        """Block B: CodeEmbedder raises and no pool model is loaded → propagates."""
+        import pytest
+
+        from mcp_server import model_pool_manager as mpm
+
+        pool = MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED
+        mgr = _make_pool_manager_with_active_pool(pool)
+        first_key = next(iter(pool.keys()))
+        request_key = next(k for k in pool if k != first_key)
+        state_mock = self._make_state_mock()  # empty embedders — no fallback
+
+        with (
+            patch.object(mpm, "_model_pool_manager", mgr),
+            patch("mcp_server.model_pool_manager.get_state", return_value=state_mock),
+            patch(
+                "mcp_server.model_pool_manager.CodeEmbedder",
+                side_effect=RuntimeError("no GPU"),
+            ),
+            patch("mcp_server.model_pool_manager.get_storage_dir") as mock_storage,
+            pytest.raises(RuntimeError, match="no GPU"),
+        ):
+            self._patch_storage(mock_storage)
+            mpm.get_embedder(request_key)
+
+    def test_multimodel_first_load_emits_first_use_log(self, caplog):
+        """Block C: cold-start (empty embedders, model_key=None) emits [FIRST USE] and 'Ready' log."""
+        import logging
+
+        from mcp_server import model_pool_manager as mpm
+
+        pool = MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED
+        mgr = _make_pool_manager_with_active_pool(pool)
+        first_key = next(iter(pool.keys()))
+        fake_model = MagicMock()
+        state_mock = self._make_state_mock(
+            multi_model_enabled=True
+        )  # empty → cold start
+
+        mock_config = MagicMock()
+        mock_config.embedding.model_name = pool[first_key]  # maps to first_key
+
+        with (
+            patch.object(mpm, "_model_pool_manager", mgr),
+            patch("mcp_server.model_pool_manager.get_state", return_value=state_mock),
+            patch("mcp_server.model_pool_manager.get_config", return_value=mock_config),
+            patch(
+                "mcp_server.model_pool_manager.CodeEmbedder", return_value=fake_model
+            ),
+            patch("mcp_server.model_pool_manager.get_storage_dir") as mock_storage,
+            caplog.at_level(logging.INFO, logger="mcp_server.model_pool_manager"),
+        ):
+            self._patch_storage(mock_storage)
+            result = mpm.get_embedder()  # model_key=None → resolves from config
+
+        assert result is fake_model
+        assert any("[FIRST USE]" in rec.message for rec in caplog.records), (
+            "Cold-start load should emit a [FIRST USE] log"
+        )
+        assert any(
+            "Ready for fast searches" in rec.message for rec in caplog.records
+        ), "Cold-start success should log 'Ready for fast searches'"
+
+
+# ---------------------------------------------------------------------------
+# Tests: _load_pool_embedder private helper
+# ---------------------------------------------------------------------------
+
+
+class TestLoadPoolEmbedderHelper:
+    """Direct tests for the _load_pool_embedder private method."""
+
+    def test_idempotent_returns_cached_without_reconstructing(self):
+        """Already-loaded model_key returns the cached instance; CodeEmbedder not called."""
+        from pathlib import Path
+
+        existing = MagicMock()
+        state_mock = MagicMock()
+        state_mock.embedders = {"bge_m3": existing}
+
+        mgr = _make_pool_manager_with_active_pool(MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED)
+        with patch("mcp_server.model_pool_manager.CodeEmbedder") as mock_cls:
+            result = mgr._load_pool_embedder(
+                state_mock,
+                "bge_m3",
+                "BAAI/bge-m3",
+                Path("/tmp/models"),
+                allow_fallback=False,
+                exc_info=False,
+            )
+
+        mock_cls.assert_not_called()
+        assert result is existing
