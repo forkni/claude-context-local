@@ -9,6 +9,7 @@ import heapq
 import json
 import logging
 from collections import deque
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -391,62 +392,15 @@ class CodeGraphStorage:
 
             while queue:
                 current_id, depth = queue.popleft()
-
                 if depth >= max_depth:
                     continue
-
-                # Process outgoing edges (forward relationships)
-                for _, target, edge_data in self.graph.out_edges(current_id, data=True):
-                    edge_type = edge_data.get("relationship_type") or edge_data.get(
-                        "type"
-                    )
-
-                    # Check if this edge type is requested
-                    if edge_type and edge_type in relation_types:
-                        # Apply import category filtering if needed
-                        if (
-                            edge_type == "imports"
-                            and exclude_import_categories
-                            and self._should_exclude_edge(
-                                current_id, target, exclude_import_categories
-                            )
-                        ):
-                            continue
-
-                        if target not in visited:
-                            neighbors.add(target)
-                            visited.add(target)
-                            queue.append((target, depth + 1))
-
-                # Process incoming edges (reverse relationships)
-                for source, _, edge_data in self.graph.in_edges(current_id, data=True):
-                    edge_type = edge_data.get("relationship_type") or edge_data.get(
-                        "type"
-                    )
-
-                    # Convert to reverse type name (e.g., "calls" -> "called_by")
-                    reverse_type = (
-                        self._get_reverse_relation_type(edge_type)
-                        if edge_type
-                        else None
-                    )
-
-                    # Check if this reverse type is requested
-                    if reverse_type and reverse_type in relation_types:
-                        # Apply import category filtering if needed
-                        if (
-                            edge_type == "imports"
-                            and exclude_import_categories
-                            and self._should_exclude_edge(
-                                source, current_id, exclude_import_categories
-                            )
-                        ):
-                            continue
-
-                        if source not in visited:
-                            neighbors.add(source)
-                            visited.add(source)
-                            queue.append((source, depth + 1))
+                for neighbor, _edge_type in self._iter_matching_neighbors(
+                    current_id, relation_types, exclude_import_categories
+                ):
+                    if neighbor not in visited:
+                        neighbors.add(neighbor)
+                        visited.add(neighbor)
+                        queue.append((neighbor, depth + 1))
 
         else:
             # Weighted BFS using priority queue (higher weight = higher priority)
@@ -457,73 +411,75 @@ class CodeGraphStorage:
             visited = {normalized_chunk_id}
 
             while pq:
-                neg_weight, _, current_id, depth = heapq.heappop(pq)
-
+                _neg_weight, _, current_id, depth = heapq.heappop(pq)
                 if depth >= max_depth:
                     continue
-
-                # Process outgoing edges (forward relationships)
-                for _, target, edge_data in self.graph.out_edges(current_id, data=True):
-                    edge_type = edge_data.get("relationship_type") or edge_data.get(
-                        "type"
-                    )
-
-                    # Check if this edge type is requested
-                    if edge_type and edge_type in relation_types:
-                        # Apply import category filtering if needed
-                        if (
-                            edge_type == "imports"
-                            and exclude_import_categories
-                            and self._should_exclude_edge(
-                                current_id, target, exclude_import_categories
-                            )
-                        ):
-                            continue
-
-                        if target not in visited:
-                            neighbors.add(target)
-                            visited.add(target)
-
-                            # Get weight for this edge type (default 0.5 if not in dict)
-                            weight = edge_weights.get(edge_type, 0.5)
-                            counter += 1
-                            heapq.heappush(pq, (-weight, counter, target, depth + 1))
-
-                # Process incoming edges (reverse relationships)
-                for source, _, edge_data in self.graph.in_edges(current_id, data=True):
-                    edge_type = edge_data.get("relationship_type") or edge_data.get(
-                        "type"
-                    )
-
-                    # Convert to reverse type name (e.g., "calls" -> "called_by")
-                    reverse_type = (
-                        self._get_reverse_relation_type(edge_type)
-                        if edge_type
-                        else None
-                    )
-
-                    # Check if this reverse type is requested
-                    if reverse_type and reverse_type in relation_types:
-                        # Apply import category filtering if needed
-                        if (
-                            edge_type == "imports"
-                            and exclude_import_categories
-                            and self._should_exclude_edge(
-                                source, current_id, exclude_import_categories
-                            )
-                        ):
-                            continue
-
-                        if source not in visited:
-                            neighbors.add(source)
-                            visited.add(source)
-
-                            # Get weight for the forward edge type (not reverse)
-                            weight = edge_weights.get(edge_type, 0.5)
-                            counter += 1
-                            heapq.heappush(pq, (-weight, counter, source, depth + 1))
+                for neighbor, edge_type in self._iter_matching_neighbors(
+                    current_id, relation_types, exclude_import_categories
+                ):
+                    if neighbor not in visited:
+                        neighbors.add(neighbor)
+                        visited.add(neighbor)
+                        # Get weight for the forward edge type (not reverse)
+                        weight = edge_weights.get(edge_type, 0.5)
+                        counter += 1
+                        heapq.heappush(pq, (-weight, counter, neighbor, depth + 1))
 
         return neighbors
+
+    def _iter_matching_neighbors(
+        self,
+        current_id: str,
+        relation_types: list[str],
+        exclude_import_categories: list[str] | None,
+    ) -> Iterator[tuple[str, str]]:
+        """Yield ``(neighbor_id, edge_type)`` for each edge of ``current_id`` that matches.
+
+        Forward (outgoing) edges are yielded first, then reverse (incoming) edges — the
+        same order the BFS bodies in :meth:`get_neighbors` relied on.  ``edge_type`` is
+        always the *forward* (stored) relationship type, so callers can compute edge
+        weights from it (preserving the "weight for the forward edge type, not reverse"
+        invariant used by the weighted BFS).
+
+        This is the single source of truth for edge-type resolution, requested-type
+        matching, and the ``imports`` exclusion filter that was previously duplicated
+        across four blocks in :meth:`get_neighbors`.
+
+        Args:
+            current_id: The node whose edges are iterated.
+            relation_types: Accepted forward and reverse relation type names.
+            exclude_import_categories: If set, ``imports`` edges whose import category
+                is in this list are skipped (same semantics as :meth:`_should_exclude_edge`).
+        """
+        # Forward (outgoing) relationships — forward edge_type matched directly
+        for _, target, edge_data in self.graph.out_edges(current_id, data=True):
+            edge_type = edge_data.get("relationship_type") or edge_data.get("type")
+            if edge_type and edge_type in relation_types:
+                if (
+                    edge_type == "imports"
+                    and exclude_import_categories
+                    and self._should_exclude_edge(
+                        current_id, target, exclude_import_categories
+                    )
+                ):
+                    continue
+                yield target, edge_type
+        # Reverse (incoming) relationships — reverse type matched, forward type yielded
+        for source, _, edge_data in self.graph.in_edges(current_id, data=True):
+            edge_type = edge_data.get("relationship_type") or edge_data.get("type")
+            reverse_type = (
+                self._get_reverse_relation_type(edge_type) if edge_type else None
+            )
+            if reverse_type and reverse_type in relation_types:
+                if (
+                    edge_type == "imports"
+                    and exclude_import_categories
+                    and self._should_exclude_edge(
+                        source, current_id, exclude_import_categories
+                    )
+                ):
+                    continue
+                yield source, edge_type
 
     def _get_reverse_relation_type(self, relation_type: str) -> str:
         """

@@ -399,3 +399,56 @@ def test_get_neighbors_exclude_import_categories(graph_storage):
         exclude_import_categories=["stdlib"],
     )
     assert filtered_imports == {"local.py:1-10:module:local_module"}
+
+
+def test_exclude_import_categories_with_weighted_bfs(graph_storage):
+    """Import-category exclusion is applied by _iter_matching_neighbors for both BFS modes.
+
+    The weighted path previously had its own copy of the exclusion logic. This test
+    guards that _iter_matching_neighbors correctly filters categories when used by the
+    weighted BFS — i.e., the exclusion didn't get dropped during extraction.
+    """
+    nodes = [
+        ("test.py:1-10:module:module_a", "module_a", "module"),
+        ("stdlib.py:1-10:module:stdlib_module", "stdlib_module", "module"),
+        ("local.py:1-10:module:local_module", "local_module", "module"),
+    ]
+    for chunk_id, name, chunk_type in nodes:
+        graph_storage.add_node(
+            chunk_id=chunk_id, name=name, chunk_type=chunk_type, file_path="test.py"
+        )
+
+    graph_storage.graph.add_edge(
+        "test.py:1-10:module:module_a",
+        "stdlib.py:1-10:module:stdlib_module",
+        relationship_type="imports",
+        import_category="stdlib",
+    )
+    graph_storage.graph.add_edge(
+        "test.py:1-10:module:module_a",
+        "local.py:1-10:module:local_module",
+        relationship_type="imports",
+        import_category="local",
+    )
+
+    edge_weights = {"imports": 1.0}
+
+    # Weighted BFS without exclusion: both neighbors returned
+    all_imports = graph_storage.get_neighbors(
+        "test.py:1-10:module:module_a",
+        relation_types=["imports"],
+        edge_weights=edge_weights,
+    )
+    assert all_imports == {
+        "stdlib.py:1-10:module:stdlib_module",
+        "local.py:1-10:module:local_module",
+    }
+
+    # Weighted BFS with stdlib excluded: only local returned
+    filtered_imports = graph_storage.get_neighbors(
+        "test.py:1-10:module:module_a",
+        relation_types=["imports"],
+        exclude_import_categories=["stdlib"],
+        edge_weights=edge_weights,
+    )
+    assert filtered_imports == {"local.py:1-10:module:local_module"}
