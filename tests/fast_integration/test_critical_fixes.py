@@ -142,13 +142,15 @@ async def test_concurrent_search_weight_isolation():
 
     with (
         patch(
-            "mcp_server.tools.search_handlers.get_searcher", return_value=mock_searcher
+            "mcp_server.tools.search_orchestrator.get_searcher",
+            return_value=mock_searcher,
         ),
-        patch("mcp_server.tools.search_handlers.get_state") as mock_state,
-        patch("mcp_server.tools.search_handlers.get_config") as mock_app_cfg,
-        patch("mcp_server.tools.search_handlers.get_config_manager") as mock_cm,
-        patch("mcp_server.tools.search_handlers.get_search_config") as mock_cfg,
-        patch("mcp_server.tools.search_handlers.IntentClassifier") as mock_ic_cls,
+        patch("mcp_server.tools.search_orchestrator.get_state") as mock_state,
+        patch("mcp_server.tools.decorators.get_state") as mock_state_dec,
+        patch("mcp_server.tools.search_orchestrator.get_config") as mock_app_cfg,
+        patch("mcp_server.tools.search_orchestrator.get_config_manager") as mock_cm,
+        patch("mcp_server.tools.search_orchestrator.get_search_config") as mock_cfg,
+        patch("mcp_server.tools.search_orchestrator.IntentClassifier") as mock_ic_cls,
         patch(
             "mcp_server.tools.search_handlers._check_auto_reindex",
             return_value=(False, None),
@@ -156,6 +158,7 @@ async def test_concurrent_search_weight_isolation():
     ):
         mock_state.return_value.current_project = "/test"
         mock_state.return_value.searcher = None
+        mock_state_dec.return_value.current_project = "/test"
 
         mock_app_cfg.return_value = make_app_config_mock()
         mock_cfg.return_value = SearchConfig()

@@ -328,7 +328,7 @@ async def test_handle_get_search_config_status():
         mock_cfg.embedding.model_name = "BAAI/bge-m3"
         mock_config.return_value = mock_cfg
 
-        with patch("mcp_server.state.get_state") as mock_state:
+        with patch("mcp_server.tools.status_handlers.get_state") as mock_state:
             state = mock_state.return_value
             state.multi_model_enabled = True
             result = await tool_handlers.handle_get_search_config_status({})
