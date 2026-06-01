@@ -64,7 +64,12 @@ def get_indexed_projects() -> dict[tuple[str, str], set[str]]:
         Dict mapping (project_id, model_slug) to set of dimensions
         Example: {('abc123...', 'qwen3'): {'1024d'}, ('def456...', 'bge-m3'): {'768d', '1024d'}}
     """
-    storage_dir = Path.home() / ".claude_code_search" / "projects"
+    try:
+        from mcp_server.storage_manager import get_storage_dir
+
+        storage_dir = get_storage_dir() / "projects"
+    except Exception:
+        storage_dir = Path.home() / ".claude_code_search" / "projects"
     indexed = {}
 
     if not storage_dir.exists():

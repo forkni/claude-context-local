@@ -94,12 +94,12 @@ Test-ConfigField "Server has 'type' field" `
     -Condition ($null -ne $Server.type) `
     -ErrorMessage "Missing 'type' field (should be 'stdio')"
 
-# Test 6: Server type is valid (stdio or sse)
-$validTypes = @("stdio", "sse")
+# Test 6: Server type is valid (stdio or http)
+$validTypes = @("stdio", "http")
 $isValidType = $validTypes -contains $Server.type
-Test-ConfigField "Server type is valid (stdio or sse)" `
+Test-ConfigField "Server type is valid (stdio or http)" `
     -Condition $isValidType `
-    -ErrorMessage "Expected type='stdio' or 'sse', got '$($Server.type)'"
+    -ErrorMessage "Expected type='stdio' or 'http', got '$($Server.type)'"
 
 # Transport-specific validation
 if ($Server.type -eq "stdio") {
@@ -130,22 +130,22 @@ if ($Server.type -eq "stdio") {
             -ErrorMessage "Args must be an array, got type: $($Server.args.GetType().Name)"
     }
 }
-elseif ($Server.type -eq "sse") {
-    # Test 7b: SSE - Server has 'url' field
-    Test-ConfigField "Server has 'url' field (sse mode)" `
+elseif ($Server.type -eq "http") {
+    # Test 7b: HTTP - Server has 'url' field
+    Test-ConfigField "Server has 'url' field (http mode)" `
         -Condition ($null -ne $Server.url) `
-        -ErrorMessage "Missing 'url' field for SSE transport"
+        -ErrorMessage "Missing 'url' field for StreamableHTTP transport"
 
-    # Test 8b: SSE - URL is valid format
+    # Test 8b: HTTP - URL is valid format and ends with /mcp
     if ($Server.url) {
-        $urlIsValid = $Server.url -match "^https?://.+:\d+(/.*)?$"
-        Test-ConfigField "URL is valid format" `
+        $urlIsValid = $Server.url -match "^https?://.+:\d+/mcp$"
+        Test-ConfigField "URL is valid format (http://host:port/mcp)" `
             -Condition $urlIsValid `
-            -ErrorMessage "Invalid URL format: $($Server.url) (expected http://host:port or https://host:port)"
+            -ErrorMessage "Invalid URL: $($Server.url) (expected http://host:port/mcp)"
     }
 
-    # SSE mode doesn't require 'args' field
-    Write-Host "[INFO] SSE mode - 'command' and 'args' fields not required" -ForegroundColor Gray
+    # HTTP mode doesn't require 'args' field
+    Write-Host "[INFO] HTTP mode - 'command' and 'args' fields not required" -ForegroundColor Gray
 }
 
 # Test 11: Server has 'env' field (CRITICAL)
@@ -225,9 +225,9 @@ if ($Server.type -eq "stdio" -and -not $hasArgs) {
     $criticalFailures += "Missing 'args' field (required for stdio mode)"
 }
 
-# For SSE mode: url is critical
-if ($Server.type -eq "sse" -and -not $Server.url) {
-    $criticalFailures += "Missing 'url' field (required for SSE mode)"
+# For HTTP mode: url is critical
+if ($Server.type -eq "http" -and -not $Server.url) {
+    $criticalFailures += "Missing 'url' field (required for HTTP mode)"
 }
 
 # env field recommended but not critical for SSE

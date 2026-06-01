@@ -53,6 +53,7 @@ class ChangeDetector:
         snapshot_manager: SnapshotManager | None = None,
         include_dirs: list[str] | None = None,
         exclude_dirs: list[str] | None = None,
+        supported_extensions: set[str] | None = None,
     ):
         """Initialize change detector.
 
@@ -60,10 +61,16 @@ class ChangeDetector:
             snapshot_manager: Snapshot manager instance
             include_dirs: Optional list of directories to include
             exclude_dirs: Optional list of directories to exclude
+            supported_extensions: If provided, the DAG built for change detection
+                uses a stat-based hash for files whose suffix is NOT in this set.
+                This must match the scheme used when the stored snapshot was
+                built, otherwise non-indexed files will appear as "modified" on
+                every incremental run.
         """
         self.snapshot_manager = snapshot_manager or SnapshotManager()
         self.include_dirs = include_dirs
         self.exclude_dirs = exclude_dirs
+        self.supported_extensions = supported_extensions
 
     def detect_changes(self, old_dag: MerkleDAG, new_dag: MerkleDAG) -> FileChanges:
         """Detect file changes between two Merkle DAGs.
@@ -142,7 +149,12 @@ class ChangeDetector:
                 )
 
         # Build current DAG with inherited or provided filters
-        current_dag = MerkleDAG(project_path, include_dirs, exclude_dirs)
+        current_dag = MerkleDAG(
+            project_path,
+            include_dirs,
+            exclude_dirs,
+            supported_extensions=self.supported_extensions,
+        )
 
         # Add snapshot directory to ignore patterns if it's inside the project
         snapshot_dir = self.snapshot_manager.storage_dir
@@ -201,7 +213,12 @@ class ChangeDetector:
             exclude_dirs = old_dag.directory_filter.exclude_dirs
 
         # Build current DAG with inherited or provided filters
-        current_dag = MerkleDAG(project_path, include_dirs, exclude_dirs)
+        current_dag = MerkleDAG(
+            project_path,
+            include_dirs,
+            exclude_dirs,
+            supported_extensions=self.supported_extensions,
+        )
 
         # Add snapshot directory to ignore patterns if it's inside the project
         snapshot_dir = self.snapshot_manager.storage_dir

@@ -8,9 +8,13 @@ Tests:
 
 import pytest
 
-from graph.relationship_extractors.implements_extractor import ImplementsExtractor
-from graph.relationship_extractors.override_extractor import OverrideExtractor
-from graph.relationship_types import RelationshipType
+from chunking.relationships.relationship_extractors.implements_extractor import (
+    ImplementsExtractor,
+)
+from chunking.relationships.relationship_extractors.override_extractor import (
+    OverrideExtractor,
+)
+from chunking.relationships.relationship_types import RelationshipType
 
 
 # ===== Test Fixtures =====

@@ -1,0 +1,383 @@
+# Intent classification rules for IntentClassifier.
+# Loaded at module import by _load_intent_rules() in search/intent_classifier.py.
+# Mirrors the intent_anchors.yaml convention for semantic anchors.
+#
+# patterns: list of [regex, weight] pairs (weight boosts the intent score).
+# Each regex is matched case-insensitively against the lowercased query.
+
+intent_rules:
+
+  local:
+    description: "Symbol/entity lookup queries"
+    weight: 1.0
+    max_tokens: 8  # Short, focused queries (raised for natural language function lookups)
+    keywords:
+      # Definition/implementation queries
+      - "where is"
+      - "find the implementation"
+      - "find the definition"
+      - "definition of"
+      - "implementation of"
+      - "locate"
+      - "show me"
+      # Retrieval verbs
+      - "lookup"
+      - "retrieve"
+      - "get the"
+      - "obtain"
+      - "fetch"
+      # Discovery terms
+      - "discover"
+      - "identify"
+      # Existence-checking query patterns
+      - "check if"
+      - "does"
+      - "is there"
+      - "exists"
+      # Symbol-specific
+      - "class"
+      - "function"
+      - "method"
+      - "variable"
+      - "constant"
+      - "module"
+      - "file"
+      - "interface"
+      - "type"
+      - "enum"
+      - "struct"
+      # Implementation-focused verbs (added to fix Q19 intent classification failure)
+      # These verbs indicate concrete code implementation queries, not architectural queries
+      - "encode"
+      - "decode"
+      - "parse"
+      - "serialize"
+      - "deserialize"
+      - "convert"
+      - "transform"
+      - "validate"
+      - "normalize"
+      - "extract"
+      - "process"
+      - "handle"
+      - "compute"
+      - "calculate"
+      - "render"
+      - "format"
+      - "generate"
+      - "build"
+      # I/O and persistence verbs (added to fix Q16 zero-intent classification)
+      # These are function-level I/O operations (LOCAL), not architectural concepts (GLOBAL)
+      - "save"
+      - "load"
+      - "store"
+      - "persist"
+      - "read"
+      - "write"
+    patterns:
+      # Dead CamelCase pattern removed (ran against lowered query, never matched).
+      # Functionality moved to _detect_code_symbols() fallback.
+      - ['\bwhere\s+is\b', 1.5]
+      - ['\bfind\s+(the\s+)?(implementation|definition)\b', 1.5]
+      - ['\bshow\s+me\s+(the\s+)?', 1.2]
+      - ['\b(lookup|retrieve|fetch)\s+(\w+)\b', 1.3]       # "lookup QueryRouter"
+      - ['\bget\s+(the\s+)?(\w+)\s+(class|function|definition)\b', 1.5]  # "get the QueryRouter class"
+      - ['\bget\s+\w+(\s+\w+)*\s+from\b', 1.3]             # "get node text from tree sitter"
+      - ['\b(enum|interface|struct|type)\s+\w+\b', 1.2]    # "interface SearchResult"
+      - ['\bcheck\s+if\s+\w+\s+exists?\b', 1.4]
+      - ['\bdoes\s+\w+\s+exist\b', 1.4]
+      - ['\bis\s+there\s+(a\s+)?\w+\b', 1.3]
+
+  global:
+    description: "Architectural/conceptual queries"
+    weight: 1.0
+    keywords:
+      # Architectural/conceptual queries
+      - "how does"
+      - "how do"
+      - "explain"
+      - "overview"
+      - "architecture"
+      - "design"
+      - "structure"
+      - "system"
+      - "pipeline"
+      - "workflow"
+      - "flow"
+      - "process"
+      - "mechanism"
+      - "strategy"
+      # Software patterns
+      - "pattern"
+      - "approach"
+      - "paradigm"
+      - "model"
+      - "framework"
+      # Conceptual understanding
+      - "concept"
+      - "rationale"
+      - "purpose"
+      - "reasoning"
+      - "logic behind"
+      # System terms
+      - "component"
+      - "module interaction"
+      - "integration"
+      - "data flow"
+      # Understanding queries
+      - "understand"
+      - "learn about"
+      - "describe"
+      - "summary"
+      - "high-level"
+    patterns:
+      - ['\bhow\s+does\s+.+\s+work\b', 1.8]
+      - ['\bhow\s+do\s+.+\s+work\b', 1.8]
+      - ['\b(architecture|pipeline|flow|overview)\b', 1.2]
+      - ['\bexplain\s+(the\s+)?', 1.3]
+      - ['\bwhy\s+(does|is)\b', 1.3]                             # "why does search use embeddings"
+      - ['\bwhat\s+is\s+the\s+(purpose|rationale|logic)\b', 1.4] # "what is the purpose of..."
+      - ['\b(component|layer)s?\s+(interact|work)\b', 1.2]       # "how components interact"
+      - ['\b(arrangement|organization|scheme)\s+of\b', 1.2]      # "organization of search system"
+      - ['\b(procedure|technique|methodology)\s+(for|of)\b', 1.3] # "methodology for indexing"
+
+  navigational:
+    description: "Relationship/dependency queries"
+    weight: 1.2  # Higher weight for strong signal
+    keywords:
+      # Caller/dependency queries
+      - "what calls"
+      - "what uses"
+      - "what depends"
+      - "who calls"
+      - "who uses"
+      - "callers"
+      - "called by"
+      - "used by"
+      - "depends on"
+      - "dependencies"
+      - "dependents"
+      # Synonym coverage for dependency terminology
+      - "relations"
+      - "reliance"
+      - "correlations"
+      # Caller/Callee terminology
+      - "callee"
+      - "callees"
+      - "invokes"
+      - "invoked by"
+      - "triggers"
+      - "triggered by"
+      # Upstream/Downstream
+      - "upstream"
+      - "downstream"
+      - "upstream of"
+      - "downstream of"
+      # Consumer/Provider
+      - "consumer"
+      - "consumers"
+      - "provider"
+      - "providers"
+      - "client"
+      - "clients"
+      - "supplier"
+      - "suppliers"
+      # Relationship queries
+      - "imports"
+      - "imported by"
+      - "inherits"
+      - "inherited by"
+      - "extends"
+      - "extended by"
+      - "implements"
+      - "implemented by"
+      - "decorates"
+      - "decorated by"
+      # Exception handling
+      - "raises"
+      - "throws"
+      - "exception"
+      - "exceptions"
+      # Instantiation
+      - "creates"
+      - "instantiates"
+      - "instances"
+      # Flow tracing
+      - "trace"
+      - "flow from"
+      - "flow to"
+      - "call chain"
+      - "call graph"
+      - "call stack"
+    patterns:
+      - ['\b(callers?|called\s+by)\b', 2.0]
+      - ['\bwhat\s+(calls|uses|depends)\b', 1.8]
+      - ['\b(who\s+)?(calls|uses)\b', 1.5]
+      - ['\b(imports?|inherits?|extends?|implements?)\b', 1.5]
+      - ['\b(decorates?|decorated\s+by)\b', 1.5]
+      - ['\b(raises?|throws?|exceptions?)\b', 1.5]
+      - ['\b(creates?|instantiates?|instances?)\b', 1.5]
+      - ['\b(callee|callees)\s+(of|for)\b', 1.8]                    # "callees of process_query"
+      - ['\b(upstream|downstream)\s+(of|from|to)\b', 1.5]           # "upstream of QueryRouter"
+      - ['\b(consumer|provider|client|supplier)s?\s+(of|for)\b', 1.5] # "consumers of API"
+      - ['\b(invokes?|triggers?)\s+\w+\b', 1.3]                     # "invokes handle_search"
+      - ['\btrace\s+', 1.3]
+      - ['\bdependenc(y|ies)\b', 1.2]
+      - ['\b(relations|reliance|correlations)\s+(of|between)\b', 1.3] # "relations of IntentClassifier"
+
+  path_tracing:
+    description: "Path tracing queries between code entities"
+    weight: 1.3
+    keywords:
+      - "trace"
+      - "follow"
+      - "path from"
+      - "path to"
+      - "path between"
+      - "connect"
+      - "connection between"
+      - "how does X connect"
+      - "flow from"
+      - "flow to"
+      - "reaches"
+      - "leads to"
+      # Synonym coverage for path-tracing terminology
+      - "trail"
+      - "pursue"
+      # Journey metaphors
+      - "route"
+      - "route from"
+      - "route to"
+      - "journey"
+      # Linking terms
+      - "link"
+      - "link between"
+      - "bridge"
+      - "bridge to"
+      # Sequence terms
+      - "traversal"
+    patterns:
+      - ['\btrace\s+(path\s+)?(from|to)\b', 2.0]
+      - ['\bfollow\s+(the\s+)?(path|call|execution|flow)\b', 1.8] # "follow the path", "follow call"
+      - ['\bpath\s+(from|to|between)\b', 2.0]
+      - ['\bhow\s+does\s+\w+\s+connect\s+to\b', 1.8]
+      - ['\bconnection\s+between\b', 1.5]
+      - ['\b(from|to)\s+\w+\s+(to|from)\s+\w+\b', 1.3]
+      - ['\b(trail|pursue)\s+(the\s+)?(path|call|flow)\b', 1.5]  # "trail the path"
+      - ['\b(route|journey)\s+(from|to|between)\b', 1.8]         # "route from login to logout"
+      - ['\blink\s+(between|from|to)\b', 1.5]                    # "link between modules"
+
+  similarity:
+    description: "Code similarity queries"
+    weight: 1.2
+    keywords:
+      - "similar to"
+      - "similar code"
+      - "like this"
+      - "patterns like"
+      - "code like"
+      - "implementations like"
+      - "similar implementations"
+      - "same pattern"
+      - "resembles"
+      - "looks like"
+      # Synonym coverage for similarity terminology
+      - "replicate"
+      - "mimic"
+      - "emulate"
+      - "replica"
+      - "mirror"
+      - "counterpart"
+      - "look-alike"
+      - "parallel"
+      - "twin"
+      # Clone detection terminology
+      - "clone"
+      - "clones"
+      - "clone of"
+      - "duplicate"
+      - "duplicates"
+      - "duplicate of"
+      - "copy"
+      - "copies"
+      - "copy of"
+      # Comparative terms
+      - "equivalent"
+      - "analogous"
+      - "comparable"
+      - "matching"
+      - "matches"
+    patterns:
+      - ['\bsimilar\s+(to|code|implementations?)\b', 2.0]
+      - ['\b(code|patterns?|implementations?)\s+like\b', 1.8]
+      - ['\bfind\s+(code\s+)?similar\b', 1.8]
+      - ['\b(resembles?|looks?\s+like)\b', 1.3]
+      - ['\b(clone|duplicate|copy)\s+(of|code)\b', 2.0]          # "clone of QueryRouter"
+      - ['\bfind\s+(clones?|duplicates?|copies)\b', 1.8]         # "find clones"
+      - ['\b(equivalent|analogous|comparable)\s+to\b', 1.5]      # "equivalent to X"
+      - ['\b(matches|matching)\s+\w+\b', 1.3]                    # "matches QueryRouter pattern"
+      - ['\b(replicate|mimic|emulate)s?\s+\w+\b', 1.5]          # "replicate QueryRouter"
+      - ['\b(replica|counterpart|twin)\s+(of|for)\b', 1.8]       # "replica of QueryRouter"
+      - ['\b(mirror|parallel)\s+(of|to)\b', 1.5]                 # "mirror of IntentClassifier"
+      - ['\blook-alike\s+(of|for|to)\b', 1.5]                    # "look-alike of QueryRouter"
+
+  contextual:
+    description: "Contextual exploration queries (ego-graph beneficial)"
+    weight: 1.0
+    keywords:
+      - "context"
+      - "around"
+      - "related to"
+      - "connected to"
+      - "neighbors"
+      - "surrounding"
+      - "nearby code"
+      - "explore"
+      - "overview of"
+      - "understand"
+      # Synonym coverage for contextual exploration terminology
+      - "investigate"
+      - "examine"
+      - "probe"
+      - "inspect"
+      - "survey"
+      - "look into"
+      - "delve into"
+      - "delve"
+      - "scout"
+      - "scour"
+      # Spatial metaphors
+      - "vicinity"
+      - "vicinity of"
+      - "proximity"
+      - "proximity to"
+      - "neighborhood"
+      - "periphery"
+      # Scope terms
+      - "scope"
+      - "scope of"
+      - "environment"
+      - "ecosystem"
+      # Discovery
+      - "discover related"
+      - "what touches"
+    patterns:
+      - ['\b(context|surrounding)\b.*\b(of|around|for)\b', 1.8]
+      - ['\brelated\s+(to|code)\b', 1.5]
+      - ['\bexplore\s+\w+\b', 1.3]
+      - ['\bunderstand\s+(how|the)\b', 1.2]
+      - ['\b(investigate|examine|inspect)\s+\w+\b', 1.3]          # "investigate handle_search_code"
+      - ['\b(delve|probe)\s+(into\s+)?\w+\b', 1.5]               # "delve into QueryRouter"
+      - ['\b(survey|scout)\s+(the\s+)?\w+\b', 1.2]               # "survey the codebase"
+      - ['\b(vicinity|proximity|neighborhood)\s+(of|around)\b', 1.8] # "vicinity of QueryRouter"
+      - ['\bwhat\s+(touches|interacts\s+with)\b', 1.5]            # "what touches this module"
+      - ['\b(ecosystem|environment)\s+(of|around)\b', 1.3]        # "ecosystem of search"
+
+# Tie-breaking precedence — higher priority intents appear earlier in the list.
+precedence:
+  - path_tracing
+  - similarity
+  - navigational
+  - contextual
+  - local
+  - global

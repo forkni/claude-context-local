@@ -2,11 +2,21 @@
 
 from collections import defaultdict
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
+
+from utils.path_utils import normalize_path
 
 
 if TYPE_CHECKING:
     from chunking.python_ast_chunker import CodeChunk
+
+
+class SymbolSummary(NamedTuple):
+    classes: list[str]
+    functions: list[str]
+    methods: list[str]
+    all_imports: list[str]
+    docstring_lines: list[str]
 
 
 def generate_file_summaries(chunks: list["CodeChunk"]) -> list["CodeChunk"]:
@@ -32,21 +42,21 @@ def generate_file_summaries(chunks: list["CodeChunk"]) -> list["CodeChunk"]:
     return summaries
 
 
-def _build_file_summary(rel_path: str, file_chunks: list["CodeChunk"]) -> "CodeChunk":
-    """Build a synthetic module CodeChunk from a file's chunks."""
-    from chunking.python_ast_chunker import CodeChunk
+def collect_symbol_summary(
+    chunks: list["CodeChunk"],
+) -> SymbolSummary:
+    """Collect symbol metadata from a list of chunks.
 
-    module_name = Path(rel_path).stem
-    folder_structure = list(Path(rel_path).parent.parts)
+    Returns:
+        SymbolSummary(classes, functions, methods, all_imports, docstring_lines)
+    """
+    classes: list[str] = []
+    functions: list[str] = []
+    methods: list[str] = []
+    all_imports: list[str] = []
+    docstring_lines: list[str] = []
 
-    # Collect metadata
-    classes = []
-    functions = []
-    methods = []
-    all_imports = []
-    docstring_lines = []
-
-    for chunk in file_chunks:
+    for chunk in chunks:
         if chunk.chunk_type == "class":
             classes.append(chunk.name or "?")
             if chunk.docstring:
@@ -63,27 +73,39 @@ def _build_file_summary(rel_path: str, file_chunks: list["CodeChunk"]) -> "CodeC
         if chunk.imports:
             all_imports.extend(chunk.imports[:5])  # Cap per-chunk imports
 
+    return SymbolSummary(classes, functions, methods, all_imports, docstring_lines)
+
+
+def _build_file_summary(rel_path: str, file_chunks: list["CodeChunk"]) -> "CodeChunk":
+    """Build a synthetic module CodeChunk from a file's chunks."""
+    from chunking.python_ast_chunker import CodeChunk
+
+    module_name = Path(rel_path).stem
+    folder_structure = list(Path(rel_path).parent.parts)
+
+    summary = collect_symbol_summary(file_chunks)
+
     # Build summary text
     parts = [f"# {rel_path} | module {module_name}"]
 
-    symbol_count = len(classes) + len(functions) + len(methods)
+    symbol_count = len(summary.classes) + len(summary.functions) + len(summary.methods)
     package = folder_structure[0] if folder_structure else "root"
     parts.append(f"# Module containing {symbol_count} symbols in the {package} package")
 
-    if classes:
-        parts.append(f"# Classes: {', '.join(classes[:10])}")
-    if functions:
-        parts.append(f"# Functions: {', '.join(functions[:10])}")
-    if methods:
-        parts.append(f"# Key methods: {', '.join(methods[:15])}")
+    if summary.classes:
+        parts.append(f"# Classes: {', '.join(summary.classes[:10])}")
+    if summary.functions:
+        parts.append(f"# Functions: {', '.join(summary.functions[:10])}")
+    if summary.methods:
+        parts.append(f"# Key methods: {', '.join(summary.methods[:15])}")
 
     # Deduplicate imports, show top-level modules
-    unique_imports = sorted(set(all_imports))[:10]
+    unique_imports = sorted(set(summary.all_imports))[:10]
     if unique_imports:
         parts.append(f"# Imports: {', '.join(unique_imports)}")
 
-    if docstring_lines:
-        parts.extend(docstring_lines[:5])
+    if summary.docstring_lines:
+        parts.extend(summary.docstring_lines[:5])
 
     content = "\n".join(parts)
 
@@ -94,7 +116,7 @@ def _build_file_summary(rel_path: str, file_chunks: list["CodeChunk"]) -> "CodeC
         if c.docstring and c.name
     )[:500]
 
-    chunk_id = f"{_normalize_path(rel_path)}:0-0:module:{module_name}"
+    chunk_id = f"{normalize_path(rel_path)}:0-0:module:{module_name}"
 
     return CodeChunk(
         content=content,
@@ -109,8 +131,3 @@ def _build_file_summary(rel_path: str, file_chunks: list["CodeChunk"]) -> "CodeC
         language=file_chunks[0].language,
         chunk_id=chunk_id,
     )
-
-
-def _normalize_path(path: str) -> str:
-    """Normalize path separators to forward slashes."""
-    return path.replace("\\", "/")

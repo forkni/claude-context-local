@@ -58,7 +58,7 @@ class ApplicationState:
     # Configuration
     multi_model_enabled: bool = field(
         default_factory=lambda: (
-            os.getenv("CLAUDE_MULTI_MODEL_ENABLED", "true").lower()
+            os.getenv("CLAUDE_MULTI_MODEL_ENABLED", "false").lower()
             in ("true", "1", "yes")
         )
     )
@@ -89,22 +89,28 @@ class ApplicationState:
         except (AttributeError, KeyError, RuntimeError):
             # Fallback to env var if config unavailable
             self.multi_model_enabled = os.getenv(
-                "CLAUDE_MULTI_MODEL_ENABLED", "true"
+                "CLAUDE_MULTI_MODEL_ENABLED", "false"
             ).lower() in ("true", "1", "yes")
 
     def sync_from_config(self, config: "SearchConfig") -> None:
         """Sync multi_model_enabled from config file.
 
-        Environment variable CLAUDE_MULTI_MODEL_ENABLED overrides config file.
+        Config file takes precedence for disabling multi-model. The env var
+        CLAUDE_MULTI_MODEL_ENABLED can only enable multi-model when the config
+        also enables it, preventing stale OS-level env vars from overriding the
+        user's explicit config choice.
         Called during server startup in app_lifespan().
 
         Args:
             config: SearchConfig instance to sync from
         """
-        # Environment variable takes precedence over config file
         env_value = os.getenv("CLAUDE_MULTI_MODEL_ENABLED")
         if env_value is not None:
-            self.multi_model_enabled = env_value.lower() in ("true", "1", "yes")
+            env_wants_enabled = env_value.lower() in ("true", "1", "yes")
+            # Config file can always disable multi-model regardless of env var
+            self.multi_model_enabled = (
+                env_wants_enabled and config.routing.multi_model_enabled
+            )
         else:
             self.multi_model_enabled = config.routing.multi_model_enabled
 
@@ -129,7 +135,7 @@ class ApplicationState:
         may remain if it supports the new model's dimension.
 
         Args:
-            model_key: Model key (e.g., 'qwen3', 'bge_m3')
+            model_key: Model key (e.g., 'qwen3_0.6b', 'bge_m3')
         """
         self.current_model_key = model_key
         self.current_index_model_key = None  # Force index reload on model switch
@@ -175,6 +181,9 @@ class ApplicationState:
                     logger.warning(f"[CLEANUP] Failed to cleanup {model_key}: {e}")
 
         self.embedders = {}
+        # Every searcher component stashes embedder refs that are now dead.
+        # Force rebuild on next search request.
+        self.searcher = None
 
     def reset_search_components(self) -> None:
         """Reset index_manager and searcher to force re-initialization.
@@ -228,23 +237,6 @@ def get_state() -> ApplicationState:
         The global ApplicationState instance
     """
     return _app_state
-
-
-# Register ApplicationState with ServiceLocator for dependency injection
-def _register_with_service_locator() -> None:
-    """Register ApplicationState with ServiceLocator on module import."""
-    try:
-        from mcp_server.services import ServiceLocator
-
-        locator = ServiceLocator.instance()
-        locator.register("state", _app_state)
-    except ImportError:
-        # ServiceLocator not yet available (during early initialization)
-        pass
-
-
-# Auto-register on module import
-_register_with_service_locator()
 
 
 def reset_state() -> None:

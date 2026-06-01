@@ -1,12 +1,12 @@
 """Parallel file chunking with progress tracking."""
 
+import contextlib
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from rich.console import Console
 from rich.progress import (
     BarColumn,
     Progress,
@@ -14,6 +14,8 @@ from rich.progress import (
     TaskProgressColumn,
     TextColumn,
 )
+
+from utils.console import get_progress_console
 
 
 if TYPE_CHECKING:
@@ -47,6 +49,75 @@ class ParallelChunker:
         self.enable_parallel = enable_parallel
         self.max_workers = max_workers
 
+    @staticmethod
+    def _accumulate_chunk_stats(
+        chunks: list,
+        total_original: int,
+        total_merged: int,
+    ) -> tuple[int, int]:
+        """Accumulate per-file merge stats into running totals; return updated pair.
+
+        When ``chunks[0]._merge_stats`` is a ``(original, merged)`` tuple the chunker
+        recorded how many chunks were produced before and after greedy-merge.  Otherwise
+        every chunk is counted as-is (no merging occurred for this file).
+        """
+        if hasattr(chunks[0], "_merge_stats") and isinstance(
+            chunks[0]._merge_stats, tuple
+        ):
+            orig, merged = chunks[0]._merge_stats
+            return total_original + orig, total_merged + merged
+        return total_original + len(chunks), total_merged + len(chunks)
+
+    @staticmethod
+    def _log_chunking_summary(
+        file_paths: list[str],
+        all_chunks: list,
+        total_original: int,
+        total_merged: int,
+    ) -> None:
+        """Log the post-chunking summary; show merge-% when greedy-merge reduced count."""
+        if total_original > 0 and total_original != total_merged:
+            merge_pct = 100.0 * (1 - total_merged / total_original)
+            logger.info(
+                f"Chunking complete: {len(file_paths)} files → {total_merged} chunks "
+                f"({merge_pct:.1f}% merged from {total_original} original)"
+            )
+        else:
+            logger.info(
+                f"Chunking complete: {len(file_paths)} files → {len(all_chunks)} chunks"
+            )
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _progress_context(file_paths: list[str]):
+        """Suppress INFO logs and display a Rich progress bar for the duration.
+
+        Yields ``(progress, task)`` ready for ``progress.update(task, advance=1)`` calls.
+        ``get_progress_console()`` is called before log suppression, matching the order
+        used in the original parallel and sequential branches.  The log level is
+        unconditionally restored in ``finally`` even if the body raises.
+        """
+        console = (
+            get_progress_console()
+        )  # before suppress — preserves original call order
+        root_logger = logging.getLogger()
+        original_level = root_logger.level
+        root_logger.setLevel(logging.WARNING)
+        try:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TextColumn("({task.completed}/{task.total} files)"),
+                console=console,
+                transient=False,
+            ) as progress:
+                task = progress.add_task("Chunking files...", total=len(file_paths))
+                yield progress, task
+        finally:
+            root_logger.setLevel(original_level)
+
     def chunk_files(
         self, project_path: str, file_paths: list[str]
     ) -> list["CodeChunk"]:
@@ -62,67 +133,36 @@ class ParallelChunker:
         all_chunks = []
         start_time = time.time()
         stalled_files = []
-        total_original = 0  # Track original chunk count before merging
-        total_merged = 0  # Track final chunk count after merging
+        total_original = 0
+        total_merged = 0
 
-        # Use parallel chunking if enabled and there are multiple files
         if self.enable_parallel and len(file_paths) > 1:
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                # Submit all chunking tasks
-                future_to_path = {}
-                for file_path in file_paths:
-                    full_path = Path(project_path) / file_path
-                    future = executor.submit(self.chunker.chunk_file, str(full_path))
-                    future_to_path[future] = file_path
-
-                # Collect results as they complete with progress bar
-                console = Console(force_terminal=True)
-
-                # Suppress INFO logs during progress bar to prevent line mixing
-                root_logger = logging.getLogger()
-                original_log_level = root_logger.level
-                root_logger.setLevel(logging.WARNING)
-
-                with Progress(
-                    SpinnerColumn(),
-                    TextColumn("[progress.description]{task.description}"),
-                    BarColumn(),
-                    TaskProgressColumn(),
-                    TextColumn("({task.completed}/{task.total} files)"),
-                    console=console,
-                    transient=False,
-                ) as progress:
-                    task = progress.add_task("Chunking files...", total=len(file_paths))
+                future_to_path = {
+                    executor.submit(
+                        self.chunker.chunk_file, str(Path(project_path) / fp)
+                    ): fp
+                    for fp in file_paths
+                }
+                with self._progress_context(file_paths) as (progress, task):
                     for future in as_completed(future_to_path):
                         file_path = future_to_path[future]
-                        elapsed = time.time() - start_time
-
-                        # Check total timeout
-                        if elapsed > TOTAL_CHUNKING_TIMEOUT:
+                        if time.time() - start_time > TOTAL_CHUNKING_TIMEOUT:
                             logger.error(
                                 f"[TIMEOUT] Chunking exceeded {TOTAL_CHUNKING_TIMEOUT}s total timeout"
                             )
-                            # Cancel remaining futures
                             for f in future_to_path:
                                 if not f.done():
                                     f.cancel()
                             break
-
                         try:
                             chunks = future.result(timeout=CHUNKING_TIMEOUT_PER_FILE)
                             if chunks:
-                                # Extract merge stats if available
-                                if hasattr(chunks[0], "_merge_stats") and isinstance(
-                                    chunks[0]._merge_stats, tuple
-                                ):
-                                    orig, merged = chunks[0]._merge_stats
-                                    total_original += orig
-                                    total_merged += merged
-                                else:
-                                    # No merging occurred, count as-is
-                                    total_original += len(chunks)
-                                    total_merged += len(chunks)
-
+                                total_original, total_merged = (
+                                    self._accumulate_chunk_stats(
+                                        chunks, total_original, total_merged
+                                    )
+                                )
                                 all_chunks.extend(chunks)
                                 logger.debug(
                                     f"Chunked {file_path}: {len(chunks)} chunks"
@@ -136,76 +176,29 @@ class ParallelChunker:
                             logger.warning(f"Failed to chunk {file_path}: {e}")
                         finally:
                             progress.update(task, advance=1)
-
-                # Restore original log level
-                root_logger.setLevel(original_log_level)
-
-            # Log chunking summary with merge percentage
-            if total_original > 0 and total_original != total_merged:
-                merge_pct = 100.0 * (1 - total_merged / total_original)
-                logger.info(
-                    f"Chunking complete: {len(file_paths)} files → {total_merged} chunks "
-                    f"({merge_pct:.1f}% merged from {total_original} original)"
-                )
-            else:
-                logger.info(
-                    f"Chunking complete: {len(file_paths)} files → {len(all_chunks)} chunks"
-                )
         else:
-            # Sequential chunking (fallback or single file)
-            console = Console(force_terminal=True)
-
-            # Suppress INFO logs during progress bar to prevent line mixing
-            root_logger = logging.getLogger()
-            original_log_level = root_logger.level
-            root_logger.setLevel(logging.WARNING)
-
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TaskProgressColumn(),
-                TextColumn("({task.completed}/{task.total} files)"),
-                console=console,
-                transient=False,
-            ) as progress:
-                task = progress.add_task("Chunking files...", total=len(file_paths))
+            with self._progress_context(file_paths) as (progress, task):
                 for file_path in file_paths:
-                    elapsed = time.time() - start_time
-
-                    # Check total timeout
-                    if elapsed > TOTAL_CHUNKING_TIMEOUT:
+                    if time.time() - start_time > TOTAL_CHUNKING_TIMEOUT:
                         logger.error(
                             f"[TIMEOUT] Chunking exceeded {TOTAL_CHUNKING_TIMEOUT}s total timeout"
                         )
                         break
-
                     full_path = Path(project_path) / file_path
                     file_start_time = time.time()
                     try:
                         chunks = self.chunker.chunk_file(str(full_path))
                         file_elapsed = time.time() - file_start_time
-
-                        # Check per-file timeout
                         if file_elapsed > CHUNKING_TIMEOUT_PER_FILE:
                             logger.warning(
-                                f"[TIMEOUT] File chunking took {file_elapsed:.1f}s (>{CHUNKING_TIMEOUT_PER_FILE}s): {file_path}"
+                                f"[TIMEOUT] File chunking took {file_elapsed:.1f}s "
+                                f"(>{CHUNKING_TIMEOUT_PER_FILE}s): {file_path}"
                             )
                             stalled_files.append(file_path)
-
                         if chunks:
-                            # Extract merge stats if available
-                            if hasattr(chunks[0], "_merge_stats") and isinstance(
-                                chunks[0]._merge_stats, tuple
-                            ):
-                                orig, merged = chunks[0]._merge_stats
-                                total_original += orig
-                                total_merged += merged
-                            else:
-                                # No merging occurred, count as-is
-                                total_original += len(chunks)
-                                total_merged += len(chunks)
-
+                            total_original, total_merged = self._accumulate_chunk_stats(
+                                chunks, total_original, total_merged
+                            )
                             all_chunks.extend(chunks)
                             logger.debug(f"Chunked {file_path}: {len(chunks)} chunks")
                     except Exception as e:
@@ -213,25 +206,12 @@ class ParallelChunker:
                     finally:
                         progress.update(task, advance=1)
 
-            # Restore original log level
-            root_logger.setLevel(original_log_level)
+        # Both branches converge here — summary applies to both paths
+        self._log_chunking_summary(file_paths, all_chunks, total_original, total_merged)
 
-            # Log chunking summary with merge percentage
-            if total_original > 0 and total_original != total_merged:
-                merge_pct = 100.0 * (1 - total_merged / total_original)
-                logger.info(
-                    f"Chunking complete: {len(file_paths)} files → {total_merged} chunks "
-                    f"({merge_pct:.1f}% merged from {total_original} original)"
-                )
-            else:
-                logger.info(
-                    f"Chunking complete: {len(file_paths)} files → {len(all_chunks)} chunks"
-                )
-
-        # Log summary if there were stalled files
         if stalled_files:
             logger.warning(
-                f"[SUMMARY] {len(stalled_files)} files skipped/slow due to timeout (possibly locked)"
+                f"[SUMMARY] {len(stalled_files)} files skipped/slow due to timeout "
+                f"(possibly locked)"
             )
-
         return all_chunks

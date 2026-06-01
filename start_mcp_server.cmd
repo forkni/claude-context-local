@@ -71,7 +71,7 @@ if "%~1"=="" (
         goto start
     )
 
-    if "!choice!"=="1" goto start_server_dual_sse
+    if "!choice!"=="1" goto start_server_http
     if "!choice!"=="2" goto installation_menu
     if "!choice!"=="3" goto search_config_menu
     if "!choice!"=="4" goto project_management_menu
@@ -107,12 +107,12 @@ echo.
 echo Select transport mode:
 echo.
 echo   1. stdio Transport ^(Default - for Claude Code MCP^)
-echo   2. SSE Transport - Single Server ^(port 8765^)
+echo   2. StreamableHTTP Transport - Single Server ^(port 8765^)
 echo   0. Back to Main Menu
 echo.
-echo NOTE: SSE Transport Options:
+echo NOTE: Transport Options:
 echo   - Option 1 ^(stdio^): Default MCP mode for Claude Code
-echo   - Option 2 ^(Single SSE^): HTTP server on port 8765 for MCP access
+echo   - Option 2 ^(Single HTTP^): HTTP server on port 8765 for MCP access
 echo.
 set "transport_choice="
 set /p transport_choice="Select transport (0-2): "
@@ -123,7 +123,7 @@ if "!transport_choice!"=="" goto menu_restart
 if "!transport_choice!"=="0" goto menu_restart
 
 if "!transport_choice!"=="1" goto start_server_stdio
-if "!transport_choice!"=="2" goto start_server_dual_sse
+if "!transport_choice!"=="2" goto start_server_http
 
 echo [ERROR] Invalid choice. Please select 0-2.
 pause
@@ -175,31 +175,31 @@ REM The dual server mode launches both VSCode (port 8765) and CLI (port 8766)
 REM servers, and you can use either or both as needed.
 REM
 REM If you need single server mode, use Option 1 (stdio transport) or manually
-REM run: scripts\batch\start_mcp_sse.bat
+REM run: scripts\batch\start_mcp_http.bat
 REM ============================================================================
 
-:start_server_dual_sse
+:start_server_http
 echo.
-echo [INFO] Starting SSE server on port 8765...
-echo [INFO] Server URL: http://localhost:8765/sse
+echo [INFO] Starting HTTP server on port 8765...
+echo [INFO] Server URL: http://localhost:8765/mcp
 echo [INFO] Press Ctrl+C to stop the server
 echo ==================================================
 echo.
 
 REM Validate batch file exists
-if not exist "scripts\batch\start_mcp_sse.bat" (
-    echo [ERROR] Batch file not found: scripts\batch\start_mcp_sse.bat
+if not exist "scripts\batch\start_mcp_http.bat" (
+    echo [ERROR] Batch file not found: scripts\batch\start_mcp_http.bat
     pause
     goto menu_restart
 )
 
-start "MCP SSE Server (8765)" cmd /k "scripts\batch\start_mcp_sse.bat"
+start "MCP HTTP Server (8765)" cmd /k "scripts\batch\start_mcp_http.bat"
 goto menu_restart
 
 :debug_mode
 echo.
-echo [INFO] Starting Debug SSE Server on port 8765...
-echo [INFO] Server URL: http://localhost:8765/sse
+echo [INFO] Starting Debug HTTP Server on port 8765...
+echo [INFO] Server URL: http://localhost:8765/mcp
 echo [INFO] Debug flags: MCP_DEBUG=1, CLAUDE_SEARCH_DEBUG=1
 echo ==================================================
 echo.
@@ -528,13 +528,6 @@ goto configure_summary_chunks
 echo.
 echo === Project Management ===
 echo.
-REM Check if multi-model mode is enabled
-set "MULTI_MODEL_STATUS=Disabled"
-if "%CLAUDE_MULTI_MODEL_ENABLED%"=="true" set "MULTI_MODEL_STATUS=Enabled"
-if "%CLAUDE_MULTI_MODEL_ENABLED%"=="1" set "MULTI_MODEL_STATUS=Enabled"
-
-echo [Multi-Model Mode: %MULTI_MODEL_STATUS%]
-echo.
 echo   1. Index New Project
 echo   2. Re-index Existing Project ^(Incremental^)
 echo   3. Force Re-index Existing Project ^(Full^)
@@ -544,10 +537,6 @@ echo   6. Clear Project Indexes
 echo   7. View Storage Statistics
 echo   0. Back to Main Menu
 echo.
-if "%MULTI_MODEL_STATUS%"=="Enabled" (
-    echo   Note: Indexing will update ALL models ^(Qwen3, BGE-M3, CodeRankEmbed^)
-    echo.
-)
 set "pm_choice="
 set /p pm_choice="Select option (0-7): "
 
@@ -818,7 +807,7 @@ echo === Clear Project Indexes ===
 echo.
 
 set "TEMP_PROJECTS=%TEMP%\mcp_projects.txt"
-".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; from pathlib import Path; import json; storage = get_storage_dir(); projects = list((storage / 'projects').glob('*/project_info.json')); [print(f'{i+1}|{json.load(open(p))[\"project_name\"]}|{json.load(open(p))[\"project_path\"]}|{p.parent.name}') for i, p in enumerate(projects)]" > "%TEMP_PROJECTS%" 2>nul
+".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; from pathlib import Path; import json; storage = get_storage_dir(); projects = list((storage / 'projects').glob('*/project_info.json')); [print(f'{i+1}|{(d:=json.load(open(p)))[\"project_name\"]}|{d[\"project_path\"]}|{p.parent.name}|{d.get(\"embedding_model\",\"unknown\").split(\"/\")[-1]}|{d.get(\"model_dimension\",0)}') for i, p in enumerate(projects)]" > "%TEMP_PROJECTS%" 2>nul
 
 REM Check if any projects exist
 findstr /R "." "%TEMP_PROJECTS%" >nul 2>&1
@@ -832,11 +821,8 @@ if errorlevel 1 (
 
 echo Select project to clear index:
 echo.
-for /f "usebackq tokens=1,2,3,4 delims=|" %%a in ("%TEMP_PROJECTS%") do (
-    REM Parse model_slug and dimension from PROJECT_HASH (format: name_hash_slug_NNNd)
-    for /f "tokens=3,4 delims=_" %%m in ("%%d") do (
-        echo   %%a. %%b [%%m %%n]
-    )
+for /f "usebackq tokens=1,2,3,4,5,6 delims=|" %%a in ("%TEMP_PROJECTS%") do (
+    echo   %%a. %%b [%%e %%fd]
     echo      Path: %%c
     echo.
 )
@@ -847,9 +833,23 @@ echo.
 set "project_choice="
 set /p project_choice="Select project number(s) (comma/space separated, 0 to cancel, X for all): "
 
+REM DIAGNOSTIC: log raw input to trace unexpected behavior (see %TEMP%\mcp_clear_diag.log)
+>> "%TEMP%\mcp_clear_diag.log" echo [%DATE% %TIME%] choice="!project_choice!" temp="%TEMP%" cwd="%CD%"
+
 REM Handle empty input
 if not defined project_choice goto :cancel_and_return
 if "!project_choice!"=="" goto :cancel_and_return
+
+REM Reject wildcard characters that cmd expands in for-loop token sets
+echo.!project_choice! | findstr /R "[*?]" >nul 2>&1 && (
+    echo.
+    echo [ERROR] Invalid input. Use digits, comma/space separated, X, or 0.
+    echo.
+    pause
+    goto clear_project_indexes
+)
+REM Defensive early-out: exact "0" cancels without entering the tokenizer
+if "!project_choice!"=="0" goto :cancel_and_return
 
 REM Tokenize, dedupe, and detect sentinel tokens (cmd for splits on commas and spaces)
 set "HAS_X=0"
@@ -867,6 +867,9 @@ for %%i in (!project_choice!) do (
         set /a token_count+=1
     )
 )
+
+REM DIAGNOSTIC: log tokenizer state
+>> "%TEMP%\mcp_clear_diag.log" echo [%DATE% %TIME%] HAS_ZERO=!HAS_ZERO! HAS_X=!HAS_X! count=!token_count! dedup="!dedup_choice!"
 
 REM Enforce sole-token rule: X and 0 cannot be combined with other selections
 if "!HAS_X!"=="1" if !token_count! NEQ 1 (
@@ -902,12 +905,9 @@ set "valid_count=0"
 REM Iterate the deduped token set so repeats like "1,1,3" process each index once
 for %%t in (!dedup_choice!) do (
     set "matched=0"
-    for /f "usebackq tokens=1,2,3,4 delims=|" %%a in ("%TEMP_PROJECTS%") do (
+    for /f "usebackq tokens=1,2,3,4,5,6 delims=|" %%a in ("%TEMP_PROJECTS%") do (
         if "%%a"=="%%t" (
-            REM Inner-loop vars %%m/%%n (slug/dim) are distinct from outer %%a-%%d; safe to reference both.
-            for /f "tokens=3,4 delims=_" %%m in ("%%d") do (
-                >> "%TEMP_SELECTED%" echo %%a^|%%b^|%%c^|%%d^|%%m^|%%n
-            )
+            >> "%TEMP_SELECTED%" echo %%a^|%%b^|%%c^|%%d^|%%e^|%%f
             set "matched=1"
             set /a valid_count+=1
         )
@@ -929,7 +929,7 @@ if !valid_count! EQU 0 (
 echo.
 echo [WARNING] You are about to clear the following indices:
 for /f "usebackq tokens=1,2,3,4,5,6 delims=|" %%a in ("%TEMP_SELECTED%") do (
-    echo   %%a. %%b [%%e %%f]
+    echo   %%a. %%b [%%e %%fd]
     echo      Hash: %%d
 )
 echo.
@@ -976,7 +976,7 @@ for /f "usebackq tokens=1,2,3,4,5,6 delims=|" %%a in ("%TEMP_SELECTED%") do (
         set /a success_count+=1
     ) else (
         set /a fail_count+=1
-        >> "%TEMP_FAIL%" echo   - %%b [%%e %%f]: !LAST_REASON!
+        >> "%TEMP_FAIL%" echo   - %%b [%%e %%fd]: !LAST_REASON!
     )
 )
 
@@ -993,11 +993,11 @@ set "LAST_RESULT=0"
 set "LAST_REASON="
 
 echo.
-echo [INFO] Clearing index for %PROJECT_NAME% [%MODEL_SLUG% %MODEL_DIM%]...
+echo [INFO] Clearing index for %PROJECT_NAME% [%MODEL_SLUG% %MODEL_DIM%d]...
 echo.
 
-REM Clear the index directory with DB cleanup
-".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; import shutil, time, gc; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; gc.collect(); time.sleep(0.5); shutil.rmtree(project_dir, ignore_errors=False) if project_dir.exists() else None; print('Index: cleared')"
+REM Clear the index directory via path-safe helper (validates hash before rmtree)
+".\.venv\Scripts\python.exe" tools\safe_clear_index.py project "%PROJECT_HASH%" 2>nul
 set "INDEX_RESULT=!ERRORLEVEL!"
 
 REM Auto-retry once (no prompt inside the loop). Tentatively attribute to
@@ -1005,13 +1005,15 @@ REM rmtree error; if the dir still exists after the retry, it's a genuine lock.
 if "!INDEX_RESULT!" NEQ "0" (
     set "LAST_REASON=rmtree error"
     echo [WARN] First rmtree failed; auto-retrying with ignore_errors...
-    timeout /t 2 /nobreak >nul
-    ".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; import shutil, time; storage = get_storage_dir(); project_dir = storage / 'projects' / '%PROJECT_HASH%'; time.sleep(1); shutil.rmtree(project_dir, ignore_errors=True)"
+    timeout /t 3 /nobreak >nul
+    ".\.venv\Scripts\python.exe" tools\safe_clear_index.py project "%PROJECT_HASH%" --retry
     REM Verify via storage_manager (honors custom STORAGE_DIR), not hardcoded %USERPROFILE%
     ".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; import sys; sys.exit(1 if (get_storage_dir() / 'projects' / '%PROJECT_HASH%').exists() else 0)"
     if errorlevel 1 (
         set "INDEX_RESULT=1"
         set "LAST_REASON=locked"
+        echo [HINT] Index file is held by a running process.
+        echo [HINT] Use /delete_project "%PROJECT_PATH%" from Claude Code, or stop the MCP server and retry.
     ) else (
         echo [OK] Force cleanup successful
         set "INDEX_RESULT=0"
@@ -1034,7 +1036,7 @@ if "!INDEX_RESULT!"=="0" (
     REM Reset project selection if this was the last index for this path.
     REM stderr intentionally NOT suppressed: happy path is silent (print is gated by the if),
     REM so any traceback here signals a real bug (API drift, missing import) worth surfacing.
-    ".\.venv\Scripts\python.exe" -c "import os; from mcp_server.storage_manager import get_storage_dir; from mcp_server.project_persistence import load_project_selection, clear_project_selection; from pathlib import Path; proj_path = os.environ['CGW_PROJ_PATH']; storage = get_storage_dir(); projects_dir = storage / 'projects'; remaining = [p for p in projects_dir.glob('*/project_info.json') if Path(p.parent.name).exists()]; import json; project_paths = [json.load(open(p))['project_path'] for p in remaining]; selection = load_project_selection(); if selection and selection.get('last_project_path') == proj_path and proj_path not in project_paths: clear_project_selection(); print('[INFO] Current project reset to None (all indices cleared)')"
+    ".\.venv\Scripts\python.exe" tools\reset_selection_if_orphaned.py
     set "LAST_RESULT=0"
 ) else (
     echo [ERROR] Failed to clear %PROJECT_NAME%
@@ -1066,8 +1068,8 @@ pause >nul
 goto project_management_menu
 
 :cancel_and_return
-del "%TEMP_PROJECTS%" 2>nul
-del "%TEMP_SELECTED%" 2>nul
+if defined TEMP_PROJECTS if exist "%TEMP_PROJECTS%" del "%TEMP_PROJECTS%" 2>nul
+if defined TEMP_SELECTED if exist "%TEMP_SELECTED%" del "%TEMP_SELECTED%" 2>nul
 goto project_management_menu
 
 :clear_all_indices
@@ -1093,8 +1095,8 @@ echo.
 echo [INFO] Clearing all project indices...
 echo.
 
-REM Delete all project directories
-".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; import shutil, gc, time; storage = get_storage_dir(); projects_dir = storage / 'projects'; gc.collect(); time.sleep(0.5); shutil.rmtree(projects_dir, ignore_errors=True) if projects_dir.exists() else None; projects_dir.mkdir(exist_ok=True); print('[OK] All project indices cleared')"
+REM Delete all project directories via path-safe helper
+".\.venv\Scripts\python.exe" tools\safe_clear_index.py all
 set "CLEAR_RESULT=!ERRORLEVEL!"
 
 REM Clear all Merkle snapshots
@@ -1194,7 +1196,7 @@ REM Search Configuration Functions
 echo.
 echo [INFO] Current Search Configuration:
 if exist ".venv\Scripts\python.exe" (
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = config.routing.multi_model_enabled; pool = config.routing.multi_model_pool or 'full'; model_display = f'BGE-M3 + gte-modernbert ({pool})' if multi_enabled and pool == 'lightweight-speed' else f'BGE-Code-v1 + Qwen3 ({pool})' if multi_enabled else f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print('    Multi-Model Routing:', 'Enabled' if multi_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print('    File Summaries:', 'Enabled' if config.chunking.enable_file_summaries else 'Disabled'); print('    Community Summaries:', 'Enabled' if config.chunking.enable_community_summaries else 'Disabled'); print(); print('  Chunking Settings:'); print('    Community Detection:', 'Enabled' if config.chunking.enable_community_detection else 'Disabled'); print('    Community Merge (full re-index only):', 'Enabled' if config.chunking.enable_community_merge else 'Disabled'); print(f'    Community Resolution: {config.chunking.community_resolution}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'    Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(f'    Split Size Method: {config.chunking.split_size_method}'); print(f'    Max Split Chars: {config.chunking.max_split_chars}'); print(f'    Sizing Mode: {config.chunking.sizing_mode}'); print(f'    Adaptive Max Multiplier: {config.chunking.adaptive_multiplier_max}'); print(f'    Adaptive Min Multiplier: {config.chunking.adaptive_multiplier_min}'); print(f'    Max Complexity Cap: {config.chunking.max_complexity_cap}'); print(f'    Max Merged Tokens: {config.chunking.max_merged_tokens}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    RAM Fallback: {\"On\" if config.performance.allow_ram_fallback else \"Off\"}'); print(); print('  Output Format:', config.output.format); g = config.graph_enhanced; print(); print('  Output ^& Ranking Enhancements:'); print('    Source-Position Ordering:', 'Enabled' if config.output.source_order_output else 'Disabled'); print('    Centrality BM25 Boost:', 'Enabled' if g.centrality_bm25_boost else 'Disabled'); print(f'      Boost Threshold: {g.centrality_boost_threshold}'); print(f'      Boost Factor: {g.centrality_boost_factor}'); print(f'      Boost Cap: {g.centrality_boost_cap}')"
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = config.routing.multi_model_enabled; pool = config.routing.multi_model_pool or 'full'; model_display = f'BGE-M3 + gte-modernbert ({pool})' if multi_enabled and pool == 'lightweight-speed' else f'CodeRankEmbed + Qwen3 ({pool})' if multi_enabled else f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print('    Multi-Model Routing:', 'Enabled' if multi_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print('    File Summaries:', 'Enabled' if config.chunking.enable_file_summaries else 'Disabled'); print('    Community Summaries:', 'Enabled' if config.chunking.enable_community_summaries else 'Disabled'); print(); print('  Chunking Settings:'); print('    Community Detection:', 'Enabled' if config.chunking.enable_community_detection else 'Disabled'); print('    Community Merge (full re-index only):', 'Enabled' if config.chunking.enable_community_merge else 'Disabled'); print(f'    Community Resolution: {config.chunking.community_resolution}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'    Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(f'    Split Size Method: {config.chunking.split_size_method}'); print(f'    Max Split Chars: {config.chunking.max_split_chars}'); print(f'    Sizing Mode: {config.chunking.sizing_mode}'); print(f'    Adaptive Max Multiplier: {config.chunking.adaptive_multiplier_max}'); print(f'    Adaptive Min Multiplier: {config.chunking.adaptive_multiplier_min}'); print(f'    Max Complexity Cap: {config.chunking.max_complexity_cap}'); print(f'    Max Merged Tokens: {config.chunking.max_merged_tokens}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    RAM Fallback: {\"On\" if config.performance.allow_ram_fallback else \"Off\"}'); print(); print('  Output Format:', config.output.format); g = config.graph_enhanced; print(); print('  Output ^& Ranking Enhancements:'); print('    Source-Position Ordering:', 'Enabled' if config.output.source_order_output else 'Disabled'); print('    Centrality BM25 Boost:', 'Enabled' if g.centrality_bm25_boost else 'Disabled'); print(f'      Boost Threshold: {g.centrality_boost_threshold}'); print(f'      Boost Factor: {g.centrality_boost_factor}'); print(f'      Boost Cap: {g.centrality_boost_cap}')"
     if "!ERRORLEVEL!" neq "0" (
         echo Error loading configuration
         echo Using defaults: hybrid mode, BM25=0.35, Dense=0.65
@@ -1310,17 +1312,14 @@ echo.
 echo   3. Lightweight Multi-Model ^(1.65GB^)
 echo      BGE-M3 + gte-modernbert, smart routing
 echo.
-echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+^)
-echo   4. Qwen3-0.6B ^(1024d, 2.3GB^)
-echo      High efficiency, best value/performance
-echo.
-echo   5. Full Multi-Model Routing ^(6.3GB^)
-echo      BGE-Code-v1 + Qwen3, smart routing
+echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+, RTX 4090^)
+echo   4. Qwen3-Embedding-0.6B ^(1024d, ~1.1GB^)
+echo      Single model + Jina v3 reranker ^(MRR 0.94 SSCG baseline^)
 echo.
 echo   0. Back to Search Configuration
 echo.
 set "model_choice="
-set /p model_choice="Select model (0-5): "
+set /p model_choice="Select model (0-4): "
 
 if not defined model_choice goto search_config_menu
 if "!model_choice!"=="" goto search_config_menu
@@ -1331,12 +1330,11 @@ if "!model_choice!"=="1" set "SELECTED_MODEL=BAAI/bge-m3"
 if "!model_choice!"=="2" set "SELECTED_MODEL=google/embeddinggemma-300m"
 if "!model_choice!"=="3" goto enable_lightweight_speed
 if "!model_choice!"=="4" set "SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B"
-if "!model_choice!"=="5" goto enable_multi_model
 
 if defined SELECTED_MODEL (
     echo.
     echo [INFO] Configuring model: !SELECTED_MODEL!
-    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding.model_name = '!SELECTED_MODEL!'; cfg.routing.multi_model_enabled = False; mgr.save_config(cfg); print('[OK] Model configuration saved')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager, MODEL_REGISTRY; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding.model_name = '!SELECTED_MODEL!'; cfg.embedding.dimension = MODEL_REGISTRY['!SELECTED_MODEL!']['dimension']; cfg.routing.multi_model_enabled = False; mgr.save_config(cfg); print('[OK] Model configuration saved')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
@@ -1355,46 +1353,7 @@ if defined SELECTED_MODEL (
 ) else (
     echo [ERROR] Invalid choice
 )
-pause
-goto search_config_menu
-
-:enable_multi_model
-echo.
-echo === Enable Multi-Model Routing ===
-echo.
-echo This will enable intelligent query routing across:
-echo   - BGE-Code-v1 ^(1536d, ~4GB^)
-echo   - Qwen3-0.6B ^(1024d, 2.3GB^)
-echo.
-echo Total VRAM: 6.3GB
-echo Routing Accuracy: 100%% ^(validated^)
-echo Performance: SOTA Code Retrieval ^(CoIR 81.77^)
-echo.
-echo [WARNING] Requires 10+ GB VRAM. NOT recommended for 8GB GPUs.
-echo For 8GB GPUs, choose option 1 ^(BGE-M3^) instead.
-echo.
-set "confirm_multi="
-set /p confirm_multi="Enable multi-model routing? (y/N): "
-if /i "!confirm_multi!"=="y" (
-    REM Persist to config file via Python
-    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.routing.multi_model_enabled = True; cfg.routing.multi_model_pool = 'full'; cfg.reranker.enabled = True; cfg.reranker.model_name = 'jinaai/jina-reranker-v3'; mgr.save_config(cfg); print('[OK] Full multi-model routing enabled and saved to config')" 2>nul
-    if errorlevel 1 (
-        echo [ERROR] Failed to save to config file
-        set "CLAUDE_MULTI_MODEL_ENABLED=true"
-        echo [INFO] Set as environment variable for this session only
-    ) else (
-        echo.
-        echo [OK] Full multi-model configuration saved
-        echo [INFO] Pool: BGE-Code-v1 + Qwen3
-        echo [INFO] Reranker: jina-reranker-v3
-        echo [INFO] Total VRAM: ~7.8GB
-        echo.
-        echo [WARNING] Existing indexes need to be rebuilt for multi-model pool
-        echo [INFO] Next time you index a project, it will use the full pool
-    )
-) else (
-    echo [INFO] Cancelled
-)
+set "CLAUDE_MULTI_MODEL_ENABLED="
 pause
 goto search_config_menu
 
@@ -1957,17 +1916,14 @@ echo.
 echo   3. Lightweight Multi-Model ^(1.65GB^)
 echo      BGE-M3 + gte-modernbert, smart routing
 echo.
-echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+^)
-echo   4. Qwen3-0.6B ^(1024d, 2.3GB^)
-echo      High efficiency, best value/performance
-echo.
-echo   5. Full Multi-Model Routing ^(6.3GB^)
-echo      BGE-Code-v1 + Qwen3, smart routing
+echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+, RTX 4090^)
+echo   4. Qwen3-Embedding-0.6B ^(1024d, ~1.1GB^)
+echo      Single model + Jina v3 reranker ^(MRR 0.94 SSCG baseline^)
 echo.
 echo   0. Back to Main Menu
 echo.
 set "model_choice="
-set /p model_choice="Select model (0-5): "
+set /p model_choice="Select model (0-4): "
 
 REM Handle empty input or back
 if not defined model_choice goto menu_restart
@@ -1980,7 +1936,6 @@ if "!model_choice!"=="1" set "SELECTED_MODEL=BAAI/bge-m3"
 if "!model_choice!"=="2" set "SELECTED_MODEL=google/embeddinggemma-300m"
 if "!model_choice!"=="3" goto enable_lightweight_speed
 if "!model_choice!"=="4" set "SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B"
-if "!model_choice!"=="5" goto enable_multi_model
 
 REM Perform model switch
 if defined SELECTED_MODEL (
@@ -2008,6 +1963,7 @@ if defined SELECTED_MODEL (
     echo [ERROR] Invalid choice
 )
 echo.
+set "CLAUDE_MULTI_MODEL_ENABLED="
 pause
 goto menu_restart
 
@@ -2896,7 +2852,7 @@ echo.
 echo Key Features:
 echo   - 18 MCP Tools: Index, search, configure, manage projects
 echo   - Low-Level MCP SDK: Official Anthropic implementation
-echo   - Multi-Model Routing: BGE-M3 + Qwen3 + CodeRankEmbed ^(optional^)
+echo   - Single-Model: Qwen3-Embedding-0.6B + Jina v3 reranker ^(workstation^)
 echo   - Neural Reranking: Cross-encoder model ^(5-15%% quality boost^)
 echo   - Hybrid Search: BM25 + Semantic for optimal accuracy
 echo   - 85-95%% Token Reduction: Validated benchmark results
@@ -2931,8 +2887,8 @@ echo     - MCP_TOOLS_REFERENCE.md: MCP tools documentation
 echo     - TESTING_GUIDE.md: Test suite documentation
 echo     - GIT_WORKFLOW.md: Git automation scripts
 echo.
-echo The MCP server runs on http://localhost:8765/sse by default.
-echo Use menu option 1 to start the SSE server for Claude Code.
+echo The MCP server runs on http://localhost:8765/mcp by default.
+echo Use menu option 1 to start the HTTP server for Claude Code.
 echo.
 pause
 goto menu_restart

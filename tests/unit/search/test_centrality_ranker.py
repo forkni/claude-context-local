@@ -147,7 +147,7 @@ def test_convergence_failure_returns_empty_scores():
     )
 
     ranker = CentralityRanker(engine, method="pagerank", alpha=0.3)
-    scores = ranker._get_centrality_scores()
+    scores = ranker.get_centrality_scores()
 
     assert scores == {}
 
@@ -160,7 +160,7 @@ def test_generic_exception_returns_empty_scores():
     engine.compute_centrality = MagicMock(side_effect=RuntimeError("Test error"))
 
     ranker = CentralityRanker(engine, method="pagerank", alpha=0.3)
-    scores = ranker._get_centrality_scores()
+    scores = ranker.get_centrality_scores()
 
     assert scores == {}
 
@@ -288,3 +288,206 @@ def test_zero_centrality_does_not_affect_real_code():
     # Type demotion: 0.56 * 0.90 = 0.504
     # Zero-centrality demotion: 0.504 * 0.5 = 0.252
     assert reranked[2]["blended_score"] == pytest.approx(0.252, abs=0.02)  # module
+
+
+# ---------------------------------------------------------------------------
+# Direct unit tests for the extracted scoring policy helpers
+# ---------------------------------------------------------------------------
+
+
+class TestApplySizeNormalization:
+    """Tests for CentralityRanker._apply_size_normalization."""
+
+    def _make_ranker(self, target_lines=200, alpha=0.1):
+        from unittest.mock import Mock
+
+        from search.config import GraphEnhancedConfig
+
+        engine = Mock()
+        config = GraphEnhancedConfig(
+            enable_size_normalization=True,
+            size_norm_target_lines=target_lines,
+            size_norm_alpha=alpha,
+        )
+        return CentralityRanker(engine, config=config)
+
+    def test_penalizes_oversized_chunk(self):
+        ranker = self._make_ranker(target_lines=50, alpha=0.1)
+        # chunk_id line range 1-200 → 200 lines > 50
+        result = {"chunk_id": "file.py:1-200:function:big", "blended_score": 1.0}
+        ranker._apply_size_normalization(result)
+        assert result["blended_score"] < 1.0
+
+    def test_skips_small_chunk(self):
+        ranker = self._make_ranker(target_lines=200, alpha=0.1)
+        result = {"chunk_id": "file.py:1-10:function:small", "blended_score": 0.8}
+        ranker._apply_size_normalization(result)
+        assert result["blended_score"] == 0.8  # unchanged
+
+
+class TestApplyBm25Boost:
+    """Tests for CentralityRanker._apply_bm25_boost."""
+
+    def _make_ranker(self, factor=5.0, cap=0.15):
+        from unittest.mock import Mock
+
+        from search.config import GraphEnhancedConfig
+
+        engine = Mock()
+        config = GraphEnhancedConfig(
+            centrality_bm25_boost=True,
+            centrality_boost_factor=factor,
+            centrality_boost_cap=cap,
+        )
+        return CentralityRanker(engine, config=config)
+
+    def test_adds_boost_capped_at_cap(self):
+        ranker = self._make_ranker(factor=5.0, cap=0.15)
+        result = {"chunk_id": "f.py:1-2:function:x", "blended_score": 0.5}
+        # centrality=0.1 → boost = min(0.1*5.0, 0.15) = 0.15 (capped)
+        ranker._apply_bm25_boost(result, centrality=0.1)
+        assert result["blended_score"] == pytest.approx(0.65, abs=0.001)
+
+    def test_boost_below_cap(self):
+        ranker = self._make_ranker(factor=5.0, cap=0.15)
+        result = {"chunk_id": "f.py:1-2:function:x", "blended_score": 0.5}
+        # centrality=0.02 → boost = min(0.02*5.0, 0.15) = 0.1
+        ranker._apply_bm25_boost(result, centrality=0.02)
+        assert result["blended_score"] == pytest.approx(0.6, abs=0.001)
+
+
+class TestApplyTypeBoost:
+    """Tests for CentralityRanker._apply_type_boost."""
+
+    def _make_ranker(self):
+        from unittest.mock import Mock
+
+        engine = Mock()
+        return CentralityRanker(engine)
+
+    def test_entity_query_boosts_class(self):
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        ranker._apply_type_boost(result, "class", "find class definition")
+        assert result["blended_score"] == pytest.approx(1.35, abs=0.001)
+
+    def test_code_query_boosts_function(self):
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        ranker._apply_type_boost(result, "function", "authentication logic")
+        assert result["blended_score"] == pytest.approx(1.2, abs=0.001)
+
+    def test_entity_query_demotes_module(self):
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        ranker._apply_type_boost(result, "module", "find class")
+        assert result["blended_score"] == pytest.approx(0.85, abs=0.001)
+
+
+class TestApplySyntheticDemotion:
+    """Tests for CentralityRanker._apply_synthetic_demotion."""
+
+    def _make_ranker(self):
+        from unittest.mock import Mock
+
+        engine = Mock()
+        return CentralityRanker(engine)
+
+    def test_demotes_module_chunk_zero_centrality(self):
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0, "centrality": 0}
+        ranker._apply_synthetic_demotion(result, "module", "file.py:0-0:module:file")
+        assert result["blended_score"] == pytest.approx(0.5, abs=0.001)
+
+    def test_skips_nonzero_centrality(self):
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0, "centrality": 0.05}
+        ranker._apply_synthetic_demotion(result, "module", "file.py:0-0:module:file")
+        assert result["blended_score"] == pytest.approx(1.0, abs=0.001)  # unchanged
+
+
+class TestApplyCoreDirBoost:
+    """Tests for CentralityRanker._apply_core_dir_boost."""
+
+    def _make_ranker(self):
+        from unittest.mock import Mock
+
+        engine = Mock()
+        return CentralityRanker(engine)
+
+    def test_boosts_search_dir(self):
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        ranker._apply_core_dir_boost(
+            result, "search/hybrid_searcher.py:1-10:function:f"
+        )
+        assert result["blended_score"] == pytest.approx(1.1, abs=0.001)
+
+    def test_skips_non_core_dir(self):
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        ranker._apply_core_dir_boost(result, "scripts/helper.py:1-5:function:f")
+        assert result["blended_score"] == pytest.approx(1.0, abs=0.001)  # unchanged
+
+
+class TestApplyRoleDemotion:
+    """Tests for CentralityRanker._apply_role_demotion."""
+
+    def _make_ranker(self):
+        from unittest.mock import Mock
+
+        engine = Mock()
+        return CentralityRanker(engine)
+
+    def test_demotes_test_file_without_test_query(self):
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        ranker._apply_role_demotion(
+            result, "tests/unit/test_foo.py:1-10:function:x", [], "search logic"
+        )
+        assert result["blended_score"] == pytest.approx(0.85, abs=0.001)
+
+    def test_boosts_test_file_with_test_query(self):
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        ranker._apply_role_demotion(
+            result, "tests/unit/test_foo.py:1-10:function:x", [], "test coverage"
+        )
+        assert result["blended_score"] == pytest.approx(1.15, abs=0.001)
+
+    def test_role_tag_takes_precedence_over_path(self):
+        """indexed role:test tag should be used even for non-test path."""
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        ranker._apply_role_demotion(
+            result, "src/feature.py:1-5:function:x", ["role:test"], "search logic"
+        )
+        assert result["blended_score"] == pytest.approx(0.85, abs=0.001)
+
+
+class TestApplyNameMatchBoost:
+    """Tests for CentralityRanker._apply_name_match_boost."""
+
+    def _make_ranker(self):
+        from unittest.mock import Mock
+
+        engine = Mock()
+        return CentralityRanker(engine)
+
+    def test_high_overlap_applies_1_3_boost(self):
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        # name="authenticate_user", query="authenticate user" → overlap≥0.8
+        ranker._apply_name_match_boost(
+            result, "authenticate_user", "authenticate user", "authenticate user"
+        )
+        assert result["blended_score"] == pytest.approx(1.3, abs=0.001)
+
+    def test_lifecycle_demotion_init_without_intent(self):
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        ranker._apply_name_match_boost(
+            result, "__init__", "authentication logic", "authentication logic"
+        )
+        # lifecycle demotion ×0.85 (no init/enter/exit in query)
+        assert result["blended_score"] < 1.0

@@ -17,12 +17,13 @@ Planned Enhancements:
 - C++ and GLSL support
 """
 
-from .call_graph_extractor import (
+from chunking.relationships.call_graph_extractor import (
     CallEdge,
     CallGraphExtractor,
     CallGraphExtractorFactory,
     PythonCallGraphExtractor,
 )
+
 from .graph_queries import GraphQueryEngine
 from .graph_storage import CodeGraphStorage
 

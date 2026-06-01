@@ -15,6 +15,8 @@ except ImportError:
     GRAPH_STORAGE_AVAILABLE = False
     CodeGraphStorage = None
 
+from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
+
 
 def is_chunk_id(node_id: str) -> bool:
     """Check if a graph node ID is a real chunk ID (not a bare symbol name).
@@ -64,13 +66,13 @@ class GraphIntegration:
             project_id: Unique project identifier for graph storage
             storage_dir: Directory where index is stored (graph will be in parent dir)
         """
-        self._logger = logging.getLogger(__name__)
-        self.storage = None
+        self._setup_from_storage(None)
 
         if GRAPH_STORAGE_AVAILABLE and project_id:
             try:
                 # Store graph in same directory as vector index
                 graph_dir = storage_dir.parent
+                # pyrefly: ignore [not-callable]
                 self.storage = CodeGraphStorage(
                     project_id=project_id, storage_dir=graph_dir
                 )
@@ -79,6 +81,30 @@ class GraphIntegration:
                 )
             except Exception as e:
                 self._logger.warning(f"Failed to initialize graph storage: {e}")
+
+    @classmethod
+    def from_storage(cls, storage: Any) -> "GraphIntegration":
+        """Create a GraphIntegration wrapping an existing CodeGraphStorage instance.
+
+        Use this when the storage was constructed externally (e.g. reused from
+        another manager) and you need a seam handle without re-initialising storage.
+
+        Args:
+            storage: An existing CodeGraphStorage instance, or None.
+        """
+        instance = cls.__new__(cls)
+        instance._setup_from_storage(storage)
+        return instance
+
+    def _setup_from_storage(self, storage: Any) -> None:
+        """Set the instance attributes shared by __init__ and from_storage.
+
+        Keeping these in one place ensures the two construction paths never drift:
+        any attribute added here is set whether the instance was built normally or
+        via from_storage()'s cls.__new__ bypass.
+        """
+        self._logger = logging.getLogger(__name__)
+        self.storage = storage
 
     def add_chunk(self, chunk_id: str, metadata: dict[str, Any]) -> None:
         """Add chunk to call graph storage.
@@ -121,6 +147,7 @@ class GraphIntegration:
             self.storage.add_node(
                 chunk_id=chunk_id,
                 name=metadata.get("name", "unknown"),
+                # pyrefly: ignore [bad-argument-type]
                 chunk_type=chunk_type,
                 file_path=metadata.get("file_path", ""),
                 language=metadata.get("language", "python"),
@@ -144,12 +171,6 @@ class GraphIntegration:
                 )
                 for rel_dict in relationships:
                     try:
-                        # Import RelationshipEdge to reconstruct from dict
-                        from graph.relationship_types import (
-                            RelationshipEdge,
-                            RelationshipType,
-                        )
-
                         # Reconstruct RelationshipEdge from dict
                         edge = RelationshipEdge(
                             source_id=rel_dict.get("source_id", chunk_id),
@@ -172,6 +193,114 @@ class GraphIntegration:
 
         except (KeyError, TypeError) as e:
             self._logger.warning(f"Failed to add {chunk_id} to graph: {e}")
+
+    def populate_from_embeddings(self, embedding_results: list[Any]) -> None:
+        """Populate call graph from a list of EmbeddingResult objects.
+
+        Batch two-pass method: builds a symbol-resolution map first, then adds
+        edges using _resolve_call_target (canonical builtins-filter + same-file
+        + split_block disambiguation + qualified-name indexing).
+
+        Incremental-add counterpart to build_graph_from_chunks: does NOT clear
+        the graph first (build_graph_from_chunks clears; this appends).
+
+        Args:
+            embedding_results: List of EmbeddingResult with .chunk_id and .metadata.
+        """
+        if self.storage is None:
+            return
+        if not embedding_results:
+            return
+
+        # === PASS 1: add nodes + build symbol-resolution map ===
+        name_to_chunk_ids: dict[str, list[str]] = defaultdict(list)
+        nodes_added = 0
+
+        for result in embedding_results:
+            chunk_id = result.chunk_id
+            meta = result.metadata
+            chunk_type = meta.get("chunk_type")
+
+            if chunk_type not in SEMANTIC_TYPES:
+                continue
+
+            try:
+                self.storage.add_node(
+                    chunk_id=chunk_id,
+                    name=meta.get("name", "unknown"),
+                    chunk_type=chunk_type,
+                    file_path=meta.get("file_path", ""),
+                    language=meta.get("language", "python"),
+                )
+                nodes_added += 1
+
+                name = meta.get("name")
+                if name:
+                    name_to_chunk_ids[name].append(chunk_id)
+
+                    # Also index by bare name for methods (ClassName.method → method)
+                    if "." in name:
+                        name_to_chunk_ids[name.split(".")[-1]].append(chunk_id)
+
+                    # Index qualified name (ClassName.method) for self.method() resolution
+                    # Fixes intra-class method calls by indexing "ClassName.method"
+                    parent_name = meta.get("parent_name")
+                    if parent_name:
+                        name_to_chunk_ids[f"{parent_name}.{name}"].append(chunk_id)
+
+            except (AttributeError, KeyError, TypeError) as e:
+                self._logger.warning(f"Failed to add node {chunk_id} to graph: {e}")
+
+        # === PASS 2: add call + relationship edges with resolution ===
+        call_edges = 0
+        resolved_edges = 0
+        rel_edges = 0
+
+        for result in embedding_results:
+            chunk_id = result.chunk_id
+            meta = result.metadata
+            caller_file = meta.get("file_path", "")
+
+            for call_dict in meta.get("calls", []):
+                callee_name = call_dict.get("callee_name", "unknown")
+                resolved = self._resolve_call_target(
+                    callee_name, name_to_chunk_ids, caller_file=caller_file
+                )
+                self.storage.add_call_edge(
+                    caller_id=chunk_id,
+                    callee_name=resolved if resolved else callee_name,
+                    line_number=call_dict.get("line_number", 0),
+                    is_method_call=call_dict.get("is_method_call", False),
+                    is_resolved=resolved is not None,
+                )
+                call_edges += 1
+                if resolved:
+                    resolved_edges += 1
+
+            for rel_dict in meta.get("relationships", []):
+                try:
+                    edge = RelationshipEdge(
+                        source_id=rel_dict.get("source_id", chunk_id),
+                        target_name=rel_dict.get("target_name", "unknown"),
+                        relationship_type=RelationshipType(
+                            rel_dict.get("relationship_type", "calls")
+                        ),
+                        line_number=rel_dict.get("line_number", 0),
+                        confidence=rel_dict.get("confidence", 1.0),
+                        metadata=rel_dict.get("metadata", {}),
+                    )
+                    self.storage.add_relationship_edge(edge)
+                    rel_edges += 1
+                except (ValueError, KeyError, TypeError) as e:
+                    self._logger.debug(
+                        f"Failed to add relationship edge from {chunk_id}: {e}"
+                    )
+
+        self._logger.info(
+            f"Populated graph from embeddings: {nodes_added} nodes, "
+            f"{call_edges} call edges ({resolved_edges} resolved, "
+            f"{call_edges - resolved_edges} phantom), {rel_edges} relationship edges"
+        )
 
     def build_graph_from_chunks(self, chunks) -> None:
         """Build graph from chunks WITHOUT embeddings (for pre-embedding community detection).
@@ -303,17 +432,12 @@ class GraphIntegration:
                 # Add relationship edges
                 for rel in chunk.relationships or []:
                     try:
-                        # Import RelationshipEdge for type handling
-                        from graph.relationship_types import (
-                            RelationshipEdge,
-                            RelationshipType,
-                        )
-
                         # Handle both RelationshipEdge objects and dicts
                         if isinstance(rel, RelationshipEdge):
                             self.storage.add_relationship_edge(rel)
                         elif isinstance(rel, dict):
                             edge = RelationshipEdge(
+                                # pyrefly: ignore [bad-argument-type]
                                 source_id=rel.get("source_id", chunk.chunk_id),
                                 target_name=rel.get("target_name", "unknown"),
                                 relationship_type=RelationshipType(

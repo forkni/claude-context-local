@@ -243,7 +243,8 @@ __marimo__/
 _archive/
 benchmark_results/
 analysis/
-/logs/                   # Workflow execution logs and analysis reports (entire directory)
+# Workflow execution logs and analysis reports
+/logs/
 scripts/git
 CLAUDE.md
 MEMORY.md
@@ -275,6 +276,7 @@ docs/*
 !docs/TESTING_GUIDE.md
 !docs/VSCODE_SETUP.md
 !docs/VERSION_HISTORY.md
+!docs/OBSERVABILITY.md
 
 # Development-only documentation (local-only)
 # - AUTOMATED_GIT_WORKFLOW.md (Claude orchestration guide - development only)
@@ -289,6 +291,10 @@ docs/PRE_COMMIT_HOOKS.md
 # Call graph implementation planning (tracked in repo)
 !docs/Call_Graph_Implementation/
 !docs/Call_Graph_Implementation/**
+
+# Architecture Decision Records (tracked in repo)
+!docs/adr/
+!docs/adr/**
 
 # Evaluation and test results (temporary/generated files)
 custom_evaluation_results/
@@ -383,3 +389,8 @@ gha-creds-*.json
 
 # claude-git-workflow local config (use cgw.conf.example as template)
 .cgw.conf
+cgw.conf.example
+
+# Local-only project files (not for version control)
+SESSION_LOG.md
+CONTEXT.md

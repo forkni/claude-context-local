@@ -1,6 +1,6 @@
 """Unit tests for cAST greedy sibling merging algorithm."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -367,24 +367,16 @@ def c(): pass
         assert len(chunks) == 3
         assert all(c.node_type == "function_definition" for c in chunks)
 
-    def test_config_from_service_locator(self, chunker):
-        """Config is fetched from ServiceLocator when not provided."""
-        from mcp_server.services import ServiceLocator
-
-        # Register a config
+    def test_config_fetched_when_not_provided(self, chunker):
+        """Config is fetched from get_search_config when not explicitly passed."""
         mock_config = MagicMock()
         mock_config.chunking = ChunkingConfig()
 
-        locator = ServiceLocator.instance()
-        locator.register("config", mock_config)
-
-        try:
+        with patch("search.config.get_search_config", return_value=mock_config):
             code = "def a(): pass\ndef b(): pass"
             chunks = chunker.chunk_code(code)  # No config passed
-            # Should work with ServiceLocator config
+            # Should work with default config
             assert len(chunks) >= 2
-        finally:
-            ServiceLocator.reset()
 
 
 class TestChunkingConfig:

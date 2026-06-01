@@ -140,7 +140,7 @@ class BatchOperations:
             return len(chunks_to_remove_ids)
 
         except Exception as e:
-            self._logger.error(f"Failed to batch remove chunks: {e}")
+            self._logger.error(f"Failed to batch remove chunks: {e}", exc_info=True)
             import traceback
 
             self._logger.error(traceback.format_exc())

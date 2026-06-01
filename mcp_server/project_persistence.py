@@ -32,7 +32,7 @@ def save_project_selection(project_path: str, model_key: str | None = None) -> b
 
     Args:
         project_path: Absolute path to the project directory
-        model_key: Optional model key (e.g., 'bge_m3', 'qwen3')
+        model_key: Optional model key (e.g., 'bge_m3', 'qwen3_0.6b')
 
     Returns:
         True if saved successfully, False otherwise

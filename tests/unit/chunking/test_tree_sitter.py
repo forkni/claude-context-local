@@ -3,7 +3,7 @@
 import tempfile
 from pathlib import Path
 from unittest import TestCase
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -191,7 +191,6 @@ class TestTreeSitterChunker(TestCase):
     def test_chunk_python_file(self):
         """Test chunking a Python file."""
         import chunking.tree_sitter as tsf
-        from mcp_server.services import ServiceLocator
 
         if "python" not in tsf.AVAILABLE_LANGUAGES:
             self.skipTest("tree-sitter-python not installed")
@@ -210,16 +209,11 @@ class TestClass:
         mock_config = MagicMock()
         mock_config.chunking = ChunkingConfig()
 
-        locator = ServiceLocator.instance()
-        locator.register("config", mock_config)
-
-        try:
+        with patch("search.config.get_search_config", return_value=mock_config):
             chunks = self.chunker.chunk_file(str(file_path))
 
             assert len(chunks) >= 2
             assert all(c.language == "python" for c in chunks)
-        finally:
-            ServiceLocator.reset()
 
     def test_unsupported_file(self):
         """Test handling of unsupported file types."""

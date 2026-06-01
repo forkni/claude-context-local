@@ -1,9 +1,9 @@
 """Query routing system for multi-model semantic search.
 
 Routes queries to the optimal embedding model based on query characteristics.
-Based on empirical verification results comparing Qwen3, BGE-M3, and CodeRankEmbed.
+Based on empirical verification results comparing Qwen3-0.6B, BGE-M3, and CodeRankEmbed.
 
-Note: Qwen3 uses Qwen3-0.6B across all VRAM tiers for safety and compatibility.
+Note: Qwen3-0.6B (key: qwen3_0.6b) is used across all VRAM tiers for safety and compatibility.
 """
 
 import contextlib
@@ -54,14 +54,14 @@ class RoutingDecision:
 class QueryRouter:
     """Routes queries to optimal embedding model based on query characteristics.
 
-    # Routing strategy based on verification results:
-    - Qwen3 (Logic specialist): Action-oriented queries, logic flow, validation, and algorithms.
-    - BGE-Code (Semantic specialist): Workflow queries, complex code structure, and SOTA reasoning.
+    # Routing strategy:
+    - Qwen3-0.6B (default): Semantic discovery, implementation logic, validation, and algorithms.
+    - CodeRankEmbed (navigational): find/locate queries, caller/callee lookups, docstring-behavioral.
     """
 
     # Routing rules based on verification results (analysis/model_relevance_verification_results.md)
     ROUTING_RULES = {
-        "qwen3": {
+        "qwen3_0.6b": {
             "keywords": [
                 # Logic and Validation (Qwen3 strength)
                 "validate",
@@ -100,77 +100,71 @@ class QueryRouter:
             "weight": 1.2,  # Priority for logic
             "description": "Logic, validation, and implementation queries",
         },
-        "bge_code": {
+        "coderankembed": {
             "keywords": [
-                # Workflow & configuration
-                "workflow",
-                "process",
-                "pipeline",
-                "flow",
-                "loading",
-                "initialization",
-                "init",
-                "setup",
-                "initialize",
-                "configuration",
-                "config",
-                "settings",
-                "manager",
-                "configure",
-                "load config",
-                "load",
-                "incremental",
-                "reindex",
-                "indexing",
-                "index",
-                "embedding",
-                "embed",
-                "generate",
-                "faiss",
-                "vector",
-                "similarity",
-                "dense",
-                "system",
-                "integration",
-                "connection",
-                "connect",
-                "project",
-                "projects",
-                # Specialized algorithms (Moved from coderankembed)
-                "merkle",
-                "merkle tree",
-                "merkle dag",
-                "tree",
-                "change detection",
-                "rrf",
-                "reranking",
-                "rerank",
-                "dag",
-                "graph",
-                "graph structure",
-                "call graph",
+                # Category A — Navigational verbs (plan vocabulary)
+                "find",
+                "locate",
+                "localize",
+                "look for",
+                "look up",
+                "find the function",
+                "find the method",
+                "find the class",
+                "find the code",
+                "find where",
+                "locate the function",
+                "locate the code",
+                "where is",
+                "where are",
+                "which function",
+                "which method",
+                "which class",
+                "which file",
+                # Call graph vocabulary
                 "caller",
+                "callers",
                 "callee",
-                "dependency",
-                "relationship",
-                "inheritance",
-                "type system",
-                "interface",
-                "enum",
-                "struct",
+                "callees",
+                "call site",
+                "call sites",
+                "called by",
+                "who calls",
+                "calls into",
+                # Definition/symbol lookup
+                "defined",
+                "definition",
+                "declaration",
+                "find definition",
+                # Category C — Docstring-behavioral (CodeRankEmbed training distribution)
+                "responsible for",
+                "handles",
+                "processes",
+                "computes",
+                "returns",
+                "performs",
+                "function that",
+                "method that",
+                "class that",
+                "code that",
+                "code which",
+                # Plan verification vocabulary
+                "grep",
+                "trace",
+                "tracing",
             ],
-            "weight": 1.0,
-            "description": "Workflow, configuration, and SOTA code retrieval",
+            "weight": 1.2,
+            "description": "Code localization — find/locate specific functions, classes, and call sites",
         },
     }
 
     # Explicit precedence for tie-breaking
-    # 1. Qwen3 (Logic/Action)
-    # 2. BGE-Code (Semantic/Workflow)
-    PRECEDENCE = ["qwen3", "bge_code"]
+    # 1. Qwen3 (semantic discovery, implementation logic)
+    # 2. CodeRankEmbed (function localization, navigational queries)
+    PRECEDENCE = ["qwen3_0.6b", "coderankembed"]
 
     # Default fallback model
-    DEFAULT_MODEL = "bge_code"
+    DEFAULT_MODEL = "qwen3_0.6b"
 
     # Confidence threshold for routing (below this, use default)
     # Updated to 0.35 to align with config/routing_keywords.yaml (2026-02-06)
@@ -388,7 +382,7 @@ class QueryRouter:
         Args:
             query: Natural language search query
             confidence_threshold: Minimum confidence to use non-default model.
-                                  If None, uses value from YAML config or CONFIDENCE_THRESHOLD (0.05).
+                                  If None, uses value from YAML config or CONFIDENCE_THRESHOLD (0.35).
 
         Returns:
             RoutingDecision with model_key, confidence, and reasoning
@@ -541,7 +535,7 @@ class QueryRouter:
         """Get routing rule details for a specific model.
 
         Args:
-            model_key: Model identifier ("qwen3", "bge_m3", "coderankembed")
+            model_key: Model identifier ("qwen3_0.6b", "bge_m3", "coderankembed")
 
         Returns:
             Dictionary with keywords, weight, and description, or None if invalid
@@ -558,7 +552,7 @@ class QueryRouter:
 
 
 # Convenience function for quick routing
-def route_query(query: str, confidence_threshold: float = 0.3) -> str:
+def route_query(query: str, confidence_threshold: float = 0.35) -> str:
     """Quick routing function that returns just the model_key.
 
     Args:
@@ -566,7 +560,7 @@ def route_query(query: str, confidence_threshold: float = 0.3) -> str:
         confidence_threshold: Minimum confidence for non-default model
 
     Returns:
-        Model key string ("qwen3", "bge_m3", or "coderankembed")
+        Model key string ("qwen3_0.6b", "bge_m3", or "coderankembed")
     """
     router = QueryRouter(enable_logging=False)
     decision = router.route(query, confidence_threshold)

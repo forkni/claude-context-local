@@ -248,3 +248,186 @@ class TestRemergeLineOverlapFix:
 
         assert len(result) >= 1
         assert all(c.file_path == "file.py" for c in result)
+
+
+# ---------------------------------------------------------------------------
+# Direct tests for the three static helpers extracted from remerge_chunks_with_communities
+# ---------------------------------------------------------------------------
+
+
+class TestAssignCommunityIds:
+    """Direct tests for LanguageChunker._assign_community_ids static helper."""
+
+    def _make_chunk(self, **kwargs):
+        defaults = {
+            "content": "x",
+            "chunk_type": "function",
+            "start_line": 1,
+            "end_line": 5,
+            "file_path": "a.py",
+            "relative_path": "a.py",
+            "folder_structure": [],
+            "name": "foo",
+            "parent_name": None,
+            "language": "python",
+            "chunk_id": None,
+            "community_id": None,
+        }
+        defaults.update(kwargs)
+        return CodeChunk(**defaults)
+
+    def test_maps_correctly_with_parent_name(self):
+        """chunk_id=None + parent_name + name → key=path:L1-L2:type:parent.name."""
+        chunk = self._make_chunk(
+            relative_path="src/a.py",
+            start_line=10,
+            end_line=20,
+            chunk_type="method",
+            parent_name="MyClass",
+            name="my_method",
+            chunk_id=None,
+        )
+        community_map = {"src/a.py:10-20:method:MyClass.my_method": 42}
+        result = LanguageChunker._assign_community_ids([chunk], community_map)
+        assert len(result) == 1
+        assert result[0].community_id == 42
+
+    def test_uses_chunk_id_when_set(self):
+        """When chunk_id is set, it is used as the lookup key verbatim."""
+        chunk = self._make_chunk(chunk_id="file.py:5-10:function:foo")
+        community_map = {"file.py:5-10:function:foo": 7}
+        result = LanguageChunker._assign_community_ids([chunk], community_map)
+        assert result[0].community_id == 7
+
+    def test_community_none_when_key_missing(self):
+        """community_id is None when the lookup key is not in community_map."""
+        chunk = self._make_chunk(chunk_id="file.py:1-5:function:unknown")
+        result = LanguageChunker._assign_community_ids([chunk], {})
+        assert result[0].community_id is None
+
+
+class TestToTreesitterChunks:
+    """Direct tests for LanguageChunker._to_treesitter_chunks static helper."""
+
+    def _make_chunk(self, **kwargs):
+        defaults = {
+            "content": "def foo(): pass",
+            "chunk_type": "function",
+            "start_line": 1,
+            "end_line": 3,
+            "file_path": "a.py",
+            "relative_path": "a.py",
+            "folder_structure": [],
+            "name": "foo",
+            "parent_name": None,
+            "language": "python",
+            "chunk_id": "a.py:1-3:function:foo",
+            "community_id": 5,
+            "calls": ["bar"],
+            "relationships": [],
+            "docstring": None,
+            "decorators": [],
+            "imports": [],
+            "complexity_score": 1,
+            "tags": set(),
+        }
+        defaults.update(kwargs)
+        return CodeChunk(**defaults)
+
+    def test_preserves_key_fields(self):
+        """Converted TreeSitterChunk carries content, line range, community_id."""
+        chunk = self._make_chunk(
+            content="hello", start_line=10, end_line=15, community_id=3
+        )
+        result = LanguageChunker._to_treesitter_chunks([chunk])
+        assert len(result) == 1
+        ts = result[0]
+        assert ts.content == "hello"
+        assert ts.start_line == 10
+        assert ts.end_line == 15
+        assert ts.community_id == 3
+
+    def test_metadata_carries_calls_and_file_path(self):
+        """metadata dict includes calls and file_path from the original chunk."""
+        chunk = self._make_chunk(calls=["bar", "baz"], file_path="mod/b.py")
+        result = LanguageChunker._to_treesitter_chunks([chunk])
+        assert result[0].metadata["calls"] == ["bar", "baz"]
+        assert result[0].metadata["file_path"] == "mod/b.py"
+
+
+class TestFromTreesitterChunks:
+    """Direct tests for LanguageChunker._from_treesitter_chunks static helper."""
+
+    def _make_original(self, file_path, start_line, end_line):
+        return CodeChunk(
+            content="orig",
+            chunk_type="function",
+            start_line=start_line,
+            end_line=end_line,
+            file_path=file_path,
+            relative_path=file_path,
+            folder_structure=[],
+            name="orig_fn",
+            parent_name=None,
+            language="python",
+            chunk_id=None,
+            community_id=1,
+            calls=["dep"],
+            relationships=[],
+            docstring="doc",
+            decorators=[],
+            imports=[],
+            complexity_score=2,
+            tags=set(),
+        )
+
+    def _make_ts_chunk(self, file_path, start_line, end_line, node_type="function"):
+        from chunking.languages.base import TreeSitterChunk
+
+        return TreeSitterChunk(
+            content="merged content",
+            start_line=start_line,
+            end_line=end_line,
+            node_type=node_type,
+            language="python",
+            metadata={
+                "file_path": file_path,
+                "name": "fn",
+                "merged_from": None,
+                "relative_path": file_path,
+                "calls": [],
+                "relationships": [],
+                "docstring": None,
+                "decorators": [],
+                "imports": [],
+                "complexity_score": 0,
+                "tags": set(),
+            },
+            chunk_id=None,
+            parent_class=None,
+            community_id=1,
+        )
+
+    def test_containment_match_uses_original_metadata(self):
+        """Pass 1: exact containment → uses the original chunk's file_path."""
+        orig = self._make_original("a.py", 5, 10)
+        ts = self._make_ts_chunk("a.py", 5, 10)
+        result = LanguageChunker._from_treesitter_chunks([ts], [orig])
+        assert len(result) == 1
+        assert result[0].file_path == "a.py"
+        assert result[0].calls == ["dep"]
+
+    def test_file_fallback_when_no_containment(self):
+        """Pass 2: no exact containment → falls back to any chunk from same file."""
+        orig = self._make_original("a.py", 1, 4)
+        ts = self._make_ts_chunk("a.py", 5, 10)  # different range
+        result = LanguageChunker._from_treesitter_chunks([ts], [orig])
+        assert len(result) == 1
+        assert result[0].file_path == "a.py"
+
+    def test_skips_chunk_when_no_file_match(self):
+        """Pass 3: no chunk shares the file_path → chunk skipped, result shorter."""
+        orig = self._make_original("b.py", 1, 5)
+        ts = self._make_ts_chunk("a.py", 1, 5)  # different file
+        result = LanguageChunker._from_treesitter_chunks([ts], [orig])
+        assert len(result) == 0

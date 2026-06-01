@@ -5,6 +5,7 @@ Provides high-level query operations on code graphs.
 """
 
 import logging
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -13,7 +14,20 @@ try:
 except ImportError:
     nx = None
 
+from utils.path_utils import normalize_path
+
 from .graph_storage import CodeGraphStorage
+
+
+@dataclass
+class RelationshipEntry:
+    """A single relationship edge in the code graph."""
+
+    chunk_id: str
+    relationship_type: str
+    direction: str  # "inbound" | "outbound"
+    depth: int
+    edge_data: dict[str, Any] = field(default_factory=dict)
 
 
 class GraphQueryEngine:
@@ -63,6 +77,7 @@ class GraphQueryEngine:
 
         try:
             # Use NetworkX shortest path
+            # pyrefly: ignore [missing-attribute]
             path = nx.shortest_path(
                 self.storage.graph, source=start_chunk_id, target=end_chunk_id
             )
@@ -75,6 +90,7 @@ class GraphQueryEngine:
 
             return path
 
+        # pyrefly: ignore [missing-attribute]
         except nx.NetworkXNoPath:
             self.logger.debug(f"No call chain from {start_chunk_id} to {end_chunk_id}")
             return None
@@ -106,9 +122,6 @@ class GraphQueryEngine:
         Returns:
             Dict with path nodes, edges, and metadata, or None if no path
         """
-        # Import normalize_path here to avoid circular import
-        from search.filters import normalize_path
-
         # Normalize paths
         source_id = normalize_path(source_id)
         target_id = normalize_path(target_id)
@@ -141,14 +154,17 @@ class GraphQueryEngine:
         # Strategy 1: Direct chunk_id → chunk_id (if target exists as node)
         if target_exists:
             try:
+                # pyrefly: ignore [missing-attribute]
                 path_nodes = nx.bidirectional_shortest_path(graph, source_id, target_id)
                 self.logger.debug(f"Found direct path: {source_id} → {target_id}")
+            # pyrefly: ignore [missing-attribute]
             except (nx.NetworkXNoPath, nx.NodeNotFound):
                 pass
 
         # Strategy 2: chunk_id → symbol_name (edges point to symbol names)
         if path_nodes is None and target_symbol in self.storage.graph:
             try:
+                # pyrefly: ignore [missing-attribute]
                 path_nodes = nx.bidirectional_shortest_path(
                     graph, source_id, target_symbol
                 )
@@ -157,12 +173,14 @@ class GraphQueryEngine:
                 self.logger.debug(
                     f"Found path via symbol name: {source_id} → {target_symbol}"
                 )
+            # pyrefly: ignore [missing-attribute]
             except (nx.NetworkXNoPath, nx.NodeNotFound):
                 pass
 
         # Strategy 3: chunk_id → bare_method_name (for qualified names)
         if path_nodes is None and bare_target and bare_target in self.storage.graph:
             try:
+                # pyrefly: ignore [missing-attribute]
                 path_nodes = nx.bidirectional_shortest_path(
                     graph, source_id, bare_target
                 )
@@ -171,6 +189,7 @@ class GraphQueryEngine:
                 self.logger.debug(
                     f"Found path via bare name: {source_id} → {bare_target}"
                 )
+            # pyrefly: ignore [missing-attribute]
             except (nx.NetworkXNoPath, nx.NodeNotFound):
                 pass
 
@@ -207,6 +226,7 @@ class GraphQueryEngine:
 
         return result
 
+    # pyrefly: ignore [missing-attribute]
     def _create_filtered_subgraph(self, edge_types: list[str]) -> nx.DiGraph:
         """
         Create subgraph containing only edges of specified types.
@@ -355,7 +375,10 @@ class GraphQueryEngine:
         return callees_by_depth
 
     def find_related_functions(
-        self, chunk_id: str, relation_types: list[str] = None, max_depth: int = 2
+        self,
+        chunk_id: str,
+        relation_types: list[str] | None = None,
+        max_depth: int = 2,
     ) -> list[dict[str, Any]]:
         """
         Find all related functions with metadata.
@@ -456,13 +479,177 @@ class GraphQueryEngine:
         if method == "degree":
             return dict(self.storage.graph.degree())
         elif method == "betweenness":
+            # pyrefly: ignore [missing-attribute]
             return nx.betweenness_centrality(self.storage.graph)
         elif method == "closeness":
+            # pyrefly: ignore [missing-attribute]
             return nx.closeness_centrality(self.storage.graph)
         elif method == "pagerank":
+            # pyrefly: ignore [missing-attribute]
             return nx.pagerank(self.storage.graph)
         else:
             raise ValueError(
                 f"Unknown centrality method: {method}. "
                 f"Supported: degree, betweenness, closeness, pagerank"
             )
+
+    # ------------------------------------------------------------------
+    # Relationship traversal (deep interface over CodeGraphStorage)
+    # ------------------------------------------------------------------
+
+    def get_relationships(
+        self,
+        chunk_id: str,
+        direction: str = "both",
+        relation_types: list[str] | None = None,
+        max_depth: int = 1,
+    ) -> list[RelationshipEntry]:
+        """Find all relationships for a chunk up to max_depth hops.
+
+        Handles the graph's symbol-name edge storage: edges go from
+        caller_chunk_id → target_symbol_name (not → target_chunk_id), so both
+        the chunk_id and its symbol-name variants are queried as targets when
+        traversing inbound edges.
+
+        Args:
+            chunk_id: Origin chunk to analyse.
+            direction: "inbound" (callers), "outbound" (callees), or "both".
+            relation_types: Edge types to include; None = all types.
+            max_depth: Maximum traversal depth.
+
+        Returns:
+            Flat list of RelationshipEntry, each tagged with direction and depth.
+        """
+        results: list[RelationshipEntry] = []
+        if direction in ("inbound", "both"):
+            results.extend(self._traverse_inbound(chunk_id, relation_types, max_depth))
+        if direction in ("outbound", "both"):
+            results.extend(self._traverse_outbound(chunk_id, relation_types, max_depth))
+        return results
+
+    def get_direct_successors(self, chunk_id: str) -> list[str]:
+        """Return direct outbound neighbour IDs (depth-1 callees)."""
+        return self.storage.get_callees(chunk_id)
+
+    def get_stats(self) -> dict[str, Any]:
+        """Return graph statistics from the underlying storage."""
+        return self.storage.get_stats()
+
+    # ------------------------------------------------------------------
+    # Private BFS helpers
+    # ------------------------------------------------------------------
+
+    def _node_variants(self, chunk_id: str) -> list[str]:
+        """Return lookup variants for a node.
+
+        Graph edges point to symbol names, not full chunk_ids.  For a chunk
+        like ``file.py:10:function:bar`` the callers store an edge to ``bar``
+        (and possibly ``ClassName.bar`` → bare ``bar``).  Querying both forms
+        finds callers regardless of which variant they stored.
+        """
+        variants = [chunk_id]
+        if ":" in chunk_id:
+            symbol = chunk_id.split(":")[-1]
+            if symbol and symbol != chunk_id:
+                variants.append(symbol)
+                bare = symbol.split(".")[-1]
+                if bare and bare != symbol:
+                    variants.append(bare)
+        return variants
+
+    def _traverse_inbound(
+        self,
+        chunk_id: str,
+        relation_types: list[str] | None,
+        max_depth: int,
+    ) -> list[RelationshipEntry]:
+        """BFS over inbound edges with dual symbol-name lookup at each hop."""
+        results: list[RelationshipEntry] = []
+        origin_set = set(self._node_variants(chunk_id))
+        visited: set[str] = set(origin_set)
+
+        # query_nodes: the node IDs whose predecessors we will inspect at this depth
+        current_query: set[str] = {v for v in origin_set if v in self.storage.graph}
+
+        for depth in range(1, max_depth + 1):
+            next_query: set[str] = set()
+
+            for query_node in current_query:
+                for pred in self.storage.get_callers(query_node):
+                    if pred in visited:
+                        continue
+                    visited.add(pred)
+
+                    edge_data = self.storage.get_edge_data(pred, query_node) or {}
+                    rel_type = edge_data.get("relationship_type") or edge_data.get(
+                        "type", "unknown"
+                    )
+
+                    if relation_types is None or rel_type in relation_types:
+                        results.append(
+                            RelationshipEntry(
+                                chunk_id=pred,
+                                relationship_type=rel_type,
+                                direction="inbound",
+                                depth=depth,
+                                edge_data=edge_data,
+                            )
+                        )
+
+                    if depth < max_depth:
+                        for v in self._node_variants(pred):
+                            if v not in visited:
+                                next_query.add(v)
+
+            if not next_query:
+                break
+            current_query = next_query
+
+        return results
+
+    def _traverse_outbound(
+        self,
+        chunk_id: str,
+        relation_types: list[str] | None,
+        max_depth: int,
+    ) -> list[RelationshipEntry]:
+        """BFS over outbound edges."""
+        results: list[RelationshipEntry] = []
+        visited: set[str] = {chunk_id}
+        current_nodes: set[str] = (
+            {chunk_id} if chunk_id in self.storage.graph else set()
+        )
+
+        for depth in range(1, max_depth + 1):
+            next_nodes: set[str] = set()
+
+            for node in current_nodes:
+                for succ in self.storage.get_callees(node):
+                    if succ in visited:
+                        continue
+                    visited.add(succ)
+
+                    edge_data = self.storage.get_edge_data(node, succ) or {}
+                    rel_type = edge_data.get("relationship_type") or edge_data.get(
+                        "type", "unknown"
+                    )
+
+                    if relation_types is None or rel_type in relation_types:
+                        results.append(
+                            RelationshipEntry(
+                                chunk_id=succ,
+                                relationship_type=rel_type,
+                                direction="outbound",
+                                depth=depth,
+                                edge_data=edge_data,
+                            )
+                        )
+
+                    if depth < max_depth:
+                        next_nodes.add(succ)
+
+            if not next_nodes:
+                break
+            current_nodes = next_nodes
+
+        return results

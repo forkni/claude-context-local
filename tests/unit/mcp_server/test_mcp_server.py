@@ -72,7 +72,7 @@ class TestGetterFunctions:
 
     @patch("search.searcher.IntelligentSearcher")
     @patch("mcp_server.model_pool_manager.get_embedder")
-    @patch("mcp_server.search_factory.SearchFactory.get_index_manager")
+    @patch("mcp_server.search_factory.get_index_manager")
     @patch("search.config.get_search_config")
     def test_get_searcher_preserves_model_key_when_none_passed(
         self,
@@ -116,8 +116,10 @@ class TestGetterFunctions:
         state.searcher = None
 
         # Step 1: Simulate routing selecting a model (like handle_search_code does)
-        searcher1 = server.get_searcher(model_key="qwen3")
-        assert state.current_model_key == "qwen3", "Routing should set model to qwen3"
+        searcher1 = server.get_searcher(model_key="qwen3_0.6b")
+        assert state.current_model_key == "qwen3_0.6b", (
+            "Routing should set model to qwen3"
+        )
         assert searcher1 is mock_searcher_instance
 
         # Step 2: Call get_searcher without model_key (like follow-up operations do)
@@ -125,7 +127,7 @@ class TestGetterFunctions:
         searcher2 = server.get_searcher()
 
         # Verify model was preserved
-        assert state.current_model_key == "qwen3", (
+        assert state.current_model_key == "qwen3_0.6b", (
             "Model should be preserved when model_key=None, not reset"
         )
 
@@ -142,7 +144,7 @@ class TestToolHandlers:
     """Test MCP tool handlers return correct data."""
 
     @pytest.mark.asyncio
-    @patch("search.config.get_search_config")
+    @patch("mcp_server.tools.status_handlers.get_config")
     async def test_get_search_config_includes_auto_reindex_fields(
         self, mock_get_search_config
     ):
@@ -185,7 +187,7 @@ class TestToolHandlers:
     @pytest.mark.asyncio
     @patch("mcp_server.tools.status_handlers.SnapshotManager")
     @patch("mcp_server.tools.status_handlers.get_storage_dir")
-    @patch("search.config.get_search_config")
+    @patch("mcp_server.tools.status_handlers.get_config")
     @patch("mcp_server.tools.status_handlers.get_index_manager")
     @patch("mcp_server.tools.status_handlers.get_state")
     async def test_get_index_status_includes_last_indexed_time(
@@ -246,7 +248,7 @@ class TestToolHandlers:
         mock_snapshot_mgr.load_metadata.assert_called_once_with("/mock/project/path")
 
     @pytest.mark.asyncio
-    @patch("search.config.get_search_config")
+    @patch("mcp_server.tools.status_handlers.get_config")
     async def test_get_search_config_includes_multi_hop_and_stemming_fields(
         self, mock_get_search_config
     ):
@@ -303,7 +305,7 @@ class TestToolHandlers:
         mock_get_state.return_value = mock_state
 
         # Mock get_search_config
-        with patch("search.config.get_search_config") as mock_get_config:
+        with patch("mcp_server.tools.status_handlers.get_config") as mock_get_config:
             mock_config = MagicMock()
             mock_config.embedding.model_name = "BAAI/bge-m3"
             mock_get_config.return_value = mock_config
@@ -388,7 +390,6 @@ class TestToolHandlers:
         assert "No indexed project found" in result["error"]
         assert result["current_project"] is None
         assert "index_directory" in result["message"]
-        assert "system_message" in result
 
     @pytest.mark.asyncio
     @patch("mcp_server.tools.search_handlers.get_state")

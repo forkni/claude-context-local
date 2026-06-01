@@ -11,6 +11,249 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.12.4] - 2026-05-29
+
+### Fixed
+
+- **`CodeGraphStorage.clear()` left stale phantom nodes after full reindex** (`graph/graph_storage.py`) — `clear()` now deletes the backing `{project_id}_call_graph.json` file in addition to clearing the in-memory graph. Previously a subsequent `CodeGraphStorage` re-initialization reloaded the old JSON (including phantom nodes for deleted methods), causing them to survive rebuild and emit `WARNING - Chunk not found` during relationship queries. New test `test_clear_persists_to_disk` verifies the file is absent after clearing and a fresh instance starts empty.
+
+- **`switch_project` always logged "No indexed model detected"** (`mcp_server/tools/config_handlers.py`) — `_detect_indexed_model` now reads `project_info.json` (pool-agnostic, written at index time) before falling back to the active-pool directory scan. Previously it only checked the active pool (e.g. `lightweight-speed`: `gte_modernbert`, `bge_m3`) and missed projects indexed with a model from a different pool (e.g. `qwen3_0.6b`). Guard added: if `project_info.json` names a model whose `code.index` is missing (stale metadata from a partial index), the function falls through to the directory scan rather than returning a stale key.
+
+- **`list_embedding_models` always returned `loaded: false`** (`mcp_server/tools/status_handlers.py`) — two bugs fixed: (1) the `name → model_key` reverse-lookup used the active pool only (2-4 models), forcing `False` for the other 4-6 registry entries regardless of actual VRAM state; (2) `model_key in state.embedders` checked key *presence*, returning `True` for `None` lazy-initialized slots. Now computes `loaded_names = {e.model_name for e in state.embedders.values() if e is not None}` for an accurate live check across all 8 registry models.
+
+### Refactored
+
+- **`GraphScoringStage` extracted from `SearchOrchestrator`** (`search/graph_scoring_stage.py`, new file) — centrality scoring (Block F: `_apply_centrality`), SSCG subgraph extraction (Block G: `_extract_subgraph`), and the k×4 candidate cap are encapsulated in a single `GraphScoringStage.run()` call. `SearchOrchestrator._assemble` is reduced from a 200-line orchestration block to a 3-call sequence. `CentralityRanker._get_centrality_scores` publicised to `get_centrality_scores`.
+
+- **`SearchOrchestrator._assemble` helpers extracted** (`mcp_server/tools/search_orchestrator.py`) — `_apply_source_order_and_budget` (Block H: source-position reorder + context-token budget truncation) and `_build_response` (Block I: response dict assembly + system guidance) extracted as `@staticmethod` decorated definitions. Cyclomatic complexity of `_assemble` reduced from ~30 to ~5.
+
+- **`ServiceLocator` / `ResourceManager` / `SearchFactory` collapsed to module-level accessors** (`mcp_server/services.py`, `mcp_server/resource_manager.py`, `mcp_server/search_factory.py`) — the `ServiceLocator` DI container (a closed auto-registration loop between `state.py` and `services.get_state()`) and the two single-method wrapper classes are deleted. `services.py` is a 2-line re-export shim; methods inlined as module-level functions. Three `ServiceLocator`-first config paths in `chunking/`, `merkle/`, and `search/config.py` collapsed. ADR-0005 recorded (`docs/adr/0005-no-di-container-module-singleton-state.md`).
+
+### Security
+
+- **idna upgraded 3.11 → 3.17** (`pyproject.toml`) — fixes CVE-2026-45409 (incomplete fix of CVE-2024-3651; DoS via crafted Unicode in `idna.encode`). Transitive dependency via `anyio`/`httpx`/`requests`/`yarl`; no direct pin required. 4 advisories remain deferred and documented in `pyproject.toml`.
+
+### Changed
+
+- **`search_config.json`** — new optional config fields (all backward-compatible, existing configs are forward-compatible): `default_max_context_tokens` (0 = unlimited), `ego_graph.edge_weights` (21 relationship-type weights for PPR traversal), `ego_graph.community_bounded` / `cross_community_penalty` / `expansion_mode` / `ppr_alpha` / `min_similarity_threshold`, `parent_retrieval` section (`enabled`, `include_parent_content`, `max_parents_per_result`), `multi_hop.edge_weights`, `graph_enhanced.centrality_bm25_boost` / `centrality_boost_threshold` / `centrality_boost_factor` / `centrality_boost_cap`, `output.source_order_output`.
+
+---
+
+## [0.12.3] - 2026-05-29
+
+### Refactored
+
+- **`chunking↔graph` import cycle eliminated** — 24 files forming a self-contained extraction cluster moved from `graph/` into `chunking/relationships/` (`call_graph_extractor.py`, `relation_filter.py`, `relationship_types.py`, `resolvers/`, `relationship_extractors/`). `git mv` history preserved. Import prefixes updated across 45 source files; `graph/__init__.py` re-exports for backward compatibility. Verified: `rg "^\s*(from|import) graph" chunking/` → 0 results. Remaining dependency direction: `graph → chunking` (architecturally correct).
+
+---
+
+## [0.12.2] - 2026-05-26
+
+### Fixed
+
+- **`IndexWriteStage` bound to stale resources after full reindex** (`search/incremental_indexer.py`) — `IndexWriteStage` and `BM25SyncManager` are now rebuilt via `_build_write_pipeline()` immediately after `_release_and_verify_resources()` reassigns `self.embedder`/`self.indexer`. Previously, successive full-reindex passes could silently embed against a released embedder, report `success=True`, and persist a zero-chunk snapshot.
+- **Embedding errors silently swallowed** (`search/index_write_stage.py`) — `run()` now returns `success=False` with the error message when `embed_chunks()` raises; the snapshot is no longer written, preventing a zero-chunk "success" state from corrupting the incremental index.
+- **GPU cache not cleared on embedding failure** (`search/index_write_stage.py`) — `_clear_gpu("FULL_INDEX")` is now called before the early-return on embedding failure, preventing VRAM pressure that could cause immediate OOM on the next retry.
+
+### Refactored
+
+- **`GraphIntegration` shared initializer** (`search/graph_integration.py`) — extracted `_setup_from_storage(storage)` called by both `__init__` and `from_storage()`, eliminating drift risk when `__init__` gains new instance attributes.
+- **`CommunityDetector` import hoisted to module level** (`search/community_stage.py`) — `ImportError` now surfaces at module load instead of being masked as a "community detection failed" warning. Deferred `LanguageChunker` import annotated with circular-import explanation.
+- **`RelationshipEdge`/`RelationshipType` import hoisted to module level** (`search/graph_integration.py`) — removed three per-call inline copies in `add_chunk`, `populate_from_embeddings`, and `build_graph_from_chunks`.
+
+### Changed
+
+- **Embedding model** (`search_config.json`): `Qwen/Qwen3-Embedding-0.6B` (1024-dim) → `Alibaba-NLP/gte-modernbert-base` (768-dim). **Breaking:** existing FAISS indices built at 1024-dim are dimension-incompatible and require a full reindex.
+- **Reranker** (`search_config.json`): `Alibaba-NLP/gte-reranker-modernbert-base` → `jinaai/jina-reranker-v3`; `min_vram_gb` 4.0 → 6.0 (VRAM-verified: 1.12 GB / 8 GB on RTX 4060).
+- **Routing** (`search_config.json`): `multi_model_enabled` false → true; `multi_model_pool` "full" → "lightweight-speed"; `embedding.batch_size` 128 → 64.
+
+---
+
+## [0.12.1] - 2026-05-25
+
+### Added
+
+- **ANSI color output in MCP server console** (`mcp_server/server.py`) — stage markers print in blue, warnings in yellow, errors in red for easier log scanning.
+
+### Fixed
+
+- **Starlette `redirect_slashes` 307 on POST `/mcp`** (`mcp_server/server.py`) — ASGI wrapper intercepts trailing-slash redirects before Starlette issues a 307, preventing clients from switching to GET and breaking the StreamableHTTP handshake.
+- **Call graph edges missing for `split_block` chunks** (`chunking/multi_language_chunker.py`) — added `"split_block"` to the call-extraction allowlist; large methods that are split at AST boundaries now generate call edges for all body fragments.
+- **Relationship edges (`uses_type`, `imports`, etc.) missing for `split_block` chunks** (`chunking/multi_language_chunker.py`) — `_extract_phase3_relationships` now restricts extraction to the signature portion (before the `# ... (split block)` marker) and appends `pass` to make it syntactically valid for `ast.parse`. Previously, incomplete body fragments (dangling `else:`/`except:`) triggered a silent `SyntaxError → return []`, leaving all split_block nodes with zero relationship edges in the graph (+584 new edges after re-index).
+
+### Changed
+
+- **`CodeRelationshipAnalyzer` moved to search layer** — business logic extracted from `mcp_server/tools/code_relationship_analyzer.py` (now a backward-compat shim re-exporting `RelationshipAnalyzer`) to `search/relationship_analyzer.py`, with a new `GraphQueryEngine` seam (`graph/graph_queries.py`) and shared types (`search/types.py`).
+
+### Security
+
+- Dependency audit 2026-05-25: `pip ≥ 26.1.1` (CVE-2026-3219, CVE-2026-6357), `pillow ≥ 12.2.0` (CVE-2026-40192, CVE-2026-42308, CVE-2026-42309, CVE-2026-42310, CVE-2026-42311), `python-multipart ≥ 0.0.27` (CVE-2026-42561). Three advisories remain deferred: sqlitedict CVE-2024-35515 (mitigated), transformers 2×RCE (blocked by optimum-onnx pin), starlette host-header injection (low risk).
+
+---
+
+## [0.12.0] - 2026-05-25
+
+### Changed
+
+- **Transport: SSE → StreamableHTTP** (`mcp_server/server.py`) — replaced `SseServerTransport` (two-endpoint: GET `/sse` + POST `/messages/`) with `StreamableHTTPSessionManager(stateless=True, json_response=True)` (single `/mcp` endpoint). Port 8765 unchanged.
+- **`--transport` flag**: `sse` → `http`; `scripts/manual_configure.py` now emits `{"type": "http", "url": "http://localhost:8765/mcp"}`.
+- **Batch launchers**: `start_mcp_sse.bat` → `start_mcp_http.bat`, `start_mcp_sse_cli.bat` → `start_mcp_http_cli.bat`, `start_both_sse_servers.bat` → `start_both_http_servers.bat`; `start_mcp_debug.bat` updated in-place.
+- **Gemini skill health check** (`gemini-skills/.../start_mcp_sse.py`): switched from `GET /sse` HTTP poll to TCP port probe (stateless StreamableHTTP doesn't respond to bare GET).
+- **Regression test** (`tests/regression/test_mcp_configuration.ps1`): expects `type == "http"`, URL pattern `http://host:port/mcp`.
+- **`start_mcp_server.cmd`**: menu labels, batch file references, help text updated.
+
+### Migration
+
+Update `.claude.json` MCP entry: `{"type": "sse", "url": "...8765/sse"}` → `{"type": "http", "url": "http://localhost:8765/mcp"}`. Re-run `scripts\batch\manual_configure.bat` to apply automatically.
+
+---
+
+## [0.11.10] - 2026-05-25
+
+### Changed
+
+- **Workstation VRAM tier (18 GB+) switched to single-model + reranker mode** (`search/vram_manager.py`) — Qwen3-0.6B (1024d, ~2.5 GB VRAM), `multi_model_enabled=False`, `multi_model_pool=None`. The full 3-model pool (~6.8 GB) was replaced after the jina-v5 / Qwen3-4B experiments revealed no quality uplift over the 0.6B baseline (MRR 0.94). Resolves OOM headroom concerns on 24 GB cards.
+- **Default routing model** `bge_m3` → `qwen3_0.6b`; `routing.multi_model_enabled` → `false` in `search_config.json`.
+
+### Fixed
+
+- **Embedding pool key disambiguation** (`mcp_server/model_pool_manager.py`) — pool key renamed `qwen3` → `qwen3_0.6b` (now parameter-specific) to stop the 4B/0.6B query-vs-index 2560d/1024d dimension mismatch.
+- **Config `multi_model_enabled:false` now wins over `CLAUDE_MULTI_MODEL_ENABLED` env var** in `sync_from_config` — the env var was overriding an explicit `false` in the JSON config.
+- **Configured model not in active pool loads directly as single-model** instead of silently falling back to the first pool key (`mcp_server/model_pool_manager.py`).
+- **Auto-reindex loop caused by `search_config.json` mtime changes** — every config read was touching the file's mtime, triggering an immediate re-index on the next request.
+
+### Added
+
+- **Phase-A model-comparison harness** (`scripts/benchmark/compare_models.py` + `compare_models.sh`) — side-by-side SSCG benchmark runner for evaluating multiple embedding models in a single pass. Outputs a leaderboard table with per-query and aggregate MRR, Recall@k, and Hit@k.
+
+### Evaluation / Tests
+
+- **Golden-dataset label corrections** for Q01 (`CodeEmbedder._get_model_config` / `get_model_config` grade-3), Q05 (`utils/path_utils.normalize_path` grade-3), Q19 (`ONNXEmbeddingModel.encode` grade-2); added `recommended_k=7` (`evaluation/golden_dataset.json`).
+- **SSCG benchmark re-run at k=7** (hybrid mode): MRR **0.806**, Recall@5 **0.646**, Recall@7 **0.700**, Hit@7 **1.00** (post-label-fix; +0.203 MRR, +0.108 Recall@5 vs the pre-fix k=5 baseline).
+- **Model-key test assertions updated** `qwen3` → `qwen3_0.6b` across the unit-test suite.
+
+---
+
+## [0.11.9] - 2026-05-24
+
+### Added
+
+- **Opt-in OTel tracing across search and index pipeline** (`utils/observability.py`, `utils/otel_attributes.py`) — zero-overhead when disabled (one boolean check per `traced_block` call); degrades silently to no-op when the `opentelemetry` package is not installed. Instrumented sites: `@timed` decorator (all 5 existing timing sites gain spans automatically), `error_handler` (emits `mcp.tool.<name>` span per MCP tool call), `incremental_indexer` (`index.full` + `index.incremental` spans), `hybrid_searcher` (`search.hybrid` span with mode/result-count attributes). `init_observability()` reads `ObservabilityConfig` (env: `CLAUDE_OTEL_ENABLED`, `CLAUDE_OTEL_EXPORTER`, `CLAUDE_OTEL_ENDPOINT`); console exporter always routes to **stderr** to avoid corrupting the MCP stdio channel. `wrap_in_context()` propagates the OTel context into worker threads. Install with `pip install -e ".[otel]"`. New docs: `docs/OBSERVABILITY.md`, ADR-0003 (decline LLM hierarchical summaries), ADR-0004 (scoped tracing only). New domain glossary: `CONTEXT.md`.
+- **SummaryStage — named, testable extraction of community/file summary orchestration** (`search/summary_stage.py`) — extracts the ~360-line summary section from `_full_index` in `IncrementalIndexer` into a dedicated class that owns the two-phase ordering invariant (centrality + remerge constraint). Behavior is bit-for-bit identical; the class docstring is the single source of truth for the ordering constraint.
+- **Incremental community-summary refresh** (`search/incremental_indexer.py`) — closes the gap where incremental runs silently skipped community summary updates. A threshold-hybrid strategy: below `incremental_community_redetect_threshold` (default 0.3 = 30% of indexed files changed), `_refresh_affected_community_summaries` rebuilds only the affected community summary chunks from the persisted `community_map` + `MetadataStore` without re-chunking; above the threshold, the run promotes to a full re-index to redetect community structure. Community summary chunks now carry a `community:N` tag for precise stale-chunk lookup. New `ChunkingConfig` flags: `enable_incremental_community_summaries` (default `True`), `incremental_community_redetect_threshold` (default `0.3`).
+- **Persistent file logging** (`mcp_server/server.py`) — replaces bare `basicConfig` with a dual-handler setup: `StreamHandler` for console (existing behavior) + `_SafeRotatingFileHandler` writing to `logs/mcp_server.log` (always DEBUG level, UTF-8, 5 MB rotate). Crash tracebacks and verbose DEBUG output now survive window scroll and are available after the server exits. Backup log files are named `mcp_server_<mmddyyhhmmss>.log` (session-start timestamp, no numeric suffix) so each server run is uniquely identifiable.
+- **`utils/console.py` — `get_progress_console()` factory** — returns a `rich.Console` that forces the animated spinner only when stdout is an interactive UTF-8 terminal. Eliminates `UnicodeEncodeError` on Windows when stdout is redirected to a cp1252 stream (e.g. a log file or the MCP stdio channel).
+
+### Fixed
+
+- **`_refresh_affected_community_summaries` TypeError** (`search/incremental_indexer.py`) — a `list` was passed where a `set` was expected during chunk-ID lookup, causing a `TypeError` on every incremental run that had changed files. The error was silently caught and escalated every incremental index into a full re-index.
+- **Duplicate `RotatingFileHandler` from `-m` double-import trap** (`mcp_server/server.py`) — running via `python -m mcp_server.server` executed the module body as `__main__`; a subsequent `from mcp_server.server import ...` re-executed the body under the qualified name, attaching a second `RotatingFileHandler` to the root logger. Fixed with an idempotency sentinel (`_code_search_logging_configured`) on the root logger singleton, guarding `_configure_logging()` against repeated execution.
+- **`logs/` directory triggered spurious "Modified: 1" on every incremental re-index** (`chunking/language_registry.py`) — the MerkleDAG stat-hashed the growing `mcp_server.log` file, classifying it as modified on each run. Added `"logs"` to `DEFAULT_IGNORED_DIRS`.
+- **`WinError 32` log-rotation spam** (`mcp_server/server.py`) — `RotatingFileHandler.rotate()` raised `PermissionError` on Windows when another process held the log file open during rollover, printing `--- Logging error ---` tracebacks to stderr on every log write during an index run. Replaced with `_SafeRotatingFileHandler` whose `rotate()` swallows `PermissionError` / `OSError` via `contextlib.suppress`, allowing log writes to continue uninterrupted.
+- **`shutdown_observability()` permanently disabled OTel before indexing** (`mcp_server/resource_manager.py`) — `cleanup_previous_resources()` (called at the start of every `index_directory` request) was invoking `shutdown_observability()`, which calls `TracerProvider.shutdown()`. After shutdown, all subsequent `traced_block` calls produce non-recording no-op spans — making the entire tracing layer a no-op for the duration of indexing. Replaced with `force_flush()` which drains pending spans without permanently disabling the provider. `shutdown_observability()` is now reserved for process-exit teardown only.
+- **OTel test isolation when running alongside the e2e test module** (`tests/unit/utils/test_observability.py`, `tests/integration/test_observability_e2e.py`) — OTel ≥ 1.x silently refuses to replace the global `TracerProvider` once set. The e2e module installs its provider at collection time; the unit test's `_enable_with_in_memory()` was then trying to replace it, silently failing, and leaving the unit test's exporter unreachable. Fixed by detecting an already-installed SDK provider and adding the test exporter to it instead of replacing. The e2e `_clear_spans` fixture now also restores `_obs._enabled` and `_obs._tracer_provider` before each test to counteract unit-test teardowns.
+
+### Tests
+
+- 27 tests added across 4 new files:
+  - `tests/unit/utils/test_observability.py` (15 tests) — noop path, enabled path with `InMemorySpanExporter`, `wrap_in_context` thread propagation, stdio safety (console exporter → stderr)
+  - `tests/integration/test_observability_e2e.py` (7 fast + 2 slow tests) — functional span emission for `@timed`, `error_handler`, `search.hybrid`, thread context propagation; slow tier exercises the real embedding model
+  - `tests/unit/search/test_summary_stage.py` (9 tests) — `SummaryStage` extraction correctness
+  - `tests/unit/search/test_incremental_community_summaries.py` (10 tests) — community refresh threshold logic, TypeError regression
+  - `tests/unit/mcp_server/test_logging_setup.py` (4 tests) — `_configure_logging()` idempotency, `_SafeRotatingFileHandler` resilience under file-lock errors
+  - `tests/unit/merkle/test_merkle.py` (+1 test) — `logs/` directory ignored by `MerkleDAG`
+
+---
+
+## [0.11.8] - 2026-05-16
+
+### Fixed
+
+- **`safe_clear_index.py` crash on startup** (`tools/safe_clear_index.py`) — `ModuleNotFoundError: No module named 'graph'` when `start_mcp_server.cmd` invoked the script. Root cause: the editable install (v0.9.3-era) predated `graph` and `utils` being added to `[tool.setuptools.packages.find]`, so the custom editable finder's hard-coded `MAPPING` omitted both packages. Added the `_PROJECT_ROOT / sys.path.insert` bootstrap matching all five sibling tools; refreshed the editable install to v0.11.8 so `graph` and `utils` are now exposed to any Python process using the venv.
+- **Silent loss of user-defined index exclusions on re-index** — user-configured `exclude_dirs` were dropped when triggering an incremental re-index via auto-reindex or explicit re-index calls.
+- **Config cache bypass** (`search/config.py`) — `save_config()` did not update `_config_mtime` after writing, so `load_config()` never short-circuited to cache on the next call; every read re-parsed the file from disk.
+- **`snapshot_manager.py` logging** — replaced bare `print()` calls with structured `logger` output; tightened bare `except` clauses to preserve exception context.
+- **Circular graph–search import** — broke a circular import between `graph` and `search` packages that surfaced when importing from a bare `python` process (no editable-install finder active).
+- **Pyrefly type suppressions replaced** (`search/`, `graph/`, `mcp_server/`, `utils/`) — 165 `# type: ignore` / pyrefly-suppress comments replaced with correct type annotations across 29 files; pyrefly 1.0 now reports 0 errors on the full codebase (155 pre-existing errors remain suppressed via baseline).
+
+### Added
+
+- **Pyrefly 1.0 type checker integrated** — `pyrefly check` runs as a non-blocking step in the CGW pre-commit hook (`CGW_TYPECHECK_CMD="pyrefly"`). `[tool.pyrefly]` config in `pyproject.toml`; suppress baseline at `.pyrefly_suppress` covers 155 pre-existing errors across 29 files. ADR-0002 records the pyrefly-over-pyright decision.
+- **ADR-0001** (`docs/adr/0001-faiss-as-vector-index-backend.md`) — records the FAISS-vs-turbovec evaluation and re-evaluation triggers.
+- **ADR-0002** (`docs/adr/0002-pyrefly-over-pyright.md`) — records the static type-checker selection rationale.
+- **`utils/path_utils.py`** — shared path-normalisation helpers extracted from scattered inline usage.
+- **`cgw.conf.example`** — documents new `CGW_TYPECHECK_*` and `CGW_INDEX_LOCK_*` options added in the latest claude-git-workflow release.
+
+### Refactored
+
+- **`search/config.py`** — migrated from `os.path` to `pathlib` throughout.
+- **Silent `except` blocks in critical paths** — added `logger.exception` / `logger.error` with `exc_info=True` to previously-silent exception handlers across `mcp_server/`, `search/`, and `graph/` so errors surface in logs instead of being swallowed.
+- **Traceback preservation** (`mcp_server/server.py`) — `except` blocks now pass `exc_info=True`; top-level imports hoisted out of function bodies; pickle trust boundary documented.
+- **Lazy imports removed** (`search/incremental_indexer.py`, `embeddings/embedder.py`) — redundant deferred imports converted to module-level imports.
+
+### Tests
+
+- **2,045 unit tests** (up from 2,044 in v0.11.7).
+- New integration test: `tests/integration/test_auto_reindex_fixes.py` (166 lines) — covers the index-exclusion loss regression end-to-end.
+- New unit tests: `tests/unit/search/test_search_config.py` (+21 tests) — covers `save_config` / `load_config` cache round-trips.
+
+---
+
+## [0.11.7] - 2026-05-03
+
+### Security
+
+- **Defense-in-depth for all destructive filesystem operations** — every `shutil.rmtree` call in the codebase is now gated by layered path-containment guards. Fixes a regression where selecting "0" (Cancel) in the `start_mcp_server.cmd` "Clear Project Indexes" menu could delete project source files instead of cancelling.
+- **`validate_storage_path()`** (`mcp_server/storage_manager.py`) — new helper that refuses any `CODE_SEARCH_STORAGE` path that sits inside a project source tree (`.git`, `pyproject.toml`, `Cargo.toml`, etc. as ancestors). Falls back to `~/.claude_code_search` with a logged error rather than raising, keeping the MCP server runnable under misconfiguration.
+- **Storage sentinel file** — `get_storage_dir()` now writes `.claude_code_search_storage` on first init. `safe_rmtree_all()` refuses with exit code 6 if the sentinel is absent, and with exit code 7 if the storage directory contains a project marker.
+- **`tools/safe_clear_index.py`** (new) — standalone path-safe rmtree helper with `safe_rmtree_project()` (5-guard chain: empty hash, target==root, `relative_to` containment, traversal, underscore presence) and `safe_rmtree_all()` (sentinel + project-marker guards).
+- **Cleanup queue re-validation** (`mcp_server/cleanup_queue.py`) — paths read from persisted `cleanup_queue.json` are re-validated against `projects_root` before `rmtree`, preventing a tampered queue from triggering arbitrary deletion at server startup.
+- **Index handler assertion** (`mcp_server/tools/index_handlers.py`) — `_clear_index_files_before_create` now asserts the target directory is under the storage root before clearing any files.
+- **Snapshot manager** (`merkle/snapshot_manager.py`) — default `storage_dir` is now resolved via `get_storage_dir()` instead of the hardcoded `~/.claude_code_search/merkle` path, so `CODE_SEARCH_STORAGE` is honoured.
+- **Cleanup tools** (`tools/cleanup_orphaned_projects.py`, `tools/cleanup_stale_snapshots.py`) — replaced hardcoded `~/.claude_code_search/projects` with `get_storage_dir() / "projects"`.
+- **ONNX conversion guard** (`tools/convert_onnx.py`) — `--force` now refuses to `rmtree` directories that lack `*.onnx` / ONNX meta artifacts, preventing accidental deletion of arbitrary user-supplied paths.
+- **`scripts/batch/repair_installation.bat`** — destructive operations now route through `safe_clear_index.py`; confirmation prompts changed from `y/N` to `Type YES to confirm`.
+
+### Tests
+
+- 97 new/updated tests across 6 modules: `test_storage_manager_validation.py` (10), `test_safe_clear_index.py` (12), `test_cleanup_queue.py` (4), `test_index_handlers.py` (2), `test_merkle.py` (3).
+- All 2,044 unit tests pass.
+
+---
+
+## [0.11.6] - 2026-04-21
+
+### Performance
+
+- **~100-second incremental-index stall eliminated** (`merkle/change_detector.py`, `search/incremental_indexer.py`, `mcp_server/tools/search_handlers.py`) — companion fix to v0.11.5. `ChangeDetector.detect_changes_from_snapshot` and `quick_check` build a fresh `MerkleDAG` on every incremental run and auto-reindex freshness check, but the constructor was called without `supported_extensions`, so it fell back to content-hashing every file — hitting the exact same ~103 s / 1134-file cost the full-index path just got rid of.
+  - `ChangeDetector.__init__` now accepts `supported_extensions: set[str] | None` and threads it to both `MerkleDAG(...)` sites. `IncrementalIndexer.__init__` computes the set once from `TreeSitterChunker.get_supported_extensions()` and caches it on `self.supported_extensions` so both the incremental path and `_full_index` reuse it (no more redundant `TreeSitterChunker` import inside `_full_index`). `mcp_server/tools/search_handlers.py` passes the same set when constructing its lightweight `ChangeDetector` for the auto-reindex freshness check.
+  - Also fixes a correctness bug: v0.11.5 snapshots stored stat-hashes for non-code files, but the next incremental run's DAG used content-hashes — every non-code file appeared as "modified" (log: `Modified: 1076` out of 1080 unsupported assets). Consistent hashing across snapshot save / incremental compare is now enforced by test `test_incremental_consistent_with_new_scheme_snapshot` in `tests/unit/merkle/test_merkle.py`, which reproduces the failure mode.
+
+### Fixed
+
+- **Snapshot/incremental hash-scheme drift** — see Performance section above. Without the fix, users on v0.11.5 would see every unsupported file classified as "modified" on every incremental run, triggering unnecessary `Batch removing chunks` work for files that have no chunks to remove.
+
+---
+
+## [0.11.5] - 2026-04-21
+
+### Performance
+
+- **~2-minute full-index stall eliminated** (`merkle/merkle_dag.py`, `search/incremental_indexer.py`, `mcp_server/tools/index_handlers.py`) — `MerkleDAG.build()` was SHA-256 content-hashing every file in the project tree before the extension filter ran, which on a 1134-file TouchDesigner project (61 supported code files, 1073 `.tox`/media/binary assets) took ~103 s per model due to Windows Defender on-access scanning and NTFS per-file open overhead (~90 ms/file). The cost doubled for multi-model indexing because each per-model `IncrementalIndexer` rebuilt the DAG from scratch on unchanged files.
+  - `MerkleDAG.__init__` now accepts `supported_extensions: set[str] | None`. When provided, files whose suffix is NOT in the set get a cheap stat-based hash (`name:st_size:int(st_mtime)`) instead of a content hash. `stat()` is ~100× cheaper than `open()+read()+close()` on Windows because it bypasses Defender and doesn't touch file contents. Change detection accuracy is preserved: size+mtime is the canonical fast-path signal (same approach used by rsync/git) and is sufficient for files that are never chunked or searched.
+  - `IncrementalIndexer.__init__` now accepts `prebuilt_dag: MerkleDAG | None` and exposes the built DAG via `self.built_dag` after `_full_index`. The multi-model loop in `_index_with_all_models` captures the first model's DAG into `cached_dag` and passes it to subsequent models (same pattern already in use for `cached_repo_profile`). The second model's DAG build is skipped entirely.
+  - Expected impact: ~103 s/model → ~5 s for the first model, near-instant for each subsequent model. For a two-model pool the total `clear_index` → `Found N supported` window collapses from ~210 s to ~5 s (>95% reduction).
+
+---
+
+## [0.11.4] - 2026-04-21
+
+### Fixed
+
+- **Selection-reset one-liner SyntaxError** (`start_mcp_server.cmd:1037`, new helper `tools/reset_selection_if_orphaned.py`) — the embedded `python -c "..."` call that resets `project_selection.json` after clearing the last index for a path had a Python grammar error: an inline `if` compound statement after `;`-chained simple statements (Python forbids compound statements after `;`). The error was hidden by `2>nul` in earlier commits; `1b818b2` removed the suppression to surface real bugs and correctly exposed this one. Every `Clear Project Indexes` run since that refactor printed a SyntaxError traceback per cleared index, and the reset logic never ran — leaving stale `last_project_path` values in `project_selection.json`. Logic extracted to `tools/reset_selection_if_orphaned.py`: reads `CGW_PROJ_PATH` from env (already set at line 1023), checks selection first (cheap early-exit), short-circuits the projects-dir glob on first matching `project_info.json`. Also drops a latent filter bug where `Path(p.parent.name).exists()` checked a bare hash string against CWD instead of `projects_dir`
+
+---
+
 ## [0.11.3] - 2026-04-19
 
 ### Added

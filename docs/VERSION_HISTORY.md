@@ -2,15 +2,188 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-04-18)
+## Current Status: All Features Operational (2026-05-26)
 
-- **Version**: 0.11.0+ (development; unreleased: concurrency fixes, batch APIs, coordinator removal)
+- **Version**: 0.12.2
 - **Status**: Production-ready
-- **Test Coverage**: 1,987 unit tests + 8 integration tests (100% pass rate)
-- **Dependencies**: 124 packages (38% reduction from 201) + optional `onnxruntime-gpu` for ONNX backend
-- **SSCG Benchmark**: Best MRR=0.846 (BM25), Hybrid Recall@10=0.833, all modes 13/13 Hit@5 (2026-04-10, k=10; see `evaluation/benchmark_results/`)
+- **Test Coverage**: 2,090 unit tests + 8 integration tests (100% pass rate)
+- **Dependencies**: 124 packages + optional `onnxruntime-gpu` for ONNX backend
+- **SSCG Benchmark**: Best MRR=0.846 (BM25), Hybrid Recall@10=0.833, all modes 13/13 Hit@5
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent Features**: ONNX Runtime backend (opt-in), ORT CUDA arena cap, BFCArena OOM recovery, dtype-aware activation estimate, `onnx_supported` registry flag, lightweight-speed default pool (BGE-M3 + gte-reranker-modernbert-base)
+- **Recent**: 0.12.2 — stale write-pipeline rebind fix, embedding-failure reporting, GPU cleanup on OOM, `GraphIntegration` shared initializer, config tuned for gte-modernbert + Jina v3
+
+---
+
+## v0.12.2 - Write-Pipeline Stability + Config Tuning (2026-05-26)
+
+Patch release fixing a root-cause stale-reference bug in `IndexWriteStage`, improving OOM recovery, refactoring `GraphIntegration` for long-term safety, and tuning `search_config.json` for 8 GB VRAM machines.
+
+### Fixed
+- **Stale embedder/indexer in `IndexWriteStage`** (`search/incremental_indexer.py`): `_build_write_pipeline()` helper now rebuilds both `IndexWriteStage` and `BM25SyncManager` after every `_release_and_verify_resources()` call — stages can no longer embed against cleaned-up objects.
+- **Embedding failure silently reported as success** (`search/index_write_stage.py`): `run()` returns `success=False` + error message when embedding raises; snapshot is not written, preventing a zero-chunk corrupt state.
+- **GPU cache not freed on OOM** (`search/index_write_stage.py`): `_clear_gpu("FULL_INDEX")` called before embedding-failure early return, avoiding cascading OOM on immediate retry.
+
+### Refactored
+- **`GraphIntegration` shared initializer** (`search/graph_integration.py`): `_setup_from_storage(storage)` called by both `__init__` and `from_storage()` — the two construction paths share one attribute-setting site.
+- **Import hoists** (`search/community_stage.py`, `search/graph_integration.py`): `CommunityDetector` and `RelationshipEdge`/`RelationshipType` moved to module level; `LanguageChunker` import annotated with circular-import reason.
+
+### Changed (breaking config)
+- **Embedding model**: `Qwen/Qwen3-Embedding-0.6B` (1024-dim) → `Alibaba-NLP/gte-modernbert-base` (768-dim). Requires full reindex if upgrading from 1024-dim index.
+- **Reranker**: `gte-reranker-modernbert-base` → `jinaai/jina-reranker-v3`; `min_vram_gb` 4.0 → 6.0.
+- **Routing**: `multi_model_enabled` false → true; pool "full" → "lightweight-speed"; `batch_size` 128 → 64.
+
+---
+
+## v0.12.1 - Graph Edge Fixes + Search Layer Refactor (2026-05-25)
+
+Patch release fixing missing call and relationship edges for `split_block` chunks, ASGI transport stability, and a search-layer refactor.
+
+### Added
+- ANSI color output in MCP server console (`mcp_server/server.py`): blue=stages, yellow=warnings, red=errors.
+
+### Fixed
+- **split_block call edges** (`chunking/multi_language_chunker.py`): `"split_block"` added to call-extraction allowlist — large methods split at AST boundaries now generate call edges for all fragments.
+- **split_block relationship edges** (`chunking/multi_language_chunker.py`): `_extract_phase3_relationships` extracts from signature-only content for split_blocks, making it parseable. Result: +584 `uses_type`/`imports` edges after re-index.
+- **Starlette 307 on POST `/mcp`** (`mcp_server/server.py`): ASGI wrapper blocks `redirect_slashes` before Starlette issues a 307.
+
+### Changed
+- `CodeRelationshipAnalyzer` moved from `mcp_server/tools/` to `search/relationship_analyzer.py` with `GraphQueryEngine` seam (`graph/graph_queries.py`) and shared types (`search/types.py`). Old path is a backward-compat shim.
+
+### Security
+- `pip ≥ 26.1.1`, `pillow ≥ 12.2.0`, `python-multipart ≥ 0.0.27` (2026-05-25 audit, 13 CVEs resolved).
+
+---
+
+## v0.12.0 - StreamableHTTP Transport Migration (2026-05-25)
+
+Replaced the legacy SSE transport (`SseServerTransport`, two-endpoint GET `/sse` + POST `/messages/`) with the MCP-standard StreamableHTTP transport (`StreamableHTTPSessionManager`, single bidirectional `/mcp` endpoint).
+
+### Transport Changes
+
+- **`mcp_server/server.py`**: `--transport sse` → `--transport http`; imports `StreamableHTTPSessionManager(stateless=True, json_response=True)`; lifespan wrapped in `session_manager.run()`; routes now `Mount("/mcp", app=handle_mcp)` without `/messages/` back-channel
+- **`scripts/manual_configure.py`**: default transport `"http"`; emits `{"type": "http", "url": "http://localhost:8765/mcp"}`
+- **Batch launchers**: `start_mcp_http.bat` (port 8765), `start_mcp_http_cli.bat` (port 8766), `start_both_http_servers.bat`, `start_mcp_debug.bat` all updated
+- **`gemini-skills/.../start_mcp_sse.py`**: health check changed from `GET /sse` polling to TCP port probe; `--transport http`
+- **`tests/regression/test_mcp_configuration.ps1`**: expects `type == "http"`, URL ending `/mcp`
+- **`start_mcp_server.cmd`**: menu labels, batch file references, help text updated
+
+### Why StreamableHTTP
+
+- Single endpoint handles both request and response directions (no separate POST back-channel)
+- Stateless mode (`stateless=True`) is correct for pure request/response tools over shared process state
+- JSON response mode (`json_response=True`) — clients only need `Accept: application/json`
+- MCP Python SDK standardizing on this transport; SSE transport is legacy
+- Port 8765 unchanged; only path changes `/sse` → `/mcp`
+
+### Migration Note
+
+Update `.claude.json` MCP server config from:
+```json
+{"type": "sse", "url": "http://localhost:8765/sse"}
+```
+to:
+```json
+{"type": "http", "url": "http://localhost:8765/mcp"}
+```
+Re-run `scripts\batch\manual_configure.bat` to apply automatically.
+
+---
+
+## v0.11.7 - Defense-in-Depth for Destructive Operations (2026-05-03)
+
+### Status: PATCH RELEASE ✅
+
+Hardens every `shutil.rmtree` call in the codebase with layered path-containment guards. Fixes a regression where selecting "0" (Cancel) in the `start_mcp_server.cmd` "Clear Project Indexes" menu could delete project source files instead of cancelling.
+
+### Security
+
+- **`validate_storage_path()`** (`mcp_server/storage_manager.py`) — refuses any `CODE_SEARCH_STORAGE` path that has a project marker (`.git`, `pyproject.toml`, `Cargo.toml`, `package.json`, `go.mod`, `pom.xml`) as an ancestor up to the home directory. Falls back to `~/.claude_code_search` with a logged error.
+- **Storage sentinel** — `get_storage_dir()` writes `.claude_code_search_storage` on first init. `safe_rmtree_all()` returns exit code 6 if the sentinel is absent and exit code 7 if the directory contains a project marker.
+- **`tools/safe_clear_index.py`** (new) — standalone helper with `safe_rmtree_project()` (5-guard chain) and `safe_rmtree_all()`.
+- **Cleanup queue re-validation** — paths from `cleanup_queue.json` are checked against `projects_root` before `rmtree` at server startup.
+- **Index handler assertion** — `_clear_index_files_before_create` verifies the target is under the storage root.
+- **Single source of truth** — `snapshot_manager.py`, `cleanup_orphaned_projects.py`, `cleanup_stale_snapshots.py` all route through `get_storage_dir()` instead of hardcoding `~/.claude_code_search`.
+- **ONNX `--force` guard** — refuses to `rmtree` directories that lack `*.onnx` / ONNX meta artifacts.
+- **`repair_installation.bat`** — routes through `safe_clear_index.py`; `Type YES to confirm` prompts.
+
+### Verification
+
+- 97 new/updated tests across 6 modules (all 2,044 unit tests pass).
+
+---
+
+## v0.11.6 - Incremental-Index Hashing Parity (2026-04-21)
+
+### Status: PATCH RELEASE ✅
+
+Companion fix to v0.11.5. The full-index path got extension-aware stat-based hashing, but `ChangeDetector` — which builds a fresh `MerkleDAG` for every incremental run and for every auto-reindex freshness check — was still constructing that DAG without `supported_extensions`. Result: same ~103 s / 1134-file cost on every incremental, plus a correctness bug where stored v0.11.5 snapshots (stat-hashes for non-code files) never matched the content-hashes the incremental DAG produced, so every non-code asset looked "modified".
+
+### Performance
+
+- **Thread `supported_extensions` through `ChangeDetector`** (`merkle/change_detector.py`) — both `detect_changes_from_snapshot` and `quick_check` now propagate it to the `MerkleDAG` they build.
+- **Cache supported extensions once in `IncrementalIndexer.__init__`** (`search/incremental_indexer.py`) — `self.supported_extensions` is computed from `TreeSitterChunker.get_supported_extensions()` and reused by both change detection and `_full_index` (eliminates a per-full-index `TreeSitterChunker` re-import that v0.11.5 accidentally left in).
+- **Auto-reindex freshness check** (`mcp_server/tools/search_handlers.py`) — constructs its lightweight `ChangeDetector` with `supported_extensions` too, so `quick_check` is as fast as the incremental path.
+
+### Fixed
+
+- **Hash-scheme drift between snapshot and incremental DAG** — v0.11.5 snapshots used stat-hashes for non-code files, but the incremental DAG on the next run used content-hashes, so diffing produced false "modified" entries (observed: `Modified: 1076` out of 1080 unsupported assets in a real user log). Now both sides use the same scheme.
+
+### Verification
+
+- `tests/unit/merkle/test_merkle.py::test_incremental_consistent_with_new_scheme_snapshot` — reproduces the exact failure mode (binary asset mis-classified as modified) and guards the fix.
+- `tests/unit/merkle/test_merkle.py::test_supported_extensions_propagated_to_built_dag` — confirms `ChangeDetector` passes `supported_extensions` through to the DAG it builds.
+- All 62 `tests/unit/merkle/` + `tests/unit/search/test_incremental_indexer.py` tests pass.
+- All 199 `tests/unit/mcp_server/` tests pass.
+
+---
+
+## v0.11.5 - Full-Index DAG Hashing Performance (2026-04-21)
+
+### Status: PATCH RELEASE ✅
+
+Eliminates the ~2-minute stall between `Successfully cleared hybrid indices` and `Found N supported files out of M total files` on multi-model full indexing. Two independent bottlenecks are addressed.
+
+### Performance
+
+- **Extension-aware hashing in `MerkleDAG`** (`merkle/merkle_dag.py`) — `build()` used to SHA-256 content-hash every file in the project tree before the supported-extension filter ran. On a 1134-file TouchDesigner project with 61 code files and 1073 `.tox`/media/binary assets, this took ~103 s per model on Windows (Defender on-access scanning + NTFS per-file open overhead ≈ 90 ms/file). `MerkleDAG.__init__` now accepts `supported_extensions: set[str] | None`; files whose suffix is NOT in the set get a stat-based hash (`name:st_size:int(st_mtime)`) instead, which is ~100× cheaper and accurate enough for files that are never chunked or searched (mtime+size is the same fast-path signal rsync/git use).
+- **Shared `MerkleDAG` across models** (`search/incremental_indexer.py`, `mcp_server/tools/index_handlers.py`) — each per-model `IncrementalIndexer` previously rebuilt the DAG from scratch even though every model in a multi-model pool sees the same files at the same mtimes. `IncrementalIndexer.__init__` now accepts `prebuilt_dag: MerkleDAG | None` and exposes the built DAG via `self.built_dag`. The multi-model loop in `_index_with_all_models` captures the first model's DAG into `cached_dag` and passes it to subsequent models (mirroring the existing `cached_repo_profile` pattern). The second model's DAG build is skipped entirely.
+
+### Impact
+
+- Single-model first pass: ~103 s → ~5 s (hashing reduced from 1134 files to 61).
+- Multi-model full reindex: ~210 s → ~5 s (second model near-instant). >95% reduction on asset-heavy projects.
+- Content-code projects (no non-indexed assets) are unaffected — everything still gets a full content hash.
+
+### Trade-offs (deliberate)
+
+- Non-indexed files are tracked by `stat` (mtime+size) rather than content. A deliberate byte-level mutation that preserves both mtime and size would no longer register as a change for those files. This is considered correct: those files are never chunked, embedded, or searched — they only exist in the DAG so renames/moves are detectable via directory-hash composition.
+
+### Verification
+
+- All 21 `tests/unit/merkle/` tests pass unchanged (backward-compatible default: `supported_extensions=None` preserves original content-hash behavior).
+- All 39 `tests/unit/search/test_incremental_indexer.py` tests pass.
+- End-to-end verified by user against the FLUX_2_KLEIN_TD project (2-minute stall eliminated; second model's DAG rebuild skipped).
+
+---
+
+## v0.11.4 - Selection-Reset Helper Fix (2026-04-21)
+
+### Status: PATCH RELEASE ✅
+
+Fixes a SyntaxError in the `Clear Project Indexes` menu workflow that was silently hidden by `2>nul` in earlier commits and surfaced by the `1b818b2` refactor.
+
+### Fixed
+
+- `start_mcp_server.cmd:1037` — the embedded `python -c "..."` one-liner had an inline `if` compound statement after `;`-chained simple statements, which Python rejects at parse time. None of the reset logic ever ran; every clear printed a traceback and left stale `last_project_path` entries in `project_selection.json`.
+
+### Changed
+
+- Extracted reset logic to `tools/reset_selection_if_orphaned.py` — a 45-line helper that reads `CGW_PROJ_PATH` from env, checks the active selection first (cheap early-exit), and short-circuits the projects-dir glob on first match. Also drops a latent filter bug where `Path(p.parent.name).exists()` compared a bare hash string against CWD instead of the projects directory.
+
+### Verification
+
+- Helper syntax-checked: `.venv\Scripts\python.exe -m py_compile tools/reset_selection_if_orphaned.py`
+- Commit `68686ad` passed pre-push hook and ruff/isort checks
 
 ---
 

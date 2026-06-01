@@ -270,7 +270,7 @@ class TestErrorHandlerIntegration:
     @pytest.mark.asyncio
     async def test_model_selection_handler_pattern(self):
         """Test decorator with model selection pattern including context."""
-        available_models = ["qwen3", "bge_m3", "coderank"]
+        available_models = ["qwen3_0.6b", "bge_m3", "coderank"]
 
         @error_handler(
             "Switch model",

@@ -10,7 +10,7 @@ Tests:
 
 import pytest
 
-from graph.relationship_types import (
+from chunking.relationships.relationship_types import (
     CallEdge,
     RelationshipEdge,
     RelationshipType,

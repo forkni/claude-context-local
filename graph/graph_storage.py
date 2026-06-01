@@ -9,14 +9,15 @@ import heapq
 import json
 import logging
 from collections import deque
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from search.filters import normalize_path
+from utils.path_utils import normalize_path
 
 
 if TYPE_CHECKING:
-    from graph.relationship_types import RelationshipEdge
+    from chunking.relationships.relationship_types import RelationshipEdge
 
 try:
     import networkx as nx
@@ -250,7 +251,7 @@ class CodeGraphStorage:
             edge: RelationshipEdge object with all relationship data
 
         Example:
-            >>> from graph.relationship_types import RelationshipEdge, RelationshipType
+            >>> from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
             >>> edge = RelationshipEdge(
             ...     source_id="child.py:1-10:class:Child",
             ...     target_name="Parent",
@@ -391,62 +392,15 @@ class CodeGraphStorage:
 
             while queue:
                 current_id, depth = queue.popleft()
-
                 if depth >= max_depth:
                     continue
-
-                # Process outgoing edges (forward relationships)
-                for _, target, edge_data in self.graph.out_edges(current_id, data=True):
-                    edge_type = edge_data.get("relationship_type") or edge_data.get(
-                        "type"
-                    )
-
-                    # Check if this edge type is requested
-                    if edge_type and edge_type in relation_types:
-                        # Apply import category filtering if needed
-                        if (
-                            edge_type == "imports"
-                            and exclude_import_categories
-                            and self._should_exclude_edge(
-                                current_id, target, exclude_import_categories
-                            )
-                        ):
-                            continue
-
-                        if target not in visited:
-                            neighbors.add(target)
-                            visited.add(target)
-                            queue.append((target, depth + 1))
-
-                # Process incoming edges (reverse relationships)
-                for source, _, edge_data in self.graph.in_edges(current_id, data=True):
-                    edge_type = edge_data.get("relationship_type") or edge_data.get(
-                        "type"
-                    )
-
-                    # Convert to reverse type name (e.g., "calls" -> "called_by")
-                    reverse_type = (
-                        self._get_reverse_relation_type(edge_type)
-                        if edge_type
-                        else None
-                    )
-
-                    # Check if this reverse type is requested
-                    if reverse_type and reverse_type in relation_types:
-                        # Apply import category filtering if needed
-                        if (
-                            edge_type == "imports"
-                            and exclude_import_categories
-                            and self._should_exclude_edge(
-                                source, current_id, exclude_import_categories
-                            )
-                        ):
-                            continue
-
-                        if source not in visited:
-                            neighbors.add(source)
-                            visited.add(source)
-                            queue.append((source, depth + 1))
+                for neighbor, _edge_type in self._iter_matching_neighbors(
+                    current_id, relation_types, exclude_import_categories
+                ):
+                    if neighbor not in visited:
+                        neighbors.add(neighbor)
+                        visited.add(neighbor)
+                        queue.append((neighbor, depth + 1))
 
         else:
             # Weighted BFS using priority queue (higher weight = higher priority)
@@ -457,73 +411,75 @@ class CodeGraphStorage:
             visited = {normalized_chunk_id}
 
             while pq:
-                neg_weight, _, current_id, depth = heapq.heappop(pq)
-
+                _neg_weight, _, current_id, depth = heapq.heappop(pq)
                 if depth >= max_depth:
                     continue
-
-                # Process outgoing edges (forward relationships)
-                for _, target, edge_data in self.graph.out_edges(current_id, data=True):
-                    edge_type = edge_data.get("relationship_type") or edge_data.get(
-                        "type"
-                    )
-
-                    # Check if this edge type is requested
-                    if edge_type and edge_type in relation_types:
-                        # Apply import category filtering if needed
-                        if (
-                            edge_type == "imports"
-                            and exclude_import_categories
-                            and self._should_exclude_edge(
-                                current_id, target, exclude_import_categories
-                            )
-                        ):
-                            continue
-
-                        if target not in visited:
-                            neighbors.add(target)
-                            visited.add(target)
-
-                            # Get weight for this edge type (default 0.5 if not in dict)
-                            weight = edge_weights.get(edge_type, 0.5)
-                            counter += 1
-                            heapq.heappush(pq, (-weight, counter, target, depth + 1))
-
-                # Process incoming edges (reverse relationships)
-                for source, _, edge_data in self.graph.in_edges(current_id, data=True):
-                    edge_type = edge_data.get("relationship_type") or edge_data.get(
-                        "type"
-                    )
-
-                    # Convert to reverse type name (e.g., "calls" -> "called_by")
-                    reverse_type = (
-                        self._get_reverse_relation_type(edge_type)
-                        if edge_type
-                        else None
-                    )
-
-                    # Check if this reverse type is requested
-                    if reverse_type and reverse_type in relation_types:
-                        # Apply import category filtering if needed
-                        if (
-                            edge_type == "imports"
-                            and exclude_import_categories
-                            and self._should_exclude_edge(
-                                source, current_id, exclude_import_categories
-                            )
-                        ):
-                            continue
-
-                        if source not in visited:
-                            neighbors.add(source)
-                            visited.add(source)
-
-                            # Get weight for the forward edge type (not reverse)
-                            weight = edge_weights.get(edge_type, 0.5)
-                            counter += 1
-                            heapq.heappush(pq, (-weight, counter, source, depth + 1))
+                for neighbor, edge_type in self._iter_matching_neighbors(
+                    current_id, relation_types, exclude_import_categories
+                ):
+                    if neighbor not in visited:
+                        neighbors.add(neighbor)
+                        visited.add(neighbor)
+                        # Get weight for the forward edge type (not reverse)
+                        weight = edge_weights.get(edge_type, 0.5)
+                        counter += 1
+                        heapq.heappush(pq, (-weight, counter, neighbor, depth + 1))
 
         return neighbors
+
+    def _iter_matching_neighbors(
+        self,
+        current_id: str,
+        relation_types: list[str],
+        exclude_import_categories: list[str] | None,
+    ) -> Iterator[tuple[str, str]]:
+        """Yield ``(neighbor_id, edge_type)`` for each edge of ``current_id`` that matches.
+
+        Forward (outgoing) edges are yielded first, then reverse (incoming) edges — the
+        same order the BFS bodies in :meth:`get_neighbors` relied on.  ``edge_type`` is
+        always the *forward* (stored) relationship type, so callers can compute edge
+        weights from it (preserving the "weight for the forward edge type, not reverse"
+        invariant used by the weighted BFS).
+
+        This is the single source of truth for edge-type resolution, requested-type
+        matching, and the ``imports`` exclusion filter that was previously duplicated
+        across four blocks in :meth:`get_neighbors`.
+
+        Args:
+            current_id: The node whose edges are iterated.
+            relation_types: Accepted forward and reverse relation type names.
+            exclude_import_categories: If set, ``imports`` edges whose import category
+                is in this list are skipped (same semantics as :meth:`_should_exclude_edge`).
+        """
+        # Forward (outgoing) relationships — forward edge_type matched directly
+        for _, target, edge_data in self.graph.out_edges(current_id, data=True):
+            edge_type = edge_data.get("relationship_type") or edge_data.get("type")
+            if edge_type and edge_type in relation_types:
+                if (
+                    edge_type == "imports"
+                    and exclude_import_categories
+                    and self._should_exclude_edge(
+                        current_id, target, exclude_import_categories
+                    )
+                ):
+                    continue
+                yield target, edge_type
+        # Reverse (incoming) relationships — reverse type matched, forward type yielded
+        for source, _, edge_data in self.graph.in_edges(current_id, data=True):
+            edge_type = edge_data.get("relationship_type") or edge_data.get("type")
+            reverse_type = (
+                self._get_reverse_relation_type(edge_type) if edge_type else None
+            )
+            if reverse_type and reverse_type in relation_types:
+                if (
+                    edge_type == "imports"
+                    and exclude_import_categories
+                    and self._should_exclude_edge(
+                        source, current_id, exclude_import_categories
+                    )
+                ):
+                    continue
+                yield source, edge_type
 
     def _get_reverse_relation_type(self, relation_type: str) -> str:
         """
@@ -714,6 +670,7 @@ class CodeGraphStorage:
         try:
             # Convert graph to JSON-serializable format
             # Using edges="edges" for NetworkX 3.6+ forward compatibility
+            # pyrefly: ignore [missing-attribute]
             data = nx.node_link_data(self.graph, edges="edges")
 
             # Save to file
@@ -746,6 +703,7 @@ class CodeGraphStorage:
 
             # Reconstruct graph from JSON
             # Using edges="edges" for NetworkX 3.6+ forward compatibility
+            # pyrefly: ignore [missing-attribute]
             self.graph = nx.node_link_graph(data, directed=True, edges="edges")
 
             # Rebuild name index from loaded graph so get_nodes_by_name() works.
@@ -768,14 +726,64 @@ class CodeGraphStorage:
         except Exception as e:
             self.logger.error(f"Failed to load graph: {e}")
             # Initialize empty graph on error
+            # pyrefly: ignore [missing-attribute]
             self.graph = nx.DiGraph()
             return False
 
     def clear(self) -> None:
-        """Clear all nodes and edges from the graph."""
+        """Clear all nodes and edges from the graph and remove the backing JSON file.
+
+        Deletes the on-disk call_graph.json so that subsequent CodeGraphStorage
+        re-initialization does not reload stale phantom nodes from a previous index.
+        """
         self.graph.clear()
         self._name_index.clear()
-        self.logger.info("Cleared call graph")
+        if self.graph_path.exists():
+            self.graph_path.unlink()
+            self.logger.info("Cleared call graph (on-disk file deleted)")
+        else:
+            self.logger.info("Cleared call graph")
+
+    def remove_file_nodes(self, file_path: str) -> int:
+        """Remove all graph nodes (and their incident edges) belonging to a file.
+
+        Intended for incremental reindex: prunes stale nodes when a file's chunks
+        are deleted from the metadata store so the call graph and the metadata
+        store stay in sync.  Without this, old node IDs (which embed line ranges)
+        survive incremental reindex and cause ``Chunk not found`` errors in
+        ``find_connections``.
+
+        Args:
+            file_path: Source file path — may use any path separator; normalized
+                internally to forward slashes to match the chunk_id format used by
+                the chunker (``path:start-end:type:name``).
+
+        Returns:
+            Number of nodes removed.
+        """
+        # Normalize to forward slashes, matching chunk_id construction in chunker
+        normalized = file_path.replace("\\", "/").rstrip("/")
+        prefix = normalized + ":"
+
+        # Collect IDs first to avoid mutating the graph during iteration
+        to_remove = [n for n in self.graph.nodes() if n.startswith(prefix)]
+
+        for node_id in to_remove:
+            # Clean _name_index before removing the node
+            node_name = self.graph.nodes[node_id].get("name")
+            if node_name and node_name in self._name_index:
+                with contextlib.suppress(ValueError):
+                    self._name_index[node_name].remove(node_id)
+                if not self._name_index[node_name]:
+                    del self._name_index[node_name]
+            # networkx automatically removes all incident edges when a node is removed
+            self.graph.remove_node(node_id)
+
+        if to_remove:
+            self.logger.debug(
+                f"[GRAPH_PRUNE] Removed {len(to_remove)} nodes for '{normalized}'"
+            )
+        return len(to_remove)
 
     def get_stats(self) -> dict[str, Any]:
         """
@@ -825,6 +833,7 @@ class CodeGraphStorage:
                 return json.load(f)
         return None
 
+    # pyrefly: ignore [missing-attribute]
     def get_graph(self) -> "nx.DiGraph":
         """Expose raw NetworkX DiGraph for external algorithms (e.g., PPR).
 

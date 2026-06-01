@@ -13,12 +13,12 @@ from pathlib import Path
 MODEL_REGISTRY = {
     "google/embeddinggemma-300m": {
         "dim": 768,
-        "vram": "4-8GB",
+        "vram": "~1.2GB",
         "short": "embeddinggemma-300m",
     },
     "BAAI/bge-m3": {"dim": 1024, "vram": "1-1.5GB", "short": "bge-m3"},
-    "BAAI/bge-code-v1": {"dim": 1536, "vram": "4GB", "short": "bge-code-v1"},
     "Qwen/Qwen3-Embedding-0.6B": {"dim": 1024, "vram": "2.3GB", "short": "qwen3-0.6b"},
+    "Qwen/Qwen3-Embedding-4B": {"dim": 2560, "vram": "~10GB", "short": "qwen3-4b"},
     "nomic-ai/CodeRankEmbed": {
         "dim": 768,
         "vram": "0.5-0.6GB",
@@ -28,6 +28,11 @@ MODEL_REGISTRY = {
         "dim": 768,
         "vram": "0.28GB",
         "short": "gte-modernbert",
+    },
+    "jinaai/jina-embeddings-v5-text-small-retrieval": {
+        "dim": 1024,
+        "vram": "1.2-1.5GB",
+        "short": "jina-v5-small",
     },
 }
 
@@ -88,7 +93,7 @@ def main():
             if pool == "lightweight-speed":
                 print("Model: [MULTI] BGE-M3 + gte-modernbert (1.65GB total)")
             else:
-                print("Model: [MULTI] BGE-Code-v1 + Qwen3 (6.3GB total)")
+                print("Model: [MULTI] CodeRankEmbed + Qwen3-4B (~10.6GB total)")
             print(f"       Active routing - {pool} pool")
         else:
             # Single model lookup

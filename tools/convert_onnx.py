@@ -445,6 +445,24 @@ Examples:
         if onnx_dir.exists():
             import shutil
 
+            # Sanity check: refuse to rmtree non-empty dirs that don't look like ONNX output
+            _onnx_artifact_names = (
+                "config.json",
+                "tokenizer.json",
+                "convert_meta.json",
+            )
+            _looks_like_onnx = any(onnx_dir.glob("*.onnx")) or any(
+                (onnx_dir / f).exists() for f in _onnx_artifact_names
+            )
+            if any(onnx_dir.iterdir()) and not _looks_like_onnx:
+                _log.error(
+                    "--force refused: %s does not contain expected ONNX artifacts "
+                    "(*.onnx / %s); pass an ONNX cache directory or remove it manually",
+                    onnx_dir,
+                    "/".join(_onnx_artifact_names),
+                )
+                sys.exit(2)
+
             _log.info(f"--force: removing existing ONNX cache at {onnx_dir}")
             shutil.rmtree(onnx_dir)
 

@@ -7,12 +7,11 @@ Tests the full pipeline with assignment-based type inference.
 import shutil
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from chunking.multi_language_chunker import MultiLanguageChunker
-from graph.call_graph_extractor import PythonCallGraphExtractor
+from chunking.relationships.call_graph_extractor import PythonCallGraphExtractor
 from graph.graph_storage import CodeGraphStorage
-from mcp_server.services import ServiceLocator
 from search.config import ChunkingConfig
 
 
@@ -26,8 +25,10 @@ class TestAssignmentTrackingIntegration:
         # Disable greedy merge for these tests to check individual method chunks
         mock_config = MagicMock()
         mock_config.chunking = ChunkingConfig()
-        self.locator = ServiceLocator.instance()
-        self.locator.register("config", mock_config)
+        self._config_patch = patch(
+            "search.config.get_search_config", return_value=mock_config
+        )
+        self._config_patch.start()
 
         self.chunker = MultiLanguageChunker()
         self.extractor = PythonCallGraphExtractor()
@@ -37,7 +38,7 @@ class TestAssignmentTrackingIntegration:
 
     def teardown_method(self):
         """Clean up test fixtures."""
-        ServiceLocator.reset()
+        self._config_patch.stop()
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
     def test_chunking_and_call_extraction_with_assignments(self):

@@ -433,6 +433,160 @@ class LanguageChunker(ABC):
         return result, len(chunks), len(result)
 
     @staticmethod
+    def _assign_community_ids(
+        chunks: list["CodeChunk"],
+        community_map: dict[str, int],
+    ) -> list["CodeChunk"]:
+        """Return a copy of each chunk with its community_id resolved from ``community_map``.
+
+        Generates the lookup key that maps a raw AST chunk to a community: ``chunk_id``
+        when already set; otherwise a composite of
+        ``relative_path:start-end:chunk_type[:parent.name]``.
+        This is the single source of truth for the chunk→community lookup semantics used
+        in :meth:`remerge_chunks_with_communities`.
+        """
+        from dataclasses import replace
+
+        logger = logging.getLogger(__name__)
+        result = []
+        for chunk in chunks:
+            chunk_id = chunk.chunk_id
+            if chunk_id is None:
+                normalized_path = chunk.relative_path.replace("\\", "/")
+                if chunk.parent_name and chunk.name:
+                    lookup_key = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}:{chunk.parent_name}.{chunk.name}"
+                elif chunk.name:
+                    lookup_key = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}:{chunk.name}"
+                else:
+                    lookup_key = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
+            else:
+                lookup_key = chunk_id
+            community_id = community_map.get(lookup_key)
+            if community_id is None:
+                logger.debug(f"[REMERGE] No community found for {lookup_key}")
+            result.append(replace(chunk, community_id=community_id))
+        return result
+
+    @staticmethod
+    def _to_treesitter_chunks(chunks: list["CodeChunk"]) -> list["TreeSitterChunk"]:
+        """Convert CodeChunks to TreeSitterChunks for the greedy-merge algorithm.
+
+        Preserves call-graph data, relationships, and ``community_id`` in the metadata
+        dict so they survive the merge pass and can be recovered by
+        :meth:`_from_treesitter_chunks`.
+        """
+        # pyrefly: ignore [missing-module-attribute]
+        from chunking.languages.base import TreeSitterChunk
+
+        return [
+            TreeSitterChunk(
+                content=chunk.content,
+                start_line=chunk.start_line,
+                end_line=chunk.end_line,
+                node_type=chunk.chunk_type,
+                language=chunk.language,
+                metadata={
+                    "name": chunk.name,
+                    "file_path": chunk.file_path,
+                    "relative_path": chunk.relative_path,
+                    "calls": chunk.calls,
+                    "relationships": chunk.relationships,
+                    "docstring": chunk.docstring,
+                    "decorators": chunk.decorators,
+                    "imports": chunk.imports,
+                    "complexity_score": chunk.complexity_score,
+                    "tags": chunk.tags,
+                },
+                chunk_id=chunk.chunk_id,
+                parent_class=getattr(chunk, "parent_name", None),
+                community_id=chunk.community_id,
+            )
+            for chunk in chunks
+        ]
+
+    @staticmethod
+    def _from_treesitter_chunks(
+        merged_ts_chunks: list["TreeSitterChunk"],
+        original_chunks: list["CodeChunk"],
+    ) -> list["CodeChunk"]:
+        """Convert merged TreeSitterChunks back to CodeChunks using original metadata.
+
+        Uses a 3-pass lookup to find the best-matching original chunk:
+
+        1. **Exact containment** (same file, original range ⊆ merged range)
+        2. **File fallback** — any chunk from the same file (handles edge-case line shifts)
+        3. **Skip** — logs a warning and omits the merged chunk if no original found
+
+        ``original_chunks`` should be the community-annotated list produced by
+        :meth:`_assign_community_ids` so that ``community_id`` is available when needed.
+        """
+        from chunking.python_ast_chunker import CodeChunk
+
+        logger = logging.getLogger(__name__)
+        result = []
+        for ts_chunk in merged_ts_chunks:
+            merged_file = ts_chunk.metadata.get("file_path")
+            original = None
+            # Pass 1: exact containment within merged range, same file
+            for c in original_chunks:
+                if merged_file != c.file_path:
+                    continue
+                if (
+                    c.start_line >= ts_chunk.start_line
+                    and c.end_line <= ts_chunk.end_line
+                ):
+                    original = c
+                    break
+            # Pass 2: any chunk from same file
+            if original is None:
+                for c in original_chunks:
+                    if merged_file == c.file_path:
+                        original = c
+                        logger.debug(
+                            f"[REMERGE] Using fallback for {merged_file}:"
+                            f"{ts_chunk.start_line}-{ts_chunk.end_line}"
+                        )
+                        break
+            # Pass 3: skip if nothing found
+            if original is None:
+                logger.warning(
+                    f"[REMERGE] No original chunk found for merged chunk at "
+                    f"{merged_file}:{ts_chunk.start_line}-{ts_chunk.end_line}, skipping"
+                )
+                continue
+            result.append(
+                CodeChunk(
+                    content=ts_chunk.content,
+                    chunk_type=(
+                        ts_chunk.node_type
+                        if ts_chunk.node_type != "merged"
+                        else "merged"
+                    ),
+                    start_line=ts_chunk.start_line,
+                    end_line=ts_chunk.end_line,
+                    file_path=original.file_path,
+                    relative_path=original.relative_path,
+                    folder_structure=original.folder_structure,
+                    name=ts_chunk.metadata.get("name"),
+                    parent_name=ts_chunk.parent_class,
+                    language=original.language,
+                    chunk_id=None,
+                    community_id=ts_chunk.community_id,
+                    merged_from=ts_chunk.metadata.get("merged_from"),
+                    calls=original.calls if ts_chunk.node_type != "merged" else [],
+                    relationships=(
+                        original.relationships if ts_chunk.node_type != "merged" else []
+                    ),
+                    docstring=original.docstring,
+                    decorators=original.decorators,
+                    imports=original.imports,
+                    complexity_score=original.complexity_score,
+                    tags=original.tags,
+                )
+            )
+        return result
+
+    @staticmethod
     def remerge_chunks_with_communities(
         chunks: list["CodeChunk"],
         community_map: dict[str, int],
@@ -468,8 +622,6 @@ class LanguageChunker(ABC):
             >>> remerged = remerge_chunks_with_communities(chunks, community_map)
             >>> # Methods from different communities won't merge
         """
-        from dataclasses import replace
-
         if not chunks or not community_map:
             return chunks
 
@@ -479,68 +631,14 @@ class LanguageChunker(ABC):
         )
 
         # Step 1: Assign community_id to chunks from map
-        chunks_with_community = []
-        for chunk in chunks:
-            # Generate lookup key since chunk_id is not yet assigned
-            chunk_id = chunk.chunk_id
-
-            # Generate lookup key from chunk attributes
-            if chunk_id is None:
-                # Normalize path separators to forward slashes for cross-platform consistency
-                normalized_path = chunk.relative_path.replace("\\", "/")
-
-                if chunk.parent_name and chunk.name:
-                    lookup_key = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}:{chunk.parent_name}.{chunk.name}"
-                elif chunk.name:
-                    lookup_key = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}:{chunk.name}"
-                else:
-                    lookup_key = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
-            else:
-                lookup_key = chunk_id
-
-            community_id = community_map.get(lookup_key)
-
-            # Debug: Log if community lookup failed
-            if community_id is None:
-                logger.debug(f"[REMERGE] No community found for {lookup_key}")
-
-            # Create new chunk with community_id assigned
-            updated_chunk = replace(chunk, community_id=community_id)
-            chunks_with_community.append(updated_chunk)
+        chunks_with_community = LanguageChunker._assign_community_ids(
+            chunks, community_map
+        )
 
         # Step 2: Convert CodeChunk → TreeSitterChunk for merge algorithm
-        # The merge algorithm works on TreeSitterChunk
-        from chunking.languages.base import TreeSitterChunk
-
-        ts_chunks = []
-        for chunk in chunks_with_community:
-            ts_chunk = TreeSitterChunk(
-                content=chunk.content,
-                start_line=chunk.start_line,
-                end_line=chunk.end_line,
-                node_type=chunk.chunk_type,
-                language=chunk.language,
-                metadata={
-                    "name": chunk.name,
-                    "file_path": chunk.file_path,
-                    "relative_path": chunk.relative_path,
-                    # Preserve call graph and relationship data
-                    "calls": chunk.calls,
-                    "relationships": chunk.relationships,
-                    "docstring": chunk.docstring,
-                    "decorators": chunk.decorators,
-                    "imports": chunk.imports,
-                    "complexity_score": chunk.complexity_score,
-                    "tags": chunk.tags,
-                },
-                chunk_id=chunk.chunk_id,
-                parent_class=getattr(chunk, "parent_name", None),
-                community_id=chunk.community_id,  # KEY: Now has community_id!
-            )
-            ts_chunks.append(ts_chunk)
+        ts_chunks = LanguageChunker._to_treesitter_chunks(chunks_with_community)
 
         # Step 3: Re-run merge with use_community_boundary=True
-        # Use LanguageChunker instance (language doesn't matter for merge)
         from chunking.languages.python import PythonChunker
 
         chunker = PythonChunker()
@@ -549,8 +647,8 @@ class LanguageChunker(ABC):
             min_tokens=min_tokens,
             max_merged_tokens=max_merged_tokens,
             token_method=token_method,
-            use_community_boundary=True,  # KEY: Use community boundaries!
-            size_method=size_method,  # Pass size method
+            use_community_boundary=True,
+            size_method=size_method,
         )
 
         logger.info(
@@ -559,85 +657,9 @@ class LanguageChunker(ABC):
         )
 
         # Step 4: Convert TreeSitterChunk → CodeChunk
-        # Re-use structure from original chunks
-        result_chunks = []
-        for ts_chunk in merged_ts_chunks:
-            # Find original chunk to copy metadata (by file_path and line overlap)
-            # Match merged chunk to original by file path and line range
-            merged_file = ts_chunk.metadata.get("file_path")
-            original = None
-
-            # First pass: Find original chunk CONTAINED within merged chunk's range
-            # AND matches the file_path (prevent cross-file pollution)
-            for c in chunks_with_community:
-                # Must match file first to prevent cross-file metadata pollution
-                if merged_file != c.file_path:
-                    continue
-                # Original chunk should be CONTAINED within merged chunk's range
-                # Original chunk must be contained within merged chunk's line range
-                if (
-                    c.start_line >= ts_chunk.start_line
-                    and c.end_line <= ts_chunk.end_line
-                ):
-                    original = c
-                    break
-
-            # Fallback: find any chunk from same file if exact overlap fails
-            # Fallback: find any chunk from same file if exact containment fails
-            if original is None:
-                for c in chunks_with_community:
-                    if merged_file == c.file_path:
-                        original = c
-                        logger.debug(
-                            f"[REMERGE] Using fallback for {merged_file}:{ts_chunk.start_line}-{ts_chunk.end_line}"
-                        )
-                        break
-
-            # Last resort: skip chunk if no valid original found
-            # Skip chunk if no valid original found (avoids cross-file contamination)
-            if original is None:
-                logger.warning(
-                    f"[REMERGE] No original chunk found for merged chunk at "
-                    f"{merged_file}:{ts_chunk.start_line}-{ts_chunk.end_line}, skipping"
-                )
-                continue  # Skip this malformed chunk instead of using wrong file
-
-            # Create CodeChunk with correct fields
-            from chunking.python_ast_chunker import CodeChunk
-
-            code_chunk = CodeChunk(
-                content=ts_chunk.content,
-                chunk_type=(
-                    ts_chunk.node_type if ts_chunk.node_type != "merged" else "merged"
-                ),
-                start_line=ts_chunk.start_line,
-                end_line=ts_chunk.end_line,
-                file_path=original.file_path,
-                relative_path=original.relative_path,
-                folder_structure=original.folder_structure,
-                name=ts_chunk.metadata.get("name"),
-                parent_name=ts_chunk.parent_class,
-                language=original.language,
-                chunk_id=None,  # Will be regenerated with proper format
-                community_id=ts_chunk.community_id,  # Preserved!
-                merged_from=ts_chunk.metadata.get(
-                    "merged_from"
-                ),  # Preserve original symbol names before merge
-                # Preserve call graph and relationship data
-                # For non-merged chunks, copy from original; for merged chunks, use empty lists
-                calls=original.calls if ts_chunk.node_type != "merged" else [],
-                relationships=(
-                    original.relationships if ts_chunk.node_type != "merged" else []
-                ),
-                docstring=original.docstring,
-                decorators=original.decorators,
-                imports=original.imports,
-                complexity_score=original.complexity_score,
-                tags=original.tags,
-            )
-            result_chunks.append(code_chunk)
-
-        return result_chunks
+        return LanguageChunker._from_treesitter_chunks(
+            merged_ts_chunks, chunks_with_community
+        )
 
     def _get_block_boundary_types(self) -> set[str]:
         """Get node types that are valid split boundaries.
@@ -1008,22 +1030,11 @@ class LanguageChunker(ABC):
         return chunks
 
     def _get_chunking_config(self) -> Optional["ChunkingConfig"]:
-        """Get ChunkingConfig from ServiceLocator or direct config load.
+        """Get ChunkingConfig from the current search config.
 
         Returns:
             ChunkingConfig if available, None otherwise
         """
-        # Try ServiceLocator first (MCP server context)
-        try:
-            from mcp_server.services import ServiceLocator
-
-            config = ServiceLocator.instance().get_config()
-            if config and config.chunking:
-                return config.chunking
-        except (ImportError, AttributeError):
-            pass  # ServiceLocator not available, fall through to direct config
-
-        # Fallback: Load config directly (batch indexing context)
         try:
             from search.config import get_search_config
 

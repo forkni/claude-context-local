@@ -12,6 +12,7 @@ from typing import Any
 
 import numpy as np
 
+from utils.observability import wrap_in_context
 from utils.timing import timed
 
 from .filters import FilterEngine
@@ -195,10 +196,10 @@ class SearchExecutor:
             # Reuse existing thread pool instead of creating new one per search
             # This avoids ~1-2ms overhead of ThreadPoolExecutor creation
             bm25_future = self._thread_pool.submit(
-                self.search_bm25, query, k, min_bm25_score, filters
+                wrap_in_context(self.search_bm25), query, k, min_bm25_score, filters
             )
             dense_future = self._thread_pool.submit(
-                self.search_dense, query, k, filters, query_embedding
+                wrap_in_context(self.search_dense), query, k, filters, query_embedding
             )
 
             # Wait for results with timeout to prevent deadlocks
@@ -275,7 +276,7 @@ class SearchExecutor:
             return results
 
         except Exception as e:
-            self._logger.error(f"BM25 search failed: {e}")
+            self._logger.error(f"BM25 search failed: {e}", exc_info=True)
             return []
 
     @timed("dense_search")
@@ -323,7 +324,7 @@ class SearchExecutor:
             return results
 
         except Exception as e:
-            self._logger.error(f"Dense search failed: {e}")
+            self._logger.error(f"Dense search failed: {e}", exc_info=True)
             import traceback
 
             self._logger.error(

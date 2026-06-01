@@ -1,12 +1,16 @@
 """Manages Merkle tree snapshots for persistent change tracking."""
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 
 from search.filters import compute_drive_agnostic_hash, compute_legacy_hash
 
 from .merkle_dag import MerkleDAG
+
+
+logger = logging.getLogger(__name__)
 
 
 class SnapshotManager:
@@ -16,10 +20,18 @@ class SnapshotManager:
         """Initialize snapshot manager.
 
         Args:
-            storage_dir: Directory to store snapshots (default: ~/.claude_code_search/merkle)
+            storage_dir: Directory to store snapshots. Defaults to
+                ``get_storage_dir() / "merkle"`` (honoring CODE_SEARCH_STORAGE),
+                falling back to ``~/.claude_code_search/merkle`` if the import
+                fails (e.g. when running outside the installed package).
         """
         if storage_dir is None:
-            storage_dir = Path.home() / ".claude_code_search" / "merkle"
+            try:
+                from mcp_server.storage_manager import get_storage_dir
+
+                storage_dir = get_storage_dir() / "merkle"
+            except Exception:
+                storage_dir = Path.home() / ".claude_code_search" / "merkle"
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
@@ -58,11 +70,9 @@ class SnapshotManager:
         """
         if dimension is None:
             try:
-                # Use ServiceLocator to avoid circular dependency
-                from mcp_server.services import ServiceLocator
-                from search.config import get_model_slug
+                from search.config import get_model_slug, get_search_config
 
-                config = ServiceLocator.instance().get_config()
+                config = get_search_config()
                 dimension = config.embedding.dimension
                 model_slug = get_model_slug(config.embedding.model_name)
             except (AttributeError, KeyError, RuntimeError):
@@ -72,11 +82,9 @@ class SnapshotManager:
         else:
             # If dimension is provided explicitly, we need to get the current model slug
             try:
-                # Use ServiceLocator to avoid circular dependency
-                from mcp_server.services import ServiceLocator
-                from search.config import get_model_slug
+                from search.config import get_model_slug, get_search_config
 
-                config = ServiceLocator.instance().get_config()
+                config = get_search_config()
                 model_slug = get_model_slug(config.embedding.model_name)
             except (AttributeError, KeyError, RuntimeError):
                 model_slug = "unknown"
@@ -213,8 +221,8 @@ class SnapshotManager:
 
             return MerkleDAG.from_dict(snapshot_data["dag"])
 
-        except (json.JSONDecodeError, KeyError, Exception) as e:
-            print(f"Error loading snapshot: {e}")
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.error("Error loading snapshot: %s", e, exc_info=True)
             return None
 
     def load_metadata(self, project_path: str) -> dict | None:
@@ -234,8 +242,8 @@ class SnapshotManager:
         try:
             with open(metadata_path) as f:
                 return json.load(f)
-        except (json.JSONDecodeError, Exception) as e:
-            print(f"Error loading metadata: {e}")
+        except json.JSONDecodeError as e:
+            logger.error("Error loading metadata: %s", e, exc_info=True)
             return None
 
     def has_snapshot(self, project_path: str) -> bool:

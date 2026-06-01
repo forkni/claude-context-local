@@ -56,6 +56,7 @@ def _get_nvml_used_bytes(device: str = "cuda:0") -> int:
             and non-cuda strings fall back to index 0.
     """
     try:
+        # pyrefly: ignore [missing-import]
         import pynvml
 
         # Parse device index from "cuda:N"; default to 0 for "cuda"/"cpu"/"auto"/etc.
@@ -182,7 +183,9 @@ class ModelLoader:
                 delta_gb = max(0.0, (post - pre) / (1024**3))
             else:
                 # PyTorch: track peak allocated memory across the batch
+                # pyrefly: ignore [missing-attribute]
                 torch.cuda.reset_peak_memory_stats()
+                # pyrefly: ignore [missing-attribute]
                 pre_allocated = torch.cuda.memory_allocated()
                 model.encode(
                     dummy_batch,
@@ -190,6 +193,7 @@ class ModelLoader:
                     show_progress_bar=False,
                     convert_to_numpy=True,
                 )
+                # pyrefly: ignore [missing-attribute]
                 peak = torch.cuda.max_memory_allocated()
                 delta_gb = max(0.0, (peak - pre_allocated) / (1024**3))
 
@@ -209,6 +213,7 @@ class ModelLoader:
             )
             return 0.0
 
+    # pyrefly: ignore [missing-attribute]
     def get_torch_dtype(self) -> Optional["torch.dtype"]:
         """Get torch dtype based on config and GPU capability.
 
@@ -562,6 +567,7 @@ class ModelLoader:
                 )
                 info = model_info(self.model_name)
                 self._logger.info(
+                    # pyrefly: ignore [missing-attribute]
                     f"Model found: {info.modelId} (library: {info.library_name or 'unknown'})"
                 )
             except ImportError:

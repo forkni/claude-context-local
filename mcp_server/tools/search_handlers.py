@@ -4,7 +4,6 @@ Handlers for code search, similarity finding, and connection analysis.
 """
 
 import asyncio
-import copy
 import logging
 from typing import Any
 
@@ -17,24 +16,17 @@ from mcp_server.server import (
 )
 from mcp_server.services import get_config, get_state
 from mcp_server.storage_manager import get_project_storage_dir
-from mcp_server.tools.code_relationship_analyzer import CodeRelationshipAnalyzer
-from mcp_server.tools.decorators import error_handler
+from mcp_server.tools.decorators import error_handler, require_indexed_project
+from mcp_server.tools.search_orchestrator import SearchOrchestrator
 from mcp_server.utils.config_helpers import temporary_ram_fallback_off
-from search.config import (
-    EgoGraphConfig,
-    ParentRetrievalConfig,
-    SearchConfig,
-    get_config_manager,
-    get_search_config,
-)
 from search.exceptions import DimensionMismatchError
 from search.filters import normalize_path
 from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
-from search.intent_classifier import IntentClassifier, QueryIntent
 from search.metadata import MetadataStore
 from search.query_router import QueryRouter
+from search.relationship_analyzer import RelationshipAnalyzer
 
 
 logger = logging.getLogger(__name__)
@@ -276,17 +268,26 @@ def _check_auto_reindex(
                 f"(key: {stored_model_key}) instead of routing selection"
             )
         else:
-            logger.warning(
-                f"[AUTO_REINDEX] Could not map stored model '{stored_model_name}' to key, "
-                f"falling back to routing selection: {selected_model_key}"
+            logger.error(
+                f"[AUTO_REINDEX] Stored model '{stored_model_name}' is not registered in "
+                f"MODEL_POOL_CONFIG or MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED. Existing index "
+                f"will be discarded and rebuilt with routing-selected model "
+                f"'{selected_model_key}'. Update search/config.py:ALL_POOL_MODELS to "
+                f"register this model and prevent data loss."
             )
 
     # Phase 1: Lightweight freshness check (no HybridSearcher/embedder needed)
+    from chunking.tree_sitter import TreeSitterChunker
     from merkle.change_detector import ChangeDetector
     from merkle.snapshot_manager import SnapshotManager
 
     snapshot_mgr = SnapshotManager()
-    change_detector = ChangeDetector(snapshot_mgr, include_dirs, exclude_dirs)
+    change_detector = ChangeDetector(
+        snapshot_mgr,
+        include_dirs,
+        exclude_dirs,
+        supported_extensions=set(TreeSitterChunker.get_supported_extensions()),
+    )
 
     # Check if snapshot exists and is fresh
     if snapshot_mgr.has_snapshot(project_path):
@@ -311,14 +312,17 @@ def _check_auto_reindex(
     # Validate dimension compatibility BEFORE creating searcher
     from search.dimension_validator import validate_embedder_index_compatibility
 
-    embedder = get_embedder(model_key_for_embedder)
+    embedder = get_embedder(model_key_for_embedder, allow_cross_pool=True)
 
     try:
         validate_embedder_index_compatibility(
             embedder, project_storage, raise_on_mismatch=True
         )
     except DimensionMismatchError as e:
-        logger.warning(f"Dimension mismatch detected, will trigger full reindex: {e}")
+        logger.error(
+            f"Dimension mismatch detected for index '{project_storage.name}': {e}. "
+            f"Existing index will be discarded and rebuilt."
+        )
         # Continue - the incremental_indexer will handle reindex
 
     config = get_config()
@@ -336,9 +340,9 @@ def _check_auto_reindex(
             project_id=project_id,
             config=config,
         )
-        # Cache searcher so get_searcher() in handle_search_code reuses it (avoids double init).
-        # Only store when no valid searcher is cached — preserves an existing searcher (with
-        # its already-loaded Jina model) to avoid reloading GPU weights on every stale check.
+        # Track project/model key eagerly (used by downstream get_searcher() routing).
+        # Searcher bind is deferred until after auto_reindex_if_needed so we never
+        # cache a HybridSearcher whose embedder was just nulled by clear_embedders().
         state = get_state()
         if (
             state.searcher is None
@@ -347,11 +351,13 @@ def _check_auto_reindex(
         ):
             state.current_project = project_path
             state.current_model_key = model_key_for_embedder
-            state.searcher = indexer
     else:
         indexer = get_index_manager(project_path, model_key=selected_model_key)
     chunker = MultiLanguageChunker(
-        project_path, enable_entity_tracking=config.performance.enable_entity_tracking
+        project_path,
+        include_dirs,
+        exclude_dirs,
+        enable_entity_tracking=config.performance.enable_entity_tracking,
     )
     incremental_indexer = IncrementalIndexer(
         indexer=indexer,
@@ -368,6 +374,21 @@ def _check_auto_reindex(
         )
 
     reindexed = reindex_result.files_modified > 0 or reindex_result.files_added > 0
+
+    # Bind the local indexer as the cached searcher only if its embedder is still alive.
+    # clear_embedders() (called during needs_reindex paths) resets state.searcher=None AND
+    # replaces the pool entry with a fresh CodeEmbedder. The identity check (is embedder)
+    # confirms the pool still holds the same object we built indexer with — if clear_embedders
+    # ran, a new object will be in the pool and we skip the bind, letting get_searcher()
+    # construct a fresh HybridSearcher from the new embedder.
+    if (
+        config.search_mode.enable_hybrid
+        and model_key_for_embedder
+        and get_state().searcher is None
+        and get_state().embedders.get(model_key_for_embedder) is embedder
+    ):
+        get_state().searcher = indexer
+
     # Return stored model key for searcher cache consistency
     return reindexed, model_key_for_embedder
 
@@ -386,6 +407,79 @@ def _get_index_manager_from_searcher(searcher) -> CodeIndexManager | None:
     elif hasattr(searcher, "dense_index"):
         return searcher.dense_index
     return None
+
+
+async def _resolve_symbol_to_chunk_id(
+    symbol_name: str,
+    searcher: Any,
+) -> tuple[str | None, dict[str, str] | None]:
+    """Resolve a symbol name to a chunk_id via a 3-tier cascade.
+
+    Returns ``(chunk_id, resolution_info)`` on success, or ``(None, None)`` when
+    the symbol cannot be resolved.  Callers are responsible for returning an
+    appropriate error response.
+
+    Tier 1: O(1) symbol_cache direct lookup
+    Tier 2: graph node name index + suffix scan (both ``:name`` and ``.name`` so
+            class-qualified names like ``ClassName.method_name`` are handled)
+    Tier 3: semantic search with name-preference filter
+    """
+    # Tier 1 — O(1) symbol cache
+    index_manager = _get_index_manager_from_searcher(searcher)
+    if (
+        index_manager
+        and hasattr(index_manager, "symbol_cache")
+        and index_manager.symbol_cache
+    ):
+        resolved = index_manager.symbol_cache.get_by_symbol_name(symbol_name)
+        if resolved:
+            return resolved, {
+                "resolved_from": symbol_name,
+                "chunk_id": resolved,
+                "resolution_method": "direct_lookup",
+            }
+
+    # Tier 2 — graph node name index + suffix scan
+    if hasattr(searcher, "dense_index"):
+        gs = getattr(searcher.dense_index, "graph_storage", None)
+        if gs:
+            matches = (
+                gs.get_nodes_by_name(symbol_name)
+                if hasattr(gs, "get_nodes_by_name")
+                else []
+            )
+            if not matches:
+                # Plain ":name" (chunk_id suffix) or class-qualified ".name"
+                matches = [
+                    n
+                    for n in gs.graph.nodes()
+                    if n.endswith(f":{symbol_name}") or n.endswith(f".{symbol_name}")
+                ]
+            if matches:
+                return matches[0], {
+                    "resolved_from": symbol_name,
+                    "chunk_id": matches[0],
+                    "resolution_method": "graph_lookup",
+                }
+
+    # Tier 3 — semantic search with name-preference filter
+    results = await asyncio.to_thread(searcher.search, symbol_name, k=5)
+    for r in results:
+        meta = r.metadata if hasattr(r, "metadata") else {}
+        if meta.get("name") == symbol_name:
+            return r.chunk_id, {
+                "resolved_from": symbol_name,
+                "chunk_id": r.chunk_id,
+                "resolution_method": "semantic_search",
+            }
+    if results:
+        return results[0].chunk_id, {
+            "resolved_from": symbol_name,
+            "chunk_id": results[0].chunk_id,
+            "resolution_method": "semantic_search",
+        }
+
+    return None, None
 
 
 # ============================================================================
@@ -647,618 +741,14 @@ def _enrich_results_with_graph_data(
 
 
 @error_handler("Search")
+@require_indexed_project
 async def handle_search_code(arguments: dict[str, Any]) -> dict:
-    """Search code with natural language query.
-
-    Supports two modes:
-    1. Direct chunk_id lookup (O(1) - fast path)
-    2. Semantic/hybrid search by query (normal path)
-
-    Uses extracted helper functions for clarity:
-    - _handle_chunk_id_lookup(): Direct lookups
-    - _route_query_to_model(): Model routing decisions
-    - _check_auto_reindex(): Index freshness checks
-    - _format_search_results(): Result formatting
-    - _enrich_results_with_graph_data(): Graph relationship enrichment
-    """
-    # Extract arguments
-    query = arguments.get("query")
-    chunk_id = arguments.get("chunk_id")
-
-    # Get k from arguments, falling back to config default_k (Easy Win 2 + 3)
-    search_config = get_search_config()
-    config_default_k = search_config.search_mode.default_k
-    k = arguments.get("k", config_default_k)
-
-    # Enforce max_k limit (Easy Win 3)
-    k = min(k, search_config.search_mode.max_k)
-
-    # Validate: must provide either query OR chunk_id, not both
-    if not query and not chunk_id:
-        return {
-            "error": "Missing required parameter",
-            "message": "Provide either query or chunk_id parameter",
-        }
-    if query and chunk_id:
-        return {
-            "error": "Invalid parameters",
-            "message": "Provide either query OR chunk_id, not both",
-        }
-
-    # FAST PATH: Direct chunk_id lookup
-    if chunk_id:
-        return _handle_chunk_id_lookup(chunk_id)
-
-    # Early extraction for model routing (needed by intent redirects)
-    use_routing = arguments.get("use_routing", True)
-    model_key = arguments.get("model_key")
-
-    # Ego-graph defaults (may be overridden by CONTEXTUAL intent)
-    ego_graph_enabled = arguments.get("ego_graph_enabled", False)
-    ego_graph_k_hops = arguments.get("ego_graph_k_hops", 2)
-    ego_graph_max_neighbors = arguments.get("ego_graph_max_neighbors_per_hop", 10)
-
-    # Route query to optimal embedding model
-    selected_model_key, routing_info = _route_query_to_model(
-        query, use_routing, model_key
-    )
-
-    # Initialize intent_decision (may be set by intent classifier below)
-    intent_decision = None
-
-    # Intent Classification (Phase 2)
-    config = get_config()
-    if config.intent.enabled:
-        # Optionally supply the cached embedder for semantic anchor scoring.
-        # Uses the searcher cached from the previous request (get_state().searcher)
-        # so there is zero overhead on the first request (falls back to keyword-only).
-        _intent_embedder = None
-        if config.intent.semantic_enabled:
-            _cached = get_state().searcher
-            if _cached is not None and hasattr(_cached, "search_executor"):
-                _intent_embedder = getattr(_cached.search_executor, "embedder", None)
-
-        intent_classifier = IntentClassifier(
-            confidence_threshold=config.intent.confidence_threshold,
-            enable_logging=config.intent.log_classifications,
-            embedder=_intent_embedder,
-            semantic_enabled=config.intent.semantic_enabled,
-            semantic_weight=config.intent.semantic_weight,
-        )
-        intent_decision = intent_classifier.classify(query)
-
-        logger.info(
-            f"[INTENT] query='{query[:50]}...' -> {intent_decision.intent.value} "
-            f"(conf={intent_decision.confidence:.2f}, reason={intent_decision.reason})"
-        )
-
-        # Redirect PATH_TRACING queries to find_path
-        if (
-            intent_decision.intent == QueryIntent.PATH_TRACING
-            and intent_decision.confidence >= config.intent.confidence_threshold
-        ):
-            source = intent_decision.suggested_params.get("source")
-            target = intent_decision.suggested_params.get("target")
-            if source and target:
-                logger.info(
-                    f"[INTENT] Redirecting PATH_TRACING query to find_path: {source} → {target}"
-                )
-                return await handle_find_path(
-                    {
-                        "source": source,
-                        "target": target,
-                        "max_hops": 10,
-                    }
-                )
-
-        # Redirect SIMILARITY queries to find_similar_code
-        if (
-            intent_decision.intent == QueryIntent.SIMILARITY
-            and intent_decision.confidence >= config.intent.confidence_threshold
-        ):
-            symbol_name = intent_decision.suggested_params.get("symbol_name")
-            if symbol_name:
-                # First search to get chunk_id, then find similar
-                logger.info(
-                    f"[INTENT] Redirecting SIMILARITY query to find_similar_code: {symbol_name}"
-                )
-                try:
-                    # Get searcher if not already initialized
-                    if "searcher" not in locals():
-                        searcher = get_searcher(model_key=selected_model_key)
-                    search_result = await asyncio.to_thread(
-                        searcher.search, symbol_name, k=1
-                    )
-                    if search_result:
-                        return await handle_find_similar_code(
-                            {
-                                "chunk_id": search_result[0].chunk_id,
-                                "k": k,
-                            }
-                        )
-                except Exception as e:
-                    logger.warning(
-                        f"[INTENT] Failed to redirect SIMILARITY query: {e}. "
-                        f"Falling back to normal search."
-                    )
-
-        # Apply ego_graph for CONTEXTUAL queries (don't redirect, enhance search)
-        if (
-            intent_decision.intent == QueryIntent.CONTEXTUAL
-            and intent_decision.suggested_params.get("ego_graph_enabled")
-        ):
-            ego_graph_enabled = True
-            ego_graph_k_hops = intent_decision.suggested_params.get(
-                "ego_graph_k_hops", 2
-            )
-            logger.info(
-                f"[INTENT] Enabling ego_graph for CONTEXTUAL query "
-                f"(k_hops={ego_graph_k_hops})"
-            )
-
-        # Adjust k parameter for GLOBAL queries
-        if intent_decision.intent == QueryIntent.GLOBAL:
-            suggested_k = intent_decision.suggested_params.get("k", k)
-            if suggested_k > k:
-                logger.info(
-                    f"[INTENT] Increasing k from {k} to {suggested_k} for GLOBAL query"
-                )
-                k = suggested_k
-
-    # NORMAL PATH: Search by query
-    search_mode = arguments.get("search_mode", "auto")
-
-    # Apply intent classifier's suggested search_mode when user specifies 'auto'
-    if intent_decision and search_mode == "auto":
-        suggested_mode = intent_decision.suggested_params.get("search_mode")
-        if suggested_mode:
-            logger.info(
-                f"[INTENT] Applying suggested search_mode '{suggested_mode}' for {intent_decision.intent.value} query"
-            )
-            search_mode = suggested_mode
-
-    file_pattern = arguments.get("file_pattern")
-    include_dirs = arguments.get("include_dirs")
-    exclude_dirs = arguments.get("exclude_dirs")
-    chunk_type = arguments.get("chunk_type")
-    include_context = arguments.get("include_context", True)
-    auto_reindex = arguments.get("auto_reindex", True)
-    # Use config default instead of hardcoded 5 (respects search_config.json)
-    max_age_minutes = arguments.get(
-        "max_age_minutes", get_config().performance.max_index_age_minutes
-    )
-
-    # Parent chunk retrieval parameter (Match Small, Retrieve Big)
-    include_parent = arguments.get("include_parent", False)
-
-    # Context budget
-    max_context_tokens = arguments.get(
-        "max_context_tokens", get_config().search_mode.default_max_context_tokens
-    )
-
-    logger.info(f"[SEARCH] query='{query}', k={k}, mode='{search_mode}'")
-
-    # Early validation: Check if a project is indexed before routing
-    current_project = get_state().current_project
-    if not current_project:
-        return {
-            "error": "No indexed project found",
-            "message": "You must index a project before searching. Use index_directory first.",
-            "current_project": None,
-            "system_message": "No project indexed. Use index_directory(directory_path) to index a project first.",
-        }
-
-    # Check and perform auto-reindex if index is stale
-    current_project = get_state().current_project
-    stored_model_key = None  # Track for searcher cache consistency
-    if auto_reindex and current_project:
-        try:
-            reindexed, stored_model_key = _check_auto_reindex(
-                current_project, selected_model_key, max_age_minutes
-            )
-            if reindexed:
-                get_state().searcher = None
-        except DimensionMismatchError as e:
-            # Recovery: Return helpful error with suggested action
-            return {
-                "error": "Dimension mismatch",
-                "message": str(e),
-                "recovery_suggestion": (
-                    f"Run index_directory with force_reindex=True to rebuild "
-                    f"the index for model {e.embedder_model}"
-                ),
-                "embedder_dimension": e.embedder_dim,
-                "index_dimension": e.index_dim,
-            }
-
-    # Use stored model key if available (preserves searcher cache across routing changes)
-    effective_search_model = (
-        stored_model_key if stored_model_key else selected_model_key
-    )
-    if stored_model_key and stored_model_key != selected_model_key:
-        logger.info(
-            f"[SEARCH] Using stored index model '{stored_model_key}' instead of "
-            f"routed model '{selected_model_key}' to preserve searcher cache"
-        )
-
-    # Execute search with stored model index (preserves cache)
-    try:
-        searcher = get_searcher(model_key=effective_search_model)
-    except DimensionMismatchError as e:
-        return {
-            "error": "Dimension mismatch",
-            "message": str(e),
-            "recovery_suggestion": (
-                f"Run index_directory with force_reindex=True to rebuild "
-                f"the index for model {e.embedder_model}"
-            ),
-            "embedder_dimension": e.embedder_dim,
-            "index_dimension": e.index_dim,
-        }
-
-    # Check if index ready - support both HybridSearcher and IntelligentSearcher
-    total_chunks = 0
-    is_ready = False
-
-    # Option 1: HybridSearcher (has is_ready property and dense_index)
-    if hasattr(searcher, "is_ready"):
-        is_ready = searcher.is_ready
-        if (
-            hasattr(searcher, "dense_index")
-            and searcher.dense_index
-            and hasattr(searcher.dense_index, "index")
-            and searcher.dense_index.index
-        ):
-            total_chunks = searcher.dense_index.index.ntotal
-    # Option 2: IntelligentSearcher (has index_manager)
-    elif hasattr(searcher, "index_manager") and searcher.index_manager:
-        stats = searcher.index_manager.get_stats()
-        total_chunks = stats.get("total_chunks", 0)
-        is_ready = total_chunks > 0
-    # Option 3: Direct stats method
-    elif hasattr(searcher, "get_stats"):
-        stats = searcher.get_stats()
-        total_chunks = stats.get("total_chunks", 0)
-        is_ready = total_chunks > 0
-
-    if not is_ready or total_chunks == 0:
-        return {
-            "error": "No indexed project found",
-            "message": "You must index a project before searching",
-            "current_project": current_project or "None",
-        }
-    # Build filters
-    filters = {}
-    if file_pattern:
-        filters["file_pattern"] = [file_pattern]
-    if include_dirs:
-        filters["include_dirs"] = include_dirs
-    if exclude_dirs:
-        filters["exclude_dirs"] = exclude_dirs
-    if chunk_type:
-        filters["chunk_type"] = chunk_type
-
-    # Perform search
-    config_manager = get_config_manager()
-    actual_search_mode = config_manager.get_search_mode_for_query(query, search_mode)
-
-    # get_search_config() returns a process-wide cached singleton. Requests that
-    # don't apply ego-graph / parent-retrieval / intent-edge overrides can pass the
-    # singleton straight through. Requests that do mutate lazily deep-copy once,
-    # so the singleton is never written and concurrent requests don't race.
-    config_singleton = get_search_config()
-    config_copy: SearchConfig | None = None
-
-    def mutable_config() -> SearchConfig:
-        """Deep-copy the singleton on first call; return the same copy thereafter."""
-        nonlocal config_copy
-        if config_copy is None:
-            config_copy = copy.deepcopy(config_singleton)
-        return config_copy
-
-    # Build SearchConfig with ego-graph settings if enabled
-    if isinstance(searcher, HybridSearcher) and ego_graph_enabled:
-        mutable_config().ego_graph = EgoGraphConfig(
-            enabled=ego_graph_enabled,
-            k_hops=ego_graph_k_hops,
-            max_neighbors_per_hop=ego_graph_max_neighbors,
-        )
-        logger.info(
-            f"[EGO_GRAPH] Enabled with k_hops={ego_graph_k_hops}, "
-            f"max_neighbors_per_hop={ego_graph_max_neighbors}"
-        )
-
-    # QW5: apply intent-adaptive similarity threshold to ego-graph expansion
-    # Different query intents benefit from different neighbor precision/recall trade-offs
-    if isinstance(searcher, HybridSearcher) and ego_graph_enabled and intent_decision:
-        _intent_ego_thresholds = {
-            "local": 0.25,  # Higher precision for specific symbol lookups
-            "global": 0.10,  # Broader coverage for architecture queries
-            "contextual": 0.12,  # Broad context gathering
-            "navigational": 0.20,
-            "path_tracing": 0.15,
-            "similarity": 0.10,  # Broad coverage for similarity queries
-            "hybrid": 0.15,
-        }
-        intent_threshold = _intent_ego_thresholds.get(
-            intent_decision.intent.value, 0.15
-        )
-        if intent_threshold != 0.15:  # Only log non-default values
-            logger.info(
-                f"[EGO_GRAPH] Intent-adaptive threshold: "
-                f"{intent_decision.intent.value} -> {intent_threshold}"
-            )
-        mutable_config().ego_graph.min_similarity_threshold = intent_threshold
-
-    # Build SearchConfig with parent-retrieval settings if enabled
-    if isinstance(searcher, HybridSearcher) and include_parent:
-        mutable_config().parent_retrieval = ParentRetrievalConfig(
-            enabled=include_parent
-        )
-        logger.info("[PARENT_RETRIEVAL] Enabled")
-
-    # Apply intent-driven weight overrides (per-request kwargs — no shared-state mutation)
-    suggested_bm25: float | None = None
-    suggested_dense: float | None = None
-    if isinstance(searcher, HybridSearcher) and intent_decision:
-        suggested_bm25 = intent_decision.suggested_params.get("bm25_weight")
-        suggested_dense = intent_decision.suggested_params.get("dense_weight")
-        if suggested_bm25 is not None and suggested_dense is not None:
-            logger.info(
-                f"[INTENT] Weight override for {intent_decision.intent.value}: "
-                f"BM25={searcher.bm25_weight:.2f}→{suggested_bm25:.2f}, "
-                f"Dense={searcher.dense_weight:.2f}→{suggested_dense:.2f}"
-            )
-
-    # Apply intent-driven edge weights for graph traversal (A1)
-    if isinstance(searcher, HybridSearcher) and intent_decision:
-        from graph.graph_storage import INTENT_EDGE_WEIGHT_PROFILES
-
-        intent_key = intent_decision.intent.value  # e.g. "local", "global"
-        edge_profile = INTENT_EDGE_WEIGHT_PROFILES.get(intent_key)
-        if edge_profile:
-            cfg = mutable_config()
-            cfg.multi_hop.edge_weights = edge_profile
-            # Also set for ego-graph path (EgoGraphConfig already has edge_weights field)
-            if cfg.ego_graph:
-                cfg.ego_graph.edge_weights = edge_profile
-            logger.info(
-                f"[INTENT] Edge weight profile set for {intent_key}: "
-                f"calls={edge_profile.get('calls', 'N/A')}, imports={edge_profile.get('imports', 'N/A')}"
-            )
-
-    # Hand the copy to downstream only if we actually made one; otherwise the
-    # read-only singleton is safe to share.
-    effective_config = config_copy if config_copy is not None else config_singleton
-
-    if isinstance(searcher, HybridSearcher):
-        results = await asyncio.to_thread(
-            searcher.search,
-            query=query,
-            k=k,
-            search_mode=actual_search_mode,
-            min_bm25_score=0.1,
-            use_parallel=get_config().performance.use_parallel_search,
-            filters=filters if filters else None,
-            config=effective_config,
-            bm25_weight=suggested_bm25,
-            dense_weight=suggested_dense,
-        )
-    else:
-        context_depth = 1 if include_context else 0
-        results = await asyncio.to_thread(
-            searcher.search,
-            query=query,
-            k=k,
-            search_mode=actual_search_mode,
-            context_depth=context_depth,
-            filters=filters if filters else None,
-        )
-
-    # Format search results
-    formatted_results = _format_search_results(results)
-
-    # Enrich results with call graph data
-    index_manager = _get_index_manager_from_searcher(searcher)
-    formatted_results = _enrich_results_with_graph_data(
-        formatted_results, index_manager
-    )
-
-    # === Centrality annotation/reranking ===
-    centrality_scores = None
-    graph_config = getattr(effective_config, "graph_enhanced", None)
-
-    if (
-        graph_config
-        and graph_config.centrality_annotation
-        and index_manager
-        and index_manager.graph_storage
-    ):
-        try:
-            from graph.graph_queries import GraphQueryEngine
-            from search.centrality_ranker import CentralityRanker
-
-            graph_query_engine = GraphQueryEngine(index_manager.graph_storage)
-            ranker = CentralityRanker(
-                graph_query_engine=graph_query_engine,
-                method=graph_config.centrality_method,
-                alpha=graph_config.centrality_alpha,
-                config=graph_config,
-            )
-
-            # Compute centrality scores for subgraph population
-            centrality_scores = ranker._get_centrality_scores()
-
-            # QW1: pass centrality scores to ego-graph retriever so neighbors
-            # are ranked by architectural importance before truncation.
-            # NOTE(v0.11.2 follow-up): set_centrality_scores mutates shared retriever
-            # state, but centrality is graph-derived (not query-derived), so all
-            # concurrent requests compute the same scores — races here are benign.
-            # If centrality ever becomes query-aware, isolate this via per-request kwargs
-            # the same way bm25_weight/dense_weight were isolated in v0.11.2.
-            if (
-                isinstance(searcher, HybridSearcher)
-                and hasattr(searcher, "ego_graph_retriever")
-                and searcher.ego_graph_retriever is not None
-                and centrality_scores
-            ):
-                searcher.ego_graph_retriever.set_centrality_scores(centrality_scores)
-                logger.debug(
-                    f"[EGO_GRAPH] Injected {len(centrality_scores)} centrality scores"
-                )
-
-            # Rerank results by blended score if enabled in config
-            if graph_config.centrality_reranking:
-                formatted_results = ranker.rerank(formatted_results, query=query)
-                logger.debug(f"Reranked {len(formatted_results)} results by centrality")
-            else:
-                formatted_results = ranker.annotate(formatted_results)
-                logger.debug(
-                    f"Annotated {len(formatted_results)} results with centrality"
-                )
-
-            # Intent-aware synthetic chunk ordering (post-centrality reranking)
-            # For non-GLOBAL queries, push module/community summary chunks to end of results
-            # Research: TNO, GRACE, GraphRAG all separate summaries from code retrieval
-            if intent_decision and intent_decision.intent != QueryIntent.GLOBAL:
-                real_results = [
-                    r
-                    for r in formatted_results
-                    if r.get("kind") not in ("module", "community")
-                ]
-                synthetic_results = [
-                    r
-                    for r in formatted_results
-                    if r.get("kind") in ("module", "community")
-                ]
-                if synthetic_results:
-                    formatted_results = real_results + synthetic_results
-                    logger.debug(
-                        f"[INTENT] Moved {len(synthetic_results)} synthetic chunks "
-                        f"after {len(real_results)} real code chunks (intent: {intent_decision.intent.value})"
-                    )
-
-        except (ImportError, ValueError, KeyError, RuntimeError, TypeError) as e:
-            logger.debug(f"Centrality ranking failed: {e}")
-
-    # Cap total results to prevent token bloat (k primary + up to 3k context)
-    max_total = k * 4
-    if len(formatted_results) > max_total:
-        logger.info(f"Capping total results: {len(formatted_results)} -> {max_total}")
-        formatted_results = formatted_results[:max_total]
-
-    # === Extract subgraph over search results ===
-    subgraph_data = None
-    if index_manager and index_manager.graph_storage is not None:
-        try:
-            from search.subgraph_extractor import SubgraphExtractor
-
-            extractor = SubgraphExtractor(index_manager.graph_storage)
-            # Extract top-k search result chunk_ids
-            result_chunk_ids = [
-                r["chunk_id"] for r in formatted_results[:k] if "chunk_id" in r
-            ]
-
-            # Collect ego-graph neighbor chunk_ids (if present)
-            ego_neighbor_ids = [
-                r["chunk_id"]
-                for r in formatted_results[k:]
-                if r.get("source") == "ego_graph" and "chunk_id" in r
-            ]
-
-            # Cap ego-graph neighbors in subgraph to limit output size (defensive)
-            max_ego_in_subgraph = 10
-            if ego_neighbor_ids and len(ego_neighbor_ids) > max_ego_in_subgraph:
-                ego_neighbor_ids = ego_neighbor_ids[:max_ego_in_subgraph]
-
-            if result_chunk_ids:
-                subgraph = extractor.extract_subgraph(
-                    result_chunk_ids,
-                    include_boundary_edges=True,
-                    centrality_scores=centrality_scores,
-                    ego_neighbor_ids=ego_neighbor_ids if ego_neighbor_ids else None,
-                )
-                # Include subgraph if there are nodes (boundary edges provide structural context)
-                if subgraph.nodes:
-                    subgraph_data = subgraph.to_dict()
-                    ego_count = len(ego_neighbor_ids) if ego_neighbor_ids else 0
-                    logger.debug(
-                        f"[SSCG] Extracted subgraph: {len(subgraph.nodes)} nodes "
-                        f"({ego_count} ego-graph neighbors), {len(subgraph.edges)} edges"
-                    )
-                else:
-                    logger.info(
-                        f"[SSCG] No graph nodes found for {len(result_chunk_ids)} chunk_ids"
-                    )
-        except Exception as e:
-            logger.debug(f"[SSCG] Subgraph extraction failed: {e}")
-
-    # === Source-position reordering (DOS RAG technique) ===
-    # Applied after subgraph extraction so [:k] / [k:] partitioning sees only real chunks.
-    # Gap info is stored as gap_after on the preceding chunk (no synthetic rows injected).
-    if search_config is None:
-        search_config = get_search_config()
-    if (
-        getattr(search_config.output, "source_order_output", True)
-        and len(formatted_results) > 1
-    ):
-        formatted_results = _reorder_by_source_position(formatted_results)
-        logger.debug(
-            f"[SOURCE_ORDER] Reordered {len(formatted_results)} results by file position"
-        )
-
-    # Apply context budget truncation
-    if max_context_tokens > 0 and formatted_results:
-        import json as _json
-
-        budget_used = 0
-        truncated = []
-        for r in formatted_results:
-            est_tokens = len(_json.dumps(r)) // 4  # ~4 chars per token approximation
-            if budget_used + est_tokens <= max_context_tokens:
-                truncated.append(r)
-                budget_used += est_tokens
-            else:
-                logger.info(
-                    f"[CONTEXT_BUDGET] Truncated {len(formatted_results)}→{len(truncated)} results (budget={max_context_tokens})"
-                )
-                break
-        formatted_results = truncated
-
-    # Build response
-    response = {"query": query, "results": formatted_results}
-    # Flatten subgraph to top-level keys for ultra format TOON conversion
-    if subgraph_data:
-        response["subgraph_nodes"] = subgraph_data["nodes"]
-        response["subgraph_edges"] = subgraph_data["edges"]
-        if subgraph_data.get("topology_order"):
-            response["subgraph_order"] = subgraph_data["topology_order"]
-        if subgraph_data.get("communities"):
-            response["subgraph_communities"] = subgraph_data["communities"]
-
-    # Only include routing info when useful for debugging:
-    # - Skip for explicit user overrides (they know what they picked)
-    # - Skip for high-confidence routing (>= 0.9, expected behavior)
-    # - Include for low confidence (< 0.9) or fallback scenarios
-    if routing_info:
-        confidence = routing_info.get("confidence", 0.0)
-        reason = routing_info.get("reason", "")
-
-        # Include routing info if:
-        # - Low confidence routing (< 0.9) - might need review
-        # - Fallback scenarios - user should know routing failed
-        if confidence < 0.9 or "Fallback" in reason or "routed" in reason.lower():
-            response["routing"] = routing_info
-
-    # Add AI guidance system message
-    response = add_system_message(
-        response, tool_name="search_code", query=query, chunk_id=None
-    )
-
-    return response
+    """Search code with natural language query. Delegates to SearchOrchestrator.run()."""
+    return await SearchOrchestrator().run(arguments)
 
 
 @error_handler("Find similar")
+@require_indexed_project
 async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
     """Find code chunks similar to a reference chunk."""
     chunk_id = arguments["chunk_id"]
@@ -1268,14 +758,6 @@ async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
     # Use CodeIndexManager's normalize_chunk_id for proper cross-platform handling
     if chunk_id:
         chunk_id = MetadataStore.normalize_chunk_id(chunk_id)
-
-    # Early validation: Check if a project is indexed
-    if not get_state().current_project:
-        return {
-            "error": "No indexed project found",
-            "message": "You must index a project before finding similar code. Use index_directory first.",
-            "current_project": None,
-        }
 
     searcher = get_searcher()
 
@@ -1308,6 +790,7 @@ async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
         "symbol_name": args.get("symbol_name"),
     },
 )
+@require_indexed_project
 async def handle_find_connections(arguments: dict[str, Any]) -> dict:
     """Find all code connections to a given symbol."""
     chunk_id = arguments.get("chunk_id")
@@ -1331,19 +814,11 @@ async def handle_find_connections(arguments: dict[str, Any]) -> dict:
         f"[FIND_CONNECTIONS] chunk_id={chunk_id}, symbol_name={symbol_name}, depth={max_depth}"
     )
 
-    # Early validation: Check if a project is indexed
-    if not get_state().current_project:
-        return {
-            "error": "No indexed project found",
-            "message": "You must index a project before analyzing connections. Use index_directory first.",
-            "current_project": None,
-        }
-
     # Get searcher
     searcher = get_searcher()
 
     # Create analyzer
-    analyzer = CodeRelationshipAnalyzer(searcher)
+    analyzer = RelationshipAnalyzer.from_searcher(searcher)
 
     # Run analysis - raises ValueError for validation errors
     report = analyzer.analyze_impact(
@@ -1375,6 +850,7 @@ async def handle_find_connections(arguments: dict[str, Any]) -> dict:
         "target": args.get("target") or args.get("target_chunk_id"),
     },
 )
+@require_indexed_project
 async def handle_find_path(arguments: dict[str, Any]) -> dict:
     """Find shortest path between two code entities."""
     # Extract parameters
@@ -1397,13 +873,6 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
             "message": "Provide either target (symbol name) or target_chunk_id",
         }
 
-    # Check project indexed
-    if not get_state().current_project:
-        return {
-            "error": "No indexed project found",
-            "message": "You must index a project before finding paths. Use index_directory first.",
-        }
-
     # Normalize chunk_ids
     if source_chunk_id:
         source_chunk_id = MetadataStore.normalize_chunk_id(source_chunk_id)
@@ -1420,133 +889,24 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
     target_info = None
 
     if not resolved_source and source:
-        # Try direct symbol lookup first (O(1) from secondary symbol index)
-        index_manager = _get_index_manager_from_searcher(searcher)
-        if (
-            index_manager
-            and hasattr(index_manager, "symbol_cache")
-            and index_manager.symbol_cache
-        ):
-            resolved_source = index_manager.symbol_cache.get_by_symbol_name(source)
-            if resolved_source:
-                source_info = {
-                    "resolved_from": source,
-                    "chunk_id": resolved_source,
-                    "resolution_method": "direct_lookup",
-                }
-
-        # Try graph node exact-name lookup before falling back to semantic search.
-        # Uses the O(1) name index when available; falls back to a key-only scan
-        # (no attribute access) for the chunk_id suffix pattern.
-        if not resolved_source and hasattr(searcher, "dense_index"):
-            gs = getattr(searcher.dense_index, "graph_storage", None)
-            if gs:
-                matches = (
-                    gs.get_nodes_by_name(source)
-                    if hasattr(gs, "get_nodes_by_name")
-                    else []
-                )
-                if not matches:
-                    # Chunk_id suffix match (e.g. "file.py:function:my_func" ends with ":my_func")
-                    matches = [n for n in gs.graph.nodes() if n.endswith(f":{source}")]
-                if matches:
-                    resolved_source = matches[0]
-                    source_info = {
-                        "resolved_from": source,
-                        "chunk_id": resolved_source,
-                        "resolution_method": "graph_lookup",
-                    }
-
-        # Fall back to semantic search if all lookups failed
+        resolved_source, source_info = await _resolve_symbol_to_chunk_id(
+            source, searcher
+        )
         if not resolved_source:
-            results = await asyncio.to_thread(searcher.search, source, k=5)
-            # Prefer chunks whose name matches the symbol over module-level chunks
-            for r in results:
-                meta = r.metadata if hasattr(r, "metadata") else {}
-                if meta.get("name") == source:
-                    resolved_source = r.chunk_id
-                    source_info = {
-                        "resolved_from": source,
-                        "chunk_id": resolved_source,
-                        "resolution_method": "semantic_search",
-                    }
-                    break
-            if not resolved_source and results:
-                resolved_source = results[0].chunk_id
-                source_info = {
-                    "resolved_from": source,
-                    "chunk_id": resolved_source,
-                    "resolution_method": "semantic_search",
-                }
-            if not resolved_source:
-                return {
-                    "path_found": False,
-                    "error": f"Could not resolve source symbol: {source}",
-                }
+            return {
+                "path_found": False,
+                "error": f"Could not resolve source symbol: {source}",
+            }
 
     if not resolved_target and target:
-        # Try direct symbol lookup first (O(1) from secondary symbol index)
-        index_manager = _get_index_manager_from_searcher(searcher)
-        if (
-            index_manager
-            and hasattr(index_manager, "symbol_cache")
-            and index_manager.symbol_cache
-        ):
-            resolved_target = index_manager.symbol_cache.get_by_symbol_name(target)
-            if resolved_target:
-                target_info = {
-                    "resolved_from": target,
-                    "chunk_id": resolved_target,
-                    "resolution_method": "direct_lookup",
-                }
-
-        # Try graph node exact-name lookup before falling back to semantic search.
-        # Uses the O(1) name index when available; falls back to a key-only scan
-        # (no attribute access) for the chunk_id suffix pattern.
-        if not resolved_target and hasattr(searcher, "dense_index"):
-            gs = getattr(searcher.dense_index, "graph_storage", None)
-            if gs:
-                matches = (
-                    gs.get_nodes_by_name(target)
-                    if hasattr(gs, "get_nodes_by_name")
-                    else []
-                )
-                if not matches:
-                    matches = [n for n in gs.graph.nodes() if n.endswith(f":{target}")]
-                if matches:
-                    resolved_target = matches[0]
-                    target_info = {
-                        "resolved_from": target,
-                        "chunk_id": resolved_target,
-                        "resolution_method": "graph_lookup",
-                    }
-
-        # Fall back to semantic search if all lookups failed
+        resolved_target, target_info = await _resolve_symbol_to_chunk_id(
+            target, searcher
+        )
         if not resolved_target:
-            results = await asyncio.to_thread(searcher.search, target, k=5)
-            # Prefer chunks whose name matches the symbol over module-level chunks
-            for r in results:
-                meta = r.metadata if hasattr(r, "metadata") else {}
-                if meta.get("name") == target:
-                    resolved_target = r.chunk_id
-                    target_info = {
-                        "resolved_from": target,
-                        "chunk_id": resolved_target,
-                        "resolution_method": "semantic_search",
-                    }
-                    break
-            if not resolved_target and results:
-                resolved_target = results[0].chunk_id
-                target_info = {
-                    "resolved_from": target,
-                    "chunk_id": resolved_target,
-                    "resolution_method": "semantic_search",
-                }
-            if not resolved_target:
-                return {
-                    "path_found": False,
-                    "error": f"Could not resolve target symbol: {target}",
-                }
+            return {
+                "path_found": False,
+                "error": f"Could not resolve target symbol: {target}",
+            }
 
     # Get graph query engine
     graph_storage = None
@@ -1620,6 +980,7 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
         path_len = response["path_length"]
         src_name = response["source"].get("name", "source")
         tgt_name = response["target"].get("name", "target")
+        # pyrefly: ignore [no-matching-overload]
         edge_summary = ", ".join(response.get("edge_types_traversed", [])) or "various"
         response["system_message"] = (
             f"Found path of length {path_len} from {src_name} to {tgt_name} "

@@ -3,6 +3,8 @@
 from collections import Counter, defaultdict
 from typing import TYPE_CHECKING
 
+from chunking.file_summarizer import collect_symbol_summary
+
 
 if TYPE_CHECKING:
     from chunking.python_ast_chunker import CodeChunk
@@ -69,29 +71,7 @@ def _build_community_summary(
     directory_counts = Counter(directories)
     dominant_directory = directory_counts.most_common(1)[0][0]
 
-    # Collect metadata
-    classes = []
-    functions = []
-    methods = []
-    all_imports = []
-    docstring_lines = []
-
-    for chunk in community_chunks:
-        if chunk.chunk_type == "class":
-            classes.append(chunk.name or "?")
-            if chunk.docstring:
-                first_line = chunk.docstring.strip().split("\n")[0][:120]
-                docstring_lines.append(f"# - {chunk.name}: {first_line}")
-        elif chunk.chunk_type == "function":
-            functions.append(chunk.name or "?")
-        elif chunk.chunk_type in ("method", "decorated_definition"):
-            qualified = (
-                f"{chunk.parent_name}.{chunk.name}" if chunk.parent_name else chunk.name
-            )
-            methods.append(qualified or "?")
-
-        if chunk.imports:
-            all_imports.extend(chunk.imports[:5])  # Cap per-chunk imports
+    summary = collect_symbol_summary(community_chunks)
 
     # Find hub function: prefer highest PageRank centrality, fallback to largest chunk
     if centrality_scores:
@@ -106,10 +86,10 @@ def _build_community_summary(
         )
 
     # Generate label from dominant directory + primary class/function
-    if classes:
-        primary_symbol = classes[0]
-    elif functions:
-        primary_symbol = functions[0]
+    if summary.classes:
+        primary_symbol = summary.classes[0]
+    elif summary.functions:
+        primary_symbol = summary.functions[0]
     else:
         primary_symbol = f"comm{community_id}"
 
@@ -118,21 +98,21 @@ def _build_community_summary(
     # Build summary text
     parts = [f"# Community {community_id} | {label}"]
 
-    symbol_count = len(classes) + len(functions) + len(methods)
+    symbol_count = len(summary.classes) + len(summary.functions) + len(summary.methods)
     parts.append(
         f"# Community containing {symbol_count} symbols in {len(community_chunks)} chunks"
     )
     parts.append(f"# Dominant directory: {dominant_directory}")
 
-    if classes:
-        parts.append(f"# Classes: {', '.join(classes[:10])}")
-    if functions:
-        parts.append(f"# Functions: {', '.join(functions[:10])}")
-    if methods:
-        parts.append(f"# Key methods: {', '.join(methods[:15])}")
+    if summary.classes:
+        parts.append(f"# Classes: {', '.join(summary.classes[:10])}")
+    if summary.functions:
+        parts.append(f"# Functions: {', '.join(summary.functions[:10])}")
+    if summary.methods:
+        parts.append(f"# Key methods: {', '.join(summary.methods[:15])}")
 
     # Deduplicate imports, show top-level modules
-    unique_imports = sorted(set(all_imports))[:10]
+    unique_imports = sorted(set(summary.all_imports))[:10]
     if unique_imports:
         parts.append(f"# Imports: {', '.join(unique_imports)}")
 
@@ -149,8 +129,8 @@ def _build_community_summary(
         else:
             parts.append(f"# Hub function: {hub_chunk.name}")
 
-    if docstring_lines:
-        parts.extend(docstring_lines[:5])
+    if summary.docstring_lines:
+        parts.extend(summary.docstring_lines[:5])
 
     content = "\n".join(parts)
 
@@ -177,4 +157,5 @@ def _build_community_summary(
         docstring=agg_docstring or None,
         language=community_chunks[0].language if community_chunks else "python",
         chunk_id=chunk_id,
+        tags=[f"community:{community_id}"],
     )

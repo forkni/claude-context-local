@@ -13,7 +13,7 @@ import numpy as np
 if TYPE_CHECKING:
     from embeddings.embedder import CodeEmbedder, EmbeddingResult
 
-    from .config import EgoGraphConfig, SearchConfig
+    from .config import EgoGraphConfig, ParentRetrievalConfig, SearchConfig
 
 try:
     import torch
@@ -21,11 +21,16 @@ except ImportError:
     torch = None
 
 from graph.graph_storage import CodeGraphStorage
-from graph.relationship_types import RelationshipEdge, RelationshipType
 from mcp_server.utils.config_helpers import (
     get_config_via_service_locator as _get_config_via_service_locator,
 )
-from search.graph_integration import SEMANTIC_TYPES
+from search.graph_integration import GraphIntegration
+from utils.observability import traced_block
+from utils.otel_attributes import (
+    ATTR_K,
+    ATTR_RESULT_COUNT,
+    ATTR_SEARCH_MODE,
+)
 
 from .base_searcher import BaseSearcher
 from .bm25_index import BM25Index
@@ -256,6 +261,7 @@ class HybridSearcher(BaseSearcher):
         """
         # Initialize to None
         self._graph_storage = None
+        self._graph: GraphIntegration | None = None
         self.ego_graph_retriever = None
 
         if project_id:
@@ -274,6 +280,8 @@ class HybridSearcher(BaseSearcher):
                     self._graph_storage = CodeGraphStorage(
                         project_id=project_id, storage_dir=graph_dir
                     )
+                self._graph = GraphIntegration.from_storage(self._graph_storage)
+                # pyrefly: ignore [bad-argument-type]
                 self.ego_graph_retriever = EgoGraphRetriever(self._graph_storage)
                 self._logger.info(
                     f"[INIT] Ego-graph retrieval initialized for project: {project_id}"
@@ -284,6 +292,7 @@ class HybridSearcher(BaseSearcher):
                     "Ego-graph expansion will be disabled."
                 )
                 self._graph_storage = None
+                self._graph = None
                 self.ego_graph_retriever = None
 
     def _load_bm25_index(self) -> bool:
@@ -410,6 +419,9 @@ class HybridSearcher(BaseSearcher):
             value: CodeGraphStorage instance or None
         """
         self._graph_storage = value
+        self._graph = (
+            GraphIntegration.from_storage(value) if value is not None else None
+        )
 
     @property
     def stats(self) -> dict[str, Any]:
@@ -467,6 +479,7 @@ class HybridSearcher(BaseSearcher):
             This property delegates to reranking_engine.neural_reranker.
             The neural reranker is lazily initialized when first needed.
         """
+        # pyrefly: ignore [bad-return]
         return self.reranking_engine.neural_reranker
 
     def get_stats(self) -> dict[str, Any]:
@@ -591,6 +604,7 @@ class HybridSearcher(BaseSearcher):
             f"Hybrid indexing complete: BM25 {bm25_time:.2f}s, Dense {dense_time:.2f}s"
         )
 
+    # pyrefly: ignore [bad-override]
     def search(
         self,
         query: str,
@@ -625,83 +639,100 @@ class HybridSearcher(BaseSearcher):
         if hasattr(self, "reranking_engine") and self.reranking_engine:
             self.reranking_engine.reset_session_state()
 
-        # Check if indices are ready based on search mode
-        if search_mode == "bm25":
-            if self.bm25_index.is_empty:
-                self._logger.warning("BM25 search requested but BM25 index is empty")
-                return []
-        elif search_mode == "semantic":
-            if not self.dense_index.index or self.dense_index.index.ntotal == 0:
-                self._logger.warning(
-                    "Semantic search requested but dense index is empty"
+        with traced_block(
+            "search.hybrid", **{ATTR_SEARCH_MODE: search_mode, ATTR_K: k}
+        ) as span:
+            # Check if indices are ready based on search mode
+            if search_mode == "bm25":
+                if self.bm25_index.is_empty:
+                    self._logger.warning(
+                        "BM25 search requested but BM25 index is empty"
+                    )
+                    span.set_attribute(ATTR_RESULT_COUNT, 0)
+                    return []
+            elif search_mode == "semantic":
+                if not self.dense_index.index or self.dense_index.index.ntotal == 0:
+                    self._logger.warning(
+                        "Semantic search requested but dense index is empty"
+                    )
+                    span.set_attribute(ATTR_RESULT_COUNT, 0)
+                    return []
+            else:  # hybrid
+                if not self.is_ready:
+                    self._logger.warning(
+                        "Hybrid search not ready - indices may be empty"
+                    )
+                    span.set_attribute(ATTR_RESULT_COUNT, 0)
+                    return []
+
+            # Check if multi-hop search is enabled
+            # Use ServiceLocator helper instead of inline import
+            # Allow config override (for ego-graph settings from MCP)
+            effective_config = (
+                config if config is not None else _get_config_via_service_locator()
+            )
+
+            # Get initial search results (multi-hop or single-hop)
+            if effective_config.multi_hop.enabled:
+                # Use multi-hop search for discovering related code
+                results = self.multi_hop_searcher.search(
+                    query=query,
+                    k=k,
+                    search_mode=search_mode,
+                    hops=effective_config.multi_hop.hop_count,
+                    expansion_factor=effective_config.multi_hop.expansion,
+                    use_parallel=use_parallel,
+                    min_bm25_score=min_bm25_score,
+                    filters=filters,
+                    edge_weights=effective_config.multi_hop.edge_weights,
                 )
-                return []
-        else:  # hybrid
-            if not self.is_ready:
-                self._logger.warning("Hybrid search not ready - indices may be empty")
-                return []
+            else:
+                # Single-hop search (direct matching only)
+                results = self._single_hop_search(
+                    query=query,
+                    k=k,
+                    search_mode=search_mode,
+                    use_parallel=use_parallel,
+                    min_bm25_score=min_bm25_score,
+                    filters=filters,
+                    bm25_weight=bm25_weight,
+                    dense_weight=dense_weight,
+                )
 
-        # Check if multi-hop search is enabled
-        # Use ServiceLocator helper instead of inline import
-        # Allow config override (for ego-graph settings from MCP)
-        effective_config = (
-            config if config is not None else _get_config_via_service_locator()
-        )
+            # Apply ego-graph expansion if enabled
+            if (
+                effective_config.ego_graph.enabled
+                and self.ego_graph_retriever
+                and results
+            ):
+                results = self._apply_ego_graph_expansion(
+                    results, effective_config.ego_graph, k, query
+                )
 
-        # Get initial search results (multi-hop or single-hop)
-        if effective_config.multi_hop.enabled:
-            # Use multi-hop search for discovering related code
-            results = self.multi_hop_searcher.search(
-                query=query,
-                k=k,
-                search_mode=search_mode,
-                hops=effective_config.multi_hop.hop_count,
-                expansion_factor=effective_config.multi_hop.expansion,
-                use_parallel=use_parallel,
-                min_bm25_score=min_bm25_score,
-                filters=filters,
-                edge_weights=effective_config.multi_hop.edge_weights,
-            )
-        else:
-            # Single-hop search (direct matching only)
-            results = self._single_hop_search(
-                query=query,
-                k=k,
-                search_mode=search_mode,
-                use_parallel=use_parallel,
-                min_bm25_score=min_bm25_score,
-                filters=filters,
-                bm25_weight=bm25_weight,
-                dense_weight=dense_weight,
-            )
+            # Apply parent expansion if enabled (limit to primary k results to prevent bloat)
+            if effective_config.parent_retrieval.enabled and results:
+                results = self._apply_parent_expansion(
+                    results,
+                    effective_config.parent_retrieval,
+                    max_results_to_expand=k,
+                )
 
-        # Apply ego-graph expansion if enabled
-        if effective_config.ego_graph.enabled and self.ego_graph_retriever and results:
-            results = self._apply_ego_graph_expansion(
-                results, effective_config.ego_graph, k, query
-            )
+            # Post-expansion neural reranking: unify scoring across primary + ego results
+            # Only runs when ego-graph added results, putting all on same cross-encoder scale
+            if (
+                effective_config.ego_graph.enabled
+                and self.reranking_engine
+                and len(results) > k
+            ):
+                results = self.reranking_engine.rerank_by_query(
+                    query=query,
+                    results=results,
+                    k=len(results),  # Keep all results, just re-score and re-sort
+                    search_mode=search_mode,
+                )
 
-        # Apply parent expansion if enabled (limit to primary k results to prevent bloat)
-        if effective_config.parent_retrieval.enabled and results:
-            results = self._apply_parent_expansion(
-                results, effective_config.parent_retrieval, max_results_to_expand=k
-            )
-
-        # Post-expansion neural reranking: unify scoring across primary + ego results
-        # Only runs when ego-graph added results, putting all on same cross-encoder scale
-        if (
-            effective_config.ego_graph.enabled
-            and self.reranking_engine
-            and len(results) > k
-        ):
-            results = self.reranking_engine.rerank_by_query(
-                query=query,
-                results=results,
-                k=len(results),  # Keep all results, just re-score and re-sort
-                search_mode=search_mode,
-            )
-
-        return results
+            span.set_attribute(ATTR_RESULT_COUNT, len(results))
+            return results
 
     def _single_hop_search(
         self,
@@ -776,6 +807,7 @@ class HybridSearcher(BaseSearcher):
 
             # Expand via ego-graph
             expanded_chunk_ids, ego_graphs = (
+                # pyrefly: ignore [missing-attribute]
                 self.ego_graph_retriever.expand_search_results(
                     search_results_dict, ego_config
                 )
@@ -798,6 +830,7 @@ class HybridSearcher(BaseSearcher):
 
             # Compute query embedding once for all neighbor scoring
             try:
+                # pyrefly: ignore [missing-attribute]
                 query_embedding = self.embedder.embed_query(query)
                 query_embedding_available = True
             except Exception as e:
@@ -831,6 +864,7 @@ class HybridSearcher(BaseSearcher):
                             )
                             # Compute cosine similarity (embeddings are L2-normalized)
                             similarity = float(
+                                # pyrefly: ignore [bad-argument-type]
                                 np.dot(query_embedding, neighbor_embedding)
                             )
                             # QW5: configurable similarity threshold (intent-adaptive)
@@ -913,7 +947,7 @@ class HybridSearcher(BaseSearcher):
     def _apply_parent_expansion(
         self,
         results: list[SearchResult],
-        config: "SearchConfig",
+        config: "ParentRetrievalConfig",
         max_results_to_expand: int = 0,
     ) -> list[SearchResult]:
         """Apply parent chunk expansion to search results.
@@ -1236,132 +1270,9 @@ class HybridSearcher(BaseSearcher):
 
             self.index_documents(documents, doc_ids, embeddings, metadata)
 
-            # Populate call graph with nodes and edges
-            if self._graph_storage is not None:
-                graph_nodes_added = 0
-                graph_edges_added = 0
-                relationship_edges_added = 0
-                resolved_count = 0
-                # Use canonical SEMANTIC_TYPES from graph_integration
-                semantic_types = set(SEMANTIC_TYPES)
-
-                # Build name resolution map for call target resolution
-                # Maps symbol names to their chunk_ids for resolving call targets
-                name_to_chunk_ids: dict[str, list[str]] = {}
-                for result in embedding_results:
-                    chunk_id = result.chunk_id
-                    name = result.metadata.get("name")
-                    if name:
-                        if name not in name_to_chunk_ids:
-                            name_to_chunk_ids[name] = []
-                        name_to_chunk_ids[name].append(chunk_id)
-
-                        # Also index by bare name for methods (ClassName.method → method)
-                        if "." in name:
-                            bare_name = name.split(".")[-1]
-                            if bare_name not in name_to_chunk_ids:
-                                name_to_chunk_ids[bare_name] = []
-                            name_to_chunk_ids[bare_name].append(chunk_id)
-
-                for result in embedding_results:
-                    chunk_id = result.chunk_id
-                    chunk_type = result.metadata.get("chunk_type")
-
-                    # Only add semantic types
-                    if chunk_type not in semantic_types:
-                        continue
-
-                    # Add node
-                    self._graph_storage.add_node(
-                        chunk_id=chunk_id,
-                        name=result.metadata.get("name", "unknown"),
-                        chunk_type=chunk_type,
-                        file_path=result.metadata.get("file_path", ""),
-                        language=result.metadata.get("language", "python"),
-                    )
-                    graph_nodes_added += 1
-
-                    # Add call edges with resolution
-                    calls = result.metadata.get("calls", [])
-                    for call_dict in calls:
-                        callee_name = call_dict.get("callee_name", "unknown")
-
-                        # Try to resolve call target to full chunk_id
-                        # Conservative approach with same-file preference and split_block disambiguation
-                        resolved_target = None
-                        candidates = name_to_chunk_ids.get(callee_name, [])
-                        if len(candidates) == 1:
-                            resolved_target = candidates[0]
-                        elif len(candidates) > 1:
-                            # Same-file preference
-                            caller_file = result.metadata.get("file_path", "")
-                            same_file = [c for c in candidates if caller_file in c]
-                            if len(same_file) == 1:
-                                resolved_target = same_file[0]
-                            else:
-                                # Split block disambiguation: all split_blocks → pick entry block (lowest start line)
-                                split_blocks = [
-                                    c for c in candidates if ":split_block:" in c
-                                ]
-                                if len(split_blocks) == len(candidates):
-
-                                    def _start_line(cid: str) -> int:
-                                        parts = cid.split(":")
-                                        if len(parts) >= 2:
-                                            try:
-                                                return int(parts[1].split("-")[0])
-                                            except (ValueError, IndexError):
-                                                pass
-                                        return 2**31  # Sentinel for sort ordering
-
-                                    split_blocks.sort(key=_start_line)
-                                    resolved_target = split_blocks[0]
-                        if resolved_target:
-                            resolved_count += 1
-
-                        # Use resolved chunk_id if available, otherwise use bare name
-                        self._graph_storage.add_call_edge(
-                            caller_id=chunk_id,
-                            callee_name=(
-                                resolved_target if resolved_target else callee_name
-                            ),
-                            line_number=call_dict.get("line_number", 0),
-                            is_method_call=call_dict.get("is_method_call", False),
-                            is_resolved=resolved_target is not None,
-                        )
-                        graph_edges_added += 1
-
-                    # Add relationship edges (inherits, imports, decorates, etc.)
-                    relationships = result.metadata.get("relationships", [])
-                    for rel_dict in relationships:
-                        try:
-                            # Reconstruct RelationshipEdge from dict
-                            edge = RelationshipEdge(
-                                source_id=rel_dict.get("source_id", chunk_id),
-                                target_name=rel_dict.get("target_name", "unknown"),
-                                relationship_type=RelationshipType(
-                                    rel_dict.get("relationship_type", "calls")
-                                ),
-                                line_number=rel_dict.get("line_number", 0),
-                                confidence=rel_dict.get("confidence", 1.0),
-                                metadata=rel_dict.get("metadata", {}),
-                            )
-
-                            # Add to graph storage
-                            self._graph_storage.add_relationship_edge(edge)
-                            relationship_edges_added += 1
-
-                        except (ValueError, KeyError, TypeError) as e:
-                            self._logger.debug(
-                                f"Failed to add relationship edge from {chunk_id}: {e}"
-                            )
-
-                self._logger.info(
-                    f"[ADD_EMBEDDINGS] Populated graph: {graph_nodes_added} nodes, "
-                    f"{graph_edges_added} call edges ({resolved_count} resolved, "
-                    f"{graph_edges_added - resolved_count} phantom), "
-                    f"{relationship_edges_added} relationship edges"
-                )
+            # Populate call graph via the GraphIntegration seam
+            if self._graph is not None:
+                self._graph.populate_from_embeddings(embedding_results)
 
             self._logger.info(
                 f"[ADD_EMBEDDINGS] Successfully added {len(embedding_results)} embeddings to hybrid index"
@@ -1414,6 +1325,7 @@ class HybridSearcher(BaseSearcher):
         # Update graph_storage reference to match new dense_index (prevents stale references)
         if hasattr(self.dense_index, "_graph") and self.dense_index._graph:
             self._graph_storage = self.dense_index._graph.storage
+            self._graph = GraphIntegration.from_storage(self._graph_storage)
             self._logger.debug(
                 "[CLEAR] Updated graph_storage reference after clear_index()"
             )

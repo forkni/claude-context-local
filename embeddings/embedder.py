@@ -11,12 +11,12 @@ import contextlib
 import gc
 import logging
 import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-from rich.console import Console
 from rich.progress import (
     BarColumn,
     Progress,
@@ -34,6 +34,7 @@ from mcp_server.utils.config_helpers import (
 )
 from search.exceptions import VRAMExhaustedError
 from search.filters import normalize_path
+from utils.console import get_progress_console
 from utils.timing import timed
 
 
@@ -373,6 +374,7 @@ def calculate_optimal_batch_size(
     model_name: str | None = None,
     activation_gb_per_item: float = 0.0,
     ort_cap_gb: float = 0.0,
+    is_onnx: bool = False,
 ) -> int:
     """Calculate optimal batch size from architecture-derived activation memory cost.
 
@@ -391,6 +393,9 @@ def calculate_optimal_batch_size(
         model_name: Model identifier (used only for logging)
         activation_gb_per_item: Pre-computed activation cost per batch item in GB.
             Pass 0.0 to signal "unknown" — a 40 MB floor will be used.
+        is_onnx: True when the model is served by ONNX Runtime. Enables tighter
+            VRAM-aware caps to account for BFCArena contiguous single-op peaks
+            that do not scale linearly with batch size.
 
     Returns:
         Batch size clamped to [min_batch, max_batch]
@@ -449,6 +454,20 @@ def calculate_optimal_batch_size(
         elif free_gb < 6:
             max_batch = min(max_batch, 16)
 
+        # ONNX Runtime: BFCArena allocates large CONTIGUOUS buffers per single op
+        # (attention MatMul, residual Add). These peaks do NOT scale linearly with
+        # batch and have no Flash-Attention fallback, so the linear per-item budget
+        # over-predicts the safe batch under a small ORT arena.
+        # Keyed off available_gb (the ORT-clamped budget, not system free_gb).
+        # Calibrated from a batch=9 BFCArena OOM at available≈4.6 GB (safe batch was 4).
+        if is_onnx:
+            if available_gb < 3.5:
+                max_batch = min(max_batch, 2)
+            elif available_gb < 5.5:
+                max_batch = min(max_batch, 4)
+            elif available_gb < 8.0:
+                max_batch = min(max_batch, 8)
+
         # Clamp to safe bounds
         result = max(min_batch, min(optimal_batch, max_batch))
 
@@ -458,13 +477,14 @@ def calculate_optimal_batch_size(
             if ort_cap_gb > 0.0
             else ""
         )
+        backend = "onnx" if is_onnx else "torch"
         logger.info(
             f"[DYNAMIC_BATCH] GPU: {free_gb:.1f}GB free / {total_gb:.1f}GB total, "
             f"model: {model_vram_gb:.1f}GB ({model_name or 'unknown'}){ort_info}, "
             f"available: {available_gb:.1f}GB → "
             f"target: {target_activation_gb:.1f}GB "
             f"({memory_fraction:.0%} × {FRAGMENTATION_OVERHEAD:.0%} frag), "
-            f"cost: {gb_per_item:.3f}GB/item → batch: {result} chunks"
+            f"cost: {gb_per_item:.3f}GB/item [{backend}] → batch: {result} chunks"
         )
 
         return result
@@ -541,6 +561,14 @@ class CodeEmbedder:
     Default model is google/embeddinggemma-300m.
     """
 
+    def __new__(cls, *args, **kwargs) -> "CodeEmbedder":
+        instance = super().__new__(cls)
+        # Initialize lock before __init__ so __new__-only construction (test mocks,
+        # unpickling, etc.) always has a functional lock.
+        # pyrefly: ignore [missing-attribute]
+        instance._lifecycle_lock = threading.RLock()
+        return instance
+
     def __init__(
         self,
         model_name: str = "google/embeddinggemma-300m",
@@ -553,6 +581,7 @@ class CodeEmbedder:
         )
         self.device = device
         self._model = None
+        self._is_onnx: bool = False
         self._logger = logging.getLogger(__name__)
         self._model_config = None
 
@@ -650,10 +679,18 @@ class CodeEmbedder:
 
     def _log_gpu_memory(self, stage: str) -> None:
         """Delegate to ModelLoader.log_gpu_memory()."""
+        if self._model_loader is None:
+            return
         self._model_loader.log_gpu_memory(stage)
 
+    # pyrefly: ignore [missing-attribute]
     def _get_torch_dtype(self) -> "torch.dtype":
         """Delegate to ModelLoader.get_torch_dtype()."""
+        if self._model_loader is None:
+            raise RuntimeError(
+                "Embedder has been cleaned up; obtain a fresh instance "
+                "via model_pool_manager.get_embedder()."
+            )
         return self._model_loader.get_torch_dtype()
 
     def _is_gpu_device(self) -> bool:
@@ -686,6 +723,7 @@ class CodeEmbedder:
 
     def _tensor_to_numpy(self, emb: Any) -> np.ndarray:
         """Convert a tensor or array to a float32 numpy array."""
+        # pyrefly: ignore [missing-attribute]
         if torch.is_tensor(emb):
             return emb.cpu().float().numpy()
         return emb
@@ -724,14 +762,24 @@ class CodeEmbedder:
 
     @property
     def model(self) -> SentenceTransformer | None:
-        """Lazy loading of the model."""
-        if self._model is None:
-            self._load_model()
-        return self._model
+        """Lazy loading of the model. Thread-safe via double-checked lock."""
+        if self._model is not None:
+            return self._model
+        # pyrefly: ignore [missing-attribute]
+        with self._lifecycle_lock:
+            if self._model is None:
+                if self._model_loader is None:
+                    raise RuntimeError(
+                        "Embedder has been cleaned up; obtain a fresh instance "
+                        "via model_pool_manager.get_embedder()."
+                    )
+                self._load_model()
+            return self._model
 
     def _load_model(self) -> None:
         """Delegate to ModelLoader.load()."""
         self._model, self.device = self._model_loader.load()
+        self._is_onnx = hasattr(self._model, "ort_model")
         # Sync VRAM usage tracking from ModelLoader
         self._model_vram_usage.update(self._model_loader.model_vram_usage)
 
@@ -968,37 +1016,13 @@ class CodeEmbedder:
 
         return "\n".join(content_parts)
 
-    def embed_chunk(self, chunk: CodeChunk) -> EmbeddingResult:
-        """Generate embedding for a single code chunk."""
-        content = self.create_embedding_content(chunk)
-
-        # Get model-specific configuration
-        model_config = self._get_model_config()
-        passage_prefix = model_config.get("passage_prefix", "")
-
-        # Prepend passage prefix if it exists
-        content_to_embed = passage_prefix + content if passage_prefix else content
-
-        # Use convert_to_tensor for GPU to avoid CPU<->GPU transfers
-        use_tensor = self._is_gpu_device()
-        embedding = self.model.encode(
-            [content_to_embed],
-            show_progress_bar=False,
-            convert_to_tensor=use_tensor,
-            device=self.device if use_tensor else None,
-        )[0]
-
-        # Convert back to numpy if tensor
-        # Note: bf16 tensors must be converted to float32 first (numpy doesn't support bf16)
-        if torch and torch.is_tensor(embedding):
-            embedding = embedding.cpu().float().numpy()
-
-        # Create unique chunk ID with normalized path separators
+    @staticmethod
+    def _build_chunk_id(chunk: CodeChunk) -> str:
+        """Build the unique chunk identifier from a CodeChunk."""
         normalized_path = normalize_path(str(chunk.relative_path))
         chunk_id = (
             f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
         )
-        # Build qualified name for methods/functions inside classes
         qualified_name = (
             f"{chunk.parent_name}.{chunk.name}"
             if chunk.parent_name and chunk.name
@@ -1006,9 +1030,12 @@ class CodeEmbedder:
         )
         if qualified_name:
             chunk_id += f":{qualified_name}"
+        return chunk_id
 
-        # Prepare metadata
-        metadata = {
+    @staticmethod
+    def _build_chunk_metadata(chunk: CodeChunk) -> dict[str, Any]:
+        """Build the metadata dict for an EmbeddingResult from a CodeChunk."""
+        return {
             "file_path": chunk.file_path,
             "relative_path": chunk.relative_path,
             "folder_structure": chunk.folder_structure,
@@ -1029,9 +1056,7 @@ class CodeEmbedder:
                 if len(chunk.content) > 200
                 else chunk.content
             ),
-            # Call graph data
-            "calls": [call.to_dict() for call in chunk.calls] if chunk.calls else [],
-            # Relationship edges
+            "calls": ([call.to_dict() for call in chunk.calls] if chunk.calls else []),
             "relationships": (
                 [rel.to_dict() for rel in chunk.relationships]
                 if chunk.relationships
@@ -1039,6 +1064,35 @@ class CodeEmbedder:
             ),
             "language": getattr(chunk, "language", "python"),
         }
+
+    def embed_chunk(self, chunk: CodeChunk) -> EmbeddingResult:
+        """Generate embedding for a single code chunk."""
+        content = self.create_embedding_content(chunk)
+
+        # Get model-specific configuration
+        model_config = self._get_model_config()
+        passage_prefix = model_config.get("passage_prefix", "")
+
+        # Prepend passage prefix if it exists
+        content_to_embed = passage_prefix + content if passage_prefix else content
+
+        # Use convert_to_tensor for GPU to avoid CPU<->GPU transfers
+        use_tensor = self._is_gpu_device()
+        # pyrefly: ignore [missing-attribute]
+        embedding = self.model.encode(
+            [content_to_embed],
+            show_progress_bar=False,
+            convert_to_tensor=use_tensor,
+            device=self.device if use_tensor else None,
+        )[0]
+
+        # Convert back to numpy if tensor
+        # Note: bf16 tensors must be converted to float32 first (numpy doesn't support bf16)
+        if torch and torch.is_tensor(embedding):
+            embedding = embedding.cpu().float().numpy()
+
+        chunk_id = self._build_chunk_id(chunk)
+        metadata = self._build_chunk_metadata(chunk)
 
         return EmbeddingResult(
             embedding=embedding, chunk_id=chunk_id, metadata=metadata
@@ -1072,7 +1126,10 @@ class CodeEmbedder:
         # Ensure model is loaded BEFORE batch calculation (to get accurate VRAM)
         # (model loads lazily on first encode() call - causes log interference)
         if not hasattr(self, "_model_warmed_up") or not self._model_warmed_up:
-            self.model.encode(["warmup"], show_progress_bar=False)
+            # pyrefly: ignore [missing-attribute]
+            with self._lifecycle_lock:
+                # pyrefly: ignore [missing-attribute]
+                self.model.encode(["warmup"], show_progress_bar=False)
             self._model_warmed_up = True
 
         # Log VRAM usage after model load
@@ -1123,9 +1180,8 @@ class CodeEmbedder:
                 if activation_gb_per_item <= 0.0:
                     hf_cfg = self._extract_hf_config()
                     if hf_cfg is not None:
-                        is_onnx = hasattr(self._model, "ort_model")
                         activation_gb_per_item = estimate_activation_gb_from_config(
-                            hf_cfg, is_onnx=is_onnx
+                            hf_cfg, is_onnx=self._is_onnx
                         )
                         self._logger.info(
                             f"[DYNAMIC_BATCH] Activation cost estimated from model config: "
@@ -1137,7 +1193,7 @@ class CodeEmbedder:
                 # (e.g. attention MatMul, residual Add) do not scale linearly
                 # with batch and can blow past the per-item × batch budget.
                 # Apply an empirically-validated floor for known ONNX models.
-                if hasattr(self._model, "ort_model"):
+                if self._is_onnx:
                     onnx_floor = _get_onnx_cost_floor(self.model_name)
                     if onnx_floor > activation_gb_per_item:
                         self._logger.info(
@@ -1158,7 +1214,7 @@ class CodeEmbedder:
                 # ORT cap: gpu_mem_limit is static (set at from_pretrained time), so
                 # computing it once here (not per-batch) is correct and sufficient.
                 ort_cap_gb = 0.0
-                if hasattr(self._model, "ort_model"):
+                if self._is_onnx:
                     try:
                         _cap_result = compute_effective_vram_cap(
                             config.performance.vram_limit_fraction
@@ -1179,6 +1235,7 @@ class CodeEmbedder:
                     model_name=self.model_name,
                     activation_gb_per_item=activation_gb_per_item,
                     ort_cap_gb=ort_cap_gb,
+                    is_onnx=self._is_onnx,
                 )
                 self._logger.info(
                     f"Using dynamic GPU-optimized batch size {batch_size} for {len(chunks)} chunks"
@@ -1194,7 +1251,7 @@ class CodeEmbedder:
             )
 
         # Process in batches for efficiency with progress bar
-        console = Console(force_terminal=True)
+        console = get_progress_console()
         # current_batch_size tracks the live batch size — may be halved on OOM.
         current_batch_size = batch_size
         total_batches = (len(chunks) + current_batch_size - 1) // current_batch_size
@@ -1253,12 +1310,15 @@ class CodeEmbedder:
                 use_tensor = self._is_gpu_device()
 
                 try:
-                    batch_embeddings = self.model.encode(
-                        batch_contents,
-                        show_progress_bar=False,
-                        convert_to_tensor=use_tensor,
-                        device=self.device if use_tensor else None,
-                    )
+                    # pyrefly: ignore [missing-attribute]
+                    with self._lifecycle_lock:
+                        # pyrefly: ignore [missing-attribute]
+                        batch_embeddings = self.model.encode(
+                            batch_contents,
+                            show_progress_bar=False,
+                            convert_to_tensor=use_tensor,
+                            device=self.device if use_tensor else None,
+                        )
                 except RuntimeError as e:
                     # OOM recovery: halve current_batch_size and retry the same chunk
                     # position with a smaller batch.  Applies to both PyTorch CUDA OOM
@@ -1323,53 +1383,8 @@ class CodeEmbedder:
                 for _j, (chunk, embedding) in enumerate(
                     zip(batch, batch_embeddings, strict=False)
                 ):
-                    # Normalize path separators for cross-platform consistency
-                    normalized_path = normalize_path(str(chunk.relative_path))
-                    chunk_id = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
-                    # Build qualified name for methods/functions inside classes
-                    qualified_name = (
-                        f"{chunk.parent_name}.{chunk.name}"
-                        if chunk.parent_name and chunk.name
-                        else chunk.name
-                    )
-                    if qualified_name:
-                        chunk_id += f":{qualified_name}"
-
-                    metadata = {
-                        "file_path": chunk.file_path,
-                        "relative_path": chunk.relative_path,
-                        "folder_structure": chunk.folder_structure,
-                        "chunk_type": chunk.chunk_type,
-                        "start_line": chunk.start_line,
-                        "end_line": chunk.end_line,
-                        "name": chunk.name,
-                        "parent_name": chunk.parent_name,
-                        "parent_chunk_id": chunk.parent_chunk_id,
-                        "docstring": chunk.docstring,
-                        "decorators": chunk.decorators,
-                        "imports": chunk.imports,
-                        "complexity_score": chunk.complexity_score,
-                        "tags": chunk.tags,
-                        "content": chunk.content,  # Full content for accurate token counting
-                        "content_preview": (
-                            chunk.content[:200] + "..."
-                            if len(chunk.content) > 200
-                            else chunk.content
-                        ),
-                        # Call graph data (Python)
-                        "calls": (
-                            [call.to_dict() for call in chunk.calls]
-                            if chunk.calls
-                            else []
-                        ),
-                        # Relationship edges (all relationship types)
-                        "relationships": (
-                            [rel.to_dict() for rel in chunk.relationships]
-                            if chunk.relationships
-                            else []
-                        ),
-                        "language": getattr(chunk, "language", "python"),
-                    }
+                    chunk_id = self._build_chunk_id(chunk)
+                    metadata = self._build_chunk_metadata(chunk)
 
                     results.append(
                         EmbeddingResult(
@@ -1447,7 +1462,10 @@ class CodeEmbedder:
             self._logger.debug("Using custom instruction for query encoding")
         query_to_embed = self._format_query_text(query, model_config)
 
-        embedding = self.model.encode([query_to_embed], **encode_kwargs)[0]
+        # pyrefly: ignore [missing-attribute]
+        with self._lifecycle_lock:
+            # pyrefly: ignore [missing-attribute]
+            embedding = self.model.encode([query_to_embed], **encode_kwargs)[0]
         # bf16 tensors must be cast to float32 before numpy conversion
         embedding = self._tensor_to_numpy(embedding)
 
@@ -1507,7 +1525,10 @@ class CodeEmbedder:
                 encode_kwargs["convert_to_tensor"] = True
                 encode_kwargs["device"] = self.device
 
-            raw = self.model.encode(uncached_texts, **encode_kwargs)
+            # pyrefly: ignore [missing-attribute]
+            with self._lifecycle_lock:
+                # pyrefly: ignore [missing-attribute]
+                raw = self.model.encode(uncached_texts, **encode_kwargs)
 
             for local_i, orig_i in enumerate(uncached_indices):
                 emb = self._tensor_to_numpy(raw[local_i])
@@ -1525,6 +1546,7 @@ class CodeEmbedder:
         assert all(r is not None for r in results), (
             "BUG: cache miss left a result slot unfilled"
         )
+        # pyrefly: ignore [no-matching-overload]
         return np.stack(results)
 
     def get_model_info(self) -> dict[str, Any]:
@@ -1652,58 +1674,59 @@ class CodeEmbedder:
             # Python interpreter is shutting down; imports are unavailable.
             # Skip cleanup to avoid spurious errors from gc/torch teardown.
             return
-        if self._model is not None:
-            try:
-                import gc
+        # pyrefly: ignore [missing-attribute]
+        with self._lifecycle_lock:
+            if self._model is not None:
+                try:
+                    # Step 1: Free GPU memory.
+                    # ONNX path: call cleanup() to explicitly destroy the ORT CUDA session,
+                    # which is the only way to release CUDA memory allocated by ORT's
+                    # CUDAExecutionProvider (not tracked by torch.cuda.memory_allocated).
+                    # PyTorch path: move to CPU first to free VRAM, then delete.
+                    if hasattr(self._model, "cleanup"):
+                        self._logger.info("Releasing ONNX Runtime CUDA session...")
+                        self._model.cleanup()
+                        self._logger.info("ONNX VRAM freed")
+                    elif (
+                        torch is not None
+                        and torch.cuda.is_available()
+                        and hasattr(self._model, "cpu")
+                    ):
+                        self._logger.info("Moving model from GPU to CPU...")
+                        self._model = self._model.cpu()
+                        torch.cuda.synchronize()  # Wait for GPU operations
+                        torch.cuda.empty_cache()
+                        self._logger.info("VRAM freed")
 
-                # Step 1: Free GPU memory.
-                # ONNX path: call cleanup() to explicitly destroy the ORT CUDA session,
-                # which is the only way to release CUDA memory allocated by ORT's
-                # CUDAExecutionProvider (not tracked by torch.cuda.memory_allocated).
-                # PyTorch path: move to CPU first to free VRAM, then delete.
-                if hasattr(self._model, "cleanup"):
-                    self._logger.info("Releasing ONNX Runtime CUDA session...")
-                    self._model.cleanup()
-                    self._logger.info("ONNX VRAM freed")
-                elif (
-                    torch is not None
-                    and torch.cuda.is_available()
-                    and hasattr(self._model, "cpu")
-                ):
-                    self._logger.info("Moving model from GPU to CPU...")
-                    self._model = self._model.cpu()
-                    torch.cuda.synchronize()  # Wait for GPU operations
-                    torch.cuda.empty_cache()
-                    self._logger.info("VRAM freed")
+                    # Step 2: Delete model reference (allows RAM to be freed)
+                    del self._model
+                    self._model = None
+                    self._logger.info("Model reference deleted")
 
-                # Step 2: Delete model reference (allows RAM to be freed)
-                del self._model
-                self._model = None
-                self._logger.info("Model reference deleted")
+                    # Step 3: Clear query cache (numpy arrays)
+                    if hasattr(self, "_query_cache"):
+                        self._query_cache.clear()
+                        self._logger.info("Query cache cleared")
 
-                # Step 3: Clear query cache (numpy arrays)
-                if hasattr(self, "_query_cache"):
-                    self._query_cache.clear()
-                    self._logger.info("Query cache cleared")
+                    # Step 4: Clear model loader to prevent lazy reload (CRITICAL for VRAM cleanup)
+                    # Preserving model loader causes immediate reload when .model is accessed
+                    # This defeats cleanup purpose - forces creation of fresh embedder instead
+                    if hasattr(self, "_model_loader"):
+                        # pyrefly: ignore [bad-assignment]
+                        self._model_loader = None
+                        self._logger.info("Model loader cleared - lazy reload disabled")
 
-                # Step 4: Clear model loader to prevent lazy reload (CRITICAL for VRAM cleanup)
-                # Preserving model loader causes immediate reload when .model is accessed
-                # This defeats cleanup purpose - forces creation of fresh embedder instead
-                if hasattr(self, "_model_loader"):
-                    self._model_loader = None
-                    self._logger.info("Model loader cleared - lazy reload disabled")
+                    # Step 5: Force garbage collection (frees RAM)
+                    gc.collect()
+                    self._logger.info("RAM freed via garbage collection")
 
-                # Step 5: Force garbage collection (frees RAM)
-                gc.collect()
-                self._logger.info("RAM freed via garbage collection")
+                    # Step 6: Final CUDA cache clear
+                    if torch is not None and torch.cuda.is_available():
+                        torch.cuda.empty_cache()
 
-                # Step 6: Final CUDA cache clear
-                if torch is not None and torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-
-                self._logger.info("Model cleanup complete - VRAM and RAM freed")
-            except Exception as e:
-                self._logger.warning(f"Error during model cleanup: {e}")
+                    self._logger.info("Model cleanup complete - VRAM and RAM freed")
+                except Exception as e:
+                    self._logger.warning(f"Error during model cleanup: {e}")
 
     def __enter__(self) -> "CodeEmbedder":
         """Context manager entry - ensure model is loaded."""
@@ -1714,14 +1737,21 @@ class CodeEmbedder:
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Context manager exit - cleanup resources."""
         self.cleanup()
+        # pyrefly: ignore [bad-return]
         return False  # Don't suppress exceptions
 
     def __del__(self):
         """Ensure cleanup when object is destroyed."""
-        # Intentional: cleanup during interpreter shutdown may fail
-        # Logging is unreliable in __del__, so suppress is acceptable
         with contextlib.suppress(Exception):
-            self.cleanup()
+            # Non-blocking acquire: if another thread holds the lock, skip cleanup
+            # rather than stalling the GC thread indefinitely.
+            # pyrefly: ignore [missing-attribute]
+            if self._lifecycle_lock.acquire(blocking=False):
+                try:
+                    self.cleanup()
+                finally:
+                    # pyrefly: ignore [missing-attribute]
+                    self._lifecycle_lock.release()
 
     # ===== Cache Management Methods (delegated to ModelCacheManager) =====
 
@@ -1771,4 +1801,9 @@ class CodeEmbedder:
 
     def _resolve_device(self, requested: str | None) -> str:
         """Delegate to ModelLoader.resolve_device()."""
+        if self._model_loader is None:
+            raise RuntimeError(
+                "Embedder has been cleaned up; obtain a fresh instance "
+                "via model_pool_manager.get_embedder()."
+            )
         return self._model_loader.resolve_device(requested)

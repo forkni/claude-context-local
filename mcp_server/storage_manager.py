@@ -3,11 +3,13 @@
 Manages project storage directories, metadata persistence, and path resolution.
 """
 
+import contextlib
 import json
 import logging
 import os
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 from mcp_server.services import get_state
 from search.config import (
@@ -24,6 +26,51 @@ from search.filters import (
 
 logger = logging.getLogger(__name__)
 
+# Filename written into every legitimate storage root on first init.
+# Downstream guards use its presence to verify a directory is a real
+# storage root before performing destructive operations.
+STORAGE_SENTINEL = ".claude_code_search_storage"
+
+# Project-root markers — if any ancestor of the candidate path contains
+# one of these (excluding the home dir itself), the path is inside a
+# source tree and must be refused as storage location.
+_PROJECT_MARKERS = (
+    ".git",
+    "pyproject.toml",
+    "package.json",
+    "Cargo.toml",
+    "go.mod",
+    "pom.xml",
+)
+
+
+def validate_storage_path(path: Path) -> tuple[bool, str]:
+    """Check that *path* is a safe location for an index storage root.
+
+    Refuses:
+    - The user's home directory itself or a filesystem root
+    - Any path whose directory tree (up to home) contains a project-root marker
+
+    Returns ``(True, "ok")`` when safe, ``(False, reason)`` when refused.
+    """
+    p = path.resolve()
+    home = Path.home()
+
+    if p == home or p == Path(p.anchor):
+        return False, f"refusing home dir or filesystem root: {p}"
+
+    for ancestor in (p, *p.parents):
+        if ancestor == home or ancestor == ancestor.parent:
+            break
+        for marker in _PROJECT_MARKERS:
+            if (ancestor / marker).exists():
+                return (
+                    False,
+                    f"path is inside a project tree ({marker} found at {ancestor})",
+                )
+
+    return True, "ok"
+
 
 class StorageManager:
     """Manages storage paths and project directories."""
@@ -39,17 +86,43 @@ class StorageManager:
     def get_storage_dir(self) -> Path:
         """Get or create base storage directory.
 
+        Reads CODE_SEARCH_STORAGE env var if set; falls back to
+        ``~/.claude_code_search``.  Refuses paths that sit inside a project
+        source tree (have a .git / pyproject.toml ancestor) and falls back to
+        the default rather than using the unsafe path.
+
         Returns:
             Path to the base storage directory
         """
         state = get_state()
 
         if state.storage_dir is None:
-            storage_path = os.getenv(
-                "CODE_SEARCH_STORAGE", str(Path.home() / ".claude_code_search")
-            )
-            state.storage_dir = Path(storage_path)
-            state.storage_dir.mkdir(parents=True, exist_ok=True)
+            env_val = os.getenv("CODE_SEARCH_STORAGE")
+            if env_val:
+                candidate = Path(env_val).expanduser()
+                ok, reason = validate_storage_path(candidate)
+                if not ok:
+                    logger.error(
+                        "CODE_SEARCH_STORAGE=%r is unsafe (%s); "
+                        "falling back to ~/.claude_code_search",
+                        env_val,
+                        reason,
+                    )
+                    candidate = Path.home() / ".claude_code_search"
+            else:
+                candidate = Path.home() / ".claude_code_search"
+
+            candidate.mkdir(parents=True, exist_ok=True)
+
+            sentinel = candidate / STORAGE_SENTINEL
+            if not sentinel.exists():
+                with contextlib.suppress(OSError):
+                    sentinel.write_text(
+                        "claude-context-local storage root\n", encoding="utf-8"
+                    )
+
+            state.storage_dir = candidate
+
         return state.storage_dir
 
     def set_current_project(self, project_path: str) -> None:
@@ -153,7 +226,9 @@ class StorageManager:
         """
         base_dir = self.get_storage_dir()
 
+        # pyrefly: ignore [bad-assignment]
         project_path = Path(project_path).resolve()
+        # pyrefly: ignore [missing-attribute]
         project_name = project_path.name
 
         # Compute both hashes for backward compatibility
@@ -167,26 +242,21 @@ class StorageManager:
 
         # Determine which model to use
         if model_key:
-            # Use routing-selected model (map model_key to model_name via pool config)
-            if model_key not in pool_config:
+            # Resolve key → name: active pool first, then all known pools (cross-pool path)
+            from mcp_server.model_pool_manager import get_model_name_from_key
+
+            model_name = get_model_name_from_key(model_key)
+            if model_name is None:
                 logger.error(
                     f"Invalid model_key: {model_key}, falling back to config default"
                 )
                 config = get_search_config()
                 model_name = config.embedding.model_name
-            elif model_key == "qwen3":
-                # Qwen3 uses adaptive selection - check which variant is actually indexed
-                from search.config import resolve_qwen3_variant_for_lookup
-
-                model_name = resolve_qwen3_variant_for_lookup(new_hash, project_name)
-                logger.info(
-                    f"[ROUTING] Resolved qwen3 to actual variant: {model_name} (key: {model_key})"
-                )
-            else:
-                model_name = pool_config[model_key]
+            elif model_key in pool_config:
                 logger.info(
                     f"[ROUTING] Using routed model: {model_name} (key: {model_key})"
                 )
+            # else: cross-pool INFO already emitted by get_model_name_from_key
         else:
             # Use config default
             config = get_search_config()
@@ -204,13 +274,20 @@ class StorageManager:
                 f"To add this model, update search/config.py:MODEL_REGISTRY"
             )
         # Use effective dimension (truncate_dim for MRL, else native dimension)
-        dimension = model_config.get("truncate_dim") or model_config["dimension"]
+        dimension = cast(
+            int, model_config.get("truncate_dim") or model_config["dimension"]
+        )
         model_slug = get_model_slug(model_name)
 
         # Check for existing project directory (handles drive letter changes)
         projects_dir = base_dir / "projects"
         existing_dir = self._find_existing_project_dir(
-            projects_dir, project_name, new_hash, legacy_hash, model_slug, dimension
+            projects_dir,
+            project_name,
+            new_hash,
+            legacy_hash,
+            model_slug,
+            dimension,
         )
 
         if existing_dir:
@@ -257,6 +334,33 @@ class StorageManager:
                 json.dump(project_info, f, indent=2)
         return project_dir
 
+    def get_canonical_project_info(self, project_path: str) -> Path | None:
+        """Find the first existing project_info.json across all model dirs for this project.
+
+        Searches all model-specific storage dirs for this project hash and returns the
+        first project_info.json found. Use this instead of get_project_storage_dir() when
+        reading stored filters, so the result is independent of the current config model.
+
+        Args:
+            project_path: Path to the project
+
+        Returns:
+            Path to an existing project_info.json, or None if no model dir has one yet.
+        """
+        base_dir = self.get_storage_dir()
+        projects_dir = base_dir / "projects"
+        resolved = Path(project_path).resolve()
+        project_name = resolved.name
+        new_hash = compute_drive_agnostic_hash(str(resolved))
+        legacy_hash = compute_legacy_hash(str(resolved))
+
+        for hash_val in (new_hash, legacy_hash):
+            for model_dir in sorted(projects_dir.glob(f"{project_name}_{hash_val}_*")):
+                info = model_dir / "project_info.json"
+                if info.exists():
+                    return info
+        return None
+
     def update_project_filters(
         self,
         project_path: str,
@@ -294,8 +398,28 @@ class StorageManager:
                 MultiLanguageChunker.DEFAULT_IGNORED_DIRS
             )
 
-            # Update user-defined filter fields
+            # Guard against silently clearing user-defined filters.
+            # None means "caller didn't specify", not "user wants to clear".
+            # Pass [] to explicitly clear a filter.
+            stored_include = project_info.get("user_included_dirs")
+            stored_exclude = project_info.get("user_excluded_dirs")
+
+            if include_dirs is None and stored_include is not None:
+                logger.warning(
+                    "[PROJECT_INFO] refusing to clear user_included_dirs %r with None; "
+                    "pass [] to clear explicitly",
+                    stored_include,
+                )
+                include_dirs = stored_include
             project_info["user_included_dirs"] = include_dirs
+
+            if exclude_dirs is None and stored_exclude is not None:
+                logger.warning(
+                    "[PROJECT_INFO] refusing to clear user_excluded_dirs %r with None; "
+                    "pass [] to clear explicitly",
+                    stored_exclude,
+                )
+                exclude_dirs = stored_exclude
             project_info["user_excluded_dirs"] = exclude_dirs
 
             # Clean up obsolete field names
@@ -359,6 +483,14 @@ def get_project_storage_dir(
     return get_storage_manager().get_project_storage_dir(
         project_path, model_key, include_dirs, exclude_dirs
     )
+
+
+def get_canonical_project_info(project_path: str) -> Path | None:
+    """Find the first existing project_info.json across all model dirs.
+
+    Backward-compatible wrapper for StorageManager.get_canonical_project_info().
+    """
+    return get_storage_manager().get_canonical_project_info(project_path)
 
 
 def update_project_filters(

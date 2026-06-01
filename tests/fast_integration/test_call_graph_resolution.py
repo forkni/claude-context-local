@@ -11,12 +11,11 @@ Expected improvement:
 
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from chunking.multi_language_chunker import MultiLanguageChunker
-from graph.call_graph_extractor import PythonCallGraphExtractor
+from chunking.relationships.call_graph_extractor import PythonCallGraphExtractor
 from graph.graph_storage import CodeGraphStorage
-from mcp_server.services import ServiceLocator
 from search.config import ChunkingConfig
 
 
@@ -31,8 +30,10 @@ class TestCallGraphResolutionIntegration:
         # Disable greedy merge for these tests to check individual method chunks
         mock_config = MagicMock()
         mock_config.chunking = ChunkingConfig()
-        self.locator = ServiceLocator.instance()
-        self.locator.register("config", mock_config)
+        self._config_patch = patch(
+            "search.config.get_search_config", return_value=mock_config
+        )
+        self._config_patch.start()
 
         # Create test files
         self._create_test_files()
@@ -44,8 +45,8 @@ class TestCallGraphResolutionIntegration:
         )
 
     def teardown_method(self):
-        """Clean up ServiceLocator."""
-        ServiceLocator.reset()
+        """Stop config patch."""
+        self._config_patch.stop()
 
     def _create_test_files(self):
         """Create test Python files with multiple classes having 'extract' methods."""

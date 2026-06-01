@@ -8,7 +8,7 @@ import ast
 import os
 import tempfile
 
-from graph.call_graph_extractor import PythonCallGraphExtractor
+from chunking.relationships.call_graph_extractor import PythonCallGraphExtractor
 
 
 class TestSimpleImportResolution:

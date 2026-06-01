@@ -5,7 +5,6 @@ import logging
 import tempfile
 import time
 import traceback
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -19,12 +18,22 @@ from embeddings.embedder import CodeEmbedder
 from merkle.change_detector import ChangeDetector, FileChanges
 from merkle.merkle_dag import MerkleDAG
 from merkle.snapshot_manager import SnapshotManager
+from utils.observability import traced_block
+from utils.otel_attributes import (
+    ATTR_INDEX_TYPE,
+    ATTR_PROJECT_ID,
+)
+from utils.timing import timed
 
 from .bm25_sync import BM25SyncManager
+from .community_refresh_stage import CommunityRefreshStage
+from .community_stage import CommunityStage
 from .config import get_search_config
 from .graph_integration import GraphIntegration
+from .index_write_stage import IncrementalIndexResult, IndexWriteStage
 from .indexer import CodeIndexManager as Indexer
 from .parallel_chunker import ParallelChunker
+from .summary_stage import SummaryStage
 
 
 logger = logging.getLogger(__name__)
@@ -32,37 +41,6 @@ logger = logging.getLogger(__name__)
 # Minimum GPU memory (MB) considered "still allocated" after cleanup.
 # Below this threshold, residual allocations are expected (PyTorch runtime overhead ~50MB).
 GPU_CLEANUP_THRESHOLD_MB = 100
-
-
-@dataclass
-class IncrementalIndexResult:
-    """Result of incremental indexing operation."""
-
-    files_added: int
-    files_removed: int
-    files_modified: int
-    chunks_added: int
-    chunks_removed: int
-    time_taken: float
-    success: bool
-    error: str | None = None
-    bm25_resynced: bool = False
-    bm25_resync_count: int = 0
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "files_added": self.files_added,
-            "files_removed": self.files_removed,
-            "files_modified": self.files_modified,
-            "chunks_added": self.chunks_added,
-            "chunks_removed": self.chunks_removed,
-            "time_taken": self.time_taken,
-            "success": self.success,
-            "error": self.error,
-            "bm25_resynced": self.bm25_resynced,
-            "bm25_resync_count": self.bm25_resync_count,
-        }
 
 
 class IncrementalIndexer:
@@ -77,6 +55,7 @@ class IncrementalIndexer:
         include_dirs: list | None = None,
         exclude_dirs: list | None = None,
         precomputed_repo_profile: object | None = None,
+        prebuilt_dag: MerkleDAG | None = None,
     ):
         """Initialize incremental indexer.
 
@@ -89,6 +68,8 @@ class IncrementalIndexer:
             exclude_dirs: Optional list of directories to exclude
             precomputed_repo_profile: Optional pre-computed RepoProfile to skip
                 profiling (used in multi-model indexing to avoid redundant AST scans)
+            prebuilt_dag: Optional already-built MerkleDAG to skip the filesystem
+                walk (used in multi-model indexing to avoid redundant I/O)
         """
         if indexer is None:
             # Create indexer with temporary storage directory for testing
@@ -113,9 +94,22 @@ class IncrementalIndexer:
         self.include_dirs = include_dirs
         self.exclude_dirs = exclude_dirs
 
-        # Create change detector with filters
+        # Cache supported extensions once — used by both full reindex and change
+        # detection to skip content-hashing non-code assets (~95% I/O reduction
+        # on asset-heavy projects). Must be stable across passes so the hash
+        # scheme of a stored snapshot matches any DAG we rebuild from it.
+        from chunking.tree_sitter import TreeSitterChunker
+
+        self.supported_extensions: set[str] = set(
+            TreeSitterChunker.get_supported_extensions()
+        )
+
+        # Create change detector with filters + extension-aware hashing
         self.change_detector = ChangeDetector(
-            self.snapshot_manager, include_dirs, exclude_dirs
+            self.snapshot_manager,
+            include_dirs,
+            exclude_dirs,
+            supported_extensions=self.supported_extensions,
         )
 
         # Load parallel chunking configuration
@@ -128,10 +122,40 @@ class IncrementalIndexer:
             enable_parallel=self.enable_parallel_chunking,
             max_workers=self.max_chunking_workers,
         )
-        self._bm25_sync = BM25SyncManager(indexer=self.indexer)
+        self._summary_stage = SummaryStage()
+        self._community_stage = CommunityStage(
+            build_graph_fn=self._build_temp_graph,
+            regenerate_ids_fn=self._regenerate_chunk_ids,
+            summary_stage=self._summary_stage,
+        )
+        self._build_write_pipeline()
         self.precomputed_repo_profile = precomputed_repo_profile
         self.repo_profile: object | None = (
             None  # Set after full index for caller capture
+        )
+        self.prebuilt_dag = prebuilt_dag
+        self.built_dag: MerkleDAG | None = None  # Captured for multi-model reuse
+
+    def _build_write_pipeline(self) -> None:
+        """(Re)build the resource-bound write pipeline.
+
+        Call from __init__ and again immediately after _release_and_verify_resources()
+        so IndexWriteStage and BM25SyncManager are always bound to the current
+        self.embedder / self.indexer — never to released objects.
+        """
+        self._bm25_sync = BM25SyncManager(indexer=self.indexer)
+        self._index_write_stage = IndexWriteStage(
+            embedder=self.embedder,
+            indexer=self.indexer,
+            snapshot_manager=self.snapshot_manager,
+            bm25_sync=self._bm25_sync,
+            build_metadata_fn=self._build_snapshot_metadata,
+            clear_gpu_fn=self._clear_gpu_cache,
+        )
+        self._community_refresh_stage = CommunityRefreshStage(
+            embedder=self.embedder,
+            indexer=self.indexer,
+            summary_stage=self._summary_stage,
         )
 
     def _get_symbol_cache(self) -> Optional["SymbolHashCache"]:
@@ -238,7 +262,11 @@ class IncrementalIndexer:
                 except Exception as e:
                     logger.warning(f"VRAM cleanup failed (continuing with index): {e}")
 
-                return self._full_index(project_path, project_name, start_time)
+                with traced_block(
+                    "index.full",
+                    **{ATTR_PROJECT_ID: project_name, ATTR_INDEX_TYPE: "full"},
+                ):
+                    return self._full_index(project_path, project_name, start_time)
 
             # Detect changes
             logger.info(f"Detecting changes in {project_name}")
@@ -260,54 +288,45 @@ class IncrementalIndexer:
                 )
                 self.snapshot_manager.save_snapshot(current_dag, metadata)
 
-                return IncrementalIndexResult(
-                    files_added=0,
-                    files_removed=0,
-                    files_modified=0,
-                    chunks_added=0,
-                    chunks_removed=0,
-                    time_taken=time.time() - start_time,
-                    success=True,
-                    bm25_resynced=False,
-                    bm25_resync_count=0,
-                )
+                return self._zero_result(start_time, success=True)
 
             # Log changes
             logger.info(
                 f"Changes detected - Added: {len(changes.added)}, "
                 f"Removed: {len(changes.removed)}, Modified: {len(changes.modified)}"
             )
+            _config = get_search_config()
+            _should_refresh_communities = (
+                _config.chunking.enable_community_summaries
+                and _config.chunking.enable_incremental_community_summaries
+            )
+            _drift_result, _new_cumulative = self._check_community_drift(
+                project_path,
+                project_name,
+                changes,
+                start_time,
+                _should_refresh_communities,
+            )
+            if _drift_result is not None:
+                return _drift_result
 
             # Process changes
             chunks_removed = self._remove_old_chunks(changes, project_name)
 
             # Load cached repo profile for adaptive chunk sizing (set by previous full index)
-            _incr_config = get_search_config()
-            if _incr_config.chunking.sizing_mode == "adaptive":
-                _cached_meta = self.snapshot_manager.load_metadata(project_path)
-                if isinstance(_cached_meta, dict) and "repo_profile" in _cached_meta:
-                    from chunking.repo_profiler import RepoProfile
-
-                    _rp = _cached_meta["repo_profile"]
-                    _cached_profile = RepoProfile(
-                        function_count=_rp.get("function_count", 0),
-                        p25_chars=_rp.get("p25_chars", 0),
-                        p50_chars=_rp.get("p50_chars", 0),
-                        p75_chars=_rp.get("p75_chars", 0),
-                        p90_chars=_rp.get("p90_chars", 0),
-                        mean_chars=_rp.get("mean_chars", 0),
-                        max_complexity=_rp.get("max_complexity", 0),
-                    )
-                    self._parallel_chunker.chunker.tree_sitter_chunker.repo_profile = (
-                        _cached_profile
-                    )
-                    logger.info(
-                        f"[REPO_PROFILE] Loaded cached profile for incremental update: "
-                        f"P75={_cached_profile.p75_chars} chars, "
-                        f"max_cc={_cached_profile.max_complexity}"
-                    )
+            self._restore_repo_profile(project_path)
 
             chunks_added = self._add_new_chunks(changes, project_path, project_name)
+
+            # ========== Community summary refresh (approximate, below redetect threshold) ==========
+            if _should_refresh_communities:
+                try:
+                    self._community_refresh_stage.run(changes, project_name)
+                except Exception as e:
+                    logger.warning(
+                        f"[INCR_COMM] Community summary refresh failed (non-fatal): {e}"
+                    )
+            # ========== END Community summary refresh ==========
 
             # Validate index consistency after operations
             if hasattr(self.indexer, "validate_index_consistency"):
@@ -340,6 +359,7 @@ class IncrementalIndexer:
                 files_added=len(changes.added),
                 files_removed=len(changes.removed),
                 files_modified=len(changes.modified),
+                cumulative_changed_files=_new_cumulative,
             )
             self.snapshot_manager.save_snapshot(current_dag, metadata)
 
@@ -377,6 +397,117 @@ class IncrementalIndexer:
                 start_time,
             )
 
+    @staticmethod
+    def _zero_result(
+        start_time: float,
+        *,
+        success: bool,
+        error: str | None = None,
+    ) -> IncrementalIndexResult:
+        """Return an all-zeros IncrementalIndexResult (no file changes, no chunks moved).
+
+        Used for: no-changes detected (success=True), auto-reindex skipped (success=True),
+        full-index failure (success=False), and recovery failure (success=False, error=...).
+        ``time_taken`` is computed from ``start_time`` at the moment of the call.
+        """
+        return IncrementalIndexResult(
+            files_added=0,
+            files_removed=0,
+            files_modified=0,
+            chunks_added=0,
+            chunks_removed=0,
+            time_taken=time.time() - start_time,
+            success=success,
+            error=error,
+            bm25_resynced=False,
+            bm25_resync_count=0,
+        )
+
+    def _restore_repo_profile(self, project_path: str) -> None:
+        """Restore the cached repo profile for adaptive chunk sizing.
+
+        If the stored snapshot contains a ``repo_profile`` dict and the current chunking
+        config uses ``sizing_mode == "adaptive"``, reconstruct the ``RepoProfile`` object
+        and inject it into the parallel chunker so incremental updates use the same size
+        calibration as the original full index.  No-ops silently when the profile is
+        absent or adaptive sizing is disabled.
+        """
+        from chunking.repo_profiler import RepoProfile
+
+        _incr_config = get_search_config()
+        if _incr_config.chunking.sizing_mode != "adaptive":
+            return
+        _cached_meta = self.snapshot_manager.load_metadata(project_path)
+        if not isinstance(_cached_meta, dict) or "repo_profile" not in _cached_meta:
+            return
+        _rp = _cached_meta["repo_profile"]
+        _cached_profile = RepoProfile(
+            function_count=_rp.get("function_count", 0),
+            p25_chars=_rp.get("p25_chars", 0),
+            p50_chars=_rp.get("p50_chars", 0),
+            p75_chars=_rp.get("p75_chars", 0),
+            p90_chars=_rp.get("p90_chars", 0),
+            mean_chars=_rp.get("mean_chars", 0),
+            max_complexity=_rp.get("max_complexity", 0),
+        )
+        self._parallel_chunker.chunker.tree_sitter_chunker.repo_profile = (
+            _cached_profile
+        )
+        logger.info(
+            f"[REPO_PROFILE] Loaded cached profile for incremental update: "
+            f"P75={_cached_profile.p75_chars} chars, "
+            f"max_cc={_cached_profile.max_complexity}"
+        )
+
+    def _check_community_drift(
+        self,
+        project_path: str,
+        project_name: str,
+        changes: "FileChanges",
+        start_time: float,
+        should_refresh_communities: bool,
+    ) -> "tuple[IncrementalIndexResult | None, int]":
+        """Compute cumulative drift; promote to full reindex when threshold exceeded.
+
+        Always returns the new cumulative changed-file count so the caller can include
+        it in snapshot metadata whether or not a promotion occurred.
+
+        Returns:
+            (None, new_cumulative) — continue with incremental update.
+            (full_index_result, new_cumulative) — drift exceeded threshold; caller
+                should immediately return full_index_result.
+        """
+        _prev_meta = self.snapshot_manager.load_metadata(project_path)
+        _prev_meta_dict = _prev_meta if isinstance(_prev_meta, dict) else {}
+        _has_prior_tracking = "cumulative_changed_files" in _prev_meta_dict
+        _prev_cumulative = int(_prev_meta_dict.get("cumulative_changed_files", 0))
+        _this_change_count = (
+            len(changes.added) + len(changes.modified) + len(changes.removed)
+        )
+        _new_cumulative = _prev_cumulative + _this_change_count
+        if should_refresh_communities and _has_prior_tracking:
+            _config = get_search_config()
+            _prev_supported = max(1, int(_prev_meta_dict.get("supported_files", 1)))
+            _drift_fraction = _new_cumulative / _prev_supported
+            if (
+                _drift_fraction
+                > _config.chunking.incremental_community_redetect_threshold
+            ):
+                logger.info(
+                    f"[INCREMENTAL] Community drift {_drift_fraction:.0%} exceeds "
+                    f"threshold {_config.chunking.incremental_community_redetect_threshold:.0%}; "
+                    "promoting to full reindex for community redetection"
+                )
+                with traced_block(
+                    "index.full",
+                    **{ATTR_PROJECT_ID: project_name, ATTR_INDEX_TYPE: "full"},
+                ):
+                    return (
+                        self._full_index(project_path, project_name, start_time),
+                        _new_cumulative,
+                    )
+        return None, _new_cumulative
+
     def _attempt_recovery(
         self,
         original_error: str,
@@ -402,17 +533,10 @@ class IncrementalIndexer:
         except Exception as recovery_error:
             logger.error(f"Recovery failed: {recovery_error}")
             logger.error(traceback.format_exc())
-            return IncrementalIndexResult(
-                files_added=0,
-                files_removed=0,
-                files_modified=0,
-                chunks_added=0,
-                chunks_removed=0,
-                time_taken=time.time() - start_time,
+            return self._zero_result(
+                start_time,
                 success=False,
                 error=f"Original: {original_error}, Recovery: {recovery_error}",
-                bm25_resynced=False,
-                bm25_resync_count=0,
             )
 
     def _release_and_verify_resources(self, project_path: str) -> None:
@@ -469,10 +593,9 @@ class IncrementalIndexer:
                 )
 
         # Step 1: Release resources (same operation as UI "Release Resources" command)
-        from mcp_server.resource_manager import ResourceManager
+        from mcp_server.resource_manager import _cleanup_previous_resources
 
-        resource_manager = ResourceManager()
-        resource_manager.cleanup_previous_resources()
+        _cleanup_previous_resources()
         logger.info("[FULL_INDEX] Resource release completed")
 
         # Step 2: Verify cleanup completeness
@@ -519,8 +642,6 @@ class IncrementalIndexer:
                 f"[FULL_INDEX] Initial verification failed: {warnings}. "
                 "Attempting secondary cleanup..."
             )
-            import gc
-
             gc.collect()
             try:
                 import torch
@@ -569,6 +690,7 @@ class IncrementalIndexer:
         if hasattr(self.indexer, "_is_shutdown") and self.indexer._is_shutdown:
             from mcp_server.search_factory import get_searcher
 
+            # pyrefly: ignore [bad-assignment]
             self.indexer = get_searcher(project_path)
             logger.info("[FULL_INDEX] Fresh indexer/searcher acquired for reindex")
         else:
@@ -592,6 +714,9 @@ class IncrementalIndexer:
         try:
             # === MANDATORY: Release resources before full reindex ===
             self._release_and_verify_resources(project_path)
+            # Rebind write pipeline to freshly acquired embedder/indexer so the
+            # stage never runs against the released (stale) objects.
+            self._build_write_pipeline()
             # Defense in depth: Load filters from snapshot before deleting it
             # This handles cases where filters weren't passed during IncrementalIndexer creation
             if self.include_dirs is None or self.exclude_dirs is None:
@@ -624,9 +749,21 @@ class IncrementalIndexer:
             # Clear existing index
             self.indexer.clear_index()
 
-            # Build DAG for all files
-            dag = MerkleDAG(project_path, self.include_dirs, self.exclude_dirs)
-            dag.build()
+            # Build DAG for all files (or reuse from a previous model pass)
+            if self.prebuilt_dag is not None:
+                dag = self.prebuilt_dag
+                logger.info(
+                    "[FULL_INDEX] Reusing prebuilt MerkleDAG (shared across models)"
+                )
+            else:
+                dag = MerkleDAG(
+                    project_path,
+                    self.include_dirs,
+                    self.exclude_dirs,
+                    supported_extensions=self.supported_extensions,
+                )
+                dag.build()
+                self.built_dag = dag  # Expose for multi-model caller to reuse
             all_files = dag.get_all_files()
 
             # Filter supported files
@@ -690,237 +827,24 @@ class IncrementalIndexer:
 
             logger.info(f"Total chunks collected: {len(all_chunks)}")
 
-            # ========== Community Detection & Remerge ==========
-            # Community merge flow: Chunk → Build graph → Detect communities → (Optional) Remerge → Embed
-            # Community detection runs independently of chunk merging
+            # Stage 1: community detection, summarisation, remerge
             config = get_search_config()
-            community_map = None  # Will be populated if community detection runs
-            temp_graph = None  # Will be set if community detection succeeds
+            all_chunks = self._community_stage.run(all_chunks, project_path, config)
 
-            # Step A: Community Detection (Independent - can run without merging)
-            if config.chunking.enable_community_detection and all_chunks:
-                logger.info("[COMMUNITY_DETECT] Running community detection")
-                logger.info(
-                    f"[COMMUNITY_DETECT] Starting with {len(all_chunks)} chunks"
-                )
-
-                try:
-                    # Build graph from chunks (NetworkX DiGraph)
-                    # Uses GraphIntegration.build_graph_from_chunks() - no embeddings needed
-                    temp_graph = self._build_temp_graph(all_chunks)
-
-                    # Detect communities using native Louvain algorithm
-                    # NetworkX native (no external dependencies: igraph/leidenalg)
-                    from graph.community_detector import CommunityDetector
-
-                    detector = CommunityDetector(temp_graph.storage)
-                    community_map = detector.detect_communities(
-                        resolution=config.chunking.community_resolution,
-                        max_phantom_degree=getattr(
-                            config.chunking, "max_phantom_degree", 20
-                        ),
-                    )
-                    logger.info(
-                        f"[COMMUNITY_DETECT] Detected {len(set(community_map.values()))} communities from {len(community_map)} nodes"
-                    )
-
-                    # NEW: Persist community_map to graph storage for future use
-                    if community_map and temp_graph:
-                        temp_graph.storage.store_community_map(community_map)
-                        logger.info(
-                            "[COMMUNITY_DETECT] Community map persisted to graph storage"
-                        )
-
-                except Exception as e:
-                    logger.error(f"[COMMUNITY_DETECT] Failed: {e}")
-                    logger.error(traceback.format_exc())
-                    logger.warning(
-                        "[COMMUNITY_DETECT] Continuing without community data"
-                    )
-                    community_map = None
-
-            # ========== Community Summaries (B1) — PHASE 1: Compute ==========
-            # CRITICAL: Compute BEFORE remerge (chunk_ids match community_map)
-            community_summaries = []
-            if (
-                config.chunking.enable_community_summaries
-                and community_map
-                and all_chunks
-            ):
-                try:
-                    from graph.community_summarizer import generate_community_summaries
-
-                    # Compute PageRank centrality for hub detection (QW4)
-                    centrality_scores_for_summaries: dict[str, float] | None = None
-                    if community_map and temp_graph is not None:
-                        try:
-                            from graph.graph_queries import GraphQueryEngine
-
-                            gqe = GraphQueryEngine(temp_graph.storage)
-                            centrality_scores_for_summaries = gqe.compute_centrality(
-                                method="pagerank"
-                            )
-                            logger.info(
-                                f"[COMMUNITY_SUMMARIES] Computed centrality for "
-                                f"{len(centrality_scores_for_summaries)} nodes"
-                            )
-                        except Exception as ce:
-                            logger.debug(
-                                f"[COMMUNITY_SUMMARIES] Centrality unavailable, "
-                                f"using line-count fallback: {ce}"
-                            )
-
-                    community_summaries = generate_community_summaries(
-                        all_chunks, community_map, centrality_scores_for_summaries
-                    )
-                    logger.info(
-                        f"[COMMUNITY_SUMMARIES] Computed {len(community_summaries)} community summary chunks"
-                    )
-                except Exception as e:
-                    logger.warning(f"[COMMUNITY_SUMMARIES] Failed to compute: {e}")
-            # ========== END Community Summaries Phase 1 ==========
-
-            # Step B: Community-based Remerge (Full index only)
-            if config.chunking.enable_community_merge and community_map and all_chunks:
-                logger.info("[COMMUNITY_MERGE] Running community-based remerge")
-
-                try:
-                    # Remerge with community boundaries
-                    # Uses fixed remerge_chunks_with_communities() from base.py
-                    from chunking.languages.base import LanguageChunker
-
-                    all_chunks = LanguageChunker.remerge_chunks_with_communities(
-                        chunks=all_chunks,
-                        community_map=community_map,
-                        min_tokens=config.chunking.min_chunk_tokens,
-                        max_merged_tokens=config.chunking.max_merged_tokens,
-                        token_method=config.chunking.token_estimation,
-                        size_method=config.chunking.size_method,
-                    )
-                    logger.info(
-                        f"[COMMUNITY_MERGE] Community remerge complete: {len(all_chunks)} chunks"
-                    )
-
-                    # Regenerate proper chunk_ids (line numbers changed after merge)
-                    all_chunks = self._regenerate_chunk_ids(all_chunks, project_path)
-
-                    logger.info(
-                        f"[COMMUNITY_MERGE] Community merge complete: {len(all_chunks)} final chunks"
-                    )
-
-                except Exception as e:
-                    logger.error(f"[COMMUNITY_MERGE] Failed: {e}")
-                    logger.error(traceback.format_exc())
-                    logger.warning(
-                        "[COMMUNITY_MERGE] Continuing with unmerged chunks from Pass 1"
-                    )
-            # ========== END Community Detection & Remerge ==========
-
-            # ========== File-Level Module Summaries (A2) ==========
-            config = get_search_config()
-            if config.chunking.enable_file_summaries and all_chunks:
-                try:
-                    from chunking.file_summarizer import generate_file_summaries
-
-                    file_summaries = generate_file_summaries(all_chunks)
-                    if file_summaries:
-                        logger.info(
-                            f"[FILE_SUMMARIES] Generated {len(file_summaries)} module summary chunks"
-                        )
-                        all_chunks.extend(file_summaries)
-                        logger.info(
-                            f"[FILE_SUMMARIES] Appended {len(file_summaries)} module summaries to chunk list"
-                        )
-                except Exception as e:
-                    logger.warning(f"[FILE_SUMMARIES] Failed: {e}")
-            # ========== END File-Level Module Summaries ==========
-
-            # ========== Community Summaries (B1) — PHASE 2: Append ==========
-            # CRITICAL: Append AFTER remerge (avoid being processed by remerge)
-            if community_summaries:
-                all_chunks.extend(community_summaries)
-                logger.info(
-                    f"[COMMUNITY_SUMMARIES] Appended {len(community_summaries)} community summaries to chunk list"
-                )
-            # ========== END Community Summaries Phase 2 ==========
-
-            # Embed all chunks in one batched call
-            all_embedding_results = []
-            if all_chunks:
-                try:
-                    logger.info(f"Starting embedding for {len(all_chunks)} chunks")
-                    all_embedding_results = self.embedder.embed_chunks(all_chunks)
-                    logger.info(
-                        f"Successfully embedded {len(all_embedding_results)} chunks"
-                    )
-                    # Update metadata
-                    for chunk, embedding_result in zip(
-                        all_chunks, all_embedding_results, strict=False
-                    ):
-                        embedding_result.metadata["project_name"] = project_name
-                        embedding_result.metadata["content"] = chunk.content
-                except Exception as e:
-                    logger.error(f"Embedding failed: {e}")
-                    logger.error(traceback.format_exc())
-
-            # Add all embeddings to index at once
-            if all_embedding_results:
-                logger.info(f"Adding {len(all_embedding_results)} embeddings to index")
-                self.indexer.add_embeddings(all_embedding_results)
-                logger.info("Successfully added embeddings to index")
-            else:
-                logger.warning("No embedding results to add to index")
-
-            chunks_added = len(all_embedding_results)
-
-            # Save snapshot
-            metadata = self._build_snapshot_metadata(
-                project_name=project_name,
-                all_files=all_files,
-                supported_files=supported_files,
-                total_chunks=chunks_added,
-                is_full=True,
-                repo_profile=repo_profile,
-            )
-            self.snapshot_manager.save_snapshot(dag, metadata)
-
-            # Save index
-            logger.info("[INCREMENTAL] Saving index...")
-            self.indexer.save_indices()
-            logger.info("[INCREMENTAL] Index saved")
-
-            # Auto-sync BM25 if significant desync detected (>10% difference)
-            bm25_resynced, bm25_resync_count = self._sync_bm25_if_needed("FULL_INDEX")
-
-            # Clear GPU cache to free intermediate tensors from embedding batches
-            self._clear_gpu_cache("FULL_INDEX")
-
-            return IncrementalIndexResult(
-                files_added=len(supported_files),
-                files_removed=0,
-                files_modified=0,
-                chunks_added=chunks_added,
-                chunks_removed=0,
-                time_taken=time.time() - start_time,
-                success=True,
-                bm25_resynced=bm25_resynced,
-                bm25_resync_count=bm25_resync_count,
+            # Stage 2: embed, index, snapshot, BM25, GPU
+            return self._index_write_stage.run(
+                all_chunks,
+                project_name,
+                dag,
+                all_files,
+                supported_files,
+                start_time,
+                self.repo_profile,
             )
 
         except Exception as e:
             logger.error(f"Full indexing failed: {e}")
-            return IncrementalIndexResult(
-                files_added=0,
-                files_removed=0,
-                files_modified=0,
-                chunks_added=0,
-                chunks_removed=0,
-                time_taken=time.time() - start_time,
-                success=False,
-                error=str(e),
-                bm25_resynced=False,
-                bm25_resync_count=0,
-            )
+            return self._zero_result(start_time, success=False, error=str(e))
 
     def _get_total_chunks(self) -> int:
         """Get total number of chunks currently in the index.
@@ -1110,13 +1034,21 @@ class IncrementalIndexer:
 
         # Cache repo profile for incremental indexing reuse
         if repo_profile is not None:
+            # pyrefly: ignore [bad-typed-dict-key]
             metadata["repo_profile"] = {
+                # pyrefly: ignore [missing-attribute]
                 "function_count": repo_profile.function_count,
+                # pyrefly: ignore [missing-attribute]
                 "p25_chars": repo_profile.p25_chars,
+                # pyrefly: ignore [missing-attribute]
                 "p50_chars": repo_profile.p50_chars,
+                # pyrefly: ignore [missing-attribute]
                 "p75_chars": repo_profile.p75_chars,
+                # pyrefly: ignore [missing-attribute]
                 "p90_chars": repo_profile.p90_chars,
+                # pyrefly: ignore [missing-attribute]
                 "mean_chars": repo_profile.mean_chars,
+                # pyrefly: ignore [missing-attribute]
                 "max_complexity": repo_profile.max_complexity,
             }
 
@@ -1144,7 +1076,6 @@ class IncrementalIndexer:
                 logger.info(
                     f"Batch removed {chunks_removed} chunks from {len(files_to_remove)} files"
                 )
-                return chunks_removed
             except Exception as e:
                 logger.error(f"Batch removal failed: {e}")
                 logger.warning("Falling back to individual file removal")
@@ -1154,7 +1085,6 @@ class IncrementalIndexer:
                     removed = self.indexer.remove_file_chunks(file_path, project_name)
                     chunks_removed += removed
                     logger.debug(f"Removed {removed} chunks from {file_path}")
-                return chunks_removed
         else:
             # Fallback to individual removal if batch method not available
             chunks_removed = 0
@@ -1162,8 +1092,28 @@ class IncrementalIndexer:
                 removed = self.indexer.remove_file_chunks(file_path, project_name)
                 chunks_removed += removed
                 logger.debug(f"Removed {removed} chunks from {file_path}")
-            return chunks_removed
 
+        # Prune stale call-graph nodes for all removed/modified files.
+        # The call graph and the metadata store are maintained independently; without
+        # this step, old node IDs (which embed line ranges) survive incremental
+        # reindex and cause "Chunk not found" errors in find_connections.
+        # The graph is persisted later by save_indices() — no explicit save needed here.
+        from graph.graph_storage import CodeGraphStorage
+
+        graph_storage = getattr(self.indexer, "graph_storage", None)
+        if isinstance(graph_storage, CodeGraphStorage) and files_to_remove:
+            graph_nodes_removed = 0
+            for fp in files_to_remove:
+                graph_nodes_removed += graph_storage.remove_file_nodes(fp)
+            if graph_nodes_removed:
+                logger.info(
+                    f"[GRAPH_PRUNE] Pruned {graph_nodes_removed} stale graph nodes "
+                    f"across {len(files_to_remove)} files"
+                )
+
+        return chunks_removed
+
+    @timed("index.incremental")
     def _add_new_chunks(
         self, changes: FileChanges, project_path: str, project_name: str
     ) -> int:
@@ -1266,8 +1216,6 @@ class IncrementalIndexer:
             log_prefix: Prefix for log messages (e.g., "INCREMENTAL" or "FULL_INDEX")
         """
         try:
-            import gc
-
             import torch
 
             gc.collect()  # Free Python wrapper objects first
@@ -1334,8 +1282,6 @@ class IncrementalIndexer:
         Returns:
             IncrementalIndexResult with statistics
         """
-        import time
-
         start_time = time.time()
 
         if self.needs_reindex(project_path, max_age_minutes):
@@ -1431,14 +1377,4 @@ class IncrementalIndexer:
             return self.incremental_index(project_path, project_name)
         else:
             logger.debug(f"Index for {project_path} is fresh, skipping reindex")
-            return IncrementalIndexResult(
-                files_added=0,
-                files_removed=0,
-                files_modified=0,
-                chunks_added=0,
-                chunks_removed=0,
-                time_taken=time.time() - start_time,
-                success=True,
-                bm25_resynced=False,
-                bm25_resync_count=0,
-            )
+            return self._zero_result(start_time, success=True)

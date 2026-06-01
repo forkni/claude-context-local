@@ -1502,6 +1502,109 @@ class TestCalculateOptimalBatchSizeOrtCap:
         assert r_large_cap == r_no_cap
 
 
+class TestCalculateOptimalBatchSizeOnnxCap:
+    """Regression tests for the ONNX-specific BFCArena batch-size cap.
+
+    ORT BFCArena allocates large contiguous buffers per single op whose peak
+    does not scale linearly with batch.  When available_gb is small, the linear
+    per-item budget over-predicts the safe batch.  is_onnx=True enables a
+    tighter tiered cap keyed off available_gb.
+
+    Reproduces the exact OOM seen in production:
+      available≈4.6 GB, cost=0.264 GB/item → linear batch=9, ORT OOM, safe=4.
+    """
+
+    @patch("embeddings.embedder.torch")
+    def test_onnx_low_vram_caps_batch(self, mock_torch):
+        """is_onnx=True + available≈4.6 GB → batch capped to 4 (not 9)."""
+        from embeddings.embedder import calculate_optimal_batch_size
+
+        mock_torch.cuda.is_available.return_value = True
+        # ~8 GB GPU with only 4.6 GB free after multi-model + reranker load
+        total_bytes = int(8 * 1024**3)
+        free_bytes = int(4.6 * 1024**3)
+        mock_torch.cuda.mem_get_info.return_value = (free_bytes, total_bytes)
+
+        # Without is_onnx the linear formula gives 9: floor(4.6*0.65*0.82/0.264)=9
+        result_torch = calculate_optimal_batch_size(
+            activation_gb_per_item=0.264,
+            memory_fraction=0.65,
+            min_batch=4,
+            max_batch=32,
+            is_onnx=False,
+        )
+        # With is_onnx the BFCArena cap kicks in: available<5.5 → max_batch=4
+        result_onnx = calculate_optimal_batch_size(
+            activation_gb_per_item=0.264,
+            memory_fraction=0.65,
+            min_batch=4,
+            max_batch=32,
+            is_onnx=True,
+        )
+        assert result_torch >= 9, (
+            f"Torch path should give ≥9 without ONNX cap, got {result_torch}"
+        )
+        assert result_onnx <= 4, (
+            f"ONNX path must cap batch to ≤4 at available≈4.6 GB, got {result_onnx}"
+        )
+
+    @patch("embeddings.embedder.torch")
+    def test_onnx_cap_inert_on_roomy_gpu(self, mock_torch):
+        """is_onnx=True with available≥8 GB → same batch as is_onnx=False (no regression)."""
+        from embeddings.embedder import calculate_optimal_batch_size
+
+        mock_torch.cuda.is_available.return_value = True
+        total_bytes = int(24 * 1024**3)
+        free_bytes = int(14 * 1024**3)  # roomy: well above the 8 GB ONNX threshold
+        mock_torch.cuda.mem_get_info.return_value = (free_bytes, total_bytes)
+
+        result_torch = calculate_optimal_batch_size(
+            activation_gb_per_item=0.28,
+            memory_fraction=0.65,
+            min_batch=1,
+            max_batch=256,
+            is_onnx=False,
+        )
+        result_onnx = calculate_optimal_batch_size(
+            activation_gb_per_item=0.28,
+            memory_fraction=0.65,
+            min_batch=1,
+            max_batch=256,
+            is_onnx=True,
+        )
+        assert result_onnx == result_torch, (
+            f"ONNX cap must be inert on roomy GPU: onnx={result_onnx}, torch={result_torch}"
+        )
+
+    @patch("embeddings.embedder.torch")
+    def test_non_onnx_low_vram_unaffected(self, mock_torch):
+        """is_onnx=False on a tight GPU is unchanged by this fix."""
+        from embeddings.embedder import calculate_optimal_batch_size
+
+        mock_torch.cuda.is_available.return_value = True
+        total_bytes = int(8 * 1024**3)
+        free_bytes = int(4.6 * 1024**3)
+        mock_torch.cuda.mem_get_info.return_value = (free_bytes, total_bytes)
+
+        # Pre-fix and post-fix torch path must be identical (no regression)
+        before = calculate_optimal_batch_size(
+            activation_gb_per_item=0.264,
+            memory_fraction=0.65,
+            min_batch=4,
+            max_batch=32,
+            is_onnx=False,
+        )
+        after = calculate_optimal_batch_size(
+            activation_gb_per_item=0.264,
+            memory_fraction=0.65,
+            min_batch=4,
+            max_batch=32,
+        )  # is_onnx defaults to False
+        assert before == after, (
+            f"Non-ONNX path must be unchanged: before={before}, after={after}"
+        )
+
+
 class TestOomRecoveryBackoff:
     """Tests for Fix B: OOM-recovery backoff in embed_chunks().
 
@@ -2038,3 +2141,148 @@ class TestCacheKeyInstructionMode:
         assert encode_count[0] == count_after_prompt, (
             "custom-mode second call must hit the original cache entry"
         )
+
+
+class TestBuildChunkId:
+    """Unit tests for CodeEmbedder._build_chunk_id — no model load required."""
+
+    def _make_chunk(
+        self,
+        relative_path,
+        start_line,
+        end_line,
+        chunk_type,
+        name=None,
+        parent_name=None,
+    ):
+        from unittest.mock import Mock
+
+        chunk = Mock()
+        chunk.relative_path = relative_path
+        chunk.start_line = start_line
+        chunk.end_line = end_line
+        chunk.chunk_type = chunk_type
+        chunk.name = name
+        chunk.parent_name = parent_name
+        return chunk
+
+    def test_basic_function(self):
+        chunk = self._make_chunk("src/foo.py", 10, 20, "function", name="bar")
+        assert CodeEmbedder._build_chunk_id(chunk) == "src/foo.py:10-20:function:bar"
+
+    def test_method_qualified_name(self):
+        chunk = self._make_chunk(
+            "src/foo.py", 5, 15, "method", name="run", parent_name="MyClass"
+        )
+        assert (
+            CodeEmbedder._build_chunk_id(chunk) == "src/foo.py:5-15:method:MyClass.run"
+        )
+
+    def test_no_name_omits_suffix(self):
+        chunk = self._make_chunk(
+            "pkg/mod.py", 1, 50, "module", name=None, parent_name=None
+        )
+        assert CodeEmbedder._build_chunk_id(chunk) == "pkg/mod.py:1-50:module"
+
+    def test_windows_path_normalized(self):
+        chunk = self._make_chunk(
+            "src\\utils\\helper.py", 3, 8, "function", name="do_thing"
+        )
+        result = CodeEmbedder._build_chunk_id(chunk)
+        assert "\\" not in result
+        assert result == "src/utils/helper.py:3-8:function:do_thing"
+
+
+class TestBuildChunkMetadata:
+    """Unit tests for CodeEmbedder._build_chunk_metadata — no model load required."""
+
+    def _make_chunk(self, **kwargs):
+        from unittest.mock import Mock
+
+        defaults = {
+            "file_path": "/abs/src/foo.py",
+            "relative_path": "src/foo.py",
+            "folder_structure": "src",
+            "chunk_type": "function",
+            "start_line": 1,
+            "end_line": 10,
+            "name": "my_func",
+            "parent_name": None,
+            "parent_chunk_id": None,
+            "docstring": "Does a thing.",
+            "decorators": [],
+            "imports": [],
+            "complexity_score": 3,
+            "tags": ["python"],
+            "content": "def my_func(): pass",
+            "calls": [],
+            "relationships": [],
+        }
+        defaults.update(kwargs)
+        chunk = Mock()
+        for k, v in defaults.items():
+            setattr(chunk, k, v)
+        return chunk
+
+    def test_required_keys_present(self):
+        chunk = self._make_chunk()
+        meta = CodeEmbedder._build_chunk_metadata(chunk)
+        for key in (
+            "file_path",
+            "relative_path",
+            "chunk_type",
+            "start_line",
+            "end_line",
+            "name",
+            "content",
+            "calls",
+            "relationships",
+            "language",
+        ):
+            assert key in meta, f"missing key: {key}"
+
+    def test_language_default(self):
+        chunk = self._make_chunk()
+        del chunk.language  # force getattr fallback
+        meta = CodeEmbedder._build_chunk_metadata(chunk)
+        assert meta["language"] == "python"
+
+    def test_language_override(self):
+        chunk = self._make_chunk()
+        chunk.language = "go"
+        meta = CodeEmbedder._build_chunk_metadata(chunk)
+        assert meta["language"] == "go"
+
+    def test_content_preview_truncated(self):
+        chunk = self._make_chunk(content="x" * 300)
+        meta = CodeEmbedder._build_chunk_metadata(chunk)
+        assert meta["content_preview"].endswith("...")
+        assert len(meta["content_preview"]) == 203  # 200 + "..."
+
+    def test_content_preview_short(self):
+        chunk = self._make_chunk(content="short")
+        meta = CodeEmbedder._build_chunk_metadata(chunk)
+        assert meta["content_preview"] == "short"
+
+    def test_calls_serialized(self):
+        from unittest.mock import Mock
+
+        call_mock = Mock()
+        call_mock.to_dict.return_value = {"target": "bar"}
+        chunk = self._make_chunk(calls=[call_mock])
+        meta = CodeEmbedder._build_chunk_metadata(chunk)
+        assert meta["calls"] == [{"target": "bar"}]
+
+    def test_empty_calls(self):
+        chunk = self._make_chunk(calls=[])
+        meta = CodeEmbedder._build_chunk_metadata(chunk)
+        assert meta["calls"] == []
+
+    def test_relationships_serialized(self):
+        from unittest.mock import Mock
+
+        rel_mock = Mock()
+        rel_mock.to_dict.return_value = {"rel": "imports"}
+        chunk = self._make_chunk(relationships=[rel_mock])
+        meta = CodeEmbedder._build_chunk_metadata(chunk)
+        assert meta["relationships"] == [{"rel": "imports"}]

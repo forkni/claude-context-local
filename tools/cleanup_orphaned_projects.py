@@ -11,8 +11,26 @@ import contextlib
 import gc
 import json
 import shutil
+import sys
 import time
 from pathlib import Path
+
+
+# Allow importing from project root when run as a standalone script
+_PROJECT_ROOT = Path(__file__).parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+try:
+    from mcp_server.storage_manager import get_storage_dir as _get_storage_dir
+
+    def _projects_dir() -> Path:
+        return _get_storage_dir() / "projects"
+
+except Exception:
+
+    def _projects_dir() -> Path:  # type: ignore[misc]
+        return Path.home() / ".claude_code_search" / "projects"
 
 
 def find_orphaned_projects():
@@ -21,7 +39,7 @@ def find_orphaned_projects():
     Returns:
         List of Path objects for orphaned project directories.
     """
-    storage_dir = Path.home() / ".claude_code_search" / "projects"
+    storage_dir = _projects_dir()
 
     if not storage_dir.exists():
         print("No projects directory found")

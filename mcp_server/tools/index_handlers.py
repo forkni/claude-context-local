@@ -3,6 +3,7 @@
 Handlers for creating, updating, and clearing code indices.
 """
 
+import gc
 import json
 import logging
 from datetime import datetime
@@ -17,6 +18,7 @@ from mcp_server.server import (
 )
 from mcp_server.services import get_config, get_state
 from mcp_server.storage_manager import (
+    get_canonical_project_info,
     get_project_storage_dir,
     get_storage_dir,
     set_current_project,
@@ -81,14 +83,14 @@ def _create_indexer_for_model(
     """Create indexer and embedder for a specific model.
 
     Args:
-        model_key: The model key (e.g., 'qwen3', 'bge_m3') or None for default
+        model_key: The model key (e.g., 'qwen3_0.6b', 'bge_m3') or None for default
         directory_path: Path to the project directory
         index_dir: Path to store the index
 
     Returns:
         tuple: (indexer, embedder, chunker)
     """
-    from graph.relation_filter import RepositoryRelationFilter
+    from chunking.relationships.relation_filter import RepositoryRelationFilter
 
     config = get_config()
 
@@ -238,6 +240,15 @@ def _clear_index_files_before_create(index_dir: Path) -> None:
     """
     import shutil
 
+    from mcp_server.storage_manager import get_storage_dir
+
+    storage_root = get_storage_dir().resolve()
+    if not index_dir.resolve().is_relative_to(storage_root):
+        raise ValueError(
+            f"_clear_index_files_before_create refused: {index_dir} is outside "
+            f"storage root {storage_root}"
+        )
+
     logger.info(
         f"[PRE-CLEAR] Deleting index files before HybridSearcher creation: {index_dir}"
     )
@@ -281,6 +292,81 @@ def _clear_index_files_before_create(index_dir: Path) -> None:
             logger.warning(f"[PRE-CLEAR] Could not delete call graph: {e}")
 
 
+def _release_gpu_memory() -> None:
+    """Release GPU memory and run garbage collection.
+
+    Calls :func:`gc.collect` unconditionally, then clears the PyTorch CUDA cache if
+    available.  Safe to call when CUDA/torch is not installed — the :exc:`ImportError`
+    is silently swallowed.  This is the single source of truth for the GPU-memory
+    release ritual that appears in per-model indexing and cleanup paths.
+    """
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+    except ImportError:
+        pass
+
+
+def _invalidate_config_caches() -> None:
+    """Invalidate all process-wide config caches after a model switch.
+
+    Must be called after writing an updated config to disk so that the next
+    :func:`get_config` call reads the new values instead of returning stale ones.
+    Clears two caches in order:
+
+    1. ``search.config._config_manager`` (module-level singleton) — the real cache.
+    2. ``state.reset_for_model_switch()`` (clears embedders, index_manager, searcher)
+    """
+    from search import config as config_module
+
+    config_module._config_manager = None
+
+    state = get_state()
+    state.reset_for_model_switch()
+
+
+def _switch_active_model(model_key: str, model_name: str) -> None:
+    """Update the active embedding model in the persisted config and invalidate caches.
+
+    Loads the current config, sets ``embedding.model_name`` and the matching
+    ``embedding.dimension`` from :data:`MODEL_REGISTRY`, saves to disk only when
+    something changed, then calls :func:`_invalidate_config_caches` so the next
+    :func:`get_config` call returns fresh values.
+
+    Args:
+        model_key: Pool key (e.g. ``"qwen3_0.6b"``), unused here but passed for logging.
+        model_name: Full HuggingFace model identifier to activate.
+    """
+    config_mgr = SearchConfigManager()
+    config = config_mgr.load_config()
+    new_dimension = config.embedding.dimension
+    if model_name in MODEL_REGISTRY:
+        model_cfg = MODEL_REGISTRY[model_name]
+        new_dimension = model_cfg.get("truncate_dim") or model_cfg["dimension"]
+
+    if (
+        config.embedding.model_name != model_name
+        or config.embedding.dimension != new_dimension
+    ):
+        config.embedding.model_name = model_name
+        # pyrefly: ignore [bad-assignment]
+        config.embedding.dimension = new_dimension
+        config_mgr.save_config(config)
+    else:
+        logger.info(
+            f"Config already set to {model_name} ({new_dimension}d), skipping save"
+        )
+        config.embedding.model_name = model_name
+        # pyrefly: ignore [bad-assignment]
+        config.embedding.dimension = new_dimension
+
+    _invalidate_config_caches()
+
+
 def _index_with_all_models(
     directory_path: Path, incremental: bool, include_dirs=None, exclude_dirs=None
 ) -> list[dict]:
@@ -301,6 +387,7 @@ def _index_with_all_models(
     cached_repo_profile = (
         None  # Captured after first model; reused by subsequent models
     )
+    cached_dag = None  # Built MerkleDAG shared across models (avoids re-hashing)
 
     try:
         # Use pool from manager (respects config file setting)
@@ -308,70 +395,13 @@ def _index_with_all_models(
 
         pool_config = get_model_pool_manager().get_pool_config()
         for model_key, model_name in pool_config.items():
-            # Apply VRAM tier selection for qwen3 (selects 0.6B/4B/8B based on available VRAM)
-            if model_key == "qwen3":
-                from search.vram_manager import VRAMTierManager
-
-                tier = VRAMTierManager().detect_tier()
-                model_name = tier.recommended_model
-                logger.info(f"VRAM tier '{tier.name}' detected: using {model_name}")
-
             logger.info(f"Indexing with model: {model_name} ({model_key})")
 
             # Switch to this model temporarily
-            config_mgr = SearchConfigManager()
-            config = config_mgr.load_config()
-            new_model_name = model_name
-            new_dimension = config.embedding.dimension
-
-            # Update dimension from registry
-            if model_name in MODEL_REGISTRY:
-                model_cfg = MODEL_REGISTRY[model_name]
-                # Use truncate_dim if MRL is enabled, otherwise use native dimension
-                new_dimension = model_cfg.get("truncate_dim") or model_cfg["dimension"]
-
-            # Only write to disk if something actually changed
-            if (
-                config.embedding.model_name != new_model_name
-                or config.embedding.dimension != new_dimension
-            ):
-                config.embedding.model_name = new_model_name
-                config.embedding.dimension = new_dimension
-                config_mgr.save_config(config)
-            else:
-                logger.info(
-                    f"Config already set to {new_model_name} ({new_dimension}d), skipping save"
-                )
-                config.embedding.model_name = new_model_name
-                config.embedding.dimension = new_dimension
-
-            # Invalidate global config cache to force reload from disk
-            from search import config as config_module
-
-            config_module._config_manager = None
-
-            # Invalidate ServiceLocator's cached config to ensure correct snapshot naming
-            from mcp_server.services import ServiceLocator
-
-            locator = ServiceLocator.instance()
-            locator.invalidate("config")  # Force config reload with new model settings
-
-            # Clear cached components including embedders to release GPU memory
-            state = get_state()
-            state.reset_for_model_switch()  # Clears embedders + index_manager + searcher
+            _switch_active_model(model_key, model_name)
 
             # Force garbage collection and GPU memory release
-            import gc
-
-            gc.collect()
-            try:
-                import torch
-
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    torch.cuda.synchronize()
-            except ImportError:
-                pass
+            _release_gpu_memory()
 
             # Get project storage for this model
             project_dir = get_project_storage_dir(
@@ -430,6 +460,7 @@ def _index_with_all_models(
                 include_dirs=include_dirs,
                 exclude_dirs=exclude_dirs,
                 precomputed_repo_profile=cached_repo_profile,
+                prebuilt_dag=cached_dag if not incremental else None,
             )
 
             start_time = datetime.now()
@@ -441,9 +472,11 @@ def _index_with_all_models(
                 )
             elapsed = (datetime.now() - start_time).total_seconds()
 
-            # Capture repo profile after first model pass to reuse for subsequent models
+            # Capture repo profile and built DAG after first model pass for reuse
             if cached_repo_profile is None:
                 cached_repo_profile = incremental_indexer.repo_profile
+            if cached_dag is None and not incremental:
+                cached_dag = incremental_indexer.built_dag
 
             results.append(
                 {
@@ -571,6 +604,7 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
     }
     # Only include snapshot count when non-zero (token optimization)
     if snapshots_cleared > 0:
+        # pyrefly: ignore [bad-typed-dict-key]
         result["snapshots_cleared"] = snapshots_cleared
     return result
 
@@ -698,12 +732,15 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
     }
     # Only include snapshot count when non-zero (token optimization)
     if deleted_snapshots > 0:
+        # pyrefly: ignore [bad-typed-dict-key]
         result["deleted_snapshots"] = deleted_snapshots
 
     if errors:
         result["errors"] = errors
+        # pyrefly: ignore [bad-typed-dict-key]
         result["queued_for_retry"] = len(errors)
         result["hint"] = (
+            # pyrefly: ignore [bad-typed-dict-key]
             "Some files couldn't be deleted (locked). They'll be retried on next server startup."
         )
 
@@ -746,10 +783,9 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
 
     # Step 1: Cleanup previous resources BEFORE starting indexing
     logger.info("[INDEX] Releasing previous resources before indexing...")
-    from mcp_server.resource_manager import ResourceManager
+    from mcp_server.resource_manager import _cleanup_previous_resources
 
-    resource_manager = ResourceManager()
-    resource_manager.cleanup_previous_resources()
+    _cleanup_previous_resources()
 
     directory_path = Path(directory_path).resolve()
     if not directory_path.exists():
@@ -782,10 +818,13 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
         # Don't fail indexing if accessibility check fails
         logger.debug(f"[ACCESSIBILITY] Check failed (non-critical): {e}")
 
-    # Check if project already exists and handle filter immutability
-    # First call without filters to check existence
-    project_dir = get_project_storage_dir(str(directory_path))
-    project_info_file = project_dir / "project_info.json"
+    # Check if project already exists and handle filter immutability.
+    # Use get_canonical_project_info() so filter reads work regardless of which
+    # model the current config default points to (prevents H1: null-overwrite when
+    # the config model's dir has no project_info.json but another model's dir does).
+    project_info_file = get_canonical_project_info(str(directory_path)) or (
+        get_project_storage_dir(str(directory_path)) / "project_info.json"
+    )
 
     # Load stored filters if project exists
     stored_include = None

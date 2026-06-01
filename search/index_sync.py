@@ -276,6 +276,7 @@ class IndexSynchronizer:
                     )
 
                 # Release reference to allow garbage collection
+                # pyrefly: ignore [bad-assignment]
                 self.dense_index = None
 
             # Force garbage collection to release file handles (Windows)

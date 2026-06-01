@@ -1,13 +1,16 @@
 """Configuration system for search modes and hybrid search features."""
 
+import dataclasses
 import json
 import logging
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 # Import DEFAULT_EDGE_WEIGHTS for ego-graph weighted BFS
 from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
+from search.config_paths import resolve_config_path
 
 
 # Model registry with specifications
@@ -15,8 +18,8 @@ from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
 # Maps model keys to full model names in MODEL_REGISTRY
 # Note: Using 0.6B variant for systems with limited VRAM (<18GB)
 MODEL_POOL_CONFIG = {
-    "qwen3": "Qwen/Qwen3-Embedding-0.6B",  # 2.3GB VRAM - lighter than 4B variant
-    "bge_code": "BAAI/bge-code-v1",  # SOTA Code Retrieval (CoIR 81.77)
+    "qwen3_0.6b": "Qwen/Qwen3-Embedding-0.6B",  # 1024d, ~1.1GB VRAM, MRR 0.94 on SSCG benchmark
+    "coderankembed": "nomic-ai/CodeRankEmbed",  # Code localization, function-level search (CoRNStack/ICLR 2025)
 }
 
 # Lightweight pool configuration for 8GB VRAM GPUs
@@ -24,6 +27,14 @@ MODEL_POOL_CONFIG = {
 MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED = {
     "gte_modernbert": "Alibaba-NLP/gte-modernbert-base",
     "bge_m3": "BAAI/bge-m3",
+}
+
+# Union of all known pool configs — used for cross-pool reverse lookups so that
+# an index built with one pool's model can still be identified when the active
+# pool changes.  Update this whenever a new pool dict is added.
+ALL_POOL_MODELS: dict[str, str] = {
+    **MODEL_POOL_CONFIG,
+    **MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED,
 }
 
 # MODEL_REGISTRY convention for ONNX support:
@@ -40,7 +51,7 @@ MODEL_REGISTRY = {
         "max_context": 2048,
         "passage_prefix": "Retrieval-document: ",
         "description": "Default model, fast and efficient",
-        "vram_gb": "4-8GB",
+        "vram_gb": "~1.2GB",  # 300M params @FP16 ≈0.6GB weights + buffers; original "4-8GB" was stale estimate
         "fallback_batch_size": 128,  # Used when dynamic sizing disabled
         "onnx_pooling": "mean",  # Gemma uses mean pooling
     },
@@ -79,6 +90,20 @@ MODEL_REGISTRY = {
         "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
         "prompt_name": "query",  # Alternative: use model's built-in prompt (generic)
     },
+    "Qwen/Qwen3-Embedding-4B": {
+        "dimension": 2560,
+        "max_context": 32768,
+        "description": "High-performance general model, MTEB code retrieval rank #3 (80.07)",
+        "vram_gb": "~10GB",
+        "fallback_batch_size": 16,
+        "vram_tier": "high",  # Requires 12GB+ GPU
+        "onnx_pooling": "mean",
+        "mrl_dimensions": [2560, 1024, 512, 256, 128, 64, 32],
+        "truncate_dim": None,
+        "instruction_mode": "custom",
+        "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
+        "prompt_name": "query",
+    },
     # Code-specific models (optimized for Python, C++, and programming languages)
     "nomic-ai/CodeRankEmbed": {
         "dimension": 768,
@@ -101,59 +126,20 @@ MODEL_REGISTRY = {
         "model_type": "code-optimized",
         "onnx_pooling": "cls",  # GTE-ModernBERT uses CLS pooling
     },
+    "jinaai/jina-embeddings-v5-text-small-retrieval": {
+        "dimension": 1024,
+        "max_context": 32768,
+        "description": "0.6B distilled from Qwen3-Embedding-4B; near-4B quality at 0.6B size (1.2-1.5GB VRAM)",
+        "vram_gb": "1.2-1.5GB",
+        "fallback_batch_size": 256,
+        "trust_remote_code": True,
+        # Last-token pooling: ONNX wrapper supports only cls/mean — gate ONNX off.
+        "onnx_supported": False,
+        "instruction_mode": "prompt_name",  # passes prompt_name="query" to encode for queries
+        "prompt_name": "query",
+        "passage_prefix": "",  # -retrieval task adapter merged in; no explicit doc prefix needed
+    },
 }
-
-
-def resolve_qwen3_variant_for_lookup(project_hash: str, project_name: str) -> str:
-    """Resolve actual Qwen3 variant indexed for a project.
-
-    Qwen3 uses the 0.6B variant.
-
-    This function checks which Qwen3 variant is actually indexed for the given
-    project and returns the correct full model name for directory lookup.
-
-    Args:
-        project_hash: Project hash for directory matching
-        project_name: Project name for directory matching
-
-    Returns:
-        Full model name of indexed Qwen3 variant ("Qwen/Qwen3-Embedding-0.6B"), or MODEL_POOL_CONFIG["qwen3"] if not found.
-
-    Example:
-        >>> resolve_qwen3_variant_for_lookup("abc123", "my-project")
-        "Qwen/Qwen3-Embedding-0.6B"  # If 0.6B variant is indexed
-    """
-    from pathlib import Path
-
-    storage_dir = Path.home() / ".claude_code_search" / "projects"
-
-    # Check for existing Qwen3 index
-    qwen_variants = [
-        ("Qwen/Qwen3-Embedding-0.6B", "qwen3-0.6b", 1024),
-    ]
-
-    for model_name, slug, dim in qwen_variants:
-        # Check for both hash variants (drive-agnostic and legacy)
-        pattern = f"{project_name}_{project_hash}_{slug}_{dim}d"
-        index_path = storage_dir / pattern / "index" / "code.index"
-        if index_path.exists():
-            logging.getLogger(__name__).debug(
-                f"[QWEN3_RESOLUTION] Found {model_name} index at {pattern}"
-            )
-            return model_name
-
-    # No index found → use VRAM-based selection for creation context
-    # (During search lookups, this will find existing index above)
-    # (During index creation, this selects correct variant for hardware)
-    from search.vram_manager import VRAMTierManager
-
-    tier = VRAMTierManager().detect_tier()
-    logger = logging.getLogger(__name__)
-
-    logger.debug(
-        f"[QWEN3_RESOLUTION] No Qwen3 index found, using VRAM tier '{tier.name}': {tier.recommended_model}"
-    )
-    return tier.recommended_model  # e.g., "Qwen/Qwen3-Embedding-0.6B"
 
 
 # Multi-hop search configuration
@@ -275,7 +261,7 @@ class RoutingConfig:
     """Multi-model routing settings (3 fields)."""
 
     multi_model_enabled: bool = True  # Enable intelligent query routing across models
-    default_model: str = "qwen3"  # Default model key for routing (best quality)
+    default_model: str = "qwen3_0.6b"  # Default model key for routing (best quality)
     multi_model_pool: str | None = (
         None  # Pool type: "full", "lightweight-speed", or "lightweight-accuracy"
     )
@@ -360,6 +346,14 @@ class ChunkingConfig:
     # Community-level summaries (B1: thematic grouping via Louvain communities)
     enable_community_summaries: bool = True  # Generate community-summary chunks
 
+    # Incremental community-summary refresh (subordinate to enable_community_summaries)
+    enable_incremental_community_summaries: bool = (
+        True  # Refresh stale community summaries on incremental index
+    )
+    incremental_community_redetect_threshold: float = (
+        0.3  # Cumulative changed-file fraction that triggers full redetect
+    )
+
     # Adaptive chunk sizing (research: P75 baseline + complexity modulation)
     sizing_mode: str = "fixed"  # "fixed" (static) or "adaptive" (repo-profiled)
     adaptive_multiplier_max: float = 1.3  # T_max = P75_baseline × this (low-complexity)
@@ -434,6 +428,32 @@ class GraphEnhancedConfig:
     centrality_boost_cap: float = 0.15  # Maximum boost added to blended_score
 
 
+@dataclass
+class ObservabilityConfig:
+    """OTel tracing configuration (traces-only v1; metrics deferred to v2)."""
+
+    enabled: bool = False
+    service_name: str = "claude-context-local"
+    exporter: str = "otlp"  # otlp | console(->stderr) | none
+    otlp_endpoint: str = "http://localhost:4318"
+    sample_ratio: float = 1.0
+    capture_query_text: bool = False  # off by default (query text can be sensitive)
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> None:
+    """Merge *override* into *base* in-place.
+
+    One level of nesting is sufficient for SearchConfig (sub-config dicts are flat).
+    Sub-config dicts are merged field-by-field so an override touching only a subset
+    of fields does not wipe out the rest.
+    """
+    for key, value in override.items():
+        if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+            base[key].update(value)
+        else:
+            base[key] = value
+
+
 class SearchConfig:
     """Root configuration with nested sub-configs.
 
@@ -459,6 +479,7 @@ class SearchConfig:
         ego_graph: EgoGraphConfig | None = None,
         parent_retrieval: ParentRetrievalConfig | None = None,
         graph_enhanced: GraphEnhancedConfig | None = None,
+        observability: ObservabilityConfig | None = None,
     ):
         """Initialize SearchConfig with nested sub-configs.
 
@@ -499,126 +520,213 @@ class SearchConfig:
         self.graph_enhanced = (
             graph_enhanced if graph_enhanced is not None else GraphEnhancedConfig()
         )
+        self.observability = (
+            observability if observability is not None else ObservabilityConfig()
+        )
+
+    # ------------------------------------------------------------------
+    # Serialization schema — single source of truth
+    # Adding a field to a sub-config dataclass is sufficient; no manual
+    # update of to_dict / from_dict is required.
+    # ------------------------------------------------------------------
+
+    _SUBCONFIG_FIELDS: tuple[str, ...] = (
+        "embedding",
+        "search_mode",
+        "performance",
+        "multi_hop",
+        "routing",
+        "intent",
+        "reranker",
+        "output",
+        "chunking",
+        "ego_graph",
+        "parent_retrieval",
+        "graph_enhanced",
+        "observability",
+    )
+
+    # frozenset for O(1) membership tests in _flat_to_nested / is_nested checks
+    _SUBCONFIG_NAMES: frozenset[str] = frozenset(_SUBCONFIG_FIELDS)
+
+    _SUBCONFIG_TYPES: dict[str, type] = {
+        "embedding": EmbeddingConfig,
+        "search_mode": SearchModeConfig,
+        "performance": PerformanceConfig,
+        "multi_hop": MultiHopConfig,
+        "routing": RoutingConfig,
+        "intent": IntentConfig,
+        "reranker": RerankerConfig,
+        "output": OutputConfig,
+        "chunking": ChunkingConfig,
+        "ego_graph": EgoGraphConfig,
+        "parent_retrieval": ParentRetrievalConfig,
+        "graph_enhanced": GraphEnhancedConfig,
+        "observability": ObservabilityConfig,
+    }
+
+    # Maps legacy flat config keys (and env-var flat keys) to
+    # (sub_config_name, field_name) in the nested schema.
+    # Used by _flat_to_nested() and by SearchConfigManager.load_config()
+    # to translate env overrides into the nested structure before merging.
+    _FLAT_KEY_ALIASES: dict[str, tuple[str, str]] = {
+        # EmbeddingConfig
+        "embedding_model_name": ("embedding", "model_name"),
+        "model_dimension": ("embedding", "dimension"),
+        "embedding_batch_size": ("embedding", "batch_size"),
+        "query_cache_size": ("embedding", "query_cache_size"),
+        "enable_import_context": ("embedding", "enable_import_context"),
+        "enable_class_context": ("embedding", "enable_class_context"),
+        "max_import_lines": ("embedding", "max_import_lines"),
+        "max_class_signature_lines": ("embedding", "max_class_signature_lines"),
+        "enable_structural_header": ("embedding", "enable_structural_header"),
+        # SearchModeConfig
+        "default_search_mode": ("search_mode", "default_mode"),
+        "enable_hybrid_search": ("search_mode", "enable_hybrid"),
+        "bm25_weight": ("search_mode", "bm25_weight"),
+        "dense_weight": ("search_mode", "dense_weight"),
+        "bm25_k_parameter": ("search_mode", "bm25_k_parameter"),
+        "bm25_use_stopwords": ("search_mode", "bm25_use_stopwords"),
+        "bm25_use_stemming": ("search_mode", "bm25_use_stemming"),
+        "min_bm25_score": ("search_mode", "min_bm25_score"),
+        "rrf_k_parameter": ("search_mode", "rrf_k_parameter"),
+        "enable_result_reranking": ("search_mode", "enable_result_reranking"),
+        "default_k": ("search_mode", "default_k"),
+        "max_k": ("search_mode", "max_k"),
+        # PerformanceConfig
+        "use_parallel_search": ("performance", "use_parallel_search"),
+        "max_parallel_workers": ("performance", "max_parallel_workers"),
+        "enable_parallel_chunking": ("performance", "enable_parallel_chunking"),
+        "max_chunking_workers": ("performance", "max_chunking_workers"),
+        "enable_entity_tracking": ("performance", "enable_entity_tracking"),
+        "prefer_gpu": ("performance", "prefer_gpu"),
+        "enable_fp16": ("performance", "enable_fp16"),
+        "prefer_bf16": ("performance", "prefer_bf16"),
+        "enable_dynamic_batch_size": ("performance", "enable_dynamic_batch_size"),
+        "dynamic_batch_min": ("performance", "dynamic_batch_min"),
+        "dynamic_batch_max": ("performance", "dynamic_batch_max"),
+        "enable_auto_reindex": ("performance", "enable_auto_reindex"),
+        "max_index_age_minutes": ("performance", "max_index_age_minutes"),
+        "use_onnx": ("performance", "use_onnx"),
+        "onnx_gpu_mem_limit": ("performance", "onnx_gpu_mem_limit"),
+        "allow_shared_memory": ("performance", "allow_ram_fallback"),  # backward-compat
+        # MultiHopConfig
+        "enable_multi_hop": ("multi_hop", "enabled"),
+        "multi_hop_count": ("multi_hop", "hop_count"),
+        "multi_hop_expansion": ("multi_hop", "expansion"),
+        "multi_hop_initial_k_multiplier": ("multi_hop", "initial_k_multiplier"),
+        "multi_hop_mode": ("multi_hop", "multi_hop_mode"),
+        # RoutingConfig
+        "multi_model_enabled": ("routing", "multi_model_enabled"),
+        "routing_default_model": ("routing", "default_model"),
+        "routing_multi_model_pool": ("routing", "multi_model_pool"),
+        # IntentConfig
+        "intent_enabled": ("intent", "enabled"),
+        "intent_confidence_threshold": ("intent", "confidence_threshold"),
+        "intent_default_intent": ("intent", "default_intent"),
+        "intent_log_classifications": ("intent", "log_classifications"),
+        "intent_semantic_enabled": ("intent", "semantic_enabled"),
+        "intent_semantic_weight": ("intent", "semantic_weight"),
+        # RerankerConfig
+        "reranker_enabled": ("reranker", "enabled"),
+        "reranker_model_name": ("reranker", "model_name"),
+        "reranker_top_k_candidates": ("reranker", "top_k_candidates"),
+        "reranker_min_vram_gb": ("reranker", "min_vram_gb"),
+        "reranker_batch_size": ("reranker", "batch_size"),
+        # OutputConfig
+        "output_format": ("output", "format"),
+        "source_order_output": ("output", "source_order_output"),
+        # ChunkingConfig (flat keys equal their field names for most)
+        "min_chunk_tokens": ("chunking", "min_chunk_tokens"),
+        "max_merged_tokens": ("chunking", "max_merged_tokens"),
+        "enable_large_node_splitting": ("chunking", "enable_large_node_splitting"),
+        "max_chunk_lines": ("chunking", "max_chunk_lines"),
+        "token_estimation": ("chunking", "token_estimation"),
+        "community_resolution": ("chunking", "community_resolution"),
+        "size_method": ("chunking", "size_method"),
+        "enable_community_detection": ("chunking", "enable_community_detection"),
+        "enable_community_merge": ("chunking", "enable_community_merge"),
+        "split_size_method": ("chunking", "split_size_method"),
+        "max_split_chars": ("chunking", "max_split_chars"),
+        "max_phantom_degree": ("chunking", "max_phantom_degree"),
+        # EgoGraphConfig
+        "ego_graph_enabled": ("ego_graph", "enabled"),
+        "ego_graph_k_hops": ("ego_graph", "k_hops"),
+        "ego_graph_max_neighbors_per_hop": ("ego_graph", "max_neighbors_per_hop"),
+        "ego_graph_relation_types": ("ego_graph", "relation_types"),
+        "ego_graph_include_anchor": ("ego_graph", "include_anchor"),
+        "ego_graph_deduplicate": ("ego_graph", "deduplicate"),
+        # GraphEnhancedConfig (flat keys equal their field names)
+        "centrality_method": ("graph_enhanced", "centrality_method"),
+        "centrality_alpha": ("graph_enhanced", "centrality_alpha"),
+        "centrality_annotation": ("graph_enhanced", "centrality_annotation"),
+        "centrality_reranking": ("graph_enhanced", "centrality_reranking"),
+        "enable_size_normalization": ("graph_enhanced", "enable_size_normalization"),
+        "size_norm_target_lines": ("graph_enhanced", "size_norm_target_lines"),
+        "size_norm_alpha": ("graph_enhanced", "size_norm_alpha"),
+        "centrality_bm25_boost": ("graph_enhanced", "centrality_bm25_boost"),
+        "centrality_boost_threshold": ("graph_enhanced", "centrality_boost_threshold"),
+        "centrality_boost_factor": ("graph_enhanced", "centrality_boost_factor"),
+        "centrality_boost_cap": ("graph_enhanced", "centrality_boost_cap"),
+        # ObservabilityConfig
+        "otel_enabled": ("observability", "enabled"),
+        "otel_service_name": ("observability", "service_name"),
+        "otel_exporter": ("observability", "exporter"),
+        "otel_endpoint": ("observability", "otlp_endpoint"),
+        "otel_sample_ratio": ("observability", "sample_ratio"),
+        "otel_capture_query_text": ("observability", "capture_query_text"),
+    }
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to nested dictionary for JSON serialization.
 
-        Returns nested structure matching the config class hierarchy.
-        Each sub-config becomes a nested object in the JSON output.
+        Uses dataclasses.asdict so every sub-config field is included automatically.
+        Adding a field to a sub-config dataclass requires no change here.
         """
         return {
-            "embedding": {
-                "model_name": self.embedding.model_name,
-                "dimension": self.embedding.dimension,
-                "batch_size": self.embedding.batch_size,
-                "query_cache_size": self.embedding.query_cache_size,
-                "enable_import_context": self.embedding.enable_import_context,
-                "enable_class_context": self.embedding.enable_class_context,
-                "max_import_lines": self.embedding.max_import_lines,
-                "max_class_signature_lines": self.embedding.max_class_signature_lines,
-                "enable_structural_header": self.embedding.enable_structural_header,
-            },
-            "search_mode": {
-                "default_mode": self.search_mode.default_mode,
-                "enable_hybrid": self.search_mode.enable_hybrid,
-                "bm25_weight": self.search_mode.bm25_weight,
-                "dense_weight": self.search_mode.dense_weight,
-                "bm25_k_parameter": self.search_mode.bm25_k_parameter,
-                "bm25_use_stopwords": self.search_mode.bm25_use_stopwords,
-                "bm25_use_stemming": self.search_mode.bm25_use_stemming,
-                "min_bm25_score": self.search_mode.min_bm25_score,
-                "rrf_k_parameter": self.search_mode.rrf_k_parameter,
-                "enable_result_reranking": self.search_mode.enable_result_reranking,
-                "default_k": self.search_mode.default_k,
-                "max_k": self.search_mode.max_k,
-            },
-            "performance": {
-                "use_parallel_search": self.performance.use_parallel_search,
-                "max_parallel_workers": self.performance.max_parallel_workers,
-                "enable_parallel_chunking": self.performance.enable_parallel_chunking,
-                "max_chunking_workers": self.performance.max_chunking_workers,
-                "enable_entity_tracking": self.performance.enable_entity_tracking,
-                "prefer_gpu": self.performance.prefer_gpu,
-                "vram_limit_fraction": self.performance.vram_limit_fraction,
-                "allow_ram_fallback": self.performance.allow_ram_fallback,
-                "enable_fp16": self.performance.enable_fp16,
-                "prefer_bf16": self.performance.prefer_bf16,
-                "enable_dynamic_batch_size": self.performance.enable_dynamic_batch_size,
-                "dynamic_batch_min": self.performance.dynamic_batch_min,
-                "dynamic_batch_max": self.performance.dynamic_batch_max,
-                "enable_auto_reindex": self.performance.enable_auto_reindex,
-                "max_index_age_minutes": self.performance.max_index_age_minutes,
-                "use_onnx": self.performance.use_onnx,
-                "onnx_gpu_mem_limit": self.performance.onnx_gpu_mem_limit,
-            },
-            "multi_hop": {
-                "enabled": self.multi_hop.enabled,
-                "hop_count": self.multi_hop.hop_count,
-                "expansion": self.multi_hop.expansion,
-                "initial_k_multiplier": self.multi_hop.initial_k_multiplier,
-                "multi_hop_mode": self.multi_hop.multi_hop_mode,
-            },
-            "routing": {
-                "multi_model_enabled": self.routing.multi_model_enabled,
-                "default_model": self.routing.default_model,
-                "multi_model_pool": self.routing.multi_model_pool,
-            },
-            "intent": {
-                "enabled": self.intent.enabled,
-                "confidence_threshold": self.intent.confidence_threshold,
-                "default_intent": self.intent.default_intent,
-                "log_classifications": self.intent.log_classifications,
-                "semantic_enabled": self.intent.semantic_enabled,
-                "semantic_weight": self.intent.semantic_weight,
-            },
-            "reranker": {
-                "enabled": self.reranker.enabled,
-                "model_name": self.reranker.model_name,
-                "top_k_candidates": self.reranker.top_k_candidates,
-                "min_vram_gb": self.reranker.min_vram_gb,
-                "batch_size": self.reranker.batch_size,
-            },
-            "output": {
-                "format": self.output.format,
-            },
-            "chunking": {
-                "min_chunk_tokens": self.chunking.min_chunk_tokens,
-                "max_merged_tokens": self.chunking.max_merged_tokens,
-                "enable_community_detection": self.chunking.enable_community_detection,
-                "enable_community_merge": self.chunking.enable_community_merge,
-                "community_resolution": self.chunking.community_resolution,
-                "enable_large_node_splitting": self.chunking.enable_large_node_splitting,
-                "max_chunk_lines": self.chunking.max_chunk_lines,
-                "token_estimation": self.chunking.token_estimation,
-                "size_method": self.chunking.size_method,
-                "split_size_method": self.chunking.split_size_method,
-                "max_split_chars": self.chunking.max_split_chars,
-                "enable_file_summaries": self.chunking.enable_file_summaries,
-                "enable_community_summaries": self.chunking.enable_community_summaries,
-                "sizing_mode": self.chunking.sizing_mode,
-                "adaptive_multiplier_max": self.chunking.adaptive_multiplier_max,
-                "adaptive_multiplier_min": self.chunking.adaptive_multiplier_min,
-                "max_complexity_cap": self.chunking.max_complexity_cap,
-                "max_phantom_degree": self.chunking.max_phantom_degree,
-            },
-            "ego_graph": {
-                "enabled": self.ego_graph.enabled,
-                "k_hops": self.ego_graph.k_hops,
-                "max_neighbors_per_hop": self.ego_graph.max_neighbors_per_hop,
-                "relation_types": self.ego_graph.relation_types,
-                "include_anchor": self.ego_graph.include_anchor,
-                "deduplicate": self.ego_graph.deduplicate,
-            },
-            "graph_enhanced": {
-                "centrality_method": self.graph_enhanced.centrality_method,
-                "centrality_alpha": self.graph_enhanced.centrality_alpha,
-                "centrality_annotation": self.graph_enhanced.centrality_annotation,
-                "centrality_reranking": self.graph_enhanced.centrality_reranking,
-                "enable_size_normalization": self.graph_enhanced.enable_size_normalization,
-                "size_norm_target_lines": self.graph_enhanced.size_norm_target_lines,
-                "size_norm_alpha": self.graph_enhanced.size_norm_alpha,
-            },
+            name: dataclasses.asdict(getattr(self, name))
+            for name in self._SUBCONFIG_FIELDS
         }
+
+    @staticmethod
+    def _build_subconfig(cls_type: type, data: dict[str, Any]) -> Any:
+        """Instantiate a sub-config dataclass from a dict, using dataclass defaults for
+        any missing keys.  Unknown keys are silently dropped (forward-compatible).
+        """
+        valid = {f.name for f in dataclasses.fields(cls_type)}
+        return cls_type(**{k: v for k, v in data.items() if k in valid})
+
+    @classmethod
+    def _flat_to_nested(cls, data: dict[str, Any]) -> dict[str, Any]:
+        """Translate a flat (legacy / env-var) key dict into the nested sub-config structure.
+
+        Only keys present in _FLAT_KEY_ALIASES are translated; unknown keys are dropped.
+        """
+        nested: dict[str, dict[str, Any]] = {}
+        for flat_key, value in data.items():
+            if flat_key in cls._FLAT_KEY_ALIASES:
+                sub_name, field_name = cls._FLAT_KEY_ALIASES[flat_key]
+                nested.setdefault(sub_name, {})[field_name] = value
+        return nested
+
+    @staticmethod
+    def _apply_model_registry_dimension(embedding_data: dict[str, Any]) -> None:
+        """Sync dimension (and optionally batch_size) from MODEL_REGISTRY in-place.
+
+        Extracted to avoid duplicating the auto-update logic across the two old
+        from_dict branches.
+        """
+        model_name = embedding_data.get("model_name")
+        if model_name:
+            model_config = get_model_config(model_name)
+            if model_config:
+                embedding_data["dimension"] = (
+                    model_config.get("truncate_dim") or model_config["dimension"]
+                )
+                if "batch_size" not in embedding_data:
+                    embedding_data["batch_size"] = model_config.get(
+                        "fallback_batch_size", 128
+                    )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "SearchConfig":
@@ -628,368 +736,50 @@ class SearchConfig:
         - Nested: {"embedding": {...}, "search_mode": {...}, ...}
         - Flat (legacy): {"embedding_model_name": "...", "default_search_mode": "...", ...}
 
+        Dataclass defaults are the single source of truth for missing keys — no
+        hard-coded fallback values in this method.  Adding a field to any sub-config
+        dataclass is sufficient; this method does not need to be updated.
+
         Args:
             data: Dictionary in either format
 
         Returns:
             SearchConfig with populated nested sub-configs
         """
-        # Detect format by checking for nested keys
-        is_nested = "embedding" in data and isinstance(data["embedding"], dict)
+        # Detect nested format: any key that is a sub-config section name with a dict
+        # value.  Checking all section names (not just "embedding") handles partial
+        # nested dicts produced by env-only loads or single-section overrides.
+        is_nested = any(
+            isinstance(v, dict) and k in cls._SUBCONFIG_NAMES for k, v in data.items()
+        )
 
         if is_nested:
-            # NEW: Nested format (v0.8.0+)
-            embedding_data = data.get("embedding", {})
-            search_mode_data = data.get("search_mode", {})
-            performance_data = data.get("performance", {})
-            multi_hop_data = data.get("multi_hop", {})
-            routing_data = data.get("routing", {})
-            intent_data = data.get("intent", {})
-            reranker_data = data.get("reranker", {})
-            output_data = data.get("output", {})
-            chunking_data = data.get("chunking", {})
-            ego_graph_data = data.get("ego_graph", {})
-            graph_enhanced_data = data.get("graph_enhanced", {})
-
-            # Auto-update dimension from model registry
-            if "model_name" in embedding_data:
-                model_config = get_model_config(embedding_data["model_name"])
-                if model_config:
-                    embedding_data["dimension"] = (
-                        model_config.get("truncate_dim") or model_config["dimension"]
-                    )
-                    if "batch_size" not in embedding_data:
-                        embedding_data["batch_size"] = model_config.get(
-                            "fallback_batch_size", 128
-                        )
-
-            embedding = EmbeddingConfig(
-                model_name=embedding_data.get(
-                    "model_name", "google/embeddinggemma-300m"
-                ),
-                dimension=embedding_data.get("dimension", 768),
-                batch_size=embedding_data.get("batch_size", 128),
-                query_cache_size=embedding_data.get("query_cache_size", 128),
-                enable_import_context=embedding_data.get("enable_import_context", True),
-                enable_class_context=embedding_data.get("enable_class_context", True),
-                max_import_lines=embedding_data.get("max_import_lines", 10),
-                max_class_signature_lines=embedding_data.get(
-                    "max_class_signature_lines", 5
-                ),
-                enable_structural_header=embedding_data.get(
-                    "enable_structural_header", True
-                ),
-            )
-
-            search_mode = SearchModeConfig(
-                default_mode=search_mode_data.get("default_mode", "hybrid"),
-                enable_hybrid=search_mode_data.get("enable_hybrid", True),
-                bm25_weight=search_mode_data.get("bm25_weight", 0.35),
-                dense_weight=search_mode_data.get("dense_weight", 0.65),
-                bm25_k_parameter=search_mode_data.get("bm25_k_parameter", 100),
-                bm25_use_stopwords=search_mode_data.get("bm25_use_stopwords", True),
-                bm25_use_stemming=search_mode_data.get("bm25_use_stemming", True),
-                min_bm25_score=search_mode_data.get("min_bm25_score", 0.1),
-                rrf_k_parameter=search_mode_data.get("rrf_k_parameter", 100),
-                enable_result_reranking=search_mode_data.get(
-                    "enable_result_reranking", True
-                ),
-                default_k=search_mode_data.get("default_k", 4),
-                max_k=search_mode_data.get("max_k", 50),
-            )
-
-            performance = PerformanceConfig(
-                use_parallel_search=performance_data.get("use_parallel_search", True),
-                max_parallel_workers=performance_data.get("max_parallel_workers", 2),
-                enable_parallel_chunking=performance_data.get(
-                    "enable_parallel_chunking", True
-                ),
-                max_chunking_workers=performance_data.get("max_chunking_workers", 4),
-                enable_entity_tracking=performance_data.get(
-                    "enable_entity_tracking", False
-                ),
-                prefer_gpu=performance_data.get("prefer_gpu", True),
-                vram_limit_fraction=performance_data.get("vram_limit_fraction", 0.80),
-                allow_ram_fallback=performance_data.get(
-                    "allow_ram_fallback",
-                    performance_data.get(
-                        "allow_shared_memory", False
-                    ),  # backward compat
-                ),
-                enable_fp16=performance_data.get("enable_fp16", True),
-                prefer_bf16=performance_data.get("prefer_bf16", True),
-                enable_dynamic_batch_size=performance_data.get(
-                    "enable_dynamic_batch_size", True
-                ),
-                dynamic_batch_min=performance_data.get("dynamic_batch_min", 32),
-                dynamic_batch_max=performance_data.get("dynamic_batch_max", 384),
-                enable_auto_reindex=performance_data.get("enable_auto_reindex", True),
-                max_index_age_minutes=performance_data.get(
-                    "max_index_age_minutes", 5.0
-                ),
-                use_onnx=performance_data.get("use_onnx", False),
-                onnx_gpu_mem_limit=performance_data.get("onnx_gpu_mem_limit", True),
-            )
-
-            multi_hop = MultiHopConfig(
-                enabled=multi_hop_data.get("enabled", True),
-                hop_count=multi_hop_data.get("hop_count", 2),
-                expansion=multi_hop_data.get("expansion", 0.3),
-                initial_k_multiplier=multi_hop_data.get("initial_k_multiplier", 2.0),
-                multi_hop_mode=multi_hop_data.get("multi_hop_mode", "hybrid"),
-            )
-
-            routing = RoutingConfig(
-                multi_model_enabled=routing_data.get("multi_model_enabled", True),
-                default_model=routing_data.get("default_model", "bge_code"),
-                multi_model_pool=routing_data.get("multi_model_pool", None),
-            )
-
-            intent = IntentConfig(
-                enabled=intent_data.get("enabled", True),
-                confidence_threshold=intent_data.get("confidence_threshold", 0.3),
-                default_intent=intent_data.get("default_intent", "HYBRID"),
-                log_classifications=intent_data.get("log_classifications", True),
-                semantic_enabled=intent_data.get("semantic_enabled", False),
-                semantic_weight=intent_data.get("semantic_weight", 0.3),
-            )
-
-            reranker = RerankerConfig(
-                enabled=reranker_data.get("enabled", True),
-                model_name=reranker_data.get("model_name", "BAAI/bge-reranker-v2-m3"),
-                top_k_candidates=reranker_data.get("top_k_candidates", 50),
-                min_vram_gb=reranker_data.get("min_vram_gb", 6.0),
-                batch_size=reranker_data.get("batch_size", 16),
-            )
-
-            output = OutputConfig(
-                format=output_data.get("format", "compact"),
-                source_order_output=output_data.get("source_order_output", True),
-            )
-
-            chunking = ChunkingConfig(
-                min_chunk_tokens=chunking_data.get("min_chunk_tokens", 50),
-                max_merged_tokens=chunking_data.get("max_merged_tokens", 400),
-                enable_large_node_splitting=chunking_data.get(
-                    "enable_large_node_splitting", True
-                ),
-                max_chunk_lines=chunking_data.get("max_chunk_lines", 100),
-                token_estimation=chunking_data.get("token_estimation", "whitespace"),
-                enable_community_detection=chunking_data.get(
-                    "enable_community_detection", True
-                ),
-                enable_community_merge=chunking_data.get(
-                    "enable_community_merge", True
-                ),
-                community_resolution=chunking_data.get("community_resolution", 1.0),
-                size_method=chunking_data.get("size_method", "tokens"),
-                split_size_method=chunking_data.get("split_size_method", "characters"),
-                max_split_chars=chunking_data.get("max_split_chars", 1600),
-                enable_file_summaries=chunking_data.get("enable_file_summaries", True),
-                enable_community_summaries=chunking_data.get(
-                    "enable_community_summaries", True
-                ),
-                sizing_mode=chunking_data.get("sizing_mode", "fixed"),
-                adaptive_multiplier_max=chunking_data.get(
-                    "adaptive_multiplier_max", 1.3
-                ),
-                adaptive_multiplier_min=chunking_data.get(
-                    "adaptive_multiplier_min", 0.5
-                ),
-                max_complexity_cap=chunking_data.get("max_complexity_cap", 30),
-                max_phantom_degree=chunking_data.get("max_phantom_degree", 20),
-            )
-
-            ego_graph = EgoGraphConfig(
-                enabled=ego_graph_data.get("enabled", False),
-                k_hops=ego_graph_data.get("k_hops", 2),
-                max_neighbors_per_hop=ego_graph_data.get("max_neighbors_per_hop", 10),
-                relation_types=ego_graph_data.get("relation_types"),
-                include_anchor=ego_graph_data.get("include_anchor", True),
-                deduplicate=ego_graph_data.get("deduplicate", True),
-            )
-
-            graph_enhanced = GraphEnhancedConfig(
-                centrality_method=graph_enhanced_data.get(
-                    "centrality_method", "pagerank"
-                ),
-                centrality_alpha=graph_enhanced_data.get("centrality_alpha", 0.3),
-                centrality_annotation=graph_enhanced_data.get(
-                    "centrality_annotation", True
-                ),
-                centrality_reranking=graph_enhanced_data.get(
-                    "centrality_reranking", True
-                ),
-                enable_size_normalization=graph_enhanced_data.get(
-                    "enable_size_normalization", True
-                ),
-                size_norm_target_lines=graph_enhanced_data.get(
-                    "size_norm_target_lines", 200
-                ),
-                size_norm_alpha=graph_enhanced_data.get("size_norm_alpha", 0.1),
-                centrality_bm25_boost=graph_enhanced_data.get(
-                    "centrality_bm25_boost", True
-                ),
-                centrality_boost_threshold=graph_enhanced_data.get(
-                    "centrality_boost_threshold", 0.02
-                ),
-                centrality_boost_factor=graph_enhanced_data.get(
-                    "centrality_boost_factor", 5.0
-                ),
-                centrality_boost_cap=graph_enhanced_data.get(
-                    "centrality_boost_cap", 0.15
-                ),
-            )
-
+            # Shallow-copy sub-dicts so we never mutate the caller's data
+            nested: dict[str, Any] = {
+                k: dict(v) if isinstance(v, dict) else v for k, v in data.items()
+            }
+            # Backward-compat: allow_shared_memory may appear inside the nested
+            # performance dict (pre-v0.8.0 configs that were partially upgraded).
+            perf = nested.get("performance")
+            if (
+                isinstance(perf, dict)
+                and "allow_shared_memory" in perf
+                and "allow_ram_fallback" not in perf
+            ):
+                perf["allow_ram_fallback"] = perf.pop("allow_shared_memory")
         else:
-            # LEGACY: Flat format (pre-v0.8.0) - backward compatibility
-            # Auto-update dimension and batch size if model is in registry
-            if "embedding_model_name" in data:
-                model_config = get_model_config(data["embedding_model_name"])
-                if model_config:
-                    data["model_dimension"] = (
-                        model_config.get("truncate_dim") or model_config["dimension"]
-                    )
-                    if "embedding_batch_size" not in data:
-                        data["embedding_batch_size"] = model_config.get(
-                            "fallback_batch_size", 128
-                        )
+            # LEGACY: Flat format (pre-v0.8.0) — translate via alias map
+            nested = cls._flat_to_nested(data)
 
-            embedding = EmbeddingConfig(
-                model_name=data.get(
-                    "embedding_model_name", "google/embeddinggemma-300m"
-                ),
-                dimension=data.get("model_dimension", 768),
-                batch_size=data.get("embedding_batch_size", 128),
-                query_cache_size=data.get("query_cache_size", 128),
-                enable_import_context=data.get("enable_import_context", True),
-                enable_class_context=data.get("enable_class_context", True),
-                max_import_lines=data.get("max_import_lines", 10),
-                max_class_signature_lines=data.get("max_class_signature_lines", 5),
-                enable_structural_header=data.get("enable_structural_header", True),
-            )
-
-            search_mode = SearchModeConfig(
-                default_mode=data.get("default_search_mode", "hybrid"),
-                enable_hybrid=data.get("enable_hybrid_search", True),
-                bm25_weight=data.get("bm25_weight", 0.35),
-                dense_weight=data.get("dense_weight", 0.65),
-                bm25_k_parameter=data.get("bm25_k_parameter", 100),
-                bm25_use_stopwords=data.get("bm25_use_stopwords", True),
-                bm25_use_stemming=data.get("bm25_use_stemming", True),
-                min_bm25_score=data.get("min_bm25_score", 0.1),
-                rrf_k_parameter=data.get("rrf_k_parameter", 100),
-                enable_result_reranking=data.get("enable_result_reranking", True),
-                default_k=data.get("default_k", 4),
-                max_k=data.get("max_k", 50),
-            )
-
-            performance = PerformanceConfig(
-                use_parallel_search=data.get("use_parallel_search", True),
-                max_parallel_workers=data.get("max_parallel_workers", 2),
-                enable_parallel_chunking=data.get("enable_parallel_chunking", True),
-                max_chunking_workers=data.get("max_chunking_workers", 4),
-                enable_entity_tracking=data.get("enable_entity_tracking", False),
-                prefer_gpu=data.get("prefer_gpu", True),
-                enable_fp16=data.get("enable_fp16", True),
-                prefer_bf16=data.get("prefer_bf16", True),
-                enable_dynamic_batch_size=data.get("enable_dynamic_batch_size", True),
-                dynamic_batch_min=data.get("dynamic_batch_min", 32),
-                dynamic_batch_max=data.get("dynamic_batch_max", 384),
-                enable_auto_reindex=data.get("enable_auto_reindex", True),
-                max_index_age_minutes=data.get("max_index_age_minutes", 5.0),
-                use_onnx=data.get("use_onnx", False),
-                onnx_gpu_mem_limit=data.get("onnx_gpu_mem_limit", True),
-            )
-
-            multi_hop = MultiHopConfig(
-                enabled=data.get("enable_multi_hop", True),
-                hop_count=data.get("multi_hop_count", 2),
-                expansion=data.get("multi_hop_expansion", 0.3),
-                initial_k_multiplier=data.get("multi_hop_initial_k_multiplier", 2.0),
-                multi_hop_mode=data.get("multi_hop_mode", "hybrid"),
-            )
-
-            routing = RoutingConfig(
-                multi_model_enabled=data.get("multi_model_enabled", True),
-                default_model=data.get("routing_default_model", "bge_code"),
-                multi_model_pool=data.get("routing_multi_model_pool"),
-            )
-
-            intent = IntentConfig(
-                enabled=data.get("intent_enabled", True),
-                confidence_threshold=data.get("intent_confidence_threshold", 0.3),
-                default_intent=data.get("intent_default_intent", "HYBRID"),
-                log_classifications=data.get("intent_log_classifications", True),
-                semantic_enabled=data.get("intent_semantic_enabled", False),
-                semantic_weight=data.get("intent_semantic_weight", 0.3),
-            )
-
-            reranker = RerankerConfig(
-                enabled=data.get("reranker_enabled", True),
-                model_name=data.get("reranker_model_name", "BAAI/bge-reranker-v2-m3"),
-                top_k_candidates=data.get("reranker_top_k_candidates", 50),
-                min_vram_gb=data.get("reranker_min_vram_gb", 6.0),
-                batch_size=data.get("reranker_batch_size", 16),
-            )
-
-            output = OutputConfig(
-                format=data.get("output_format", "compact"),
-                source_order_output=data.get("source_order_output", True),
-            )
-
-            chunking = ChunkingConfig(
-                min_chunk_tokens=data.get("min_chunk_tokens", 50),
-                max_merged_tokens=data.get("max_merged_tokens", 400),
-                enable_large_node_splitting=data.get(
-                    "enable_large_node_splitting", True
-                ),
-                max_chunk_lines=data.get("max_chunk_lines", 100),
-                token_estimation=data.get("token_estimation", "whitespace"),
-                community_resolution=data.get("community_resolution", 1.0),
-                size_method=data.get("size_method", "tokens"),
-                enable_community_detection=data.get("enable_community_detection", True),
-                enable_community_merge=data.get("enable_community_merge", True),
-                split_size_method=data.get("split_size_method", "characters"),
-                max_split_chars=data.get("max_split_chars", 1600),
-                max_phantom_degree=data.get("max_phantom_degree", 20),
-            )
-
-            ego_graph = EgoGraphConfig(
-                enabled=data.get("ego_graph_enabled", False),
-                k_hops=data.get("ego_graph_k_hops", 2),
-                max_neighbors_per_hop=data.get("ego_graph_max_neighbors_per_hop", 10),
-                relation_types=data.get("ego_graph_relation_types"),
-                include_anchor=data.get("ego_graph_include_anchor", True),
-                deduplicate=data.get("ego_graph_deduplicate", True),
-            )
-
-            graph_enhanced = GraphEnhancedConfig(
-                centrality_method=data.get("centrality_method", "pagerank"),
-                centrality_alpha=data.get("centrality_alpha", 0.3),
-                centrality_annotation=data.get("centrality_annotation", True),
-                centrality_reranking=data.get("centrality_reranking", True),
-                enable_size_normalization=data.get("enable_size_normalization", True),
-                size_norm_target_lines=data.get("size_norm_target_lines", 200),
-                size_norm_alpha=data.get("size_norm_alpha", 0.1),
-                centrality_bm25_boost=data.get("centrality_bm25_boost", True),
-                centrality_boost_threshold=data.get("centrality_boost_threshold", 0.02),
-                centrality_boost_factor=data.get("centrality_boost_factor", 5.0),
-                centrality_boost_cap=data.get("centrality_boost_cap", 0.15),
-            )
+        cls._apply_model_registry_dimension(nested.setdefault("embedding", {}))
 
         return cls(
-            embedding=embedding,
-            search_mode=search_mode,
-            performance=performance,
-            multi_hop=multi_hop,
-            routing=routing,
-            intent=intent,
-            reranker=reranker,
-            output=output,
-            chunking=chunking,
-            ego_graph=ego_graph,
-            graph_enhanced=graph_enhanced,
+            **{
+                name: cls._build_subconfig(
+                    cls._SUBCONFIG_TYPES[name], nested.get(name) or {}
+                )
+                for name in cls._SUBCONFIG_FIELDS
+            }
         )
 
 
@@ -1003,49 +793,50 @@ class SearchConfigManager:
         self._config_mtime: float | None = None  # Track file modification time
 
     def _get_default_config_path(self) -> str:
-        """Get default config file path."""
-        # Try common locations
-        candidates = [
-            "search_config.json",
-            ".search_config.json",
-            os.path.expanduser("~/.claude_code_search/search_config.json"),
-        ]
-
-        for candidate in candidates:
-            if os.path.exists(candidate):
-                return candidate
-
-        # Return first candidate as default
-        return candidates[0]
+        """Get default config file path (delegates to shared config_paths module)."""
+        return resolve_config_path()
 
     def load_config(self) -> SearchConfig:
         """Load configuration from file and environment variables."""
         # Check if file changed since last load
         current_mtime = None
-        if os.path.exists(self.config_file):
-            current_mtime = os.path.getmtime(self.config_file)
+        _config_path = Path(self.config_file)
+        if _config_path.exists():
+            current_mtime = _config_path.stat().st_mtime
 
         # Return cache only if file hasn't changed
         if self._config is not None and current_mtime == self._config_mtime:
             return self._config
 
         # Start with defaults
-        config_dict = {}
+        config_dict: dict[str, Any] = {}
 
         # Load from file if exists
-        if os.path.exists(self.config_file):
+        if _config_path.exists():
             try:
                 with open(self.config_file) as f:
-                    config_dict = json.load(f)
+                    raw = json.load(f)
                 self.logger.info(f"Loaded search config from {self.config_file}")
+                # Normalise to nested format so env overrides can be deep-merged
+                # without mixing flat and nested keys in a single dict.
+                file_is_nested = any(
+                    isinstance(v, dict) and k in SearchConfig._SUBCONFIG_NAMES
+                    for k, v in raw.items()
+                )
+                config_dict = (
+                    raw if file_is_nested else SearchConfig._flat_to_nested(raw)
+                )
             except Exception as e:
                 self.logger.warning(
                     f"Failed to load config file {self.config_file}: {e}"
                 )
 
-        # Override with environment variables
+        # Translate env-var flat keys to nested and deep-merge so they apply over
+        # a nested config file (previously the update() call was a no-op for nested
+        # files because the flat env keys were never read by the nested branch).
         env_overrides = self._load_from_environment()
-        config_dict.update(env_overrides)
+        env_nested = SearchConfig._flat_to_nested(env_overrides)
+        _deep_merge(config_dict, env_nested)
 
         # Create config object
         self._config = SearchConfig.from_dict(config_dict)
@@ -1111,6 +902,15 @@ class SearchConfigManager:
             "CLAUDE_RERANKER_TOP_K": ("reranker_top_k_candidates", int),
             "CLAUDE_RERANKER_MIN_VRAM_GB": ("reranker_min_vram_gb", float),
             "CLAUDE_RERANKER_BATCH_SIZE": ("reranker_batch_size", int),
+            # Observability (OTel tracing) env vars
+            "CLAUDE_OTEL_ENABLED": ("otel_enabled", self._bool_from_env),
+            "CLAUDE_OTEL_EXPORTER": ("otel_exporter", str),
+            "CLAUDE_OTEL_ENDPOINT": ("otel_endpoint", str),
+            "CLAUDE_OTEL_SAMPLE": ("otel_sample_ratio", float),
+            "CLAUDE_OTEL_CAPTURE_QUERY": (
+                "otel_capture_query_text",
+                self._bool_from_env,
+            ),
         }
 
         config_dict = {}
@@ -1118,6 +918,7 @@ class SearchConfigManager:
             env_value = os.environ.get(env_var)
             if env_value is not None:
                 try:
+                    # pyrefly: ignore [unsupported-operation]
                     config_dict[config_key] = converter(env_value)
                     self.logger.debug(
                         f"Set {config_key} = {config_dict[config_key]} from {env_var}"
@@ -1126,6 +927,20 @@ class SearchConfigManager:
                     self.logger.warning(
                         f"Invalid value for {env_var}: {env_value} ({e})"
                     )
+
+        # Auto-detect: if standard OTEL_* vars are present without CLAUDE_OTEL_ENABLED,
+        # treat as opted-in with OTLP (network exporter — never touches stdio).
+        if (
+            "CLAUDE_OTEL_ENABLED" not in os.environ
+            and "otel_enabled" not in config_dict
+            and any(k.startswith("OTEL_") for k in os.environ)
+        ):
+            config_dict["otel_enabled"] = True
+            if "otel_exporter" not in config_dict:
+                config_dict["otel_exporter"] = "otlp"
+            self.logger.info(
+                "[OTEL] Auto-detected OTEL_* env vars — enabling OTLP tracing"
+            )
 
         return config_dict
 
@@ -1144,10 +959,8 @@ class SearchConfigManager:
                     model_config.get("truncate_dim") or model_config["dimension"]
                 )
 
-            # Create directory if needed (only if not current directory)
-            config_dir = os.path.dirname(self.config_file)
-            if config_dir:  # Only create if not empty (not current directory)
-                os.makedirs(config_dir, exist_ok=True)
+            # Create directory if needed (pathlib handles the current-dir no-op case)
+            Path(self.config_file).parent.mkdir(parents=True, exist_ok=True)
 
             # ATOMIC WRITE: Write to temp file first, then rename
             # This prevents data loss if exception occurs during write
@@ -1166,13 +979,15 @@ class SearchConfigManager:
 
             self.logger.info(f"Saved search config to {self.config_file}")
             self._config = config  # Update cached config
+            # Sync mtime so the next load_config() short-circuits to the cache
+            # instead of re-reading and re-parsing the file we just wrote.
+            self._config_mtime = Path(self.config_file).stat().st_mtime
 
         except Exception as e:
             self.logger.error(f"Failed to save config to {self.config_file}: {e}")
             # Clean up temp file if it exists
             temp_file = self.config_file + ".tmp"
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
+            Path(temp_file).unlink(missing_ok=True)
             raise  # Re-raise so caller knows save failed
 
     def get_search_mode_for_query(
@@ -1287,22 +1102,3 @@ def get_model_slug(model_name: str) -> str:
     slug = slug.strip("-")
 
     return slug
-
-
-# Register SearchConfigManager with ServiceLocator for dependency injection
-# This allows flexible dependency resolution
-def _register_with_service_locator() -> None:
-    """Register SearchConfig with ServiceLocator on module import."""
-    try:
-        from mcp_server.services import ServiceLocator
-
-        locator = ServiceLocator.instance()
-        # Register factory for lazy loading
-        locator.register_factory("config", get_search_config)
-    except ImportError:
-        # ServiceLocator not yet available (during early initialization)
-        pass
-
-
-# Auto-register on module import
-_register_with_service_locator()

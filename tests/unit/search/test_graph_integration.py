@@ -275,6 +275,238 @@ class TestGraphIntegration(TestCase):
         # Disambiguation should NOT activate (would return None in real code)
 
 
+class TestFromStorage(TestCase):
+    """Tests for GraphIntegration.from_storage classmethod."""
+
+    def test_from_storage_wraps_existing_storage(self):
+        """from_storage should expose the passed storage as .storage."""
+        mock_storage = Mock()
+        mock_storage.__len__ = Mock(return_value=5)
+
+        graph = GraphIntegration.from_storage(mock_storage)
+
+        self.assertIs(graph.storage, mock_storage)
+        self.assertTrue(graph.is_available)
+        self.assertEqual(len(graph), 5)
+
+    def test_from_storage_none(self):
+        """from_storage(None) should yield an instance with storage=None."""
+        graph = GraphIntegration.from_storage(None)
+
+        self.assertIsNone(graph.storage)
+        self.assertFalse(graph.is_available)
+        self.assertEqual(graph.node_count, 0)
+
+    def test_from_storage_independent_of_init(self):
+        """from_storage should not call CodeGraphStorage constructor."""
+        with patch("search.graph_integration.CodeGraphStorage") as mock_cls:
+            mock_storage = Mock()
+            GraphIntegration.from_storage(mock_storage)
+            mock_cls.assert_not_called()
+
+
+def _make_result(
+    chunk_id: str,
+    chunk_type: str = "function",
+    name: str = "foo",
+    parent_name: str | None = None,
+    calls: list | None = None,
+    relationships: list | None = None,
+    file_path: str = "src/module.py",
+) -> Mock:
+    """Build a mock EmbeddingResult for testing populate_from_embeddings."""
+    result = Mock()
+    result.chunk_id = chunk_id
+    result.metadata = {
+        "chunk_type": chunk_type,
+        "name": name,
+        "parent_name": parent_name,
+        "file_path": file_path,
+        "language": "python",
+        "calls": calls or [],
+        "relationships": relationships or [],
+    }
+    return result
+
+
+class TestPopulateFromEmbeddings(TestCase):
+    """Tests for GraphIntegration.populate_from_embeddings."""
+
+    def _make_graph(self) -> tuple[GraphIntegration, Mock]:
+        storage = Mock()
+        storage.__len__ = Mock(return_value=0)
+        graph = GraphIntegration.from_storage(storage)
+        return graph, storage
+
+    def test_no_storage_is_noop(self):
+        """populate_from_embeddings on a None-storage instance should be silent."""
+        graph = GraphIntegration.from_storage(None)
+        result = _make_result("f.py:1-5:function:foo")
+        graph.populate_from_embeddings([result])  # must not raise
+
+    def test_empty_list_is_noop(self):
+        """Empty embedding_results list should not touch storage."""
+        graph, storage = self._make_graph()
+        graph.populate_from_embeddings([])
+        storage.add_node.assert_not_called()
+        storage.add_call_edge.assert_not_called()
+
+    def test_nodes_added_for_semantic_types(self):
+        """Only semantic-type chunks get nodes; non-semantic types are skipped."""
+        graph, storage = self._make_graph()
+
+        semantic = _make_result(
+            "f.py:1-5:function:do_thing", chunk_type="function", name="do_thing"
+        )
+        non_semantic = _make_result("f.py:6-8:module:f", chunk_type="module")
+
+        graph.populate_from_embeddings([semantic, non_semantic])
+
+        # Exactly one node added (the function, not the module)
+        storage.add_node.assert_called_once_with(
+            chunk_id="f.py:1-5:function:do_thing",
+            name="do_thing",
+            chunk_type="function",
+            file_path="src/module.py",
+            language="python",
+        )
+
+    def test_unique_call_target_resolved(self):
+        """A callee whose name maps to exactly one chunk_id resolves with is_resolved=True."""
+        graph, storage = self._make_graph()
+
+        callee = _make_result("f.py:10-15:function:helper", name="helper")
+        caller = _make_result(
+            "f.py:20-30:function:main",
+            name="main",
+            calls=[
+                {"callee_name": "helper", "line_number": 25, "is_method_call": False}
+            ],
+        )
+
+        graph.populate_from_embeddings([callee, caller])
+
+        call_args = storage.add_call_edge.call_args_list
+        assert len(call_args) == 1
+        kwargs = call_args[0].kwargs
+        self.assertEqual(kwargs["callee_name"], "f.py:10-15:function:helper")
+        self.assertTrue(kwargs["is_resolved"])
+
+    def test_common_method_name_stays_phantom(self):
+        """Calls to common method builtins (get, join, append) must NOT resolve
+        even when a project symbol of the same name exists in the batch.
+        This is the divergence the inline copy had: it lacked _resolve_call_target's
+        common-method filter and would mis-resolve these names."""
+        graph, storage = self._make_graph()
+
+        # A project function named "get" exists in the batch
+        project_get = _make_result("f.py:1-5:function:get", name="get")
+        # A caller that calls "get" (the common dict method)
+        caller = _make_result(
+            "f.py:10-20:function:process",
+            name="process",
+            calls=[{"callee_name": "get", "line_number": 15, "is_method_call": True}],
+        )
+
+        graph.populate_from_embeddings([project_get, caller])
+
+        call_args = storage.add_call_edge.call_args_list
+        assert len(call_args) == 1
+        kwargs = call_args[0].kwargs
+        # Must NOT be resolved to the project "get" function
+        self.assertEqual(kwargs["callee_name"], "get")
+        self.assertFalse(kwargs["is_resolved"])
+
+    def test_qualified_parent_name_resolves_intra_class_calls(self):
+        """Calls to 'ClassName.method' should resolve via the qualified-name index
+        that populate_from_embeddings builds. The inline copy lacked this indexing
+        and would leave intra-class self.method() calls as phantom."""
+        graph, storage = self._make_graph()
+
+        method = _make_result(
+            "c.py:10-20:method:MyClass.process",
+            chunk_type="method",
+            name="process",
+            parent_name="MyClass",
+        )
+        caller = _make_result(
+            "c.py:30-40:method:MyClass.run",
+            chunk_type="method",
+            name="run",
+            parent_name="MyClass",
+            calls=[
+                {
+                    "callee_name": "MyClass.process",
+                    "line_number": 35,
+                    "is_method_call": True,
+                }
+            ],
+        )
+
+        graph.populate_from_embeddings([method, caller])
+
+        call_args = storage.add_call_edge.call_args_list
+        assert len(call_args) == 1
+        kwargs = call_args[0].kwargs
+        self.assertEqual(kwargs["callee_name"], "c.py:10-20:method:MyClass.process")
+        self.assertTrue(kwargs["is_resolved"])
+
+    def test_relationship_edges_added(self):
+        """Relationship edges in metadata should be forwarded to add_relationship_edge."""
+        graph, storage = self._make_graph()
+
+        result = _make_result(
+            "child.py:1-10:class:Child",
+            chunk_type="class",
+            name="Child",
+            relationships=[
+                {
+                    "source_id": "child.py:1-10:class:Child",
+                    "target_name": "Base",
+                    "relationship_type": "inherits",
+                    "line_number": 1,
+                    "confidence": 1.0,
+                    "metadata": {},
+                }
+            ],
+        )
+
+        graph.populate_from_embeddings([result])
+        storage.add_relationship_edge.assert_called_once()
+
+    def test_ambiguous_same_file_preferred(self):
+        """When two candidates share a name, the one in the caller's file is preferred."""
+        graph, storage = self._make_graph()
+
+        local_helper = _make_result(
+            "src/module.py:1-5:function:helper",
+            name="helper",
+            file_path="src/module.py",
+        )
+        other_helper = _make_result(
+            "src/other.py:10-15:function:helper",
+            name="helper",
+            file_path="src/other.py",
+        )
+        caller = _make_result(
+            "src/module.py:20-30:function:main",
+            name="main",
+            file_path="src/module.py",
+            calls=[
+                {"callee_name": "helper", "line_number": 25, "is_method_call": False}
+            ],
+        )
+
+        graph.populate_from_embeddings([local_helper, other_helper, caller])
+
+        call_args = storage.add_call_edge.call_args_list
+        assert len(call_args) == 1
+        kwargs = call_args[0].kwargs
+        # Same-file preference: resolves to local_helper, not other_helper
+        self.assertEqual(kwargs["callee_name"], "src/module.py:1-5:function:helper")
+        self.assertTrue(kwargs["is_resolved"])
+
+
 if __name__ == "__main__":
     import pytest
 

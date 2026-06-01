@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 
 if TYPE_CHECKING:
-    from graph.call_graph_extractor import CallEdge
+    from chunking.relationships.call_graph_extractor import CallEdge
 
 
 @dataclass(slots=True)

@@ -174,6 +174,24 @@ class TestMerkleDAG(TestCase):
         # Regular files should be present
         assert "README.md" in all_files
 
+    def test_logs_directory_is_ignored(self):
+        """logs/ must be excluded so a growing mcp_server.log inside the indexed project
+        does not flip the Merkle hash and trigger spurious incremental re-indexing."""
+        self.create_test_files()
+
+        (self.test_path / "logs").mkdir()
+        (self.test_path / "logs" / "mcp_server.log").write_text("server log content")
+
+        dag = MerkleDAG(self.temp_dir)
+        dag.build()
+
+        all_files = dag.get_all_files()
+
+        assert not any("logs" in f for f in all_files), (
+            f"logs/ should be excluded from DAG, but found: "
+            f"{[f for f in all_files if 'logs' in f]}"
+        )
+
     def test_dag_serialization(self):
         """Test DAG to/from dict conversion."""
         self.create_test_files()
@@ -533,6 +551,104 @@ class TestChangeDetector(TestCase):
         assert current_dag.directory_filter.exclude_dirs == ["tests"], (
             "Exclude dirs should be inherited from snapshot"
         )
+
+    def test_supported_extensions_propagated_to_built_dag(self):
+        """ChangeDetector should pass supported_extensions through to the DAG it
+        builds, so stat-based hashing applies to non-code files during
+        incremental change detection."""
+        supported = {".py"}
+        detector = ChangeDetector(self.snapshot_manager, supported_extensions=supported)
+
+        # No prior snapshot → treats every file as added but still builds a
+        # live DAG whose supported_extensions matches what we passed in.
+        _, current_dag = detector.detect_changes_from_snapshot(str(self.test_path))
+
+        assert current_dag.supported_extensions == supported
+
+    def test_incremental_consistent_with_new_scheme_snapshot(self):
+        """Regression for the 'Modified: 1076' bug: when the stored snapshot
+        was built with supported_extensions set (stat-based hashing for
+        non-code assets), the incremental change-detection DAG must use the
+        same scheme, otherwise every non-code file gets mis-classified as
+        modified on every incremental run."""
+        # Add a binary-ish asset the indexer won't chunk.
+        (self.test_path / "asset.bin").write_bytes(b"\x00\x01" * 1024)
+
+        supported = {".py"}
+
+        # Snapshot built with the new (extension-aware) scheme.
+        initial_dag = MerkleDAG(str(self.test_path), supported_extensions=supported)
+        initial_dag.build()
+        self.snapshot_manager.save_snapshot(initial_dag)
+
+        # Now run change detection. With supported_extensions threaded through,
+        # the asset should match and not show up as modified.
+        detector = ChangeDetector(self.snapshot_manager, supported_extensions=supported)
+        changes, _ = detector.detect_changes_from_snapshot(str(self.test_path))
+
+        assert not changes.has_changes(), (
+            f"Expected clean diff, but got "
+            f"added={changes.added}, modified={changes.modified}, "
+            f"removed={changes.removed}. The DAG built during change "
+            f"detection is using a different hash scheme than the snapshot."
+        )
+
+
+class TestSnapshotManagerStorageDir:
+    """Verify SnapshotManager storage_dir defaulting and explicit-arg behavior."""
+
+    def test_explicit_storage_dir_used(self, tmp_path: Path) -> None:
+        sm = SnapshotManager(storage_dir=tmp_path)
+        assert sm.storage_dir == tmp_path
+        assert sm.storage_dir.exists()
+
+    def test_default_is_merkle_subdir_of_get_storage_dir(self, tmp_path: Path) -> None:
+        """Default storage_dir must be get_storage_dir() / 'merkle', not hardcoded home."""
+
+        fake_storage = tmp_path / "fake_storage"
+        fake_storage.mkdir()
+
+        # Patch the lazy import path inside __init__
+        import types
+
+        fake_module = types.ModuleType("mcp_server.storage_manager")
+        fake_module.get_storage_dir = lambda: fake_storage  # type: ignore[attr-defined]
+
+        import sys
+
+        orig = sys.modules.get("mcp_server.storage_manager")
+        sys.modules["mcp_server.storage_manager"] = fake_module
+        try:
+            sm = SnapshotManager()
+        finally:
+            if orig is None:
+                del sys.modules["mcp_server.storage_manager"]
+            else:
+                sys.modules["mcp_server.storage_manager"] = orig
+
+        assert sm.storage_dir == fake_storage / "merkle"
+
+    def test_default_without_storage_manager_falls_back(self) -> None:
+        """If mcp_server.storage_manager can't be imported, falls back to ~/.claude_code_search/merkle."""
+        import sys
+        import types
+
+        # Replace mcp_server.storage_manager with a module whose get_storage_dir raises
+        broken = types.ModuleType("mcp_server.storage_manager")
+        broken.get_storage_dir = None  # type: ignore[attr-defined]  # will raise TypeError on call
+
+        orig = sys.modules.get("mcp_server.storage_manager")
+        sys.modules["mcp_server.storage_manager"] = broken
+        try:
+            sm = SnapshotManager()
+        finally:
+            if orig is None:
+                del sys.modules["mcp_server.storage_manager"]
+            else:
+                sys.modules["mcp_server.storage_manager"] = orig
+
+        expected = Path.home() / ".claude_code_search" / "merkle"
+        assert sm.storage_dir == expected
 
 
 if __name__ == "__main__":

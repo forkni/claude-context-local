@@ -226,6 +226,7 @@ class FaissVectorIndex:
 
         try:
             self._logger.info(f"Loading existing index from {self.index_path}")
+            # pyrefly: ignore [missing-attribute]
             self._index = faiss.read_index(str(self.index_path))
 
             # Validate index dimension matches current model (if embedder provided)
@@ -259,6 +260,8 @@ class FaissVectorIndex:
             self.move_to_gpu()
 
             # Load chunk IDs
+            # SECURITY: pickle.load is safe here — chunk_id_path lives under
+            # ~/.claude_code_search/ which is exclusively written by this process.
             if self.chunk_id_path.exists():
                 with open(self.chunk_id_path, "rb") as f:
                     self._chunk_ids = pickle.load(f)
@@ -290,7 +293,7 @@ class FaissVectorIndex:
             return True
 
         except (OSError, RuntimeError) as e:
-            self._logger.error(f"Failed to load index: {e}")
+            self._logger.error(f"Failed to load index: {e}", exc_info=True)
             self._index = None
             self._chunk_ids = []
             return False
@@ -306,6 +309,7 @@ class FaissVectorIndex:
             # If on GPU, convert to CPU before saving
             if self._on_gpu and hasattr(faiss, "index_gpu_to_cpu"):
                 index_to_write = faiss.index_gpu_to_cpu(self._index)
+            # pyrefly: ignore [missing-attribute]
             faiss.write_index(index_to_write, str(self.index_path))
             self._logger.info(f"Saved index to {self.index_path}")
         except (OSError, RuntimeError) as e:
@@ -313,7 +317,9 @@ class FaissVectorIndex:
                 f"Failed to save GPU index directly, attempting CPU fallback: {e}"
             )
             try:
+                # pyrefly: ignore [missing-attribute]
                 cpu_index = faiss.index_gpu_to_cpu(self._index)
+                # pyrefly: ignore [missing-attribute]
                 faiss.write_index(cpu_index, str(self.index_path))
                 self._logger.info(f"Saved index to {self.index_path} (CPU fallback)")
             except (OSError, RuntimeError) as e2:
@@ -384,6 +390,7 @@ class FaissVectorIndex:
             )
 
         # Normalize embeddings for cosine similarity
+        # pyrefly: ignore [missing-attribute]
         faiss.normalize_L2(embeddings)
 
         # Train index if needed (for IVF indexes)
@@ -432,6 +439,7 @@ class FaissVectorIndex:
             )
 
         query = query.copy()  # normalize_L2 is in-place
+        # pyrefly: ignore [missing-attribute]
         faiss.normalize_L2(query)
 
         distances, indices = self._index.search(query, k)
@@ -531,6 +539,7 @@ class FaissVectorIndex:
 
         try:
             # Move index to all GPUs for faster add/search
+            # pyrefly: ignore [missing-attribute]
             self._index = faiss.index_cpu_to_all_gpus(self._index)
             self._on_gpu = True
             self._logger.info("FAISS index moved to GPU(s)")
@@ -551,6 +560,7 @@ class FaissVectorIndex:
             return False
 
         try:
+            # pyrefly: ignore [missing-attribute]
             self._index = faiss.index_gpu_to_cpu(self._index)
             self._on_gpu = False
             self._logger.info("FAISS index moved to CPU")

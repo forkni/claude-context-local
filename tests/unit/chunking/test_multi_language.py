@@ -1,7 +1,7 @@
 """Basic tests for multi-language chunking."""
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -40,16 +40,11 @@ class TestMultiLanguageChunker:
 
     def test_chunk_python_file(self, chunker, test_data_dir):
         """Test chunking Python file."""
-        from mcp_server.services import ServiceLocator
-
         # Use default config for basic chunking behavior
         mock_config = MagicMock()
         mock_config.chunking = ChunkingConfig()
 
-        locator = ServiceLocator.instance()
-        locator.register("config", mock_config)
-
-        try:
+        with patch("search.config.get_search_config", return_value=mock_config):
             file_path = test_data_dir / "example.py"
             chunks = chunker.chunk_file(str(file_path))
 
@@ -58,21 +53,14 @@ class TestMultiLanguageChunker:
             chunk_types = {chunk.chunk_type for chunk in chunks}
             assert "function" in chunk_types or "method" in chunk_types
             assert "class" in chunk_types
-        finally:
-            ServiceLocator.reset()
 
     def test_chunk_javascript_file(self, chunker, test_data_dir):
         """Test chunking JavaScript file."""
-        from mcp_server.services import ServiceLocator
-
         # Use default config for basic chunking behavior
         mock_config = MagicMock()
         mock_config.chunking = ChunkingConfig()
 
-        locator = ServiceLocator.instance()
-        locator.register("config", mock_config)
-
-        try:
+        with patch("search.config.get_search_config", return_value=mock_config):
             file_path = test_data_dir / "example.js"
             chunks = chunker.chunk_file(str(file_path))
 
@@ -81,21 +69,14 @@ class TestMultiLanguageChunker:
             chunk_names = {chunk.name for chunk in chunks if chunk.name}
             assert "calculateSum" in chunk_names
             assert "Calculator" in chunk_names
-        finally:
-            ServiceLocator.reset()
 
     def test_chunk_typescript_file(self, chunker, test_data_dir):
         """Test chunking TypeScript file."""
-        from mcp_server.services import ServiceLocator
-
         # Use default config for basic chunking behavior
         mock_config = MagicMock()
         mock_config.chunking = ChunkingConfig()
 
-        locator = ServiceLocator.instance()
-        locator.register("config", mock_config)
-
-        try:
+        with patch("search.config.get_search_config", return_value=mock_config):
             file_path = test_data_dir / "example.ts"
             chunks = chunker.chunk_file(str(file_path))
 
@@ -103,21 +84,14 @@ class TestMultiLanguageChunker:
             # Should find interface, class, and functions
             chunk_types = {chunk.chunk_type for chunk in chunks}
             assert any(t in chunk_types for t in ["class", "interface", "function"])
-        finally:
-            ServiceLocator.reset()
 
     def test_chunk_tsx_file(self, chunker, test_data_dir):
         """Test chunking TSX file."""
-        from mcp_server.services import ServiceLocator
-
         # Use default config for basic chunking behavior
         mock_config = MagicMock()
         mock_config.chunking = ChunkingConfig()
 
-        locator = ServiceLocator.instance()
-        locator.register("config", mock_config)
-
-        try:
+        with patch("search.config.get_search_config", return_value=mock_config):
             file_path = test_data_dir / "Component.tsx"
             chunks = chunker.chunk_file(str(file_path))
 
@@ -125,21 +99,14 @@ class TestMultiLanguageChunker:
             # Should find TypeScript React components
             chunk_names = {chunk.name for chunk in chunks if chunk.name}
             assert any(name in chunk_names for name in ["TypedCounter", "UserList"])
-        finally:
-            ServiceLocator.reset()
 
     def test_chunk_go_file(self, chunker, test_data_dir):
         """Test chunking Go file."""
-        from mcp_server.services import ServiceLocator
-
         # Use default config for basic chunking behavior
         mock_config = MagicMock()
         mock_config.chunking = ChunkingConfig()
 
-        locator = ServiceLocator.instance()
-        locator.register("config", mock_config)
-
-        try:
+        with patch("search.config.get_search_config", return_value=mock_config):
             file_path = test_data_dir / "calculator.go"
             chunks = chunker.chunk_file(str(file_path))
 
@@ -160,8 +127,6 @@ class TestMultiLanguageChunker:
                 )
                 or len(chunks) > 0
             )
-        finally:
-            ServiceLocator.reset()
 
     def test_chunk_c_file(self, chunker, test_data_dir):
         """Test chunking C file."""
@@ -204,16 +169,11 @@ class TestMultiLanguageChunker:
 
     def test_chunk_rust_file(self, chunker, test_data_dir):
         """Test chunking Rust file."""
-        from mcp_server.services import ServiceLocator
-
         # Use default config for basic chunking behavior
         mock_config = MagicMock()
         mock_config.chunking = ChunkingConfig()
 
-        locator = ServiceLocator.instance()
-        locator.register("config", mock_config)
-
-        try:
+        with patch("search.config.get_search_config", return_value=mock_config):
             file_path = test_data_dir / "calculator.rs"
             chunks = chunker.chunk_file(str(file_path))
 
@@ -236,5 +196,3 @@ class TestMultiLanguageChunker:
                 t in chunk_types
                 for t in ["function", "struct", "trait", "enum", "impl", "macro"]
             )
-        finally:
-            ServiceLocator.reset()
