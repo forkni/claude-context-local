@@ -460,3 +460,118 @@ class TestCodeGraphStorage:
         assert "edges" in data  # NetworkX 3.6+ uses "edges" for edges
         assert "directed" in data
         assert data["directed"] is True
+
+    # ------------------------------------------------------------------
+    # Fix 3: remove_file_nodes — graph prune on incremental reindex
+    # ------------------------------------------------------------------
+
+    def test_remove_file_nodes_removes_matching_nodes(self, graph_storage):
+        """Nodes whose chunk_id starts with 'file_path:' are removed."""
+        graph_storage.add_node(
+            "src/auth.py:10-20:method:Auth.login", "login", "method", "src/auth.py"
+        )
+        graph_storage.add_node(
+            "src/auth.py:30-40:function:hash_pw", "hash_pw", "function", "src/auth.py"
+        )
+        graph_storage.add_node(
+            "src/utils.py:1-10:function:helper", "helper", "function", "src/utils.py"
+        )
+
+        removed = graph_storage.remove_file_nodes("src/auth.py")
+
+        assert removed == 2
+        assert len(graph_storage) == 1
+        assert "src/utils.py:1-10:function:helper" in graph_storage
+
+    def test_remove_file_nodes_cleans_name_index(self, graph_storage):
+        """_name_index entries for removed nodes are pruned."""
+        graph_storage.add_node(
+            "src/auth.py:10-20:method:Auth.login", "login", "method", "src/auth.py"
+        )
+        graph_storage.add_node(
+            "src/utils.py:5-10:function:login", "login", "function", "src/utils.py"
+        )
+
+        # Both nodes share name "login"
+        assert "login" in graph_storage._name_index
+        assert len(graph_storage._name_index["login"]) == 2
+
+        graph_storage.remove_file_nodes("src/auth.py")
+
+        # "login" entry for auth.py removed; utils.py entry remains
+        assert "login" in graph_storage._name_index
+        assert len(graph_storage._name_index["login"]) == 1
+
+    def test_remove_file_nodes_removes_empty_name_index_key(self, graph_storage):
+        """When the last node for a name is removed, the name key is deleted."""
+        graph_storage.add_node(
+            "src/auth.py:10-20:method:Auth.login", "login", "method", "src/auth.py"
+        )
+
+        graph_storage.remove_file_nodes("src/auth.py")
+
+        assert "login" not in graph_storage._name_index
+        assert len(graph_storage) == 0
+
+    def test_remove_file_nodes_removes_incident_edges(self, graph_storage):
+        """Edges to/from removed nodes are also removed."""
+        graph_storage.add_node(
+            "src/auth.py:10-20:function:do_auth", "do_auth", "function", "src/auth.py"
+        )
+        graph_storage.add_node(
+            "src/main.py:1-5:function:main", "main", "function", "src/main.py"
+        )
+        graph_storage.add_call_edge(
+            "src/main.py:1-5:function:main", "do_auth", line_number=3
+        )
+
+        # Resolve call edge so there's a real edge
+        graph_storage.add_node(
+            "src/auth.py:10-20:function:do_auth", "do_auth", "function", "src/auth.py"
+        )
+        graph_storage.graph.add_edge(
+            "src/main.py:1-5:function:main", "src/auth.py:10-20:function:do_auth"
+        )
+
+        removed = graph_storage.remove_file_nodes("src/auth.py")
+
+        assert removed >= 1
+        assert "src/auth.py:10-20:function:do_auth" not in graph_storage
+        # Caller node still present
+        assert "src/main.py:1-5:function:main" in graph_storage
+
+    def test_remove_file_nodes_normalizes_windows_path(self, graph_storage):
+        """Backslash-separated paths are normalized and match forward-slash chunk_ids."""
+        graph_storage.add_node(
+            "src/auth.py:10-20:function:fn", "fn", "function", "src/auth.py"
+        )
+
+        removed = graph_storage.remove_file_nodes("src\\auth.py")  # Windows-style
+
+        assert removed == 1
+        assert len(graph_storage) == 0
+
+    def test_remove_file_nodes_no_match_returns_zero(self, graph_storage):
+        """Returns 0 when no nodes match the given file path."""
+        graph_storage.add_node(
+            "src/other.py:1-10:function:foo", "foo", "function", "src/other.py"
+        )
+
+        removed = graph_storage.remove_file_nodes("src/auth.py")
+
+        assert removed == 0
+        assert len(graph_storage) == 1
+
+    def test_remove_file_nodes_does_not_remove_prefix_siblings(self, graph_storage):
+        """'src/auth.py' must not remove nodes from 'src/auth_utils.py'."""
+        graph_storage.add_node(
+            "src/auth.py:1-5:function:a", "a", "function", "src/auth.py"
+        )
+        graph_storage.add_node(
+            "src/auth_utils.py:1-5:function:b", "b", "function", "src/auth_utils.py"
+        )
+
+        removed = graph_storage.remove_file_nodes("src/auth.py")
+
+        assert removed == 1
+        assert "src/auth_utils.py:1-5:function:b" in graph_storage

@@ -1076,7 +1076,6 @@ class IncrementalIndexer:
                 logger.info(
                     f"Batch removed {chunks_removed} chunks from {len(files_to_remove)} files"
                 )
-                return chunks_removed
             except Exception as e:
                 logger.error(f"Batch removal failed: {e}")
                 logger.warning("Falling back to individual file removal")
@@ -1086,7 +1085,6 @@ class IncrementalIndexer:
                     removed = self.indexer.remove_file_chunks(file_path, project_name)
                     chunks_removed += removed
                     logger.debug(f"Removed {removed} chunks from {file_path}")
-                return chunks_removed
         else:
             # Fallback to individual removal if batch method not available
             chunks_removed = 0
@@ -1094,7 +1092,26 @@ class IncrementalIndexer:
                 removed = self.indexer.remove_file_chunks(file_path, project_name)
                 chunks_removed += removed
                 logger.debug(f"Removed {removed} chunks from {file_path}")
-            return chunks_removed
+
+        # Prune stale call-graph nodes for all removed/modified files.
+        # The call graph and the metadata store are maintained independently; without
+        # this step, old node IDs (which embed line ranges) survive incremental
+        # reindex and cause "Chunk not found" errors in find_connections.
+        # The graph is persisted later by save_indices() — no explicit save needed here.
+        from graph.graph_storage import CodeGraphStorage
+
+        graph_storage = getattr(self.indexer, "graph_storage", None)
+        if isinstance(graph_storage, CodeGraphStorage) and files_to_remove:
+            graph_nodes_removed = 0
+            for fp in files_to_remove:
+                graph_nodes_removed += graph_storage.remove_file_nodes(fp)
+            if graph_nodes_removed:
+                logger.info(
+                    f"[GRAPH_PRUNE] Pruned {graph_nodes_removed} stale graph nodes "
+                    f"across {len(files_to_remove)} files"
+                )
+
+        return chunks_removed
 
     @timed("index.incremental")
     def _add_new_chunks(

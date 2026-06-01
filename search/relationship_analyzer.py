@@ -371,11 +371,13 @@ class RelationshipAnalyzer:
         if not should_include(""):
             return None
         return {
+            "chunk_id": "",
             "target_name": target,
             "relationship_type": rel_type,
             "line": line,
             "confidence": confidence,
             "note": "External or builtin type (not in index)",
+            "resolvable": False,
         }
 
     def _enrich_reverse(
@@ -410,11 +412,12 @@ class RelationshipAnalyzer:
         if not should_include(""):
             return None
         return {
-            "source_chunk_id": source,
+            "source_chunk_id": "",
             "relationship_type": entry.relationship_type,
             "line": line,
             "confidence": confidence,
             "note": "Source chunk not found in index",
+            "resolvable": False,
         }
 
     def _enrich_callers(
@@ -455,9 +458,23 @@ class RelationshipAnalyzer:
     ) -> tuple[Any, str]:
         if chunk_id:
             result = self.searcher.get_by_chunk_id(chunk_id)
-            if not result:
+            if result:
+                return result, chunk_id
+            # Chunk not found — the index was likely incrementally reindexed and the
+            # line range embedded in the chunk_id has drifted (e.g. after editing a
+            # file, `path:339-342:method:Cls.m` becomes `path:350-353:method:Cls.m`
+            # but the old node survives in the call graph). Derive the symbol name
+            # from the last colon-segment and fall through to the Tier 1→3 symbol-
+            # resolution block below so we can locate the *current* chunk.
+            parts = chunk_id.split(":")
+            if len(parts) >= 4:
+                symbol_name = parts[-1]
+                logger.warning(
+                    f"[RESOLVE] stale chunk_id '{chunk_id}' not in index; "
+                    f"retrying by symbol '{symbol_name}'"
+                )
+            else:
                 raise SearchError(f"Chunk not found: {chunk_id}")
-            return result, chunk_id
 
         # Tier 1: O(1) exact symbol-cache lookup (populated by indexer for all indexed chunks)
         if self.symbol_cache:
