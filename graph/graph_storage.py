@@ -25,6 +25,12 @@ except ImportError:
     nx = None
 
 
+# Legacy string confidence tags written by the in-house call extractor
+# (add_relationship_edge writes confidence=edge.confidence which is "exact" / "ambiguous").
+# These must be passed through unchanged by get_edge_data — do NOT coerce to float.
+# Downstream enrichers (_enrich_callers/_enrich_callees) read them as string tokens.
+_LEGACY_CONFIDENCE_TAGS: frozenset[str] = frozenset({"exact", "ambiguous", "recovered"})
+
 # Edge-type weights for weighted BFS (SOG paper: data flow > control flow > effect flow)
 # Higher weight = higher priority in graph traversal
 DEFAULT_EDGE_WEIGHTS: dict[str, float] = {
@@ -681,14 +687,22 @@ class CodeGraphStorage:
             )
             edge_data["line_number"] = 0
 
-        try:
-            # Ensure confidence is float
-            edge_data["confidence"] = float(edge_data["confidence"])
-        except (ValueError, TypeError):
-            self.logger.warning(
-                f"Edge {caller_id} → {callee_id} has invalid confidence, defaulting to 1.0"
-            )
-            edge_data["confidence"] = 1.0
+        conf = edge_data["confidence"]
+        if isinstance(conf, str) and conf in _LEGACY_CONFIDENCE_TAGS:
+            # Known legacy string tag written by the in-house call extractor.
+            # Downstream enrichers (_enrich_callers/_enrich_callees) consume this
+            # as a string — do not coerce to float.
+            pass
+        else:
+            try:
+                # Ensure numeric confidence edges carry a float (e.g. resolver_confidence
+                # paths that also mirror to "confidence" in the future).
+                edge_data["confidence"] = float(conf)
+            except (ValueError, TypeError):
+                self.logger.warning(
+                    f"Edge {caller_id} → {callee_id} has invalid confidence, defaulting to 1.0"
+                )
+                edge_data["confidence"] = 1.0
 
         return edge_data
 

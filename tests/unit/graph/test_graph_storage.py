@@ -650,3 +650,70 @@ class TestCodeGraphStorage:
             "Use 'resolver_source' instead."
         )
         assert edge_data.get("resolver_source") == "libcst"
+
+    # ------------------------------------------------------------------
+    # Regression: legacy string confidence tags must survive get_edge_data
+    # ------------------------------------------------------------------
+
+    def _add_relationship_edge(self, gs: "CodeGraphStorage", confidence_value) -> None:
+        """Helper: add a synthetic calls edge with the given confidence via the graph API."""
+        # Directly inject edge attrs so the test doesn't depend on the full
+        # RelationshipEdge path, which requires more fixture setup.
+        gs.graph.add_edge(
+            "src/caller.py:1-5:function:caller",
+            "src/callee.py:1-5:function:callee",
+            type="calls",
+            line=2,
+            confidence=confidence_value,
+        )
+
+    def test_get_edge_data_preserves_ambiguous_confidence_tag(
+        self, graph_storage: "CodeGraphStorage"
+    ) -> None:
+        """get_edge_data must not warn or clobber legacy string 'ambiguous'."""
+        caller = "src/caller.py:1-5:function:caller"
+        callee = "src/callee.py:1-5:function:callee"
+        graph_storage.add_node(caller, "caller", "function", "src/caller.py")
+        graph_storage.add_node(callee, "callee", "function", "src/callee.py")
+        self._add_relationship_edge(graph_storage, "ambiguous")
+
+        edge_data = graph_storage.get_edge_data(caller, callee)
+        assert edge_data is not None
+        assert edge_data["confidence"] == "ambiguous", (
+            "get_edge_data must pass legacy 'ambiguous' string through unchanged; "
+            "it must not coerce it to float or emit a warning"
+        )
+
+    def test_get_edge_data_preserves_exact_confidence_tag(
+        self, graph_storage: "CodeGraphStorage"
+    ) -> None:
+        """get_edge_data must not warn or clobber legacy string 'exact'."""
+        caller = "src/caller.py:1-5:function:caller"
+        callee = "src/callee.py:1-5:function:callee"
+        graph_storage.add_node(caller, "caller", "function", "src/caller.py")
+        graph_storage.add_node(callee, "callee", "function", "src/callee.py")
+        self._add_relationship_edge(graph_storage, "exact")
+
+        edge_data = graph_storage.get_edge_data(caller, callee)
+        assert edge_data is not None
+        assert edge_data["confidence"] == "exact", (
+            "get_edge_data must pass legacy 'exact' string through unchanged"
+        )
+
+    def test_get_edge_data_warns_on_genuinely_invalid_confidence(
+        self, graph_storage: "CodeGraphStorage"
+    ) -> None:
+        """get_edge_data must still warn + default for non-string, non-float values."""
+        caller = "src/caller.py:1-5:function:caller"
+        callee = "src/callee.py:1-5:function:callee"
+        graph_storage.add_node(caller, "caller", "function", "src/caller.py")
+        graph_storage.add_node(callee, "callee", "function", "src/callee.py")
+        # Use an object() — not a known string tag, not a float-convertible value
+        self._add_relationship_edge(graph_storage, object())
+
+        edge_data = graph_storage.get_edge_data(caller, callee)
+        assert edge_data is not None
+        # Existing fallback: invalid value → defaulted to 1.0
+        assert edge_data["confidence"] == 1.0, (
+            "Genuinely invalid confidence (non-string non-numeric) must default to 1.0"
+        )
