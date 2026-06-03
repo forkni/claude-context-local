@@ -16,6 +16,7 @@ from typing import Any
 # Matches: "file/path.py:123-456:type:name" → "file/path.py:type:name"
 # Also handles module chunks: "file/path.py:1-8:module" → "file/path.py:module"
 _LINE_RANGE_RE = re.compile(r":\d+-\d+:")
+_SPLIT_BLOCK_RE = re.compile(r":split_block:")
 
 THRESHOLDS = {
     "mrr": 0.50,
@@ -25,10 +26,10 @@ THRESHOLDS = {
 
 
 def normalize_chunk_id(chunk_id: str) -> str:
-    """Strip line-range component from a chunk ID for stable comparison.
+    """Strip line-range component and normalize split_block type from a chunk ID.
 
-    Line numbers shift as code evolves. Comparison uses only the stable
-    ``file_path:type:name`` portion.
+    Line numbers shift as code evolves; split_block is a structural detail.
+    Comparison uses only the stable ``file_path:type:name`` portion.
 
     Examples::
 
@@ -37,8 +38,12 @@ def normalize_chunk_id(chunk_id: str) -> str:
 
         "merkle/__init__.py:1-8:module"
         → "merkle/__init__.py:module"
+
+        "graph/graph_integration.py:276-310:split_block:GraphIntegration.populate_from_embeddings"
+        → "graph/graph_integration.py:method:GraphIntegration.populate_from_embeddings"
     """
-    return _LINE_RANGE_RE.sub(":", chunk_id, count=1)
+    result = _LINE_RANGE_RE.sub(":", chunk_id, count=1)
+    return _SPLIT_BLOCK_RE.sub(":method:", result)
 
 
 def normalize_chunk_ids(chunk_ids: list[str]) -> list[str]:

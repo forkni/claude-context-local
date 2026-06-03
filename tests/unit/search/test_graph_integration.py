@@ -530,6 +530,114 @@ class TestPopulateFromEmbeddings(TestCase):
         self.assertTrue(kwargs["is_resolved"])
 
 
+class TestExtractSplitBlockCalls(TestCase):
+    """Regression tests for _extract_split_block_calls whole-method-from-file fix.
+
+    The correct implementation reads the full source file (not the split_block
+    content fragment) and locates the enclosing method by line-range containment.
+    This ensures that split_block chunks — whose stored ``content`` is not valid
+    Python — still contribute call edges to the persisted call graph.
+    """
+
+    def _make_gi(self) -> GraphIntegration:
+        """Create a GraphIntegration with no real graph storage."""
+        return GraphIntegration.from_storage(None)
+
+    def test_extract_calls_from_real_file(self):
+        """Recovering calls from a real split_block locator yields the expected callee.
+
+        Scenario: analyze_impact is large enough to be split into split_block chunks.
+        The helper must re-read relationship_analyzer.py, locate the FunctionDef
+        whose lineno <= start_line, and return call edges that include the qualified
+        callee ``RelationshipAnalyzer._enrich_callers``.
+        """
+        import os
+
+        # Locate the real file relative to this test file's directory
+        repo_root = Path(__file__).parent.parent.parent.parent
+        file_path = str(repo_root / "search" / "relationship_analyzer.py")
+        if not os.path.isfile(file_path):
+            self.skipTest(f"Source file not found: {file_path}")
+
+        gi = self._make_gi()
+        # analyze_impact starts at line 75; pick a start_line deep inside the method
+        # (simulating a split_block chunk that covers the _enrich_callers call site)
+        calls = gi._extract_split_block_calls(
+            file_path=file_path,
+            parent_name="RelationshipAnalyzer",
+            name="analyze_impact",
+            start_line=100,  # well inside the method body
+            language="python",
+        )
+
+        callee_names = {c["callee_name"] for c in calls}
+        self.assertIn(
+            "RelationshipAnalyzer._enrich_callers",
+            callee_names,
+            f"Expected 'RelationshipAnalyzer._enrich_callers' in callee names; "
+            f"got: {sorted(callee_names)}",
+        )
+
+    def test_non_python_language_returns_empty(self):
+        """Non-Python chunks are skipped (no AST extractor for them)."""
+        gi = self._make_gi()
+        calls = gi._extract_split_block_calls(
+            file_path="/some/file.js",
+            parent_name=None,
+            name="doSomething",
+            start_line=10,
+            language="javascript",
+        )
+        self.assertEqual(calls, [])
+
+    def test_missing_file_returns_empty(self):
+        """A missing file path returns [] without raising."""
+        gi = self._make_gi()
+        calls = gi._extract_split_block_calls(
+            file_path="/nonexistent/totally_fake_path.py",
+            parent_name="Foo",
+            name="bar",
+            start_line=5,
+            language="python",
+        )
+        self.assertEqual(calls, [])
+
+    def test_per_method_dedup_across_split_blocks(self):
+        """Two split_block chunks for the same method emit edges only once.
+
+        The seen_split_methods set should suppress the second call for the
+        same (file_path, name, func.lineno) tuple.
+        """
+        import os
+
+        repo_root = Path(__file__).parent.parent.parent.parent
+        file_path = str(repo_root / "search" / "relationship_analyzer.py")
+        if not os.path.isfile(file_path):
+            self.skipTest(f"Source file not found: {file_path}")
+
+        gi = self._make_gi()
+        # Warm the cache and record first-call result
+        calls_first = gi._extract_split_block_calls(
+            file_path=file_path,
+            parent_name="RelationshipAnalyzer",
+            name="analyze_impact",
+            start_line=100,
+            language="python",
+        )
+        # Second split_block of the same method: must return [] (deduped)
+        calls_second = gi._extract_split_block_calls(
+            file_path=file_path,
+            parent_name="RelationshipAnalyzer",
+            name="analyze_impact",
+            start_line=150,  # different fragment, same method
+            language="python",
+        )
+        self.assertGreater(len(calls_first), 0, "First split_block should return calls")
+        self.assertEqual(
+            calls_second, [], "Second split_block of same method should be deduped"
+        )
+
+
 if __name__ == "__main__":
     import pytest
 

@@ -1,5 +1,6 @@
 """Graph integration layer for call graph storage operations."""
 
+import ast
 import logging
 from collections import defaultdict
 from pathlib import Path
@@ -127,6 +128,154 @@ class GraphIntegration:
         """
         self._logger = logging.getLogger(__name__)
         self.storage = storage
+        self._call_extractor: Any = None  # lazy-initialized on first split_block call
+        # Per-build caches reset at the start of each populate_from_embeddings /
+        # build_graph_from_chunks call.
+        self._file_ast_cache: dict[str, tuple[str, ast.Module | None]] = {}
+        # (file_path, name, func_lineno) → already emitted; dedup across split_block pieces
+        self._seen_split_methods: set[tuple[str, str, int]] = set()
+
+    def _extract_split_block_calls(
+        self,
+        file_path: str,
+        parent_name: str | None,
+        name: str,
+        start_line: int,
+        language: str = "python",
+    ) -> list[dict[str, Any]]:
+        """Extract call edges for a split_block chunk by re-reading its source file.
+
+        Split_block chunks have empty ``calls`` because the AST extractor only runs
+        on the *whole* node before splitting, and the stored ``content`` fragment is
+        NOT valid Python (it's a bare body slice — ``ast.parse`` fails with
+        "expected an indented block after function definition").
+
+        This method avoids that problem by locating the **enclosing method in the
+        source file** via line-range containment, then running the extractor on the
+        full method source exactly once per (file, method) pair.
+
+        Algorithm
+        ---------
+        1. Guard: non-Python languages are skipped (return []).
+        2. Per-file AST cache: read + parse each file at most once per build pass
+           (cache key = file_path; value = (source_text, ast.Module | None)).
+        3. Find the deepest ``FunctionDef``/``AsyncFunctionDef`` whose
+           ``lineno <= start_line <= end_lineno`` and whose ``name == bare_name``
+           (and optionally ``parent_name`` for secondary disambiguation).
+        4. Per-method dedup: track ``_seen_split_methods`` so only the *first*
+           split_block of each logical method emits edges.  Subsequent pieces return [].
+        5. Extract via ``PythonCallGraphExtractor.extract_calls`` on the full
+           method source (``ast.get_source_segment``).
+
+        Args:
+            file_path: Absolute path to the source file containing the method.
+            parent_name: Class name that owns the method, or None for module-level.
+            name: Bare method name (e.g. ``"analyze_impact"``), *not* qualified.
+            start_line: First line of this split_block fragment (1-based, same as
+                the AST ``lineno`` convention).
+            language: Chunk language tag; only ``"python"`` is processed.
+
+        Returns:
+            List of call dicts with keys ``callee_name``, ``line_number``,
+            ``is_method_call`` — compatible with the PASS 2 call-resolution loop.
+            Returns [] when the method is not found, the file is missing/unreadable,
+            the language is not Python, or this is a duplicate split_block piece.
+        """
+        if language != "python":
+            return []
+        if not file_path or not name:
+            return []
+
+        # Lazy-init the extractor
+        if self._call_extractor is None:
+            from chunking.relationships.call_graph_extractor import (
+                PythonCallGraphExtractor,
+            )
+
+            self._call_extractor = PythonCallGraphExtractor()
+
+        # --- Per-file AST cache ---
+        if file_path not in self._file_ast_cache:
+            try:
+                src = Path(file_path).read_text(encoding="utf-8", errors="replace")
+                try:
+                    tree = ast.parse(src)
+                except SyntaxError:
+                    tree = None
+                self._file_ast_cache[file_path] = (src, tree)
+            except OSError as e:
+                self._logger.debug(f"split_block: cannot read {file_path}: {e}")
+                self._file_ast_cache[file_path] = ("", None)
+
+        src, tree = self._file_ast_cache[file_path]
+        if tree is None:
+            return []
+
+        # --- Locate the enclosing FunctionDef by line-range + name ---
+        # Use bare name (split_block stores bare, not qualified)
+        bare_name = name.split(".")[-1] if "." in name else name
+        best_func: ast.FunctionDef | ast.AsyncFunctionDef | None = None
+        best_span = -1  # prefer the smallest enclosing span (innermost match)
+
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.name != bare_name:
+                continue
+            end_lineno = getattr(node, "end_lineno", None)
+            if end_lineno is None:
+                continue
+            if node.lineno <= start_line <= end_lineno:
+                span = end_lineno - node.lineno
+                if best_func is None or span < best_span:
+                    best_func = node  # type: ignore[assignment]
+                    best_span = span
+
+        if best_func is None:
+            self._logger.debug(
+                f"split_block: no FunctionDef '{bare_name}' enclosing line "
+                f"{start_line} in {file_path}"
+            )
+            return []
+
+        # --- Per-method dedup: only first split_block emits edges ---
+        dedup_key = (file_path, bare_name, best_func.lineno)
+        if dedup_key in self._seen_split_methods:
+            return []
+        self._seen_split_methods.add(dedup_key)
+
+        # --- Extract calls from full method source ---
+        method_src = ast.get_source_segment(src, best_func)
+        if not method_src:
+            return []
+
+        # Build a fake chunk_id for the extractor (only used internally)
+        fake_chunk_id = (
+            f"{file_path}:{best_func.lineno}-{best_func.end_lineno}:method:{bare_name}"  # type: ignore[attr-defined]
+        )
+        try:
+            call_edges = self._call_extractor.extract_calls(
+                method_src,
+                {"chunk_id": fake_chunk_id, "parent_class": parent_name},
+            )
+            result = [
+                {
+                    "callee_name": ce.callee_name,
+                    "line_number": ce.line_number,
+                    "is_method_call": ce.is_method_call,
+                }
+                for ce in call_edges
+            ]
+            self._logger.debug(
+                f"split_block call extraction: {len(result)} calls from "
+                f"'{parent_name}.{bare_name}' in {file_path}"
+            )
+            return result
+        except Exception as e:
+            self._logger.debug(
+                f"split_block call extraction failed for {file_path}:{bare_name}: {e}"
+            )
+            return []
 
     def add_chunk(self, chunk_id: str, metadata: dict[str, Any]) -> None:
         """Add chunk to call graph storage.
@@ -278,12 +427,26 @@ class GraphIntegration:
         resolved_edges = 0
         rel_edges = 0
 
+        # Reset per-build caches so dedup and AST cache don't bleed across calls
+        self._file_ast_cache = {}
+        self._seen_split_methods = set()
+
         for result in embedding_results:
             chunk_id = result.chunk_id
             meta = result.metadata
             caller_file = meta.get("file_path", "")
 
-            for call_dict in meta.get("calls", []):
+            calls_to_process = meta.get("calls", [])
+            if meta.get("chunk_type") == "split_block" and not calls_to_process:
+                calls_to_process = self._extract_split_block_calls(
+                    file_path=caller_file,
+                    parent_name=meta.get("parent_name"),
+                    name=meta.get("name", ""),
+                    start_line=meta.get("start_line", 0),
+                    language=meta.get("language", "python"),
+                )
+
+            for call_dict in calls_to_process:
                 callee_name = call_dict.get("callee_name", "unknown")
                 line_number = call_dict.get("line_number", 0)
                 is_method_call = call_dict.get("is_method_call", False)
@@ -435,13 +598,26 @@ class GraphIntegration:
         resolved_edges = 0
         phantom_edges = 0
 
+        # Reset per-build caches
+        self._file_ast_cache = {}
+        self._seen_split_methods = set()
+
         for chunk in chunks:
             if not chunk.chunk_id:
                 continue
 
             try:
                 # Add call edges with resolution (NetworkX: G.add_edge)
-                for call in chunk.calls or []:
+                chunk_calls: list[Any] = list(chunk.calls or [])
+                if chunk.chunk_type == "split_block" and not chunk_calls:
+                    chunk_calls = self._extract_split_block_calls(
+                        file_path=chunk.file_path or "",
+                        parent_name=chunk.parent_name,
+                        name=chunk.name or "",
+                        start_line=chunk.start_line or 0,
+                        language=chunk.language or "python",
+                    )
+                for call in chunk_calls:
                     # Handle both CallEdge objects and dicts
                     if hasattr(call, "callee_name"):
                         callee_name = call.callee_name
