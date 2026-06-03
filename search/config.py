@@ -440,6 +440,52 @@ class ObservabilityConfig:
     capture_query_text: bool = False  # off by default (query text can be sensitive)
 
 
+@dataclass
+class CallGraphConfig:
+    """Call-graph resolver pipeline settings (3 fields).
+
+    Controls which static-analysis backends run at full-index time to inject
+    cross-module ``calls`` edges into the code graph.
+
+    Resolver names map to concrete classes in the ``chunking/relationships/``
+    package.  Only resolvers that are also *available* (i.e. their optional
+    dependency is installed) are executed::
+
+        "pyan"   → PyanResolver   (pyan3>=2.6.0, optional extra [callgraph])
+        "libcst" → LibCSTResolver (libcst>=1.8.6, optional extra [callgraph])
+        "lsp"    → LSPResolver    (basedpyright>=1.21, optional extra [lsp])
+
+    The ``"ast"`` entry is a documentation placeholder — in-house AST edges are
+    produced during chunking and are already in the graph before the injection
+    seam runs.
+    """
+
+    resolvers: list[str] = None  # type: ignore[assignment]
+    """Resolver names to attempt in the injection pipeline.
+
+    Default: ``["pyan", "libcst"]`` (both in the ``[callgraph]`` extra).
+    Set to ``["pyan"]`` to disable LibCST (Stage 2), ``[]`` to skip entirely.
+    """
+
+    lsp_enabled: bool = False
+    """Enable the basedpyright LSP resolver (Stage 3, opt-in).
+
+    Requires the ``[lsp]`` extra: ``pip install -e ".[lsp]"``.
+    Adds basedpyright as the highest-accuracy resolver (confidence 0.98) but
+    is the slowest and requires a full-type-check pass.
+    """
+
+    lsp_timeout_seconds: float = 30.0
+    """Per-request timeout for LSP JSON-RPC calls (seconds).
+
+    Increase for large codebases where basedpyright type-checking takes longer.
+    """
+
+    def __post_init__(self) -> None:
+        if self.resolvers is None:
+            self.resolvers = ["pyan", "libcst"]
+
+
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> None:
     """Merge *override* into *base* in-place.
 
@@ -480,6 +526,7 @@ class SearchConfig:
         parent_retrieval: ParentRetrievalConfig | None = None,
         graph_enhanced: GraphEnhancedConfig | None = None,
         observability: ObservabilityConfig | None = None,
+        call_graph: CallGraphConfig | None = None,
     ):
         """Initialize SearchConfig with nested sub-configs.
 
@@ -496,6 +543,8 @@ class SearchConfig:
             ego_graph: EgoGraphConfig instance (optional, defaults to EgoGraphConfig())
             parent_retrieval: ParentRetrievalConfig instance (optional, defaults to ParentRetrievalConfig())
             graph_enhanced: GraphEnhancedConfig instance (optional, defaults to GraphEnhancedConfig())
+            observability: ObservabilityConfig instance (optional, defaults to ObservabilityConfig())
+            call_graph: CallGraphConfig instance (optional, defaults to CallGraphConfig())
         """
         # Initialize nested configs with defaults
         self.embedding = embedding if embedding is not None else EmbeddingConfig()
@@ -523,6 +572,7 @@ class SearchConfig:
         self.observability = (
             observability if observability is not None else ObservabilityConfig()
         )
+        self.call_graph = call_graph if call_graph is not None else CallGraphConfig()
 
     # ------------------------------------------------------------------
     # Serialization schema — single source of truth
@@ -544,6 +594,7 @@ class SearchConfig:
         "parent_retrieval",
         "graph_enhanced",
         "observability",
+        "call_graph",
     )
 
     # frozenset for O(1) membership tests in _flat_to_nested / is_nested checks
@@ -563,6 +614,7 @@ class SearchConfig:
         "parent_retrieval": ParentRetrievalConfig,
         "graph_enhanced": GraphEnhancedConfig,
         "observability": ObservabilityConfig,
+        "call_graph": CallGraphConfig,
     }
 
     # Maps legacy flat config keys (and env-var flat keys) to

@@ -240,6 +240,28 @@ class CodeGraphStorage:
             **kwargs,
         )
 
+    def upgrade_call_edge(
+        self, caller_id: str, callee_id: str, **attrs: object
+    ) -> None:
+        """Update attributes on an existing ``calls`` edge in-place.
+
+        Called by the resolver injection seam when a higher-confidence resolver
+        produces an edge that was already added by a lower-confidence resolver.
+        Only updates the keys supplied in *attrs*; all other edge attributes are
+        preserved.
+
+        Args:
+            caller_id: Source node (caller chunk_id).
+            callee_id: Target node (callee chunk_id or symbol name).
+            **attrs: Edge attribute key-value pairs to overwrite.  Typical keys:
+                ``source``, ``resolver_confidence``, ``is_resolved``, ``line``.
+
+        Raises:
+            KeyError: If the edge ``(caller_id, callee_id)`` does not exist in
+                the graph.  Callers should check ``graph.has_edge`` first.
+        """
+        self.graph.edges[caller_id, callee_id].update(attrs)
+
     def add_relationship_edge(self, edge: "RelationshipEdge") -> None:
         """
         Add a relationship edge to the graph.

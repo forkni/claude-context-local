@@ -2,9 +2,8 @@
 
 This module uses **pyan3** (``pip install pyan3``, import ``pyan``) to
 produce a whole-project static call graph and translates the resulting
-``caller_fqn → callee_fqn`` edges into ``(caller_raw_id, callee_raw_id,
-line_number, is_method_call)`` tuples that the :class:`IndexWriteStage` can
-inject directly into the persisted code graph.
+``caller_fqn → callee_fqn`` edges into :class:`~.call_edge_resolver.ResolvedEdge`
+instances that the resolver pipeline merges and injects into the code graph.
 
 Why pyan3?
 ----------
@@ -14,13 +13,15 @@ as ``pkg.mod.func()`` where caller and callee live in different files.  pyan3
 performs a whole-project AST walk and resolves module imports, closing this
 gap.
 
-Hard dependency — no import guard
-----------------------------------
-pyan3 is a required dependency (``install_requires``).  There is no
-``try/except ImportError`` guard and no ``enabled`` config flag.  External
-edges are *always* built during a full index pass.  If the pyan3 analysis
-itself fails at runtime, the error is caught and logged as a warning so it
-never aborts the index.
+Optional dependency — import guard
+-----------------------------------
+pyan3 is an **optional** dependency in the ``[callgraph]`` install extra.  A
+``try/except ImportError`` guard is used so the project's Apache-2.0
+distribution does not hard-depend on pyan3's GPL-2.0 licence.  Call
+:func:`pyan_available` to test at runtime whether the extra is installed.
+
+When pyan3 is absent, :class:`PyanResolver` logs one INFO message and returns
+an empty edge list — indexing continues with the in-house AST edges only.
 
 Node → chunk_id mapping
 -----------------------
@@ -31,19 +32,37 @@ convert the absolute filename to a project-relative path, then call
 back to ``chunk_id_from_fqn(node.get_name(), ...)``.
 
 The returned chunk_ids are **raw store-key ids** (with ``:start-end:`` line
-range) because the code graph keys nodes by raw ids.  The caller in
-:class:`IndexWriteStage` uses ``callee_id in graph`` / ``caller_id in graph``
-prechecks so any stray unmatched id silently degrades to "no edge added".
+range) because the code graph keys nodes by raw ids.  The injection seam uses
+``callee_id in graph`` / ``caller_id in graph`` prechecks so any stray
+unmatched id silently degrades to "no edge added".
 """
 
 from __future__ import annotations
 
-import ast
 import logging
 from pathlib import Path
 
 from evaluation.chunk_mapping import chunk_id_from_fqn, find_enclosing_chunk
 
+from .call_edge_resolver import (
+    ResolvedEdge,
+    gather_py_files,
+    scope_to_indexed_files,
+    validate_py_files,
+)
+
+
+# ---------------------------------------------------------------------------
+# Optional pyan3 import — guarded for GPL-2.0 licence hygiene
+# ---------------------------------------------------------------------------
+try:
+    from pyan.analyzer import (
+        CallGraphVisitor as _CallGraphVisitor,  # type: ignore[import-untyped]
+    )
+
+    _PYAN_AVAILABLE = True
+except ImportError:
+    _PYAN_AVAILABLE = False
 
 # Flavors that correspond to callable definitions (not modules or classes).
 _CALLABLE_FLAVORS = {"FUNCTION", "METHOD", "STATICMETHOD", "CLASSMETHOD"}
@@ -52,27 +71,25 @@ _CALLABLE_FLAVORS = {"FUNCTION", "METHOD", "STATICMETHOD", "CLASSMETHOD"}
 _METHOD_FLAVORS = {"METHOD", "STATICMETHOD", "CLASSMETHOD"}
 
 
-def _gather_py_files(project_root: Path) -> list[str]:
-    """Collect all .py files under *project_root*, excluding noise dirs.
+# ---------------------------------------------------------------------------
+# Public availability probe
+# ---------------------------------------------------------------------------
 
-    Excluded: test directories (``/tests/``, ``/test/``), the virtualenv
-    (``.venv``), hidden directories (starting with ``.``), and ``__pycache__``.
 
-    Returns:
-        Sorted list of absolute path strings, suitable for pyan3.
+def pyan_available() -> bool:
+    """Return True if pyan3 is installed and the import succeeded.
+
+    Use this guard before calling :class:`PyanResolver` or :func:`build_call_edges`
+    in tests or tooling that wants to skip the pyan pass when the ``[callgraph]``
+    extra is absent.
     """
-    excluded_segments = {".venv", "tests", "test", "__pycache__"}
-    files: list[str] = []
-    for p in project_root.rglob("*.py"):
-        # Check any path segment matches an excluded name or starts with '.'
-        skip = False
-        for part in p.relative_to(project_root).parts[:-1]:  # skip file name itself
-            if part in excluded_segments or part.startswith("."):
-                skip = True
-                break
-        if not skip:
-            files.append(str(p))
-    return sorted(files)
+    return _PYAN_AVAILABLE
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat alias for tests that import ``_gather_py_files`` directly
+# ---------------------------------------------------------------------------
+_gather_py_files = gather_py_files
 
 
 def _node_to_raw_chunk_id(
@@ -111,132 +128,183 @@ def _node_to_raw_chunk_id(
     return None
 
 
+class PyanResolver:
+    """Call-edge resolver backed by pyan3 whole-project static analysis.
+
+    Implements :class:`~.call_edge_resolver.CallEdgeResolver`.
+
+    pyan3 is a **GPL-2.0** library.  This class is only instantiated when the
+    ``[callgraph]`` optional extra is installed; the Apache-2.0 core of this
+    project does not hard-depend on it at import time.
+
+    Confidence:  0.75 — whole-project name resolution is more accurate than the
+    single-file in-house extractor but cannot resolve calls through return values
+    or duck-typed dispatch.
+    """
+
+    name: str = "pyan"
+    base_confidence: float = 0.75
+
+    def available(self) -> bool:
+        """Return True if pyan3 was successfully imported at module load time."""
+        return _PYAN_AVAILABLE
+
+    def resolve(
+        self,
+        project_root: Path,
+        raw_line_map: dict[str, list[tuple[int, int, str]]],
+        logger: logging.Logger,
+    ) -> list[ResolvedEdge]:
+        """Run pyan3 on the project and return :class:`ResolvedEdge` instances.
+
+        Args:
+            project_root: Absolute path to the project root.
+            raw_line_map: Per-file sorted ``(start, end, raw_chunk_id)`` list,
+                built with ``normalize=False`` so ids match graph node keys.
+            logger: Logger for progress and warning messages.
+
+        Returns:
+            Deduplicated list of :class:`ResolvedEdge` for edges where both
+            endpoints mapped to a known chunk_id.
+        """
+        if not _PYAN_AVAILABLE:
+            logger.info(
+                "[PYAN] pyan3 not installed — skipping cross-module edge injection. "
+                "Install the '[callgraph]' extra for higher-recall call edges."
+            )
+            return []
+
+        py_files = gather_py_files(project_root)
+
+        # Scope to indexed files only — eliminates unindexed install/venv trees
+        # (e.g. Scripts/, site-packages/) that can never produce injectable edges.
+        if raw_line_map:
+            py_files = scope_to_indexed_files(
+                py_files, set(raw_line_map.keys()), project_root
+            )
+
+        if not py_files:
+            logger.warning(
+                "[PYAN] No .py files found under %s — skipping", project_root
+            )
+            return []
+
+        # Pre-validate with ast.parse — one malformed file must not abort the
+        # whole pass (pyan's prescan raises SyntaxError on the first bad file).
+        py_files = validate_py_files(py_files, logger, source_name="PYAN")
+
+        if not py_files:
+            logger.warning(
+                "[PYAN] No parseable .py files remain — skipping edge injection"
+            )
+            return []
+
+        logger.info("[PYAN] Analysing %d Python files with pyan3...", len(py_files))
+
+        # Silence pyan's own verbose logging while letting warnings/errors through.
+        pyan_logger = logging.getLogger("pyan")
+        pyan_logger.setLevel(logging.WARNING)
+
+        visitor = _CallGraphVisitor(
+            py_files, root=str(project_root), logger=pyan_logger
+        )
+
+        raw_edges: set[tuple[str, str, int, bool]] = set()
+        skipped = 0
+
+        for caller_node, callees in visitor.uses_edges.items():
+            caller_flavor: str = caller_node.flavor.name  # type: ignore[attr-defined]
+
+            # Skip module-level "callers" — those represent import statements, not
+            # real function/method call sites.
+            if caller_flavor not in _CALLABLE_FLAVORS:
+                skipped += len(callees)
+                continue
+
+            caller_id = _node_to_raw_chunk_id(caller_node, project_root, raw_line_map)
+            if caller_id is None:
+                skipped += len(callees)
+                continue
+
+            is_method_call = caller_flavor in _METHOD_FLAVORS
+
+            for callee_node in callees:
+                callee_flavor: str = callee_node.flavor.name  # type: ignore[attr-defined]
+
+                # Skip module-flavored callees (import resolutions) and anything
+                # whose file is outside the project (stdlib, venv).
+                if callee_flavor == "MODULE":
+                    skipped += 1
+                    continue
+
+                callee_fn: str | None = getattr(callee_node, "filename", None)
+                if callee_fn:
+                    try:
+                        Path(callee_fn).resolve().relative_to(project_root)
+                    except ValueError:
+                        skipped += 1
+                        continue  # outside project root → stdlib / venv / external
+
+                callee_id = _node_to_raw_chunk_id(
+                    callee_node, project_root, raw_line_map
+                )
+                if callee_id is None:
+                    skipped += 1
+                    continue
+
+                # Skip self-loops (recursive calls).
+                if caller_id == callee_id:
+                    skipped += 1
+                    continue
+
+                # Line number: callee definition line (best effort).
+                callee_ast = getattr(callee_node, "ast_node", None)
+                line_num: int = getattr(callee_ast, "lineno", 0) if callee_ast else 0
+
+                raw_edges.add((caller_id, callee_id, line_num, is_method_call))
+
+        result = [
+            ResolvedEdge(
+                caller_id=c,
+                callee_id=t,
+                line=ln,
+                is_method=im,
+                source="pyan",
+                confidence=self.base_confidence,
+            )
+            for c, t, ln, im in sorted(raw_edges)
+        ]
+        logger.info(
+            "[PYAN] Resolved %d cross-module call edges (%d skipped / unmappable)",
+            len(result),
+            skipped,
+        )
+        return result
+
+
 def build_call_edges(
     project_root: Path,
     raw_line_map: dict[str, list[tuple[int, int, str]]],
     logger: logging.Logger,
 ) -> list[tuple[str, str, int, bool]]:
-    """Run pyan3 on the project and return cross-module call edges.
+    """Backward-compatible wrapper around :class:`PyanResolver`.
+
+    Delegates to ``PyanResolver().resolve()`` and converts each
+    :class:`~.call_edge_resolver.ResolvedEdge` back to the legacy
+    ``(caller_id, callee_id, line_number, is_method_call)`` tuple format.
+
+    New code should use the resolver pipeline (``run_resolvers``) instead of
+    calling this function directly.
 
     Args:
         project_root: Absolute path to the project root.
-        raw_line_map: Per-file sorted ``(start, end, raw_chunk_id)`` list,
-            built with ``normalize=False`` so ids match graph node keys.
+        raw_line_map: Per-file sorted ``(start, end, raw_chunk_id)`` list.
         logger: Logger for progress and warning messages.
 
     Returns:
-        Deduplicated list of ``(caller_raw_id, callee_raw_id, line_number,
-        is_method_call)`` tuples for edges where both endpoints mapped to a
-        known chunk_id.  *line_number* is the callee's definition line (0 if
-        unavailable); *is_method_call* is True when the caller flavor is a
-        method variant.
+        Sorted list of ``(caller_raw_id, callee_raw_id, line_number,
+        is_method_call)`` tuples.
     """
-    from pyan.analyzer import CallGraphVisitor  # hard dep — no guard
-
-    py_files = _gather_py_files(project_root)
-
-    # Fix 1: Scope to indexed files only — eliminates unindexed install/venv trees
-    # (e.g. Scripts/, site-packages/) that can never produce injectable edges.
-    if raw_line_map:
-        indexed_relpaths = set(raw_line_map.keys())
-        scoped: list[str] = []
-        for fn in py_files:
-            try:
-                rel = str(Path(fn).resolve().relative_to(project_root)).replace(
-                    "\\", "/"
-                )
-                if rel in indexed_relpaths:
-                    scoped.append(fn)
-            except ValueError:
-                pass  # outside project_root — not in index, skip
-        py_files = scoped
-
-    if not py_files:
-        logger.warning("[PYAN] No .py files found under %s — skipping", project_root)
-        return []
-
-    # Fix 2: Pre-validate with ast.parse — one malformed file must not abort the
-    # whole pass (pyan's prescan raises SyntaxError on the first bad file).
-    parseable: list[str] = []
-    for fn in py_files:
-        try:
-            source = Path(fn).read_text(encoding="utf-8", errors="replace")
-            ast.parse(source, filename=fn)
-            parseable.append(fn)
-        except SyntaxError as exc:
-            logger.warning("[PYAN] Skipping unparseable file %s: %s", fn, exc)
-        except (OSError, ValueError) as exc:
-            logger.warning("[PYAN] Skipping unreadable file %s: %s", fn, exc)
-    py_files = parseable
-
-    if not py_files:
-        logger.warning("[PYAN] No parseable .py files remain — skipping edge injection")
-        return []
-
-    logger.info("[PYAN] Analysing %d Python files with pyan3...", len(py_files))
-
-    # Silence pyan's own verbose logging while letting warnings/errors through.
-    pyan_logger = logging.getLogger("pyan")
-    pyan_logger.setLevel(logging.WARNING)
-
-    visitor = CallGraphVisitor(py_files, root=str(project_root), logger=pyan_logger)
-
-    edges: set[tuple[str, str, int, bool]] = set()
-    skipped = 0
-
-    for caller_node, callees in visitor.uses_edges.items():
-        caller_flavor: str = caller_node.flavor.name  # type: ignore[attr-defined]
-
-        # Skip module-level "callers" — those represent import statements, not
-        # real function/method call sites.
-        if caller_flavor not in _CALLABLE_FLAVORS:
-            skipped += len(callees)
-            continue
-
-        caller_id = _node_to_raw_chunk_id(caller_node, project_root, raw_line_map)
-        if caller_id is None:
-            skipped += len(callees)
-            continue
-
-        is_method_call = caller_flavor in _METHOD_FLAVORS
-
-        for callee_node in callees:
-            callee_flavor: str = callee_node.flavor.name  # type: ignore[attr-defined]
-
-            # Skip module-flavored callees (import resolutions) and anything
-            # whose file is outside the project (stdlib, venv).
-            if callee_flavor == "MODULE":
-                skipped += 1
-                continue
-
-            callee_fn: str | None = getattr(callee_node, "filename", None)
-            if callee_fn:
-                try:
-                    Path(callee_fn).resolve().relative_to(project_root)
-                except ValueError:
-                    skipped += 1
-                    continue  # outside project root → stdlib / venv / external
-
-            callee_id = _node_to_raw_chunk_id(callee_node, project_root, raw_line_map)
-            if callee_id is None:
-                skipped += 1
-                continue
-
-            # Skip self-loops (recursive calls).
-            if caller_id == callee_id:
-                skipped += 1
-                continue
-
-            # Line number: callee definition line (best effort).
-            callee_ast = getattr(callee_node, "ast_node", None)
-            line_num: int = getattr(callee_ast, "lineno", 0) if callee_ast else 0
-
-            edges.add((caller_id, callee_id, line_num, is_method_call))
-
-    result = sorted(edges)
-    logger.info(
-        "[PYAN] Resolved %d cross-module call edges (%d skipped / unmappable)",
-        len(result),
-        skipped,
-    )
-    return result
+    resolver = PyanResolver()
+    edges = resolver.resolve(project_root, raw_line_map, logger)
+    return [(e.caller_id, e.callee_id, e.line, e.is_method) for e in edges]
