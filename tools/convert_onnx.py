@@ -205,7 +205,7 @@ def convert(
             _log.warning(
                 "ORTOptimizer does not support this architecture — saving unoptimized model."
             )
-            _log.warning(f"  Reason: {e}")
+            _log.warning(f"  Reason: {e}", exc_info=True)
             ort_model.save_pretrained(str(onnx_dir))
             # save_pretrained() saves model+config but not the tokenizer — save it explicitly
             try:
@@ -213,7 +213,9 @@ def convert(
 
                 AutoTokenizer.from_pretrained(model_name).save_pretrained(str(onnx_dir))
             except Exception as tok_err:
-                _log.warning(f"Could not save tokenizer to ONNX dir: {tok_err}")
+                _log.warning(
+                    f"Could not save tokenizer to ONNX dir: {tok_err}", exc_info=True
+                )
             _optimized = False
         else:
             raise RuntimeError(f"ONNX optimization failed: {e}") from e
