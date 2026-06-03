@@ -209,6 +209,55 @@ def test_gather_py_files_excludes_venv(tmp_path: Path) -> None:
     assert "venv_mod.py" not in file_names
 
 
+def test_unparseable_file_skipped(tmp_path: Path, caplog) -> None:
+    """A single unparseable .py file must not abort edge injection.
+
+    The bad file is included in raw_line_map (so Fix 1 passes it through) and
+    contains YAML-not-Python syntax (the real-world StreamDiffusion repro).
+    The valid cross-module edge must still be present in the result.
+    """
+    import logging
+
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+
+    (pkg / "a.py").write_text(
+        dedent("""\
+        def helper():
+            pass
+    """)
+    )
+    (pkg / "b.py").write_text(
+        dedent("""\
+        from pkg.a import helper
+
+        def caller():
+            helper()
+    """)
+    )
+    # Simulate a TouchDesigner YAML-in-.py config — invalid Python syntax.
+    (pkg / "bad.py").write_text("controlnets:\n  - model: foo\n")
+
+    raw_line_map = {
+        "pkg/a.py": [(1, 2, "pkg/a.py:1-2:function:helper")],
+        "pkg/b.py": [(3, 4, "pkg/b.py:3-4:function:caller")],
+        # bad.py is in the map so Fix 1 includes it; Fix 2 must handle it.
+        "pkg/bad.py": [],
+    }
+    log = logging.getLogger("test_external_call_graph")
+
+    with caplog.at_level(logging.WARNING, logger="test_external_call_graph"):
+        edges = build_call_edges(tmp_path, raw_line_map, log)
+
+    # Must not raise — bad.py is skipped, not fatal.
+    caller_raw = "pkg/b.py:3-4:function:caller"
+    callee_raw = "pkg/a.py:1-2:function:helper"
+    assert any(e[0] == caller_raw and e[1] == callee_raw for e in edges), (
+        f"Expected edge ({caller_raw!r} → {callee_raw!r}) not found in {edges}"
+    )
+
+
 def test_gather_py_files_excludes_tests(tmp_path: Path) -> None:
     """Files inside tests/ must not be gathered."""
     (tmp_path / "src.py").write_text("")
