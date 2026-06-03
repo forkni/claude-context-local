@@ -724,7 +724,7 @@ class CodeGraphStorage:
             return True
 
         except Exception as e:
-            self.logger.error(f"Failed to load graph: {e}")
+            self.logger.error(f"Failed to load graph: {e}", exc_info=True)
             # Initialize empty graph on error
             # pyrefly: ignore [missing-attribute]
             self.graph = nx.DiGraph()

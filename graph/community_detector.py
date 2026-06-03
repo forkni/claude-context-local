@@ -189,7 +189,7 @@ class CommunityDetector:
                 f"(resolution={resolution}, modularity={mod_score:.3f})"
             )
         except Exception as e:
-            self.logger.warning(f"Failed to calculate modularity: {e}")
+            self.logger.warning(f"Failed to calculate modularity: {e}", exc_info=True)
             self.logger.info(
                 f"Detected {len(communities_list)} communities from {len(community_map)} nodes "
                 f"(resolution={resolution})"
