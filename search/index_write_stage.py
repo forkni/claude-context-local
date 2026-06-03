@@ -231,8 +231,6 @@ class IndexWriteStage:
             raw_line_map = build_line_to_chunk_map(meta_store, normalize=False)
 
             # Build the resolver list from CallGraphConfig.
-            # Stage 2 (LibCSTResolver) and Stage 3 (LSPResolver) are added here
-            # once their modules exist.  For now: pyan only.
             from search.config import get_search_config
 
             cg_cfg = getattr(get_search_config(), "call_graph", None)
@@ -245,11 +243,12 @@ class IndexWriteStage:
             resolvers: list[CallEdgeResolver] = []
             if "pyan" in enabled_names:
                 resolvers.append(PyanResolver())
-            # Stage 2 placeholder:
-            # if "libcst" in enabled_names:
-            #     from chunking.relationships.libcst_call_graph import LibCSTResolver
-            #     resolvers.append(LibCSTResolver())
-            # Stage 3 placeholder:
+            # Stage 2 — LibCST FQN resolver (MIT, default in [callgraph] extra):
+            if "libcst" in enabled_names:
+                from chunking.relationships.libcst_call_graph import LibCSTResolver
+
+                resolvers.append(LibCSTResolver())
+            # Stage 3 placeholder (LSPResolver, opt-in):
             # if cg_cfg is not None and cg_cfg.lsp_enabled:
             #     from chunking.relationships.lsp_call_graph import LSPResolver
             #     resolvers.append(LSPResolver(timeout=cg_cfg.lsp_timeout_seconds))
