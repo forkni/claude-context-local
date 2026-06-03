@@ -53,17 +53,6 @@ MCP search returns **ranked candidates**, not definitive answers. On the 2026-05
 - MCP server running and connected in Claude Code (`/mcp` → Reconnect next to `code-search`)
 - At least one project indexed: `code-search:index_directory(path="<your-project>")`
 
-**Offline smoke test** (verifies imports, config, and tool registry without a running server):
-
-```powershell
-# From repo root — 2>nul suppresses torch INFO noise
-.venv/Scripts/python .claude/skills/mcp-search-tool/smoke.py 2>nul
-```
-
-Driver: `.claude/skills/mcp-search-tool/smoke.py`
-
-What it checks: core imports, `get_search_config()` (mode/model/ego_graph), all 19 tools in `TOOL_REGISTRY`, stale model-key guard (`qwen3`/`c2llm` absent), and a live search if the server is active.
-
 ---
 
 ## Quick Start: Which Tool?

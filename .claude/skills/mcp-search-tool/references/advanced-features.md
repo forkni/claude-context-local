@@ -12,6 +12,7 @@ The project has **three distinct graph-aware subsystems** that are often confuse
 - A1: Intent-Adaptive Edge Weights (internal)
 - A2: File-Level Summary Chunks (configurable)
 - B1: Community-Level Summary Chunks (configurable)
+- **pyan3 Cross-Module Caller Edges** (v0.13.0 — injected at full-index time)
 
 ---
 
@@ -129,7 +130,7 @@ Normalizes word forms so "indexing", "indexed", and "index" all resolve to the s
 - Ensemble: `0.7 × keyword_score + 0.3 × anchor_embedding_score`
 - Anchor queries: 8–10 representative phrases per intent, defined in `config/intent_anchors.yaml`
 - Confidence threshold: 0.35 (queries below fall back to HYBRID intent)
-- Enable via `code-search:configure_search_mode` or `search_config.json`
+- Enable via `search_config.json` (`IntentConfig.semantic_enabled = true`); **not** exposed through any MCP config tool (`configure_search_mode` does not accept `semantic_enabled`)
 
 ---
 
@@ -175,3 +176,33 @@ Normalizes word forms so "indexing", "indexed", and "index" all resolve to the s
 - `enable_large_node_splitting` / `max_chunk_lines` / `split_size_method` / `max_split_chars`
 
 These are advanced tuning options. For most projects, defaults are correct.
+
+---
+
+## pyan3 Cross-Module Caller Edges (v0.13.0)
+
+**Status:** Always-on at full-index time. No opt-in flag required.
+
+**Purpose:** Improve `find_connections` direct-caller recall across module boundaries. The intra-file call graph extractor only sees calls within a single file; pyan3 resolves cross-module calls by analyzing the entire indexed project at once.
+
+**How it works:**
+1. At full-index time, `build_call_edges()` (`chunking/relationships/external_call_graph.py`) runs pyan3 on all **indexed** `.py` files.
+2. Resolved `(caller_raw_id, callee_raw_id)` pairs are injected into the code graph via `CodeGraphStorage.add_call_edge(source="pyan")`.
+3. Each file is pre-validated with `ast.parse` before being passed to pyan3, so one unparseable file (e.g. a TouchDesigner YAML-in-`.py` config) does not abort injection for the whole project.
+4. Injection is scoped to indexed files only — unindexed trees (e.g. `.venv/`, `Scripts/`) are excluded.
+
+**Observable in `find_connections` output:** When callers are resolved via symbol-retry (stale/drifted IDs) or ambiguous-candidate logic, the response includes:
+```json
+{
+  "caller_confidence": {
+    "exact": 3,
+    "recovered": 1,
+    "ambiguous": 0
+  }
+}
+```
+`exact` = resolved directly by chunk_id; `recovered` = re-resolved via `_resolve_by_symbol` Tier 1→3 cascade; `ambiguous` = multiple graph-edge candidates.
+
+**Recall improvement (v0.13.0):**
+- 7-query golden set: 14/14 callers found, 0 missed
+- 5-query set: `mean_recall` 0.5667 → 0.9500

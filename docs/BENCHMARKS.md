@@ -461,6 +461,55 @@ The Mixed approach demonstrates that **MCP semantic search is production-ready**
 
 ---
 
+## Caller Recall Benchmark
+
+**Added**: v0.13.0
+
+Measures `find_connections` direct-caller recall — how many callers of a target symbol the system finds vs. the ground-truth set produced by ripgrep.
+
+### Dataset
+
+Golden dataset: `evaluation/caller_golden.json` — 7 queries (C001–C007), including 2 cross-module pyan3 targets. Built with `scripts/benchmark/build_caller_oracle.py` (ripgrep-based oracle).
+
+Baseline results: `results/caller_recall_pyan.json`
+
+### Results (v0.13.0)
+
+| Metric | v0.12.x baseline | v0.13.0 |
+|--------|-----------------|---------|
+| Direct callers found (7-query set) | — | **14/14 (100%)** |
+| Total missed callers | — | **0** |
+| mean_recall (5-query set) | 0.5667 | **0.9500** |
+| callers found (5-query set) | 8/12 | **12/12** |
+
+### Running the Benchmark
+
+```bash
+# Single run — evaluate all 7 golden queries
+./scripts/benchmark/run_caller_recall.sh \
+  --project-path F:/RD_PROJECTS/COMPONENTS/claude-context-local
+
+# Compare before/after (delta table)
+./scripts/benchmark/run_caller_recall.sh \
+  --project-path F:/RD_PROJECTS/COMPONENTS/claude-context-local \
+  --compare results/caller_recall_pyan.json
+
+# Direct Python invocation
+.venv/Scripts/python scripts/benchmark/run_caller_recall.py run \
+  --golden evaluation/caller_golden.json \
+  --output results/my_run.json
+.venv/Scripts/python scripts/benchmark/run_caller_recall.py compare \
+  results/caller_recall_pyan.json results/my_run.json
+```
+
+### How It Works
+
+1. `build_caller_oracle.py` uses ripgrep to find all files that reference the target symbol and builds a ground-truth caller set.
+2. `run_caller_recall.py run` calls `find_connections` via the MCP server and normalizes the returned `direct_callers` chunk IDs.
+3. Recall = |found ∩ expected| / |expected|; precision = |found ∩ expected| / |found|.
+
+---
+
 ## Appendix: Benchmark Data
 
 ### Full Result Files

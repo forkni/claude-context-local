@@ -6,7 +6,7 @@ Complete version history and feature timeline for claude-context-local MCP serve
 
 - **Version**: 0.13.0
 - **Status**: Production-ready
-- **Test Coverage**: 2,372 unit tests + 8 integration tests (100% pass rate)
+- **Test Coverage**: 2,373 unit tests + 19 integration tests (100% pass rate)
 - **Dependencies**: 124 packages + optional `onnxruntime-gpu` for ONNX backend
 - **SSCG Benchmark**: MRR=0.94, Recall@4=0.89 (12/13 perfect rank-1), Hit@7=1.00
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
