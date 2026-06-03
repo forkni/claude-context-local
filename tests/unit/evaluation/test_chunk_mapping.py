@@ -83,6 +83,23 @@ class TestBuildLineToChunkMap:
         _, _, cid = line_map["f.py"][0]
         assert "x" in cid
 
+    def test_windows_backslash_relative_path_normalized(self) -> None:
+        """Windows-style backslash relative_path must be normalized to forward slashes."""
+        store = {
+            "pkg/a.py:10-20:function:helper": {
+                "metadata": {
+                    "relative_path": "pkg\\a.py",  # Windows backslash
+                    "start_line": 10,
+                    "end_line": 20,
+                    "chunk_type": "function",
+                }
+            }
+        }
+        line_map = build_line_to_chunk_map(store, normalize=False)
+        # Key must be normalized to forward slashes
+        assert "pkg/a.py" in line_map
+        assert "pkg\\a.py" not in line_map
+
     def test_missing_relative_path_skipped(self) -> None:
         store = {
             "bad:1-5:function:f": {

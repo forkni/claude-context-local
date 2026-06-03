@@ -52,7 +52,7 @@ def build_line_to_chunk_map(
     result: dict[str, list[tuple[int, int, str]]] = {}
     for raw_id, entry in metadata_store.items():
         meta = entry.get("metadata", {})
-        path = meta.get("relative_path", "")
+        path = meta.get("relative_path", "").replace("\\", "/")
         start = meta.get("start_line") or 0
         end = meta.get("end_line") or 0
         chunk_type = meta.get("chunk_type", "")
