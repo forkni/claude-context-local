@@ -280,7 +280,10 @@ class IndexWriteStage:
                         line_number=edge.line,
                         is_method_call=edge.is_method,
                         is_resolved=True,
-                        source=edge.source,
+                        # Use "resolver_source" not "source": NetworkX node-link format
+                        # reserves "source"/"target" as endpoint keys — any edge attribute
+                        # named "source" is silently destroyed on save/load round-trip.
+                        resolver_source=edge.source,
                         resolver_confidence=edge.confidence,
                     )
                     added += 1
@@ -294,7 +297,7 @@ class IndexWriteStage:
                         storage.upgrade_call_edge(
                             caller_id,
                             callee_id,
-                            source=edge.source,
+                            resolver_source=edge.source,
                             resolver_confidence=edge.confidence,
                             is_resolved=True,
                             line=edge.line,

@@ -467,7 +467,7 @@ class RelationshipAnalyzer:
             caller_id = entry.chunk_id
             # Edge-level confidence may be stored at indexing time (e.g. "ambiguous")
             edge_confidence: str | None = entry.edge_data.get("confidence")
-            resolver_source: str = entry.edge_data.get("source", "ast")
+            resolver_source: str = entry.edge_data.get("resolver_source", "ast")
             resolver_confidence: float = entry.edge_data.get("resolver_confidence", 0.5)
 
             result = self.searcher.get_by_chunk_id(caller_id)
@@ -550,7 +550,7 @@ class RelationshipAnalyzer:
         for entry in entries:
             callee_id = entry.chunk_id
             edge_confidence: str | None = entry.edge_data.get("confidence")
-            resolver_source: str = entry.edge_data.get("source", "ast")
+            resolver_source: str = entry.edge_data.get("resolver_source", "ast")
             resolver_confidence: float = entry.edge_data.get("resolver_confidence", 0.5)
 
             result = self.searcher.get_by_chunk_id(callee_id)

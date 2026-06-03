@@ -214,7 +214,10 @@ class CodeGraphStorage:
             is_method_call: Whether this is a method call
             is_resolved: Whether callee_name is fully resolved to a chunk_id
                 (vs qualified name or bare name)
-            **kwargs: Additional edge attributes
+            **kwargs: Additional edge attributes.  **⚠ Never pass ``source``
+                or ``target`` as a key** — NetworkX node-link format reserves
+                those names for edge endpoints and silently drops them on
+                save/load.  Use ``resolver_source`` instead.
         """
         # Create lightweight target_name node if it doesn't exist
         # This enables get_callers(callee_name) queries to work
@@ -254,7 +257,13 @@ class CodeGraphStorage:
             caller_id: Source node (caller chunk_id).
             callee_id: Target node (callee chunk_id or symbol name).
             **attrs: Edge attribute key-value pairs to overwrite.  Typical keys:
-                ``source``, ``resolver_confidence``, ``is_resolved``, ``line``.
+                ``resolver_source``, ``resolver_confidence``, ``is_resolved``, ``line``.
+
+                **⚠ Never use ``source`` or ``target`` as attr keys** — the
+                NetworkX node-link serialization format (`nx.node_link_data`)
+                reserves those names for edge endpoints; any edge attribute
+                named ``source`` or ``target`` is silently destroyed on
+                save/load round-trip.
 
         Raises:
             KeyError: If the edge ``(caller_id, callee_id)`` does not exist in
