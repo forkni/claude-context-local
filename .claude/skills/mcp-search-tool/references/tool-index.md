@@ -27,7 +27,7 @@ Find code with natural language query or direct chunk lookup. Use for all initia
 **Result fields (optional):** `complexity_score`, `graph`, `reranker_score`, `summary`
 
 ### code-search:find_connections
-Find all callers, dependencies, and relationships for a given symbol. Preferred over Grep for caller/dependency discovery.
+Find all callers, callees, dependencies, and relationships for a given symbol. Returns `direct_callers` (inbound) and `direct_callees` (outbound) with per-entry provenance (`resolver_source`, `resolver_confidence`). Preferred over Grep for caller/dependency discovery.
 
 **Key options:** `chunk_id` (preferred), `symbol_name` (fallback — may be ambiguous), `max_depth` (default 3, range 1-5), `exclude_dirs`, `relationship_types`, `output_format`
 

@@ -90,7 +90,16 @@ code-search:search_code("how does the indexing pipeline work", k=10)
 
 `calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`, `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`, `uses_context_manager`
 
-**Returns:** Direct and indirect callers, dependency graph, similar code (when available). When any caller was resolved via the symbol-retry cascade, also includes `caller_confidence: {exact, recovered, ambiguous}` — `exact` = resolved directly by chunk_id; `recovered` = stale/drifted ID re-resolved by `_resolve_by_symbol`; `ambiguous` = multiple candidates at graph-edge time.
+**Returns:** Direct callers (inbound) and direct callees (outbound), indirect callers, dependency graph (DOT format), similar code (when available).
+
+Per-entry provenance fields on every caller and callee entry (v0.14.0+):
+- `confidence`: string tag — `"exact"` (direct chunk_id resolution), `"recovered"` (stale ID re-resolved via `_resolve_by_symbol` Tier 1→3), `"ambiguous"` (multiple candidates)
+- `resolver_source`: which resolver produced the edge — `"ast"`, `"pyan"`, `"libcst"`, or `"lsp"`
+- `resolver_confidence`: float 0.5–0.98 (higher = more trusted)
+
+Top-level breakdowns (when any counter is non-zero):
+- `caller_confidence: {exact, recovered, ambiguous}` — count of each tag in `direct_callers`
+- `callee_confidence: {exact, recovered, ambiguous}` — count of each tag in `direct_callees`
 
 **Standard 2-step workflow:**
 

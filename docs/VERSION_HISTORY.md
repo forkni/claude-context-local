@@ -6,7 +6,7 @@ Complete version history and feature timeline for claude-context-local MCP serve
 
 - **Version**: 0.14.0
 - **Status**: Production-ready
-- **Test Coverage**: 2,446 unit tests + 19 integration tests (100% pass rate)
+- **Test Coverage**: 2,451 unit tests + 19 integration tests (100% pass rate)
 - **Dependencies**: 124 packages + optional `[callgraph]` / `[lsp]` extras
 - **SSCG Benchmark**: MRR=0.94, Recall@4=0.89 (12/13 perfect rank-1), Hit@7=1.00
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
@@ -32,6 +32,11 @@ Architectural release introducing a pluggable multi-resolver call-graph pipeline
 - **`_inject_call_edges`** (`search/index_write_stage.py`) — replaces `_inject_pyan_edges`; reads `CallGraphConfig`, instantiates enabled+available resolvers, calls `run_resolvers()`, merges with confidence-precedence (upgrade if higher confidence, else add).
 - **Callee golden set** (`evaluation/callee_golden.json`) — 7-query outbound golden set for `--direction callees` benchmarking.
 - **Unit tests** — 63 new tests: `test_call_edge_resolver.py` (31), `test_call_graph_config.py` (15), `test_libcst_call_graph.py` (15), `test_lsp_call_graph.py` (17).
+
+### Fixed
+
+- **`c478f54` — edge attribute renamed `source` → `resolver_source`** (`search/index_write_stage.py`, `search/relationship_analyzer.py`) — NetworkX node-link format reserves `"source"` and `"target"` as endpoint keys; an edge attribute named `"source"` was silently destroyed on save/load round-trip, making resolver provenance invisible after reindex.
+- **`ec005b2` — `get_edge_data` preserves legacy string confidence tags** (`graph/graph_storage.py`) — string tags `"exact"`, `"ambiguous"`, `"recovered"` were unconditionally coerced to `float()`, yielding `1.0` with a spurious warning and causing ambiguous edges to be miscounted as exact in `callee_confidence` breakdowns. Fixed via `_LEGACY_CONFIDENCE_TAGS` pass-through.
 
 ### Changed
 

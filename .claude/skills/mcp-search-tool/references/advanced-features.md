@@ -179,30 +179,56 @@ These are advanced tuning options. For most projects, defaults are correct.
 
 ---
 
-## pyan3 Cross-Module Caller Edges (v0.13.0)
+## Layered Call-Graph Resolver Pipeline (v0.14.0)
 
-**Status:** Always-on at full-index time. No opt-in flag required.
+**Status:** Runs at full-index time via `_inject_call_edges`. Core (AST) is always-on; pyan3/LibCST require `pip install -e ".[callgraph]"`; LSP requires `pip install -e ".[lsp]"` plus `lsp_enabled=true` in `search_config.json`.
 
-**Purpose:** Improve `find_connections` direct-caller recall across module boundaries. The intra-file call graph extractor only sees calls within a single file; pyan3 resolves cross-module calls by analyzing the entire indexed project at once.
+**Purpose:** Improve `find_connections` cross-module caller/callee recall. Each resolver adds edges with a confidence score; a higher-confidence resolver can upgrade an edge already contributed by a lower one.
 
-**How it works:**
-1. At full-index time, `build_call_edges()` (`chunking/relationships/external_call_graph.py`) runs pyan3 on all **indexed** `.py` files.
-2. Resolved `(caller_raw_id, callee_raw_id)` pairs are injected into the code graph via `CodeGraphStorage.add_call_edge(source="pyan")`.
-3. Each file is pre-validated with `ast.parse` before being passed to pyan3, so one unparseable file (e.g. a TouchDesigner YAML-in-`.py` config) does not abort injection for the whole project.
-4. Injection is scoped to indexed files only — unindexed trees (e.g. `.venv/`, `Scripts/`) are excluded.
+**Confidence ladder:**
 
-**Observable in `find_connections` output:** When callers are resolved via symbol-retry (stale/drifted IDs) or ambiguous-candidate logic, the response includes:
+| Resolver | Confidence | Requires |
+|----------|-----------|----------|
+| In-house AST (intra-file) | 0.5 | nothing — always-on |
+| In-house AST (cross-file) | 0.7 | nothing — always-on |
+| pyan3 | 0.75 | `pip install -e ".[callgraph]"` (GPL-2.0, optional) |
+| LibCST (`FullyQualifiedNameProvider`) | 0.90 | `pip install -e ".[callgraph]"` (MIT, optional) |
+| LSP/basedpyright | 0.98 | `pip install -e ".[lsp]"` + `lsp_enabled=true` |
+
+**Configuration** (`search_config.json`):
 ```json
 {
-  "caller_confidence": {
-    "exact": 3,
-    "recovered": 1,
-    "ambiguous": 0
+  "call_graph": {
+    "resolvers": ["pyan", "libcst"],
+    "lsp_enabled": false,
+    "lsp_timeout_seconds": 30.0
   }
 }
 ```
-`exact` = resolved directly by chunk_id; `recovered` = re-resolved via `_resolve_by_symbol` Tier 1→3 cascade; `ambiguous` = multiple graph-edge candidates.
 
-**Recall improvement (v0.13.0):**
+**How it works:**
+1. At full-index time, `_inject_call_edges()` (`search/index_write_stage.py`) reads `CallGraphConfig`, instantiates enabled + available resolvers.
+2. `run_resolvers()` (`chunking/relationships/call_edge_resolver.py`) runs all resolvers in ascending confidence order; the merged result keeps the highest-confidence edge per `(caller_id, callee_id)` pair.
+3. Edges carry provenance: `resolver_source` (`"ast"|"pyan"|"libcst"|"lsp"`) and `resolver_confidence` (float).
+4. Each file is pre-validated with `ast.parse`; injection is scoped to indexed files only.
+
+**Observable in `find_connections` output (v0.14.0+):**
+
+Every entry in `direct_callers` and `direct_callees` now includes:
+- `confidence`: string tag (`"exact"` / `"recovered"` / `"ambiguous"`)
+- `resolver_source`: which resolver produced the edge (`"ast"`, `"pyan"`, `"libcst"`, `"lsp"`)
+- `resolver_confidence`: float 0.5–0.98
+
+Top-level breakdowns:
+```json
+{
+  "caller_confidence": {"exact": 3, "recovered": 1, "ambiguous": 0},
+  "callee_confidence": {"exact": 2, "recovered": 0, "ambiguous": 0}
+}
+```
+
+`direct_callees` (outbound calls) is now returned alongside `direct_callers` (inbound).
+
+**Recall improvement (v0.13.0 baseline, maintained in v0.14.0):**
 - 7-query golden set: 14/14 callers found, 0 missed
 - 5-query set: `mean_recall` 0.5667 → 0.9500

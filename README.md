@@ -33,7 +33,7 @@
 - **SSCG Integration**: Structural-Semantic Code Graph — on the [SSCG benchmark](#benchmark-results) (2026-04-10, 13 queries, k=10; cutoffs @5/@10): **13/13 Hit@5 across all three modes (hybrid, BM25, semantic); BM25 MRR=0.846 (best overall)**
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
 - **Multi-Model Routing**: Intelligent query routing (Qwen3, BGE-M3, CodeRankEmbed) with 100% accuracy - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md)
-- **pyan3 Cross-Module Caller Edges**: `find_connections` direct-caller recall improved (5-query golden set: 0.57→0.95; 7-query harness: 14/14 callers found) via pyan3 cross-module edge injection at full-index time — [caller recall benchmark](docs/BENCHMARKS.md#caller-recall-benchmark)
+- **Layered Call-Graph Resolver Pipeline**: `find_connections` returns callers **and** callees with per-entry provenance (`resolver_source`, `resolver_confidence`). Confidence ladder: AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98. Install `pip install -e ".[callgraph]"` for pyan3 + LibCST; core is Apache-2.0-clean — [caller recall benchmark](docs/BENCHMARKS.md#caller-recall-benchmark)
 - **OTel Tracing** (opt-in): Zero-overhead `traced_block` / `@timed` spans across the search and index pipeline — export to Jaeger, Tempo, or any OTLP collector. See [Observability](docs/OBSERVABILITY.md).
 - **ONNX Runtime Backend** (opt-in): `performance.use_onnx` loads eligible models via `ORTModelForFeatureExtraction` with `CUDAExecutionProvider` + `gpu_mem_limit` arena cap — prevents WDDM shared-memory spillover on 8 GB laptop GPUs
 - **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
@@ -42,17 +42,18 @@
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
 - **File-Role Tagging**: Chunks tagged `role:src/test/doc/config` at index time — enables role-aware ranking and precision boosts
 
-**Status**: ✅ Production-ready | 2,373+ passing tests | All 19 MCP tools operational | Windows 10/11
+**Status**: ✅ Production-ready | 2,451 passing tests | All 19 MCP tools operational | Windows 10/11
 
-## What's New in v0.13.0
+## What's New in v0.14.0
 
-- **pyan3 cross-module caller edges in `find_connections`** — `build_call_edges()` runs pyan3 on all indexed project `.py` files at full-index time and injects cross-module call edges directly into the code graph. On this codebase: 5,341 edges resolved, 3,594 injected.
-- **`find_connections` direct-caller recall improved** — stale chunk IDs now recovered via Tier 1→3 symbol cascade (`confidence="recovered"`); common-method blocklist drops names only when no project definition exists; per-candidate `confidence="ambiguous"` edges preserve all resolution candidates. Recall on 5-query golden set: 0.5667 → 0.9500.
-- **`split_block` call edges recovered** — extractor now re-reads the enclosing `FunctionDef` from source (per-file AST cache) instead of parsing the bare body fragment, which always yielded `[]`.
-- **Windows path normalization in `build_line_to_chunk_map`** — backslash `relative_path` values from the metadata store are normalized before lookup, fixing zero-pyan3-edges on Windows.
-- **`exc_info=True` across all swallow-and-degrade handlers** — stack traces now appear in debug logs across `graph/`, `search/`, `chunking/`, `utils/`, and `tools/` without changing runtime behavior.
-- **Security**: `pyjwt` 2.12.1 → 2.13.0 (4 CVEs), `uv` 0.11.6 → 0.11.18 (GHSA-4gg8-gxpx-9rph).
-- **2,373 unit tests** passing.
+- **Layered call-graph resolver pipeline** — pluggable `CallEdgeResolver` Protocol with confidence-precedence merge (`run_resolvers()`). Confidence ladder: AST 0.5/0.7 (in-house, always-on) → pyan3 0.75 → LibCST FQN 0.90 → LSP/basedpyright 0.98 (opt-in). Higher-confidence resolver upgrades edges per `(caller_id, callee_id)` pair.
+- **Optional `[callgraph]` / `[lsp]` extras** — pyan3 (GPL-2.0) and libcst moved to optional `[callgraph]` extra; basedpyright in `[lsp]`. Core install is Apache-2.0-clean. Install `pip install -e ".[callgraph]"` to activate pyan3 + LibCST resolvers; add `"call_graph": {"lsp_enabled": true}` in `search_config.json` for LSP.
+- **Bidirectional callees** — `find_connections` now returns `direct_callees` (outbound calls) alongside `direct_callers`, with the same per-entry provenance: `confidence` (tag), `resolver_source` (`"ast"|"pyan"|"libcst"|"lsp"`), `resolver_confidence` (0.5–0.98). Top-level `callee_confidence` breakdown (`exact/recovered/ambiguous`) mirrors `caller_confidence`.
+- **`CallGraphConfig`** — `resolvers: list[str]`, `lsp_enabled: bool`, `lsp_timeout_seconds: float` added to `SearchConfig`.
+- **Fixed**: `source` → `resolver_source` edge attribute rename (NetworkX node-link format reserves `"source"`/`"target"` — provenance was silently destroyed on save/load). `get_edge_data` now preserves legacy string confidence tags instead of float-coercing them to 1.0.
+- **2,451 unit tests** passing (63 new tests for resolver pipeline).
+
+**Previous (v0.13.0)**: pyan3 cross-module caller edges in `find_connections`, direct-caller recall 0.57→0.95, `split_block` call edges recovered, Windows backslash normalization, `exc_info=True` across all swallow-and-degrade handlers. Security: pyjwt 2.13.0, uv 0.11.18.
 
 **Previous (v0.12.4)**: Three MCP server bug fixes: `switch_project` no longer logs "No indexed model detected" (reads `project_info.json`); `list_embedding_models` `loaded` field fixed; `CodeGraphStorage.clear()` deletes backing JSON. `GraphScoringStage` extracted; `ServiceLocator`/`ResourceManager`/`SearchFactory` collapsed to module-level functions (ADR-0005). Security: idna 3.17.
 

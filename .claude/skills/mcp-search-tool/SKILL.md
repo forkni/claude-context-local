@@ -1,6 +1,6 @@
 ---
 name: mcp-search-tool
-description: "Guides semantic code search via the code-search MCP server. Use when searching for code definitions, callers, dependencies, or tracing code flow in indexed projects. Provides correct workflows for search_code, find_connections, find_path, find_similar_code. Invoke /mcp-search-tool status to run a health check."
+description: "Guides semantic code search via the code-search MCP server. Use when searching for code definitions, callers, callees, dependencies, or tracing code flow in indexed projects. Provides correct workflows for search_code, find_connections, find_path, find_similar_code. Invoke /mcp-search-tool status to run a health check."
 user-invocable: true
 argument-hint: "search query or 'status' for index health"
 allowed-tools: "Bash, Read, Grep, code-search:search_code, code-search:find_connections, code-search:find_path, code-search:find_similar_code, code-search:index_directory, code-search:list_projects, code-search:switch_project, code-search:get_index_status, code-search:clear_index, code-search:delete_project, code-search:configure_search_mode, code-search:get_search_config_status, code-search:configure_query_routing, code-search:configure_reranking, code-search:configure_chunking, code-search:list_embedding_models, code-search:switch_embedding_model, code-search:get_memory_status, code-search:cleanup_resources"
@@ -64,6 +64,7 @@ MCP search returns **ranked candidates**, not definitive answers. On the 2026-05
 What are you trying to do?
 │
 ├─ "Find callers of X" ──────────────► code-search:find_connections(chunk_id=<chunk_id>)
+├─ "What does X call" ───────────────► code-search:find_connections(chunk_id=<chunk_id>)
 ├─ "What depends on X" ──────────────► code-search:find_connections(chunk_id=<chunk_id>)
 ├─ "Trace flow from X to Y" ─────────► code-search:find_path(source_chunk_id=<src>, target_chunk_id=<tgt>)
 ├─ "How does X connect to Y?" ───────► code-search:find_path(source_chunk_id=<src>, target_chunk_id=<tgt>)
@@ -103,7 +104,7 @@ What are you trying to do?
 | Tool | Purpose |
 |------|---------|
 | **code-search:search_code** | Find code with NL query or direct chunk lookup |
-| **code-search:find_connections** | Find callers, dependencies, relationships |
+| **code-search:find_connections** | Find callers, callees, dependencies, relationships |
 | **code-search:find_path** | Shortest path between two entities |
 | code-search:find_similar_code | Functionally similar code |
 | code-search:index_directory | Index project (one-time setup) |
