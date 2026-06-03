@@ -844,6 +844,7 @@ class IncrementalIndexer:
                 supported_files,
                 start_time,
                 self.repo_profile,
+                project_path=project_path,
             )
 
         except Exception as e:

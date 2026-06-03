@@ -38,7 +38,12 @@ _PROJECT_ROOT = _SCRIPT_DIR.parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from evaluation.metrics import normalize_chunk_id  # noqa: E402
+from evaluation.chunk_mapping import (  # noqa: E402, I001
+    build_line_to_chunk_map as _build_line_to_chunk_map_shared,
+    chunk_id_from_fqn as _chunk_id_from_fqn_shared,
+    find_enclosing_chunk as _find_enclosing_chunk_shared,
+)
+from evaluation.metrics import normalize_chunk_id  # noqa: E402, I001
 
 
 # ---------------------------------------------------------------------------
@@ -96,30 +101,12 @@ def _build_line_to_chunk_map(
 ) -> dict[str, list[tuple[int, int, str]]]:
     """Build a per-file sorted list of (start, end, normalized_chunk_id).
 
-    Args:
-        metadata_store: An open MetadataStore (dict-like: raw_id → entry).
-        semantic_types: Chunk types to include. None = all types.
-
-    Returns:
-        {relative_path: sorted [(start_line, end_line, normalized_chunk_id), ...]}
+    Delegates to :func:`evaluation.chunk_mapping.build_line_to_chunk_map`
+    with ``normalize=True`` (oracle always uses normalized ids).
     """
-    if semantic_types is None:
-        semantic_types = frozenset(
-            {"function", "method", "class", "decorated_definition"}
-        )
-    result: dict[str, list[tuple[int, int, str]]] = {}
-    for raw_id, entry in metadata_store.items():
-        meta = entry.get("metadata", {})
-        path = meta.get("relative_path", "")
-        start = meta.get("start_line") or 0
-        end = meta.get("end_line") or 0
-        chunk_type = meta.get("chunk_type", "")
-        if path and start and end and chunk_type in semantic_types:
-            norm = normalize_chunk_id(raw_id)
-            result.setdefault(path, []).append((start, end, norm))
-    for chunks in result.values():
-        chunks.sort()
-    return result
+    return _build_line_to_chunk_map_shared(
+        metadata_store, semantic_types=semantic_types, normalize=True
+    )
 
 
 def _find_enclosing_chunk(
@@ -128,16 +115,7 @@ def _find_enclosing_chunk(
     line_num: int,
 ) -> str | None:
     """Return the normalized chunk_id of the innermost chunk containing (rel_path, line_num)."""
-    chunks = line_map.get(rel_path, [])
-    best: str | None = None
-    best_size = float("inf")
-    for start, end, cid in chunks:
-        if start <= line_num <= end:
-            size = end - start
-            if size < best_size:
-                best_size = size
-                best = cid
-    return best
+    return _find_enclosing_chunk_shared(line_map, rel_path, line_num)
 
 
 def _rg_find_callers(
@@ -240,21 +218,9 @@ def _chunk_id_from_pycg_fqn(
 ) -> str | None:
     """Best-effort mapping from PyCG FQN to normalized chunk_id.
 
-    PyCG uses dotted module paths: "search.relationship_analyzer.RelationshipAnalyzer._enrich_callers"
-    We convert to relative path and scan the line map for a name match.
+    Delegates to :func:`evaluation.chunk_mapping.chunk_id_from_fqn`.
     """
-    parts = fqn.split(".")
-    # Progressively longer module paths, shorter name suffixes
-    for split_at in range(len(parts) - 1, 0, -1):
-        module_path = "/".join(parts[:split_at]) + ".py"
-        name = ".".join(parts[split_at:])
-        if module_path in line_map:
-            # Find chunk in that file whose normalized ID ends with the name
-            for _, _, cid in line_map[module_path]:
-                cid_name = cid.split(":")[-1]
-                if cid_name == name or cid_name.endswith("." + name):
-                    return cid
-    return None
+    return _chunk_id_from_fqn_shared(fqn, line_map, project_root)
 
 
 # ---------------------------------------------------------------------------

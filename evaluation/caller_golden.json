@@ -4,7 +4,7 @@
     "usage": "Run scripts/benchmark/build_caller_oracle.py to regenerate from PyCG + ripgrep",
     "normalization": "Chunk IDs normalized (line ranges stripped via evaluation/metrics.py:normalize_chunk_id)",
     "format": "target_chunk_id → list of expected direct-caller chunk IDs",
-    "total_queries": 5,
+    "total_queries": 7,
     "categories": {
       "E": "Exact callers (hand-curated, high confidence)",
       "O": "Oracle-generated (from build_caller_oracle.py)"
@@ -45,10 +45,12 @@
     {
       "id": "C004",
       "category": "E",
-      "description": "add_call_edge adds a caller→callee edge to the code graph; called from graph_integration during populate_from_embeddings (both resolved and phantom paths)",
+      "description": "add_call_edge adds a caller→callee edge to the code graph; called from add_chunk (main chunk, findable), populate_from_embeddings, and build_graph_from_chunks (both in split_blocks, structural gap)",
       "target_chunk_id": "graph/graph_storage.py:method:CodeGraphStorage.add_call_edge",
       "expected_callers": [
-        "search/graph_integration.py:method:GraphIntegration._build_graph_from_chunks"
+        "search/graph_integration.py:method:GraphIntegration.add_chunk",
+        "search/graph_integration.py:method:GraphIntegration.populate_from_embeddings",
+        "search/graph_integration.py:method:GraphIntegration.build_graph_from_chunks"
       ]
     },
     {
@@ -61,6 +63,24 @@
         "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_target",
         "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_forward",
         "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_reverse"
+      ]
+    },
+    {
+      "id": "C006",
+      "category": "E",
+      "description": "find_enclosing_chunk is called directly from _node_to_raw_chunk_id in external_call_graph — cross-package call from chunking/relationships to evaluation",
+      "target_chunk_id": "evaluation/chunk_mapping.py:function:find_enclosing_chunk",
+      "expected_callers": [
+        "chunking/relationships/external_call_graph.py:function:_node_to_raw_chunk_id"
+      ]
+    },
+    {
+      "id": "C007",
+      "category": "E",
+      "description": "build_line_to_chunk_map is called from IndexWriteStage._inject_pyan_edges — cross-package call from search to evaluation",
+      "target_chunk_id": "evaluation/chunk_mapping.py:function:build_line_to_chunk_map",
+      "expected_callers": [
+        "search/index_write_stage.py:method:IndexWriteStage._inject_pyan_edges"
       ]
     }
   ]
