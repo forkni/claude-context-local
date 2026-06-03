@@ -619,10 +619,10 @@ class RelationshipAnalyzer:
             # from the last colon-segment and fall through to the Tier 1→3 symbol-
             # resolution block below so we can locate the *current* chunk.
             parts = chunk_id.split(":")
-            if len(parts) >= 4:
+            if len(parts) >= 3:
                 symbol_name = parts[-1]
                 logger.warning(
-                    f"[RESOLVE] stale chunk_id '{chunk_id}' not in index; "
+                    f"[RESOLVE] chunk_id '{chunk_id}' not in index; "
                     f"retrying by symbol '{symbol_name}'"
                 )
             else:
