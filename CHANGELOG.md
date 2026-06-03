@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Dependency audit 2026-06-03: `pyjwt` 2.12.1 → 2.13.0 (CVE-2026-48522, CVE-2026-48524, CVE-2026-48525, CVE-2026-48526), `uv` 0.11.6 → 0.11.18 (GHSA-4gg8-gxpx-9rph, malicious-wheel entry-point path traversal). Four advisories remain deferred: sqlitedict CVE-2024-35515 (mitigated via JSON serialization in `metadata.py`), transformers 2×RCE (blocked by optimum-onnx pin), starlette host-header injection (localhost-only deployment, low risk).
+
 ---
 
 ## [0.12.4] - 2026-05-29
