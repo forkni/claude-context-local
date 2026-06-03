@@ -51,6 +51,28 @@ SEMANTIC_TYPES = (
     "split_block",  # Large node split blocks (AST block splitting)
 )
 
+# Common Python method/attribute names that are almost certainly stdlib
+# or built-in targets when the project itself does not define them.
+# We drop these ONLY when `name_to_chunk_ids` has no matching project chunk.
+# If the project defines its own `get`, `format`, etc., the edge is kept.
+_COMMON_METHODS: frozenset[str] = frozenset(
+    {
+        "append",
+        "extend",
+        "get",
+        "items",
+        "keys",
+        "values",
+        "split",
+        "join",
+        "strip",
+        "replace",
+        "format",
+        "lower",
+        "upper",
+    }
+)
+
 
 class GraphIntegration:
     """Wrapper for call graph storage operations.
@@ -263,19 +285,46 @@ class GraphIntegration:
 
             for call_dict in meta.get("calls", []):
                 callee_name = call_dict.get("callee_name", "unknown")
+                line_number = call_dict.get("line_number", 0)
+                is_method_call = call_dict.get("is_method_call", False)
                 resolved = self._resolve_call_target(
                     callee_name, name_to_chunk_ids, caller_file=caller_file
                 )
-                self.storage.add_call_edge(
-                    caller_id=chunk_id,
-                    callee_name=resolved if resolved else callee_name,
-                    line_number=call_dict.get("line_number", 0),
-                    is_method_call=call_dict.get("is_method_call", False),
-                    is_resolved=resolved is not None,
-                )
-                call_edges += 1
                 if resolved:
+                    self.storage.add_call_edge(
+                        caller_id=chunk_id,
+                        callee_name=resolved,
+                        line_number=line_number,
+                        is_method_call=is_method_call,
+                        is_resolved=True,
+                        confidence="exact",
+                    )
+                    call_edges += 1
                     resolved_edges += 1
+                else:
+                    ambiguous = self._get_ambiguous_candidates(
+                        callee_name, name_to_chunk_ids, caller_file=caller_file
+                    )
+                    if ambiguous:
+                        for candidate_id in ambiguous:
+                            self.storage.add_call_edge(
+                                caller_id=chunk_id,
+                                callee_name=candidate_id,
+                                line_number=line_number,
+                                is_method_call=is_method_call,
+                                is_resolved=True,
+                                confidence="ambiguous",
+                            )
+                        call_edges += 1
+                    else:
+                        self.storage.add_call_edge(
+                            caller_id=chunk_id,
+                            callee_name=callee_name,
+                            line_number=line_number,
+                            is_method_call=is_method_call,
+                            is_resolved=False,
+                        )
+                        call_edges += 1
 
             for rel_dict in meta.get("relationships", []):
                 try:
@@ -409,25 +458,46 @@ class GraphIntegration:
                     )
 
                     if resolved_chunk_id:
-                        # Direct chunk-to-chunk edge!
+                        # Direct chunk-to-chunk edge — high confidence
                         self.storage.add_call_edge(
                             caller_id=chunk.chunk_id,
                             callee_name=resolved_chunk_id,  # Use resolved chunk_id
                             line_number=line_number,
                             is_method_call=is_method_call,
                             is_resolved=True,
+                            confidence="exact",
                         )
                         resolved_edges += 1
                     else:
-                        # Fallback to phantom node (existing behavior)
-                        self.storage.add_call_edge(
-                            caller_id=chunk.chunk_id,
-                            callee_name=callee_name,  # Use bare symbol name
-                            line_number=line_number,
-                            is_method_call=is_method_call,
-                            is_resolved=False,
+                        # Check whether it's ambiguous (project has multiple
+                        # definitions) or a true phantom (no project definition).
+                        ambiguous = self._get_ambiguous_candidates(
+                            callee_name, name_to_chunk_ids, caller_file=chunk.file_path
                         )
-                        phantom_edges += 1
+                        if ambiguous:
+                            # Keep all candidates tagged as ambiguous so they are
+                            # retrievable at query time.  Each edge is low-confidence
+                            # rather than silently dropped.
+                            for candidate_id in ambiguous:
+                                self.storage.add_call_edge(
+                                    caller_id=chunk.chunk_id,
+                                    callee_name=candidate_id,
+                                    line_number=line_number,
+                                    is_method_call=is_method_call,
+                                    is_resolved=True,
+                                    confidence="ambiguous",
+                                )
+                            phantom_edges += 1  # still counted as unresolved for stats
+                        else:
+                            # True phantom node (builtin, stdlib, or unknown symbol)
+                            self.storage.add_call_edge(
+                                caller_id=chunk.chunk_id,
+                                callee_name=callee_name,  # Use bare symbol name
+                                line_number=line_number,
+                                is_method_call=is_method_call,
+                                is_resolved=False,
+                            )
+                            phantom_edges += 1
 
                 # Add relationship edges
                 for rel in chunk.relationships or []:
@@ -469,8 +539,12 @@ class GraphIntegration:
     ) -> str | None:
         """Resolve a call target name to its chunk_id.
 
-        Conservative approach: Only resolve if exactly ONE match exists.
-        Ambiguous matches (multiple functions with same name) create phantom nodes.
+        Returns a chunk_id when exactly one project match exists (or after
+        same-file / split_block disambiguation).  Returns ``None`` when the call
+        should become a phantom node (true builtin, common stdlib name with no
+        project definition, or still-ambiguous multi-candidate).  For the
+        still-ambiguous case, call ``_get_ambiguous_candidates`` to obtain all
+        candidates and create ``confidence="ambiguous"`` edges instead.
 
         Args:
             callee_name: Symbol name from the call (e.g., "foo", "ClassName.method")
@@ -478,7 +552,7 @@ class GraphIntegration:
             caller_file: Optional file path of caller for disambiguation
 
         Returns:
-            chunk_id if exactly one match, None otherwise (creates phantom node)
+            chunk_id if exactly one match, None otherwise
         """
         # Skip builtins (len, print, etc.) -- they never resolve to project code
         import builtins
@@ -486,23 +560,11 @@ class GraphIntegration:
         if hasattr(builtins, callee_name):
             return None  # Create phantom node (will be filtered in traversals)
 
-        # Check if base name (after last dot) is a common method builtin
+        # Refined common-method blocklist: drop the name ONLY when the project has
+        # no definition for it.  If the project defines its own `get`, `format`,
+        # etc., we keep the edge (resolved below via same-file / unique-match).
         base_name = callee_name.split(".")[-1] if "." in callee_name else callee_name
-        if base_name in {
-            "append",
-            "extend",
-            "get",
-            "items",
-            "keys",
-            "values",
-            "split",
-            "join",
-            "strip",
-            "replace",
-            "format",
-            "lower",
-            "upper",
-        }:
+        if base_name in _COMMON_METHODS and callee_name not in name_to_chunk_ids:
             return None
 
         candidates = name_to_chunk_ids.get(callee_name, [])
@@ -538,8 +600,35 @@ class GraphIntegration:
                     split_blocks.sort(key=_start_line)
                     return split_blocks[0]
 
-        # No match or still ambiguous - create phantom node
+        # No match or still ambiguous — caller should check _get_ambiguous_candidates
         return None
+
+    def _get_ambiguous_candidates(
+        self,
+        callee_name: str,
+        name_to_chunk_ids: dict[str, list[str]],
+        caller_file: str | None = None,
+    ) -> list[str]:
+        """Return all candidate chunk_ids for a callee name that has multiple matches.
+
+        Used by the call-site in ``_build_graph_from_chunks`` when
+        ``_resolve_call_target`` returns ``None`` but the name *does* appear in
+        ``name_to_chunk_ids`` — meaning the call is ambiguous rather than a true
+        phantom.  The caller creates ``confidence="ambiguous"`` edges to each
+        candidate so they are retained in the graph and surfaced at query time.
+
+        Returns an empty list when the name is not in ``name_to_chunk_ids`` (true
+        phantom / builtin / common-stdlib name with no project definition).
+
+        Args:
+            callee_name: Symbol name from the call.
+            name_to_chunk_ids: Full symbol → chunk_ids map for the indexed project.
+            caller_file: Caller file path (unused here, reserved for future use).
+
+        Returns:
+            List of candidate chunk_ids (possibly empty).
+        """
+        return list(name_to_chunk_ids.get(callee_name, []))
 
     def save(self) -> None:
         """Save call graph to disk."""

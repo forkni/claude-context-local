@@ -742,8 +742,11 @@ class TestCallEdgeResolution:
 
     @patch("search.hybrid_searcher.CodeIndexManager")
     @patch("search.hybrid_searcher.BM25Index")
-    def test_ambiguous_function_name_phantom(self, mock_bm25, mock_dense):
-        """Test that ambiguous function names (multiple matches) remain phantom."""
+    def test_ambiguous_function_name_keeps_all_candidates(self, mock_bm25, mock_dense):
+        """Phase 2: ambiguous function names (multiple project matches) now create
+        confidence='ambiguous' edges to all candidates instead of dropping to phantom.
+        This preserves recall while tagging low-confidence edges explicitly.
+        """
         # Setup mocks
         mock_dense.return_value.index = None
         searcher = HybridSearcher(self.temp_dir)
@@ -769,7 +772,7 @@ class TestCallEdgeResolution:
             Mock(
                 chunk_id="file_b.py:1-10:function:extract",
                 metadata={
-                    "name": "extract",  # Duplicate name
+                    "name": "extract",  # Duplicate name — ambiguous
                     "chunk_type": "function",
                     "file_path": "file_b.py",
                     "language": "python",
@@ -787,7 +790,7 @@ class TestCallEdgeResolution:
                     "language": "python",
                     "calls": [
                         {
-                            "callee_name": "extract",  # Ambiguous - should NOT be resolved
+                            "callee_name": "extract",  # Ambiguous: 2 candidates
                             "line_number": 7,
                             "is_method_call": False,
                         }
@@ -801,14 +804,21 @@ class TestCallEdgeResolution:
         # Call add_embeddings
         searcher.add_embeddings(embedding_results)
 
-        # Verify add_call_edge was called with unresolved name (phantom)
+        # Phase 2: ambiguous call → 2 edges (one per candidate), each tagged
         calls = mock_graph.add_call_edge.call_args_list
-        assert len(calls) == 1
+        assert len(calls) == 2  # one edge per ambiguous candidate
 
-        call_kwargs = calls[0][1]
-        assert call_kwargs["caller_id"] == "file_c.py:5-15:function:caller"
-        assert call_kwargs["callee_name"] == "extract"  # NOT resolved (phantom)
-        assert call_kwargs["is_resolved"] is False
+        # All edges from the caller, all resolved, all confidence='ambiguous'
+        callee_names = {c[1]["callee_name"] for c in calls}
+        assert callee_names == {
+            "file_a.py:1-10:function:extract",
+            "file_b.py:1-10:function:extract",
+        }
+        for c in calls:
+            kw = c[1]
+            assert kw["caller_id"] == "file_c.py:5-15:function:caller"
+            assert kw["is_resolved"] is True
+            assert kw.get("confidence") == "ambiguous"
 
     @patch("search.hybrid_searcher.CodeIndexManager")
     @patch("search.hybrid_searcher.BM25Index")

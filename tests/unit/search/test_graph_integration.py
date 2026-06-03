@@ -392,16 +392,17 @@ class TestPopulateFromEmbeddings(TestCase):
         self.assertEqual(kwargs["callee_name"], "f.py:10-15:function:helper")
         self.assertTrue(kwargs["is_resolved"])
 
-    def test_common_method_name_stays_phantom(self):
-        """Calls to common method builtins (get, join, append) must NOT resolve
-        even when a project symbol of the same name exists in the batch.
-        This is the divergence the inline copy had: it lacked _resolve_call_target's
-        common-method filter and would mis-resolve these names."""
+    def test_common_method_name_resolves_when_project_defines_it(self):
+        """Phase 2 refinement: common method names (get, join, append) now resolve to
+        project definitions when the project actually defines a symbol of that name.
+        The old behavior was to always drop them; the new behavior only drops them
+        when NO project definition exists (i.e. the call is definitely stdlib/builtin).
+        """
         graph, storage = self._make_graph()
 
         # A project function named "get" exists in the batch
         project_get = _make_result("f.py:1-5:function:get", name="get")
-        # A caller that calls "get" (the common dict method)
+        # A caller that calls "get" — now resolves to the project's "get" definition
         caller = _make_result(
             "f.py:10-20:function:process",
             name="process",
@@ -413,7 +414,29 @@ class TestPopulateFromEmbeddings(TestCase):
         call_args = storage.add_call_edge.call_args_list
         assert len(call_args) == 1
         kwargs = call_args[0].kwargs
-        # Must NOT be resolved to the project "get" function
+        # With exactly one project definition, "get" now resolves
+        self.assertEqual(kwargs["callee_name"], "f.py:1-5:function:get")
+        self.assertTrue(kwargs["is_resolved"])
+        self.assertEqual(kwargs.get("confidence"), "exact")
+
+    def test_common_method_name_stays_phantom_without_project_definition(self):
+        """Common method names (get, join, append) that have NO matching project
+        definition stay phantom — they are assumed to be stdlib/builtin targets."""
+        graph, storage = self._make_graph()
+
+        # No project function named "get" — only a caller that calls "get"
+        caller = _make_result(
+            "f.py:10-20:function:process",
+            name="process",
+            calls=[{"callee_name": "get", "line_number": 15, "is_method_call": True}],
+        )
+
+        graph.populate_from_embeddings([caller])
+
+        call_args = storage.add_call_edge.call_args_list
+        assert len(call_args) == 1
+        kwargs = call_args[0].kwargs
+        # No project definition for "get" — stays phantom
         self.assertEqual(kwargs["callee_name"], "get")
         self.assertFalse(kwargs["is_resolved"])
 
