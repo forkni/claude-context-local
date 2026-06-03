@@ -38,6 +38,7 @@ prechecks so any stray unmatched id silently degrades to "no edge added".
 
 from __future__ import annotations
 
+import ast
 import logging
 from pathlib import Path
 
@@ -133,8 +134,43 @@ def build_call_edges(
     from pyan.analyzer import CallGraphVisitor  # hard dep — no guard
 
     py_files = _gather_py_files(project_root)
+
+    # Fix 1: Scope to indexed files only — eliminates unindexed install/venv trees
+    # (e.g. Scripts/, site-packages/) that can never produce injectable edges.
+    if raw_line_map:
+        indexed_relpaths = set(raw_line_map.keys())
+        scoped: list[str] = []
+        for fn in py_files:
+            try:
+                rel = str(Path(fn).resolve().relative_to(project_root)).replace(
+                    "\\", "/"
+                )
+                if rel in indexed_relpaths:
+                    scoped.append(fn)
+            except ValueError:
+                pass  # outside project_root — not in index, skip
+        py_files = scoped
+
     if not py_files:
         logger.warning("[PYAN] No .py files found under %s — skipping", project_root)
+        return []
+
+    # Fix 2: Pre-validate with ast.parse — one malformed file must not abort the
+    # whole pass (pyan's prescan raises SyntaxError on the first bad file).
+    parseable: list[str] = []
+    for fn in py_files:
+        try:
+            source = Path(fn).read_text(encoding="utf-8", errors="replace")
+            ast.parse(source, filename=fn)
+            parseable.append(fn)
+        except SyntaxError as exc:
+            logger.warning("[PYAN] Skipping unparseable file %s: %s", fn, exc)
+        except (OSError, ValueError) as exc:
+            logger.warning("[PYAN] Skipping unreadable file %s: %s", fn, exc)
+    py_files = parseable
+
+    if not py_files:
+        logger.warning("[PYAN] No parseable .py files remain — skipping edge injection")
         return []
 
     logger.info("[PYAN] Analysing %d Python files with pyan3...", len(py_files))
