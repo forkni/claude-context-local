@@ -130,7 +130,10 @@ def test_reverse_inherits_graceful_degradation(impact_analyzer, mock_searcher):
     assert len(result["child_classes"]) == 1
 
     child_rel = result["child_classes"][0]
-    assert child_rel["source_chunk_id"] == child_chunk_id
+    # Fix 2: source_chunk_id is cleared to "" when the chunk isn't in the store
+    # so consumers can't accidentally re-query with a stale graph-node ID.
+    assert child_rel["source_chunk_id"] == ""
+    assert child_rel.get("resolvable") is False
     assert child_rel["relationship_type"] == "inherits"
     assert "note" in child_rel
     assert "not found" in child_rel["note"].lower()
@@ -769,3 +772,135 @@ class TestResolveTarget:
 
         with pytest.raises(SearchError):
             analyzer._resolve_target(None, "nonexistent_symbol", None)
+
+    # ------------------------------------------------------------------
+    # Fix 1: stale chunk_id falls back to symbol resolution
+    # ------------------------------------------------------------------
+
+    def test_stale_chunk_id_falls_back_via_symbol_cache(self, mock_searcher):
+        """A chunk_id that misses the store but whose symbol is in the cache resolves.
+
+        Reproduces: find_connections('path:339-342:method:Cls.method') where the
+        file was edited and the current chunk is at 'path:350-353:method:Cls.method'.
+        The symbol cache maps 'Cls.method' → current chunk_id.
+        """
+        stale_id = "td_exporter/CUDAIPCExtension.py:339-342:method:CUDAIPCExtension.verbose_performance"
+        current_id = "td_exporter/CUDAIPCExtension.py:350-353:method:CUDAIPCExtension.verbose_performance"
+
+        mock_cache = Mock()
+        mock_cache.get_by_symbol_name.return_value = current_id
+
+        current_result = _make_mock_result(current_id, "method")
+        mock_searcher.get_by_chunk_id.side_effect = lambda cid: (
+            current_result if cid == current_id else None
+        )
+
+        analyzer = self._make_analyzer_with_caches(
+            mock_searcher, symbol_cache=mock_cache
+        )
+        result, cid = analyzer._resolve_target(stale_id, None, None)
+
+        assert cid == current_id
+        assert result is current_result
+
+    def test_stale_chunk_id_falls_back_via_semantic_search(self, mock_searcher):
+        """A stale chunk_id falls through all the way to semantic search."""
+
+        stale_id = "src/auth.py:10-20:method:AuthManager.validate"
+
+        mock_cache = Mock()
+        mock_cache.get_by_symbol_name.return_value = None
+        mock_gs = Mock()
+        mock_gs.get_nodes_by_name.return_value = []
+        mock_gs.graph.nodes.return_value = []
+
+        current_result = _make_mock_result(
+            "src/auth.py:15-25:method:AuthManager.validate", "method"
+        )
+        mock_searcher.get_by_chunk_id.return_value = None
+        mock_searcher.search.return_value = [current_result]
+
+        analyzer = self._make_analyzer_with_caches(
+            mock_searcher, symbol_cache=mock_cache, graph_storage=mock_gs
+        )
+        result, cid = analyzer._resolve_target(stale_id, None, None)
+
+        assert cid == "src/auth.py:15-25:method:AuthManager.validate"
+        mock_searcher.search.assert_called_once()
+
+    def test_stale_chunk_id_with_too_few_parts_still_raises(self, mock_searcher):
+        """A chunk_id with < 4 colon-parts that misses the store raises immediately."""
+        from search.exceptions import SearchError
+
+        short_id = "src/auth.py:10-20"  # only 2 parts — no symbol derivable
+        mock_searcher.get_by_chunk_id.return_value = None
+
+        analyzer = self._make_analyzer_with_caches(mock_searcher)
+        with pytest.raises(SearchError, match="Chunk not found"):
+            analyzer._resolve_target(short_id, None, None)
+
+
+# ============================================================================
+# Fix 2: unresolvable graph-edge IDs marked as non-queryable
+# ============================================================================
+
+
+class TestLeakPrevention:
+    """_enrich_forward/_enrich_reverse should not emit queryable dead chunk_ids."""
+
+    def _make_analyzer(self, get_by_chunk_id_return=None):
+        """Build a minimal RelationshipAnalyzer with a mock searcher."""
+        from search.relationship_analyzer import RelationshipAnalyzer
+
+        searcher = Mock()
+        # Set symbol_cache to None so RelationshipAnalyzer doesn't pick up
+        # a live Mock from dense_index.symbol_cache (which would auto-return
+        # Mocks instead of None and confuse the resolution tiers).
+        searcher.dense_index = Mock()
+        searcher.dense_index.symbol_cache = None
+        searcher.symbol_cache = None
+        searcher.get_by_chunk_id.return_value = get_by_chunk_id_return
+
+        engine = Mock()
+        engine.get_relationships.return_value = []
+        engine.get_direct_successors.return_value = []
+        engine.get_stats.return_value = {}
+
+        return RelationshipAnalyzer(searcher=searcher, graph_engine=engine)
+
+    def test_enrich_reverse_miss_has_empty_source_chunk_id(self):
+        """_enrich_reverse: when source chunk is not in store, source_chunk_id must be ''."""
+        analyzer = self._make_analyzer(get_by_chunk_id_return=None)
+        entry = RelationshipEntry(
+            chunk_id="some/file.py:100-120:method:Cls.gone",
+            relationship_type="inherits",
+            direction="inbound",
+            depth=1,
+            edge_data={"line_number": 100, "confidence": 1.0},
+        )
+
+        result = analyzer._enrich_reverse(entry, lambda fp: True)
+
+        assert result is not None
+        assert result.get("source_chunk_id") == ""
+        assert result.get("resolvable") is False
+        assert "note" in result
+
+    def test_enrich_forward_inherits_miss_has_no_live_chunk_id(self):
+        """_enrich_forward: when target chunk is not in store, chunk_id must not be a live ID."""
+        analyzer = self._make_analyzer(get_by_chunk_id_return=None)
+        entry = RelationshipEntry(
+            chunk_id="some/file.py:50-60:class:MissingBase",
+            relationship_type="inherits",
+            direction="outbound",
+            depth=1,
+            edge_data={"line_number": 50, "confidence": 1.0},
+        )
+
+        result = analyzer._enrich_forward(entry, lambda fp: True)
+
+        assert result is not None
+        # chunk_id must be absent or empty — never a non-empty unresolvable id
+        chunk_id = result.get("chunk_id", "")
+        assert chunk_id == ""
+        assert result.get("resolvable") is False

@@ -289,7 +289,8 @@ class HybridSearcher(BaseSearcher):
             except Exception as e:
                 self._logger.warning(
                     f"[INIT] Failed to initialize ego-graph retrieval: {e}. "
-                    "Ego-graph expansion will be disabled."
+                    "Ego-graph expansion will be disabled.",
+                    exc_info=True,
                 )
                 self._graph_storage = None
                 self._graph = None
@@ -836,7 +837,8 @@ class HybridSearcher(BaseSearcher):
             except Exception as e:
                 self._logger.warning(
                     f"Failed to compute query embedding for ego-graph scoring: {e}. "
-                    f"Falling back to fixed decay."
+                    f"Falling back to fixed decay.",
+                    exc_info=True,
                 )
                 query_embedding = None
                 query_embedding_available = False
@@ -940,7 +942,8 @@ class HybridSearcher(BaseSearcher):
 
         except Exception as e:
             self._logger.warning(
-                f"Ego-graph expansion failed: {e}. Returning original results."
+                f"Ego-graph expansion failed: {e}. Returning original results.",
+                exc_info=True,
             )
             return results
 
@@ -1017,7 +1020,8 @@ class HybridSearcher(BaseSearcher):
 
         except Exception as e:
             self._logger.warning(
-                f"Parent expansion failed: {e}. Returning original results."
+                f"Parent expansion failed: {e}. Returning original results.",
+                exc_info=True,
             )
             return results
 

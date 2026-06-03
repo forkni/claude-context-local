@@ -5,9 +5,12 @@ import time
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from chunking.python_ast_chunker import CodeChunk
+from chunking.relationships.external_call_graph import build_call_edges
+from evaluation.chunk_mapping import build_line_to_chunk_map
 from merkle.merkle_dag import MerkleDAG
 from merkle.snapshot_manager import SnapshotManager
 
@@ -77,6 +80,7 @@ class IndexWriteStage:
         supported_files: list[Any],
         start_time: float,
         repo_profile: object | None,
+        project_path: str = "",
     ) -> IncrementalIndexResult:
         """Embed, index, snapshot, BM25-sync, and GPU-clear for a full index pass.
 
@@ -88,6 +92,9 @@ class IndexWriteStage:
             supported_files: Subset of all_files with supported extensions.
             start_time: Epoch timestamp from the start of the full index pass.
             repo_profile: Repository profile computed during adaptive sizing, or None.
+            project_path: Absolute path to the project root.  Used to gather
+                Python files for pyan3 cross-module call-edge injection.
+                Defaults to empty string (injection skipped when absent).
 
         Returns:
             IncrementalIndexResult describing the outcome of the index pass.
@@ -135,6 +142,12 @@ class IndexWriteStage:
 
         chunks_added = len(all_embedding_results)
 
+        # Inject cross-module call edges from pyan3 static analysis.
+        # Must run after add_embeddings (graph populated) and before
+        # save_indices (graph persisted).
+        if project_path:
+            self._inject_pyan_edges(project_path)
+
         # Save snapshot (reset cumulative_changed_files on full index pass)
         metadata = self._build_metadata(
             project_name=project_name,
@@ -166,3 +179,89 @@ class IndexWriteStage:
             bm25_resynced=bm25_resynced,
             bm25_resync_count=bm25_resync_count,
         )
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _inject_pyan_edges(self, project_path: str) -> None:
+        """Inject cross-module call edges produced by pyan3 into the code graph.
+
+        This runs *after* :meth:`add_embeddings` (so graph nodes are already
+        populated) and *before* :meth:`save_indices` (so the injected edges
+        are persisted).
+
+        The method is a no-op (with a warning) if the graph or metadata store
+        is unavailable.  A crash inside pyan3 is caught and logged as a
+        warning so it never aborts the full index.
+
+        Args:
+            project_path: Absolute path to the project root (passed through
+                from :meth:`run`).
+        """
+        # Resolve graph storage.
+        graph_integration = getattr(self._indexer, "_graph", None)
+        if graph_integration is None:
+            logger.warning(
+                "[PYAN] Graph integration not available — skipping edge injection"
+            )
+            return
+        storage = getattr(graph_integration, "storage", None)
+        if storage is None:
+            logger.warning(
+                "[PYAN] Graph storage not available — skipping edge injection"
+            )
+            return
+
+        # Resolve metadata store.
+        dense_index = getattr(self._indexer, "dense_index", None)
+        meta_store = (
+            getattr(dense_index, "metadata_store", None) if dense_index else None
+        )
+        if meta_store is None:
+            logger.warning(
+                "[PYAN] Metadata store not available — skipping edge injection"
+            )
+            return
+
+        try:
+            # Build raw-id line map (normalize=False → ids match graph node keys).
+            raw_line_map = build_line_to_chunk_map(meta_store, normalize=False)
+
+            # Run pyan3 analysis.
+            edges = build_call_edges(Path(project_path).resolve(), raw_line_map, logger)
+
+            # Inject edges whose both endpoints are already in the graph.
+            g = storage.graph
+            injected = 0
+            skipped = 0
+            for caller_id, callee_id, line_num, is_method in edges:
+                if (
+                    caller_id in g
+                    and callee_id in g
+                    and not g.has_edge(caller_id, callee_id)
+                ):
+                    storage.add_call_edge(
+                        caller_id,
+                        callee_name=callee_id,
+                        line_number=line_num,
+                        is_method_call=is_method,
+                        is_resolved=True,
+                        source="pyan",
+                    )
+                    injected += 1
+                else:
+                    skipped += 1
+
+            logger.info(
+                "[PYAN] Injected %d cross-module call edges (%d skipped — "
+                "node not in graph or edge already present)",
+                injected,
+                skipped,
+            )
+
+        except Exception:
+            logger.warning(
+                "[PYAN] Edge injection failed (non-fatal):\n%s",
+                traceback.format_exc(),
+            )

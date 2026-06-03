@@ -1,5 +1,6 @@
 """Graph integration layer for call graph storage operations."""
 
+import ast
 import logging
 from collections import defaultdict
 from pathlib import Path
@@ -49,6 +50,28 @@ SEMANTIC_TYPES = (
     "variable",
     "merged",  # Community-merged chunks from Louvain detection
     "split_block",  # Large node split blocks (AST block splitting)
+)
+
+# Common Python method/attribute names that are almost certainly stdlib
+# or built-in targets when the project itself does not define them.
+# We drop these ONLY when `name_to_chunk_ids` has no matching project chunk.
+# If the project defines its own `get`, `format`, etc., the edge is kept.
+_COMMON_METHODS: frozenset[str] = frozenset(
+    {
+        "append",
+        "extend",
+        "get",
+        "items",
+        "keys",
+        "values",
+        "split",
+        "join",
+        "strip",
+        "replace",
+        "format",
+        "lower",
+        "upper",
+    }
 )
 
 
@@ -105,6 +128,154 @@ class GraphIntegration:
         """
         self._logger = logging.getLogger(__name__)
         self.storage = storage
+        self._call_extractor: Any = None  # lazy-initialized on first split_block call
+        # Per-build caches reset at the start of each populate_from_embeddings /
+        # build_graph_from_chunks call.
+        self._file_ast_cache: dict[str, tuple[str, ast.Module | None]] = {}
+        # (file_path, name, func_lineno) → already emitted; dedup across split_block pieces
+        self._seen_split_methods: set[tuple[str, str, int]] = set()
+
+    def _extract_split_block_calls(
+        self,
+        file_path: str,
+        parent_name: str | None,
+        name: str,
+        start_line: int,
+        language: str = "python",
+    ) -> list[dict[str, Any]]:
+        """Extract call edges for a split_block chunk by re-reading its source file.
+
+        Split_block chunks have empty ``calls`` because the AST extractor only runs
+        on the *whole* node before splitting, and the stored ``content`` fragment is
+        NOT valid Python (it's a bare body slice — ``ast.parse`` fails with
+        "expected an indented block after function definition").
+
+        This method avoids that problem by locating the **enclosing method in the
+        source file** via line-range containment, then running the extractor on the
+        full method source exactly once per (file, method) pair.
+
+        Algorithm
+        ---------
+        1. Guard: non-Python languages are skipped (return []).
+        2. Per-file AST cache: read + parse each file at most once per build pass
+           (cache key = file_path; value = (source_text, ast.Module | None)).
+        3. Find the deepest ``FunctionDef``/``AsyncFunctionDef`` whose
+           ``lineno <= start_line <= end_lineno`` and whose ``name == bare_name``
+           (and optionally ``parent_name`` for secondary disambiguation).
+        4. Per-method dedup: track ``_seen_split_methods`` so only the *first*
+           split_block of each logical method emits edges.  Subsequent pieces return [].
+        5. Extract via ``PythonCallGraphExtractor.extract_calls`` on the full
+           method source (``ast.get_source_segment``).
+
+        Args:
+            file_path: Absolute path to the source file containing the method.
+            parent_name: Class name that owns the method, or None for module-level.
+            name: Bare method name (e.g. ``"analyze_impact"``), *not* qualified.
+            start_line: First line of this split_block fragment (1-based, same as
+                the AST ``lineno`` convention).
+            language: Chunk language tag; only ``"python"`` is processed.
+
+        Returns:
+            List of call dicts with keys ``callee_name``, ``line_number``,
+            ``is_method_call`` — compatible with the PASS 2 call-resolution loop.
+            Returns [] when the method is not found, the file is missing/unreadable,
+            the language is not Python, or this is a duplicate split_block piece.
+        """
+        if language != "python":
+            return []
+        if not file_path or not name:
+            return []
+
+        # Lazy-init the extractor
+        if self._call_extractor is None:
+            from chunking.relationships.call_graph_extractor import (
+                PythonCallGraphExtractor,
+            )
+
+            self._call_extractor = PythonCallGraphExtractor()
+
+        # --- Per-file AST cache ---
+        if file_path not in self._file_ast_cache:
+            try:
+                src = Path(file_path).read_text(encoding="utf-8", errors="replace")
+                try:
+                    tree = ast.parse(src)
+                except SyntaxError:
+                    tree = None
+                self._file_ast_cache[file_path] = (src, tree)
+            except OSError as e:
+                self._logger.debug(f"split_block: cannot read {file_path}: {e}")
+                self._file_ast_cache[file_path] = ("", None)
+
+        src, tree = self._file_ast_cache[file_path]
+        if tree is None:
+            return []
+
+        # --- Locate the enclosing FunctionDef by line-range + name ---
+        # Use bare name (split_block stores bare, not qualified)
+        bare_name = name.split(".")[-1] if "." in name else name
+        best_func: ast.FunctionDef | ast.AsyncFunctionDef | None = None
+        best_span = -1  # prefer the smallest enclosing span (innermost match)
+
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.name != bare_name:
+                continue
+            end_lineno = getattr(node, "end_lineno", None)
+            if end_lineno is None:
+                continue
+            if node.lineno <= start_line <= end_lineno:
+                span = end_lineno - node.lineno
+                if best_func is None or span < best_span:
+                    best_func = node  # type: ignore[assignment]
+                    best_span = span
+
+        if best_func is None:
+            self._logger.debug(
+                f"split_block: no FunctionDef '{bare_name}' enclosing line "
+                f"{start_line} in {file_path}"
+            )
+            return []
+
+        # --- Per-method dedup: only first split_block emits edges ---
+        dedup_key = (file_path, bare_name, best_func.lineno)
+        if dedup_key in self._seen_split_methods:
+            return []
+        self._seen_split_methods.add(dedup_key)
+
+        # --- Extract calls from full method source ---
+        method_src = ast.get_source_segment(src, best_func)
+        if not method_src:
+            return []
+
+        # Build a fake chunk_id for the extractor (only used internally)
+        fake_chunk_id = (
+            f"{file_path}:{best_func.lineno}-{best_func.end_lineno}:method:{bare_name}"  # type: ignore[attr-defined]
+        )
+        try:
+            call_edges = self._call_extractor.extract_calls(
+                method_src,
+                {"chunk_id": fake_chunk_id, "parent_class": parent_name},
+            )
+            result = [
+                {
+                    "callee_name": ce.callee_name,
+                    "line_number": ce.line_number,
+                    "is_method_call": ce.is_method_call,
+                }
+                for ce in call_edges
+            ]
+            self._logger.debug(
+                f"split_block call extraction: {len(result)} calls from "
+                f"'{parent_name}.{bare_name}' in {file_path}"
+            )
+            return result
+        except Exception as e:
+            self._logger.debug(
+                f"split_block call extraction failed for {file_path}:{bare_name}: {e}"
+            )
+            return []
 
     def add_chunk(self, chunk_id: str, metadata: dict[str, Any]) -> None:
         """Add chunk to call graph storage.
@@ -256,26 +427,67 @@ class GraphIntegration:
         resolved_edges = 0
         rel_edges = 0
 
+        # Reset per-build caches so dedup and AST cache don't bleed across calls
+        self._file_ast_cache = {}
+        self._seen_split_methods = set()
+
         for result in embedding_results:
             chunk_id = result.chunk_id
             meta = result.metadata
             caller_file = meta.get("file_path", "")
 
-            for call_dict in meta.get("calls", []):
+            calls_to_process = meta.get("calls", [])
+            if meta.get("chunk_type") == "split_block" and not calls_to_process:
+                calls_to_process = self._extract_split_block_calls(
+                    file_path=caller_file,
+                    parent_name=meta.get("parent_name"),
+                    name=meta.get("name", ""),
+                    start_line=meta.get("start_line", 0),
+                    language=meta.get("language", "python"),
+                )
+
+            for call_dict in calls_to_process:
                 callee_name = call_dict.get("callee_name", "unknown")
+                line_number = call_dict.get("line_number", 0)
+                is_method_call = call_dict.get("is_method_call", False)
                 resolved = self._resolve_call_target(
                     callee_name, name_to_chunk_ids, caller_file=caller_file
                 )
-                self.storage.add_call_edge(
-                    caller_id=chunk_id,
-                    callee_name=resolved if resolved else callee_name,
-                    line_number=call_dict.get("line_number", 0),
-                    is_method_call=call_dict.get("is_method_call", False),
-                    is_resolved=resolved is not None,
-                )
-                call_edges += 1
                 if resolved:
+                    self.storage.add_call_edge(
+                        caller_id=chunk_id,
+                        callee_name=resolved,
+                        line_number=line_number,
+                        is_method_call=is_method_call,
+                        is_resolved=True,
+                        confidence="exact",
+                    )
+                    call_edges += 1
                     resolved_edges += 1
+                else:
+                    ambiguous = self._get_ambiguous_candidates(
+                        callee_name, name_to_chunk_ids, caller_file=caller_file
+                    )
+                    if ambiguous:
+                        for candidate_id in ambiguous:
+                            self.storage.add_call_edge(
+                                caller_id=chunk_id,
+                                callee_name=candidate_id,
+                                line_number=line_number,
+                                is_method_call=is_method_call,
+                                is_resolved=True,
+                                confidence="ambiguous",
+                            )
+                        call_edges += 1
+                    else:
+                        self.storage.add_call_edge(
+                            caller_id=chunk_id,
+                            callee_name=callee_name,
+                            line_number=line_number,
+                            is_method_call=is_method_call,
+                            is_resolved=False,
+                        )
+                        call_edges += 1
 
             for rel_dict in meta.get("relationships", []):
                 try:
@@ -386,13 +598,26 @@ class GraphIntegration:
         resolved_edges = 0
         phantom_edges = 0
 
+        # Reset per-build caches
+        self._file_ast_cache = {}
+        self._seen_split_methods = set()
+
         for chunk in chunks:
             if not chunk.chunk_id:
                 continue
 
             try:
                 # Add call edges with resolution (NetworkX: G.add_edge)
-                for call in chunk.calls or []:
+                chunk_calls: list[Any] = list(chunk.calls or [])
+                if chunk.chunk_type == "split_block" and not chunk_calls:
+                    chunk_calls = self._extract_split_block_calls(
+                        file_path=chunk.file_path or "",
+                        parent_name=chunk.parent_name,
+                        name=chunk.name or "",
+                        start_line=chunk.start_line or 0,
+                        language=chunk.language or "python",
+                    )
+                for call in chunk_calls:
                     # Handle both CallEdge objects and dicts
                     if hasattr(call, "callee_name"):
                         callee_name = call.callee_name
@@ -409,25 +634,46 @@ class GraphIntegration:
                     )
 
                     if resolved_chunk_id:
-                        # Direct chunk-to-chunk edge!
+                        # Direct chunk-to-chunk edge — high confidence
                         self.storage.add_call_edge(
                             caller_id=chunk.chunk_id,
                             callee_name=resolved_chunk_id,  # Use resolved chunk_id
                             line_number=line_number,
                             is_method_call=is_method_call,
                             is_resolved=True,
+                            confidence="exact",
                         )
                         resolved_edges += 1
                     else:
-                        # Fallback to phantom node (existing behavior)
-                        self.storage.add_call_edge(
-                            caller_id=chunk.chunk_id,
-                            callee_name=callee_name,  # Use bare symbol name
-                            line_number=line_number,
-                            is_method_call=is_method_call,
-                            is_resolved=False,
+                        # Check whether it's ambiguous (project has multiple
+                        # definitions) or a true phantom (no project definition).
+                        ambiguous = self._get_ambiguous_candidates(
+                            callee_name, name_to_chunk_ids, caller_file=chunk.file_path
                         )
-                        phantom_edges += 1
+                        if ambiguous:
+                            # Keep all candidates tagged as ambiguous so they are
+                            # retrievable at query time.  Each edge is low-confidence
+                            # rather than silently dropped.
+                            for candidate_id in ambiguous:
+                                self.storage.add_call_edge(
+                                    caller_id=chunk.chunk_id,
+                                    callee_name=candidate_id,
+                                    line_number=line_number,
+                                    is_method_call=is_method_call,
+                                    is_resolved=True,
+                                    confidence="ambiguous",
+                                )
+                            phantom_edges += 1  # still counted as unresolved for stats
+                        else:
+                            # True phantom node (builtin, stdlib, or unknown symbol)
+                            self.storage.add_call_edge(
+                                caller_id=chunk.chunk_id,
+                                callee_name=callee_name,  # Use bare symbol name
+                                line_number=line_number,
+                                is_method_call=is_method_call,
+                                is_resolved=False,
+                            )
+                            phantom_edges += 1
 
                 # Add relationship edges
                 for rel in chunk.relationships or []:
@@ -469,8 +715,12 @@ class GraphIntegration:
     ) -> str | None:
         """Resolve a call target name to its chunk_id.
 
-        Conservative approach: Only resolve if exactly ONE match exists.
-        Ambiguous matches (multiple functions with same name) create phantom nodes.
+        Returns a chunk_id when exactly one project match exists (or after
+        same-file / split_block disambiguation).  Returns ``None`` when the call
+        should become a phantom node (true builtin, common stdlib name with no
+        project definition, or still-ambiguous multi-candidate).  For the
+        still-ambiguous case, call ``_get_ambiguous_candidates`` to obtain all
+        candidates and create ``confidence="ambiguous"`` edges instead.
 
         Args:
             callee_name: Symbol name from the call (e.g., "foo", "ClassName.method")
@@ -478,7 +728,7 @@ class GraphIntegration:
             caller_file: Optional file path of caller for disambiguation
 
         Returns:
-            chunk_id if exactly one match, None otherwise (creates phantom node)
+            chunk_id if exactly one match, None otherwise
         """
         # Skip builtins (len, print, etc.) -- they never resolve to project code
         import builtins
@@ -486,23 +736,11 @@ class GraphIntegration:
         if hasattr(builtins, callee_name):
             return None  # Create phantom node (will be filtered in traversals)
 
-        # Check if base name (after last dot) is a common method builtin
+        # Refined common-method blocklist: drop the name ONLY when the project has
+        # no definition for it.  If the project defines its own `get`, `format`,
+        # etc., we keep the edge (resolved below via same-file / unique-match).
         base_name = callee_name.split(".")[-1] if "." in callee_name else callee_name
-        if base_name in {
-            "append",
-            "extend",
-            "get",
-            "items",
-            "keys",
-            "values",
-            "split",
-            "join",
-            "strip",
-            "replace",
-            "format",
-            "lower",
-            "upper",
-        }:
+        if base_name in _COMMON_METHODS and callee_name not in name_to_chunk_ids:
             return None
 
         candidates = name_to_chunk_ids.get(callee_name, [])
@@ -538,8 +776,35 @@ class GraphIntegration:
                     split_blocks.sort(key=_start_line)
                     return split_blocks[0]
 
-        # No match or still ambiguous - create phantom node
+        # No match or still ambiguous — caller should check _get_ambiguous_candidates
         return None
+
+    def _get_ambiguous_candidates(
+        self,
+        callee_name: str,
+        name_to_chunk_ids: dict[str, list[str]],
+        caller_file: str | None = None,
+    ) -> list[str]:
+        """Return all candidate chunk_ids for a callee name that has multiple matches.
+
+        Used by the call-site in ``_build_graph_from_chunks`` when
+        ``_resolve_call_target`` returns ``None`` but the name *does* appear in
+        ``name_to_chunk_ids`` — meaning the call is ambiguous rather than a true
+        phantom.  The caller creates ``confidence="ambiguous"`` edges to each
+        candidate so they are retained in the graph and surfaced at query time.
+
+        Returns an empty list when the name is not in ``name_to_chunk_ids`` (true
+        phantom / builtin / common-stdlib name with no project definition).
+
+        Args:
+            callee_name: Symbol name from the call.
+            name_to_chunk_ids: Full symbol → chunk_ids map for the indexed project.
+            caller_file: Caller file path (unused here, reserved for future use).
+
+        Returns:
+            List of candidate chunk_ids (possibly empty).
+        """
+        return list(name_to_chunk_ids.get(callee_name, []))
 
     def save(self) -> None:
         """Save call graph to disk."""

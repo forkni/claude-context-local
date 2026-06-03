@@ -724,7 +724,7 @@ class CodeGraphStorage:
             return True
 
         except Exception as e:
-            self.logger.error(f"Failed to load graph: {e}")
+            self.logger.error(f"Failed to load graph: {e}", exc_info=True)
             # Initialize empty graph on error
             # pyrefly: ignore [missing-attribute]
             self.graph = nx.DiGraph()
@@ -743,6 +743,47 @@ class CodeGraphStorage:
             self.logger.info("Cleared call graph (on-disk file deleted)")
         else:
             self.logger.info("Cleared call graph")
+
+    def remove_file_nodes(self, file_path: str) -> int:
+        """Remove all graph nodes (and their incident edges) belonging to a file.
+
+        Intended for incremental reindex: prunes stale nodes when a file's chunks
+        are deleted from the metadata store so the call graph and the metadata
+        store stay in sync.  Without this, old node IDs (which embed line ranges)
+        survive incremental reindex and cause ``Chunk not found`` errors in
+        ``find_connections``.
+
+        Args:
+            file_path: Source file path — may use any path separator; normalized
+                internally to forward slashes to match the chunk_id format used by
+                the chunker (``path:start-end:type:name``).
+
+        Returns:
+            Number of nodes removed.
+        """
+        # Normalize to forward slashes, matching chunk_id construction in chunker
+        normalized = file_path.replace("\\", "/").rstrip("/")
+        prefix = normalized + ":"
+
+        # Collect IDs first to avoid mutating the graph during iteration
+        to_remove = [n for n in self.graph.nodes() if n.startswith(prefix)]
+
+        for node_id in to_remove:
+            # Clean _name_index before removing the node
+            node_name = self.graph.nodes[node_id].get("name")
+            if node_name and node_name in self._name_index:
+                with contextlib.suppress(ValueError):
+                    self._name_index[node_name].remove(node_id)
+                if not self._name_index[node_name]:
+                    del self._name_index[node_name]
+            # networkx automatically removes all incident edges when a node is removed
+            self.graph.remove_node(node_id)
+
+        if to_remove:
+            self.logger.debug(
+                f"[GRAPH_PRUNE] Removed {len(to_remove)} nodes for '{normalized}'"
+            )
+        return len(to_remove)
 
     def get_stats(self) -> dict[str, Any]:
         """

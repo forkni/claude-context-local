@@ -229,7 +229,10 @@ async def handle_get_memory_status(arguments: dict[str, Any]) -> dict:
                     mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
                     real_used_gb = round(mem_info.used / (1024**3), 2)
                     real_free_gb = round(mem_info.free / (1024**3), 2)
-                except Exception:
+                except Exception as exc:
+                    logger.debug(
+                        "pynvml per-device query failed for device %d: %s", i, exc
+                    )
                     real_used_gb = None
                     real_free_gb = None
             else:

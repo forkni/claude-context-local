@@ -111,6 +111,7 @@ class RelationshipAnalyzer:
 
         # Step 2+3: inbound callers up to max_depth
         stale_count = 0
+        exact_d = recovered_d = ambiguous_d = 0
         direct_callers: list[dict[str, Any]] = []
         indirect_callers: list[dict[str, Any]] = []
 
@@ -121,8 +122,10 @@ class RelationshipAnalyzer:
             direct_raw = [e for e in inbound if e.depth == 1]
             indirect_raw = [e for e in inbound if e.depth > 1]
 
-            enriched_direct, stale_d = self._enrich_callers(direct_raw, exclude_dirs)
-            enriched_indirect, stale_i = self._enrich_callers(
+            enriched_direct, stale_d, exact_d, recovered_d, ambiguous_d = (
+                self._enrich_callers(direct_raw, exclude_dirs)
+            )
+            enriched_indirect, stale_i, _ex_i, _rec_i, _amb_i = self._enrich_callers(
                 indirect_raw, exclude_dirs
             )
             direct_callers = enriched_direct
@@ -204,6 +207,9 @@ class RelationshipAnalyzer:
                 "context_manager_usages", []
             ),
             stale_chunk_count=stale_count,
+            direct_callers_exact=exact_d if self.graph_engine else 0,
+            direct_callers_recovered=recovered_d if self.graph_engine else 0,
+            direct_callers_ambiguous=ambiguous_d if self.graph_engine else 0,
         )
 
     # ------------------------------------------------------------------
@@ -371,11 +377,13 @@ class RelationshipAnalyzer:
         if not should_include(""):
             return None
         return {
+            "chunk_id": "",
             "target_name": target,
             "relationship_type": rel_type,
             "line": line,
             "confidence": confidence,
             "note": "External or builtin type (not in index)",
+            "resolvable": False,
         }
 
     def _enrich_reverse(
@@ -410,68 +418,117 @@ class RelationshipAnalyzer:
         if not should_include(""):
             return None
         return {
-            "source_chunk_id": source,
+            "source_chunk_id": "",
             "relationship_type": entry.relationship_type,
             "line": line,
             "confidence": confidence,
             "note": "Source chunk not found in index",
+            "resolvable": False,
         }
 
     def _enrich_callers(
         self,
         entries: list[RelationshipEntry],
         exclude_dirs: list[str] | None,
-    ) -> tuple[list[dict[str, Any]], int]:
-        """Convert inbound RelationshipEntry objects to enriched caller dicts."""
+    ) -> tuple[list[dict[str, Any]], int, int, int, int]:
+        """Convert inbound RelationshipEntry objects to enriched caller dicts.
+
+        On exact lookup miss, retries via the Tier 1→3 symbol-resolution cascade
+        (_resolve_by_symbol) instead of silently discarding graph-found callers.
+        Callers are tagged with ``confidence``:
+          - ``"exact"``     — found directly by chunk_id; edge was unambiguous
+          - ``"recovered"`` — exact lookup missed (line-range drift / split_block
+                              divergence), but re-resolution by symbol succeeded
+          - ``"ambiguous"`` — stored as ambiguous at indexing time (Phase 2 edges)
+
+        Returns:
+            (callers, stale_count, exact_count, recovered_count, ambiguous_count)
+        """
         callers: list[dict[str, Any]] = []
         stale = 0
+        exact_count = 0
+        recovered_count = 0
+        ambiguous_count = 0
+
         for entry in entries:
             caller_id = entry.chunk_id
+            # Edge-level confidence may be stored at indexing time (e.g. "ambiguous")
+            edge_confidence: str | None = entry.edge_data.get("confidence")
+
             result = self.searcher.get_by_chunk_id(caller_id)
             if result:
+                assigned_confidence = edge_confidence if edge_confidence else "exact"
                 d = self._result_to_dict(result, caller_id)
+                d["confidence"] = assigned_confidence
                 file_path = (
                     caller_id.split(":")[0] if ":" in caller_id else d.get("file", "")
                 )
                 if matches_directory_filter(file_path, None, exclude_dirs):
                     callers.append(d)
+                    if assigned_confidence == "ambiguous":
+                        ambiguous_count += 1
+                    else:
+                        exact_count += 1
             else:
-                stale += 1
+                # Exact lookup missed — likely line-range drift after incremental
+                # reindex, split_block fragmentation, or graph/metadata divergence.
+                # Derive the symbol name and retry via Tier 1→3 resolution cascade.
+                symbol = caller_id.split(":")[-1] if ":" in caller_id else caller_id
+                recovered = self._resolve_by_symbol(symbol, exclude_dirs)
+                if recovered is not None:
+                    result2, cid2 = recovered
+                    d = self._result_to_dict(result2, cid2)
+                    d["confidence"] = "recovered"
+                    d["original_chunk_id"] = caller_id
+                    file_path = cid2.split(":")[0] if ":" in cid2 else d.get("file", "")
+                    if matches_directory_filter(file_path, None, exclude_dirs):
+                        callers.append(d)
+                        recovered_count += 1
+                        logger.debug(
+                            f"[ENRICH_CALLERS] Recovered stale '{caller_id}' → '{cid2}'"
+                        )
+                    else:
+                        stale += 1
+                else:
+                    stale += 1
         if stale:
             logger.info(
-                f"[ENRICH_CALLERS] {stale} of {len(entries)} chunk_ids not in index (stale)"
+                f"[ENRICH_CALLERS] {stale} of {len(entries)} chunk_ids unresolvable"
             )
-        return callers, stale
+        return callers, stale, exact_count, recovered_count, ambiguous_count
 
     # ------------------------------------------------------------------
     # Target resolution
     # ------------------------------------------------------------------
 
-    def _resolve_target(
+    def _resolve_by_symbol(
         self,
-        chunk_id: str | None,
-        symbol_name: str | None,
+        symbol_name: str,
         exclude_dirs: list[str] | None,
-    ) -> tuple[Any, str]:
-        if chunk_id:
-            result = self.searcher.get_by_chunk_id(chunk_id)
-            if not result:
-                raise SearchError(f"Chunk not found: {chunk_id}")
-            return result, chunk_id
+    ) -> tuple[Any, str] | None:
+        """Resolve a symbol name to (result, chunk_id) via the Tier 1→3 cascade.
 
-        # Tier 1: O(1) exact symbol-cache lookup (populated by indexer for all indexed chunks)
+        Unlike _resolve_target, returns ``None`` on failure instead of raising
+        ``SearchError``.  Extracted for reuse in _enrich_callers fallback so that
+        stale/drifted caller IDs can be re-resolved by symbol rather than dropped.
+
+        Tiers:
+          1. O(1) symbol-cache lookup (populated by indexer for all indexed chunks).
+          2. Graph exact-name lookup + suffix scan (":<name>" / ".<name>").
+          3. Semantic search with name-match + type-priority ranking.
+        """
+        # Tier 1: O(1) exact symbol-cache lookup
         if self.symbol_cache:
             cid = self.symbol_cache.get_by_symbol_name(symbol_name)
             if cid:
                 result = self.searcher.get_by_chunk_id(cid)
                 if result:
                     logger.debug(
-                        f"[RESOLVE] symbol='{symbol_name}' → '{cid}' (symbol_cache)"
+                        f"[RESOLVE_SYM] '{symbol_name}' → '{cid}' (symbol_cache)"
                     )
                     return result, cid
 
-        # Tier 2: graph exact-name lookup — resolves names not yet in the symbol cache.
-        # GraphQueryEngine stores CodeGraphStorage as .storage (graph_queries.py).
+        # Tier 2: graph exact-name lookup + suffix scan
         graph_storage = None
         if self.graph_engine is not None:
             graph_storage = getattr(self.graph_engine, "storage", None)
@@ -481,30 +538,30 @@ class RelationshipAnalyzer:
         if graph_storage is not None and hasattr(graph_storage, "get_nodes_by_name"):
             matches = graph_storage.get_nodes_by_name(symbol_name)
             if not matches:
-                # Suffix scan: ":<name>" (bare) or ".<name>" (class-qualified method,
-                # e.g. chunk_id "...StorageManager.get_project_storage_dir" ends with ".name")
+                # Suffix scan: ":<name>" (bare) or ".<name>" (class-qualified)
                 matches = [
                     n
                     for n in graph_storage.graph.nodes()
                     if n.endswith(f":{symbol_name}") or n.endswith(f".{symbol_name}")
                 ]
-            # Try each match in order — a large method may only be present in the
-            # vector index as split_block chunks, not as the original method node.
             for cid in matches:
                 result = self.searcher.get_by_chunk_id(cid)
                 if result:
                     logger.debug(
-                        f"[RESOLVE] symbol='{symbol_name}' → '{cid}' (graph_lookup)"
+                        f"[RESOLVE_SYM] '{symbol_name}' → '{cid}' (graph_lookup)"
                     )
                     return result, cid
 
-        # Tier 3: semantic search fallback — only when both exact tiers miss.
+        # Tier 3: semantic search fallback
         filters = {"exclude_dirs": exclude_dirs} if exclude_dirs else None
-        results = self.searcher.search(symbol_name, k=30, filters=filters)
+        try:
+            results = self.searcher.search(symbol_name, k=30, filters=filters)
+        except Exception as exc:
+            logger.debug(f"Tier 3 semantic search failed for '{symbol_name}': {exc}")
+            return None
         if not results:
-            raise SearchError(f"Symbol not found: {symbol_name}")
+            return None
 
-        # Name-match: bare name OR class-qualified last segment (e.g. "Foo.bar")
         def _name_matches(r: Any) -> bool:
             last_seg = r.chunk_id.split(":")[-1] if hasattr(r, "chunk_id") else ""
             return last_seg == symbol_name or last_seg.split(".")[-1] == symbol_name
@@ -512,7 +569,6 @@ class RelationshipAnalyzer:
         matching = [r for r in results if _name_matches(r)]
         candidates = matching if matching else results
 
-        # Prefer definitions (function/method) over container classes
         type_priority = {
             "function": 0,
             "decorated_definition": 1,
@@ -539,13 +595,45 @@ class RelationshipAnalyzer:
             return base
 
         candidates = sorted(candidates, key=_priority)
-        target_result = candidates[0]
-        target_id = target_result.chunk_id
+        best = candidates[0]
+        cid = best.chunk_id
         logger.debug(
-            f"[RESOLVE] symbol='{symbol_name}' → chunk_id='{target_id}' "
-            f"(semantic, from {len(candidates)} candidates)"
+            f"[RESOLVE_SYM] '{symbol_name}' → '{cid}' "
+            f"(semantic, {len(candidates)} candidates)"
         )
-        return target_result, target_id
+        return best, cid
+
+    def _resolve_target(
+        self,
+        chunk_id: str | None,
+        symbol_name: str | None,
+        exclude_dirs: list[str] | None,
+    ) -> tuple[Any, str]:
+        if chunk_id:
+            result = self.searcher.get_by_chunk_id(chunk_id)
+            if result:
+                return result, chunk_id
+            # Chunk not found — the index was likely incrementally reindexed and the
+            # line range embedded in the chunk_id has drifted (e.g. after editing a
+            # file, `path:339-342:method:Cls.m` becomes `path:350-353:method:Cls.m`
+            # but the old node survives in the call graph). Derive the symbol name
+            # from the last colon-segment and fall through to the Tier 1→3 symbol-
+            # resolution block below so we can locate the *current* chunk.
+            parts = chunk_id.split(":")
+            if len(parts) >= 3:
+                symbol_name = parts[-1]
+                logger.warning(
+                    f"[RESOLVE] chunk_id '{chunk_id}' not in index; "
+                    f"retrying by symbol '{symbol_name}'"
+                )
+            else:
+                raise SearchError(f"Chunk not found: {chunk_id}")
+
+        # Delegate Tier 1→3 cascade to shared helper; raise on failure.
+        resolved = self._resolve_by_symbol(symbol_name, exclude_dirs)
+        if resolved is not None:
+            return resolved
+        raise SearchError(f"Symbol not found: {symbol_name}")
 
     # ------------------------------------------------------------------
     # Type resolution

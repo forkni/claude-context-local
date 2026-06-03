@@ -261,7 +261,9 @@ class TreeSitterChunker:
                 language = AVAILABLE_LANGUAGES[language_name]
                 self.chunkers[suffix] = chunker_factory(language)
             except Exception as e:
-                logger.warning(f"Failed to initialize chunker for {suffix}: {e}")
+                logger.warning(
+                    f"Failed to initialize chunker for {suffix}: {e}", exc_info=True
+                )
                 return None
 
         return self.chunkers[suffix]
@@ -318,10 +320,10 @@ class TreeSitterChunker:
                     with open(file_path, encoding="utf-8", errors="ignore") as f:
                         content = f.read()
                 except Exception as e:
-                    logger.error(f"Failed to read file {file_path}: {e}")
+                    logger.error(f"Failed to read file {file_path}: {e}", exc_info=True)
                     return []
             except Exception as e:
-                logger.error(f"Failed to read file {file_path}: {e}")
+                logger.error(f"Failed to read file {file_path}: {e}", exc_info=True)
                 return []
 
         try:
@@ -331,7 +333,9 @@ class TreeSitterChunker:
                 content, config=config, repo_profile=self.repo_profile
             )
         except Exception as e:
-            logger.warning(f"Tree-sitter parsing failed for {file_path}: {e}")
+            logger.warning(
+                f"Tree-sitter parsing failed for {file_path}: {e}", exc_info=True
+            )
             return []
 
     def _get_chunking_config(self):

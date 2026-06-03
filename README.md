@@ -41,19 +41,19 @@
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
 - **File-Role Tagging**: Chunks tagged `role:src/test/doc/config` at index time — enables role-aware ranking and precision boosts
 
-**Status**: ✅ Production-ready | 2,318+ passing tests | All 19 MCP tools operational | Windows 10/11
+**Status**: ✅ Production-ready | 2,372+ passing tests | All 19 MCP tools operational | Windows 10/11
 
-## What's New in v0.12.4
+## What's New in v0.13.0
 
-- **`switch_project` no longer logs "No indexed model detected"** — `_detect_indexed_model` now reads `project_info.json` (pool-agnostic) before falling back to the active-pool scan, correctly resolving models from any pool (e.g. `qwen3_0.6b` is found even when the active pool is `lightweight-speed`).
-- **`list_embedding_models` `loaded` field fixed** — was always `false` due to a pool-scoped reverse-lookup + `None`-slot false-positive; now accurately reports which models are in VRAM.
-- **`CodeGraphStorage.clear()` deletes backing JSON** — prevents stale phantom nodes from surviving a full reindex and emitting "Chunk not found" warnings in relationship queries.
-- **`GraphScoringStage` extracted** — centrality scoring, SSCG subgraph extraction, and the k×4 cap are encapsulated as `search/graph_scoring_stage.py`; `SearchOrchestrator._assemble` reduced to a 3-call sequence.
-- **`ServiceLocator` DI container removed** (ADR-0005) — `ResourceManager`/`SearchFactory` wrapper classes and the auto-registration loop deleted; all accessors are now plain module-level functions.
-- **Security**: idna 3.11 → 3.17 (CVE-2026-45409).
-- **2,318 unit tests** passing.
+- **pyan3 cross-module caller edges in `find_connections`** — `build_call_edges()` runs pyan3 on all project `.py` files at full-index time and injects cross-module call edges directly into the code graph. On this codebase: 5,341 edges resolved, 3,594 injected.
+- **`find_connections` direct-caller recall improved** — stale chunk IDs now recovered via Tier 1→3 symbol cascade (`confidence="recovered"`); common-method blocklist drops names only when no project definition exists; per-candidate `confidence="ambiguous"` edges preserve all resolution candidates. Recall on 5-query golden set: 0.5667 → 0.9500.
+- **`split_block` call edges recovered** — extractor now re-reads the enclosing `FunctionDef` from source (per-file AST cache) instead of parsing the bare body fragment, which always yielded `[]`.
+- **Windows path normalization in `build_line_to_chunk_map`** — backslash `relative_path` values from the metadata store are normalized before lookup, fixing zero-pyan3-edges on Windows.
+- **`exc_info=True` across all swallow-and-degrade handlers** — stack traces now appear in debug logs across `graph/`, `search/`, `chunking/`, `utils/`, and `tools/` without changing runtime behavior.
+- **Security**: `pyjwt` 2.12.1 → 2.13.0 (4 CVEs), `uv` 0.11.6 → 0.11.18 (GHSA-4gg8-gxpx-9rph).
+- **2,372 unit tests** passing.
 
-**Previous (v0.12.3)**: Broken `chunking ↔ graph` import cycle — extraction cluster relocated from `graph/` into `chunking/relationships/`; `SearchOrchestrator` introduced (Phases A–D); 20+ helper extractions across `IncrementalIndexer`, `CentralityRanker`, `RelationshipAnalyzer`; default model → Qwen3-0.6B.
+**Previous (v0.12.4)**: Three MCP server bug fixes: `switch_project` no longer logs "No indexed model detected" (reads `project_info.json`); `list_embedding_models` `loaded` field fixed; `CodeGraphStorage.clear()` deletes backing JSON. `GraphScoringStage` extracted; `ServiceLocator`/`ResourceManager`/`SearchFactory` collapsed to module-level functions (ADR-0005). Security: idna 3.17.
 
 Previous release notes: [CHANGELOG.md](CHANGELOG.md)
 

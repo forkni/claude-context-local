@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-context-local"
-version = "0.12.4"
+version = "0.13.0"
 description = "Local semantic code search for Claude Code (MCP) using multi-model routing (Qwen3, BGE-M3, CodeRankEmbed), FAISS, and AST/tree-sitter chunking. 100% local embeddings and indexing."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -35,6 +35,7 @@ dependencies = [
     "huggingface-hub>=0.36.0",
     "mcp>=1.27.0",
     "networkx>=3.0",  # Required for graph storage and community detection
+    "pyan3>=2.6.0",  # Whole-project static call graph (Phase 3 cross-module edges)
     "nltk>=3.9.4",  # Security: Fixes CVE-2025-14009 (path traversal in downloader)
     "psutil>=7.2.1",
     "rank-bm25>=0.2.2",
@@ -115,7 +116,7 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2026-05-29 (pip-audit - 4 advisories remain: sqlitedict CVE-2024-35515 mitigated,
+# Last audit: 2026-06-03 (pip-audit - 4 advisories remain: sqlitedict CVE-2024-35515 mitigated,
 #             transformers 2×RCE blocked by optimum-onnx <4.58.0 pin, starlette host-header injection deferred)
 #
 # Direct dependency security updates:
@@ -129,15 +130,19 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # pillow>=12.2.0           # Fixes CVE-2026-40192, CVE-2026-42308, CVE-2026-42309, CVE-2026-42310, CVE-2026-42311
 # python-multipart>=0.0.27 # Fixes CVE-2026-24486, CVE-2026-40347, CVE-2026-42561 (DoS in multipart parser)
 # pygments>=2.20.0         # Fixes CVE-2026-4539 (ReDoS in AdlLexer)
-# pyjwt>=2.12.0            # Fixes CVE-2026-32597 (JWS crit header not validated)
+# pyjwt>=2.13.0            # Fixes CVE-2026-32597 (2.12.0), 4× CVEs (2.13.0: 48522/48524/48525/48526)
 # requests>=2.34.2         # Fixes CVE-2026-25645 (predictable tempfile name)
 # starlette>=0.51.0        # Fixes CVE (0.47.3 → 0.51.0); 1.0.1 fixes PYSEC-2026-161 host-header injection (deferred: major version)
 # urllib3>=2.7.0           # Fixes CVE-2026-44431 (cross-origin redirect), CVE-2026-44432 (decompression)
-# uv>=0.11.6               # Fixes 2 CVEs (version: 0.8.21 → 0.9.6)
+# uv>=0.11.18              # Fixes GHSA-4gg8-gxpx-9rph (0.11.15, malicious-wheel path traversal)
 # werkzeug>=3.1.4          # Fixes CVE-2025-66221 (Windows device name handling)
 # wheel>=0.46.3            # Fixes CVE-2026-24049 (path traversal in unpack)
 #
 # Verification: .venv/Scripts/pip-audit --format json | .venv/Scripts/python.exe tools/summarize_audit.py
+#
+# Safe patch updates (tested 2026-06-03):
+# * pyjwt (2.12.1 -> 2.13.0), uv (0.11.6 -> 0.11.18).
+# Tested: 2345 unit tests pass, pip check passed.
 #
 # Safe patch updates (tested 2026-05-29):
 # * idna (3.11 -> 3.17) - fixes CVE-2026-45409.
@@ -274,6 +279,7 @@ replace-imports-with-any = [
     "networkx", "networkx.*",
     "optimum", "optimum.*",
     "snoop", "py_heat",
+    "pyan", "pyan.*",
 ]
 
 [[tool.pyrefly.sub-config]]
