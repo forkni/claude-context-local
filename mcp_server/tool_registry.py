@@ -512,6 +512,7 @@ Per-model indices enable instant switching - if you've already indexed a project
 
 Discovers code connected to the target symbol through multiple relationship types:
 - Direct callers (functions that call this)
+- Direct callees (functions this symbol calls — outbound)
 - Indirect callers (multi-hop call chain)
 - Similar code (semantic similarity)
 - Dependency graph visualization
@@ -523,9 +524,23 @@ WHEN TO USE:
 - Impact assessment for breaking changes
 
 RETURNS:
-- Structured report with connected symbols
-- File-level connection summary
-- Call dependency graph""",
+- direct_callers: list of chunks that call this symbol, each with
+    - chunk_id, file, start/end lines, symbol info
+    - confidence: "exact" | "recovered" | "ambiguous"
+    - resolver_source: "ast" | "pyan" | "libcst" | "lsp" (provenance)
+    - resolver_confidence: float (0.5–0.98, higher = more trusted)
+- direct_callees: list of chunks this symbol calls (outbound), same fields
+- caller_confidence / callee_confidence: breakdown (exact/recovered/ambiguous counts)
+- indirect_callers: multi-hop callers up to max_depth
+- similar_code: semantically similar implementations
+- dependency_graph: DOT-format graph for visualization
+
+CALL-GRAPH ACCURACY:
+The call edges are produced by a layered resolver pipeline:
+  AST (0.5/0.7) → pyan (0.75) → libcst (0.90) → LSP (0.98, opt-in)
+Higher-confidence resolvers upgrade lower-confidence edges for the same pair.
+Install `pip install -e ".[callgraph]"` to enable pyan3 + LibCST resolvers.
+Enable `lsp_enabled=true` in call_graph config for basedpyright LSP resolution.""",
         "input_schema": {
             "type": "object",
             "properties": {

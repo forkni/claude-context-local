@@ -4,13 +4,45 @@ Complete version history and feature timeline for claude-context-local MCP serve
 
 ## Current Status: All Features Operational (2026-06-03)
 
-- **Version**: 0.13.0
+- **Version**: 0.14.0
 - **Status**: Production-ready
-- **Test Coverage**: 2,373 unit tests + 19 integration tests (100% pass rate)
-- **Dependencies**: 124 packages + optional `onnxruntime-gpu` for ONNX backend
+- **Test Coverage**: 2,446 unit tests + 19 integration tests (100% pass rate)
+- **Dependencies**: 124 packages + optional `[callgraph]` / `[lsp]` extras
 - **SSCG Benchmark**: MRR=0.94, Recall@4=0.89 (12/13 perfect rank-1), Hit@7=1.00
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent**: 0.13.0 — pyan3 cross-module caller edges, `find_connections` recall 0.57→0.95, `split_block` call edge recovery, `exc_info=True` across swallow-and-degrade handlers, 2 audit fixes
+- **Recent**: 0.14.0 — layered resolver pipeline (AST→pyan→LibCST→LSP), bidirectional callees, pyan3 optional GPL-safe extra, 63 new unit tests
+
+---
+
+## v0.14.0 - Layered Call-Graph Resolver Pipeline + Bidirectional Callees (2026-06-03)
+
+Architectural release introducing a pluggable multi-resolver call-graph pipeline and first-class `direct_callees` support in `find_connections`.
+
+### Added
+
+- **Resolver protocol** (`chunking/relationships/call_edge_resolver.py`, new) — `ResolvedEdge` frozen dataclass, `CallEdgeResolver` `@runtime_checkable` Protocol, shared file-collection helpers (`gather_py_files`, `scope_to_indexed_files`, `validate_py_files`), and `run_resolvers()` that merges edges from all available resolvers by `(caller_id, callee_id)` key keeping the highest-confidence version.
+- **Confidence ladder**: AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98 (higher confidence upgrades lower per edge pair).
+- **LibCST resolver** (`chunking/relationships/libcst_call_graph.py`, new) — `LibCSTResolver` (`confidence=0.90`, MIT). Uses `FullRepoManager` + `FullyQualifiedNameProvider` for cross-file FQN resolution. Included in `[callgraph]` optional extra.
+- **LSP resolver** (`chunking/relationships/lsp_call_graph.py`, new) — `LSPResolver` (`confidence=0.98`, opt-in). Spawns `basedpyright-langserver --stdio`, queries `callHierarchy/outgoingCalls`. Included in `[lsp]` optional extra; disabled unless `lsp_enabled=true`.
+- **pyan3 now optional** (`chunking/relationships/external_call_graph.py`) — `try/except ImportError` guard; `pyan_available()` probe; `PyanResolver` class. Apache-2.0 core no longer hard-depends on GPL-2.0 pyan3. Install `pip install -e ".[callgraph]"` to activate.
+- **Optional extras** (`pyproject.toml`) — `callgraph = ["pyan3>=2.6.0", "libcst>=1.8.6"]` and `lsp = ["basedpyright>=1.21"]` optional dependency groups.
+- **`CallGraphConfig`** (`search/config.py`) — `resolvers: list[str]`, `lsp_enabled: bool`, `lsp_timeout_seconds: float`; wired into `SearchConfig` + `search_config.json`.
+- **Bidirectional callees** — `direct_callees`, `direct_callees_exact/recovered/ambiguous`, `callee_confidence` added to `ImpactReport` (`search/types.py`). `RelationshipAnalyzer._enrich_callees()` mirrors `_enrich_callers` for outbound `calls` edges. `find_connections` returns both callers and callees with `resolver_source` / `resolver_confidence` provenance.
+- **`upgrade_call_edge()`** (`graph/graph_storage.py`) — in-place edge attr update for confidence-precedence injection.
+- **`_inject_call_edges`** (`search/index_write_stage.py`) — replaces `_inject_pyan_edges`; reads `CallGraphConfig`, instantiates enabled+available resolvers, calls `run_resolvers()`, merges with confidence-precedence (upgrade if higher confidence, else add).
+- **Callee golden set** (`evaluation/callee_golden.json`) — 7-query outbound golden set for `--direction callees` benchmarking.
+- **Unit tests** — 63 new tests: `test_call_edge_resolver.py` (31), `test_call_graph_config.py` (15), `test_libcst_call_graph.py` (15), `test_lsp_call_graph.py` (17).
+
+### Changed
+
+- `find_connections` MCP tool description now documents `direct_callees`, `resolver_source`, `resolver_confidence` fields and the confidence ladder.
+- `docs/INSTALLATION_GUIDE.md` documents `[callgraph]` and `[lsp]` optional extras.
+
+### Migration
+
+- **No breaking change**: existing indexing continues to work (in-house AST edges only when no extras installed).
+- **To enable higher-recall edges**: `pip install -e ".[callgraph]"` then reindex with `index_directory()`.
+- **To enable LSP edges**: add `"call_graph": {"lsp_enabled": true}` to `search_config.json` and install `pip install -e ".[lsp]"`.
 
 ---
 
