@@ -248,10 +248,11 @@ class IndexWriteStage:
                 from chunking.relationships.libcst_call_graph import LibCSTResolver
 
                 resolvers.append(LibCSTResolver())
-            # Stage 3 placeholder (LSPResolver, opt-in):
-            # if cg_cfg is not None and cg_cfg.lsp_enabled:
-            #     from chunking.relationships.lsp_call_graph import LSPResolver
-            #     resolvers.append(LSPResolver(timeout=cg_cfg.lsp_timeout_seconds))
+            # Stage 3 — basedpyright LSP resolver (opt-in, highest accuracy):
+            if cg_cfg is not None and cg_cfg.lsp_enabled:
+                from chunking.relationships.lsp_call_graph import LSPResolver
+
+                resolvers.append(LSPResolver(timeout=cg_cfg.lsp_timeout_seconds))
 
             if not resolvers:
                 logger.info("[CALL_EDGES] No resolvers configured — skipping injection")
