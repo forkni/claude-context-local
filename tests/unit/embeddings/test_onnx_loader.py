@@ -346,7 +346,11 @@ class TestONNXModelLoaderLoad:
         with (
             patch.dict(
                 "sys.modules",
-                {"optimum.onnxruntime": mock_ort, "transformers": mock_tf},
+                {
+                    "optimum.onnxruntime": mock_ort,
+                    "transformers": mock_tf,
+                    "onnxruntime": MagicMock(),
+                },
             ),
             patch("embeddings.onnx_loader._is_converted", return_value=True),
             patch("embeddings.onnx_loader._convert_model") as mock_convert,
@@ -362,7 +366,11 @@ class TestONNXModelLoaderLoad:
         with (
             patch.dict(
                 "sys.modules",
-                {"optimum.onnxruntime": mock_ort, "transformers": mock_tf},
+                {
+                    "optimum.onnxruntime": mock_ort,
+                    "transformers": mock_tf,
+                    "onnxruntime": MagicMock(),
+                },
             ),
             patch("embeddings.onnx_loader._is_converted", return_value=False),
             patch("embeddings.onnx_loader._convert_model") as mock_convert,
@@ -378,7 +386,11 @@ class TestONNXModelLoaderLoad:
         with (
             patch.dict(
                 "sys.modules",
-                {"optimum.onnxruntime": mock_ort, "transformers": mock_tf},
+                {
+                    "optimum.onnxruntime": mock_ort,
+                    "transformers": mock_tf,
+                    "onnxruntime": MagicMock(),
+                },
             ),
             patch("embeddings.onnx_loader._is_converted", return_value=True),
         ):
@@ -397,7 +409,11 @@ class TestONNXModelLoaderLoad:
         with (
             patch.dict(
                 "sys.modules",
-                {"optimum.onnxruntime": mock_ort, "transformers": mock_tf},
+                {
+                    "optimum.onnxruntime": mock_ort,
+                    "transformers": mock_tf,
+                    "onnxruntime": MagicMock(),
+                },
             ),
             patch("embeddings.onnx_loader._is_converted", return_value=True),
         ):
@@ -418,7 +434,11 @@ class TestONNXModelLoaderLoad:
         with (
             patch.dict(
                 "sys.modules",
-                {"optimum.onnxruntime": mock_ort, "transformers": mock_tf},
+                {
+                    "optimum.onnxruntime": mock_ort,
+                    "transformers": mock_tf,
+                    "onnxruntime": MagicMock(),
+                },
             ),
             patch("embeddings.onnx_loader._is_converted", return_value=True),
             pytest.raises(RuntimeError, match="Failed to load"),
@@ -473,7 +493,11 @@ class TestOrtProviderOptions:
         with (
             patch.dict(
                 "sys.modules",
-                {"optimum.onnxruntime": mock_ort, "transformers": mock_tf},
+                {
+                    "optimum.onnxruntime": mock_ort,
+                    "transformers": mock_tf,
+                    "onnxruntime": MagicMock(),
+                },
             ),
             patch("embeddings.onnx_loader._is_converted", return_value=True),
             patch(
@@ -508,7 +532,11 @@ class TestOrtProviderOptions:
         with (
             patch.dict(
                 "sys.modules",
-                {"optimum.onnxruntime": mock_ort, "transformers": mock_tf},
+                {
+                    "optimum.onnxruntime": mock_ort,
+                    "transformers": mock_tf,
+                    "onnxruntime": MagicMock(),
+                },
             ),
             patch("embeddings.onnx_loader._is_converted", return_value=True),
             patch(
@@ -536,7 +564,11 @@ class TestOrtProviderOptions:
         with (
             patch.dict(
                 "sys.modules",
-                {"optimum.onnxruntime": mock_ort, "transformers": mock_tf},
+                {
+                    "optimum.onnxruntime": mock_ort,
+                    "transformers": mock_tf,
+                    "onnxruntime": MagicMock(),
+                },
             ),
             patch("embeddings.onnx_loader._is_converted", return_value=True),
         ):
@@ -556,7 +588,11 @@ class TestOrtProviderOptions:
         with (
             patch.dict(
                 "sys.modules",
-                {"optimum.onnxruntime": mock_ort, "transformers": mock_tf},
+                {
+                    "optimum.onnxruntime": mock_ort,
+                    "transformers": mock_tf,
+                    "onnxruntime": MagicMock(),
+                },
             ),
             patch("embeddings.onnx_loader._is_converted", return_value=True),
             patch(

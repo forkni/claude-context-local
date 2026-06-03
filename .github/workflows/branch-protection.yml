@@ -99,11 +99,11 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e .[test]
+          pip install -e .[test,callgraph]
 
       - name: Run tests
         run: |
-          pytest tests/ -v --tb=short --maxfail=5 --ignore=tests/slow_integration/
+          pytest tests/ -v --tb=short --maxfail=20 --ignore=tests/slow_integration/
         continue-on-error: false
 
       - name: Upload test results

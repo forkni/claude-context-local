@@ -15,6 +15,17 @@ import pytest
 from chunking.relationships.external_call_graph import (
     _gather_py_files,
     build_call_edges,
+    pyan_available,
+)
+
+
+# Skip marker: tests that exercise build_call_edges rely on real pyan3 call-graph
+# analysis.  The product degrades gracefully when pyan3 is absent (returns []),
+# so these tests must skip rather than produce false failures in minimal-dep envs.
+# Install the '[callgraph]' extra (pyan3) to run them.
+requires_pyan = pytest.mark.skipif(
+    not pyan_available(),
+    reason="pyan3 not installed — install the '[callgraph]' extra",
 )
 
 
@@ -80,6 +91,7 @@ def two_module_project(tmp_path: Path) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 
 
+@requires_pyan
 def test_cross_module_edge_detected(two_module_project: dict, caplog) -> None:
     """build_call_edges returns the cross-module caller→callee edge."""
     import logging
@@ -97,6 +109,7 @@ def test_cross_module_edge_detected(two_module_project: dict, caplog) -> None:
     )
 
 
+@requires_pyan
 def test_self_loop_excluded(tmp_path: Path) -> None:
     """Self-recursive calls must not appear in the result."""
     import logging
@@ -118,6 +131,7 @@ def test_self_loop_excluded(tmp_path: Path) -> None:
     assert not self_loop, f"Self-loops found: {self_loop}"
 
 
+@requires_pyan
 def test_duplicate_call_sites_deduped(tmp_path: Path) -> None:
     """Multiple call sites to the same function produce at most one edge tuple."""
     import logging
@@ -155,6 +169,7 @@ def test_duplicate_call_sites_deduped(tmp_path: Path) -> None:
     )
 
 
+@requires_pyan
 def test_test_file_caller_excluded(tmp_path: Path) -> None:
     """Callers inside a tests/ subdirectory must be excluded from the file set."""
     import logging
@@ -209,6 +224,7 @@ def test_gather_py_files_excludes_venv(tmp_path: Path) -> None:
     assert "venv_mod.py" not in file_names
 
 
+@requires_pyan
 def test_unparseable_file_skipped(tmp_path: Path, caplog) -> None:
     """A single unparseable .py file must not abort edge injection.
 
