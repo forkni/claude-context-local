@@ -90,7 +90,7 @@ code-search:search_code("how does the indexing pipeline work", k=10)
 
 `calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`, `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`, `uses_context_manager`
 
-**Returns:** Direct and indirect callers, dependency graph, similar code (when available).
+**Returns:** Direct and indirect callers, dependency graph, similar code (when available). When any caller was resolved via the symbol-retry cascade, also includes `caller_confidence: {exact, recovered, ambiguous}` — `exact` = resolved directly by chunk_id; `recovered` = stale/drifted ID re-resolved by `_resolve_by_symbol`; `ambiguous` = multiple candidates at graph-edge time.
 
 **Standard 2-step workflow:**
 
@@ -133,9 +133,13 @@ code-search:find_connections(chunk_id="...", relationship_types=["imports", "use
 | `target_chunk_id` | — | Ending chunk ID (preferred) |
 | `source` | — | Starting symbol name (fallback — may be ambiguous) |
 | `target` | — | Ending symbol name (fallback) |
-| `edge_types` | — | Filter path to specific relationship types |
+| `edge_types` | — | Filter path to specific relationship types (12-type subset — see below) |
 | `max_hops` | 10 | Maximum path length (range 1-20) |
 | `output_format` | "compact" | "compact" / "verbose" / "ultra" |
+
+**Valid `edge_types` for `find_path` (12 types, a subset of the 21 `find_connections` types):**
+
+`calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`
 
 **Algorithm:** Bidirectional BFS for optimal performance.
 

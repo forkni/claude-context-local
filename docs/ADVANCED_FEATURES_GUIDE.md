@@ -294,16 +294,16 @@ set CLAUDE_MULTI_MODEL_ENABLED=false
 # Configure routing behavior
 /configure_query_routing
 {
-  "multi_model_enabled": true,
-  "default_model": "bge_m3",
+  "multi_model_enabled": false,
+  "default_model": "qwen3_0.6b",
   "confidence_threshold": 0.35
 }
 ```
 
 **Routing Parameters**:
 
-- `multi_model_enabled`: Toggle multi-model routing (default: true)
-- `default_model`: Fallback model for low-confidence queries (default: `"bge_m3"` for the `lightweight-speed` pool, `"qwen3"` for the full pool)
+- `multi_model_enabled`: Toggle multi-model routing (default: false — shipped as single-model Qwen3-0.6B; enable as opt-in)
+- `default_model`: Fallback model when routing is disabled or confidence is low (default: `"qwen3_0.6b"`)
 - `confidence_threshold`: Minimum confidence to use non-default model (default: 0.35, benchmark-verified)
 
 ### Usage Examples
@@ -1047,9 +1047,9 @@ The VRAM Tier Management system automatically detects available GPU memory and r
 | Tier | VRAM Range | Default Models | Features Enabled |
 |------|------------|----------------|------------------|
 | **Minimal** | <6GB | EmbeddingGemma-300m (fallback) | Single-model only, no multi-model routing, no neural reranking |
-| **Laptop** | 6-10GB | BGE-M3 (default) | Multi-model routing ENABLED, Neural reranking ENABLED |
-| **Desktop** | 10-18GB | Qwen3-0.6B + BGE-Code (default) | Full 2-model pool, Neural reranking ENABLED |
-| **Workstation** | 18GB+ | Qwen3-0.6B + BGE-Code (default) | Full 2-model pool, all features ENABLED |
+| **Laptop** | 6-10GB | Qwen3-0.6B (shipped default) | Single-model; multi-model routing available as opt-in |
+| **Desktop** | 10-18GB | Qwen3-0.6B (shipped default) | Single-model; full 2-model pool available as opt-in |
+| **Workstation** | 18GB+ | Qwen3-0.6B (shipped default) | Single-model; all features available as opt-in |
 
 ### Automatic Configuration
 
