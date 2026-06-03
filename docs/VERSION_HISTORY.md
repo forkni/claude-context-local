@@ -2,15 +2,69 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-05-26)
+## Current Status: All Features Operational (2026-06-03)
 
-- **Version**: 0.12.2
+- **Version**: 0.13.0
 - **Status**: Production-ready
-- **Test Coverage**: 2,090 unit tests + 8 integration tests (100% pass rate)
+- **Test Coverage**: 2,372 unit tests + 8 integration tests (100% pass rate)
 - **Dependencies**: 124 packages + optional `onnxruntime-gpu` for ONNX backend
-- **SSCG Benchmark**: Best MRR=0.846 (BM25), Hybrid Recall@10=0.833, all modes 13/13 Hit@5
+- **SSCG Benchmark**: MRR=0.94, Recall@4=0.89 (12/13 perfect rank-1), Hit@7=1.00
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent**: 0.12.2 — stale write-pipeline rebind fix, embedding-failure reporting, GPU cleanup on OOM, `GraphIntegration` shared initializer, config tuned for gte-modernbert + Jina v3
+- **Recent**: 0.13.0 — pyan3 cross-module caller edges, `find_connections` recall 0.57→0.95, `split_block` call edge recovery, `exc_info=True` across swallow-and-degrade handlers, 2 audit fixes
+
+---
+
+## v0.13.0 - pyan3 Cross-Module Edges + find_connections Recall (2026-06-03)
+
+Feature release adding pyan3-powered cross-module call edges and overhauling `find_connections` direct-caller recall across four phases.
+
+### Added
+- **pyan3 cross-module caller edges** (`chunking/relationships/external_call_graph.py`, new) — `build_call_edges()` runs pyan3 on all project `.py` files at full-index time, maps nodes via `filename+lineno → find_enclosing_chunk` (FQN fallback), and injects resolved pairs into `CodeGraphStorage`. Hard `install_requires` dep; runtime failures are non-fatal warnings. On this codebase: 5,341 edges resolved, 3,594 injected.
+- **Shared FQN/line-number helpers** (`evaluation/chunk_mapping.py`, new) — `build_line_to_chunk_map`, `find_enclosing_chunk`, `chunk_id_from_fqn` promoted from private benchmark internals to a shared public module.
+- **Direct-caller recall harness** (`evaluation/caller_golden.json`, `scripts/benchmark/build_caller_oracle.py`, `scripts/benchmark/run_caller_recall.py`) — 7 golden queries (C001–C007) including 2 cross-module pyan3 targets; baseline shows `total_missed_callers: 0` (14/14 expected callers found).
+
+### Fixed
+- **`find_connections` missed direct callers after incremental reindex** — four-phase fix: stale chunk IDs recovered via `_resolve_by_symbol` Tier 1→3 cascade; common-method blocklist refined; `ImpactReport` confidence counters added. Recall: 0.5667 → 0.9500.
+- **`split_block` chunks emitted zero call edges** — extractor re-reads enclosing `FunctionDef` from source (per-file AST cache) instead of parsing bare body fragment.
+- **Windows backslash `relative_path` in `build_line_to_chunk_map`** — `.replace("\\", "/")` normalization added; fixed zero-pyan3-edges on Windows.
+- **Normalized chunk_ids raised `SearchError` in `_resolve_target`** — symbol-retry threshold changed `>= 4` → `>= 3` colon-segments.
+- **Silent broad-except in `_resolve_by_symbol` Tier 3** — added `logger.debug()` with exc binding.
+- **Silent broad-except in pynvml per-device query** — added `logger.debug()` with exc binding.
+
+### Refactored
+- **`exc_info=True` added to all swallow-and-degrade handlers** across `graph/`, `search/`, `chunking/`, `utils/`, `tools/`.
+
+### Security
+- `pyjwt` 2.12.1 → 2.13.0 (CVE-2026-48522, CVE-2026-48524, CVE-2026-48525, CVE-2026-48526); `uv` 0.11.6 → 0.11.18 (GHSA-4gg8-gxpx-9rph).
+
+---
+
+## v0.12.4 - MCP Server Bug Fixes + ServiceLocator Removal (2026-05-29)
+
+Patch release fixing three MCP server bugs and removing the ServiceLocator DI container.
+
+### Fixed
+- **`switch_project` always logged "No indexed model detected"** — `_detect_indexed_model` now reads `project_info.json` (pool-agnostic) before falling back to active-pool scan.
+- **`list_embedding_models` always returned `loaded: false`** — now computes `loaded_names = {e.model_name for e in state.embedders.values() if e is not None}` for accurate VRAM check.
+- **`CodeGraphStorage.clear()` left phantom nodes after full reindex** — `clear()` now deletes the backing JSON file; fresh instance starts empty.
+
+### Refactored
+- **`GraphScoringStage` extracted** — centrality scoring, SSCG subgraph extraction, and k×4 cap encapsulated in `search/graph_scoring_stage.py`.
+- **`ServiceLocator`/`ResourceManager`/`SearchFactory` removed** (ADR-0005) — collapsed to module-level functions; `services.py` reduced to a 2-line re-export shim.
+
+### Security
+- idna 3.11 → 3.17 (CVE-2026-45409).
+
+---
+
+## v0.12.3 - Import Cycle Elimination (2026-05-29)
+
+Patch release eliminating the `chunking↔graph` bidirectional import cycle.
+
+### Refactored
+- **`chunking↔graph` import cycle eliminated** — 24 files moved from `graph/` into `chunking/relationships/`. `git mv` history preserved; `graph/__init__.py` re-exports for backward compatibility. Remaining direction: `graph → chunking` (architecturally correct).
+- **`SearchOrchestrator` introduced** (Phases A–D) — `_assemble` logic extracted to helpers; cyclomatic complexity reduced from ~30 to ~5.
+- 20+ helper extractions across `IncrementalIndexer`, `CentralityRanker`, `RelationshipAnalyzer`.
 
 ---
 
