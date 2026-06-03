@@ -556,7 +556,8 @@ class RelationshipAnalyzer:
         filters = {"exclude_dirs": exclude_dirs} if exclude_dirs else None
         try:
             results = self.searcher.search(symbol_name, k=30, filters=filters)
-        except Exception:
+        except Exception as exc:
+            logger.debug(f"Tier 3 semantic search failed for '{symbol_name}': {exc}")
             return None
         if not results:
             return None

@@ -150,9 +150,14 @@ class TestResolveBySymbol(TestCase):
             raise RuntimeError("index unavailable")
 
         analyzer, _ = _make_analyzer(search_side_effect=_bad_search)
-        # Must not propagate
-        result = analyzer._resolve_by_symbol("anything", None)
+        # Must not propagate; failure must be logged at DEBUG level
+        with self.assertLogs("search.relationship_analyzer", level="DEBUG") as cm:
+            result = analyzer._resolve_by_symbol("anything", None)
         self.assertIsNone(result)
+        self.assertTrue(
+            any("Tier 3 semantic search failed" in msg for msg in cm.output),
+            f"Expected Tier 3 failure log, got: {cm.output}",
+        )
 
 
 # ---------------------------------------------------------------------------
