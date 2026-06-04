@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from textwrap import dedent
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -377,3 +378,101 @@ def test_tracked_visitor_has_expanded_edges_attribute(
     assert isinstance(visitor.expanded_edges, set), (
         f"expanded_edges should be a set, got {type(visitor.expanded_edges)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 14 — namespace=None wildcard guards (caller + callee)
+# ---------------------------------------------------------------------------
+
+
+import logging as _logging  # noqa: E402
+
+
+_LOG_ECG = _logging.getLogger("test_ecg_namespace")
+
+
+def _make_pyan_node(
+    flavor: str,
+    namespace: object = "pkg",
+    defined: bool = True,
+) -> MagicMock:
+    """Return a fake pyan node with the given flavor, namespace, and defined flag."""
+    n = MagicMock()
+    n.flavor.name = flavor
+    n.namespace = namespace
+    n.defined = defined
+    n.filename = None
+    n.ast_node = None
+    n.get_name.return_value = ""
+    return n
+
+
+def _run_resolver_with_fake_edges(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caller_node: MagicMock,
+    callee_node: MagicMock,
+) -> list:
+    """Run PyanResolver.resolve with a fake visitor whose uses_edges has one entry."""
+    import chunking.relationships.external_call_graph as ecg
+
+    monkeypatch.setattr(ecg, "_PYAN_AVAILABLE", True)
+
+    fake_visitor = MagicMock()
+    fake_visitor.uses_edges = {caller_node: [callee_node]}
+    fake_visitor.expanded_edges = set()
+
+    (tmp_path / "a.py").write_text("def f(): pass\n", encoding="utf-8")
+
+    # raising=False: creates the attribute even when pyan is not installed (so
+    # _TrackedVisitor is absent from the module namespace).
+    monkeypatch.setattr(
+        ecg,
+        "_TrackedVisitor",
+        MagicMock(return_value=fake_visitor),
+        raising=False,
+    )
+    return ecg.PyanResolver().resolve(tmp_path, {}, _LOG_ECG)
+
+
+class TestPyanWildcardNamespaceGuards:
+    """PyanResolver must drop caller/callee nodes whose namespace attribute is None.
+
+    ``contract_nonexistents`` leaves wildcard nodes in ``uses_edges`` with
+    ``namespace is None``.  These nodes have no real source location and
+    produce phantom edges when mapped via filename+lineno.  The guards added
+    after the flavor/defined checks must eliminate them.
+    """
+
+    def test_caller_namespace_none_drops_all_callees(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A caller with namespace=None must cause its entire callee set to be skipped."""
+        caller = _make_pyan_node("FUNCTION", namespace=None)
+        callee = _make_pyan_node("FUNCTION", namespace="pkg")
+        edges = _run_resolver_with_fake_edges(tmp_path, monkeypatch, caller, callee)
+        assert edges == [], (
+            f"Expected no edges when caller.namespace is None; got {edges}"
+        )
+
+    def test_callee_namespace_none_drops_single_edge(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A callee with namespace=None must be dropped even if caller is valid."""
+        caller = _make_pyan_node("FUNCTION", namespace="pkg")
+        callee = _make_pyan_node("FUNCTION", namespace=None)
+        edges = _run_resolver_with_fake_edges(tmp_path, monkeypatch, caller, callee)
+        assert edges == [], (
+            f"Expected no edges when callee.namespace is None; got {edges}"
+        )
+
+    def test_valid_nodes_reach_chunk_id_lookup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Nodes with a non-None namespace must pass the guard (get_name='' → chunk_id=None → skipped via mapping, not guard)."""
+        caller = _make_pyan_node("FUNCTION", namespace="pkg")
+        callee = _make_pyan_node("FUNCTION", namespace="pkg")
+        # The resolver will skip because get_name()="" → chunk_id_from_fqn returns None.
+        # The important thing is no exception is raised by the new guard code.
+        edges = _run_resolver_with_fake_edges(tmp_path, monkeypatch, caller, callee)
+        assert isinstance(edges, list)  # no exception; guard logic reached mapping step

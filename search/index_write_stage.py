@@ -249,7 +249,11 @@ class IndexWriteStage:
             if "libcst" in enabled_names:
                 from chunking.relationships.libcst_call_graph import LibCSTResolver
 
-                resolvers.append(LibCSTResolver())
+                resolvers.append(
+                    LibCSTResolver(
+                        use_pyproject_toml=getattr(cg_cfg, "use_pyproject_toml", False)
+                    )
+                )
             # Stage 3 — basedpyright LSP resolver (opt-in, highest accuracy):
             if cg_cfg is not None and cg_cfg.lsp_enabled:
                 from chunking.relationships.lsp_call_graph import LSPResolver
@@ -264,6 +268,20 @@ class IndexWriteStage:
             merged = run_resolvers(
                 resolvers, Path(project_path).resolve(), raw_line_map, logger
             )
+
+            # Apply min_confidence floor — discard edges below the threshold.
+            min_conf: float = getattr(cg_cfg, "min_confidence", 0.0) if cg_cfg else 0.0
+            if min_conf > 0.0:
+                before = len(merged)
+                merged = {k: v for k, v in merged.items() if v.confidence >= min_conf}
+                dropped = before - len(merged)
+                if dropped:
+                    logger.info(
+                        "[CALL_EDGES] min_confidence=%.2f dropped %d edge(s) "
+                        "(confidence below threshold)",
+                        min_conf,
+                        dropped,
+                    )
 
             # Inject / upgrade edges with confidence-precedence semantics.
             g = storage.graph

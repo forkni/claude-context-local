@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 
 class TestCallGraphConfig:
     def test_default_resolvers(self) -> None:
@@ -70,6 +72,47 @@ class TestCallGraphConfig:
 
         sc2 = SearchConfig.from_dict(d)
         assert sc2.call_graph.resolvers == ["pyan"]
+
+    # -----------------------------------------------------------------
+    # New fields: use_pyproject_toml + min_confidence (Task 14)
+    # -----------------------------------------------------------------
+
+    def test_use_pyproject_toml_default_false(self) -> None:
+        from search.config import CallGraphConfig
+
+        assert CallGraphConfig().use_pyproject_toml is False
+
+    def test_use_pyproject_toml_set_true(self) -> None:
+        from search.config import CallGraphConfig
+
+        cfg = CallGraphConfig(use_pyproject_toml=True)
+        assert cfg.use_pyproject_toml is True
+
+    def test_min_confidence_default_zero(self) -> None:
+        from search.config import CallGraphConfig
+
+        assert CallGraphConfig().min_confidence == 0.0
+
+    def test_min_confidence_custom(self) -> None:
+        from search.config import CallGraphConfig
+
+        cfg = CallGraphConfig(min_confidence=0.75)
+        assert cfg.min_confidence == pytest.approx(0.75)
+
+    def test_new_fields_survive_to_dict_roundtrip(self) -> None:
+        """use_pyproject_toml and min_confidence must survive SearchConfig serialisation."""
+        from search.config import CallGraphConfig, SearchConfig
+
+        sc = SearchConfig(
+            call_graph=CallGraphConfig(use_pyproject_toml=True, min_confidence=0.75)
+        )
+        d = sc.to_dict()
+        assert d["call_graph"]["use_pyproject_toml"] is True
+        assert abs(d["call_graph"]["min_confidence"] - 0.75) < 1e-9
+
+        sc2 = SearchConfig.from_dict(d)
+        assert sc2.call_graph.use_pyproject_toml is True
+        assert sc2.call_graph.min_confidence == pytest.approx(0.75)
 
 
 class TestImpactReportCalleeFields:

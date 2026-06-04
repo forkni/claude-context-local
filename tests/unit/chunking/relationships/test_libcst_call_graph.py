@@ -508,3 +508,102 @@ class TestRealFullRepoManagerIntegration:
             f"Expected self.helper() → helper edge via ClassDef FQN stack; "
             f"got edges={edges}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Task 14 — use_pyproject_toml forwarded + resolve_cache() called
+# ---------------------------------------------------------------------------
+
+
+class TestLibCSTResolverTuning:
+    """LibCSTResolver tuning parameters: use_pyproject_toml and resolve_cache."""
+
+    @staticmethod
+    def _make_fake_frm() -> MagicMock:
+        frm = MagicMock()
+        frm.get_cache_for_path.return_value = {}
+        return frm
+
+    @staticmethod
+    def _make_fake_mw(visitor_edges: list) -> MagicMock:
+        def _factory(
+            module: object, unsafe_skip_copy: bool, cache: object
+        ) -> MagicMock:
+            w = MagicMock()
+            w.visit = lambda vis: setattr(vis, "edges", visitor_edges)
+            return w
+
+        return _factory  # type: ignore[return-value]
+
+    def test_use_pyproject_toml_false_forwarded(self, tmp_path: Path) -> None:
+        """LibCSTResolver(use_pyproject_toml=False) passes use_pyproject_toml=False to FullRepoManager."""
+        import chunking.relationships.libcst_call_graph as lcg
+
+        if not lcg._LIBCST_AVAILABLE:
+            pytest.skip("libcst not installed")
+
+        (tmp_path / "mod.py").write_text("def f(): pass\n", encoding="utf-8")
+
+        with (
+            patch(
+                "chunking.relationships.libcst_call_graph.FullRepoManager",
+                return_value=self._make_fake_frm(),
+            ) as mock_frm_cls,
+            patch(
+                "chunking.relationships.libcst_call_graph.MetadataWrapper",
+                side_effect=self._make_fake_mw([]),
+            ),
+        ):
+            LibCSTResolver(use_pyproject_toml=False).resolve(tmp_path, {}, _LOG)
+
+        _, kwargs = mock_frm_cls.call_args
+        assert kwargs.get("use_pyproject_toml") is False
+
+    def test_use_pyproject_toml_true_forwarded(self, tmp_path: Path) -> None:
+        """LibCSTResolver(use_pyproject_toml=True) passes use_pyproject_toml=True to FullRepoManager."""
+        import chunking.relationships.libcst_call_graph as lcg
+
+        if not lcg._LIBCST_AVAILABLE:
+            pytest.skip("libcst not installed")
+
+        (tmp_path / "mod.py").write_text("def f(): pass\n", encoding="utf-8")
+
+        with (
+            patch(
+                "chunking.relationships.libcst_call_graph.FullRepoManager",
+                return_value=self._make_fake_frm(),
+            ) as mock_frm_cls,
+            patch(
+                "chunking.relationships.libcst_call_graph.MetadataWrapper",
+                side_effect=self._make_fake_mw([]),
+            ),
+        ):
+            LibCSTResolver(use_pyproject_toml=True).resolve(tmp_path, {}, _LOG)
+
+        _, kwargs = mock_frm_cls.call_args
+        assert kwargs.get("use_pyproject_toml") is True
+
+    def test_resolve_cache_called_after_construction(self, tmp_path: Path) -> None:
+        """resolve_cache() must be called on the FullRepoManager instance after construction."""
+        import chunking.relationships.libcst_call_graph as lcg
+
+        if not lcg._LIBCST_AVAILABLE:
+            pytest.skip("libcst not installed")
+
+        (tmp_path / "mod.py").write_text("def f(): pass\n", encoding="utf-8")
+
+        fake_frm = self._make_fake_frm()
+
+        with (
+            patch(
+                "chunking.relationships.libcst_call_graph.FullRepoManager",
+                return_value=fake_frm,
+            ),
+            patch(
+                "chunking.relationships.libcst_call_graph.MetadataWrapper",
+                side_effect=self._make_fake_mw([]),
+            ),
+        ):
+            LibCSTResolver().resolve(tmp_path, {}, _LOG)
+
+        fake_frm.resolve_cache.assert_called_once()

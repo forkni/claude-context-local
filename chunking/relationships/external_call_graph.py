@@ -273,6 +273,16 @@ class PyanResolver:
                 skipped += len(callees)
                 continue
 
+            # Skip wildcard/undefined callers left over from contract_nonexistents.
+            # namespace is None  → wildcard node produced by the postprocessor.
+            # defined=False      → external/unresolved symbol (e.g. stdlib stubs).
+            if getattr(caller_node, "namespace", "") is None:
+                skipped += len(callees)
+                continue
+            if not getattr(caller_node, "defined", True):
+                skipped += len(callees)
+                continue
+
             caller_id = _node_to_raw_chunk_id(caller_node, project_root, raw_line_map)
             if caller_id is None:
                 skipped += len(callees)
@@ -293,6 +303,12 @@ class PyanResolver:
                 # Drop wildcard/unresolved nodes left over from expand_unknowns
                 # that contract_nonexistents didn't fully eliminate.
                 if not getattr(callee_node, "defined", True):
+                    skipped += 1
+                    continue
+
+                # Drop wildcard callee nodes (namespace is None = residue from
+                # contract_nonexistents; these nodes have no real source location).
+                if getattr(callee_node, "namespace", "") is None:
                     skipped += 1
                     continue
 

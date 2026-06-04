@@ -1,7 +1,7 @@
 """Unit tests for IndexWriteStage pipeline stage."""
 
 import time
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from search.index_write_stage import IncrementalIndexResult, IndexWriteStage
 
@@ -219,6 +219,129 @@ class TestIndexWriteStageOrdering:
 
         assert embed_result.metadata["project_name"] == "myproj"
         assert embed_result.metadata["content"] == "def foo(): pass"
+
+
+# ---------------------------------------------------------------------------
+# Task 14 — min_confidence floor in _inject_call_edges
+# ---------------------------------------------------------------------------
+
+
+class TestInjectCallEdgesMinConfidence:
+    """_inject_call_edges must discard edges below min_confidence before injection."""
+
+    @staticmethod
+    def _make_resolved_edge(
+        caller: str, callee: str, confidence: float, source: str = "pyan"
+    ):
+        from chunking.relationships.call_edge_resolver import ResolvedEdge
+
+        return ResolvedEdge(
+            caller_id=caller,
+            callee_id=callee,
+            line=1,
+            is_method=False,
+            source=source,
+            confidence=confidence,
+        )
+
+    @staticmethod
+    def _make_stage_for_injection() -> IndexWriteStage:
+        """Return an IndexWriteStage whose _indexer has all the attributes
+        _inject_call_edges accesses (graph, dense_index.metadata_store)."""
+        import networkx as nx
+
+        g = nx.DiGraph()
+        g.add_node("caller_a")
+        g.add_node("callee_a")
+        g.add_node("caller_b")
+        g.add_node("callee_b")
+
+        storage = Mock()
+        storage.graph = g
+
+        graph_integration = Mock()
+        graph_integration.storage = storage
+
+        meta_store = Mock()
+        dense_index = Mock()
+        dense_index.metadata_store = meta_store
+
+        indexer = Mock()
+        indexer._graph = graph_integration
+        indexer.dense_index = dense_index
+
+        stage = IndexWriteStage(
+            embedder=Mock(),
+            indexer=indexer,
+            snapshot_manager=Mock(),
+            bm25_sync=Mock(),
+            build_metadata_fn=Mock(return_value={}),
+            clear_gpu_fn=Mock(),
+        )
+        return stage, storage
+
+    def test_edge_below_min_confidence_not_injected(self) -> None:
+        """An edge with confidence=0.75 must be dropped when min_confidence=0.80."""
+        from search.config import CallGraphConfig
+
+        stage, storage = self._make_stage_for_injection()
+
+        pyan_edge = self._make_resolved_edge("caller_a", "callee_a", 0.75)
+        libcst_edge = self._make_resolved_edge(
+            "caller_b", "callee_b", 0.90, source="libcst"
+        )
+
+        merged_edges = {
+            ("caller_a", "callee_a"): pyan_edge,
+            ("caller_b", "callee_b"): libcst_edge,
+        }
+
+        cg_cfg = CallGraphConfig(min_confidence=0.80)
+        mock_cfg = Mock()
+        mock_cfg.call_graph = cg_cfg
+
+        with (
+            patch("search.index_write_stage.build_line_to_chunk_map", return_value={}),
+            patch("search.config.get_search_config", return_value=mock_cfg),
+            patch("search.index_write_stage.run_resolvers", return_value=merged_edges),
+            patch("search.index_write_stage.PyanResolver", return_value=Mock()),
+        ):
+            stage._inject_call_edges("/fake/project")
+
+        # Only the 0.90 edge (caller_b → callee_b) should have been injected.
+        calls = [str(c) for c in storage.add_call_edge.call_args_list]
+        assert any("caller_b" in c and "callee_b" in c for c in calls), (
+            f"Expected libcst (0.90) edge to be injected; add_call_edge calls: {calls}"
+        )
+        assert not any("caller_a" in c and "callee_a" in c for c in calls), (
+            f"Expected pyan (0.75) edge to be dropped; add_call_edge calls: {calls}"
+        )
+
+    def test_zero_min_confidence_injects_all(self) -> None:
+        """With min_confidence=0.0 (default), no edges are dropped."""
+        from search.config import CallGraphConfig
+
+        stage, storage = self._make_stage_for_injection()
+
+        pyan_edge = self._make_resolved_edge("caller_a", "callee_a", 0.75)
+        merged_edges = {("caller_a", "callee_a"): pyan_edge}
+
+        cg_cfg = CallGraphConfig(min_confidence=0.0)
+        mock_cfg = Mock()
+        mock_cfg.call_graph = cg_cfg
+
+        with (
+            patch("search.index_write_stage.build_line_to_chunk_map", return_value={}),
+            patch("search.config.get_search_config", return_value=mock_cfg),
+            patch("search.index_write_stage.run_resolvers", return_value=merged_edges),
+            patch("search.index_write_stage.PyanResolver", return_value=Mock()),
+        ):
+            stage._inject_call_edges("/fake/project")
+
+        calls = [str(c) for c in storage.add_call_edge.call_args_list]
+        assert any("caller_a" in c and "callee_a" in c for c in calls), (
+            f"Expected pyan (0.75) edge injected with min_confidence=0.0; calls: {calls}"
+        )
 
 
 class TestIndexWriteStageEmbeddingFailure:

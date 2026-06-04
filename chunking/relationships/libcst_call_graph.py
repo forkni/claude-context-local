@@ -213,6 +213,19 @@ class LibCSTResolver:
     name: str = "libcst"
     base_confidence: float = 0.90
 
+    def __init__(self, use_pyproject_toml: bool = False) -> None:
+        """Initialise the resolver.
+
+        Args:
+            use_pyproject_toml: When *True*, ``FullRepoManager`` derives each
+                file's module FQN from the nearest ``pyproject.toml`` package
+                root instead of the bare repo root.  Enable this for
+                *src-layout* projects (e.g. ``src/mypkg/``) where the default
+                would produce ``src.mypkg.mod`` instead of ``mypkg.mod``.
+                Default: ``False`` (flat-layout, module FQNs relative to root).
+        """
+        self._use_pyproject_toml = use_pyproject_toml
+
     def available(self) -> bool:
         """Return True if libcst was successfully imported at module load time."""
         return _LIBCST_AVAILABLE
@@ -299,7 +312,12 @@ class LibCSTResolver:
                 repo_root_str,
                 abs_keys,
                 {FullyQualifiedNameProvider, PositionProvider},
+                use_pyproject_toml=self._use_pyproject_toml,
             )
+            # Front-load the entire batch cache in one pass.
+            # This resolves all cross-file FQN tables up-front so each
+            # MetadataWrapper construction below hits an already-warm cache.
+            manager.resolve_cache()
         except Exception as exc:
             logger.warning(
                 "[LIBCST] FullRepoManager initialisation failed (%s) — skipping",

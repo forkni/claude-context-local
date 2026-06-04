@@ -442,7 +442,7 @@ class ObservabilityConfig:
 
 @dataclass
 class CallGraphConfig:
-    """Call-graph resolver pipeline settings (3 fields).
+    """Call-graph resolver pipeline settings (5 fields).
 
     Controls which static-analysis backends run at full-index time to inject
     cross-module ``calls`` edges into the code graph.
@@ -479,6 +479,37 @@ class CallGraphConfig:
     """Per-request timeout for LSP JSON-RPC calls (seconds).
 
     Increase for large codebases where basedpyright type-checking takes longer.
+    """
+
+    use_pyproject_toml: bool = False
+    """Derive LibCST FQNs from the nearest ``pyproject.toml`` package root.
+
+    Enable for *src-layout* projects (``src/mypkg/mod.py``) where the project
+    root is *not* the Python package root.  With the default ``False``, LibCST
+    computes FQNs relative to the repo root (``src.mypkg.mod``), which will
+    fail to match graph chunk IDs.  Setting this to ``True`` makes LibCST look
+    for the nearest ``pyproject.toml`` and strips the ``src/`` prefix so FQNs
+    resolve correctly (``mypkg.mod``).
+
+    Has no effect when ``"libcst"`` is not in ``resolvers``.
+    """
+
+    min_confidence: float = 0.0
+    """Minimum resolver confidence required to inject an edge (inclusive floor).
+
+    Edges from ``run_resolvers()`` whose ``confidence`` is strictly below this
+    threshold are discarded before injection.  The default ``0.0`` accepts all
+    edges (no behaviour change).
+
+    Reference confidence tiers:
+    - ``0.5`` / ``0.7`` — in-house AST (single-file, already in graph)
+    - ``0.6``           — pyan expand_unknowns wildcard fan-out
+    - ``0.75``          — pyan whole-project name resolution
+    - ``0.90``          — LibCST FQN cross-module resolution
+    - ``0.98``          — LSP / basedpyright type-level resolution
+
+    Example: set ``0.75`` to drop wildcard-fan-out pyan edges; set ``0.90``
+    to keep only LibCST and LSP edges.
     """
 
     def __post_init__(self) -> None:
