@@ -256,7 +256,7 @@ class LibCSTResolver:
             )
             return []
 
-        for key, rel_label in zip(abs_keys, rel_labels):
+        for key, rel_label in zip(abs_keys, rel_labels, strict=False):
             try:
                 # Bypass get_metadata_wrapper_for_path — it calls read_text()
                 # without specifying encoding, which fails on Windows cp1252
