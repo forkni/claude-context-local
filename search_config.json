@@ -166,7 +166,7 @@
     "resolvers": ["pyan", "libcst"],
     "lsp_enabled": true,
     "lsp_timeout_seconds": 30.0,
-    "use_pyproject_toml": false,
+    "use_pyproject_toml": true,
     "min_confidence": 0.65
   }
 }

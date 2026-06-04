@@ -1,7 +1,7 @@
 {
   "_meta": {
     "description": "Golden callee (outbound) dataset for direct-callee recall benchmarking",
-    "usage": "Run scripts/benchmark/run_caller_recall.py --direction callees to evaluate",
+    "usage": "Run scripts/benchmark/run_caller_recall.sh run --project-path ... --direction callees to evaluate",
     "normalization": "Chunk IDs normalized (line ranges stripped via evaluation/metrics.py:normalize_chunk_id)",
     "format": "target_chunk_id → list of expected direct-callee chunk IDs",
     "total_queries": 7,
