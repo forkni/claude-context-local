@@ -58,7 +58,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 from urllib.request import pathname2url, url2pathname
 
 from evaluation.chunk_mapping import find_enclosing_chunk
@@ -252,7 +252,14 @@ def _uri_to_path(uri: str) -> Path | None:
     """Convert a ``file://`` URI to a :class:`~pathlib.Path`.
 
     Uses :func:`urllib.request.url2pathname` to handle Windows drive letters
-    (``file:///F:/...`` → ``F:\\...``) and percent-encoded characters.
+    and :func:`urllib.parse.unquote` to decode percent-encoded characters
+    *before* passing to ``url2pathname``.
+
+    The ``unquote`` pre-pass is required because pyright/basedpyright emits
+    vscode-uri–style URIs where the drive colon is percent-encoded
+    (``file:///f%3A/RD_PROJECTS/...``).  Python ≤3.13's ``nturl2path``
+    checks for the drive separator ``:`` before decoding, so ``%3A`` is
+    never recognised as a drive letter without this step.
 
     Args:
         uri: A URI string.
@@ -267,7 +274,9 @@ def _uri_to_path(uri: str) -> Path | None:
         return None
     if parsed.scheme != "file":
         return None
-    return Path(url2pathname(parsed.path))
+    # unquote BEFORE url2pathname: basedpyright emits file:///f%3A/... and
+    # nturl2path checks for ':' before percent-decoding on Python ≤3.13.
+    return Path(url2pathname(unquote(parsed.path)))
 
 
 # ---------------------------------------------------------------------------

@@ -376,3 +376,25 @@ class TestUriToPath:
         result = _uri_to_path("file:///tmp/my%20file.py")
         assert result is not None
         assert str(result).endswith("my file.py")
+
+    @pytest.mark.skipif(os.name != "nt", reason="pyright Windows URI style")
+    def test_pyright_style_encoded_drive_colon(self) -> None:
+        # basedpyright emits file:///f%3A/... (lowercase drive + encoded colon).
+        # url2pathname must decode %3A before checking for the drive separator.
+        result = _uri_to_path("file:///f%3A/proj/mod.py")
+        assert result is not None
+        # PureWindowsPath equality is case-insensitive for drive letters
+        assert result == Path("f:/proj/mod.py")
+
+    @pytest.mark.skipif(os.name != "nt", reason="pyright Windows URI round-trip")
+    def test_encoded_drive_colon_relative_to_project_root(self) -> None:
+        # Full round-trip: parsed path must survive .resolve().relative_to().
+        drive = Path.cwd().drive  # e.g. 'F:'
+        drive_lower = drive[0].lower()  # 'f'
+        uri = f"file:///{drive_lower}%3A/proj/sub/mod.py"
+        result = _uri_to_path(uri)
+        assert result is not None
+        root = Path(f"{drive}/proj")
+        # Should not raise ValueError
+        rel = result.resolve().relative_to(root)
+        assert str(rel).replace("\\", "/") == "sub/mod.py"
