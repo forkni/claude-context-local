@@ -385,6 +385,32 @@ basedpyright must be installed (`pip install basedpyright`) and the LSP server
 must be startable.  On Windows, `lsp_call_graph.py` falls back to the venv
 `basedpyright` binary if the system-level one is absent.
 
+**Requires v0.14.0+** — earlier builds silently resolved 0 edges due to three
+protocol bugs (probe at column 0 instead of the symbol-name position, missing
+JSON-RPC ID correlation, and `file:///f%3A/...` percent-encoded drive-colon
+handling on Windows).
+
+**Diagnostics.** Every LSP session emits one INFO line:
+
+```text
+[LSP] probes=N null_prepares=N items=N outgoing_calls=N dropped_uri=N dropped_no_chunk=N
+```
+
+| Counter | Meaning |
+|---------|---------|
+| `probes` | Chunks for which `prepareCallHierarchy` was attempted |
+| `null_prepares` | Chunks skipped (module / split-block continuations with no def/class header) |
+| `items` | Chunks where `prepareCallHierarchy` returned at least one item |
+| `outgoing_calls` | Total callee references returned by `callHierarchy/outgoingCalls` |
+| `dropped_uri` | Callees whose URI could not be mapped to a local path |
+| `dropped_no_chunk` | Callees resolved to a local path but with no enclosing chunk (`.venv/`, unindexed files) |
+
+Health signals:
+
+- `dropped_uri ≈ outgoing_calls` — URI-to-path conversion is failing; check Python version and basedpyright version.
+- Large `dropped_no_chunk` is **normal** — most callees land in `.venv/` site-packages which are not indexed.
+- Zero resolved edges with `items > 0` and `dropped_uri = 0` — basedpyright stderr tail is logged at WARNING.
+
 ### 6.5 Recommended Defaults by Use Case
 
 | Use case | Settings |
