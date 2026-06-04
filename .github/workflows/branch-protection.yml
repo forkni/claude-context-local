@@ -61,18 +61,20 @@ jobs:
           echo "Checking docs/ directory..."
 
           # Allowed public documentation files (main branch)
-          ALLOWED_DOCS="ADVANCED_FEATURES_GUIDE.md|BENCHMARKS.md|CLAUDE_MD_TEMPLATE.md|claude_code_config.md|DOCUMENTATION_INDEX.md|GIT_WORKFLOW.md|HYBRID_SEARCH_CONFIGURATION_GUIDE.md|INSTALLATION_GUIDE.md|MCP_TOOLS_REFERENCE.md|MODEL_MIGRATION_GUIDE.md|PYTORCH_COMPATIBILITY.md|VERSION_HISTORY.md"
+          ALLOWED_DOCS="ADVANCED_FEATURES_GUIDE.md|BENCHMARKS.md|CALL_GRAPH_TUNING.md|CLAUDE_MD_TEMPLATE.md|claude_code_config.md|DOCUMENTATION_INDEX.md|GIT_WORKFLOW.md|HYBRID_SEARCH_CONFIGURATION_GUIDE.md|INSTALLATION_GUIDE.md|MCP_TOOLS_REFERENCE.md|MODEL_MIGRATION_GUIDE.md|OBSERVABILITY.md|PYTORCH_COMPATIBILITY.md|VERSION_HISTORY.md"
 
           # Find unauthorized docs (only check on main branch)
+          # docs/adr/ subtree is always permitted (architecture decision records)
           if [ "$GITHUB_REF" = "refs/heads/main" ]; then
-            UNAUTHORIZED=$(git ls-files docs/ | grep -v -E "docs/($ALLOWED_DOCS)$" || true)
+            UNAUTHORIZED=$(git ls-files docs/ | grep -v -E "docs/($ALLOWED_DOCS)$" | grep -v "^docs/adr/" || true)
 
             if [ -n "$UNAUTHORIZED" ]; then
               echo "❌ ERROR: Unauthorized documentation files found on main branch:"
               echo "$UNAUTHORIZED"
               echo ""
-              echo "Only these 12 docs are allowed in main branch:"
+              echo "Allowed top-level docs:"
               echo "$ALLOWED_DOCS" | tr '|' '\n'
+              echo "(docs/adr/ subtree is always permitted)"
               exit 1
             fi
           fi
