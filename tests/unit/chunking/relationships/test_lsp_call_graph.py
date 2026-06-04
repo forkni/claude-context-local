@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -25,7 +26,10 @@ from chunking.relationships.call_edge_resolver import (
 from chunking.relationships.lsp_call_graph import (
     LSPResolver,
     _encode,
+    _find_def_position,
     _read_response,
+    _read_until_id,
+    _uri_to_path,
     lsp_available,
 )
 
@@ -225,3 +229,150 @@ class TestLSPInRunResolvers:
         )
         assert result[("a", "b")].source == "libcst"
         assert result[("a", "b")].confidence == pytest.approx(0.90)
+
+
+# ---------------------------------------------------------------------------
+# _find_def_position — probe position helper
+# ---------------------------------------------------------------------------
+
+
+class TestFindDefPosition:
+    """_find_def_position must locate the symbol *name*, not column 0."""
+
+    def test_plain_def(self) -> None:
+        lines = ["def foo():"]
+        assert _find_def_position(lines, 1, 1) == (0, 4)  # 'f' in 'foo'
+
+    def test_async_def(self) -> None:
+        lines = ["async def bar():"]
+        assert _find_def_position(lines, 1, 1) == (0, 10)  # 'b' in 'bar'
+
+    def test_class_def(self) -> None:
+        lines = ["class MyClass:"]
+        assert _find_def_position(lines, 1, 1) == (0, 6)  # 'M' in 'MyClass'
+
+    def test_decorated_def_skips_decorator_line(self) -> None:
+        # Decorator on line 1, def on line 2 (1-based); chunk start_line=1.
+        lines = ["@property", "def getter(self):", "    return self._x"]
+        result = _find_def_position(lines, 1, 3)
+        assert result == (1, 4)  # line idx 1, 'g' in 'getter'
+
+    def test_indented_method(self) -> None:
+        lines = ["class Foo:", "    def method(self):", "        pass"]
+        # Chunk for 'method' has start_line=2 (1-based)
+        result = _find_def_position(lines, 2, 3)
+        assert result == (1, 8)  # line idx 1, 'm' in 'method'
+
+    def test_module_chunk_returns_none(self) -> None:
+        lines = ["import os", "import sys"]
+        assert _find_def_position(lines, 1, 2) is None
+
+    def test_split_block_continuation_returns_none(self) -> None:
+        lines = ["    return x + y"]
+        assert _find_def_position(lines, 1, 1) is None
+
+    def test_empty_lines_returns_none(self) -> None:
+        assert _find_def_position([], 1, 5) is None
+
+    def test_start_beyond_file_length_returns_none(self) -> None:
+        lines = ["def foo():"]
+        assert _find_def_position(lines, 5, 10) is None
+
+
+# ---------------------------------------------------------------------------
+# _read_until_id — ID-correlated reader
+# ---------------------------------------------------------------------------
+
+
+class TestReadUntilId:
+    """_read_until_id must correlate IDs and handle interleaved messages."""
+
+    @staticmethod
+    def _stream(*msgs: dict) -> io.BytesIO:
+        """Return a readable BytesIO of consecutively encoded messages."""
+        return io.BytesIO(b"".join(_encode(m) for m in msgs))
+
+    def test_returns_matching_response(self) -> None:
+        stream = self._stream({"jsonrpc": "2.0", "id": 5, "result": "ok"})
+        result = _read_until_id(stream, io.BytesIO(), 5, timeout=2.0)
+        assert result is not None
+        assert result["id"] == 5
+        assert result["result"] == "ok"
+
+    def test_discards_notification_before_response(self) -> None:
+        notif = {
+            "jsonrpc": "2.0",
+            "method": "textDocument/publishDiagnostics",
+            "params": {},
+        }
+        resp = {"jsonrpc": "2.0", "id": 3, "result": []}
+        stream = self._stream(notif, resp)
+        result = _read_until_id(stream, io.BytesIO(), 3, timeout=2.0)
+        assert result is not None
+        assert result["id"] == 3
+
+    def test_stubs_workspace_configuration_request(self) -> None:
+        # Server sends a workspace/configuration REQUEST (has id + method).
+        server_req = {
+            "jsonrpc": "2.0",
+            "id": "srv-1",
+            "method": "workspace/configuration",
+            "params": {"items": [{"section": "a"}, {"section": "b"}]},
+        }
+        resp = {"jsonrpc": "2.0", "id": 7, "result": "done"}
+        stream = self._stream(server_req, resp)
+        stdin_buf = io.BytesIO()
+        result = _read_until_id(stream, stdin_buf, 7, timeout=2.0)
+        assert result is not None
+        assert result["result"] == "done"
+        # stdin must have received the stub reply for the server request
+        stdin_buf.seek(0)
+        stub = _read_response(stdin_buf)
+        assert stub is not None
+        assert stub["id"] == "srv-1"
+        assert stub["result"] == [None, None]  # 2 config items → [None, None]
+
+    def test_skips_wrong_id_response(self) -> None:
+        wrong = {"jsonrpc": "2.0", "id": 4, "result": "wrong"}
+        right = {"jsonrpc": "2.0", "id": 5, "result": "right"}
+        stream = self._stream(wrong, right)
+        result = _read_until_id(stream, io.BytesIO(), 5, timeout=2.0)
+        assert result is not None
+        assert result["result"] == "right"
+
+    def test_returns_none_on_eof(self) -> None:
+        result = _read_until_id(io.BytesIO(b""), io.BytesIO(), 1, timeout=2.0)
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _uri_to_path — URI → Path conversion
+# ---------------------------------------------------------------------------
+
+
+class TestUriToPath:
+    """_uri_to_path must handle Windows drives, POSIX paths, and percent-encoding."""
+
+    def test_non_file_scheme_returns_none(self) -> None:
+        assert _uri_to_path("https://example.com/foo.py") is None
+
+    def test_empty_string_returns_none(self) -> None:
+        # Empty URI has no 'file' scheme
+        assert _uri_to_path("") is None
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows drive letter handling")
+    def test_windows_drive_letter(self) -> None:
+        result = _uri_to_path("file:///F:/RD_PROJECTS/mod.py")
+        assert result is not None
+        assert result == Path("F:/RD_PROJECTS/mod.py")
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX path handling")
+    def test_posix_path(self) -> None:
+        result = _uri_to_path("file:///home/user/mod.py")
+        assert result is not None
+        assert result == Path("/home/user/mod.py")
+
+    def test_percent_encoded_space_decoded(self) -> None:
+        result = _uri_to_path("file:///tmp/my%20file.py")
+        assert result is not None
+        assert str(result).endswith("my file.py")

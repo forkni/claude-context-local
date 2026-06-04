@@ -46,17 +46,20 @@ cleanly (``shutdown`` + ``exit``) at the end.
 
 from __future__ import annotations
 
+import collections
 import contextlib
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
-from urllib.request import pathname2url
+from urllib.parse import urljoin, urlparse
+from urllib.request import pathname2url, url2pathname
 
 from evaluation.chunk_mapping import find_enclosing_chunk
 
@@ -142,6 +145,129 @@ def _read_response(stdout: Any) -> dict[str, Any] | None:
 def _path_to_uri(path: Path) -> str:
     """Convert an absolute path to a ``file://`` URI."""
     return urljoin("file:", pathname2url(str(path)))
+
+
+# ---------------------------------------------------------------------------
+# LSP probe helpers (module-level for testability)
+# ---------------------------------------------------------------------------
+
+_DEF_RE = re.compile(r"^\s*(?:async\s+)?def\s+(\w+)")
+_CLASS_RE = re.compile(r"^\s*class\s+(\w+)")
+
+
+def _find_def_position(
+    lines: list[str], start_line: int, end_line: int
+) -> tuple[int, int] | None:
+    """Return 0-based (line, character) of the ``def``/``class`` *name* for a chunk.
+
+    Scans from *start_line* (1-based) forward past decorators, up to
+    ``min(end_line, start_line + 10)``.  Returns ``None`` when no ``def`` or
+    ``class`` line is found (module chunks, split_block continuations) — the
+    caller should skip the ``prepareCallHierarchy`` probe entirely.
+
+    Args:
+        lines: File source split by line (0-based index = line number).
+        start_line: First line of the chunk (1-based, as stored in
+            *raw_line_map*).
+        end_line: Last line of the chunk (1-based).
+
+    Returns:
+        ``(line_0based, char_0based)`` pointing at the symbol *name* token,
+        or ``None`` if no definition line was found.
+    """
+    scan_end = min(end_line, start_line + 10)
+    for idx in range(start_line - 1, scan_end):
+        if idx >= len(lines):
+            break
+        for pattern in (_DEF_RE, _CLASS_RE):
+            m = pattern.match(lines[idx])
+            if m:
+                return (idx, m.start(1))
+    return None
+
+
+def _read_until_id(
+    stdout: Any,
+    stdin: Any,
+    req_id: int,
+    timeout: float,
+) -> dict[str, Any] | None:
+    """Read JSON-RPC messages until the response for *req_id* arrives.
+
+    Discards notifications (no ``id`` field) and stubs server→client
+    requests (messages with both ``id`` and ``method``), so that
+    ``publishDiagnostics``, ``window/logMessage``, and
+    ``workspace/configuration`` messages do not desynchronise the stream.
+
+    Args:
+        stdout: LSP server stdout stream.
+        stdin: LSP server stdin stream (used to reply to server→client
+            requests).
+        req_id: The JSON-RPC ``id`` to wait for.
+        timeout: Budget in seconds; shared across all retries.
+
+    Returns:
+        The response dict whose ``id`` matches *req_id*, or ``None`` on
+        timeout / EOF.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        msg = _read_response_with_timeout(stdout, remaining)
+        if msg is None:
+            return None
+
+        # Server → client REQUEST (has both 'id' and 'method') — stub reply
+        if "id" in msg and "method" in msg:
+            stub: Any = None
+            if msg["method"] == "workspace/configuration":
+                params = msg.get("params") or {}
+                stub = [None] * len(params.get("items") or [])
+            with contextlib.suppress(Exception):
+                stdin.write(
+                    _encode(
+                        {
+                            "jsonrpc": _JSONRPC_VERSION,
+                            "id": msg["id"],
+                            "result": stub,
+                        }
+                    )
+                )
+                stdin.flush()
+            continue
+
+        # Notification (no 'id') — discard silently
+        if "id" not in msg:
+            continue
+
+        # Response matching our request ID — done
+        if msg.get("id") == req_id:
+            return msg
+        # Wrong-ID response (e.g. out-of-order) — discard and keep reading
+
+
+def _uri_to_path(uri: str) -> Path | None:
+    """Convert a ``file://`` URI to a :class:`~pathlib.Path`.
+
+    Uses :func:`urllib.request.url2pathname` to handle Windows drive letters
+    (``file:///F:/...`` → ``F:\\...``) and percent-encoded characters.
+
+    Args:
+        uri: A URI string.
+
+    Returns:
+        The corresponding :class:`~pathlib.Path`, or ``None`` for non-``file``
+        URIs or on parse error.
+    """
+    try:
+        parsed = urlparse(uri)
+    except Exception:
+        return None
+    if parsed.scheme != "file":
+        return None
+    return Path(url2pathname(parsed.path))
 
 
 # ---------------------------------------------------------------------------
@@ -238,16 +364,40 @@ class LSPResolver:
         """Run the full LSP session and collect outgoing-call edges."""
         assert _LSP_BINARY is not None  # guarded above
 
+        stderr_buf: collections.deque[str] = collections.deque(maxlen=50)
+
         proc = subprocess.Popen(
             [_LSP_BINARY, "--stdio"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             cwd=str(project_root),
         )
 
+        def _drain_stderr() -> None:
+            assert proc.stderr is not None
+            for raw_line in proc.stderr:
+                with contextlib.suppress(Exception):
+                    stderr_buf.append(raw_line.decode(errors="replace").rstrip())
+
+        threading.Thread(target=_drain_stderr, daemon=True).start()
+
         try:
-            return self._session(proc, py_files, project_root, raw_line_map, logger)
+            result = self._session(proc, py_files, project_root, raw_line_map, logger)
+            if result:
+                if stderr_buf:
+                    logger.debug(
+                        "[LSP] basedpyright stderr tail:\n%s",
+                        "\n".join(stderr_buf),
+                    )
+            else:
+                tail = list(stderr_buf)
+                if tail:
+                    logger.warning(
+                        "[LSP] No edges produced; basedpyright stderr tail:\n%s",
+                        "\n".join(tail),
+                    )
+            return result
         finally:
             # Always attempt a clean shutdown.
             try:
@@ -315,8 +465,9 @@ class LSPResolver:
         )
         proc.stdin.flush()
 
-        # Consume the initialize response (non-blocking via thread read)
-        _read_response_with_timeout(proc.stdout, self._timeout)
+        # Consume the initialize response, correlating by ID to skip any
+        # notifications (publishDiagnostics etc.) that arrive before it.
+        _read_until_id(proc.stdout, proc.stdin, _LSP_INIT_ID, self._timeout)
 
         # initialized notification
         proc.stdin.write(
@@ -332,6 +483,15 @@ class LSPResolver:
 
         raw_edges: set[tuple[str, str, int, bool]] = set()
 
+        # Session diagnostic counters
+        n_probes = 0
+        n_null_prepares = 0
+        n_items = 0
+        n_outgoing_calls = 0
+        n_dropped_uri = 0
+        n_dropped_no_chunk = 0
+        max_uri_debug = 10
+
         for fn in py_files:
             fn_path = Path(fn).resolve()
             file_uri = _path_to_uri(fn_path)
@@ -346,6 +506,7 @@ class LSPResolver:
 
             # didOpen
             source = fn_path.read_text(encoding="utf-8", errors="replace")
+            source_lines = source.splitlines()
             proc.stdin.write(
                 _encode(
                     {
@@ -364,9 +525,21 @@ class LSPResolver:
             )
             proc.stdin.flush()
 
-            # For each function chunk, query call hierarchy
-            for start_line, _end_line, caller_id in file_chunks:
-                # prepareCallHierarchy at the function definition start
+            # For each function/class chunk, query call hierarchy.
+            for start_line, end_line, caller_id in file_chunks:
+                # Locate the exact position of the def/class *name* token.
+                # Module-level (0-0) chunks and split_block continuations have
+                # no def/class line and must be skipped — probing column 0
+                # returns null from basedpyright for every such chunk.
+                def_pos = _find_def_position(source_lines, start_line, end_line)
+                if def_pos is None:
+                    n_null_prepares += 1
+                    continue
+
+                probe_line, probe_char = def_pos
+                n_probes += 1
+
+                # prepareCallHierarchy at the function/class name position
                 proc.stdin.write(
                     _encode(
                         {
@@ -376,8 +549,8 @@ class LSPResolver:
                             "params": {
                                 "textDocument": {"uri": file_uri},
                                 "position": {
-                                    "line": max(0, start_line - 1),
-                                    "character": 0,
+                                    "line": probe_line,
+                                    "character": probe_char,
                                 },
                             },
                         }
@@ -385,7 +558,7 @@ class LSPResolver:
                 )
                 proc.stdin.flush()
 
-                ch_resp = _read_response_with_timeout(proc.stdout, self._timeout)
+                ch_resp = _read_until_id(proc.stdout, proc.stdin, req_id, self._timeout)
                 req_id += 1
 
                 if ch_resp is None:
@@ -393,6 +566,8 @@ class LSPResolver:
                 items = ch_resp.get("result") or []
                 if not isinstance(items, list):
                     continue
+
+                n_items += len(items)
 
                 for item in items:
                     # outgoingCalls for each call hierarchy item
@@ -408,7 +583,9 @@ class LSPResolver:
                     )
                     proc.stdin.flush()
 
-                    oc_resp = _read_response_with_timeout(proc.stdout, self._timeout)
+                    oc_resp = _read_until_id(
+                        proc.stdout, proc.stdin, req_id, self._timeout
+                    )
                     req_id += 1
 
                     if oc_resp is None:
@@ -417,29 +594,45 @@ class LSPResolver:
                     if not isinstance(calls, list):
                         continue
 
+                    n_outgoing_calls += len(calls)
+
                     for call in calls:
                         callee_item = call.get("to", {})
                         callee_uri = callee_item.get("uri", "")
                         callee_range = callee_item.get("range", {})
                         callee_line = callee_range.get("start", {}).get("line", 0) + 1
 
-                        # Map callee URI to a relative path
-                        try:
-                            callee_path = Path(
-                                callee_uri.replace("file:///", "/").replace(
-                                    "file://", ""
+                        # Map callee URI to a relative path using proper URI
+                        # parsing — the old string-replace approach turned
+                        # file:///F:/... into /F:/... on Windows, causing
+                        # Path.resolve() to produce garbage.
+                        callee_path = _uri_to_path(callee_uri)
+                        if callee_path is None:
+                            n_dropped_uri += 1
+                            if n_dropped_uri <= max_uri_debug:
+                                logger.debug(
+                                    "[LSP] Dropped callee — non-file URI: %s",
+                                    callee_uri,
                                 )
-                            ).resolve()
+                            continue
+                        try:
                             callee_rel = str(
-                                callee_path.relative_to(project_root)
+                                callee_path.resolve().relative_to(project_root)
                             ).replace("\\", "/")
                         except (ValueError, OSError):
+                            n_dropped_uri += 1
+                            if n_dropped_uri <= max_uri_debug:
+                                logger.debug(
+                                    "[LSP] Dropped callee — outside project root: %s",
+                                    callee_path,
+                                )
                             continue
 
                         callee_id = find_enclosing_chunk(
                             raw_line_map, callee_rel, callee_line
                         )
                         if callee_id is None:
+                            n_dropped_no_chunk += 1
                             continue
                         if caller_id == callee_id:
                             continue
@@ -464,6 +657,16 @@ class LSPResolver:
         logger.info(
             "[LSP] Resolved %d call edges via callHierarchy/outgoingCalls",
             len(result),
+        )
+        logger.info(
+            "[LSP] probes=%d null_prepares=%d items=%d outgoing_calls=%d "
+            "dropped_uri=%d dropped_no_chunk=%d",
+            n_probes,
+            n_null_prepares,
+            n_items,
+            n_outgoing_calls,
+            n_dropped_uri,
+            n_dropped_no_chunk,
         )
         return result
 
