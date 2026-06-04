@@ -460,7 +460,7 @@ class CallGraphConfig:
     seam runs.
     """
 
-    resolvers: list[str] = None  # type: ignore[assignment]
+    resolvers: list[str] | None = None
     """Resolver names to attempt in the injection pipeline.
 
     Default: ``["pyan", "libcst"]`` (both in the ``[callgraph]`` extra).

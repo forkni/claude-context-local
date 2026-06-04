@@ -235,7 +235,9 @@ class IndexWriteStage:
 
             cg_cfg = getattr(get_search_config(), "call_graph", None)
             enabled_names: set[str] = (
-                set(cg_cfg.resolvers) if cg_cfg is not None else {"pyan", "libcst"}
+                set(cg_cfg.resolvers or ["pyan", "libcst"])
+                if cg_cfg is not None
+                else {"pyan", "libcst"}
             )
 
             from chunking.relationships.call_edge_resolver import CallEdgeResolver

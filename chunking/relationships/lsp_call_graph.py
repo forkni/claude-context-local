@@ -51,6 +51,7 @@ import json
 import logging
 import os
 import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import Any
@@ -74,6 +75,17 @@ try:
     import shutil
 
     _LSP_BINARY = shutil.which("basedpyright-langserver")
+    if _LSP_BINARY is None:
+        # shutil.which() only searches the process PATH.  When the MCP server
+        # is launched via system Python with the venv as a child process, the
+        # venv's Scripts/ (Windows) / bin/ (Unix) directory may not be on
+        # PATH.  Check alongside sys.executable as a fallback.
+        _venv_bin = Path(sys.executable).parent
+        for _cand in ("basedpyright-langserver", "basedpyright-langserver.exe"):
+            _p = _venv_bin / _cand
+            if _p.is_file():
+                _LSP_BINARY = str(_p)
+                break
     _LSP_AVAILABLE = _LSP_BINARY is not None
 except Exception:
     _LSP_AVAILABLE = False
@@ -81,7 +93,7 @@ except Exception:
 
 
 def lsp_available() -> bool:
-    """Return True if ``basedpyright-langserver`` is on PATH."""
+    """Return True if ``basedpyright-langserver`` is on PATH or venv bin dir."""
     return _LSP_AVAILABLE
 
 

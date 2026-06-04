@@ -50,6 +50,7 @@ try:
     from libcst.metadata import (
         FullRepoManager,
         FullyQualifiedNameProvider,
+        MetadataWrapper,
         PositionProvider,
     )
 
@@ -80,8 +81,8 @@ if _LIBCST_AVAILABLE:
         """
 
         METADATA_DEPENDENCIES = (
-            FullyQualifiedNameProvider,
-            PositionProvider,
+            FullyQualifiedNameProvider,  # type: ignore[name-defined]
+            PositionProvider,  # type: ignore[name-defined]
         )
 
         def __init__(self) -> None:
@@ -102,14 +103,15 @@ if _LIBCST_AVAILABLE:
         def leave_FunctionDef(self, original_node: cst.FunctionDef) -> None:  # noqa: N802
             self._fn_stack.pop()
 
-        def visit_AsyncFunctionDef(self, node: cst.AsyncFunctionDef) -> bool:  # noqa: N802
+        def visit_AsyncFunctionDef(self, node: cst.AsyncFunctionDef) -> bool:  # noqa: N802  # type: ignore[name-defined]
             fqns = self.get_metadata(FullyQualifiedNameProvider, node, set())
             name = next(iter(fqns)).name if fqns else ""
             self._fn_stack.append(name)
             return True
 
-        def leave_AsyncFunctionDef(  # noqa: N802
-            self, original_node: cst.AsyncFunctionDef
+        def leave_AsyncFunctionDef(  # noqa: N802  # type: ignore[name-defined]
+            self,
+            original_node: cst.AsyncFunctionDef,  # type: ignore[name-defined]
         ) -> None:
             self._fn_stack.pop()
 
@@ -217,19 +219,24 @@ class LibCSTResolver:
             len(py_files),
         )
 
-        # Build relative paths for FullRepoManager.
-        repo_root_str = str(project_root)
-        rel_paths = []
+        # Build absolute path keys for FullRepoManager.
+        # Passing relative paths triggers ValueError in
+        # FullyQualifiedNameProvider.gen_cache → calculate_module_and_package
+        # (PurePath(relative).relative_to(absolute_root) always fails).
+        root = project_root.resolve()
+        repo_root_str = str(root)
+        abs_keys: list[str] = []  # absolute resolved path strings (FRM keys)
+        rel_labels: list[str] = []  # forward-slash relative labels (logging only)
         for fn in py_files:
             try:
-                rel = str(Path(fn).resolve().relative_to(project_root)).replace(
-                    "\\", "/"
-                )
-                rel_paths.append(rel)
+                p = Path(fn).resolve()
+                rel = str(p.relative_to(root)).replace("\\", "/")
+                abs_keys.append(str(p))
+                rel_labels.append(rel)
             except ValueError:
                 continue  # outside project root — skip
 
-        if not rel_paths:
+        if not abs_keys:
             logger.warning("[LIBCST] No files relative to project root — skipping")
             return []
 
@@ -239,7 +246,7 @@ class LibCSTResolver:
         try:
             manager = FullRepoManager(
                 repo_root_str,
-                rel_paths,
+                abs_keys,
                 {FullyQualifiedNameProvider, PositionProvider},
             )
         except Exception as exc:
@@ -249,12 +256,18 @@ class LibCSTResolver:
             )
             return []
 
-        for rel_path in rel_paths:
+        for key, rel_label in zip(abs_keys, rel_labels):
             try:
-                wrapper = manager.get_metadata_wrapper_for_path(rel_path)
+                # Bypass get_metadata_wrapper_for_path — it calls read_text()
+                # without specifying encoding, which fails on Windows cp1252
+                # locales for UTF-8 source files.  Read explicitly with utf-8.
+                source = Path(key).read_text(encoding="utf-8")
+                module = cst.parse_module(source)
+                cache = manager.get_cache_for_path(key)
+                wrapper = MetadataWrapper(module, True, cache)
             except Exception as exc:
                 logger.warning(
-                    "[LIBCST] Skipping %s (wrapper error: %s)", rel_path, exc
+                    "[LIBCST] Skipping %s (wrapper error: %s)", rel_label, exc
                 )
                 skipped += 1
                 continue
@@ -264,7 +277,7 @@ class LibCSTResolver:
                 wrapper.visit(visitor)
             except Exception as exc:
                 logger.warning(
-                    "[LIBCST] Skipping %s (visitor error: %s)", rel_path, exc
+                    "[LIBCST] Skipping %s (visitor error: %s)", rel_label, exc
                 )
                 skipped += 1
                 continue

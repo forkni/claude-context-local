@@ -4,9 +4,12 @@ Tests cover:
 - LibCSTResolver protocol conformance (name, base_confidence, available())
 - Graceful fallback when libcst is absent (monkeypatched)
 - Core edge-discovery on synthetic Python source via mocked FullRepoManager
+  (tests are updated to patch MetadataWrapper instead of get_metadata_wrapper_for_path)
 - Resolver returns [] (non-fatal) on FullRepoManager init failure
 - Integration with run_resolvers: libcst edges upgrade pyan edges when
   confidence is higher (0.90 > 0.75)
+- REGRESSION: real FullRepoManager integration — absolute path keys + utf-8
+  reads (fixes for Windows cp1252 encoding error and relative-path ValueError)
 """
 
 from __future__ import annotations
@@ -129,27 +132,39 @@ class TestLibCSTRepoManagerFailure:
 
 
 class TestLibCSTEdgeDiscovery:
-    """Tests that use a mocked FullRepoManager to avoid needing a real project."""
+    """Tests that use a mocked FullRepoManager to avoid needing a real project.
 
-    def _make_mock_manager(
-        self,
-        edges: list[tuple[str, str, int]],
-    ) -> MagicMock:
-        """Return a mock FullRepoManager whose visitor emits *edges*."""
-        import chunking.relationships.libcst_call_graph as lcg
+    After the absolute-path-key fix the resolver calls
+    ``manager.get_cache_for_path(abs_key)`` and constructs a real
+    ``MetadataWrapper`` itself rather than calling
+    ``get_metadata_wrapper_for_path``.  These tests therefore patch
+    ``MetadataWrapper`` (in addition to ``FullRepoManager``) to inject
+    synthetic visitor edges.
+    """
 
-        if not lcg._LIBCST_AVAILABLE:
-            pytest.skip("libcst not installed")
+    @staticmethod
+    def _make_fake_frm() -> MagicMock:
+        """Fake FullRepoManager whose get_cache_for_path returns an empty dict."""
+        frm = MagicMock()
+        frm.get_cache_for_path.return_value = {}
+        return frm
 
-        mock_visitor = MagicMock()
-        mock_visitor.edges = edges
+    @staticmethod
+    def _make_fake_mw(visitor_edges: list[tuple[str, str, int]]) -> MagicMock:
+        """Return a fake MetadataWrapper factory that injects *visitor_edges*."""
 
-        mock_wrapper = MagicMock()
-        mock_wrapper.visit = MagicMock(side_effect=lambda v: setattr(v, "edges", edges))
+        def _factory(
+            module: object, unsafe_skip_copy: bool, cache: object
+        ) -> MagicMock:
+            w = MagicMock()
 
-        mock_manager = MagicMock()
-        mock_manager.get_metadata_wrapper_for_path.return_value = mock_wrapper
-        return mock_manager
+            def fake_visit(visitor: object) -> None:
+                visitor.edges = visitor_edges  # type: ignore[attr-defined]
+
+            w.visit = fake_visit
+            return w
+
+        return _factory  # type: ignore[return-value]
 
     def test_edges_emitted_for_caller_callee_pair(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -162,7 +177,7 @@ class TestLibCSTEdgeDiscovery:
             pytest.skip("libcst not installed")
 
         py = tmp_path / "mod.py"
-        py.write_text("def caller(): callee()\ndef callee(): pass\n")
+        py.write_text("def caller(): callee()\ndef callee(): pass\n", encoding="utf-8")
 
         # Build a minimal raw_line_map pointing to our file.
         rel = "mod.py"
@@ -175,25 +190,14 @@ class TestLibCSTEdgeDiscovery:
 
         visitor_edges = [("pkg.caller", "pkg.callee", 1)]
 
-        def fake_frm(repo_root, paths, wrappers):
-            frm = MagicMock()
-
-            def fake_get_wrapper(path):
-                w = MagicMock()
-
-                def fake_visit(visitor):
-                    visitor.edges = visitor_edges
-
-                w.visit = fake_visit
-                return w
-
-            frm.get_metadata_wrapper_for_path = fake_get_wrapper
-            return frm
-
         with (
             patch(
                 "chunking.relationships.libcst_call_graph.FullRepoManager",
-                side_effect=fake_frm,
+                return_value=self._make_fake_frm(),
+            ),
+            patch(
+                "chunking.relationships.libcst_call_graph.MetadataWrapper",
+                side_effect=self._make_fake_mw(visitor_edges),
             ),
             patch(
                 "chunking.relationships.libcst_call_graph.chunk_id_from_fqn",
@@ -221,29 +225,18 @@ class TestLibCSTEdgeDiscovery:
             pytest.skip("libcst not installed")
 
         py = tmp_path / "mod.py"
-        py.write_text("def recursive(): recursive()\n")
+        py.write_text("def recursive(): recursive()\n", encoding="utf-8")
 
         visitor_edges = [("mod.recursive", "mod.recursive", 1)]
-
-        def fake_frm(repo_root, paths, wrappers):
-            frm = MagicMock()
-
-            def fake_get_wrapper(path):
-                w = MagicMock()
-
-                def fake_visit(visitor):
-                    visitor.edges = visitor_edges
-
-                w.visit = fake_visit
-                return w
-
-            frm.get_metadata_wrapper_for_path = fake_get_wrapper
-            return frm
 
         with (
             patch(
                 "chunking.relationships.libcst_call_graph.FullRepoManager",
-                side_effect=fake_frm,
+                return_value=self._make_fake_frm(),
+            ),
+            patch(
+                "chunking.relationships.libcst_call_graph.MetadataWrapper",
+                side_effect=self._make_fake_mw(visitor_edges),
             ),
             patch(
                 "chunking.relationships.libcst_call_graph.chunk_id_from_fqn",
@@ -262,29 +255,18 @@ class TestLibCSTEdgeDiscovery:
             pytest.skip("libcst not installed")
 
         py = tmp_path / "mod.py"
-        py.write_text("def caller(): stdlib_fn()\n")
+        py.write_text("def caller(): stdlib_fn()\n", encoding="utf-8")
 
         visitor_edges = [("mod.caller", "os.path.join", 1)]
-
-        def fake_frm(repo_root, paths, wrappers):
-            frm = MagicMock()
-
-            def fake_get_wrapper(path):
-                w = MagicMock()
-
-                def fake_visit(visitor):
-                    visitor.edges = visitor_edges
-
-                w.visit = fake_visit
-                return w
-
-            frm.get_metadata_wrapper_for_path = fake_get_wrapper
-            return frm
 
         with (
             patch(
                 "chunking.relationships.libcst_call_graph.FullRepoManager",
-                side_effect=fake_frm,
+                return_value=self._make_fake_frm(),
+            ),
+            patch(
+                "chunking.relationships.libcst_call_graph.MetadataWrapper",
+                side_effect=self._make_fake_mw(visitor_edges),
             ),
             patch(
                 "chunking.relationships.libcst_call_graph.chunk_id_from_fqn",
@@ -367,3 +349,91 @@ class TestLibCSTInRunResolvers:
         )
         assert result[("a", "b")].source == "pyan"
         assert result[("a", "b")].confidence == pytest.approx(0.75)
+
+
+# ---------------------------------------------------------------------------
+# Regression: real FullRepoManager (no mocks) — Windows path + encoding fixes
+# ---------------------------------------------------------------------------
+
+
+class TestRealFullRepoManagerIntegration:
+    """Integration tests using *real* libcst machinery (no FullRepoManager mock).
+
+    These tests specifically target two bugs fixed in the resolver:
+
+    **Bug 1 — Relative path keys**: passing forward-slash relative paths as the
+    ``paths`` argument to ``FullRepoManager`` causes
+    ``FullyQualifiedNameProvider.gen_cache`` → ``calculate_module_and_package``
+    to raise ``ValueError('... is not in the subpath of ...')`` on every call
+    because ``PurePath(relative).relative_to(absolute_root)`` always fails.
+
+    **Bug 2 — Missing utf-8 encoding**: ``get_metadata_wrapper_for_path`` reads
+    source files with ``read_text()`` (no encoding), which fails on Windows
+    cp1252 locales when source files contain non-ASCII UTF-8 bytes such as
+    U+2010 (bytes ``\\xe2\\x80\\x90``; byte ``0x90`` is undefined in cp1252).
+
+    Pre-fix: both bugs produce ``[LIBCST] Skipping ... (wrapper error: ...)``
+    for every file → 0 edges.
+    Post-fix: the resolver runs cleanly and produces edges.
+    """
+
+    def test_real_libcst_produces_caller_to_helper_edge(self, tmp_path: Path) -> None:
+        """Real FullRepoManager resolves cross-module calls in a UTF-8 mini-repo."""
+        import chunking.relationships.libcst_call_graph as lcg
+
+        if not lcg._LIBCST_AVAILABLE:
+            pytest.skip("libcst not installed")
+
+        # Create a minimal two-file package.
+        # pkg/a.py has a UTF-8-only character (U+2010, bytes \xe2\x80\x90).
+        # Byte 0x90 is undefined in Windows cp1252 → triggers Bug 2 pre-fix.
+        pkg = tmp_path / "pkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "a.py").write_text(
+            # U+2010 HYPHEN (non-ASCII; byte 0x90 in its UTF-8 repr \xe2\x80\x90)
+            '"""Module a ‐ helper utilities."""\n\n\ndef helper():\n    pass\n',
+            encoding="utf-8",
+        )
+        (pkg / "b.py").write_text(
+            "from pkg.a import helper\n\n\ndef caller():\n    return helper()\n",
+            encoding="utf-8",
+        )
+
+        # raw_line_map uses forward-slash relative keys, matching the indexer's format.
+        # Only pkg/a.py and pkg/b.py are indexed; __init__.py is intentionally absent.
+        raw_line_map = {
+            "pkg/a.py": [(1, 5, "pkg/a.py:1-5:function:helper")],
+            "pkg/b.py": [(1, 5, "pkg/b.py:1-5:function:caller")],
+        }
+
+        # Only chunk_id_from_fqn is patched — all libcst machinery runs for real.
+        # The FQNs libcst produces for this mini-repo are:
+        #   caller's enclosing scope → "pkg.b.caller"
+        #   callee expression FQN   → "pkg.a.helper" (resolved via import statement)
+        def fake_chunk_id(fqn: str, rlm: dict, root: Path) -> str | None:
+            if fqn == "pkg.a.helper":
+                return "pkg/a.py:1-5:function:helper"
+            if fqn == "pkg.b.caller":
+                return "pkg/b.py:1-5:function:caller"
+            return None
+
+        with patch(
+            "chunking.relationships.libcst_call_graph.chunk_id_from_fqn",
+            side_effect=fake_chunk_id,
+        ):
+            edges = LibCSTResolver().resolve(tmp_path, raw_line_map, _LOG)
+
+        # Both bugs previously caused 0 edges.  Post-fix we get the caller→helper edge.
+        caller_to_helper = [
+            e
+            for e in edges
+            if e.caller_id == "pkg/b.py:1-5:function:caller"
+            and e.callee_id == "pkg/a.py:1-5:function:helper"
+            and e.source == "libcst"
+            and abs(e.confidence - 0.90) < 1e-6
+        ]
+        assert len(caller_to_helper) >= 1, (
+            f"Expected at least one caller→helper edge from real libcst; "
+            f"got edges={edges}"
+        )
