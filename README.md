@@ -42,16 +42,18 @@
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
 - **File-Role Tagging**: Chunks tagged `role:src/test/doc/config` at index time — enables role-aware ranking and precision boosts
 
-**Status**: ✅ Production-ready | 2,451 passing tests | All 19 MCP tools operational | Windows 10/11
+**Status**: ✅ Production-ready | 2,495 passing tests | All 19 MCP tools operational | Windows 10/11
 
-## What's New in v0.14.0
+## What's New in v0.15.0
 
-- **Layered call-graph resolver pipeline** — pluggable `CallEdgeResolver` Protocol with confidence-precedence merge (`run_resolvers()`). Confidence ladder: AST 0.5/0.7 (in-house, always-on) → pyan3 0.75 → LibCST FQN 0.90 → LSP/basedpyright 0.98 (opt-in). Higher-confidence resolver upgrades edges per `(caller_id, callee_id)` pair.
-- **Optional `[callgraph]` / `[lsp]` extras** — pyan3 (GPL-2.0) and libcst moved to optional `[callgraph]` extra; basedpyright in `[lsp]`. Core install is Apache-2.0-clean. Install `pip install -e ".[callgraph]"` to activate pyan3 + LibCST resolvers; add `"call_graph": {"lsp_enabled": true}` in `search_config.json` for LSP.
-- **Bidirectional callees** — `find_connections` now returns `direct_callees` (outbound calls) alongside `direct_callers`, with the same per-entry provenance: `confidence` (tag), `resolver_source` (`"ast"|"pyan"|"libcst"|"lsp"`), `resolver_confidence` (0.5–0.98). Top-level `callee_confidence` breakdown (`exact/recovered/ambiguous`) mirrors `caller_confidence`.
-- **`CallGraphConfig`** — `resolvers: list[str]`, `lsp_enabled: bool`, `lsp_timeout_seconds: float` added to `SearchConfig`.
-- **Fixed**: `source` → `resolver_source` edge attribute rename (NetworkX node-link format reserves `"source"`/`"target"` — provenance was silently destroyed on save/load). `get_edge_data` now preserves legacy string confidence tags instead of float-coercing them to 1.0.
-- **2,451 unit tests** passing (63 new tests for resolver pipeline).
+- **LSP resolver repair** — three protocol bugs fixed: probe at column 0 → symbol-name position; JSON-RPC ID correlation (notifications/wrong-id discarded, `workspace/configuration` stubbed); percent-encoded drive-colon URI (`file:///f%3A/...`) decoded before `url2pathname`. LSP tier: **0 → 938 resolved edges** (added=64, upgraded=869) on this codebase.
+- **Resolver precision tuning** — pyan3 callee-flavor filter, wildcard down-weight, LibCST self-call resolution, namespace guards, `resolve_cache`.
+- **`CallGraphConfig.min_confidence`** — injection floor (default `0.65`); drops low-confidence edges before graph injection.
+- **`CallGraphConfig.use_pyproject_toml`** — src-layout project support for LibCST's `FullyQualifiedNameProvider`.
+- **`docs/CALL_GRAPH_TUNING.md`** — full tuning reference: API, confidence tiers, `min_confidence` recipes, §6.4 LSP diagnostics counters.
+- **2,495 unit tests** passing (44 new tests).
+
+**Previous (v0.14.0)**: Layered call-graph resolver pipeline (AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98), optional `[callgraph]`/`[lsp]` extras, `find_connections` bidirectional callees with `resolver_source`/`resolver_confidence` provenance, `CallGraphConfig`, edge-attribute rename `source`→`resolver_source`. 2,451 tests.
 
 **Previous (v0.13.0)**: pyan3 cross-module caller edges in `find_connections`, direct-caller recall 0.57→0.95, `split_block` call edges recovered, Windows backslash normalization, `exc_info=True` across all swallow-and-degrade handlers. Security: pyjwt 2.13.0, uv 0.11.18.
 
@@ -424,7 +426,7 @@ claude-context-local/
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 2,373+ tests (unit + integration)
+└── tests/             # 2,495+ tests (unit + integration)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -490,6 +492,7 @@ scripts\batch\repair_installation.bat
 - [Installation Guide](docs/INSTALLATION_GUIDE.md) - Setup, configuration, troubleshooting
 - [MCP Tools Reference](docs/MCP_TOOLS_REFERENCE.md) - Complete tool documentation
 - [Advanced Features Guide](docs/ADVANCED_FEATURES_GUIDE.md) - Multi-model routing, graph search, optimization
+- [Call-Graph Tuning](docs/CALL_GRAPH_TUNING.md) - Resolver pipeline tuning, `min_confidence`, LSP diagnostics
 - [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) - **Setup guide for your projects** (see below)
 
 ### Configuration & Performance
@@ -527,7 +530,7 @@ The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic s
 
 ### Development
 
-- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (2,373 unit + 19 integration, 100% pass rate)
+- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (2,495 unit + 19 integration, 100% pass rate)
 - [Git Workflow](docs/GIT_WORKFLOW.md) - Contributing guidelines
 - [Version History](docs/VERSION_HISTORY.md) - Changelog
 

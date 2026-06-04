@@ -68,9 +68,10 @@ MCP server implementation and transport options.
 
 ### Transport Options
 
-- **stdio** (default): Standard MCP mode via `manual_configure.bat`
-- **SSE** (port 8765): Bypasses Claude Code stdio bugs (#3426, #768)
-- **Dual SSE** (ports 8765/8766): VSCode + CLI simultaneous access
+- **StreamableHTTP** (port 8765, `/mcp` endpoint) — **current default** (v0.12.0+): `{"type": "http", "url": "http://localhost:8765/mcp"}`. Re-run `scripts\batch\manual_configure.bat` to apply.
+- **stdio** (legacy): Standard MCP mode via `manual_configure.bat`
+- **SSE** (port 8765, legacy): Bypasses Claude Code stdio bugs (#3426, #768)
+- **Dual SSE** (ports 8765/8766, legacy): VSCode + CLI simultaneous access
 
 ---
 
@@ -138,7 +139,7 @@ Test suite documentation and validation reports.
 
 | Document | Description |
 |----------|-------------|
-| **[tests/TESTING_GUIDE.md](../tests/TESTING_GUIDE.md)** | Comprehensive testing documentation (1,682 unit + 8 integration tests) |
+| **[tests/TESTING_GUIDE.md](../tests/TESTING_GUIDE.md)** | Comprehensive testing documentation (2,495 unit + 19 integration tests) |
 | **[tests/README.md](../tests/README.md)** | Test suite organization and best practices |
 
 ### Testing Tools (scripts/test/)
@@ -163,7 +164,7 @@ Detailed technical documentation.
 | Document | Description |
 |----------|-------------|
 | **[CHUNKING_ENHANCEMENTS_PLAN.md](CHUNKING_ENHANCEMENTS_PLAN.md)** | Code chunking enhancements and strategy |
-| **[CALL_GRAPH_TUNING.md](CALL_GRAPH_TUNING.md)** | pyan3 2.6.0 + LibCST API reference, confidence tiers, tuning recipes |
+| **[CALL_GRAPH_TUNING.md](CALL_GRAPH_TUNING.md)** | pyan3 + LibCST + LSP API reference, confidence tiers, `min_confidence` recipes, §6.4 LSP diagnostics counters |
 
 ### Architecture Files
 
@@ -184,10 +185,22 @@ Detailed technical documentation.
 
 | Document | Description |
 |----------|-------------|
-| **[VERSION_HISTORY.md](VERSION_HISTORY.md)** | Complete version history from v0.1.x to v0.13.0 |
+| **[VERSION_HISTORY.md](VERSION_HISTORY.md)** | Complete version history from v0.1.x to v0.15.0 |
 
 ### Key Versions
 
+- **v0.15.0** (2026-06-03): LSP resolver repair (0 → 938 edges), resolver precision tuning, `min_confidence`/`use_pyproject_toml` config knobs, `docs/CALL_GRAPH_TUNING.md`, 2,495 tests
+- **v0.14.0** (2026-06-03): Layered call-graph resolver pipeline (AST→pyan→LibCST→LSP), optional `[callgraph]`/`[lsp]` extras, `find_connections` bidirectional callees + `resolver_source`/`resolver_confidence` provenance
+- **v0.13.0** (2026-06-03): pyan3 cross-module caller edges, `find_connections` recall 0.57→0.95, split_block call-edge recovery, Windows path fixes
+- **v0.12.4** (2026-05-29): MCP server bug fixes (`switch_project`, `list_embedding_models`, `CodeGraphStorage.clear()`), `ServiceLocator` removal (ADR-0005)
+- **v0.12.3** (2026-05-29): `chunking↔graph` import cycle eliminated (24 files moved), `SearchOrchestrator` refactor
+- **v0.12.2** (2026-05-26): `IndexWriteStage` stale-resource fix, embedding OOM recovery, `GraphIntegration` shared initializer, jina-reranker-v3 default
+- **v0.12.1** (2026-05-25): split_block call + relationship edges, Starlette 307 fix, `RelationshipAnalyzer` moved to `search/`
+- **v0.12.0** (2026-05-25): StreamableHTTP transport migration (SSE → `/mcp` single endpoint)
+- **v0.11.7** (2026-05-03): Defense-in-depth for destructive operations (storage sentinel, path-containment guards)
+- **v0.11.6** (2026-04-21): Incremental-index hashing parity (`ChangeDetector` gets `supported_extensions`)
+- **v0.11.5** (2026-04-21): Full-index DAG hashing performance (stat-based hash for non-code files, ~100× speedup)
+- **v0.10.x** (2026-04-06 – 2026-04-21): ONNX backend, parallel chunker, OTel tracing, call-graph refactor, security patches
 - **v0.9.5** (2026-04-06): Installer fixes (cu118→cu128, dead preview install, hardcoded Python path), 8 CI review fixes (intent classifier caching, semantic_weight clamping, O(1) graph name index, reranker score propagation, thread-safe stdout, benchmark compat)
 - **v0.9.4** (2026-04-06): Ego-graph QW1-QW5, semantic intent classification, SSCG benchmark pipeline, 5 MCP bug fixes, startup performance, security patches
 - **v0.9.3** (2026-02-21): Resource lifecycle stabilization, mandatory release before reindex, RAM fallback
@@ -258,4 +271,4 @@ Detailed technical documentation.
 
 ---
 
-**Last Updated**: 2026-04-06 (v0.9.5 - Installer & Code Quality Fixes)
+**Last Updated**: 2026-06-03 (v0.15.0 - LSP resolver repair & call-graph tuning)

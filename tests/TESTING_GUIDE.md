@@ -2,22 +2,17 @@
 
 ## Overview
 
-This comprehensive guide covers the testing infrastructure for the Claude Context MCP semantic search system. The project maintains a professional test suite with 1,054 passing tests organized into clear categories for effective quality assurance.
+This comprehensive guide covers the testing infrastructure for the Claude Context MCP semantic search system. The project maintains a professional test suite with 2,495 passing unit tests organized into clear categories for effective quality assurance.
 
 ### Current Test Status
 
-✅ **All tests passing** (as of 2026-01-14):
+✅ **All tests passing** (as of 2026-06-03):
 
-- **Unit Tests**: 1,063 tests passing across 7 modules
-  - Chunking: 63 tests (8.92s)
-  - Embeddings: 113 tests (1.36s)
-  - Graph: 313 tests (1.52s)
-  - Merkle: 21 tests (0.91s)
-  - Search: 402 tests (25.91s) - includes 4 Phase 2 call edge resolution tests
-  - MCP Server: 140 tests (1.79s)
-  - Testing Utilities: 11 tests (0.58s)
-- **Integration Tests**: 2 tests passing (19.00s)
-- **Total**: 1,065 tests, ~60s total execution time
+- **Unit Tests**: 2,495 tests (`tests/unit/`)
+  - Chunking (incl. relationships): includes `test_call_edge_resolver.py` (31), `test_call_graph_config.py` (15), `test_libcst_call_graph.py` (38+), `test_lsp_call_graph.py` (38, 1 POSIX skip)
+  - Embeddings, Graph, Merkle, Search, MCP Server, Evaluation, Benchmark, Utils
+- **Integration Tests**: 19 tests (`tests/integration/`)
+- **Total**: 2,514 tests
 
 **⚠️ IMPORTANT**: Run tests by module for best results (see "Recommended Testing Approach" below)
 
@@ -25,7 +20,7 @@ This comprehensive guide covers the testing infrastructure for the Claude Contex
 
 ### Why Run Tests by Module?
 
-The test suite has been optimized for module-by-module execution. Running all tests together may encounter resource cleanup issues between modules. **All 1,054 tests pass when run by module.**
+The test suite has been optimized for module-by-module execution. Running all tests together may encounter resource cleanup issues between modules. **All 2,495 unit tests pass when run via `./scripts/test/run_tests.sh`.**
 
 ### Quick Start: Run Tests by Module
 

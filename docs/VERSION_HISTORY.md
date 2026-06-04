@@ -4,13 +4,40 @@ Complete version history and feature timeline for claude-context-local MCP serve
 
 ## Current Status: All Features Operational (2026-06-03)
 
-- **Version**: 0.14.0
+- **Version**: 0.15.0
 - **Status**: Production-ready
-- **Test Coverage**: 2,451 unit tests + 19 integration tests (100% pass rate)
+- **Test Coverage**: 2,495 unit tests + 19 integration tests (100% pass rate)
 - **Dependencies**: 124 packages + optional `[callgraph]` / `[lsp]` extras
 - **SSCG Benchmark**: MRR=0.94, Recall@4=0.89 (12/13 perfect rank-1), Hit@7=1.00
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent**: 0.14.0 — layered resolver pipeline (AST→pyan→LibCST→LSP), bidirectional callees, pyan3 optional GPL-safe extra, 63 new unit tests
+- **Recent**: 0.15.0 — LSP resolver repair (0→938 edges), precision tuning, `min_confidence`/`use_pyproject_toml`, CALL_GRAPH_TUNING.md
+
+---
+
+## v0.15.0 - LSP Resolver Repair + Resolver Precision Tuning (2026-06-03)
+
+Patch release completing the v0.14.0 call-graph resolver pipeline: fixes three LSP protocol bugs that caused 0 edges to be resolved, adds precision tuning options, and publishes tuning documentation.
+
+### Fixed
+
+- **LSP resolver — probe position** (`aee8c63`) — `prepareCallHierarchy` probed at column 0 (missed every symbol); now uses `_find_def_position()` to locate the symbol-name character offset within the chunk's source lines, skipping decorator lines. Chunks without a `def`/`class` header (module chunks, split-block continuations) are skipped (`null_prepares` counter).
+- **LSP resolver — JSON-RPC ID correlation** (`aee8c63`) — responses were read without ID matching; fixed via `_read_until_id()`: notifications (no `id`) are discarded; server→client requests (`workspace/configuration`) are stub-answered; only the message matching the sent `req_id` is accepted as the real response.
+- **LSP resolver — percent-encoded drive-colon URI** (`3ffca25`) — basedpyright emits `file:///f%3A/RD_PROJECTS/...` (lowercase drive + `%3A`). Python ≤3.13 `nturl2path.url2pathname` checks for `:` before percent-decoding, so `%3A` is never recognized as a drive separator; `.resolve()` produced drive-relative garbage and `.relative_to()` raised `ValueError`. Fix: `unquote(parsed.path)` before `url2pathname`. Combined: LSP tier went from **0 edges to 938 edges** (added=64, upgraded=869) on this codebase.
+- **LibCST — absolute path keys + UTF-8 reads** (`b50d234`) — chunk-ID keys now use absolute paths consistent with the graph store; source files read with explicit `encoding="utf-8"`.
+- **LibCST — `zip(strict=False)`** (`5b7954d`) — prevents `ValueError` on mismatched iterables in the resolve loop.
+
+### Added
+
+- **Resolver precision tuning** — pyan3 callee-flavor filter (drops callee-side pyan edges, which are low-precision); wildcard-import down-weighting; LibCST self-call resolution (`self.method()` patterns); namespace guard; `resolve_cache` for repeated FQN lookups.
+- **`CallGraphConfig.min_confidence`** (`search/config.py`, default `0.65`) — edges below this threshold are dropped before injection, trading recall for precision without reindexing.
+- **`CallGraphConfig.use_pyproject_toml`** (`search/config.py`, default `false`) — passes `use_pyproject_toml=True` to LibCST's `FullRepoManager` for correct src-layout package discovery.
+- **`docs/CALL_GRAPH_TUNING.md`** — API reference, confidence tiers, `min_confidence` / `use_pyproject_toml` / `lsp_enabled` tuning recipes, §6.4 LSP diagnostics counters (`probes`, `null_prepares`, `items`, `outgoing_calls`, `dropped_uri`, `dropped_no_chunk`) with health-signal interpretation.
+- **LSP session diagnostics** — every session logs `[LSP] probes=N ... dropped_uri=N dropped_no_chunk=N` at INFO; on 0 resolved edges, basedpyright stderr tail logged at WARNING.
+- **21 new unit tests** in `test_lsp_call_graph.py` (38 total, 1 POSIX skip): `TestFindDefPosition` (9), `TestReadUntilId` (5), `TestUriToPath` (7) including `test_pyright_style_encoded_drive_colon` and `test_encoded_drive_colon_relative_to_project_root`.
+
+### Documentation
+
+- `docs/CALL_GRAPH_TUNING.md` §6.4 documents LSP diagnostics counters and health signals.
 
 ---
 

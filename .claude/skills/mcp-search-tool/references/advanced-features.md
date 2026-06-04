@@ -201,10 +201,14 @@ These are advanced tuning options. For most projects, defaults are correct.
   "call_graph": {
     "resolvers": ["pyan", "libcst"],
     "lsp_enabled": false,
-    "lsp_timeout_seconds": 30.0
+    "lsp_timeout_seconds": 30.0,
+    "min_confidence": 0.65,
+    "use_pyproject_toml": false
   }
 }
 ```
+
+`min_confidence` (default `0.65`): drops edges below this threshold before injection — trade recall for precision without reindexing. `use_pyproject_toml` (default `false`): pass to LibCST `FullRepoManager` for src-layout package discovery.
 
 **How it works:**
 1. At full-index time, `_inject_call_edges()` (`search/index_write_stage.py`) reads `CallGraphConfig`, instantiates enabled + available resolvers.
@@ -229,6 +233,8 @@ Top-level breakdowns:
 
 `direct_callees` (outbound calls) is now returned alongside `direct_callers` (inbound).
 
-**Recall improvement (v0.13.0 baseline, maintained in v0.14.0):**
+**Recall improvement (v0.13.0 baseline, maintained in v0.14.0+):**
 - 7-query golden set: 14/14 callers found, 0 missed
 - 5-query set: `mean_recall` 0.5667 → 0.9500
+
+**LSP tier verified working (v0.15.0):** After three protocol bug fixes in v0.15.0 (`_find_def_position` probe position, `_read_until_id` ID correlation, `unquote()` before `url2pathname` for `file:///f%3A/...` URIs), LSP resolves **938 edges on this codebase** (added=64, upgraded=869 from LibCST 0.90 → 0.98). Diagnostics: `[LSP] probes=N ... dropped_uri=N dropped_no_chunk=N` logged at INFO each session; see `docs/CALL_GRAPH_TUNING.md` §6.4 for counter meanings.

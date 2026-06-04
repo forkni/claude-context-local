@@ -11,6 +11,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.15.0] - 2026-06-03
+
+### Added
+
+- **Resolver precision tuning** — pyan3 callee-flavor filter (drops callee-side edges from pyan, which has no callee role, reducing false positives); wildcard-import down-weighting; LibCST self-call resolution for method-on-self patterns; namespace guard to prevent re-injection of already-resolved namespaces; `resolve_cache` for repeat-FQN lookup de-duplication across large codebases.
+- **`CallGraphConfig.min_confidence`** (`search/config.py`) — injection floor (float, default `0.65`); edges below this threshold are dropped before graph injection, allowing users to trade recall for precision without reindexing.
+- **`CallGraphConfig.use_pyproject_toml`** (`search/config.py`) — boolean flag (default `false`); passes LibCST's `use_pyproject_toml=True` for correct src-layout package discovery.
+- **`docs/CALL_GRAPH_TUNING.md`** — API reference, confidence tiers, tuning recipes, and §6.4 LSP diagnostics counters (`probes`, `null_prepares`, `items`, `outgoing_calls`, `dropped_uri`, `dropped_no_chunk`) with health-signal interpretation.
+- **2,495 unit tests** + 19 integration tests (net ~44 new tests from resolver tuning and LSP repair).
+
+### Fixed
+
+- **LSP resolver repair (`aee8c63`, `3ffca25`)** — three protocol bugs fixed: (1) `prepareCallHierarchy` was probing at column 0 instead of the symbol-name character offset; (2) JSON-RPC responses were not correlated by `id` — notifications discarded, `workspace/configuration` server-requests stubbed, wrong-id responses skipped; (3) basedpyright emits `file:///f%3A/...` (lowercase drive + percent-encoded colon) which Python ≤3.13 `url2pathname` cannot parse without a preceding `unquote()`. Combined effect: LSP tier went from silently resolving **0 edges** to **938 edges (added=64, upgraded=869)** on this codebase.
+- **LibCST: absolute path keys + UTF-8 reads** (`b50d234`) — chunk-ID path normalization now produces absolute-path keys consistent with the graph store, fixing FQN resolution misses.
+- **LibCST: `zip(strict=False)` in resolve loop** (`5b7954d`) — prevents `ValueError` on mismatched iterable lengths in edge injection.
+
+---
+
 ## [0.14.0] - 2026-06-03
 
 ### Added
