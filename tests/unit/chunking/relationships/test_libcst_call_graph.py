@@ -437,3 +437,74 @@ class TestRealFullRepoManagerIntegration:
             f"Expected at least one caller→helper edge from real libcst; "
             f"got edges={edges}"
         )
+
+    def test_real_libcst_resolves_self_call_edge(self, tmp_path: Path) -> None:
+        """Task 13: self.method() calls are resolved via ClassDef FQN stack.
+
+        ``FullyQualifiedNameProvider`` cannot resolve ``self.x`` / ``cls.x``
+        attribute calls (no instance-type tracking).  The patched
+        ``_resolve_self_call`` synthesises ``<class_fqn>.<attr>`` as a fallback
+        FQN, which ``chunk_id_from_fqn`` maps to the correct chunk.
+
+        Verifies:
+        - ``_class_stack`` is populated by ``visit_ClassDef`` before the
+          enclosing ``visit_FunctionDef`` fires for methods.
+        - The synthesised FQN ``pkg.service.MyService.helper`` reaches
+          ``chunk_id_from_fqn`` and maps to the correct chunk_id.
+        - The resulting edge has ``source="libcst"`` and ``confidence≈0.90``.
+        """
+        import chunking.relationships.libcst_call_graph as lcg
+
+        if not lcg._LIBCST_AVAILABLE:
+            pytest.skip("libcst not installed")
+
+        # A class with two methods: helper() and caller() that calls self.helper().
+        pkg = tmp_path / "pkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "service.py").write_text(
+            "class MyService:\n"
+            "    def helper(self):\n"
+            "        return 42\n"
+            "\n"
+            "    def caller(self):\n"
+            "        return self.helper()\n",
+            encoding="utf-8",
+        )
+
+        raw_line_map = {
+            "pkg/service.py": [
+                (2, 3, "pkg/service.py:2-3:method:MyService.helper"),
+                (5, 6, "pkg/service.py:5-6:method:MyService.caller"),
+            ],
+        }
+
+        def fake_chunk_id(fqn: str, rlm: dict, root: Path) -> str | None:
+            mapping = {
+                "pkg.service.MyService.helper": (
+                    "pkg/service.py:2-3:method:MyService.helper"
+                ),
+                "pkg.service.MyService.caller": (
+                    "pkg/service.py:5-6:method:MyService.caller"
+                ),
+            }
+            return mapping.get(fqn)
+
+        with patch(
+            "chunking.relationships.libcst_call_graph.chunk_id_from_fqn",
+            side_effect=fake_chunk_id,
+        ):
+            edges = LibCSTResolver().resolve(tmp_path, raw_line_map, _LOG)
+
+        caller_to_helper = [
+            e
+            for e in edges
+            if e.caller_id == "pkg/service.py:5-6:method:MyService.caller"
+            and e.callee_id == "pkg/service.py:2-3:method:MyService.helper"
+            and e.source == "libcst"
+            and abs(e.confidence - 0.90) < 1e-6
+        ]
+        assert len(caller_to_helper) >= 1, (
+            f"Expected self.helper() → helper edge via ClassDef FQN stack; "
+            f"got edges={edges}"
+        )

@@ -60,12 +60,61 @@ try:
         CallGraphVisitor as _CallGraphVisitor,  # type: ignore[import-untyped]
     )
 
+    class _TrackedVisitor(_CallGraphVisitor):
+        """``CallGraphVisitor`` subclass that records which edges were added by
+        ``expand_unknowns`` wildcard fan-out so the resolver can assign them a
+        lower confidence (0.6) than directly-resolved edges (0.75).
+
+        ``postprocess()`` is called automatically from ``__init__`` via
+        ``process()``.  We override it to run each postprocessor stage
+        individually, capturing a snapshot of ``uses_edges`` before
+        ``expand_unknowns`` fires and diffing afterwards.  The resulting
+        ``expanded_edges`` set contains only the edges that (a) were added by
+        wildcard fan-out AND (b) survived the subsequent ``cull_inherited`` /
+        ``collapse_inner`` passes.
+        """
+
+        expanded_edges: set[tuple[object, object]]
+
+        def postprocess(self) -> None:  # type: ignore[override]
+            from pyan.postprocessor import (  # type: ignore[import-untyped]
+                collapse_inner,
+                contract_nonexistents,
+                cull_inherited,
+                expand_unknowns,
+                resolve_imports,
+            )
+
+            resolve_imports(self)
+            contract_nonexistents(self)
+            # Snapshot *before* wildcard fan-out.
+            pre: dict[object, frozenset[object]] = {
+                f: frozenset(ts) for f, ts in self.uses_edges.items()
+            }
+            expand_unknowns(self)
+            cull_inherited(self)
+            collapse_inner(self)
+            # Surviving edges that were not in the pre-expansion snapshot.
+            self.expanded_edges = {
+                (f, t)
+                for f, ts in self.uses_edges.items()
+                for t in ts
+                if t not in pre.get(f, frozenset())
+            }
+
     _PYAN_AVAILABLE = True
 except ImportError:
     _PYAN_AVAILABLE = False
 
 # Flavors that correspond to callable definitions (not modules or classes).
 _CALLABLE_FLAVORS = {"FUNCTION", "METHOD", "STATICMETHOD", "CLASSMETHOD"}
+
+# Flavors accepted as callees: callables + CLASS (instantiation calls e.g.
+# ``MyClass()`` resolve to the class node; pyan also emits a separate
+# METHOD edge to ``MyClass.__init__`` when the class is known).
+# NAME, ATTRIBUTE, UNKNOWN, IMPORTEDITEM are excluded — they produce phantom
+# "call into the enclosing function" edges via filename+lineno mapping.
+_CALLEE_FLAVORS = _CALLABLE_FLAVORS | {"CLASS"}
 
 # Flavors that indicate a method call (useful for ``is_method_call`` flag).
 _METHOD_FLAVORS = {"METHOD", "STATICMETHOD", "CLASSMETHOD"}
@@ -205,11 +254,14 @@ class PyanResolver:
         pyan_logger = logging.getLogger("pyan")
         pyan_logger.setLevel(logging.WARNING)
 
-        visitor = _CallGraphVisitor(
-            py_files, root=str(project_root), logger=pyan_logger
-        )
+        # Use _TrackedVisitor to record which edges were added by expand_unknowns
+        # so they can be assigned a lower confidence (0.6 vs 0.75).
+        visitor = _TrackedVisitor(py_files, root=str(project_root), logger=pyan_logger)
+        expanded = getattr(visitor, "expanded_edges", set())
+        wildcard_confidence: float = 0.6  # expand_unknowns fan-out edges
 
-        raw_edges: set[tuple[str, str, int, bool]] = set()
+        # 5-tuple: (caller_id, callee_id, line_num, is_method_call, confidence)
+        raw_edges: set[tuple[str, str, int, bool, float]] = set()
         skipped = 0
 
         for caller_node, callees in visitor.uses_edges.items():
@@ -231,9 +283,16 @@ class PyanResolver:
             for callee_node in callees:
                 callee_flavor: str = callee_node.flavor.name  # type: ignore[attr-defined]
 
-                # Skip module-flavored callees (import resolutions) and anything
-                # whose file is outside the project (stdlib, venv).
-                if callee_flavor == "MODULE":
+                # Only accept callable flavors + CLASS (instantiation).
+                # NAME, ATTRIBUTE, UNKNOWN, IMPORTEDITEM produce phantom "call into
+                # enclosing function" edges via filename+lineno mapping — drop them.
+                if callee_flavor not in _CALLEE_FLAVORS:
+                    skipped += 1
+                    continue
+
+                # Drop wildcard/unresolved nodes left over from expand_unknowns
+                # that contract_nonexistents didn't fully eliminate.
+                if not getattr(callee_node, "defined", True):
                     skipped += 1
                     continue
 
@@ -261,7 +320,15 @@ class PyanResolver:
                 callee_ast = getattr(callee_node, "ast_node", None)
                 line_num: int = getattr(callee_ast, "lineno", 0) if callee_ast else 0
 
-                raw_edges.add((caller_id, callee_id, line_num, is_method_call))
+                # Assign lower confidence to edges added by wildcard fan-out.
+                confidence = (
+                    wildcard_confidence
+                    if (caller_node, callee_node) in expanded
+                    else self.base_confidence
+                )
+                raw_edges.add(
+                    (caller_id, callee_id, line_num, is_method_call, confidence)
+                )
 
         result = [
             ResolvedEdge(
@@ -270,9 +337,9 @@ class PyanResolver:
                 line=ln,
                 is_method=im,
                 source="pyan",
-                confidence=self.base_confidence,
+                confidence=conf,
             )
-            for c, t, ln, im in sorted(raw_edges)
+            for c, t, ln, im, conf in sorted(raw_edges)
         ]
         logger.info(
             "[PYAN] Resolved %d cross-module call edges (%d skipped / unmappable)",

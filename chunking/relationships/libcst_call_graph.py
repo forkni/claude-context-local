@@ -32,7 +32,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from evaluation.chunk_mapping import chunk_id_from_fqn, find_enclosing_chunk
+from evaluation.chunk_mapping import chunk_id_from_fqn
 
 from .call_edge_resolver import (
     ResolvedEdge,
@@ -116,6 +116,48 @@ if _LIBCST_AVAILABLE:
             self._fn_stack.pop()
 
         # ------------------------------------------------------------------
+        # self/cls call resolution helper
+        # ------------------------------------------------------------------
+
+        def _resolve_self_call(
+            self,
+            func_node: cst.BaseExpression,  # type: ignore[name-defined]
+        ) -> str | None:
+            """Synthesise FQN for ``self.method()`` / ``cls.method()`` calls.
+
+            ``FullyQualifiedNameProvider`` cannot resolve attribute accesses on
+            ``self`` or ``cls`` because it does not track instance-level types.
+            When the callee is ``<Name("self"|"cls")>.<attr>`` and FQN resolution
+            returned nothing, we derive the enclosing class FQN from the *caller's*
+            FQN (already on ``_fn_stack``): ``pkg.mod.MyClass.method`` → class FQN
+            is ``pkg.mod.MyClass``.  We then synthesise ``<class_fqn>.<attr>`` as
+            the callee FQN.
+
+            ``chunk_id_from_fqn`` handles ``module.Class.method`` via its
+            progressive split; inherited methods safely return *None* — no
+            wrong edge is emitted in that case.
+
+            Returns the synthesised FQN string, or *None* if the call doesn't
+            match the ``self.x`` / ``cls.x`` pattern or the stack has no method FQN.
+            """
+            if not isinstance(func_node, cst.Attribute):
+                return None
+            value = func_node.value
+            if not isinstance(value, cst.Name):
+                return None
+            if value.value not in ("self", "cls"):
+                return None
+            if not self._fn_stack or not self._fn_stack[-1]:
+                return None
+            # Split "pkg.mod.MyClass.method" → class_fqn="pkg.mod.MyClass"
+            parts = self._fn_stack[-1].rsplit(".", 1)
+            if len(parts) < 2:
+                return None  # top-level function — not a method
+            class_fqn = parts[0]
+            method_name: str = func_node.attr.value  # type: ignore[attr-defined]
+            return f"{class_fqn}.{method_name}"
+
+        # ------------------------------------------------------------------
         # Capture call sites
         # ------------------------------------------------------------------
 
@@ -125,14 +167,23 @@ if _LIBCST_AVAILABLE:
 
             caller_fqn = self._fn_stack[-1]
 
-            # Resolve the callee expression to a FQN set
+            # Resolve the callee expression to a FQN set.
+            # Filter out ``<locals>`` FQNs — LibCST emits these for attribute
+            # accesses on local variables (e.g. ``self.helper`` →
+            # ``MyClass.m.<locals>.self.helper``) which cannot be mapped to
+            # indexed chunks.  Fall back to self/cls synthesis for those.
             func_node = node.func
             fqns = self.get_metadata(FullyQualifiedNameProvider, func_node, set())
-            if not fqns:
+            usable_fqns = {q for q in fqns if "<locals>" not in q.name}
+            if usable_fqns:
+                # Prefer the most-specific FQN (shortest path = fewest qualifications)
+                callee_fqn: str | None = min((q.name for q in usable_fqns), key=len)
+            else:
+                # FQN resolution failed or yielded only <locals> FQNs —
+                # try self/cls attribute call synthesis via _fn_stack.
+                callee_fqn = self._resolve_self_call(func_node)
+            if callee_fqn is None:
                 return
-
-            # Prefer the most-specific FQN (shortest path = fewest qualifications)
-            callee_fqn = min((q.name for q in fqns), key=len)
 
             # Line number from position metadata
             pos = self.get_metadata(PositionProvider, node, None)
@@ -299,21 +350,6 @@ class LibCSTResolver:
 
                 # Infer whether the caller is a method from its FQN depth.
                 is_method = caller_fqn.count(".") >= 2
-
-                # Re-map callee's chunk id by line for accuracy if possible.
-                if lineno:
-                    # Try to find a more precise chunk by line position.
-                    try:
-                        rel_callee = str(
-                            Path(
-                                callee_fqn.replace(".", "/").split(":")[0]
-                            ).with_suffix(".py")
-                        )
-                        by_line = find_enclosing_chunk(raw_line_map, rel_callee, lineno)
-                        if by_line is not None:
-                            callee_id = by_line
-                    except Exception:
-                        pass  # fall through to FQN-based callee_id
 
                 raw_edges.add((caller_id, callee_id, lineno, is_method))
 

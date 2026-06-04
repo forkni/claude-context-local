@@ -13,6 +13,9 @@ from textwrap import dedent
 import pytest
 
 from chunking.relationships.external_call_graph import (
+    _CALLABLE_FLAVORS,
+    _CALLEE_FLAVORS,
+    PyanResolver,
     _gather_py_files,
     build_call_edges,
     pyan_available,
@@ -286,3 +289,91 @@ def test_gather_py_files_excludes_tests(tmp_path: Path) -> None:
 
     assert "src.py" in file_names
     assert "test_src.py" not in file_names
+
+
+# ---------------------------------------------------------------------------
+# Task 11 — callee-flavor filter + defined check
+# ---------------------------------------------------------------------------
+
+
+def test_callee_flavor_constants() -> None:
+    """_CALLEE_FLAVORS must equal _CALLABLE_FLAVORS | {'CLASS'}.
+
+    Phantom-edge sources (NAME, ATTRIBUTE, UNKNOWN, IMPORTEDITEM, MODULE) must
+    NOT be in the allow-list — these produce phantom edges via filename+lineno
+    mapping when pyan can't resolve the callee to a real callable.
+    """
+    assert _CALLABLE_FLAVORS | {"CLASS"} == _CALLEE_FLAVORS, (
+        f"Unexpected _CALLEE_FLAVORS={_CALLEE_FLAVORS!r}; "
+        f"expected {_CALLABLE_FLAVORS | {'CLASS'}!r}"
+    )
+    for phantom in ("NAME", "ATTRIBUTE", "UNKNOWN", "IMPORTEDITEM", "MODULE"):
+        assert phantom not in _CALLEE_FLAVORS, (
+            f"{phantom!r} must not be in _CALLEE_FLAVORS (phantom-edge source)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Task 12 — PyanResolver direct edges get base_confidence=0.75
+# ---------------------------------------------------------------------------
+
+
+@requires_pyan
+def test_pyan_resolver_direct_edge_confidence(
+    two_module_project: dict,
+) -> None:
+    """Direct cross-module edges produced by PyanResolver get confidence=0.75.
+
+    This verifies that:
+    - The 5-tuple raw_edges change doesn't break normal edge output.
+    - Direct (non-wildcard-expanded) edges keep the base confidence of 0.75.
+    """
+    import logging
+
+    project_root = two_module_project["project_root"]
+    raw_line_map = two_module_project["raw_line_map"]
+    caller_raw = two_module_project["b_raw_id"]
+    callee_raw = two_module_project["a_raw_id"]
+
+    log = logging.getLogger("test_external_call_graph")
+    edges = PyanResolver().resolve(project_root, raw_line_map, log)
+
+    direct = [
+        e for e in edges if e.caller_id == caller_raw and e.callee_id == callee_raw
+    ]
+    assert direct, (
+        f"Expected edge ({caller_raw!r} → {callee_raw!r}) not found.\n"
+        f"All edges: {edges}"
+    )
+    assert direct[0].confidence == pytest.approx(0.75), (
+        f"Expected direct edge confidence 0.75, got {direct[0].confidence}"
+    )
+    assert direct[0].source == "pyan"
+
+
+@requires_pyan
+def test_tracked_visitor_has_expanded_edges_attribute(
+    two_module_project: dict,
+) -> None:
+    """_TrackedVisitor must populate .expanded_edges (a set) after construction.
+
+    This is a structural smoke test — it does not assert the *contents* of
+    expanded_edges (which depend on pyan's wildcard-expansion behaviour on the
+    specific fixture), only that the attribute exists and has the right type.
+    """
+    import logging
+
+    from chunking.relationships.external_call_graph import _TrackedVisitor
+
+    project_root = two_module_project["project_root"]
+    py_files = sorted(str(p) for p in project_root.rglob("*.py"))
+    pyan_logger = logging.getLogger("pyan")
+
+    visitor = _TrackedVisitor(py_files, root=str(project_root), logger=pyan_logger)
+
+    assert hasattr(visitor, "expanded_edges"), (
+        "_TrackedVisitor missing 'expanded_edges' attribute after construction"
+    )
+    assert isinstance(visitor.expanded_edges, set), (
+        f"expanded_edges should be a set, got {type(visitor.expanded_edges)}"
+    )
