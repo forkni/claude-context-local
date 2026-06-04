@@ -9,7 +9,7 @@
       "E": "Exact callers (hand-curated, high confidence)",
       "O": "Oracle-generated (from build_caller_oracle.py)"
     },
-    "baseline_note": "Run scripts/benchmark/run_caller_recall.py --baseline to capture pre-fix baseline",
+    "baseline_note": "Capture baseline with: run_caller_recall.sh run --project-path ... --output results/before.json; compare with: run_caller_recall.sh --compare results/before.json results/after.json",
     "relevance_scale": "All entries in expected_callers are grade=2 (direct caller confirmed by code reading)"
   },
   "queries": [
@@ -77,10 +77,10 @@
     {
       "id": "C007",
       "category": "E",
-      "description": "build_line_to_chunk_map is called from IndexWriteStage._inject_pyan_edges — cross-package call from search to evaluation",
+      "description": "build_line_to_chunk_map is called from IndexWriteStage._inject_call_edges — cross-package call from search to evaluation (renamed from _inject_pyan_edges in commit 5ac2b7a)",
       "target_chunk_id": "evaluation/chunk_mapping.py:function:build_line_to_chunk_map",
       "expected_callers": [
-        "search/index_write_stage.py:method:IndexWriteStage._inject_pyan_edges"
+        "search/index_write_stage.py:method:IndexWriteStage._inject_call_edges"
       ]
     }
   ]

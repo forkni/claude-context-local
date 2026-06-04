@@ -1,31 +1,36 @@
 #!/usr/bin/env python3
-"""Direct-caller recall benchmark.
+"""Direct-caller/callee recall benchmark.
 
-Evaluates how many of the expected direct callers find_connections() returns.
-Reads evaluation/caller_golden.json (or --golden-path) for ground truth.
-Calls RelationshipAnalyzer.analyze_impact() directly (in-process, requires .venv).
+Evaluates how many of the expected direct callers (or callees) find_connections()
+returns.  Reads evaluation/caller_golden.json or evaluation/callee_golden.json for
+ground truth.  Calls RelationshipAnalyzer.analyze_impact() directly (in-process,
+requires .venv).
 
 Usage:
-    # Run against live index, using default caller_golden.json
-    ./scripts/benchmark/run_caller_recall.sh --project-path F:/RD_PROJECTS/...
+    # Run caller recall against live index
+    ./scripts/benchmark/run_caller_recall.sh run \\
+        --project-path F:/RD_PROJECTS/...
 
-    # Save baseline (before fix commits)
-    ./scripts/benchmark/run_caller_recall.sh --project-path /path \\
-        --output results/caller_recall_baseline.json
+    # Run callee recall
+    ./scripts/benchmark/run_caller_recall.sh run \\
+        --project-path F:/RD_PROJECTS/... --direction callees
 
-    # Compare two saved runs
+    # Save baseline, then compare
+    ./scripts/benchmark/run_caller_recall.sh run \\
+        --project-path /path --output results/caller_recall_baseline.json
     ./scripts/benchmark/run_caller_recall.sh \\
         --compare results/caller_recall_baseline.json results/caller_recall_fixed.json
 
     # Single target quick-check
-    ./scripts/benchmark/run_caller_recall.sh --project-path /path \\
-        --target C002
+    ./scripts/benchmark/run_caller_recall.sh run \\
+        --project-path /path --target C002
 """
 
 import argparse
 import json
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 from statistics import mean
 from typing import Any
@@ -47,8 +52,9 @@ from evaluation.metrics import (  # noqa: E402
 # Helpers
 # ---------------------------------------------------------------------------
 
-DEFAULT_GOLDEN_PATH = _PROJECT_ROOT / "evaluation" / "caller_golden.json"
-DEFAULT_K = 50  # max callers to retrieve per target
+DEFAULT_CALLER_GOLDEN = _PROJECT_ROOT / "evaluation" / "caller_golden.json"
+DEFAULT_CALLEE_GOLDEN = _PROJECT_ROOT / "evaluation" / "callee_golden.json"
+DEFAULT_K = 50  # max edges to retrieve per target
 
 
 def _load_golden(path: Path) -> dict[str, Any]:
@@ -67,65 +73,98 @@ def _get_searcher(project_path: str) -> Any:
         return get_searcher()
 
 
-def _get_direct_callers(
+def _get_direct_edges(
     analyzer: Any,
     target_chunk_id: str,
+    direction: str,
     max_depth: int = 1,
-) -> list[str]:
-    """Call analyze_impact and return normalized chunk IDs of direct callers.
+) -> tuple[list[str], dict[str, int]]:
+    """Call analyze_impact and return normalized chunk IDs plus resolver provenance.
 
-    Strips split_block duplicates by normalizing chunk IDs (line ranges stripped).
+    Args:
+        analyzer: RelationshipAnalyzer instance.
+        target_chunk_id: Chunk to look up.
+        direction: "callers" or "callees".
+        max_depth: Impact analysis depth (1 = direct only).
+
+    Returns:
+        Tuple of (normalized_chunk_ids, resolver_source_counts).
+        resolver_source_counts maps resolver name -> count of retrieved entries
+        carrying that resolver_source (e.g. {"lsp": 3, "libcst": 1}).
     """
     try:
         report = analyzer.analyze_impact(
             chunk_id=target_chunk_id,
             max_depth=max_depth,
         )
-        raw_callers = [c.get("chunk_id", "") for c in (report.direct_callers or [])]
+        if direction == "callees":
+            raw_entries = report.direct_callees or []
+        else:
+            raw_entries = report.direct_callers or []
     except Exception as e:
         print(f"    [ERROR] analyze_impact failed: {e}", file=sys.stderr)
-        raw_callers = []
+        raw_entries = []
 
-    # Normalize + deduplicate
+    # Normalize + deduplicate, collect resolver provenance
     seen: set[str] = set()
     result: list[str] = []
-    for cid in raw_callers:
+    resolver_counts: Counter[str] = Counter()
+
+    for entry in raw_entries:
+        if isinstance(entry, dict):
+            cid = entry.get("chunk_id", "")
+            rsrc = entry.get("resolver_source", "unknown")
+        else:
+            # Fallback for plain string entries (old format)
+            cid = str(entry)
+            rsrc = "unknown"
+
         if not cid:
             continue
         norm = normalize_chunk_id(cid)
         if norm not in seen:
             seen.add(norm)
             result.append(norm)
-    return result
+            resolver_counts[rsrc] += 1
+
+    return result, dict(resolver_counts)
 
 
 def _run_single(
     query: dict[str, Any],
     analyzer: Any,
+    direction: str,
     k: int,
     verbose: bool = True,
 ) -> dict[str, Any]:
     """Evaluate one query and return a result dict."""
     qid = query["id"]
     target = normalize_chunk_id(query["target_chunk_id"])
-    expected = [normalize_chunk_id(c) for c in query.get("expected_callers", [])]
+    expected_key = "expected_callees" if direction == "callees" else "expected_callers"
+    expected = [normalize_chunk_id(c) for c in query.get(expected_key, [])]
 
     if verbose:
         print(f"  [{qid}] {target}", flush=True)
 
     t0 = time.perf_counter()
-    retrieved = _get_direct_callers(analyzer, target)
+    retrieved, resolver_sources = _get_direct_edges(analyzer, target, direction)
     latency_ms = (time.perf_counter() - t0) * 1000.0
 
     # Trim to k for metric computation
     retrieved_k = retrieved[:k]
 
-    recall = calculate_recall_at_k(retrieved_k, expected, k=len(expected) or 1)
-    precision = calculate_precision_at_k(
-        retrieved_k, expected, k=max(len(retrieved_k), 1)
-    )
+    # Empty-expected semantics: if no expected entries exist the query is vacuously
+    # satisfied (expected_callees: [] means "we know there are none").
+    if not expected:
+        recall = 1.0
+        precision = 1.0 if not retrieved_k else 0.0
+    else:
+        recall = calculate_recall_at_k(retrieved_k, expected, k=len(expected))
+        precision = calculate_precision_at_k(
+            retrieved_k, expected, k=max(len(retrieved_k), 1)
+        )
 
-    # Per-caller breakdown: which expected callers were found / missed
+    # Per-entry breakdown
     expected_set = set(expected)
     retrieved_set = set(retrieved_k)
     found = sorted(expected_set & retrieved_set)
@@ -142,14 +181,16 @@ def _run_single(
         "found": found,
         "missed": missed,
         "extra": extra,
+        "resolver_sources": resolver_sources,
         "latency_ms": round(latency_ms, 1),
     }
 
     if verbose:
         status = "OK" if recall == 1.0 else ("PARTIAL" if recall > 0 else "MISS")
+        src_str = " sources=" + json.dumps(resolver_sources) if resolver_sources else ""
         print(
             f"    recall={recall:.2f} precision={precision:.2f} "
-            f"retrieved={len(retrieved)} expected={len(expected)} [{status}]"
+            f"retrieved={len(retrieved)} expected={len(expected)} [{status}]{src_str}"
         )
         if missed:
             print(f"    missed: {missed}")
@@ -164,9 +205,9 @@ def _run_single(
 
 def _compare(file_a: str, file_b: str) -> None:
     """Print a delta table comparing two saved benchmark result JSONs."""
-    with open(file_a) as f:
+    with open(file_a, encoding="utf-8") as f:
         data_a = json.load(f)
-    with open(file_b) as f:
+    with open(file_b, encoding="utf-8") as f:
         data_b = json.load(f)
 
     rows_a = {r["id"]: r for r in data_a.get("results", [])}
@@ -176,7 +217,7 @@ def _compare(file_a: str, file_b: str) -> None:
     label_a = Path(file_a).stem
     label_b = Path(file_b).stem
 
-    print(f"\nComparison: {label_a} → {label_b}")
+    print(f"\nComparison: {label_a} -> {label_b}")
     print(f"{'ID':<8} {'recall_a':>9} {'recall_b':>9} {'delta':>7} {'missed_delta'}")
     print("-" * 60)
 
@@ -186,8 +227,8 @@ def _compare(file_a: str, file_b: str) -> None:
         b = rows_b.get(qid, {})
         r_a = a.get("recall", float("nan"))
         r_b = b.get("recall", float("nan"))
-        delta = r_b - r_a if r_a == r_a and r_b == r_b else float("nan")
-        if delta == delta:
+        delta = r_b - r_a if r_a == r_a and r_b == r_b else float("nan")  # noqa: SIM300
+        if delta == delta:  # noqa: SIM300
             deltas_recall.append(delta)
 
         missed_a = set(a.get("missed", []))
@@ -195,7 +236,7 @@ def _compare(file_a: str, file_b: str) -> None:
         now_found = sorted(missed_a - missed_b)
         still_missed = sorted(missed_b - missed_a)
 
-        delta_str = f"{delta:+.3f}" if delta == delta else "   N/A"
+        delta_str = f"{delta:+.3f}" if delta == delta else "   N/A"  # noqa: SIM300
         changes = ""
         if now_found:
             changes = f"+{len(now_found)} recovered"
@@ -221,7 +262,7 @@ def _compare(file_a: str, file_b: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Direct-caller recall benchmark for find_connections()"
+        description="Direct-caller/callee recall benchmark for find_connections()"
     )
     subparsers = parser.add_subparsers(dest="command")
 
@@ -229,9 +270,18 @@ def main() -> None:
     run_p = subparsers.add_parser("run", help="Run recall benchmark (default)")
     run_p.add_argument("--project-path", required=True, help="Indexed project path")
     run_p.add_argument(
+        "--direction",
+        choices=["callers", "callees"],
+        default="callers",
+        help="Evaluate direct callers (default) or direct callees",
+    )
+    run_p.add_argument(
         "--golden-path",
-        default=str(DEFAULT_GOLDEN_PATH),
-        help=f"Path to caller_golden.json (default: {DEFAULT_GOLDEN_PATH})",
+        default=None,
+        help=(
+            "Path to golden JSON (default: caller_golden.json for callers, "
+            "callee_golden.json for callees)"
+        ),
     )
     run_p.add_argument("--output", help="Save results JSON to this path")
     run_p.add_argument(
@@ -245,7 +295,7 @@ def main() -> None:
         "--k",
         type=int,
         default=DEFAULT_K,
-        help=f"Max callers to retrieve per target (default: {DEFAULT_K})",
+        help=f"Max edges to retrieve per target (default: {DEFAULT_K})",
     )
     run_p.add_argument("--quiet", action="store_true", help="Suppress per-query output")
 
@@ -254,7 +304,7 @@ def main() -> None:
     cmp_p.add_argument("file_a", help="First results JSON (baseline)")
     cmp_p.add_argument("file_b", help="Second results JSON (after fix)")
 
-    # Handle bare --compare (legacy shorthand from run_benchmark.sh style)
+    # Handle bare --compare (legacy shorthand)
     if "--compare" in sys.argv:
         idx = sys.argv.index("--compare")
         files = sys.argv[idx + 1 : idx + 3]
@@ -270,16 +320,24 @@ def main() -> None:
 
     # Default: run mode (even if no subcommand given, try to parse as run)
     if args.command is None:
-        # Re-parse with run defaults
         args = run_p.parse_args(sys.argv[1:])
 
-    golden_path = Path(args.golden_path)
+    # Resolve golden path based on direction
+    direction = args.direction
+    if args.golden_path:
+        golden_path = Path(args.golden_path)
+    elif direction == "callees":
+        golden_path = DEFAULT_CALLEE_GOLDEN
+    else:
+        golden_path = DEFAULT_CALLER_GOLDEN
+
     if not golden_path.exists():
         print(f"[ERROR] Golden file not found: {golden_path}", file=sys.stderr)
-        print(
-            "  Run scripts/benchmark/build_caller_oracle.py to build it.",
-            file=sys.stderr,
-        )
+        if direction == "callers":
+            print(
+                "  Run scripts/benchmark/build_caller_oracle.py to build it.",
+                file=sys.stderr,
+            )
         sys.exit(1)
 
     dataset = _load_golden(golden_path)
@@ -295,6 +353,7 @@ def main() -> None:
             sys.exit(1)
 
     print(f"[INFO] Project: {args.project_path}")
+    print(f"[INFO] Direction: {direction}")
     print(f"[INFO] Golden: {golden_path} ({len(queries)} queries)")
 
     # Load searcher and build RelationshipAnalyzer
@@ -307,10 +366,13 @@ def main() -> None:
     print(f"[INFO] RelationshipAnalyzer ready: {type(analyzer).__name__}")
 
     # Run all queries
-    print(f"\n[INFO] Running {len(queries)} queries (k={args.k})...")
+    label = "DIRECT-CALLEE" if direction == "callees" else "DIRECT-CALLER"
+    print(
+        f"\n[INFO] Running {len(queries)} queries (k={args.k}, direction={direction})..."
+    )
     results: list[dict[str, Any]] = []
     for q in queries:
-        row = _run_single(q, analyzer, k=args.k, verbose=not args.quiet)
+        row = _run_single(q, analyzer, direction, k=args.k, verbose=not args.quiet)
         results.append(row)
 
     # Aggregate
@@ -321,25 +383,34 @@ def main() -> None:
     total_missed = sum(len(r["missed"]) for r in results)
     perfect = sum(1 for r in results if r["recall"] == 1.0)
 
+    # Aggregate resolver sources across all queries
+    agg_sources: Counter[str] = Counter()
+    for r in results:
+        agg_sources.update(r.get("resolver_sources", {}))
+
     agg: dict[str, Any] = {
         "mean_recall": round(mean(recalls), 4) if recalls else 0.0,
         "mean_precision": round(mean(precisions), 4) if precisions else 0.0,
         "perfect_recall_count": perfect,
         "total_queries": len(results),
-        "total_expected_callers": total_expected,
-        "total_found_callers": total_found,
-        "total_missed_callers": total_missed,
+        "total_expected": total_expected,
+        "total_found": total_found,
+        "total_missed": total_missed,
+        "resolver_sources": dict(agg_sources),
     }
 
     print("\n" + "=" * 60)
-    print("DIRECT-CALLER RECALL SUMMARY")
+    print(f"{label} RECALL SUMMARY")
     print("=" * 60)
-    print(f"  Queries:             {len(results)}")
-    print(f"  Mean Recall:         {agg['mean_recall']:.4f}")
-    print(f"  Mean Precision:      {agg['mean_precision']:.4f}")
+    print(f"  Queries:              {len(results)}")
+    print(f"  Mean Recall:          {agg['mean_recall']:.4f}")
+    print(f"  Mean Precision:       {agg['mean_precision']:.4f}")
     print(f"  Perfect recall (1.0): {perfect}/{len(results)}")
-    print(f"  Callers found:       {total_found}/{total_expected}")
-    print(f"  Callers missed:      {total_missed}")
+    print(f"  Edges found:          {total_found}/{total_expected}")
+    print(f"  Edges missed:         {total_missed}")
+    if agg_sources:
+        src_str = ", ".join(f"{k}={v}" for k, v in sorted(agg_sources.items()))
+        print(f"  Resolver sources:     {src_str}")
 
     output_data: dict[str, Any] = {
         "aggregate": agg,
@@ -347,6 +418,7 @@ def main() -> None:
         "meta": {
             "project_path": str(args.project_path),
             "golden_path": str(golden_path),
+            "direction": direction,
             "k": args.k,
         },
     }
