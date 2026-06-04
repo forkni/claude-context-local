@@ -4,13 +4,77 @@ Complete version history and feature timeline for claude-context-local MCP serve
 
 ## Current Status: All Features Operational (2026-06-03)
 
-- **Version**: 0.13.0
+- **Version**: 0.15.0
 - **Status**: Production-ready
-- **Test Coverage**: 2,373 unit tests + 19 integration tests (100% pass rate)
-- **Dependencies**: 124 packages + optional `onnxruntime-gpu` for ONNX backend
+- **Test Coverage**: 2,495 unit tests + 19 integration tests (100% pass rate)
+- **Dependencies**: 124 packages + optional `[callgraph]` / `[lsp]` extras
 - **SSCG Benchmark**: MRR=0.94, Recall@4=0.89 (12/13 perfect rank-1), Hit@7=1.00
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent**: 0.13.0 — pyan3 cross-module caller edges, `find_connections` recall 0.57→0.95, `split_block` call edge recovery, `exc_info=True` across swallow-and-degrade handlers, 2 audit fixes
+- **Recent**: 0.15.0 — LSP resolver repair (0→938 edges), precision tuning, `min_confidence`/`use_pyproject_toml`, CALL_GRAPH_TUNING.md
+
+---
+
+## v0.15.0 - LSP Resolver Repair + Resolver Precision Tuning (2026-06-03)
+
+Patch release completing the v0.14.0 call-graph resolver pipeline: fixes three LSP protocol bugs that caused 0 edges to be resolved, adds precision tuning options, and publishes tuning documentation.
+
+### Fixed
+
+- **LSP resolver — probe position** (`aee8c63`) — `prepareCallHierarchy` probed at column 0 (missed every symbol); now uses `_find_def_position()` to locate the symbol-name character offset within the chunk's source lines, skipping decorator lines. Chunks without a `def`/`class` header (module chunks, split-block continuations) are skipped (`null_prepares` counter).
+- **LSP resolver — JSON-RPC ID correlation** (`aee8c63`) — responses were read without ID matching; fixed via `_read_until_id()`: notifications (no `id`) are discarded; server→client requests (`workspace/configuration`) are stub-answered; only the message matching the sent `req_id` is accepted as the real response.
+- **LSP resolver — percent-encoded drive-colon URI** (`3ffca25`) — basedpyright emits `file:///f%3A/RD_PROJECTS/...` (lowercase drive + `%3A`). Python ≤3.13 `nturl2path.url2pathname` checks for `:` before percent-decoding, so `%3A` is never recognized as a drive separator; `.resolve()` produced drive-relative garbage and `.relative_to()` raised `ValueError`. Fix: `unquote(parsed.path)` before `url2pathname`. Combined: LSP tier went from **0 edges to 938 edges** (added=64, upgraded=869) on this codebase.
+- **LibCST — absolute path keys + UTF-8 reads** (`b50d234`) — chunk-ID keys now use absolute paths consistent with the graph store; source files read with explicit `encoding="utf-8"`.
+- **LibCST — `zip(strict=False)`** (`5b7954d`) — prevents `ValueError` on mismatched iterables in the resolve loop.
+
+### Added
+
+- **Resolver precision tuning** — pyan3 callee-flavor filter (drops callee-side pyan edges, which are low-precision); wildcard-import down-weighting; LibCST self-call resolution (`self.method()` patterns); namespace guard; `resolve_cache` for repeated FQN lookups.
+- **`CallGraphConfig.min_confidence`** (`search/config.py`, default `0.65`) — edges below this threshold are dropped before injection, trading recall for precision without reindexing.
+- **`CallGraphConfig.use_pyproject_toml`** (`search/config.py`, default `false`) — passes `use_pyproject_toml=True` to LibCST's `FullRepoManager` for correct src-layout package discovery.
+- **`docs/CALL_GRAPH_TUNING.md`** — API reference, confidence tiers, `min_confidence` / `use_pyproject_toml` / `lsp_enabled` tuning recipes, §6.4 LSP diagnostics counters (`probes`, `null_prepares`, `items`, `outgoing_calls`, `dropped_uri`, `dropped_no_chunk`) with health-signal interpretation.
+- **LSP session diagnostics** — every session logs `[LSP] probes=N ... dropped_uri=N dropped_no_chunk=N` at INFO; on 0 resolved edges, basedpyright stderr tail logged at WARNING.
+- **21 new unit tests** in `test_lsp_call_graph.py` (38 total, 1 POSIX skip): `TestFindDefPosition` (9), `TestReadUntilId` (5), `TestUriToPath` (7) including `test_pyright_style_encoded_drive_colon` and `test_encoded_drive_colon_relative_to_project_root`.
+
+### Documentation
+
+- `docs/CALL_GRAPH_TUNING.md` §6.4 documents LSP diagnostics counters and health signals.
+
+---
+
+## v0.14.0 - Layered Call-Graph Resolver Pipeline + Bidirectional Callees (2026-06-03)
+
+Architectural release introducing a pluggable multi-resolver call-graph pipeline and first-class `direct_callees` support in `find_connections`.
+
+### Added
+
+- **Resolver protocol** (`chunking/relationships/call_edge_resolver.py`, new) — `ResolvedEdge` frozen dataclass, `CallEdgeResolver` `@runtime_checkable` Protocol, shared file-collection helpers (`gather_py_files`, `scope_to_indexed_files`, `validate_py_files`), and `run_resolvers()` that merges edges from all available resolvers by `(caller_id, callee_id)` key keeping the highest-confidence version.
+- **Confidence ladder**: AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98 (higher confidence upgrades lower per edge pair).
+- **LibCST resolver** (`chunking/relationships/libcst_call_graph.py`, new) — `LibCSTResolver` (`confidence=0.90`, MIT). Uses `FullRepoManager` + `FullyQualifiedNameProvider` for cross-file FQN resolution. Included in `[callgraph]` optional extra.
+- **LSP resolver** (`chunking/relationships/lsp_call_graph.py`, new) — `LSPResolver` (`confidence=0.98`, opt-in). Spawns `basedpyright-langserver --stdio`, queries `callHierarchy/outgoingCalls`. Included in `[lsp]` optional extra; disabled unless `lsp_enabled=true`.
+- **pyan3 now optional** (`chunking/relationships/external_call_graph.py`) — `try/except ImportError` guard; `pyan_available()` probe; `PyanResolver` class. Apache-2.0 core no longer hard-depends on GPL-2.0 pyan3. Install `pip install -e ".[callgraph]"` to activate.
+- **Optional extras** (`pyproject.toml`) — `callgraph = ["pyan3>=2.6.0", "libcst>=1.8.6"]` and `lsp = ["basedpyright>=1.21"]` optional dependency groups.
+- **`CallGraphConfig`** (`search/config.py`) — `resolvers: list[str]`, `lsp_enabled: bool`, `lsp_timeout_seconds: float`; wired into `SearchConfig` + `search_config.json`.
+- **Bidirectional callees** — `direct_callees`, `direct_callees_exact/recovered/ambiguous`, `callee_confidence` added to `ImpactReport` (`search/types.py`). `RelationshipAnalyzer._enrich_callees()` mirrors `_enrich_callers` for outbound `calls` edges. `find_connections` returns both callers and callees with `resolver_source` / `resolver_confidence` provenance.
+- **`upgrade_call_edge()`** (`graph/graph_storage.py`) — in-place edge attr update for confidence-precedence injection.
+- **`_inject_call_edges`** (`search/index_write_stage.py`) — replaces `_inject_pyan_edges`; reads `CallGraphConfig`, instantiates enabled+available resolvers, calls `run_resolvers()`, merges with confidence-precedence (upgrade if higher confidence, else add).
+- **Callee golden set** (`evaluation/callee_golden.json`) — 7-query outbound golden set for `--direction callees` benchmarking.
+- **Unit tests** — 63 new tests: `test_call_edge_resolver.py` (31), `test_call_graph_config.py` (15), `test_libcst_call_graph.py` (15), `test_lsp_call_graph.py` (17).
+
+### Fixed
+
+- **`c478f54` — edge attribute renamed `source` → `resolver_source`** (`search/index_write_stage.py`, `search/relationship_analyzer.py`) — NetworkX node-link format reserves `"source"` and `"target"` as endpoint keys; an edge attribute named `"source"` was silently destroyed on save/load round-trip, making resolver provenance invisible after reindex.
+- **`ec005b2` — `get_edge_data` preserves legacy string confidence tags** (`graph/graph_storage.py`) — string tags `"exact"`, `"ambiguous"`, `"recovered"` were unconditionally coerced to `float()`, yielding `1.0` with a spurious warning and causing ambiguous edges to be miscounted as exact in `callee_confidence` breakdowns. Fixed via `_LEGACY_CONFIDENCE_TAGS` pass-through.
+
+### Changed
+
+- `find_connections` MCP tool description now documents `direct_callees`, `resolver_source`, `resolver_confidence` fields and the confidence ladder.
+- `docs/INSTALLATION_GUIDE.md` documents `[callgraph]` and `[lsp]` optional extras.
+
+### Migration
+
+- **No breaking change**: existing indexing continues to work (in-house AST edges only when no extras installed).
+- **To enable higher-recall edges**: `pip install -e ".[callgraph]"` then reindex with `index_directory()`.
+- **To enable LSP edges**: add `"call_graph": {"lsp_enabled": true}` to `search_config.json` and install `pip install -e ".[lsp]"`.
 
 ---
 

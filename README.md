@@ -33,7 +33,7 @@
 - **SSCG Integration**: Structural-Semantic Code Graph — on the [SSCG benchmark](#benchmark-results) (2026-04-10, 13 queries, k=10; cutoffs @5/@10): **13/13 Hit@5 across all three modes (hybrid, BM25, semantic); BM25 MRR=0.846 (best overall)**
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
 - **Multi-Model Routing**: Intelligent query routing (Qwen3, BGE-M3, CodeRankEmbed) with 100% accuracy - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md)
-- **pyan3 Cross-Module Caller Edges**: `find_connections` direct-caller recall improved (5-query golden set: 0.57→0.95; 7-query harness: 14/14 callers found) via pyan3 cross-module edge injection at full-index time — [caller recall benchmark](docs/BENCHMARKS.md#caller-recall-benchmark)
+- **Layered Call-Graph Resolver Pipeline**: `find_connections` returns callers **and** callees with per-entry provenance (`resolver_source`, `resolver_confidence`). Confidence ladder: AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98. Install `pip install -e ".[callgraph]"` for pyan3 + LibCST; core is Apache-2.0-clean — [caller recall benchmark](docs/BENCHMARKS.md#caller-recall-benchmark)
 - **OTel Tracing** (opt-in): Zero-overhead `traced_block` / `@timed` spans across the search and index pipeline — export to Jaeger, Tempo, or any OTLP collector. See [Observability](docs/OBSERVABILITY.md).
 - **ONNX Runtime Backend** (opt-in): `performance.use_onnx` loads eligible models via `ORTModelForFeatureExtraction` with `CUDAExecutionProvider` + `gpu_mem_limit` arena cap — prevents WDDM shared-memory spillover on 8 GB laptop GPUs
 - **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
@@ -42,17 +42,20 @@
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
 - **File-Role Tagging**: Chunks tagged `role:src/test/doc/config` at index time — enables role-aware ranking and precision boosts
 
-**Status**: ✅ Production-ready | 2,373+ passing tests | All 19 MCP tools operational | Windows 10/11
+**Status**: ✅ Production-ready | 2,495 passing tests | All 19 MCP tools operational | Windows 10/11
 
-## What's New in v0.13.0
+## What's New in v0.15.0
 
-- **pyan3 cross-module caller edges in `find_connections`** — `build_call_edges()` runs pyan3 on all indexed project `.py` files at full-index time and injects cross-module call edges directly into the code graph. On this codebase: 5,341 edges resolved, 3,594 injected.
-- **`find_connections` direct-caller recall improved** — stale chunk IDs now recovered via Tier 1→3 symbol cascade (`confidence="recovered"`); common-method blocklist drops names only when no project definition exists; per-candidate `confidence="ambiguous"` edges preserve all resolution candidates. Recall on 5-query golden set: 0.5667 → 0.9500.
-- **`split_block` call edges recovered** — extractor now re-reads the enclosing `FunctionDef` from source (per-file AST cache) instead of parsing the bare body fragment, which always yielded `[]`.
-- **Windows path normalization in `build_line_to_chunk_map`** — backslash `relative_path` values from the metadata store are normalized before lookup, fixing zero-pyan3-edges on Windows.
-- **`exc_info=True` across all swallow-and-degrade handlers** — stack traces now appear in debug logs across `graph/`, `search/`, `chunking/`, `utils/`, and `tools/` without changing runtime behavior.
-- **Security**: `pyjwt` 2.12.1 → 2.13.0 (4 CVEs), `uv` 0.11.6 → 0.11.18 (GHSA-4gg8-gxpx-9rph).
-- **2,373 unit tests** passing.
+- **LSP resolver repair** — three protocol bugs fixed: probe at column 0 → symbol-name position; JSON-RPC ID correlation (notifications/wrong-id discarded, `workspace/configuration` stubbed); percent-encoded drive-colon URI (`file:///f%3A/...`) decoded before `url2pathname`. LSP tier: **0 → 938 resolved edges** (added=64, upgraded=869) on this codebase.
+- **Resolver precision tuning** — pyan3 callee-flavor filter, wildcard down-weight, LibCST self-call resolution, namespace guards, `resolve_cache`.
+- **`CallGraphConfig.min_confidence`** — injection floor (default `0.65`); drops low-confidence edges before graph injection.
+- **`CallGraphConfig.use_pyproject_toml`** — src-layout project support for LibCST's `FullyQualifiedNameProvider`.
+- **`docs/CALL_GRAPH_TUNING.md`** — full tuning reference: API, confidence tiers, `min_confidence` recipes, §6.4 LSP diagnostics counters.
+- **2,495 unit tests** passing (44 new tests).
+
+**Previous (v0.14.0)**: Layered call-graph resolver pipeline (AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98), optional `[callgraph]`/`[lsp]` extras, `find_connections` bidirectional callees with `resolver_source`/`resolver_confidence` provenance, `CallGraphConfig`, edge-attribute rename `source`→`resolver_source`. 2,451 tests.
+
+**Previous (v0.13.0)**: pyan3 cross-module caller edges in `find_connections`, direct-caller recall 0.57→0.95, `split_block` call edges recovered, Windows backslash normalization, `exc_info=True` across all swallow-and-degrade handlers. Security: pyjwt 2.13.0, uv 0.11.18.
 
 **Previous (v0.12.4)**: Three MCP server bug fixes: `switch_project` no longer logs "No indexed model detected" (reads `project_info.json`); `list_embedding_models` `loaded` field fixed; `CodeGraphStorage.clear()` deletes backing JSON. `GraphScoringStage` extracted; `ServiceLocator`/`ResourceManager`/`SearchFactory` collapsed to module-level functions (ADR-0005). Security: idna 3.17.
 
@@ -423,7 +426,7 @@ claude-context-local/
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 2,373+ tests (unit + integration)
+└── tests/             # 2,495+ tests (unit + integration)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -489,6 +492,7 @@ scripts\batch\repair_installation.bat
 - [Installation Guide](docs/INSTALLATION_GUIDE.md) - Setup, configuration, troubleshooting
 - [MCP Tools Reference](docs/MCP_TOOLS_REFERENCE.md) - Complete tool documentation
 - [Advanced Features Guide](docs/ADVANCED_FEATURES_GUIDE.md) - Multi-model routing, graph search, optimization
+- [Call-Graph Tuning](docs/CALL_GRAPH_TUNING.md) - Resolver pipeline tuning, `min_confidence`, LSP diagnostics
 - [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) - **Setup guide for your projects** (see below)
 
 ### Configuration & Performance
@@ -526,7 +530,7 @@ The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic s
 
 ### Development
 
-- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (2,373 unit + 19 integration, 100% pass rate)
+- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (2,495 unit + 19 integration, 100% pass rate)
 - [Git Workflow](docs/GIT_WORKFLOW.md) - Contributing guidelines
 - [Version History](docs/VERSION_HISTORY.md) - Changelog
 

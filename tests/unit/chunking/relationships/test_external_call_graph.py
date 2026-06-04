@@ -9,12 +9,27 @@ from __future__ import annotations
 
 from pathlib import Path
 from textwrap import dedent
+from unittest.mock import MagicMock
 
 import pytest
 
 from chunking.relationships.external_call_graph import (
+    _CALLABLE_FLAVORS,
+    _CALLEE_FLAVORS,
+    PyanResolver,
     _gather_py_files,
     build_call_edges,
+    pyan_available,
+)
+
+
+# Skip marker: tests that exercise build_call_edges rely on real pyan3 call-graph
+# analysis.  The product degrades gracefully when pyan3 is absent (returns []),
+# so these tests must skip rather than produce false failures in minimal-dep envs.
+# Install the '[callgraph]' extra (pyan3) to run them.
+requires_pyan = pytest.mark.skipif(
+    not pyan_available(),
+    reason="pyan3 not installed — install the '[callgraph]' extra",
 )
 
 
@@ -80,6 +95,7 @@ def two_module_project(tmp_path: Path) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 
 
+@requires_pyan
 def test_cross_module_edge_detected(two_module_project: dict, caplog) -> None:
     """build_call_edges returns the cross-module caller→callee edge."""
     import logging
@@ -97,6 +113,7 @@ def test_cross_module_edge_detected(two_module_project: dict, caplog) -> None:
     )
 
 
+@requires_pyan
 def test_self_loop_excluded(tmp_path: Path) -> None:
     """Self-recursive calls must not appear in the result."""
     import logging
@@ -118,6 +135,7 @@ def test_self_loop_excluded(tmp_path: Path) -> None:
     assert not self_loop, f"Self-loops found: {self_loop}"
 
 
+@requires_pyan
 def test_duplicate_call_sites_deduped(tmp_path: Path) -> None:
     """Multiple call sites to the same function produce at most one edge tuple."""
     import logging
@@ -155,6 +173,7 @@ def test_duplicate_call_sites_deduped(tmp_path: Path) -> None:
     )
 
 
+@requires_pyan
 def test_test_file_caller_excluded(tmp_path: Path) -> None:
     """Callers inside a tests/ subdirectory must be excluded from the file set."""
     import logging
@@ -209,6 +228,7 @@ def test_gather_py_files_excludes_venv(tmp_path: Path) -> None:
     assert "venv_mod.py" not in file_names
 
 
+@requires_pyan
 def test_unparseable_file_skipped(tmp_path: Path, caplog) -> None:
     """A single unparseable .py file must not abort edge injection.
 
@@ -270,3 +290,189 @@ def test_gather_py_files_excludes_tests(tmp_path: Path) -> None:
 
     assert "src.py" in file_names
     assert "test_src.py" not in file_names
+
+
+# ---------------------------------------------------------------------------
+# Task 11 — callee-flavor filter + defined check
+# ---------------------------------------------------------------------------
+
+
+def test_callee_flavor_constants() -> None:
+    """_CALLEE_FLAVORS must equal _CALLABLE_FLAVORS | {'CLASS'}.
+
+    Phantom-edge sources (NAME, ATTRIBUTE, UNKNOWN, IMPORTEDITEM, MODULE) must
+    NOT be in the allow-list — these produce phantom edges via filename+lineno
+    mapping when pyan can't resolve the callee to a real callable.
+    """
+    assert _CALLABLE_FLAVORS | {"CLASS"} == _CALLEE_FLAVORS, (
+        f"Unexpected _CALLEE_FLAVORS={_CALLEE_FLAVORS!r}; "
+        f"expected {_CALLABLE_FLAVORS | {'CLASS'}!r}"
+    )
+    for phantom in ("NAME", "ATTRIBUTE", "UNKNOWN", "IMPORTEDITEM", "MODULE"):
+        assert phantom not in _CALLEE_FLAVORS, (
+            f"{phantom!r} must not be in _CALLEE_FLAVORS (phantom-edge source)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Task 12 — PyanResolver direct edges get base_confidence=0.75
+# ---------------------------------------------------------------------------
+
+
+@requires_pyan
+def test_pyan_resolver_direct_edge_confidence(
+    two_module_project: dict,
+) -> None:
+    """Direct cross-module edges produced by PyanResolver get confidence=0.75.
+
+    This verifies that:
+    - The 5-tuple raw_edges change doesn't break normal edge output.
+    - Direct (non-wildcard-expanded) edges keep the base confidence of 0.75.
+    """
+    import logging
+
+    project_root = two_module_project["project_root"]
+    raw_line_map = two_module_project["raw_line_map"]
+    caller_raw = two_module_project["b_raw_id"]
+    callee_raw = two_module_project["a_raw_id"]
+
+    log = logging.getLogger("test_external_call_graph")
+    edges = PyanResolver().resolve(project_root, raw_line_map, log)
+
+    direct = [
+        e for e in edges if e.caller_id == caller_raw and e.callee_id == callee_raw
+    ]
+    assert direct, (
+        f"Expected edge ({caller_raw!r} → {callee_raw!r}) not found.\n"
+        f"All edges: {edges}"
+    )
+    assert direct[0].confidence == pytest.approx(0.75), (
+        f"Expected direct edge confidence 0.75, got {direct[0].confidence}"
+    )
+    assert direct[0].source == "pyan"
+
+
+@requires_pyan
+def test_tracked_visitor_has_expanded_edges_attribute(
+    two_module_project: dict,
+) -> None:
+    """_TrackedVisitor must populate .expanded_edges (a set) after construction.
+
+    This is a structural smoke test — it does not assert the *contents* of
+    expanded_edges (which depend on pyan's wildcard-expansion behaviour on the
+    specific fixture), only that the attribute exists and has the right type.
+    """
+    import logging
+
+    from chunking.relationships.external_call_graph import _TrackedVisitor
+
+    project_root = two_module_project["project_root"]
+    py_files = sorted(str(p) for p in project_root.rglob("*.py"))
+    pyan_logger = logging.getLogger("pyan")
+
+    visitor = _TrackedVisitor(py_files, root=str(project_root), logger=pyan_logger)
+
+    assert hasattr(visitor, "expanded_edges"), (
+        "_TrackedVisitor missing 'expanded_edges' attribute after construction"
+    )
+    assert isinstance(visitor.expanded_edges, set), (
+        f"expanded_edges should be a set, got {type(visitor.expanded_edges)}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task 14 — namespace=None wildcard guards (caller + callee)
+# ---------------------------------------------------------------------------
+
+
+import logging as _logging  # noqa: E402
+
+
+_LOG_ECG = _logging.getLogger("test_ecg_namespace")
+
+
+def _make_pyan_node(
+    flavor: str,
+    namespace: object = "pkg",
+    defined: bool = True,
+) -> MagicMock:
+    """Return a fake pyan node with the given flavor, namespace, and defined flag."""
+    n = MagicMock()
+    n.flavor.name = flavor
+    n.namespace = namespace
+    n.defined = defined
+    n.filename = None
+    n.ast_node = None
+    n.get_name.return_value = ""
+    return n
+
+
+def _run_resolver_with_fake_edges(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caller_node: MagicMock,
+    callee_node: MagicMock,
+) -> list:
+    """Run PyanResolver.resolve with a fake visitor whose uses_edges has one entry."""
+    import chunking.relationships.external_call_graph as ecg
+
+    monkeypatch.setattr(ecg, "_PYAN_AVAILABLE", True)
+
+    fake_visitor = MagicMock()
+    fake_visitor.uses_edges = {caller_node: [callee_node]}
+    fake_visitor.expanded_edges = set()
+
+    (tmp_path / "a.py").write_text("def f(): pass\n", encoding="utf-8")
+
+    # raising=False: creates the attribute even when pyan is not installed (so
+    # _TrackedVisitor is absent from the module namespace).
+    monkeypatch.setattr(
+        ecg,
+        "_TrackedVisitor",
+        MagicMock(return_value=fake_visitor),
+        raising=False,
+    )
+    return ecg.PyanResolver().resolve(tmp_path, {}, _LOG_ECG)
+
+
+class TestPyanWildcardNamespaceGuards:
+    """PyanResolver must drop caller/callee nodes whose namespace attribute is None.
+
+    ``contract_nonexistents`` leaves wildcard nodes in ``uses_edges`` with
+    ``namespace is None``.  These nodes have no real source location and
+    produce phantom edges when mapped via filename+lineno.  The guards added
+    after the flavor/defined checks must eliminate them.
+    """
+
+    def test_caller_namespace_none_drops_all_callees(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A caller with namespace=None must cause its entire callee set to be skipped."""
+        caller = _make_pyan_node("FUNCTION", namespace=None)
+        callee = _make_pyan_node("FUNCTION", namespace="pkg")
+        edges = _run_resolver_with_fake_edges(tmp_path, monkeypatch, caller, callee)
+        assert edges == [], (
+            f"Expected no edges when caller.namespace is None; got {edges}"
+        )
+
+    def test_callee_namespace_none_drops_single_edge(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A callee with namespace=None must be dropped even if caller is valid."""
+        caller = _make_pyan_node("FUNCTION", namespace="pkg")
+        callee = _make_pyan_node("FUNCTION", namespace=None)
+        edges = _run_resolver_with_fake_edges(tmp_path, monkeypatch, caller, callee)
+        assert edges == [], (
+            f"Expected no edges when callee.namespace is None; got {edges}"
+        )
+
+    def test_valid_nodes_reach_chunk_id_lookup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Nodes with a non-None namespace must pass the guard (get_name='' → chunk_id=None → skipped via mapping, not guard)."""
+        caller = _make_pyan_node("FUNCTION", namespace="pkg")
+        callee = _make_pyan_node("FUNCTION", namespace="pkg")
+        # The resolver will skip because get_name()="" → chunk_id_from_fqn returns None.
+        # The important thing is no exception is raised by the new guard code.
+        edges = _run_resolver_with_fake_edges(tmp_path, monkeypatch, caller, callee)
+        assert isinstance(edges, list)  # no exception; guard logic reached mapping step

@@ -139,6 +139,8 @@ class RelationshipAnalyzer:
 
         # Step 5: graph relationships (inheritance, type usage, imports, …)
         graph_relationships: dict[str, list[dict[str, Any]]] = {}
+        direct_callees: list[dict[str, Any]] = []
+        exact_ce = recovered_ce = ambiguous_ce = 0
         if self.graph_engine:
             outbound = self.graph_engine.get_relationships(
                 target_id, direction="outbound", max_depth=1
@@ -148,6 +150,13 @@ class RelationshipAnalyzer:
             ]
             graph_relationships = self._build_graph_relationships(
                 target_id, inbound_1hop, outbound, exclude_dirs
+            )
+
+            # Step 5b: outbound `calls` edges → direct callees (bidirectional).
+            # _build_graph_relationships explicitly skips calls edges; pull them here.
+            calls_outbound = [e for e in outbound if e.relationship_type == "calls"]
+            direct_callees, _stale_ce, exact_ce, recovered_ce, ambiguous_ce = (
+                self._enrich_callees(calls_outbound, exclude_dirs)
             )
 
         # Step 5.5: filter to requested relationship types
@@ -210,6 +219,10 @@ class RelationshipAnalyzer:
             direct_callers_exact=exact_d if self.graph_engine else 0,
             direct_callers_recovered=recovered_d if self.graph_engine else 0,
             direct_callers_ambiguous=ambiguous_d if self.graph_engine else 0,
+            direct_callees=direct_callees,
+            direct_callees_exact=exact_ce if self.graph_engine else 0,
+            direct_callees_recovered=recovered_ce if self.graph_engine else 0,
+            direct_callees_ambiguous=ambiguous_ce if self.graph_engine else 0,
         )
 
     # ------------------------------------------------------------------
@@ -454,12 +467,16 @@ class RelationshipAnalyzer:
             caller_id = entry.chunk_id
             # Edge-level confidence may be stored at indexing time (e.g. "ambiguous")
             edge_confidence: str | None = entry.edge_data.get("confidence")
+            resolver_source: str = entry.edge_data.get("resolver_source", "ast")
+            resolver_confidence: float = entry.edge_data.get("resolver_confidence", 0.5)
 
             result = self.searcher.get_by_chunk_id(caller_id)
             if result:
                 assigned_confidence = edge_confidence if edge_confidence else "exact"
                 d = self._result_to_dict(result, caller_id)
                 d["confidence"] = assigned_confidence
+                d["resolver_source"] = resolver_source
+                d["resolver_confidence"] = resolver_confidence
                 file_path = (
                     caller_id.split(":")[0] if ":" in caller_id else d.get("file", "")
                 )
@@ -480,6 +497,8 @@ class RelationshipAnalyzer:
                     d = self._result_to_dict(result2, cid2)
                     d["confidence"] = "recovered"
                     d["original_chunk_id"] = caller_id
+                    d["resolver_source"] = resolver_source
+                    d["resolver_confidence"] = resolver_confidence
                     file_path = cid2.split(":")[0] if ":" in cid2 else d.get("file", "")
                     if matches_directory_filter(file_path, None, exclude_dirs):
                         callers.append(d)
@@ -496,6 +515,88 @@ class RelationshipAnalyzer:
                 f"[ENRICH_CALLERS] {stale} of {len(entries)} chunk_ids unresolvable"
             )
         return callers, stale, exact_count, recovered_count, ambiguous_count
+
+    def _enrich_callees(
+        self,
+        entries: list[RelationshipEntry],
+        exclude_dirs: list[str] | None,
+    ) -> tuple[list[dict[str, Any]], int, int, int, int]:
+        """Convert outbound ``calls`` RelationshipEntry objects to enriched callee dicts.
+
+        Mirrors :meth:`_enrich_callers` for the outbound direction.  For each entry the
+        ``chunk_id`` field is the *callee* node (a full chunk_id for pyan/libcst-resolved
+        edges, or a symbol name for in-house AST edges).
+
+        On exact lookup miss, retries via the Tier 1→3 symbol-resolution cascade
+        (:meth:`_resolve_by_symbol`) so that symbol-name callee nodes from the in-house
+        extractor are still surfaced when they can be re-resolved.  Callees are tagged
+        with ``confidence``:
+          - ``"exact"``     — found directly by chunk_id; edge was unambiguous
+          - ``"recovered"`` — symbol-name node re-resolved by ``_resolve_by_symbol``
+          - ``"ambiguous"`` — stored as ambiguous at indexing time
+
+        Each dict also includes ``resolver_source`` and ``resolver_confidence`` from the
+        edge's provenance data (populated when the edge was injected by a named resolver).
+
+        Returns:
+            (callees, stale_count, exact_count, recovered_count, ambiguous_count)
+        """
+        callees: list[dict[str, Any]] = []
+        stale = 0
+        exact_count = 0
+        recovered_count = 0
+        ambiguous_count = 0
+
+        for entry in entries:
+            callee_id = entry.chunk_id
+            edge_confidence: str | None = entry.edge_data.get("confidence")
+            resolver_source: str = entry.edge_data.get("resolver_source", "ast")
+            resolver_confidence: float = entry.edge_data.get("resolver_confidence", 0.5)
+
+            result = self.searcher.get_by_chunk_id(callee_id)
+            if result:
+                assigned_confidence = edge_confidence if edge_confidence else "exact"
+                d = self._result_to_dict(result, callee_id)
+                d["confidence"] = assigned_confidence
+                d["resolver_source"] = resolver_source
+                d["resolver_confidence"] = resolver_confidence
+                file_path = (
+                    callee_id.split(":")[0] if ":" in callee_id else d.get("file", "")
+                )
+                if matches_directory_filter(file_path, None, exclude_dirs):
+                    callees.append(d)
+                    if assigned_confidence == "ambiguous":
+                        ambiguous_count += 1
+                    else:
+                        exact_count += 1
+            else:
+                # Callee may be stored as a symbol name (in-house AST edges) or a
+                # stale/drifted chunk_id.  Derive the symbol and retry via the cascade.
+                symbol = callee_id.split(":")[-1] if ":" in callee_id else callee_id
+                recovered = self._resolve_by_symbol(symbol, exclude_dirs)
+                if recovered is not None:
+                    result2, cid2 = recovered
+                    d = self._result_to_dict(result2, cid2)
+                    d["confidence"] = "recovered"
+                    d["original_chunk_id"] = callee_id
+                    d["resolver_source"] = resolver_source
+                    d["resolver_confidence"] = resolver_confidence
+                    file_path = cid2.split(":")[0] if ":" in cid2 else d.get("file", "")
+                    if matches_directory_filter(file_path, None, exclude_dirs):
+                        callees.append(d)
+                        recovered_count += 1
+                        logger.debug(
+                            f"[ENRICH_CALLEES] Recovered stale '{callee_id}' → '{cid2}'"
+                        )
+                    else:
+                        stale += 1
+                else:
+                    stale += 1
+        if stale:
+            logger.info(
+                f"[ENRICH_CALLEES] {stale} of {len(entries)} chunk_ids unresolvable"
+            )
+        return callees, stale, exact_count, recovered_count, ambiguous_count
 
     # ------------------------------------------------------------------
     # Target resolution

@@ -389,6 +389,30 @@ The project uses a clean separation between runtime and development dependencies
 
 - `pytest`, `pytest-asyncio`, `pytest-cov`, `pytest-mock`
 
+**Call-Graph Optional Extras** (higher-recall / higher-precision call edges):
+
+| Extra | Packages | Adds |
+|-------|----------|------|
+| `[callgraph]` | `pyan3>=2.6.0`, `libcst>=1.8.6` | pyan (0.75 confidence) + LibCST FQN resolver (0.90 confidence) |
+| `[lsp]` | `basedpyright>=1.21` | basedpyright LSP resolver (0.98 confidence, opt-in via `lsp_enabled=true`) |
+
+The core install (no extras) uses only the in-house AST resolver (0.5/0.7 confidence).
+Cross-module call edges benefit most from `[callgraph]`; heavily-typed codebases benefit from `[lsp]`.
+
+```bash
+# Core only (in-house AST edges)
+pip install -e "."
+
+# Higher-recall cross-module edges (pyan3 + LibCST, MIT/GPL-2.0)
+pip install -e ".[callgraph]"
+
+# Highest-accuracy type-inference edges (basedpyright LSP)
+pip install -e ".[lsp]"
+
+# Full stack (test + callgraph + lsp)
+pip install -e ".[test,callgraph,lsp]"
+```
+
 To install with test dependencies:
 
 ```bash

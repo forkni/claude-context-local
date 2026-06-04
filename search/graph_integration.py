@@ -621,8 +621,8 @@ class GraphIntegration:
                     # Handle both CallEdge objects and dicts
                     if hasattr(call, "callee_name"):
                         callee_name = call.callee_name
-                        line_number = call.line_number
-                        is_method_call = call.is_method_call
+                        line_number = call.line_number  # type: ignore[union-attr]
+                        is_method_call = call.is_method_call  # type: ignore[union-attr]
                     else:
                         callee_name = call.get("callee_name", "unknown")
                         line_number = call.get("line_number", 0)

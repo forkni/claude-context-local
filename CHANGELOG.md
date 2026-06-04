@@ -11,6 +11,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.15.0] - 2026-06-03
+
+### Added
+
+- **Resolver precision tuning** — pyan3 callee-flavor filter (drops callee-side edges from pyan, which has no callee role, reducing false positives); wildcard-import down-weighting; LibCST self-call resolution for method-on-self patterns; namespace guard to prevent re-injection of already-resolved namespaces; `resolve_cache` for repeat-FQN lookup de-duplication across large codebases.
+- **`CallGraphConfig.min_confidence`** (`search/config.py`) — injection floor (float, default `0.65`); edges below this threshold are dropped before graph injection, allowing users to trade recall for precision without reindexing.
+- **`CallGraphConfig.use_pyproject_toml`** (`search/config.py`) — boolean flag (default `false`); passes LibCST's `use_pyproject_toml=True` for correct src-layout package discovery.
+- **`docs/CALL_GRAPH_TUNING.md`** — API reference, confidence tiers, tuning recipes, and §6.4 LSP diagnostics counters (`probes`, `null_prepares`, `items`, `outgoing_calls`, `dropped_uri`, `dropped_no_chunk`) with health-signal interpretation.
+- **2,495 unit tests** + 19 integration tests (net ~44 new tests from resolver tuning and LSP repair).
+
+### Fixed
+
+- **LSP resolver repair (`aee8c63`, `3ffca25`)** — three protocol bugs fixed: (1) `prepareCallHierarchy` was probing at column 0 instead of the symbol-name character offset; (2) JSON-RPC responses were not correlated by `id` — notifications discarded, `workspace/configuration` server-requests stubbed, wrong-id responses skipped; (3) basedpyright emits `file:///f%3A/...` (lowercase drive + percent-encoded colon) which Python ≤3.13 `url2pathname` cannot parse without a preceding `unquote()`. Combined effect: LSP tier went from silently resolving **0 edges** to **938 edges (added=64, upgraded=869)** on this codebase.
+- **LibCST: absolute path keys + UTF-8 reads** (`b50d234`) — chunk-ID path normalization now produces absolute-path keys consistent with the graph store, fixing FQN resolution misses.
+- **LibCST: `zip(strict=False)` in resolve loop** (`5b7954d`) — prevents `ValueError` on mismatched iterable lengths in edge injection.
+
+---
+
+## [0.14.0] - 2026-06-03
+
+### Added
+
+- **Layered call-graph resolver pipeline** (`chunking/relationships/call_edge_resolver.py`) — `ResolvedEdge` frozen dataclass, `CallEdgeResolver` `@runtime_checkable` Protocol, shared file-collection helpers (`gather_py_files`, `scope_to_indexed_files`, `validate_py_files`), and `run_resolvers()` that merges edges from all available resolvers by `(caller_id, callee_id)` key keeping the highest-confidence version. Confidence ladder: AST 0.5/0.7 → pyan 0.75 (`chunking/relationships/external_call_graph.py`, now import-guarded) → LibCST 0.90 (`chunking/relationships/libcst_call_graph.py`, new) → LSP/basedpyright 0.98 (`chunking/relationships/lsp_call_graph.py`, new, opt-in).
+- **Optional extras** (`pyproject.toml`) — `[callgraph]` (pyan3 + libcst, GPL-2.0 isolated) and `[lsp]` (basedpyright). Core install is Apache-2.0-clean; without extras only in-house AST edges are produced. Install `pip install -e ".[callgraph]"` to activate pyan3 + LibCST resolvers.
+- **`CallGraphConfig`** (`search/config.py`) — `resolvers: list[str]`, `lsp_enabled: bool`, `lsp_timeout_seconds: float`; wired into `SearchConfig` + `search_config.json`.
+- **Bidirectional callees** — `direct_callees`, `direct_callees_exact/recovered/ambiguous`, and `callee_confidence` breakdown added to `ImpactReport` (`search/types.py`). `RelationshipAnalyzer._enrich_callees()` mirrors `_enrich_callers` for outbound `calls` edges. `find_connections` now returns both callers and callees with `resolver_source` / `resolver_confidence` per-entry provenance.
+- **`upgrade_call_edge()`** (`graph/graph_storage.py`) — in-place edge-attribute update enabling confidence-precedence upgrades during injection.
+- **`_inject_call_edges`** (`search/index_write_stage.py`) — replaces `_inject_pyan_edges`; reads `CallGraphConfig`, instantiates enabled + available resolvers, calls `run_resolvers()`, and merges with confidence-precedence semantics.
+- **Callee golden set** (`evaluation/callee_golden.json`) — 7-query outbound golden set for `--direction callees` benchmarking.
+- **63 new unit tests**: `test_call_edge_resolver.py` (31), `test_call_graph_config.py` (15), `test_libcst_call_graph.py` (15), `test_lsp_call_graph.py` (17).
+
+### Fixed
+
+- **`c478f54` — edge attribute renamed `source` → `resolver_source`** (`search/index_write_stage.py`, `search/relationship_analyzer.py`) — NetworkX node-link format reserves `"source"` and `"target"` as endpoint keys; an edge attribute named `"source"` was silently destroyed on save/load round-trip, making resolver provenance invisible after reindex.
+- **`ec005b2` — `get_edge_data` preserves legacy string confidence tags** (`graph/graph_storage.py`) — string tags `"exact"`, `"ambiguous"`, `"recovered"` were unconditionally coerced to `float()`, yielding `1.0` with a spurious warning and causing ambiguous edges to be miscounted as exact in `callee_confidence` breakdowns. Fixed via `_LEGACY_CONFIDENCE_TAGS` pass-through.
+
+### Changed
+
+- **pyan3 demoted from core to optional extra** — pyan3 (GPL-2.0) moved from `install_requires` to the `[callgraph]` optional extra. Without extras only in-house AST edges (confidence 0.5/0.7) are produced — cross-module recall is lower but there is no crash and the Apache-2.0 core license is preserved.
+
+---
+
 ## [0.13.0] - 2026-06-03
 
 ### Added

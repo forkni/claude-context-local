@@ -1,6 +1,6 @@
 ---
 name: mcp-search-tool
-description: "Guides semantic code search via the code-search MCP server. Use when searching for code definitions, callers, dependencies, or tracing code flow in indexed projects. Provides correct workflows for search_code, find_connections, find_path, find_similar_code. Invoke /mcp-search-tool status to run a health check."
+description: "Guides semantic code search via the code-search MCP server. Use when searching for code definitions, callers, callees, dependencies, or tracing code flow in indexed projects. Provides correct workflows for search_code, find_connections, find_path, find_similar_code. Invoke /mcp-search-tool status to run a health check."
 user-invocable: true
 argument-hint: "search query or 'status' for index health"
 allowed-tools: "Bash, Read, Grep, code-search:search_code, code-search:find_connections, code-search:find_path, code-search:find_similar_code, code-search:index_directory, code-search:list_projects, code-search:switch_project, code-search:get_index_status, code-search:clear_index, code-search:delete_project, code-search:configure_search_mode, code-search:get_search_config_status, code-search:configure_query_routing, code-search:configure_reranking, code-search:configure_chunking, code-search:list_embedding_models, code-search:switch_embedding_model, code-search:get_memory_status, code-search:cleanup_resources"
@@ -64,6 +64,7 @@ MCP search returns **ranked candidates**, not definitive answers. On the 2026-05
 What are you trying to do?
 │
 ├─ "Find callers of X" ──────────────► code-search:find_connections(chunk_id=<chunk_id>)
+├─ "What does X call" ───────────────► code-search:find_connections(chunk_id=<chunk_id>)
 ├─ "What depends on X" ──────────────► code-search:find_connections(chunk_id=<chunk_id>)
 ├─ "Trace flow from X to Y" ─────────► code-search:find_path(source_chunk_id=<src>, target_chunk_id=<tgt>)
 ├─ "How does X connect to Y?" ───────► code-search:find_path(source_chunk_id=<src>, target_chunk_id=<tgt>)
@@ -103,7 +104,7 @@ What are you trying to do?
 | Tool | Purpose |
 |------|---------|
 | **code-search:search_code** | Find code with NL query or direct chunk lookup |
-| **code-search:find_connections** | Find callers, dependencies, relationships |
+| **code-search:find_connections** | Find callers, callees, dependencies, relationships |
 | **code-search:find_path** | Shortest path between two entities |
 | code-search:find_similar_code | Functionally similar code |
 | code-search:index_directory | Index project (one-time setup) |
@@ -144,6 +145,8 @@ Failing to sort is why a result at array position 0 isn't always rank-1.
 **`ego_graph.enabled=True` in the live config even though the EgoGraphConfig dataclass default is `False`.** The server reads `search_config.json`, which ships with `"ego_graph": {"enabled": true}`. The Python default is irrelevant once the JSON is loaded. Verify with `get_search_config().ego_graph.enabled`.
 
 **`split_block` variants of the same function are one logical hit.** A long function chunked into `split_block` pieces (e.g. `file.py:10-40:split_block:fn` and `file.py:41-80:split_block:fn`) should count as one unique chunk in Recall/Hit metrics. Normalize and deduplicate by stripping the line-range portion: `file.py:10-40:type:name` → `file.py:type:name`. As of v0.12.1, split_block nodes carry full `uses_type`/`imports` relationship edges extracted from the method signature — `find_connections` will return these edges.
+
+**Call edges carry resolver provenance (v0.14.0+).** Every entry in `direct_callers` and `direct_callees` includes `resolver_source` (`"ast"` / `"pyan"` / `"libcst"` / `"lsp"`), `resolver_confidence` (0.5–0.98), and `confidence` tag (`"exact"` / `"recovered"` / `"ambiguous"`). Top-level `caller_confidence` / `callee_confidence` breakdowns show counts per tag. The confidence ladder (AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98) means edges are upgraded in-place to the highest-confidence resolver — `resolver_source: "lsp"` means basedpyright confirmed the call. Configure via `call_graph.min_confidence` (drops low-confidence edges) and see `docs/CALL_GRAPH_TUNING.md` for tuning recipes.
 
 **Community and module summary chunks surface at rank-1 on class-overview queries.** They have IDs like `__community__/label:0-0:community:label` or `file.py:0-0:module:name`. Add `chunk_type="function"` or `chunk_type="class"` to filter them when you need a specific implementation.
 

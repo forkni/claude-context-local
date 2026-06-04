@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from chunking.python_ast_chunker import CodeChunk
-from chunking.relationships.external_call_graph import build_call_edges
+from chunking.relationships.call_edge_resolver import run_resolvers
+from chunking.relationships.external_call_graph import PyanResolver
 from evaluation.chunk_mapping import build_line_to_chunk_map
 from merkle.merkle_dag import MerkleDAG
 from merkle.snapshot_manager import SnapshotManager
@@ -142,11 +143,11 @@ class IndexWriteStage:
 
         chunks_added = len(all_embedding_results)
 
-        # Inject cross-module call edges from pyan3 static analysis.
+        # Inject cross-module call edges from the resolver pipeline.
         # Must run after add_embeddings (graph populated) and before
         # save_indices (graph persisted).
         if project_path:
-            self._inject_pyan_edges(project_path)
+            self._inject_call_edges(project_path)
 
         # Save snapshot (reset cumulative_changed_files on full index pass)
         metadata = self._build_metadata(
@@ -184,32 +185,33 @@ class IndexWriteStage:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _inject_pyan_edges(self, project_path: str) -> None:
-        """Inject cross-module call edges produced by pyan3 into the code graph.
+    def _inject_call_edges(self, project_path: str) -> None:
+        """Inject cross-module call edges from the resolver pipeline into the code graph.
 
-        This runs *after* :meth:`add_embeddings` (so graph nodes are already
-        populated) and *before* :meth:`save_indices` (so the injected edges
-        are persisted).
+        Runs *after* :meth:`add_embeddings` (graph nodes already populated) and
+        *before* :meth:`save_indices` (edges persisted).  Multiple resolvers are
+        merged by confidence precedence — a higher-confidence resolver can upgrade
+        an edge that was already added by a lower-confidence one.
 
-        The method is a no-op (with a warning) if the graph or metadata store
-        is unavailable.  A crash inside pyan3 is caught and logged as a
-        warning so it never aborts the full index.
+        The method is a no-op (with a warning) if the graph or metadata store is
+        unavailable.  Resolver failures are caught and logged as warnings so they
+        never abort the full index pass.
 
         Args:
-            project_path: Absolute path to the project root (passed through
-                from :meth:`run`).
+            project_path: Absolute path to the project root (passed through from
+                :meth:`run`).
         """
         # Resolve graph storage.
         graph_integration = getattr(self._indexer, "_graph", None)
         if graph_integration is None:
             logger.warning(
-                "[PYAN] Graph integration not available — skipping edge injection"
+                "[CALL_EDGES] Graph integration not available — skipping edge injection"
             )
             return
         storage = getattr(graph_integration, "storage", None)
         if storage is None:
             logger.warning(
-                "[PYAN] Graph storage not available — skipping edge injection"
+                "[CALL_EDGES] Graph storage not available — skipping edge injection"
             )
             return
 
@@ -220,7 +222,7 @@ class IndexWriteStage:
         )
         if meta_store is None:
             logger.warning(
-                "[PYAN] Metadata store not available — skipping edge injection"
+                "[CALL_EDGES] Metadata store not available — skipping edge injection"
             )
             return
 
@@ -228,40 +230,114 @@ class IndexWriteStage:
             # Build raw-id line map (normalize=False → ids match graph node keys).
             raw_line_map = build_line_to_chunk_map(meta_store, normalize=False)
 
-            # Run pyan3 analysis.
-            edges = build_call_edges(Path(project_path).resolve(), raw_line_map, logger)
+            # Build the resolver list from CallGraphConfig.
+            from search.config import get_search_config
 
-            # Inject edges whose both endpoints are already in the graph.
+            cg_cfg = getattr(get_search_config(), "call_graph", None)
+            enabled_names: set[str] = (
+                set(cg_cfg.resolvers or ["pyan", "libcst"])
+                if cg_cfg is not None
+                else {"pyan", "libcst"}
+            )
+
+            from chunking.relationships.call_edge_resolver import CallEdgeResolver
+
+            resolvers: list[CallEdgeResolver] = []
+            if "pyan" in enabled_names:
+                resolvers.append(PyanResolver())
+            # Stage 2 — LibCST FQN resolver (MIT, default in [callgraph] extra):
+            if "libcst" in enabled_names:
+                from chunking.relationships.libcst_call_graph import LibCSTResolver
+
+                resolvers.append(
+                    LibCSTResolver(
+                        use_pyproject_toml=getattr(cg_cfg, "use_pyproject_toml", False)
+                    )
+                )
+            # Stage 3 — basedpyright LSP resolver (opt-in, highest accuracy):
+            if cg_cfg is not None and cg_cfg.lsp_enabled:
+                from chunking.relationships.lsp_call_graph import LSPResolver
+
+                resolvers.append(LSPResolver(timeout=cg_cfg.lsp_timeout_seconds))
+
+            if not resolvers:
+                logger.info("[CALL_EDGES] No resolvers configured — skipping injection")
+                return
+
+            # Run all available resolvers; merge by max confidence.
+            merged = run_resolvers(
+                resolvers, Path(project_path).resolve(), raw_line_map, logger
+            )
+
+            # Apply min_confidence floor — discard edges below the threshold.
+            min_conf: float = getattr(cg_cfg, "min_confidence", 0.0) if cg_cfg else 0.0
+            if min_conf > 0.0:
+                before = len(merged)
+                merged = {k: v for k, v in merged.items() if v.confidence >= min_conf}
+                dropped = before - len(merged)
+                if dropped:
+                    logger.info(
+                        "[CALL_EDGES] min_confidence=%.2f dropped %d edge(s) "
+                        "(confidence below threshold)",
+                        min_conf,
+                        dropped,
+                    )
+
+            # Inject / upgrade edges with confidence-precedence semantics.
             g = storage.graph
-            injected = 0
-            skipped = 0
-            for caller_id, callee_id, line_num, is_method in edges:
-                if (
-                    caller_id in g
-                    and callee_id in g
-                    and not g.has_edge(caller_id, callee_id)
-                ):
+            injected = added = upgraded = skipped = 0
+            for edge in merged.values():
+                caller_id = edge.caller_id
+                callee_id = edge.callee_id
+                if caller_id not in g or callee_id not in g:
+                    skipped += 1
+                    continue
+
+                if not g.has_edge(caller_id, callee_id):
                     storage.add_call_edge(
                         caller_id,
                         callee_name=callee_id,
-                        line_number=line_num,
-                        is_method_call=is_method,
+                        line_number=edge.line,
+                        is_method_call=edge.is_method,
                         is_resolved=True,
-                        source="pyan",
+                        # Use "resolver_source" not "source": NetworkX node-link format
+                        # reserves "source"/"target" as endpoint keys — any edge attribute
+                        # named "source" is silently destroyed on save/load round-trip.
+                        resolver_source=edge.source,
+                        resolver_confidence=edge.confidence,
                     )
+                    added += 1
                     injected += 1
                 else:
-                    skipped += 1
+                    # Upgrade if this resolver has higher confidence.
+                    existing_confidence: float = g.edges[caller_id, callee_id].get(
+                        "resolver_confidence", 0.0
+                    )
+                    if edge.confidence > existing_confidence:
+                        storage.upgrade_call_edge(
+                            caller_id,
+                            callee_id,
+                            resolver_source=edge.source,
+                            resolver_confidence=edge.confidence,
+                            is_resolved=True,
+                            line=edge.line,
+                        )
+                        upgraded += 1
+                        injected += 1
+                    else:
+                        skipped += 1
 
             logger.info(
-                "[PYAN] Injected %d cross-module call edges (%d skipped — "
-                "node not in graph or edge already present)",
+                "[CALL_EDGES] Injected %d edges (added=%d, upgraded=%d, skipped=%d — "
+                "node not in graph, edge already present at equal/higher confidence)",
                 injected,
+                added,
+                upgraded,
                 skipped,
             )
 
         except Exception:
             logger.warning(
-                "[PYAN] Edge injection failed (non-fatal):\n%s",
+                "[CALL_EDGES] Edge injection failed (non-fatal):\n%s",
                 traceback.format_exc(),
             )

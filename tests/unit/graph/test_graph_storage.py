@@ -575,3 +575,145 @@ class TestCodeGraphStorage:
 
         assert removed == 1
         assert "src/auth_utils.py:1-5:function:b" in graph_storage
+
+    # ------------------------------------------------------------------
+    # Regression: resolver_source must survive save/load round-trip
+    # ------------------------------------------------------------------
+
+    def test_resolver_source_survives_save_load_round_trip(
+        self, graph_storage: "CodeGraphStorage", temp_storage_dir: Path
+    ) -> None:
+        """``resolver_source`` edge attr must survive a node-link JSON round-trip.
+
+        NetworkX's node-link format reserves the keys ``"source"`` and ``"target"``
+        for edge endpoints.  Any edge attribute named ``"source"`` is silently
+        destroyed on save/load.  We use ``"resolver_source"`` instead — this test
+        guards against regression to the broken ``"source"`` key name.
+        """
+        caller = "src/a.py:1-5:function:caller"
+        callee = "src/b.py:1-5:function:callee"
+        graph_storage.add_node(caller, "caller", "function", "src/a.py")
+        graph_storage.add_node(callee, "callee", "function", "src/b.py")
+
+        graph_storage.add_call_edge(
+            caller,
+            callee,
+            line_number=3,
+            is_method_call=False,
+            is_resolved=True,
+            resolver_source="pyan",
+            resolver_confidence=0.75,
+        )
+
+        graph_storage.save()
+
+        reloaded = CodeGraphStorage(
+            project_id="test_project", storage_dir=temp_storage_dir
+        )
+
+        assert reloaded.graph.has_edge(caller, callee), "Edge must survive round-trip"
+        edge_data = reloaded.graph.edges[caller, callee]
+        assert edge_data.get("resolver_source") == "pyan", (
+            "resolver_source must survive node-link JSON round-trip; "
+            "if this fails the edge attr was accidentally named 'source' (reserved key)"
+        )
+        assert edge_data.get("resolver_confidence") == 0.75
+
+    def test_source_key_not_used_as_edge_attr(
+        self, graph_storage: "CodeGraphStorage"
+    ) -> None:
+        """Guard: add_call_edge must not write a graph edge attr named 'source'.
+
+        NetworkX node-link serialization reserves 'source' / 'target' for endpoint
+        keys.  This test ensures no code path passes ``source=...`` as an edge kwarg,
+        which would be silently discarded on the first save/load cycle.
+        """
+        caller = "src/x.py:1-5:function:x"
+        callee = "src/y.py:1-5:function:y"
+        graph_storage.add_node(caller, "x", "function", "src/x.py")
+        graph_storage.add_node(callee, "y", "function", "src/y.py")
+
+        # Simulate what the injection seam does with resolver_source (correct key)
+        graph_storage.add_call_edge(
+            caller,
+            callee,
+            line_number=1,
+            resolver_source="libcst",
+            resolver_confidence=0.90,
+        )
+
+        edge_data = graph_storage.graph.edges[caller, callee]
+        # 'source' must NOT appear as an edge attribute (it would collide with the
+        # node-link endpoint key and be lost on save/load)
+        assert "source" not in edge_data, (
+            "Edge attr 'source' would be destroyed by node-link save/load. "
+            "Use 'resolver_source' instead."
+        )
+        assert edge_data.get("resolver_source") == "libcst"
+
+    # ------------------------------------------------------------------
+    # Regression: legacy string confidence tags must survive get_edge_data
+    # ------------------------------------------------------------------
+
+    def _add_relationship_edge(self, gs: "CodeGraphStorage", confidence_value) -> None:
+        """Helper: add a synthetic calls edge with the given confidence via the graph API."""
+        # Directly inject edge attrs so the test doesn't depend on the full
+        # RelationshipEdge path, which requires more fixture setup.
+        gs.graph.add_edge(
+            "src/caller.py:1-5:function:caller",
+            "src/callee.py:1-5:function:callee",
+            type="calls",
+            line=2,
+            confidence=confidence_value,
+        )
+
+    def test_get_edge_data_preserves_ambiguous_confidence_tag(
+        self, graph_storage: "CodeGraphStorage"
+    ) -> None:
+        """get_edge_data must not warn or clobber legacy string 'ambiguous'."""
+        caller = "src/caller.py:1-5:function:caller"
+        callee = "src/callee.py:1-5:function:callee"
+        graph_storage.add_node(caller, "caller", "function", "src/caller.py")
+        graph_storage.add_node(callee, "callee", "function", "src/callee.py")
+        self._add_relationship_edge(graph_storage, "ambiguous")
+
+        edge_data = graph_storage.get_edge_data(caller, callee)
+        assert edge_data is not None
+        assert edge_data["confidence"] == "ambiguous", (
+            "get_edge_data must pass legacy 'ambiguous' string through unchanged; "
+            "it must not coerce it to float or emit a warning"
+        )
+
+    def test_get_edge_data_preserves_exact_confidence_tag(
+        self, graph_storage: "CodeGraphStorage"
+    ) -> None:
+        """get_edge_data must not warn or clobber legacy string 'exact'."""
+        caller = "src/caller.py:1-5:function:caller"
+        callee = "src/callee.py:1-5:function:callee"
+        graph_storage.add_node(caller, "caller", "function", "src/caller.py")
+        graph_storage.add_node(callee, "callee", "function", "src/callee.py")
+        self._add_relationship_edge(graph_storage, "exact")
+
+        edge_data = graph_storage.get_edge_data(caller, callee)
+        assert edge_data is not None
+        assert edge_data["confidence"] == "exact", (
+            "get_edge_data must pass legacy 'exact' string through unchanged"
+        )
+
+    def test_get_edge_data_warns_on_genuinely_invalid_confidence(
+        self, graph_storage: "CodeGraphStorage"
+    ) -> None:
+        """get_edge_data must still warn + default for non-string, non-float values."""
+        caller = "src/caller.py:1-5:function:caller"
+        callee = "src/callee.py:1-5:function:callee"
+        graph_storage.add_node(caller, "caller", "function", "src/caller.py")
+        graph_storage.add_node(callee, "callee", "function", "src/callee.py")
+        # Use an object() — not a known string tag, not a float-convertible value
+        self._add_relationship_edge(graph_storage, object())
+
+        edge_data = graph_storage.get_edge_data(caller, callee)
+        assert edge_data is not None
+        # Existing fallback: invalid value → defaulted to 1.0
+        assert edge_data["confidence"] == 1.0, (
+            "Genuinely invalid confidence (non-string non-numeric) must default to 1.0"
+        )

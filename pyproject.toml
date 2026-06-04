@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-context-local"
-version = "0.13.0"
+version = "0.15.0"
 description = "Local semantic code search for Claude Code (MCP) using multi-model routing (Qwen3, BGE-M3, CodeRankEmbed), FAISS, and AST/tree-sitter chunking. 100% local embeddings and indexing."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -35,7 +35,6 @@ dependencies = [
     "huggingface-hub>=0.36.0",
     "mcp>=1.27.0",
     "networkx>=3.0",  # Required for graph storage and community detection
-    "pyan3>=2.6.0",  # Whole-project static call graph (Phase 3 cross-module edges)
     "nltk>=3.9.4",  # Security: Fixes CVE-2025-14009 (path traversal in downloader)
     "psutil>=7.2.1",
     "rank-bm25>=0.2.2",
@@ -69,6 +68,19 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+callgraph = [
+    # pyan3: GPL-2.0-only; kept as an optional extra so the Apache-2.0 core
+    # distribution remains licence-clean.  Provides whole-project cross-module
+    # call edges (recall booster on top of the in-house AST extractor).
+    "pyan3>=2.6.0",
+    # libcst: MIT; FullyQualifiedNameProvider cross-file resolution (Stage 2).
+    "libcst>=1.8.6",
+]
+lsp = [
+    # basedpyright: MIT; pip-installable, bundles the node runtime.
+    # Provides the highest-accuracy call hierarchy via LSP JSON-RPC (Stage 3, opt-in).
+    "basedpyright>=1.21",
+]
 test = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",

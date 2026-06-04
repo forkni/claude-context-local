@@ -1,7 +1,7 @@
 {
   "embedding": {
-    "model_name": "Alibaba-NLP/gte-modernbert-base",
-    "dimension": 768,
+    "model_name": "Qwen/Qwen3-Embedding-0.6B",
+    "dimension": 1024,
     "batch_size": 64,
     "query_cache_size": 128,
     "enable_import_context": true,
@@ -53,7 +53,7 @@
     "edge_weights": null
   },
   "routing": {
-    "multi_model_enabled": true,
+    "multi_model_enabled": false,
     "default_model": "qwen3_0.6b",
     "multi_model_pool": "lightweight-speed"
   },
@@ -161,5 +161,12 @@
     "otlp_endpoint": "http://localhost:4318",
     "sample_ratio": 1.0,
     "capture_query_text": false
+  },
+  "call_graph": {
+    "resolvers": ["pyan", "libcst"],
+    "lsp_enabled": true,
+    "lsp_timeout_seconds": 30.0,
+    "use_pyproject_toml": false,
+    "min_confidence": 0.65
   }
 }
