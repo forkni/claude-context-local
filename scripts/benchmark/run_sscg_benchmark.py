@@ -625,10 +625,8 @@ def run_single(
         line_lookup=line_lookup,
     )
 
-    # Merge dataset thresholds over module defaults once; pass the same dict to
-    # aggregate_metrics so the display and gating are always in sync.
-    effective_thresholds = {**THRESHOLDS, **(dataset.get("thresholds") or {})}
-    agg = aggregate_metrics(per_query, thresholds=effective_thresholds)
+    dataset_thresholds = dataset.get("thresholds") or {}
+    agg = aggregate_metrics(per_query, thresholds=dataset_thresholds)
     avg_lat = round(mean(latencies), 1) if latencies else 0.0
 
     # Config metadata for comparison / experiment tracking (Lesson 4 pattern)
@@ -650,7 +648,7 @@ def run_single(
         "aggregate": agg,
         "avg_latency_ms": avg_lat,
         "config_metadata": config_metadata,
-        "thresholds": effective_thresholds,
+        "thresholds": {**THRESHOLDS, **dataset_thresholds},
         "per_query": per_query,
     }
 
