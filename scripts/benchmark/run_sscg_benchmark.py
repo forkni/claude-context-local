@@ -305,8 +305,10 @@ def run_benchmark(
                     "category": category,
                     "error": str(exc),
                     "hit": False,
+                    "hit@7": False,
                     "recall@1": 0.0,
                     "recall@5": 0.0,
+                    "recall@7": 0.0,
                     "recall@10": 0.0,
                     "precision@1": 0.0,
                     "precision@5": 0.0,
@@ -334,11 +336,11 @@ def print_leaderboard(
     has_line = any("line_iou" in run.get("aggregate", {}) for run in runs)
 
     if has_line:
-        width = 100
+        width = 107
         sep = "=" * width
         print(f"\n{sep}\n{title}\n{sep}")
         header = (
-            f"{'Config':<22} {'MRR':>6} {'R@5':>6} {'R@10':>6} {'HR@5':>6} "
+            f"{'Config':<22} {'MRR':>6} {'R@5':>6} {'R@7':>6} {'R@10':>6} {'HR@5':>6} "
             f"{'NDCG@5':>8} {'Lat(ms)':>8} | {'LR':>6} {'LP':>6} {'LIoU':>6}"
         )
         print(header)
@@ -356,7 +358,8 @@ def print_leaderboard(
             )
             print(
                 f"{run['config_name']:<22} "
-                f"{agg['mrr']:>6.3f} {agg['recall@5']:>6.3f} {agg['recall@10']:>6.3f} "
+                f"{agg['mrr']:>6.3f} {agg['recall@5']:>6.3f} {agg.get('recall@7', 0.0):>6.3f} "
+                f"{agg['recall@10']:>6.3f} "
                 f"{agg['hit_rate@5']:>6.3f} {agg['ndcg@5']:>8.3f} "
                 f"{lat:>8.0f}{line_str}"
             )
@@ -375,11 +378,11 @@ def print_leaderboard(
                 )
         print(sep)
     else:
-        width = 80
+        width = 87
         sep = "=" * width
         print(f"\n{sep}\n{title}\n{sep}")
         header = (
-            f"{'Config':<22} {'MRR':>6} {'R@5':>6} {'R@10':>6} {'HR@5':>6} "
+            f"{'Config':<22} {'MRR':>6} {'R@5':>6} {'R@7':>6} {'R@10':>6} {'HR@5':>6} "
             f"{'NDCG@5':>8} {'Lat(ms)':>8} {'MRR':>5} {'R@5':>5} {'HR@5':>5}"
         )
         print(header)
@@ -391,7 +394,8 @@ def print_leaderboard(
             lat = run.get("avg_latency_ms", agg.get("avg_latency_ms", 0))
             print(
                 f"{run['config_name']:<22} "
-                f"{agg['mrr']:>6.3f} {agg['recall@5']:>6.3f} {agg['recall@10']:>6.3f} "
+                f"{agg['mrr']:>6.3f} {agg['recall@5']:>6.3f} {agg.get('recall@7', 0.0):>6.3f} "
+                f"{agg['recall@10']:>6.3f} "
                 f"{agg['hit_rate@5']:>6.3f} {agg['ndcg@5']:>8.3f} "
                 f"{lat:>8.0f} {pf_str}"
             )
@@ -406,13 +410,14 @@ def print_per_query_drilldown(
     print(f"\n--- Per-query drill-down: {config_name} ---")
     if has_line:
         print(
-            f"{'ID':<5} {'Cat':<3} {'R@5':>6} {'MRR':>6} {'NDCG@5':>8} "
+            f"{'ID':<5} {'Cat':<3} {'R@5':>6} {'R@7':>6} {'MRR':>6} {'NDCG@5':>8} "
             f"{'LR':>6} {'LP':>6} {'LIoU':>6} {'Status':<5} Query"
         )
-        print("-" * 85)
+        print("-" * 92)
         for q in per_query:
             status = "HIT" if q.get("hit") else "MISS"
             r5 = q.get("recall@5", 0.0)
+            r7 = q.get("recall@7", 0.0)
             mrr = q.get("mrr", 0.0)
             ndcg = q.get("ndcg@5", 0.0)
             lr = q.get("line_recall")
@@ -425,22 +430,23 @@ def print_per_query_drilldown(
             )
             query_short = q["query"][:28]
             print(
-                f"{q['id']:<5} {q.get('category', '?'):<3} {r5:>6.3f} {mrr:>6.3f} "
+                f"{q['id']:<5} {q.get('category', '?'):<3} {r5:>6.3f} {r7:>6.3f} {mrr:>6.3f} "
                 f"{ndcg:>8.3f} {line_str} {status:<5} {query_short}"
             )
     else:
         print(
-            f"{'ID':<5} {'Cat':<3} {'R@5':>6} {'MRR':>6} {'NDCG@5':>8} {'Status':<5} Query"
+            f"{'ID':<5} {'Cat':<3} {'R@5':>6} {'R@7':>6} {'MRR':>6} {'NDCG@5':>8} {'Status':<5} Query"
         )
-        print("-" * 70)
+        print("-" * 77)
         for q in per_query:
             status = "HIT" if q.get("hit") else "MISS"
             r5 = q.get("recall@5", 0.0)
+            r7 = q.get("recall@7", 0.0)
             mrr = q.get("mrr", 0.0)
             ndcg = q.get("ndcg@5", 0.0)
             query_short = q["query"][:35]
             print(
-                f"{q['id']:<5} {q.get('category', '?'):<3} {r5:>6.3f} {mrr:>6.3f} "
+                f"{q['id']:<5} {q.get('category', '?'):<3} {r5:>6.3f} {r7:>6.3f} {mrr:>6.3f} "
                 f"{ndcg:>8.3f} {status:<5} {query_short}"
             )
 
@@ -608,7 +614,7 @@ def run_single(
         line_lookup=line_lookup,
     )
 
-    agg = aggregate_metrics(per_query)
+    agg = aggregate_metrics(per_query, thresholds=dataset.get("thresholds"))
     avg_lat = round(mean(latencies), 1) if latencies else 0.0
 
     # Config metadata for comparison / experiment tracking (Lesson 4 pattern)
@@ -722,8 +728,9 @@ def main() -> None:
     pf = result["aggregate"].get("pass_fail", {})
     all_pass = all(v == "PASS" for v in pf.values())
     print(f"\nOverall: {'PASS' if all_pass else 'FAIL'}")
+    run_thresholds = result.get("thresholds", THRESHOLDS)
     for metric, status in pf.items():
-        threshold = THRESHOLDS.get(
+        threshold = run_thresholds.get(
             metric.replace("@", "_at_").replace("hit_rate_at_5", "hit_rate_at_5"), "?"
         )
         print(f"  {metric:<14}: {status}  (threshold >= {threshold})")

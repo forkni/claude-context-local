@@ -153,13 +153,15 @@ def calculate_metrics_from_results(
             Falls back to ``expected`` if not provided (for MRR calculation).
 
     Returns:
-        Dict with keys: recall@1, recall@5, recall@10, precision@1,
-        precision@5, precision@10, mrr, ndcg@5, ndcg@10, hit.
+        Dict with keys: recall@1, recall@5, recall@7, recall@10, precision@1,
+        precision@5, precision@10, mrr, ndcg@5, ndcg@10, hit, hit@7.
     """
     primary = expected_primary if expected_primary is not None else expected
+    recall_7 = calculate_recall_at_k(retrieved, expected, 7)
     return {
         "recall@1": calculate_recall_at_k(retrieved, expected, 1),
         "recall@5": calculate_recall_at_k(retrieved, expected, 5),
+        "recall@7": recall_7,
         "recall@10": calculate_recall_at_k(retrieved, expected, 10),
         "precision@1": calculate_precision_at_k(retrieved, expected, 1),
         "precision@5": calculate_precision_at_k(retrieved, expected, 5),
@@ -168,14 +170,24 @@ def calculate_metrics_from_results(
         "ndcg@5": calculate_ndcg_at_k(retrieved, expected, 5),
         "ndcg@10": calculate_ndcg_at_k(retrieved, expected, 10),
         "hit": calculate_recall_at_k(retrieved, expected, 5) > 0,
+        "hit@7": recall_7 > 0,
     }
 
 
-def aggregate_metrics(per_query: list[dict[str, Any]]) -> dict[str, Any]:
+def aggregate_metrics(
+    per_query: list[dict[str, Any]],
+    thresholds: dict | None = None,
+) -> dict[str, Any]:
     """Compute aggregate statistics across all per-query metric dicts.
 
     Args:
         per_query: List of dicts, each from ``calculate_metrics_from_results``.
+        thresholds: Optional threshold dict (keys: mrr, recall_at_5,
+            hit_rate_at_5). When provided, its values override the module-level
+            ``THRESHOLDS`` constant for the ``pass_fail`` assessment.  Pass
+            ``dataset.get("thresholds")`` to honour the golden-dataset JSON
+            thresholds instead of the hardcoded module constant.  Falls back to
+            ``THRESHOLDS`` for any keys not present in the override.
 
     Returns:
         Aggregate dict with means, pass/fail assessment, and counts.
@@ -186,6 +198,7 @@ def aggregate_metrics(per_query: list[dict[str, Any]]) -> dict[str, Any]:
     float_keys = [
         "recall@1",
         "recall@5",
+        "recall@7",
         "recall@10",
         "precision@1",
         "precision@5",
@@ -197,6 +210,7 @@ def aggregate_metrics(per_query: list[dict[str, Any]]) -> dict[str, Any]:
     agg: dict[str, Any] = {
         "total_queries": len(per_query),
         "success_count": sum(1 for q in per_query if q.get("hit", False)),
+        "success_count@7": sum(1 for q in per_query if q.get("hit@7", False)),
     }
     for key in float_keys:
         # Use 0.0 for queries missing a key (e.g. error rows) so they count
@@ -205,12 +219,14 @@ def aggregate_metrics(per_query: list[dict[str, Any]]) -> dict[str, Any]:
         agg[key] = round(mean(vals), 4) if vals else 0.0
 
     agg["hit_rate@5"] = round(agg["success_count"] / agg["total_queries"], 4)
+    agg["hit_rate@7"] = round(agg["success_count@7"] / agg["total_queries"], 4)
 
+    _thresholds = {**THRESHOLDS, **(thresholds or {})}
     agg["pass_fail"] = {
-        "mrr": "PASS" if agg["mrr"] >= THRESHOLDS["mrr"] else "FAIL",
-        "recall@5": "PASS" if agg["recall@5"] >= THRESHOLDS["recall_at_5"] else "FAIL",
+        "mrr": "PASS" if agg["mrr"] >= _thresholds["mrr"] else "FAIL",
+        "recall@5": "PASS" if agg["recall@5"] >= _thresholds["recall_at_5"] else "FAIL",
         "hit_rate@5": "PASS"
-        if agg["hit_rate@5"] >= THRESHOLDS["hit_rate_at_5"]
+        if agg["hit_rate@5"] >= _thresholds["hit_rate_at_5"]
         else "FAIL",
     }
 
