@@ -397,3 +397,85 @@ class TestResolveChunkIdsToRanges:
             ["search/filters.py:function:normalize_path"], lookup
         )
         assert result == {"search/filters.py": [(22, 31)]}
+
+
+# ---------------------------------------------------------------------------
+# _extract_ranges_from_results  (regression: must read .metadata, not attrs)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractRangesFromResults:
+    """Regression tests for _extract_ranges_from_results.
+
+    The real HybridSearcher returns search.reranker.SearchResult whose only
+    fields are chunk_id/score/metadata/source/rank.  Line data lives inside
+    .metadata — NOT as top-level attributes.  Earlier code used getattr() on
+    top-level attrs and always returned {}, making all line-overlap metrics 0.
+    """
+
+    def _make_sr(self, chunk_id: str, meta: dict):
+        """Build a real reranker.SearchResult with the given metadata."""
+        from search.reranker import SearchResult
+
+        return SearchResult(chunk_id=chunk_id, score=1.0, metadata=meta)
+
+    def _extract(self, results):
+        from scripts.benchmark.run_sscg_benchmark import _extract_ranges_from_results
+
+        return _extract_ranges_from_results(results)
+
+    def test_reads_from_metadata_not_top_level_attrs(self):
+        """Core regression: line data in .metadata must produce non-empty output."""
+        sr = self._make_sr(
+            "search/config.py:function:foo",
+            {"relative_path": "search/config.py", "start_line": 10, "end_line": 20},
+        )
+        result = self._extract([sr])
+        assert result == {"search/config.py": [(10, 20)]}
+
+    def test_windows_backslash_path_normalized(self):
+        """Windows raw relative_path with backslashes must be normalized to forward slashes."""
+        sr = self._make_sr(
+            "search/config.py:function:foo",
+            {"relative_path": "search\\config.py", "start_line": 10, "end_line": 20},
+        )
+        result = self._extract([sr])
+        assert "search/config.py" in result
+        assert "search\\config.py" not in result
+        assert result["search/config.py"] == [(10, 20)]
+
+    def test_missing_line_fields_skipped(self):
+        """A result without start_line/end_line in metadata must be silently skipped."""
+        sr = self._make_sr(
+            "search/config.py:module:search",
+            {"relative_path": "search/config.py"},
+        )
+        result = self._extract([sr])
+        assert result == {}
+
+    def test_zero_line_fields_skipped(self):
+        """A module-summary result with start=0/end=0 must be silently skipped."""
+        sr = self._make_sr(
+            "search/config.py:module:search",
+            {"relative_path": "search/config.py", "start_line": 0, "end_line": 0},
+        )
+        result = self._extract([sr])
+        assert result == {}
+
+    def test_multiple_results_grouped_by_file(self):
+        """Multiple results in the same file should be grouped under one path key."""
+        sr1 = self._make_sr(
+            "search/config.py:function:foo",
+            {"relative_path": "search/config.py", "start_line": 1, "end_line": 10},
+        )
+        sr2 = self._make_sr(
+            "search/config.py:function:bar",
+            {"relative_path": "search/config.py", "start_line": 12, "end_line": 20},
+        )
+        result = self._extract([sr1, sr2])
+        assert "search/config.py" in result
+        assert (1, 10) in result["search/config.py"]
+        assert (12, 20) in result["search/config.py"]
+
+    def test_empty_results_returns_empty_dict(self):
+        assert self._extract([]) == {}

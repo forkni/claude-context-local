@@ -142,19 +142,26 @@ def _extract_ranges_from_results(
 ) -> dict[str, list[tuple[int, int]]]:
     """Extract per-file line ranges from SearchResult objects.
 
+    Reads line data from ``result.metadata`` (where ``HybridSearcher`` stores it)
+    rather than top-level attributes, and normalises path separators to forward
+    slashes so keys match those produced by ``build_chunk_line_lookup``.
+
     Args:
-        results: List of SearchResult objects with relative_path/start_line/end_line.
+        results: List of SearchResult objects whose ``.metadata`` dict contains
+            ``relative_path``, ``start_line``, and ``end_line``.
 
     Returns:
-        ``{relative_path: [(start_line, end_line), ...]}`` grouped by file.
+        ``{relative_path: [(start_line, end_line), ...]}`` grouped by file,
+        with forward-slash path separators.
     """
     ranges: dict[str, list[tuple[int, int]]] = {}
     for r in results:
-        path = getattr(r, "relative_path", "") or ""
-        start = getattr(r, "start_line", 0) or 0
-        end = getattr(r, "end_line", 0) or 0
+        meta = getattr(r, "metadata", {}) or {}
+        path = (meta.get("relative_path", "") or "").replace("\\", "/")
+        start = meta.get("start_line") or 0
+        end = meta.get("end_line") or 0
         if path and start and end:
-            ranges.setdefault(path, []).append((start, end))
+            ranges.setdefault(path, []).append((int(start), int(end)))
     return ranges
 
 
