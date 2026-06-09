@@ -625,7 +625,10 @@ def run_single(
         line_lookup=line_lookup,
     )
 
-    agg = aggregate_metrics(per_query, thresholds=dataset.get("thresholds"))
+    # Merge dataset thresholds over module defaults once; pass the same dict to
+    # aggregate_metrics so the display and gating are always in sync.
+    effective_thresholds = {**THRESHOLDS, **(dataset.get("thresholds") or {})}
+    agg = aggregate_metrics(per_query, thresholds=effective_thresholds)
     avg_lat = round(mean(latencies), 1) if latencies else 0.0
 
     # Config metadata for comparison / experiment tracking (Lesson 4 pattern)
@@ -647,7 +650,7 @@ def run_single(
         "aggregate": agg,
         "avg_latency_ms": avg_lat,
         "config_metadata": config_metadata,
-        "thresholds": dataset.get("thresholds", THRESHOLDS),
+        "thresholds": effective_thresholds,
         "per_query": per_query,
     }
 
@@ -741,9 +744,7 @@ def main() -> None:
     print(f"\nOverall: {'PASS' if all_pass else 'FAIL'}")
     run_thresholds = result.get("thresholds", THRESHOLDS)
     for metric, status in pf.items():
-        threshold = run_thresholds.get(
-            metric.replace("@", "_at_").replace("hit_rate_at_5", "hit_rate_at_5"), "?"
-        )
+        threshold = run_thresholds.get(metric.replace("@", "_at_"), "?")
         print(f"  {metric:<14}: {status}  (threshold >= {threshold})")
 
     # Save results

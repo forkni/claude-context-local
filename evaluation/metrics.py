@@ -157,10 +157,11 @@ def calculate_metrics_from_results(
         precision@5, precision@10, mrr, ndcg@5, ndcg@10, hit, hit@7.
     """
     primary = expected_primary if expected_primary is not None else expected
+    recall_5 = calculate_recall_at_k(retrieved, expected, 5)
     recall_7 = calculate_recall_at_k(retrieved, expected, 7)
     return {
         "recall@1": calculate_recall_at_k(retrieved, expected, 1),
-        "recall@5": calculate_recall_at_k(retrieved, expected, 5),
+        "recall@5": recall_5,
         "recall@7": recall_7,
         "recall@10": calculate_recall_at_k(retrieved, expected, 10),
         "precision@1": calculate_precision_at_k(retrieved, expected, 1),
@@ -169,7 +170,7 @@ def calculate_metrics_from_results(
         "mrr": calculate_mrr(retrieved, primary),
         "ndcg@5": calculate_ndcg_at_k(retrieved, expected, 5),
         "ndcg@10": calculate_ndcg_at_k(retrieved, expected, 10),
-        "hit": calculate_recall_at_k(retrieved, expected, 5) > 0,
+        "hit": recall_5 > 0,
         "hit@7": recall_7 > 0,
     }
 
