@@ -316,6 +316,7 @@ class TestCalculateNdcgAtK:
 _EXPECTED_KEYS = {
     "recall@1",
     "recall@5",
+    "recall@7",
     "recall@10",
     "precision@1",
     "precision@5",
@@ -324,6 +325,7 @@ _EXPECTED_KEYS = {
     "ndcg@5",
     "ndcg@10",
     "hit",
+    "hit@7",
 }
 
 

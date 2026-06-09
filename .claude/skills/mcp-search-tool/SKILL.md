@@ -25,15 +25,15 @@ allowed-tools: "Bash, Read, Grep, code-search:search_code, code-search:find_conn
 
 Ensures all MCP semantic search operations follow correct workflows for accurate results. The key behavioral rule: **search results are ranked candidates, not definitive answers — always scan all returned results.**
 
-**SSCG benchmark:** 100% Hit@7 (k=7 hybrid, 2026-05-25): MRR 0.806, Recall@5 0.646, Recall@7 0.700. Recommended operating k: **7** (some targets rank 6–7; k=5 misses them). Default is `k=4`. See [references/performance.md](references/performance.md) for full results.
+**SSCG benchmark:** 100% Hit@5 (k=7 hybrid, 2026-06-08): MRR 0.797, Recall@5 0.689, Recall@7 0.736. Recommended operating k: **7** (consistent coverage; targets may rank 6–7 on complex queries). Default is `k=4`. See [references/performance.md](references/performance.md) for full results.
 
 ---
 
 ## Critical: Results Are Candidates, Not Answers
 
-MCP search returns **ranked candidates**, not definitive answers. On the 2026-05-25 13-query SSCG benchmark (hybrid, k=7) Hit@7 = 100% — but the correct result is **not always ranked first**, and this is not a general reliability guarantee for arbitrary queries or codebases.
+MCP search returns **ranked candidates**, not definitive answers. On the 2026-06-08 13-query SSCG benchmark (hybrid, k=7) Hit@5 = 100% — but the correct result is **not always ranked first**, and this is not a general reliability guarantee for arbitrary queries or codebases.
 
-**Baseline rule:** **pass `k=7` explicitly when correctness matters.** The tool default is `k=4`; some targets rank 6–7 (e.g. `FaissVectorIndex.__init__` in the SSCG benchmark), so Hit@7 > Hit@5. Use `k=10` for architectural / global queries.
+**Baseline rule:** **pass `k=7` explicitly when correctness matters.** The tool default is `k=4`; targets may rank 6–7 on complex or multi-target queries, so Hit@7 > Hit@5. Use `k=10` for architectural / global queries.
 
 **Result Interpretation Workflow:**
 1. Run `code-search:search_code(query="<your query>", k=7)` with appropriate filters

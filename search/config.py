@@ -292,12 +292,16 @@ class RerankerConfig:
 
 @dataclass
 class OutputConfig:
-    """MCP output formatting settings (2 fields)."""
+    """MCP output formatting settings (4 fields)."""
 
     format: str = (
         "ultra"  # verbose, compact, ultra (default: ultra for 45-55% token reduction)
     )
     source_order_output: bool = True  # Reorder results by file position (DOS RAG)
+    include_subgraph: bool = (
+        False  # Serialize ego_graph subgraph_* blocks into the response
+    )
+    include_result_graph: bool = False  # Attach per-result `graph` dict to each result
 
 
 @dataclass
@@ -719,6 +723,8 @@ class SearchConfig:
         # OutputConfig
         "output_format": ("output", "format"),
         "source_order_output": ("output", "source_order_output"),
+        "include_subgraph": ("output", "include_subgraph"),
+        "include_result_graph": ("output", "include_result_graph"),
         # ChunkingConfig (flat keys equal their field names for most)
         "min_chunk_tokens": ("chunking", "min_chunk_tokens"),
         "max_merged_tokens": ("chunking", "max_merged_tokens"),

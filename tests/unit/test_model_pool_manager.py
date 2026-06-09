@@ -382,6 +382,106 @@ class TestGetEmbedderOverride:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Tests: get_pool_config() single-model mode
+# ---------------------------------------------------------------------------
+
+
+class TestGetPoolConfigSingleModelMode:
+    """get_pool_config() must return a single-entry pool when multi_model_enabled=False.
+
+    Regression guard for: stale multi_model_pool config value (e.g. "lightweight-speed"
+    left over from another machine) causing the active pool to exclude the actual
+    operational model, which triggers spurious [CROSS_POOL] INFO/WARNING logs on every
+    search request even though search is functionally correct.
+    """
+
+    def _make_config(
+        self,
+        *,
+        multi_model_enabled: bool,
+        default_model: str = "qwen3_0.6b",
+        multi_model_pool: str | None = "lightweight-speed",
+        embedding_model: str = "Qwen/Qwen3-Embedding-0.6B",
+    ):
+        cfg = MagicMock()
+        cfg.routing.multi_model_enabled = multi_model_enabled
+        cfg.routing.default_model = default_model
+        cfg.routing.multi_model_pool = multi_model_pool
+        cfg.embedding.model_name = embedding_model
+        return cfg
+
+    def test_single_model_mode_returns_single_entry_pool(self):
+        """Single-model mode: pool contains exactly {default_model: embedding.model_name}."""
+        from mcp_server.model_pool_manager import ModelPoolManager
+
+        mgr = ModelPoolManager()
+        cfg = self._make_config(multi_model_enabled=False)
+
+        with patch("search.config.get_search_config", return_value=cfg):
+            pool = mgr.get_pool_config()
+
+        assert pool == {"qwen3_0.6b": "Qwen/Qwen3-Embedding-0.6B"}, (
+            "Single-model pool must contain exactly the configured model "
+            "so reverse-lookups never trip the cross-pool path"
+        )
+
+    def test_single_model_mode_ignores_stale_lightweight_speed_preset(self):
+        """Stale multi_model_pool='lightweight-speed' must not affect single-model pool."""
+        from mcp_server.model_pool_manager import ModelPoolManager
+
+        mgr = ModelPoolManager()
+        cfg = self._make_config(
+            multi_model_enabled=False,
+            multi_model_pool="lightweight-speed",  # stale laptop value
+        )
+
+        with patch("search.config.get_search_config", return_value=cfg):
+            pool = mgr.get_pool_config()
+
+        assert "gte_modernbert" not in pool, (
+            "gte_modernbert must not appear in single-model pool"
+        )
+        assert "bge_m3" not in pool, "bge_m3 must not appear in single-model pool"
+        assert "qwen3_0.6b" in pool, "active single model must be present"
+
+    def test_multi_model_mode_still_uses_pool_preset_unchanged(self):
+        """multi_model_enabled=True must keep the existing pool-preset logic intact."""
+        from mcp_server.model_pool_manager import ModelPoolManager
+        from search.config import MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED
+
+        mgr = ModelPoolManager()
+        cfg = self._make_config(
+            multi_model_enabled=True,
+            multi_model_pool="lightweight-speed",
+        )
+
+        with patch("search.config.get_search_config", return_value=cfg):
+            pool = mgr.get_pool_config()
+
+        assert pool == MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED, (
+            "Multi-model mode must still return the configured pool preset unchanged"
+        )
+
+    def test_single_model_mode_unknown_model_no_crash(self):
+        """Unknown model name in single-model mode falls back gracefully — no crash."""
+        from mcp_server.model_pool_manager import ModelPoolManager
+
+        mgr = ModelPoolManager()
+        cfg = self._make_config(
+            multi_model_enabled=False,
+            default_model="custom_model",
+            embedding_model="my-org/custom-embedding-model-v1",
+        )
+
+        with patch("search.config.get_search_config", return_value=cfg):
+            pool = mgr.get_pool_config()
+
+        assert pool == {"custom_model": "my-org/custom-embedding-model-v1"}, (
+            "Unknown model still produces a valid pool mapping — no crash"
+        )
+
+
 class TestLoadPoolEmbedderHelper:
     """Direct tests for the _load_pool_embedder private method."""
 

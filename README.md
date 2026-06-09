@@ -28,9 +28,9 @@
 
 ## Highlights
 
-- **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-05-25, 13 queries, k=7): **Hit@7 100%, MRR 0.806, Recall@7 0.700 (recommended k=7)** - [benchmarks](docs/BENCHMARKS.md)
+- **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-06-08, 13 queries, k=7): **Hit@5 100%, MRR 0.797, Recall@7 0.736 (recommended k=7)** - [benchmarks](docs/BENCHMARKS.md)
 - **Neural Reranking**: Cross-encoder models (default: `jinaai/jina-reranker-v3`; alternatives: BGE-reranker-v2-m3, gte-reranker-modernbert-base) improve ranking quality by 5-15% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
-- **SSCG Integration**: Structural-Semantic Code Graph — on the [SSCG benchmark](#benchmark-results) (2026-04-10, 13 queries, k=10; cutoffs @5/@10): **13/13 Hit@5 across all three modes (hybrid, BM25, semantic); BM25 MRR=0.846 (best overall)**
+- **SSCG Integration**: Structural-Semantic Code Graph — on the [SSCG benchmark](#benchmark-results) (2026-06-08, 13 queries, k=10): **13/13 Hit@5 across all three modes (hybrid, BM25, semantic); neural reranker active (all modes MRR 0.797); Hybrid best at deep recall (R@7 0.736, R@10 0.770)**
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
 - **Multi-Model Routing**: Intelligent query routing (Qwen3, BGE-M3, CodeRankEmbed) with 100% accuracy - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md)
 - **Layered Call-Graph Resolver Pipeline**: `find_connections` returns callers **and** callees with per-entry provenance (`resolver_source`, `resolver_confidence`). Confidence ladder: AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98. Install `pip install -e ".[callgraph]"` for pyan3 + LibCST; core is Apache-2.0-clean — [caller recall benchmark](docs/BENCHMARKS.md#caller-recall-benchmark)
@@ -239,13 +239,13 @@ start_mcp_server.cmd → 3 (Search Configuration)
 
 ## Search Modes
 
-Quality metrics below are from the [SSCG benchmark](#benchmark-results) (2026-04-10, 13 queries, k=10; cutoffs @5/@10). They describe mode performance on this benchmark only — not general reliability guarantees.
+Quality metrics below are from the [SSCG benchmark](#benchmark-results) (2026-06-08, 13 queries, k=10). They describe mode performance on this benchmark only — not general reliability guarantees.
 
-| Mode | Description | SSCG Quality (2026-04-10, k=10) | Status |
+| Mode | Description | SSCG Quality (2026-06-08, k=10) | Status |
 |------|-------------|-------------------------------|--------|
-| **hybrid** (default) | BM25 + Semantic fusion | MRR 0.800, R@5 0.622, R@10 0.833, Hit@5 100% | ✅ Operational |
-| **semantic** | Dense vector search | MRR 0.712, R@5 0.660, Hit@5 100% | ✅ Operational |
-| **bm25** | Text-based sparse search | MRR 0.846 (best overall), R@5 0.660, P@1 0.769, Hit@5 100% | ✅ Operational |
+| **hybrid** (default) | BM25 + Semantic fusion | MRR 0.797, R@5 0.689, R@7 0.736, R@10 0.770, Hit@5 100% | ✅ Operational |
+| **semantic** | Dense vector search | MRR 0.797, R@5 0.676, R@10 0.758, Hit@5 100% | ✅ Operational |
+| **bm25** | Text-based sparse search | MRR 0.797, R@5 0.689, R@10 0.777, Hit@5 100% | ✅ Operational |
 
 **Configuration**: See [Hybrid Search Configuration Guide](docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md)
 
@@ -439,27 +439,29 @@ claude-context-local/
 
 ## Benchmark Results
 
-### Latest Validation (2026-05-25, hybrid k=7)
+### Latest Validation (2026-06-08, hybrid k=10)
 
-Post-label-fix single-mode run. Recommended operating point: **k=7** (`golden_dataset.recommended_k=7`).
+Post golden-set drift fix (`b5cfc24`) and line-overlap harness fix (`184e13b`). Recommended operating point: **k=7** (`golden_dataset.recommended_k=7`). All metrics auto-computed by `scripts/benchmark/run_sscg_benchmark.py`. Thresholds enforced from `evaluation/golden_dataset.json`.
 
-| MRR | Recall@5 | Recall@7 | Hit@7 | vs pre-fix baseline (k=5) |
-|-----|----------|----------|-------|---------------------------|
-| **0.806** | **0.646** | **0.700** | **13/13 (100%)** | +0.203 MRR, +0.108 Recall@5 |
+| MRR | Recall@5 | Recall@7 | Recall@10 | Hit@5 | NDCG@5 | Line Recall | Line Precision | Line IoU |
+|-----|----------|----------|-----------|-------|--------|-------------|----------------|----------|
+| **0.797** | **0.689** | **0.736** | **0.770** | **13/13 (100%)** | **0.717** | 0.852 | 0.267 | 0.304 |
 
-### SSCG Mode Comparison (2026-04-10, three-mode, k=10)
+Thresholds: MRR ≥ 0.50 ✓ | Recall@5 ≥ 0.55 ✓ | Hit@5 ≥ 0.80 ✓
 
-All three modes evaluated against 13 queries; cutoffs reported at @5/@10. All pass thresholds (MRR ≥ 0.50, Recall@5 ≥ 0.55, Hit@5 ≥ 0.80):
+### SSCG Mode Comparison (2026-06-08, k=10)
 
-| Mode | MRR | Recall@5 | Recall@10 | Hit@5 | NDCG@10 | Best category |
-|------|-----|----------|-----------|-------|---------|---------------|
-| **BM25** | **0.846** | 0.660 | 0.712 | 13/13 (100%) | 0.709 | A: 0.90 (exact symbol lookup) |
-| **Hybrid** | 0.800 | 0.622 | **0.833** | 13/13 (100%) | **0.730** | A: 0.85 |
-| **Semantic** | 0.712 | 0.660 | 0.731 | 13/13 (100%) | 0.685 | C: 0.80 |
+All three modes evaluated against 13 queries with neural reranker active. The cross-encoder reranker dominates final ranking — all modes reach the same MRR (0.797). Hybrid leads on deep recall.
 
-**Key findings**: BM25 best for exact symbol lookup; Hybrid best at deep recall (R@10, NDCG@10); Semantic ties BM25 on Cat C (Class Overview). See `evaluation/golden_dataset.json` and `scripts/benchmark/mcp_eval.py` for details.
+| Mode | MRR | Recall@5 | Recall@7 | Recall@10 | Hit@5 | NDCG@5 | Best for |
+|------|-----|----------|----------|-----------|-------|--------|----------|
+| **Hybrid** (default) | 0.797 | **0.689** | **0.736** | 0.770 | 13/13 (100%) | **0.717** | Deep recall, balanced |
+| **BM25** | 0.797 | **0.689** | 0.723 | **0.777** | 13/13 (100%) | **0.717** | Exact symbol lookup |
+| **Semantic** | 0.797 | 0.676 | 0.723 | 0.758 | 13/13 (100%) | 0.705 | Concept/intent queries |
 
-See [benchmarks](docs/BENCHMARKS.md) for token efficiency results (63% reduction).
+**Key findings**: Reranker normalises MRR across modes. Hybrid leads on R@7 (0.736); BM25 highest raw R@10 (0.777). All modes Hit@5 = 100% (13/13). See `evaluation/golden_dataset.json` and `scripts/benchmark/run_sscg_benchmark.py` for details.
+
+See [benchmarks](docs/BENCHMARKS.md) for full SSCG retrieval metrics and token efficiency results (63% reduction).
 
 ## Troubleshooting
 

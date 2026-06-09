@@ -44,6 +44,25 @@ class ModelPoolManager:
             from search.config import get_search_config
 
             config = get_search_config()
+
+            # Single-model mode: build a single-entry pool from the configured model.
+            # This prevents a stale multi_model_pool value (e.g. "lightweight-speed" left
+            # over from another machine) from populating the active pool with models that
+            # exclude the actual operational model — which would cause every index
+            # reverse-lookup (get_model_key_from_name) to trip the cross-pool path and
+            # emit spurious [CROSS_POOL] INFO/WARNING logs on every search request.
+            if not config.routing.multi_model_enabled:
+                model_key = config.routing.default_model  # e.g. "qwen3_0.6b"
+                model_name = (
+                    config.embedding.model_name
+                )  # e.g. "Qwen/Qwen3-Embedding-0.6B"
+                logger.info(
+                    f"[SINGLE_MODEL] Using single model '{model_key}' ({model_name}) "
+                    f"— multi_model_enabled=false, ignoring multi_model_pool preset"
+                )
+                self._cached_pool_config = {model_key: model_name}
+                return dict(self._cached_pool_config)
+
             pool_type = config.routing.multi_model_pool
 
             if pool_type == "lightweight-speed":

@@ -1,7 +1,7 @@
 {
   "embedding": {
-    "model_name": "Qwen/Qwen3-Embedding-0.6B",
-    "dimension": 1024,
+    "model_name": "Alibaba-NLP/gte-modernbert-base",
+    "dimension": 768,
     "batch_size": 64,
     "query_cache_size": 128,
     "enable_import_context": true,
@@ -53,7 +53,7 @@
     "edge_weights": null
   },
   "routing": {
-    "multi_model_enabled": false,
+    "multi_model_enabled": true,
     "default_model": "qwen3_0.6b",
     "multi_model_pool": "lightweight-speed"
   },
@@ -74,7 +74,9 @@
   },
   "output": {
     "format": "ultra",
-    "source_order_output": true
+    "source_order_output": true,
+    "include_subgraph": false,
+    "include_result_graph": false
   },
   "chunking": {
     "min_chunk_tokens": 50,
@@ -163,7 +165,10 @@
     "capture_query_text": false
   },
   "call_graph": {
-    "resolvers": ["pyan", "libcst"],
+    "resolvers": [
+      "pyan",
+      "libcst"
+    ],
     "lsp_enabled": true,
     "lsp_timeout_seconds": 30.0,
     "use_pyproject_toml": true,

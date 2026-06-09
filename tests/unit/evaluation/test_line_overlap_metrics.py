@@ -7,6 +7,8 @@ including the range arithmetic helpers and the MetadataStore resolution utilitie
 import pytest
 
 from evaluation.metrics import (
+    THRESHOLDS,
+    aggregate_metrics,
     build_chunk_line_lookup,
     calculate_line_iou,
     calculate_line_precision,
@@ -397,3 +399,159 @@ class TestResolveChunkIdsToRanges:
             ["search/filters.py:function:normalize_path"], lookup
         )
         assert result == {"search/filters.py": [(22, 31)]}
+
+
+# ---------------------------------------------------------------------------
+# _extract_ranges_from_results  (regression: must read .metadata, not attrs)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractRangesFromResults:
+    """Regression tests for _extract_ranges_from_results.
+
+    The real HybridSearcher returns search.reranker.SearchResult whose only
+    fields are chunk_id/score/metadata/source/rank.  Line data lives inside
+    .metadata — NOT as top-level attributes.  Earlier code used getattr() on
+    top-level attrs and always returned {}, making all line-overlap metrics 0.
+    """
+
+    def _make_sr(self, chunk_id: str, meta: dict):
+        """Build a real reranker.SearchResult with the given metadata."""
+        from search.reranker import SearchResult
+
+        return SearchResult(chunk_id=chunk_id, score=1.0, metadata=meta)
+
+    def _extract(self, results):
+        from scripts.benchmark.run_sscg_benchmark import _extract_ranges_from_results
+
+        return _extract_ranges_from_results(results)
+
+    def test_reads_from_metadata_not_top_level_attrs(self):
+        """Core regression: line data in .metadata must produce non-empty output."""
+        sr = self._make_sr(
+            "search/config.py:function:foo",
+            {"relative_path": "search/config.py", "start_line": 10, "end_line": 20},
+        )
+        result = self._extract([sr])
+        assert result == {"search/config.py": [(10, 20)]}
+
+    def test_windows_backslash_path_normalized(self):
+        """Windows raw relative_path with backslashes must be normalized to forward slashes."""
+        sr = self._make_sr(
+            "search/config.py:function:foo",
+            {"relative_path": "search\\config.py", "start_line": 10, "end_line": 20},
+        )
+        result = self._extract([sr])
+        assert "search/config.py" in result
+        assert "search\\config.py" not in result
+        assert result["search/config.py"] == [(10, 20)]
+
+    def test_missing_line_fields_skipped(self):
+        """A result without start_line/end_line in metadata must be silently skipped."""
+        sr = self._make_sr(
+            "search/config.py:module:search",
+            {"relative_path": "search/config.py"},
+        )
+        result = self._extract([sr])
+        assert result == {}
+
+    def test_zero_line_fields_skipped(self):
+        """A module-summary result with start=0/end=0 must be silently skipped."""
+        sr = self._make_sr(
+            "search/config.py:module:search",
+            {"relative_path": "search/config.py", "start_line": 0, "end_line": 0},
+        )
+        result = self._extract([sr])
+        assert result == {}
+
+    def test_multiple_results_grouped_by_file(self):
+        """Multiple results in the same file should be grouped under one path key."""
+        sr1 = self._make_sr(
+            "search/config.py:function:foo",
+            {"relative_path": "search/config.py", "start_line": 1, "end_line": 10},
+        )
+        sr2 = self._make_sr(
+            "search/config.py:function:bar",
+            {"relative_path": "search/config.py", "start_line": 12, "end_line": 20},
+        )
+        result = self._extract([sr1, sr2])
+        assert "search/config.py" in result
+        assert (1, 10) in result["search/config.py"]
+        assert (12, 20) in result["search/config.py"]
+
+    def test_empty_results_returns_empty_dict(self):
+        assert self._extract([]) == {}
+
+    def test_non_numeric_start_line_skipped(self):
+        """Non-numeric metadata values must not raise ValueError — silently skip."""
+        sr = self._make_sr(
+            "search/config.py:function:foo",
+            {"relative_path": "search/config.py", "start_line": "N/A", "end_line": 20},
+        )
+        result = self._extract([sr])
+        assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# aggregate_metrics — thresholds override contract (b5cfc24)
+# ---------------------------------------------------------------------------
+
+
+class TestAggregateMetricsThresholds:
+    """Tests for the aggregate_metrics(thresholds=...) JSON-override contract.
+
+    The module constant THRESHOLDS has recall_at_5 = 0.70 (high bar).
+    The golden_dataset.json ships thresholds.recall_at_5 = 0.55 (lower bar).
+    The merge ``_thresholds = {**THRESHOLDS, **(thresholds or {})}`` means the
+    JSON value wins for supplied keys; module constant is the fallback.
+    """
+
+    def _minimal_query(self, recall5: float, hit: bool) -> dict:
+        """Minimal per-query dict that satisfies aggregate_metrics float_keys."""
+        return {
+            "recall@1": 0.0,
+            "recall@5": recall5,
+            "recall@7": 0.0,
+            "recall@10": 0.0,
+            "precision@1": 0.0,
+            "precision@5": 0.0,
+            "precision@10": 0.0,
+            "mrr": 0.6,  # above THRESHOLDS["mrr"] = 0.50 → always PASS
+            "ndcg@5": 0.0,
+            "ndcg@10": 0.0,
+            "hit": hit,
+            "hit@7": hit,
+        }
+
+    def test_module_constant_fails_low_recall(self):
+        """Without override, recall@5 < 0.70 (module constant) → FAIL."""
+        per_query = [self._minimal_query(recall5=0.60, hit=True)]
+        result = aggregate_metrics(per_query)
+        assert result["pass_fail"]["recall@5"] == "FAIL"
+
+    def test_json_override_passes_low_recall(self):
+        """With JSON override recall_at_5=0.55, same 0.60 score → PASS."""
+        per_query = [self._minimal_query(recall5=0.60, hit=True)]
+        result = aggregate_metrics(per_query, thresholds={"recall_at_5": 0.55})
+        assert result["pass_fail"]["recall@5"] == "PASS"
+
+    def test_unspecified_keys_fall_back_to_module_constant(self):
+        """Keys absent from the override dict must use THRESHOLDS as fallback."""
+        per_query = [self._minimal_query(recall5=0.60, hit=True)]
+        # Only override recall_at_5; mrr and hit_rate_at_5 must use module constants
+        result = aggregate_metrics(per_query, thresholds={"recall_at_5": 0.55})
+        # mrr is 0.6, THRESHOLDS["mrr"] is 0.50 → PASS (fallback in effect)
+        assert result["pass_fail"]["mrr"] == "PASS"
+
+    def test_none_thresholds_behaves_as_module_constant(self):
+        """Passing thresholds=None must behave identically to the module constant."""
+        per_query = [self._minimal_query(recall5=0.60, hit=True)]
+        default_result = aggregate_metrics(per_query)
+        explicit_none_result = aggregate_metrics(per_query, thresholds=None)
+        assert default_result["pass_fail"] == explicit_none_result["pass_fail"]
+
+    def test_module_thresholds_dict_contents(self):
+        """Sanity: the module THRESHOLDS constant must contain the expected keys."""
+        assert "mrr" in THRESHOLDS
+        assert "recall_at_5" in THRESHOLDS
+        assert "hit_rate_at_5" in THRESHOLDS

@@ -2,15 +2,31 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-06-03)
+## Current Status: All Features Operational (2026-06-08)
 
-- **Version**: 0.15.0
+- **Version**: 0.15.0 + unreleased benchmark fixes
 - **Status**: Production-ready
 - **Test Coverage**: 2,495 unit tests + 19 integration tests (100% pass rate)
 - **Dependencies**: 124 packages + optional `[callgraph]` / `[lsp]` extras
-- **SSCG Benchmark**: MRR=0.94, Recall@4=0.89 (12/13 perfect rank-1), Hit@7=1.00
+- **SSCG Benchmark**: MRR 0.797, Recall@5 0.689, Recall@7 0.736, Hit@5 100% — all three modes pass thresholds (2026-06-08)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent**: 0.15.0 — LSP resolver repair (0→938 edges), precision tuning, `min_confidence`/`use_pyproject_toml`, CALL_GRAPH_TUNING.md
+- **Recent**: post-0.15.0 — golden-set drift fix (Q05/Q35), line-overlap harness fix (LR/LP/LIoU were 0.000), recall@7/hit_rate@7 auto-computed, JSON thresholds gate
+
+---
+
+## Unreleased — Benchmark Harness Fixes (post-0.15.0, 2026-06-08)
+
+Evaluation harness correctness fixes and golden-set maintenance. No change to search runtime behavior.
+
+### Fixed
+
+- **Line-overlap metrics returned 0.000 for every query** (`184e13b`) — `_extract_ranges_from_results` read line data as top-level attributes on `search.reranker.SearchResult`, which stores them in `.metadata`. Fixed to read `r.metadata.get(...)` with forward-slash path normalization. Real values: LR 0.852, LP 0.267, LIoU 0.304 (hybrid, 13-query SSCG set).
+- **SSCG golden-set drift** (`b5cfc24`) — removed stale `search/filters.py:function:normalize_path` from Q05 (moved to `utils/path_utils.py`; its presence capped Q05 Recall at 0.67); cleaned two MISSING distractors from Q35 `relevance_grades`.
+- **Pass/fail gate now enforces JSON thresholds** (`b5cfc24`) — `aggregate_metrics` previously hardcoded the module constant; now reads `thresholds` from `golden_dataset.json` (recall_at_5 = 0.55).
+
+### Added
+
+- `recall@7` / `hit_rate@7` auto-computed by the benchmark runner (`b5cfc24`); previously manual figures only.
 
 ---
 
