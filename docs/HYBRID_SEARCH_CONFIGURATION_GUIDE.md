@@ -17,7 +17,7 @@ The Claude Context MCP system now includes **hybrid search capabilities** that c
 
 - **Reciprocal Rank Fusion (RRF)** combines results from multiple search methods
 - **Complementary strengths**: BM25 for exact text matches, dense search for semantic similarity
-- **Proven quality metrics**: 44.4% precision, 46.7% F1-score, 100% MRR (see [BENCHMARKS.md](BENCHMARKS.md))
+- **Proven quality metrics**: MRR 0.797, Recall@5 0.689, Hit@5 100% (see [SSCG Retrieval Benchmark](BENCHMARKS.md#sscg-retrieval-benchmark))
 - **Configurable weights** to tune for your specific use case
 - **Auto-mode detection** based on query characteristics
 

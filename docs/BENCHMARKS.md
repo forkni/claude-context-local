@@ -461,6 +461,61 @@ The Mixed approach demonstrates that **MCP semantic search is production-ready**
 
 ---
 
+## SSCG Retrieval Benchmark
+
+**Added**: v0.9.0 | **Last run**: 2026-06-08
+
+Measures end-to-end retrieval quality for `search_code` queries: how well the ranked results cover the labeled relevant chunks for each query.
+
+### Dataset
+
+Golden dataset: `evaluation/golden_dataset.json` — 13 queries (Q01–Q35) across 4 categories:
+- **Category A** — Small function discovery (exact symbol lookup)
+- **Category B** — Sibling context (related functions / pairs)
+- **Category C** — Class overview (class + key methods)
+- **Category D** — Connection queries (callers, impact)
+
+Relevance grades: 3 = primary target, 2 = expected, 1 = acceptable, 0 = distractor. Recall/MRR/NDCG are computed on grade ≥ 2 items; MRR uses grade = 3 items.
+
+**Runner**: `scripts/benchmark/run_sscg_benchmark.py` (shell wrapper: `scripts/benchmark/run_benchmark.sh`)
+
+### Results (2026-06-08, k=10, neural reranker active)
+
+| Mode | MRR | Recall@5 | Recall@7 | Recall@10 | Hit@5 | NDCG@5 | Line Recall | Line Precision | Line IoU |
+|------|-----|----------|----------|-----------|-------|--------|-------------|----------------|----------|
+| **Hybrid** (default) | **0.797** | **0.689** | **0.736** | 0.770 | 13/13 (100%) | **0.717** | 0.852 | 0.267 | 0.304 |
+| **BM25** | **0.797** | **0.689** | 0.723 | **0.777** | 13/13 (100%) | **0.717** | 0.852 | 0.270 | 0.308 |
+| **Semantic** | **0.797** | 0.676 | 0.723 | 0.758 | 13/13 (100%) | 0.705 | 0.852 | 0.268 | 0.303 |
+
+**Thresholds** (from `golden_dataset.json`): MRR ≥ 0.50 ✓ | Recall@5 ≥ 0.55 ✓ | Hit@5 ≥ 0.80 ✓
+
+**Line-overlap metrics** (LR/LP/LIoU) — Chroma-style source-line coverage between retrieved chunks and the expected primary set:
+- **Line Recall (LR 0.852)**: 85% of expected source lines are present in the top-k retrieved chunks.
+- **Line Precision (LP 0.267)**: 27% of retrieved source lines are relevant; low LP is expected since chunks contain surrounding context beyond the target function/class.
+- **Line IoU (LIoU ~0.304)**: intersection / union; lower than LR due to context overhead in chunks.
+
+### Key Findings
+
+- **Reranker-dominated**: the neural cross-encoder reranker normalises final ordering — all three modes reach the same MRR (0.797) and HR@5 (100%). BM25/dense weighting affects pre-rerank order only.
+- **Hybrid** best for comprehensive coverage (R@7 0.736); **BM25** highest raw R@10 (0.777) and fastest (~5ms).
+- **Recommended k**: 7 (`golden_dataset.recommended_k=7`). k=5 may miss targets ranked 6–7.
+
+### Running the Benchmark
+
+```bash
+# Default (hybrid mode):
+./scripts/benchmark/run_benchmark.sh --project-path <project-path>
+
+# Specific mode:
+./scripts/benchmark/run_benchmark.sh --project-path <project-path> --search-mode bm25
+./scripts/benchmark/run_benchmark.sh --project-path <project-path> --search-mode semantic
+
+# Weight sweep (4 BM25/dense splits, default k=10):
+./scripts/benchmark/run_benchmark.sh --project-path <project-path> --sweep
+```
+
+---
+
 ## Caller Recall Benchmark
 
 **Added**: v0.13.0

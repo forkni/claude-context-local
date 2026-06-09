@@ -1,56 +1,75 @@
 # Search Performance & Benchmark Reference
 
-## Latest Validation (2026-05-25, hybrid k=7)
+## Latest Validation (2026-06-08, hybrid k=10)
 
-Single-mode hybrid run after Q01/Q05/Q19 label corrections. Recommended operating point: **k=7** (some targets rank 6–7; `golden_dataset.recommended_k=7`).
+Post golden-set drift fix (`b5cfc24`) and line-overlap harness fix (`184e13b`). Thresholds enforced from `evaluation/golden_dataset.json`. Metrics auto-computed by `scripts/benchmark/run_sscg_benchmark.py`.
 
-| MRR | Recall@5 | Recall@7 | Hit@7 |
-|-----|----------|----------|-------|
-| **0.806** | **0.646** | **0.700** | **1.00** (13/13) |
+| MRR | Recall@5 | Recall@7 | Recall@10 | Hit@5 | NDCG@5 | Line Recall | Line Precision | Line IoU |
+|-----|----------|----------|-----------|-------|--------|-------------|----------------|----------|
+| **0.797** | **0.689** | **0.736** | **0.770** | **1.00** (13/13) | **0.717** | 0.852 | 0.267 | 0.304 |
 
-All thresholds pass: MRR ≥ 0.50 ✓ | Recall@5 ≥ 0.55 ✓ | Hit@7 ≥ 0.80 ✓. Pre-label-fix baseline (k=5): MRR 0.603, Recall@5 0.538.
+All thresholds pass: MRR ≥ 0.50 ✓ | Recall@5 ≥ 0.55 ✓ | Hit@5 ≥ 0.80 ✓. Recommended operating point: **k=7** (`golden_dataset.recommended_k=7`).
 
 ---
 
-## SSCG Benchmark (2026-04-10, three-mode comparison)
+## SSCG Benchmark (2026-06-08, three-mode comparison)
 
-Mode-comparison baseline. Evaluated against 13 queries across 4 categories on this project's own codebase. All three modes pass all thresholds.
+Mode-comparison baseline. Evaluated against 13 queries across 4 categories with neural reranker active. The cross-encoder reranker dominates final ranking — all three modes reach the same MRR (0.797).
 
 **Thresholds:** MRR ≥ 0.50 | Recall@5 ≥ 0.55 | Hit@5 ≥ 0.80
 
-| Mode | MRR | Recall@5 | Recall@10 | Hit@5 | NDCG@10 | P@1 | Best category |
-|------|-----|----------|-----------|-------|---------|-----|---------------|
-| **BM25** | **0.846** | 0.660 | 0.712 | 13/13 (100%) | 0.709 | **0.769** | A: 0.90 |
-| **Hybrid** | 0.800 | 0.622 | **0.833** | 13/13 (100%) | **0.730** | 0.692 | A: 0.85 |
-| **Semantic** | 0.712 | 0.660 | 0.731 | 13/13 (100%) | 0.685 | 0.692 | C: 0.80 |
+| Mode | MRR | Recall@5 | Recall@7 | Recall@10 | Hit@5 | NDCG@5 | Best for |
+|------|-----|----------|----------|-----------|-------|--------|----------|
+| **Hybrid** (default) | 0.797 | **0.689** | **0.736** | 0.770 | 13/13 (100%) | **0.717** | Deep recall, balanced |
+| **BM25** | 0.797 | **0.689** | 0.723 | **0.777** | 13/13 (100%) | **0.717** | Exact symbol lookup |
+| **Semantic** | 0.797 | 0.676 | 0.723 | 0.758 | 13/13 (100%) | 0.705 | Concept/intent queries |
 
 **Key findings:**
-- **BM25**: Best for exact symbol lookup (Cat A: 0.90, MRR 0.846). Fastest mode.
-- **Hybrid**: Best at deep recall — R@10 = 0.833, NDCG@10 = 0.730. Best for architectural/conceptual queries.
-- **Semantic**: Ties BM25 on Cat C (Class Overview: 0.80). Underperforms on Cat A (exact symbols: 0.60).
-- **All modes**: 100% Hit@5 **on this 13-query SSCG benchmark** — the labeled target appeared in the top 5 for every query. This is not a general reliability guarantee; treat it as a mode-comparison baseline, not a property of arbitrary future queries.
+- **Reranker-dominated**: all modes reach MRR 0.797 and Hit@5 100%; individual BM25/dense weighting affects pre-rerank order only.
+- **Hybrid**: best at deep recall — R@7 = 0.736, R@10 = 0.770. Default and recommended for general use.
+- **BM25**: highest raw R@10 = 0.777. Fastest mode (~5ms vs ~85ms hybrid).
+- **Semantic**: slightly lower R@5/R@10 on this benchmark; useful for pure intent/concept queries.
+- **All modes**: 100% Hit@5 on this 13-query benchmark. Treat as a mode-comparison baseline, not a general reliability guarantee.
 
-**Note on `k`:** Benchmark runs were executed with `k=10` (visible in the filenames below) — so each query retrieved 10 ranked results. The reported metrics `Hit@5` / `Recall@5` / `P@1` are cutoff metrics computed from those same ranked lists at the given cutoff. Running with `k=10` does not change the `@5` values; it just also lets us report `@10`.
+**Note on `k`:** Benchmark runs use `k=10` — metrics at `@5`/`@7`/`@10` are cutoff statistics from those ranked lists. Running at `k=10` does not change `@5` values.
 
 **Source files:**
 - `evaluation/golden_dataset.json` — 13 queries, labels, thresholds, metadata
-- `benchmark_results/sscg_mcp_bm25_k10_20260410_175903.json`
-- `benchmark_results/sscg_mcp_hybrid_k10_20260410_175331.json`
-- `benchmark_results/sscg_mcp_semantic_k10_20260410_175331.json`
+- `scripts/benchmark/run_sscg_benchmark.py` — runner (supports `--search-mode {hybrid,bm25,semantic}`)
+- `scripts/benchmark/run_benchmark.sh` — shell wrapper
 
 **Re-run benchmark:**
 
-Replace `<project-path>` with the path to the project you want to evaluate. From the repo root of this project, pass `.` to re-run on itself.
-
 ```bash
-# Run all three modes (hybrid, bm25, semantic):
+# Single mode (default hybrid):
 ./scripts/benchmark/run_benchmark.sh --project-path <project-path>
 
-# Or run a single mode directly (cwd = repo root):
-.venv/Scripts/python scripts/benchmark/mcp_eval.py --mode hybrid
-.venv/Scripts/python scripts/benchmark/mcp_eval.py --mode bm25
-.venv/Scripts/python scripts/benchmark/mcp_eval.py --mode semantic
+# Specific mode:
+./scripts/benchmark/run_benchmark.sh --project-path <project-path> --search-mode bm25
+./scripts/benchmark/run_benchmark.sh --project-path <project-path> --search-mode semantic
+
+# Weight sweep (4 BM25/dense splits):
+./scripts/benchmark/run_benchmark.sh --project-path <project-path> --sweep
 ```
+
+---
+
+## Line-Overlap Metrics (LR / LP / LIoU)
+
+In addition to chunk-level Recall/MRR/NDCG, the runner computes **Chroma-style line-range overlap** between retrieved chunks and the golden `expected_primary` set.
+
+| Metric | Symbol | Aggregate (hybrid, 2026-06-08) |
+|--------|--------|-------------------------------|
+| Line Recall | LR | **0.852** |
+| Line Precision | LP | **0.267** |
+| Line IoU | LIoU | **0.304** |
+
+**Interpretation:**
+- **LR 0.852** — 85% of the expected source lines appear in the top-k retrieved chunks.
+- **LP 0.267** — 27% of the retrieved source lines are relevant (rest are context overhead from surrounding code in the same chunks).
+- **LIoU 0.304** — intersection / union of line sets; lower than LR because retrieved chunks contain broader context.
+
+Low LP / LIoU relative to LR is expected: code chunks span whole functions/classes, so retrieving the right chunk always brings surrounding lines. The high LR (0.852) confirms the search is surfacing the correct file regions.
 
 ---
 
@@ -69,8 +88,8 @@ Replace `<project-path>` with the path to the project you want to evaluate. From
 
 ## Result Reliability
 
-- **Hit@7 = 100% on the 2026-05-25 13-query SSCG benchmark** (hybrid, k=7). The three-mode 2026-04-10 run also achieved 100% Hit@5 at k≥5. These are mode-comparison baselines, not general reliability guarantees for arbitrary queries.
-- **Why k=7 over k=5:** targets like `FaissVectorIndex.__init__` consistently rank 6–7; k=5 misses them. The `golden_dataset.recommended_k=7` reflects this.
-- **Rank-1 reliability:** BM25 highest (P@1 = 0.769), semantic/hybrid lower (P@1 = 0.692). Always scan all k results before concluding.
+- **Hit@5 = 100% on the 2026-06-08 13-query SSCG benchmark** (all three modes, k=7). This is a mode-comparison baseline, not a general reliability guarantee for arbitrary queries.
+- **Why k=7 over k=5:** targets may rank 6–7 on complex or multi-target queries. The `golden_dataset.recommended_k=7` reflects this.
+- **Rank-1 reliability:** all modes have P@1 ≈ 0.69 (MRR 0.797 — not all primaries rank first). Always scan all k results before concluding.
 - **When rank-1 is most reliable:** exact symbol lookup, small function discovery ("get X", "validate Y").
 - **When you must scan all results:** class overview, sibling pairs ("encode and decode", "save and load"), queries where module/community summary chunks may surface.

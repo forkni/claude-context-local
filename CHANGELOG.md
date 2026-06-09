@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Line-overlap metrics returned 0.000 for every query** (`184e13b`, `scripts/benchmark/run_sscg_benchmark.py`) — `_extract_ranges_from_results` read `relative_path`/`start_line`/`end_line` as top-level attributes but `HybridSearcher` returns `search.reranker.SearchResult` whose line data lives in `.metadata`. Fixed to read `r.metadata.get(...)` with forward-slash path normalization. Regression test added in `tests/unit/evaluation/test_line_overlap_metrics.py` at the real seam (`reranker.SearchResult` with Windows-style backslash path). Line-overlap now reports real values (LR 0.852, LP 0.267, LIoU 0.304 hybrid aggregate, 2026-06-08). Also normalized path separators in `evaluation/metrics.py:build_chunk_line_lookup`.
+- **SSCG golden-set drift** (`b5cfc24`, `evaluation/golden_dataset.json`) — removed stale `search/filters.py:function:normalize_path` from Q05 `expected`/`expected_primary`/`relevance_grades` (symbol moved to `utils/path_utils.py`; its presence as a grade-3 expected item capped Q05 Recall at 0.67); cleaned two MISSING distractors from Q35 `relevance_grades` (`get_resource_manager`, `ResourceManager.cleanup_previous_resources`).
+- **SSCG pass/fail gate now enforces JSON thresholds** (`b5cfc24`, `evaluation/metrics.py:aggregate_metrics`) — the gate previously hardcoded the module-level `THRESHOLDS` constant, ignoring the `thresholds` block in `golden_dataset.json`. Now uses `aggregate_metrics(per_query, thresholds=dataset.get("thresholds"))` so the JSON becomes the single source of truth; the module constant is a fallback only.
+
+### Added
+
+- **`recall@7` / `hit_rate@7`** auto-computed by the benchmark runner (`b5cfc24`, `evaluation/metrics.py`, `scripts/benchmark/run_sscg_benchmark.py`) — these metrics were previously manual figures; the runner now emits them automatically alongside @5 and @10.
+
 ---
 
 ## [0.15.0] - 2026-06-03

@@ -3656,7 +3656,7 @@ The Structural-Semantic Code Graph (SSCG) is a comprehensive 5-phase integration
 - **21 relationship types** tracked in code graph
 - **~90% call graph accuracy** for Python projects
 - **4,599 relationship edges** in production indices
-- **Perfect Recall@4 (1.00)** on SSCG benchmark
+- **Recall@5 0.689, Hit@5 100%** on SSCG benchmark (2026-06-08)
 
 ---
 
@@ -3695,7 +3695,7 @@ Centrality reranking is **always-on** when graph data is available. No configura
 
 ### Status
 
-**Production-ready**: Validated in SSCG benchmark with perfect Recall@4 (1.00).
+**Production-ready**: Validated in SSCG benchmark with Hit@5 100%, MRR 0.797 (2026-06-08).
 
 ---
 
