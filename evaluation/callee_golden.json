@@ -1,0 +1,76 @@
+{
+  "_meta": {
+    "description": "Golden callee (outbound) dataset for direct-callee recall benchmarking",
+    "usage": "Run scripts/benchmark/run_caller_recall.sh run --project-path ... --direction callees to evaluate",
+    "normalization": "Chunk IDs normalized (line ranges stripped via evaluation/metrics.py:normalize_chunk_id)",
+    "format": "target_chunk_id → list of expected direct-callee chunk IDs",
+    "total_queries": 7,
+    "categories": {
+      "E": "Exact callees (hand-curated, high confidence)"
+    },
+    "relevance_scale": "All entries in expected_callees are grade=2 (direct callee confirmed by code reading)"
+  },
+  "queries": [
+    {
+      "id": "OB01",
+      "category": "E",
+      "description": "run_resolvers calls sorted(), resolver.available(), resolver.resolve(), dict.get()",
+      "target_chunk_id": "chunking/relationships/call_edge_resolver.py:function:run_resolvers",
+      "expected_callees": [
+        "chunking/relationships/call_edge_resolver.py:method:CallEdgeResolver.available",
+        "chunking/relationships/call_edge_resolver.py:method:CallEdgeResolver.resolve"
+      ]
+    },
+    {
+      "id": "OB02",
+      "category": "E",
+      "description": "PyanResolver.resolve calls gather_py_files, scope_to_indexed_files, validate_py_files",
+      "target_chunk_id": "chunking/relationships/external_call_graph.py:method:PyanResolver.resolve",
+      "expected_callees": [
+        "chunking/relationships/call_edge_resolver.py:function:gather_py_files",
+        "chunking/relationships/call_edge_resolver.py:function:scope_to_indexed_files",
+        "chunking/relationships/call_edge_resolver.py:function:validate_py_files"
+      ]
+    },
+    {
+      "id": "OB03",
+      "category": "E",
+      "description": "_inject_call_edges calls run_resolvers and storage.upgrade_call_edge",
+      "target_chunk_id": "search/index_write_stage.py:method:IndexWriteStage._inject_call_edges",
+      "expected_callees": [
+        "chunking/relationships/call_edge_resolver.py:function:run_resolvers",
+        "graph/graph_storage.py:method:CodeGraphStorage.upgrade_call_edge"
+      ]
+    },
+    {
+      "id": "OB04",
+      "category": "E",
+      "description": "_enrich_callees calls get_by_chunk_id and _resolve_by_symbol",
+      "target_chunk_id": "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_callees",
+      "expected_callees": [
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_by_symbol"
+      ]
+    },
+    {
+      "id": "OB05",
+      "category": "E",
+      "description": "gather_py_files calls project_root.rglob",
+      "target_chunk_id": "chunking/relationships/call_edge_resolver.py:function:gather_py_files",
+      "expected_callees": []
+    },
+    {
+      "id": "OB06",
+      "category": "E",
+      "description": "scope_to_indexed_files calls Path(fn).resolve().relative_to(project_root)",
+      "target_chunk_id": "chunking/relationships/call_edge_resolver.py:function:scope_to_indexed_files",
+      "expected_callees": []
+    },
+    {
+      "id": "OB07",
+      "category": "E",
+      "description": "upgrade_call_edge calls graph.edges[...].update",
+      "target_chunk_id": "graph/graph_storage.py:method:CodeGraphStorage.upgrade_call_edge",
+      "expected_callees": []
+    }
+  ]
+}

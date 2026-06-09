@@ -611,13 +611,17 @@ class SearchOrchestrator:
         )
 
         index_manager = _get_index_manager_from_searcher(outcome.searcher)
+        output_cfg = outcome.effective_config.output
 
-        # Block E: format + enrich
-        formatted_results = _enrich_results_with_graph_data(
-            _format_search_results(outcome.results), index_manager
-        )
+        # Block E: format + enrich (per-result graph gated by include_result_graph)
+        formatted_results = _format_search_results(outcome.results)
+        if output_cfg.include_result_graph:
+            formatted_results = _enrich_results_with_graph_data(
+                formatted_results, index_manager
+            )
 
         # Blocks F–G: centrality scoring, cap, SSCG subgraph extraction
+        # subgraph_data is always computed (ego_graph drives ranking), only serialization is gated
         formatted_results, subgraph_data = self._graph_scoring_stage.run(
             plan.query,
             plan.intent_decision,
@@ -633,8 +637,9 @@ class SearchOrchestrator:
             plan, outcome, formatted_results
         )
 
-        # Block I: response assembly
-        return self._build_response(plan, formatted_results, subgraph_data)
+        # Block I: response assembly (subgraph serialization gated by include_subgraph)
+        subgraph_for_response = subgraph_data if output_cfg.include_subgraph else None
+        return self._build_response(plan, formatted_results, subgraph_for_response)
 
     # ---------------------------------------------------------------------------
     # Phase D: run driver

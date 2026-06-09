@@ -16,6 +16,7 @@ from typing import Any
 # Matches: "file/path.py:123-456:type:name" → "file/path.py:type:name"
 # Also handles module chunks: "file/path.py:1-8:module" → "file/path.py:module"
 _LINE_RANGE_RE = re.compile(r":\d+-\d+:")
+_SPLIT_BLOCK_RE = re.compile(r":split_block:")
 
 THRESHOLDS = {
     "mrr": 0.50,
@@ -25,10 +26,10 @@ THRESHOLDS = {
 
 
 def normalize_chunk_id(chunk_id: str) -> str:
-    """Strip line-range component from a chunk ID for stable comparison.
+    """Strip line-range component and normalize split_block type from a chunk ID.
 
-    Line numbers shift as code evolves. Comparison uses only the stable
-    ``file_path:type:name`` portion.
+    Line numbers shift as code evolves; split_block is a structural detail.
+    Comparison uses only the stable ``file_path:type:name`` portion.
 
     Examples::
 
@@ -37,8 +38,12 @@ def normalize_chunk_id(chunk_id: str) -> str:
 
         "merkle/__init__.py:1-8:module"
         → "merkle/__init__.py:module"
+
+        "graph/graph_integration.py:276-310:split_block:GraphIntegration.populate_from_embeddings"
+        → "graph/graph_integration.py:method:GraphIntegration.populate_from_embeddings"
     """
-    return _LINE_RANGE_RE.sub(":", chunk_id, count=1)
+    result = _LINE_RANGE_RE.sub(":", chunk_id, count=1)
+    return _SPLIT_BLOCK_RE.sub(":method:", result)
 
 
 def normalize_chunk_ids(chunk_ids: list[str]) -> list[str]:
@@ -138,7 +143,7 @@ def calculate_metrics_from_results(
     retrieved: list[str],
     expected: list[str],
     expected_primary: list[str] | None = None,
-) -> dict[str, float]:
+) -> dict[str, float | bool]:
     """Calculate all retrieval metrics for a single query.
 
     Args:
@@ -148,13 +153,16 @@ def calculate_metrics_from_results(
             Falls back to ``expected`` if not provided (for MRR calculation).
 
     Returns:
-        Dict with keys: recall@1, recall@5, recall@10, precision@1,
-        precision@5, precision@10, mrr, ndcg@5, ndcg@10, hit.
+        Dict with keys: recall@1, recall@5, recall@7, recall@10, precision@1,
+        precision@5, precision@10, mrr, ndcg@5, ndcg@10, hit, hit@7.
     """
     primary = expected_primary if expected_primary is not None else expected
+    recall_5 = calculate_recall_at_k(retrieved, expected, 5)
+    recall_7 = calculate_recall_at_k(retrieved, expected, 7)
     return {
         "recall@1": calculate_recall_at_k(retrieved, expected, 1),
-        "recall@5": calculate_recall_at_k(retrieved, expected, 5),
+        "recall@5": recall_5,
+        "recall@7": recall_7,
         "recall@10": calculate_recall_at_k(retrieved, expected, 10),
         "precision@1": calculate_precision_at_k(retrieved, expected, 1),
         "precision@5": calculate_precision_at_k(retrieved, expected, 5),
@@ -162,15 +170,25 @@ def calculate_metrics_from_results(
         "mrr": calculate_mrr(retrieved, primary),
         "ndcg@5": calculate_ndcg_at_k(retrieved, expected, 5),
         "ndcg@10": calculate_ndcg_at_k(retrieved, expected, 10),
-        "hit": calculate_recall_at_k(retrieved, expected, 5) > 0,
+        "hit": recall_5 > 0,
+        "hit@7": recall_7 > 0,
     }
 
 
-def aggregate_metrics(per_query: list[dict[str, Any]]) -> dict[str, Any]:
+def aggregate_metrics(
+    per_query: list[dict[str, Any]],
+    thresholds: dict | None = None,
+) -> dict[str, Any]:
     """Compute aggregate statistics across all per-query metric dicts.
 
     Args:
         per_query: List of dicts, each from ``calculate_metrics_from_results``.
+        thresholds: Optional threshold dict (keys: mrr, recall_at_5,
+            hit_rate_at_5). When provided, its values override the module-level
+            ``THRESHOLDS`` constant for the ``pass_fail`` assessment.  Pass
+            ``dataset.get("thresholds")`` to honour the golden-dataset JSON
+            thresholds instead of the hardcoded module constant.  Falls back to
+            ``THRESHOLDS`` for any keys not present in the override.
 
     Returns:
         Aggregate dict with means, pass/fail assessment, and counts.
@@ -181,6 +199,7 @@ def aggregate_metrics(per_query: list[dict[str, Any]]) -> dict[str, Any]:
     float_keys = [
         "recall@1",
         "recall@5",
+        "recall@7",
         "recall@10",
         "precision@1",
         "precision@5",
@@ -192,6 +211,7 @@ def aggregate_metrics(per_query: list[dict[str, Any]]) -> dict[str, Any]:
     agg: dict[str, Any] = {
         "total_queries": len(per_query),
         "success_count": sum(1 for q in per_query if q.get("hit", False)),
+        "success_count@7": sum(1 for q in per_query if q.get("hit@7", False)),
     }
     for key in float_keys:
         # Use 0.0 for queries missing a key (e.g. error rows) so they count
@@ -200,12 +220,14 @@ def aggregate_metrics(per_query: list[dict[str, Any]]) -> dict[str, Any]:
         agg[key] = round(mean(vals), 4) if vals else 0.0
 
     agg["hit_rate@5"] = round(agg["success_count"] / agg["total_queries"], 4)
+    agg["hit_rate@7"] = round(agg["success_count@7"] / agg["total_queries"], 4)
 
+    _thresholds = {**THRESHOLDS, **(thresholds or {})}
     agg["pass_fail"] = {
-        "mrr": "PASS" if agg["mrr"] >= THRESHOLDS["mrr"] else "FAIL",
-        "recall@5": "PASS" if agg["recall@5"] >= THRESHOLDS["recall_at_5"] else "FAIL",
+        "mrr": "PASS" if agg["mrr"] >= _thresholds["mrr"] else "FAIL",
+        "recall@5": "PASS" if agg["recall@5"] >= _thresholds["recall_at_5"] else "FAIL",
         "hit_rate@5": "PASS"
-        if agg["hit_rate@5"] >= THRESHOLDS["hit_rate_at_5"]
+        if agg["hit_rate@5"] >= _thresholds["hit_rate_at_5"]
         else "FAIL",
     }
 
@@ -428,7 +450,7 @@ def build_chunk_line_lookup(
     lookup: dict[str, tuple[str, int, int]] = {}
     for raw_id, entry in metadata_store.items():
         meta = entry.get("metadata", {})
-        path = meta.get("relative_path", "")
+        path = (meta.get("relative_path", "") or "").replace("\\", "/")
         start = meta.get("start_line") or 0
         end = meta.get("end_line") or 0
         if path and start and end:

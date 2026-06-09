@@ -232,7 +232,8 @@ def init_observability(cfg: ObservabilityConfig) -> None:
         )
     except Exception as exc:
         logger.warning(
-            f"[OTEL] Failed to initialize tracing: {exc} — continuing without"
+            f"[OTEL] Failed to initialize tracing: {exc} — continuing without",
+            exc_info=True,
         )
 
 

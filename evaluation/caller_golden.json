@@ -1,0 +1,87 @@
+{
+  "_meta": {
+    "description": "Golden caller dataset for direct-caller recall benchmarking",
+    "usage": "Run scripts/benchmark/build_caller_oracle.py to regenerate from PyCG + ripgrep",
+    "normalization": "Chunk IDs normalized (line ranges stripped via evaluation/metrics.py:normalize_chunk_id)",
+    "format": "target_chunk_id → list of expected direct-caller chunk IDs",
+    "total_queries": 7,
+    "categories": {
+      "E": "Exact callers (hand-curated, high confidence)",
+      "O": "Oracle-generated (from build_caller_oracle.py)"
+    },
+    "baseline_note": "Capture baseline with: run_caller_recall.sh run --project-path ... --output results/before.json; compare with: run_caller_recall.sh --compare results/before.json results/after.json",
+    "relevance_scale": "All entries in expected_callers are grade=2 (direct caller confirmed by code reading)"
+  },
+  "queries": [
+    {
+      "id": "C001",
+      "category": "E",
+      "description": "normalize_chunk_id strips line-range from chunk IDs; called by normalize_chunk_ids, build_chunk_line_lookup, resolve_chunk_ids_to_ranges within same file",
+      "target_chunk_id": "evaluation/metrics.py:function:normalize_chunk_id",
+      "expected_callers": [
+        "evaluation/metrics.py:function:normalize_chunk_ids",
+        "evaluation/metrics.py:function:build_chunk_line_lookup",
+        "evaluation/metrics.py:function:resolve_chunk_ids_to_ranges"
+      ]
+    },
+    {
+      "id": "C002",
+      "category": "E",
+      "description": "_enrich_callers converts RelationshipEntry list to enriched dicts; called only from analyze_impact in same class",
+      "target_chunk_id": "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_callers",
+      "expected_callers": [
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer.analyze_impact"
+      ]
+    },
+    {
+      "id": "C003",
+      "category": "E",
+      "description": "calculate_recall_at_k is the core Recall@k metric; called from calculate_metrics_from_results (used for 5 recall variants)",
+      "target_chunk_id": "evaluation/metrics.py:function:calculate_recall_at_k",
+      "expected_callers": [
+        "evaluation/metrics.py:function:calculate_metrics_from_results"
+      ]
+    },
+    {
+      "id": "C004",
+      "category": "E",
+      "description": "add_call_edge adds a caller→callee edge to the code graph; called from add_chunk (main chunk, findable), populate_from_embeddings, and build_graph_from_chunks (both in split_blocks, structural gap)",
+      "target_chunk_id": "graph/graph_storage.py:method:CodeGraphStorage.add_call_edge",
+      "expected_callers": [
+        "search/graph_integration.py:method:GraphIntegration.add_chunk",
+        "search/graph_integration.py:method:GraphIntegration.populate_from_embeddings",
+        "search/graph_integration.py:method:GraphIntegration.build_graph_from_chunks"
+      ]
+    },
+    {
+      "id": "C005",
+      "category": "E",
+      "description": "get_by_chunk_id does an exact metadata lookup for a chunk; called from multiple enrichment methods in RelationshipAnalyzer",
+      "target_chunk_id": "search/hybrid_searcher.py:method:HybridSearcher.get_by_chunk_id",
+      "expected_callers": [
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_callers",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_target",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_forward",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_reverse"
+      ]
+    },
+    {
+      "id": "C006",
+      "category": "E",
+      "description": "find_enclosing_chunk is called directly from _node_to_raw_chunk_id in external_call_graph — cross-package call from chunking/relationships to evaluation",
+      "target_chunk_id": "evaluation/chunk_mapping.py:function:find_enclosing_chunk",
+      "expected_callers": [
+        "chunking/relationships/external_call_graph.py:function:_node_to_raw_chunk_id"
+      ]
+    },
+    {
+      "id": "C007",
+      "category": "E",
+      "description": "build_line_to_chunk_map is called from IndexWriteStage._inject_call_edges — cross-package call from search to evaluation (renamed from _inject_pyan_edges in commit 5ac2b7a)",
+      "target_chunk_id": "evaluation/chunk_mapping.py:function:build_line_to_chunk_map",
+      "expected_callers": [
+        "search/index_write_stage.py:method:IndexWriteStage._inject_call_edges"
+      ]
+    }
+  ]
+}

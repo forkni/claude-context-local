@@ -1,6 +1,6 @@
 ---
 name: mcp-search-tool
-description: "Guides semantic code search via the code-search MCP server. Use when searching for code definitions, callers, dependencies, or tracing code flow in indexed projects. Provides correct workflows for search_code, find_connections, find_path, find_similar_code. Invoke /mcp-search-tool status to run a health check."
+description: "Guides semantic code search via the code-search MCP server. Use when searching for code definitions, callers, callees, dependencies, or tracing code flow in indexed projects. Provides correct workflows for search_code, find_connections, find_path, find_similar_code. Invoke /mcp-search-tool status to run a health check."
 user-invocable: true
 argument-hint: "search query or 'status' for index health"
 allowed-tools: "Bash, Read, Grep, code-search:search_code, code-search:find_connections, code-search:find_path, code-search:find_similar_code, code-search:index_directory, code-search:list_projects, code-search:switch_project, code-search:get_index_status, code-search:clear_index, code-search:delete_project, code-search:configure_search_mode, code-search:get_search_config_status, code-search:configure_query_routing, code-search:configure_reranking, code-search:configure_chunking, code-search:list_embedding_models, code-search:switch_embedding_model, code-search:get_memory_status, code-search:cleanup_resources"
@@ -25,15 +25,15 @@ allowed-tools: "Bash, Read, Grep, code-search:search_code, code-search:find_conn
 
 Ensures all MCP semantic search operations follow correct workflows for accurate results. The key behavioral rule: **search results are ranked candidates, not definitive answers — always scan all returned results.**
 
-**SSCG benchmark:** 100% Hit@7 (k=7 hybrid, 2026-05-25): MRR 0.806, Recall@5 0.646, Recall@7 0.700. Recommended operating k: **7** (some targets rank 6–7; k=5 misses them). Default is `k=4`. See [references/performance.md](references/performance.md) for full results.
+**SSCG benchmark:** 100% Hit@5 (k=7 hybrid, 2026-06-08): MRR 0.797, Recall@5 0.689, Recall@7 0.736. Recommended operating k: **7** (consistent coverage; targets may rank 6–7 on complex queries). Default is `k=4`. See [references/performance.md](references/performance.md) for full results.
 
 ---
 
 ## Critical: Results Are Candidates, Not Answers
 
-MCP search returns **ranked candidates**, not definitive answers. On the 2026-05-25 13-query SSCG benchmark (hybrid, k=7) Hit@7 = 100% — but the correct result is **not always ranked first**, and this is not a general reliability guarantee for arbitrary queries or codebases.
+MCP search returns **ranked candidates**, not definitive answers. On the 2026-06-08 13-query SSCG benchmark (hybrid, k=7) Hit@5 = 100% — but the correct result is **not always ranked first**, and this is not a general reliability guarantee for arbitrary queries or codebases.
 
-**Baseline rule:** **pass `k=7` explicitly when correctness matters.** The tool default is `k=4`; some targets rank 6–7 (e.g. `FaissVectorIndex.__init__` in the SSCG benchmark), so Hit@7 > Hit@5. Use `k=10` for architectural / global queries.
+**Baseline rule:** **pass `k=7` explicitly when correctness matters.** The tool default is `k=4`; targets may rank 6–7 on complex or multi-target queries, so Hit@7 > Hit@5. Use `k=10` for architectural / global queries.
 
 **Result Interpretation Workflow:**
 1. Run `code-search:search_code(query="<your query>", k=7)` with appropriate filters
@@ -53,17 +53,6 @@ MCP search returns **ranked candidates**, not definitive answers. On the 2026-05
 - MCP server running and connected in Claude Code (`/mcp` → Reconnect next to `code-search`)
 - At least one project indexed: `code-search:index_directory(path="<your-project>")`
 
-**Offline smoke test** (verifies imports, config, and tool registry without a running server):
-
-```powershell
-# From repo root — 2>nul suppresses torch INFO noise
-.venv/Scripts/python .claude/skills/mcp-search-tool/smoke.py 2>nul
-```
-
-Driver: `.claude/skills/mcp-search-tool/smoke.py`
-
-What it checks: core imports, `get_search_config()` (mode/model/ego_graph), all 19 tools in `TOOL_REGISTRY`, stale model-key guard (`qwen3`/`c2llm` absent), and a live search if the server is active.
-
 ---
 
 ## Quick Start: Which Tool?
@@ -75,6 +64,7 @@ What it checks: core imports, `get_search_config()` (mode/model/ego_graph), all 
 What are you trying to do?
 │
 ├─ "Find callers of X" ──────────────► code-search:find_connections(chunk_id=<chunk_id>)
+├─ "What does X call" ───────────────► code-search:find_connections(chunk_id=<chunk_id>)
 ├─ "What depends on X" ──────────────► code-search:find_connections(chunk_id=<chunk_id>)
 ├─ "Trace flow from X to Y" ─────────► code-search:find_path(source_chunk_id=<src>, target_chunk_id=<tgt>)
 ├─ "How does X connect to Y?" ───────► code-search:find_path(source_chunk_id=<src>, target_chunk_id=<tgt>)
@@ -114,7 +104,7 @@ What are you trying to do?
 | Tool | Purpose |
 |------|---------|
 | **code-search:search_code** | Find code with NL query or direct chunk lookup |
-| **code-search:find_connections** | Find callers, dependencies, relationships |
+| **code-search:find_connections** | Find callers, callees, dependencies, relationships |
 | **code-search:find_path** | Shortest path between two entities |
 | code-search:find_similar_code | Functionally similar code |
 | code-search:index_directory | Index project (one-time setup) |
@@ -155,6 +145,8 @@ Failing to sort is why a result at array position 0 isn't always rank-1.
 **`ego_graph.enabled=True` in the live config even though the EgoGraphConfig dataclass default is `False`.** The server reads `search_config.json`, which ships with `"ego_graph": {"enabled": true}`. The Python default is irrelevant once the JSON is loaded. Verify with `get_search_config().ego_graph.enabled`.
 
 **`split_block` variants of the same function are one logical hit.** A long function chunked into `split_block` pieces (e.g. `file.py:10-40:split_block:fn` and `file.py:41-80:split_block:fn`) should count as one unique chunk in Recall/Hit metrics. Normalize and deduplicate by stripping the line-range portion: `file.py:10-40:type:name` → `file.py:type:name`. As of v0.12.1, split_block nodes carry full `uses_type`/`imports` relationship edges extracted from the method signature — `find_connections` will return these edges.
+
+**Call edges carry resolver provenance (v0.14.0+).** Every entry in `direct_callers` and `direct_callees` includes `resolver_source` (`"ast"` / `"pyan"` / `"libcst"` / `"lsp"`), `resolver_confidence` (0.5–0.98), and `confidence` tag (`"exact"` / `"recovered"` / `"ambiguous"`). Top-level `caller_confidence` / `callee_confidence` breakdowns show counts per tag. The confidence ladder (AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98) means edges are upgraded in-place to the highest-confidence resolver — `resolver_source: "lsp"` means basedpyright confirmed the call. Configure via `call_graph.min_confidence` (drops low-confidence edges) and see `docs/CALL_GRAPH_TUNING.md` for tuning recipes.
 
 **Community and module summary chunks surface at rank-1 on class-overview queries.** They have IDs like `__community__/label:0-0:community:label` or `file.py:0-0:module:name`. Add `chunk_type="function"` or `chunk_type="class"` to filter them when you need a specific implementation.
 

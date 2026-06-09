@@ -11,7 +11,7 @@ This modular reference can be embedded in any project instructions for Claude Co
 | Tool | Priority | Purpose | Parameters |
 |------|----------|---------|------------|
 | **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=4, search_mode="hybrid", model_key, use_routing=True, file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False, max_context_tokens=0 |
-| **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (~90% accuracy with import resolution) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs, relationship_types |
+| **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (v0.14.0: layered resolver pipeline AST→pyan→LibCST→LSP; bidirectional `direct_callees`; per-entry `resolver_source`/`resolver_confidence` provenance; `caller_confidence`/`callee_confidence` breakdowns) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs, relationship_types |
 | **find_path** | 🟡 **IMPACT** | Trace shortest path between code entities in relationship graph | source OR source_chunk_id, target OR target_chunk_id, edge_types, max_hops=10 |
 | **index_directory** | 🔴 **SETUP** | Index project (multi-model support) | directory_path (required), project_name, incremental=True, multi_model=auto |
 | **find_similar_code** | 🟡 **IMPACT** | Find alternative implementations | chunk_id (required), k=4 |
@@ -141,8 +141,8 @@ find_connections(symbol_name="MyClass", relationship_types=["inherits", "imports
 | Parameter | Type | Default | Range | Description |
 |-----------|------|---------|-------|-------------|
 | `ego_graph_enabled` | boolean | false | - | Enable k-hop neighbor expansion from call graph |
-| `ego_graph_k_hops` | integer | 1 | 1-5 | Graph traversal depth (1=direct neighbors, 2=neighbors of neighbors) |
-| `ego_graph_max_neighbors_per_hop` | integer | 5 | 1-50 | Limit neighbors per hop to prevent explosion |
+| `ego_graph_k_hops` | integer | 2 | 1-5 | Graph traversal depth (1=direct neighbors, 2=neighbors of neighbors) |
+| `ego_graph_max_neighbors_per_hop` | integer | 10 | 1-50 | Limit neighbors per hop to prevent explosion |
 
 **⭐ NEW (v0.8.3): Automatic Import Filtering**
 
@@ -401,6 +401,11 @@ Ultra format optimizes token usage by declaring field names once in a header, th
   "direct_callers[1]{chunk_id,kind,score}": [
     ["mcp_server/output_formatter.py:17-34:function:format_response", "function", 1.0]
   ],
+  "caller_confidence": {
+    "exact": 1,
+    "recovered": 0,
+    "ambiguous": 0
+  },
   "similar_code[10]{chunk_id,kind,score}": [
     ["mcp_server/output_formatter.py:37-77:function:_to_compact_format", "function", 0.82],
     ["search/hybrid_searcher.py:245-289:function:_format_results", "function", 0.76],
@@ -605,11 +610,11 @@ At index time, every chunk is tagged with its file role via `_classify_file_role
 /list_embedding_models
 /switch_embedding_model "BAAI/bge-m3"
 
-# Multi-model routing configuration (v0.5.4+)
-/configure_query_routing true                       # Enable multi-model mode (default)
-/configure_query_routing false                      # Disable multi-model (single-model fallback)
-/configure_query_routing true "qwen3" 0.05          # Enable + set default model + confidence threshold (default)
-/configure_query_routing None "bge_m3" None         # Just change default model (keep multi-model enabled)
+# Multi-model routing configuration (v0.5.4+; disabled by default — shipped as single-model Qwen3-0.6B)
+/configure_query_routing true                       # Enable multi-model mode (opt-in)
+/configure_query_routing false                      # Disable multi-model (single-model Qwen3-0.6B, the shipped default)
+/configure_query_routing true "qwen3_0.6b" 0.35    # Enable + set default model + confidence threshold
+/configure_query_routing None "qwen3_0.6b" None    # Just change default model (keep current multi-model setting)
 
 # Multi-model search usage
 /search_code "Merkle tree detection"                # Auto-routes to optimal model (CodeRankEmbed)
@@ -857,12 +862,12 @@ search_code("error handling exception try except", model_key="qwen3")
 
 **Purpose**: Understand code impact before refactoring/modification.
 
-**Accuracy**: ~90% for Python method calls with call graph resolution:
+**Accuracy**: Layered resolver pipeline — confidence-precedence merge (higher resolver upgrades lower per edge pair):
 
-- Phase 1: Self/super calls (v0.5.12)
-- Phase 2: Type annotations (v0.5.13)
-- Phase 3: Assignment tracking (v0.5.14)
-- Phase 4: Import resolution (v0.5.15)
+- AST resolver: 0.5 (intra-file) / 0.7 (cross-file) — always-on, in-house
+- pyan3 resolver: 0.75 — cross-module, requires `pip install -e ".[callgraph]"`
+- LibCST FQN resolver: 0.90 — `FullyQualifiedNameProvider`, requires `[callgraph]` extra
+- LSP/basedpyright resolver: 0.98 — highest accuracy, opt-in (`lsp_enabled=true` in `search_config.json` + `pip install -e ".[lsp]"`)
 
 **Examples**:
 
@@ -879,11 +884,14 @@ search_code("error handling exception try except", model_key="qwen3")
 
 **Output Includes**:
 
-- **Direct callers**: Functions that call this symbol
+- **Direct callers**: Functions that call this symbol (inbound edges)
+- **Direct callees**: Functions this symbol calls (outbound edges, v0.14.0+)
 - **Indirect callers**: Multi-hop call chains (depth 1-N)
 - **Similar code**: Semantically related implementations
 - **Impact severity**: Low/Medium/High based on caller count
-- **Dependency graph**: Visual representation (Mermaid format)
+- **Dependency graph**: DOT-format graph for visualization
+- **Per-entry provenance**: `confidence` (string tag: `"exact"/"recovered"/"ambiguous"`), `resolver_source` (`"ast"|"pyan"|"libcst"|"lsp"`), `resolver_confidence` (float 0.5–0.98)
+- **Confidence breakdowns**: `caller_confidence` and `callee_confidence` — `{exact, recovered, ambiguous}` counts
 
 **Example Output**:
 
@@ -892,7 +900,22 @@ search_code("error handling exception try except", model_key="qwen3")
   "symbol": "authenticate_user",
   "chunk_id": "auth.py:15-42:function:login",
   "direct_callers": [
-    {"chunk_id": "api.py:100-120:function:login_endpoint", "name": "login_endpoint"}
+    {
+      "chunk_id": "api.py:100-120:function:login_endpoint",
+      "name": "login_endpoint",
+      "confidence": "exact",
+      "resolver_source": "libcst",
+      "resolver_confidence": 0.9
+    }
+  ],
+  "direct_callees": [
+    {
+      "chunk_id": "db.py:30-55:function:query_user",
+      "name": "query_user",
+      "confidence": "exact",
+      "resolver_source": "pyan",
+      "resolver_confidence": 0.75
+    }
   ],
   "indirect_callers": {
     "depth_2": [
@@ -902,13 +925,15 @@ search_code("error handling exception try except", model_key="qwen3")
   "similar_code": [
     {"chunk_id": "oauth.py:30-55:function:oauth_login", "similarity": 0.87}
   ],
+  "caller_confidence": {"exact": 1, "recovered": 0, "ambiguous": 0},
+  "callee_confidence": {"exact": 1, "recovered": 0, "ambiguous": 0},
   "impact_summary": {
     "direct_callers": 2,
     "total_connected": 5,
     "severity": "Medium",
     "recommendation": "Review callers before modification"
   },
-  "dependency_graph": "graph TD\n  authenticate_user --> login_endpoint\n  ..."
+  "dependency_graph": "digraph {\n  authenticate_user -> login_endpoint\n  ...}"
 }
 ```
 

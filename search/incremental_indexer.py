@@ -260,7 +260,10 @@ class IncrementalIndexer:
                     self.embedder.cleanup()
                     logger.info("VRAM cleanup completed successfully")
                 except Exception as e:
-                    logger.warning(f"VRAM cleanup failed (continuing with index): {e}")
+                    logger.warning(
+                        f"VRAM cleanup failed (continuing with index): {e}",
+                        exc_info=True,
+                    )
 
                 with traced_block(
                     "index.full",
@@ -324,7 +327,8 @@ class IncrementalIndexer:
                     self._community_refresh_stage.run(changes, project_name)
                 except Exception as e:
                     logger.warning(
-                        f"[INCR_COMM] Community summary refresh failed (non-fatal): {e}"
+                        f"[INCR_COMM] Community summary refresh failed (non-fatal): {e}",
+                        exc_info=True,
                     )
             # ========== END Community summary refresh ==========
 
@@ -840,10 +844,11 @@ class IncrementalIndexer:
                 supported_files,
                 start_time,
                 self.repo_profile,
+                project_path=project_path,
             )
 
         except Exception as e:
-            logger.error(f"Full indexing failed: {e}")
+            logger.error(f"Full indexing failed: {e}", exc_info=True)
             return self._zero_result(start_time, success=False, error=str(e))
 
     def _get_total_chunks(self) -> int:
@@ -1077,7 +1082,7 @@ class IncrementalIndexer:
                     f"Batch removed {chunks_removed} chunks from {len(files_to_remove)} files"
                 )
             except Exception as e:
-                logger.error(f"Batch removal failed: {e}")
+                logger.error(f"Batch removal failed: {e}", exc_info=True)
                 logger.warning("Falling back to individual file removal")
                 # Fall back to individual removal on error
                 chunks_removed = 0
@@ -1168,7 +1173,9 @@ class IncrementalIndexer:
                         f"[INCREMENTAL] Generated {len(file_summaries)} module summary chunks"
                     )
             except Exception as e:
-                logger.warning(f"[INCREMENTAL] File summary generation failed: {e}")
+                logger.warning(
+                    f"[INCREMENTAL] File summary generation failed: {e}", exc_info=True
+                )
         # ========== END File-Level Module Summaries ==========
 
         all_embedding_results = []
@@ -1182,7 +1189,7 @@ class IncrementalIndexer:
                     embedding_result.metadata["project_name"] = project_name
                     embedding_result.metadata["content"] = chunk.content
             except Exception as e:
-                logger.warning(f"Embedding failed: {e}")
+                logger.warning(f"Embedding failed: {e}", exc_info=True)
 
         # Add all embeddings to index at once
         if all_embedding_results:
@@ -1328,7 +1335,8 @@ class IncrementalIndexer:
                 logger.info("Multi-model VRAM cleanup completed successfully")
             except Exception as e:
                 logger.warning(
-                    f"Multi-model VRAM cleanup failed (continuing with reindex): {e}"
+                    f"Multi-model VRAM cleanup failed (continuing with reindex): {e}",
+                    exc_info=True,
                 )
 
             # Cleanup OUR OWN embedder reference before creating a new one
@@ -1369,7 +1377,9 @@ class IncrementalIndexer:
                             f"Using model from index: {model_name} (key: {model_key})"
                         )
             except Exception as e:
-                logger.warning(f"Could not read model from index metadata: {e}")
+                logger.warning(
+                    f"Could not read model from index metadata: {e}", exc_info=True
+                )
 
             self.embedder = get_embedder(model_key)
             logger.info("Embedder refreshed after cleanup - ready for reindex")

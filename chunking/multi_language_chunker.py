@@ -119,7 +119,9 @@ class MultiLanguageChunker:
                 self.call_graph_extractor = CallGraphExtractorFactory.create("python")
                 logger.info("Call graph extraction enabled for Python")
             except Exception as e:
-                logger.warning(f"Failed to initialize call graph extractor: {e}")
+                logger.warning(
+                    f"Failed to initialize call graph extractor: {e}", exc_info=True
+                )
 
         # Initialize relationship extractors
         self.relationship_extractors = []
@@ -163,7 +165,9 @@ class MultiLanguageChunker:
                     f"(foundation + core + data models; entity tracking disabled)"
                 )
         except Exception as e:
-            logger.warning(f"Failed to initialize relationship extractors: {e}")
+            logger.warning(
+                f"Failed to initialize relationship extractors: {e}", exc_info=True
+            )
 
     def is_supported(self, file_path: str) -> bool:
         """Check if file type is supported.
@@ -196,7 +200,7 @@ class MultiLanguageChunker:
             # Convert TreeSitterChunk to CodeChunk
             return self._convert_tree_chunks(tree_chunks, file_path)
         except Exception as e:
-            logger.error(f"Failed to chunk file {file_path}: {e}")
+            logger.error(f"Failed to chunk file {file_path}: {e}", exc_info=True)
             return []
 
     def _map_node_type(self, node_type: str, parent_name: str | None) -> str:
@@ -413,7 +417,9 @@ class MultiLanguageChunker:
                     f"Skipping call extraction for {chunk.name} (Python 3.11 AST bug)"
                 )
             else:
-                logger.warning(f"Failed to extract calls for {chunk.name}: {e}")
+                logger.warning(
+                    f"Failed to extract calls for {chunk.name}: {e}", exc_info=True
+                )
 
     def _extract_phase3_relationships(
         self, chunk: CodeChunk, tchunk: TreeSitterChunk, chunk_id: str
@@ -467,7 +473,10 @@ class MultiLanguageChunker:
                     f"Skipping relationship extraction for {chunk.name} (Python 3.11 AST limitation)"
                 )
             else:
-                logger.warning(f"Failed to extract relationships for {chunk.name}: {e}")
+                logger.warning(
+                    f"Failed to extract relationships for {chunk.name}: {e}",
+                    exc_info=True,
+                )
 
     def _convert_tree_chunks(
         self, tree_chunks: list[TreeSitterChunk], file_path: str
@@ -663,7 +672,7 @@ class MultiLanguageChunker:
                 all_chunks.extend(chunks)
                 logger.debug(f"Chunked {len(chunks)} from {file_path}")
             except Exception as e:
-                logger.warning(f"Failed to chunk {file_path}: {e}")
+                logger.warning(f"Failed to chunk {file_path}: {e}", exc_info=True)
         return all_chunks
 
     def _chunk_files_parallel(
@@ -696,6 +705,6 @@ class MultiLanguageChunker:
                     all_chunks.extend(chunks)
                     logger.debug(f"Chunked {len(chunks)} from {file_path}")
                 except Exception as e:
-                    logger.warning(f"Failed to chunk {file_path}: {e}")
+                    logger.warning(f"Failed to chunk {file_path}: {e}", exc_info=True)
 
         return all_chunks

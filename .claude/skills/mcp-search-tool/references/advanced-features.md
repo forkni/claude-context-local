@@ -12,6 +12,7 @@ The project has **three distinct graph-aware subsystems** that are often confuse
 - A1: Intent-Adaptive Edge Weights (internal)
 - A2: File-Level Summary Chunks (configurable)
 - B1: Community-Level Summary Chunks (configurable)
+- **pyan3 Cross-Module Caller Edges** (v0.13.0 — injected at full-index time)
 
 ---
 
@@ -129,7 +130,7 @@ Normalizes word forms so "indexing", "indexed", and "index" all resolve to the s
 - Ensemble: `0.7 × keyword_score + 0.3 × anchor_embedding_score`
 - Anchor queries: 8–10 representative phrases per intent, defined in `config/intent_anchors.yaml`
 - Confidence threshold: 0.35 (queries below fall back to HYBRID intent)
-- Enable via `code-search:configure_search_mode` or `search_config.json`
+- Enable via `search_config.json` (`IntentConfig.semantic_enabled = true`); **not** exposed through any MCP config tool (`configure_search_mode` does not accept `semantic_enabled`)
 
 ---
 
@@ -175,3 +176,65 @@ Normalizes word forms so "indexing", "indexed", and "index" all resolve to the s
 - `enable_large_node_splitting` / `max_chunk_lines` / `split_size_method` / `max_split_chars`
 
 These are advanced tuning options. For most projects, defaults are correct.
+
+---
+
+## Layered Call-Graph Resolver Pipeline (v0.14.0)
+
+**Status:** Runs at full-index time via `_inject_call_edges`. Core (AST) is always-on; pyan3/LibCST require `pip install -e ".[callgraph]"`; LSP requires `pip install -e ".[lsp]"` plus `lsp_enabled=true` in `search_config.json`.
+
+**Purpose:** Improve `find_connections` cross-module caller/callee recall. Each resolver adds edges with a confidence score; a higher-confidence resolver can upgrade an edge already contributed by a lower one.
+
+**Confidence ladder:**
+
+| Resolver | Confidence | Requires |
+|----------|-----------|----------|
+| In-house AST (intra-file) | 0.5 | nothing — always-on |
+| In-house AST (cross-file) | 0.7 | nothing — always-on |
+| pyan3 | 0.75 | `pip install -e ".[callgraph]"` (GPL-2.0, optional) |
+| LibCST (`FullyQualifiedNameProvider`) | 0.90 | `pip install -e ".[callgraph]"` (MIT, optional) |
+| LSP/basedpyright | 0.98 | `pip install -e ".[lsp]"` + `lsp_enabled=true` |
+
+**Configuration** (`search_config.json`):
+```json
+{
+  "call_graph": {
+    "resolvers": ["pyan", "libcst"],
+    "lsp_enabled": false,
+    "lsp_timeout_seconds": 30.0,
+    "min_confidence": 0.65,
+    "use_pyproject_toml": false
+  }
+}
+```
+
+`min_confidence` (default `0.65`): drops edges below this threshold before injection — trade recall for precision without reindexing. `use_pyproject_toml` (default `false`): pass to LibCST `FullRepoManager` for src-layout package discovery.
+
+**How it works:**
+1. At full-index time, `_inject_call_edges()` (`search/index_write_stage.py`) reads `CallGraphConfig`, instantiates enabled + available resolvers.
+2. `run_resolvers()` (`chunking/relationships/call_edge_resolver.py`) runs all resolvers in ascending confidence order; the merged result keeps the highest-confidence edge per `(caller_id, callee_id)` pair.
+3. Edges carry provenance: `resolver_source` (`"ast"|"pyan"|"libcst"|"lsp"`) and `resolver_confidence` (float).
+4. Each file is pre-validated with `ast.parse`; injection is scoped to indexed files only.
+
+**Observable in `find_connections` output (v0.14.0+):**
+
+Every entry in `direct_callers` and `direct_callees` now includes:
+- `confidence`: string tag (`"exact"` / `"recovered"` / `"ambiguous"`)
+- `resolver_source`: which resolver produced the edge (`"ast"`, `"pyan"`, `"libcst"`, `"lsp"`)
+- `resolver_confidence`: float 0.5–0.98
+
+Top-level breakdowns:
+```json
+{
+  "caller_confidence": {"exact": 3, "recovered": 1, "ambiguous": 0},
+  "callee_confidence": {"exact": 2, "recovered": 0, "ambiguous": 0}
+}
+```
+
+`direct_callees` (outbound calls) is now returned alongside `direct_callers` (inbound).
+
+**Recall improvement (v0.13.0 baseline, maintained in v0.14.0+):**
+- 7-query golden set: 14/14 callers found, 0 missed
+- 5-query set: `mean_recall` 0.5667 → 0.9500
+
+**LSP tier verified working (v0.15.0):** After three protocol bug fixes in v0.15.0 (`_find_def_position` probe position, `_read_until_id` ID correlation, `unquote()` before `url2pathname` for `file:///f%3A/...` URIs), LSP resolves **938 edges on this codebase** (added=64, upgraded=869 from LibCST 0.90 → 0.98). Diagnostics: `[LSP] probes=N ... dropped_uri=N dropped_no_chunk=N` logged at INFO each session; see `docs/CALL_GRAPH_TUNING.md` §6.4 for counter meanings.

@@ -21,7 +21,7 @@ Covers `code-search:search_code`, `code-search:find_connections`, and `code-sear
 |-----------|---------|-------------|
 | `query` | — | Natural language description. Optional if `chunk_id` given. |
 | `chunk_id` | — | Direct chunk ID for O(1) lookup. Format: `"file:lines:type:name"` |
-| `k` | 4 | Number of results to return. **Recommended: pass `k=7` explicitly** — some targets rank 6–7 (SSCG benchmark: Hit@7=100% at k=7 vs Hit@5 misses). Use `k=10` for architectural queries. |
+| `k` | 4 | Number of results to return. **Recommended: pass `k=7` explicitly** — targets may rank 6–7 on complex queries (SSCG benchmark: Hit@5=100% at k=7). Use `k=10` for architectural queries. |
 | `search_mode` | "auto" | "hybrid", "semantic", "bm25", "auto" |
 | `model_key` | — | Force model: "qwen3_0.6b", "bge_m3", "coderankembed", "gte_modernbert" |
 | `use_routing` | true | Enable multi-model query routing |
@@ -90,7 +90,16 @@ code-search:search_code("how does the indexing pipeline work", k=10)
 
 `calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`, `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`, `uses_context_manager`
 
-**Returns:** Direct and indirect callers, dependency graph, similar code (when available).
+**Returns:** Direct callers (inbound) and direct callees (outbound), indirect callers, dependency graph (DOT format), similar code (when available).
+
+Per-entry provenance fields on every caller and callee entry (v0.14.0+):
+- `confidence`: string tag — `"exact"` (direct chunk_id resolution), `"recovered"` (stale ID re-resolved via `_resolve_by_symbol` Tier 1→3), `"ambiguous"` (multiple candidates)
+- `resolver_source`: which resolver produced the edge — `"ast"`, `"pyan"`, `"libcst"`, or `"lsp"`
+- `resolver_confidence`: float 0.5–0.98 (higher = more trusted)
+
+Top-level breakdowns (when any counter is non-zero):
+- `caller_confidence: {exact, recovered, ambiguous}` — count of each tag in `direct_callers`
+- `callee_confidence: {exact, recovered, ambiguous}` — count of each tag in `direct_callees`
 
 **Standard 2-step workflow:**
 
@@ -133,9 +142,13 @@ code-search:find_connections(chunk_id="...", relationship_types=["imports", "use
 | `target_chunk_id` | — | Ending chunk ID (preferred) |
 | `source` | — | Starting symbol name (fallback — may be ambiguous) |
 | `target` | — | Ending symbol name (fallback) |
-| `edge_types` | — | Filter path to specific relationship types |
+| `edge_types` | — | Filter path to specific relationship types (12-type subset — see below) |
 | `max_hops` | 10 | Maximum path length (range 1-20) |
 | `output_format` | "compact" | "compact" / "verbose" / "ultra" |
+
+**Valid `edge_types` for `find_path` (12 types, a subset of the 21 `find_connections` types):**
+
+`calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`
 
 **Algorithm:** Bidirectional BFS for optimal performance.
 

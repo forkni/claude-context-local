@@ -294,16 +294,16 @@ set CLAUDE_MULTI_MODEL_ENABLED=false
 # Configure routing behavior
 /configure_query_routing
 {
-  "multi_model_enabled": true,
-  "default_model": "bge_m3",
+  "multi_model_enabled": false,
+  "default_model": "qwen3_0.6b",
   "confidence_threshold": 0.35
 }
 ```
 
 **Routing Parameters**:
 
-- `multi_model_enabled`: Toggle multi-model routing (default: true)
-- `default_model`: Fallback model for low-confidence queries (default: `"bge_m3"` for the `lightweight-speed` pool, `"qwen3"` for the full pool)
+- `multi_model_enabled`: Toggle multi-model routing (default: false — shipped as single-model Qwen3-0.6B; enable as opt-in)
+- `default_model`: Fallback model when routing is disabled or confidence is low (default: `"qwen3_0.6b"`)
 - `confidence_threshold`: Minimum confidence to use non-default model (default: 0.35, benchmark-verified)
 
 ### Usage Examples
@@ -1047,9 +1047,9 @@ The VRAM Tier Management system automatically detects available GPU memory and r
 | Tier | VRAM Range | Default Models | Features Enabled |
 |------|------------|----------------|------------------|
 | **Minimal** | <6GB | EmbeddingGemma-300m (fallback) | Single-model only, no multi-model routing, no neural reranking |
-| **Laptop** | 6-10GB | BGE-M3 (default) | Multi-model routing ENABLED, Neural reranking ENABLED |
-| **Desktop** | 10-18GB | Qwen3-0.6B + BGE-Code (default) | Full 2-model pool, Neural reranking ENABLED |
-| **Workstation** | 18GB+ | Qwen3-0.6B + BGE-Code (default) | Full 2-model pool, all features ENABLED |
+| **Laptop** | 6-10GB | Qwen3-0.6B (shipped default) | Single-model; multi-model routing available as opt-in |
+| **Desktop** | 10-18GB | Qwen3-0.6B (shipped default) | Single-model; full 2-model pool available as opt-in |
+| **Workstation** | 18GB+ | Qwen3-0.6B (shipped default) | Single-model; all features available as opt-in |
 
 ### Automatic Configuration
 
@@ -2235,16 +2235,38 @@ In addition to call relationships, `find_connections` now returns **Phase 3 rela
       "name": "login_endpoint",
       "file": "api.py",
       "lines": "100-120",
-      "kind": "function"
+      "kind": "function",
+      "confidence": "exact",
+      "resolver_source": "libcst",
+      "resolver_confidence": 0.9
     },
     {
       "chunk_id": "oauth.py:50-75:function:oauth_login",
       "name": "oauth_login",
       "file": "oauth.py",
       "lines": "50-75",
-      "kind": "function"
+      "kind": "function",
+      "confidence": "exact",
+      "resolver_source": "pyan",
+      "resolver_confidence": 0.75
     }
   ],
+
+  "direct_callees": [
+    {
+      "chunk_id": "db.py:30-55:function:query_user",
+      "name": "query_user",
+      "file": "db.py",
+      "lines": "30-55",
+      "kind": "function",
+      "confidence": "exact",
+      "resolver_source": "pyan",
+      "resolver_confidence": 0.75
+    }
+  ],
+
+  "caller_confidence": {"exact": 2, "recovered": 0, "ambiguous": 0},
+  "callee_confidence": {"exact": 1, "recovered": 0, "ambiguous": 0},
 
   "indirect_callers": {
     "depth_2": [
@@ -2289,7 +2311,7 @@ In addition to call relationships, `find_connections` now returns **Phase 3 rela
     "affected_files": ["api.py", "oauth.py", "routes.py", "app.py"]
   },
 
-  "dependency_graph": "graph TD\n  login[\"login<br/>auth.py:15-42\"]\n  login --> login_endpoint[\"login_endpoint<br/>api.py:100-120\"]\n  login --> oauth_login[\"oauth_login<br/>oauth.py:50-75\"]\n  login_endpoint --> auth_route[\"auth_route<br/>routes.py:30-50\"]\n  auth_route --> setup_auth[\"setup_auth<br/>app.py:10-25\"]\n  login -.similar.-> oauth_authenticate[\"oauth_authenticate<br/>oauth.py:30-55\"]",
+  "dependency_graph": "digraph {\n  \"login\" [label=\"login\\nauth.py:15-42\"]\n  \"login\" -> \"login_endpoint\" [label=\"calls\"]\n  \"login\" -> \"oauth_login\" [label=\"calls\"]\n  \"login_endpoint\" -> \"auth_route\" [label=\"calls\"]\n  \"auth_route\" -> \"setup_auth\" [label=\"calls\"]\n}",
 
   "system_message": "ℹ️ MEDIUM IMPACT: This function has 5 connected symbols across 4 files. Review callers: api.py:100-120:function:login_endpoint, oauth.py:50-75:function:oauth_login before making breaking changes."
 }
@@ -2379,7 +2401,7 @@ graph TD
 - **Python**: ✅ Full support (AST call extraction)
 - **Other languages**: Partial (similar code only, no graph traversal)
 
-**Re-indexing**: Projects indexed before v0.5.3 need re-indexing for call graph support.
+**Re-indexing**: Projects indexed before v0.5.3 need re-indexing for call graph support. Projects indexed before v0.14.0 need re-indexing to pick up layered resolver edges (`resolver_source`, `resolver_confidence` provenance).
 
 ### Implementation Details
 
@@ -2387,7 +2409,7 @@ graph TD
 
 - `mcp_server/tools/impact_analysis.py`: Graph traversal + similarity search
 - `mcp_server/tool_handlers.py`: MCP tool wrapper
-- `graph/call_graph_extractor.py`: Python AST call extraction + resolvers
+- `chunking/relationships/call_graph_extractor.py`: Python AST call extraction + resolvers
 
 **Call Graph Storage**:
 
@@ -2433,6 +2455,44 @@ Call graph resolution improves the accuracy of `find_connections` by correctly i
 
 **Problem Solved**: Prior to v0.5.12, method calls produced false positives and missed connections because the system couldn't determine which class owned a method.
 
+### v0.14.0 — Layered Resolver Pipeline
+
+v0.14.0 introduced a pluggable `CallEdgeResolver` protocol with confidence-precedence merging. Multiple resolvers run at full-index time; a higher-confidence resolver upgrades edges already contributed by a lower-confidence one.
+
+**Confidence Ladder**:
+
+| Resolver | Confidence | Requires | Notes |
+|----------|-----------|----------|-------|
+| In-house AST (intra-file) | 0.5 | nothing | Always-on |
+| In-house AST (cross-file) | 0.7 | nothing | Always-on |
+| pyan3 | 0.75 | `pip install -e ".[callgraph]"` | GPL-2.0, optional |
+| LibCST (`FullyQualifiedNameProvider`) | 0.90 | `pip install -e ".[callgraph]"` | MIT, optional |
+| LSP/basedpyright | 0.98 | `pip install -e ".[lsp]"` + `lsp_enabled=true` | Highest accuracy |
+
+**Configuration** (`search_config.json`):
+
+```json
+{
+  "call_graph": {
+    "resolvers": ["pyan", "libcst"],
+    "lsp_enabled": false,
+    "lsp_timeout_seconds": 30.0
+  }
+}
+```
+
+**Merge semantics**: `run_resolvers()` iterates resolvers in ascending `base_confidence` order; each resolver can only *upgrade* an edge (never downgrade). The edge emitted for any `(caller_id, callee_id)` pair carries the provenance of the highest-confidence resolver that resolved it.
+
+**Per-entry provenance** (every caller and callee entry in `find_connections` output):
+
+- `confidence` — string tag: `"exact"`, `"recovered"`, or `"ambiguous"`
+- `resolver_source` — which resolver produced the edge: `"ast"`, `"pyan"`, `"libcst"`, or `"lsp"`
+- `resolver_confidence` — float 0.5–0.98 matching the ladder above
+
+**Top-level breakdowns**: `caller_confidence` and `callee_confidence` objects with `{exact, recovered, ambiguous}` integer counts.
+
+**Apache-2.0-clean core**: Without the optional extras, only in-house AST edges are produced. Cross-module recall is lower but no crash occurs and no GPL code is included in the install.
+
 **Accuracy Progression**:
 
 | Version | Resolution | Accuracy | Coverage |
@@ -2442,6 +2502,7 @@ Call graph resolution improves the accuracy of `find_connections` by correctly i
 | v0.5.13 | + Type annotations | ~80% | + Typed parameter method calls |
 | v0.5.14 | + Assignment tracking | ~85-90% | + Local variable method calls |
 | v0.5.15 | + Import resolution | ~90% | + Imported class method calls |
+| v0.14.0 | + Layered resolver pipeline | up to 0.98 | + Optional pyan3/LibCST/LSP |
 
 ### Phase 1: Qualified Chunk IDs (v0.5.12)
 
@@ -3595,7 +3656,7 @@ The Structural-Semantic Code Graph (SSCG) is a comprehensive 5-phase integration
 - **21 relationship types** tracked in code graph
 - **~90% call graph accuracy** for Python projects
 - **4,599 relationship edges** in production indices
-- **Perfect Recall@4 (1.00)** on SSCG benchmark
+- **Recall@5 0.689, Hit@5 100%** on SSCG benchmark (2026-06-08)
 
 ---
 
@@ -3634,7 +3695,7 @@ Centrality reranking is **always-on** when graph data is available. No configura
 
 ### Status
 
-**Production-ready**: Validated in SSCG benchmark with perfect Recall@4 (1.00).
+**Production-ready**: Validated in SSCG benchmark with Hit@5 100%, MRR 0.797 (2026-06-08).
 
 ---
 

@@ -74,7 +74,9 @@
   },
   "output": {
     "format": "ultra",
-    "source_order_output": true
+    "source_order_output": true,
+    "include_subgraph": false,
+    "include_result_graph": false
   },
   "chunking": {
     "min_chunk_tokens": 50,
@@ -161,5 +163,15 @@
     "otlp_endpoint": "http://localhost:4318",
     "sample_ratio": 1.0,
     "capture_query_text": false
+  },
+  "call_graph": {
+    "resolvers": [
+      "pyan",
+      "libcst"
+    ],
+    "lsp_enabled": true,
+    "lsp_timeout_seconds": 30.0,
+    "use_pyproject_toml": true,
+    "min_confidence": 0.65
   }
 }

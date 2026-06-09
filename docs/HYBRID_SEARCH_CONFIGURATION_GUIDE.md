@@ -17,7 +17,7 @@ The Claude Context MCP system now includes **hybrid search capabilities** that c
 
 - **Reciprocal Rank Fusion (RRF)** combines results from multiple search methods
 - **Complementary strengths**: BM25 for exact text matches, dense search for semantic similarity
-- **Proven quality metrics**: 44.4% precision, 46.7% F1-score, 100% MRR (see [BENCHMARKS.md](BENCHMARKS.md))
+- **Proven quality metrics**: MRR 0.797, Recall@5 0.689, Hit@5 100% (see [SSCG Retrieval Benchmark](BENCHMARKS.md#sscg-retrieval-benchmark))
 - **Configurable weights** to tune for your specific use case
 - **Auto-mode detection** based on query characteristics
 
@@ -264,22 +264,22 @@ set CLAUDE_MULTI_MODEL_ENABLED=false
 # View current routing configuration
 /get_search_config_status  # Shows multi-model status, default model, confidence threshold
 
-# Enable/disable multi-model mode
-/configure_query_routing true   # Enable multi-model (default)
-/configure_query_routing false  # Disable (single-model fallback)
+# Enable/disable multi-model mode (disabled by default — single-model Qwen3-0.6B shipped)
+/configure_query_routing true   # Enable multi-model (opt-in)
+/configure_query_routing false  # Disable (single-model Qwen3-0.6B, the shipped default)
 
 # Set default model for single-model fallback or when routing disabled
-/configure_query_routing None "qwen3" None       # Use Qwen3-0.6B
-/configure_query_routing None "bge_m3" None      # Use BGE-M3 (default)
+/configure_query_routing None "qwen3_0.6b" None  # Use Qwen3-0.6B (shipped default)
+/configure_query_routing None "bge_m3" None      # Use BGE-M3 (opt-in)
 /configure_query_routing None "coderankembed" None  # Use CodeRankEmbed
 
 # Adjust confidence threshold (advanced)
-/configure_query_routing None None 0.05  # Default threshold (recommended, natural query support)
+/configure_query_routing None None 0.35  # Default threshold (recommended, benchmark-verified)
 /configure_query_routing None None 0.03  # Lower threshold (maximum sensitivity, may over-route)
 /configure_query_routing None None 0.10  # Higher threshold (more conservative, keyword-dense queries only)
 
 # Combined configuration
-/configure_query_routing true "qwen3" 0.05  # Enable routing + Qwen3 default + optimal threshold
+/configure_query_routing true "qwen3_0.6b" 0.35  # Enable routing + Qwen3 default + optimal threshold
 ```
 
 ### Model Specializations
@@ -359,9 +359,10 @@ All searches include routing metadata showing which model processed the query:
 **Threshold Guide**:
 
 - `0.03`: Maximum sensitivity (experimental, may over-route)
-- `0.05`: **Recommended default** (natural query support, balanced)
+- `0.05`: Low threshold (natural query support, may over-route)
 - `0.10`: Conservative (requires more keyword matches)
 - `0.30`: Very conservative (keyword-dense queries only)
+- `0.35`: **Current default** (benchmark-verified, balanced)
 
 **Example Natural Queries**:
 
@@ -393,7 +394,7 @@ Force a specific model for a query:
 # Force specific model
 /search_code "error handling" --model_key "qwen3"
 
-# Disable routing (use default BGE-M3)
+# Disable routing (use default model, Qwen3-0.6B with shipped config)
 /search_code "configuration" --use_routing False
 ```
 

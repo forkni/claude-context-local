@@ -43,8 +43,8 @@ The right time to absorb that cost is when there is a measured reason to.
 **Existing summaries are sufficient for the current query mix.** The deterministic
 summaries in `chunking/file_summarizer.py` and `graph/community_summarizer.py`
 already produce structured summaries that feed the retrieval pipeline. Hit@5
-is already saturated at 100%; the remaining headroom is in MRR (0.85) and
-Recall@5 (0.65), and both gaps are on local/structural queries — not the
+is already saturated at 100%; the remaining headroom is in MRR (0.797) and
+Recall@5 (0.689), and both gaps are on local/structural queries — not the
 target of LLM summaries.
 
 ## Considered Options

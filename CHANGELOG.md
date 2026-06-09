@@ -9,6 +9,109 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Line-overlap metrics returned 0.000 for every query** (`184e13b`, `scripts/benchmark/run_sscg_benchmark.py`) — `_extract_ranges_from_results` read `relative_path`/`start_line`/`end_line` as top-level attributes but `HybridSearcher` returns `search.reranker.SearchResult` whose line data lives in `.metadata`. Fixed to read `r.metadata.get(...)` with forward-slash path normalization. Regression test added in `tests/unit/evaluation/test_line_overlap_metrics.py` at the real seam (`reranker.SearchResult` with Windows-style backslash path). Line-overlap now reports real values (LR 0.852, LP 0.267, LIoU 0.304 hybrid aggregate, 2026-06-08). Also normalized path separators in `evaluation/metrics.py:build_chunk_line_lookup`.
+- **SSCG golden-set drift** (`b5cfc24`, `evaluation/golden_dataset.json`) — removed stale `search/filters.py:function:normalize_path` from Q05 `expected`/`expected_primary`/`relevance_grades` (symbol moved to `utils/path_utils.py`; its presence as a grade-3 expected item capped Q05 Recall at 0.67); cleaned two MISSING distractors from Q35 `relevance_grades` (`get_resource_manager`, `ResourceManager.cleanup_previous_resources`).
+- **SSCG pass/fail gate now enforces JSON thresholds** (`b5cfc24`, `evaluation/metrics.py:aggregate_metrics`) — the gate previously hardcoded the module-level `THRESHOLDS` constant, ignoring the `thresholds` block in `golden_dataset.json`. Now uses `aggregate_metrics(per_query, thresholds=dataset.get("thresholds"))` so the JSON becomes the single source of truth; the module constant is a fallback only.
+
+### Added
+
+- **`recall@7` / `hit_rate@7`** auto-computed by the benchmark runner (`b5cfc24`, `evaluation/metrics.py`, `scripts/benchmark/run_sscg_benchmark.py`) — these metrics were previously manual figures; the runner now emits them automatically alongside @5 and @10.
+
+### Changed
+
+- **`golden_dataset.json` `current_metrics` reconciled to hybrid-default run** — the stored figures (MRR, Recall@5/@7/@10, NDCG@5) now reflect the canonical hybrid 0.35/0.65 k=10 run (MRR 0.797, R@5 0.689) that all documentation cites, replacing the earlier sweep-run figures (MRR 0.801, R@5 0.704 from a bm25_35_65 k=10 sweep). The `thresholds` block used for pass/fail gating is unchanged.
+
+### Refactored
+
+- **Dropped redundant `getattr` guards in `search_orchestrator._assemble`** (`mcp_server/tools/search_orchestrator.py:618,642`) — `OutputConfig` always carries `include_result_graph` and `include_subgraph` (both default `False`), so the `getattr(..., False)` safety guards are no-ops. Replaced with direct attribute access consistent with the rest of the config-access pattern.
+
+- **`calculate_metrics_from_results` return type corrected** (`evaluation/metrics.py`) — annotation updated from `dict[str, float]` to `dict[str, float | bool]` to reflect that `hit` and `hit@7` are boolean values. Caught by Copilot static-analysis review of PR #30.
+
+---
+
+## [0.15.0] - 2026-06-03
+
+### Added
+
+- **Resolver precision tuning** — pyan3 callee-flavor filter (drops callee-side edges from pyan, which has no callee role, reducing false positives); wildcard-import down-weighting; LibCST self-call resolution for method-on-self patterns; namespace guard to prevent re-injection of already-resolved namespaces; `resolve_cache` for repeat-FQN lookup de-duplication across large codebases.
+- **`CallGraphConfig.min_confidence`** (`search/config.py`) — injection floor (float, default `0.65`); edges below this threshold are dropped before graph injection, allowing users to trade recall for precision without reindexing.
+- **`CallGraphConfig.use_pyproject_toml`** (`search/config.py`) — boolean flag (default `false`); passes LibCST's `use_pyproject_toml=True` for correct src-layout package discovery.
+- **`docs/CALL_GRAPH_TUNING.md`** — API reference, confidence tiers, tuning recipes, and §6.4 LSP diagnostics counters (`probes`, `null_prepares`, `items`, `outgoing_calls`, `dropped_uri`, `dropped_no_chunk`) with health-signal interpretation.
+- **2,495 unit tests** + 19 integration tests (net ~44 new tests from resolver tuning and LSP repair).
+
+### Fixed
+
+- **LSP resolver repair (`aee8c63`, `3ffca25`)** — three protocol bugs fixed: (1) `prepareCallHierarchy` was probing at column 0 instead of the symbol-name character offset; (2) JSON-RPC responses were not correlated by `id` — notifications discarded, `workspace/configuration` server-requests stubbed, wrong-id responses skipped; (3) basedpyright emits `file:///f%3A/...` (lowercase drive + percent-encoded colon) which Python ≤3.13 `url2pathname` cannot parse without a preceding `unquote()`. Combined effect: LSP tier went from silently resolving **0 edges** to **938 edges (added=64, upgraded=869)** on this codebase.
+- **LibCST: absolute path keys + UTF-8 reads** (`b50d234`) — chunk-ID path normalization now produces absolute-path keys consistent with the graph store, fixing FQN resolution misses.
+- **LibCST: `zip(strict=False)` in resolve loop** (`5b7954d`) — prevents `ValueError` on mismatched iterable lengths in edge injection.
+
+---
+
+## [0.14.0] - 2026-06-03
+
+### Added
+
+- **Layered call-graph resolver pipeline** (`chunking/relationships/call_edge_resolver.py`) — `ResolvedEdge` frozen dataclass, `CallEdgeResolver` `@runtime_checkable` Protocol, shared file-collection helpers (`gather_py_files`, `scope_to_indexed_files`, `validate_py_files`), and `run_resolvers()` that merges edges from all available resolvers by `(caller_id, callee_id)` key keeping the highest-confidence version. Confidence ladder: AST 0.5/0.7 → pyan 0.75 (`chunking/relationships/external_call_graph.py`, now import-guarded) → LibCST 0.90 (`chunking/relationships/libcst_call_graph.py`, new) → LSP/basedpyright 0.98 (`chunking/relationships/lsp_call_graph.py`, new, opt-in).
+- **Optional extras** (`pyproject.toml`) — `[callgraph]` (pyan3 + libcst, GPL-2.0 isolated) and `[lsp]` (basedpyright). Core install is Apache-2.0-clean; without extras only in-house AST edges are produced. Install `pip install -e ".[callgraph]"` to activate pyan3 + LibCST resolvers.
+- **`CallGraphConfig`** (`search/config.py`) — `resolvers: list[str]`, `lsp_enabled: bool`, `lsp_timeout_seconds: float`; wired into `SearchConfig` + `search_config.json`.
+- **Bidirectional callees** — `direct_callees`, `direct_callees_exact/recovered/ambiguous`, and `callee_confidence` breakdown added to `ImpactReport` (`search/types.py`). `RelationshipAnalyzer._enrich_callees()` mirrors `_enrich_callers` for outbound `calls` edges. `find_connections` now returns both callers and callees with `resolver_source` / `resolver_confidence` per-entry provenance.
+- **`upgrade_call_edge()`** (`graph/graph_storage.py`) — in-place edge-attribute update enabling confidence-precedence upgrades during injection.
+- **`_inject_call_edges`** (`search/index_write_stage.py`) — replaces `_inject_pyan_edges`; reads `CallGraphConfig`, instantiates enabled + available resolvers, calls `run_resolvers()`, and merges with confidence-precedence semantics.
+- **Callee golden set** (`evaluation/callee_golden.json`) — 7-query outbound golden set for `--direction callees` benchmarking.
+- **63 new unit tests**: `test_call_edge_resolver.py` (31), `test_call_graph_config.py` (15), `test_libcst_call_graph.py` (15), `test_lsp_call_graph.py` (17).
+
+### Fixed
+
+- **`c478f54` — edge attribute renamed `source` → `resolver_source`** (`search/index_write_stage.py`, `search/relationship_analyzer.py`) — NetworkX node-link format reserves `"source"` and `"target"` as endpoint keys; an edge attribute named `"source"` was silently destroyed on save/load round-trip, making resolver provenance invisible after reindex.
+- **`ec005b2` — `get_edge_data` preserves legacy string confidence tags** (`graph/graph_storage.py`) — string tags `"exact"`, `"ambiguous"`, `"recovered"` were unconditionally coerced to `float()`, yielding `1.0` with a spurious warning and causing ambiguous edges to be miscounted as exact in `callee_confidence` breakdowns. Fixed via `_LEGACY_CONFIDENCE_TAGS` pass-through.
+
+### Changed
+
+- **pyan3 demoted from core to optional extra** — pyan3 (GPL-2.0) moved from `install_requires` to the `[callgraph]` optional extra. Without extras only in-house AST edges (confidence 0.5/0.7) are produced — cross-module recall is lower but there is no crash and the Apache-2.0 core license is preserved.
+
+---
+
+## [0.13.0] - 2026-06-03
+
+### Added
+
+- **pyan3 cross-module caller edges in `find_connections`** (`chunking/relationships/external_call_graph.py`, new; `search/index_write_stage.py`) — `build_call_edges()` runs pyan3 on all indexed project `.py` files at full-index time and injects resolved `(caller_raw_id, callee_raw_id)` pairs directly into the code graph via `CodeGraphStorage.add_call_edge(source="pyan")`. The injection seam sits after `add_embeddings` (graph nodes populated) and before `save_indices` (edges persisted). Node→chunk_id mapping tries `filename + ast_node.lineno → find_enclosing_chunk` first, falls back to `chunk_id_from_fqn`. pyan3 is a hard `install_requires` dependency (no import guard, no enabled flag). Any pyan3 runtime failure is caught and logged as a non-fatal warning so it never aborts a full index. On the project's own codebase: 5,341 cross-module edges resolved, 3,594 injected, 1,747 skipped (node absent or edge already present).
+
+- **Shared FQN / line-number → chunk_id helpers** (`evaluation/chunk_mapping.py`, new) — `build_line_to_chunk_map`, `find_enclosing_chunk`, and `chunk_id_from_fqn` promoted from private `build_caller_oracle.py` internals to a shared public module. `build_line_to_chunk_map(normalize=False)` returns raw store-key ids (with `:start-end:` line range) for graph alignment; `normalize=True` (default) strips line ranges for stable IDs. `find_enclosing_chunk` picks the innermost (smallest-span) chunk containing a given line, correctly handling nested class/method constructs.
+
+- **Direct-caller recall evaluation harness** (`evaluation/caller_golden.json`, `scripts/benchmark/build_caller_oracle.py`, `scripts/benchmark/run_caller_recall.py`, `scripts/benchmark/run_caller_recall.sh`) — deterministic feedback loop for `find_connections` caller recall. `build_caller_oracle.py` uses ripgrep to build a ground-truth caller set for any target chunk_id. `run_caller_recall.py` provides `run` (per-query recall/precision/latency) and `compare` (before/after delta table) subcommands. Golden dataset covers 7 queries (C001–C007) including 2 cross-module pyan3 targets; baseline `results/caller_recall_pyan.json` shows `total_missed_callers: 0` (14/14 expected callers found).
+
+### Fixed
+
+- **`find_connections` missed direct callers after incremental reindex** (`search/relationship_analyzer.py`, `search/graph_integration.py`, `search/types.py`) — root-caused two independent failure classes and fixed across four phases:
+  - *Phase 1*: Extracted `_resolve_by_symbol(symbol_name) → tuple | None` as a shared Tier 1→3 cascade (symbol_cache → graph suffix-scan → semantic search). `_enrich_callers` now retries stale callers via `_resolve_by_symbol` instead of silently discarding them; recovered callers are tagged `confidence="recovered"`.
+  - *Phase 2*: `_resolve_call_target` common-method blocklist (`get`, `format`, etc.) now only drops a name when no project definition exists, preventing false drops for project-defined methods with generic names. Ambiguous-name resolution changed from a single phantom node to per-candidate `confidence="ambiguous"` edges, keeping all candidates retrievable.
+  - *Phase 4*: `ImpactReport` gains `direct_callers_exact`, `direct_callers_recovered`, `direct_callers_ambiguous` counters; `to_dict()` emits a `"caller_confidence"` breakdown when any counter is non-zero. Recall improvement on 5-query golden set: `mean_recall` 0.5667 → 0.9500, callers found 8/12 → 12/12.
+
+- **Stale graph node IDs caused `SearchError: Chunk not found`** (`search/relationship_analyzer.py`, `graph/graph_storage.py`, `search/incremental_indexer.py`) — the call graph and metadata store were maintained independently; incremental reindex deleted chunks from the metadata store but left their graph nodes, and any line-range drift after edits produced stale node IDs. Three layered fixes: (1) `_resolve_target` no longer raises immediately on a chunk_id miss — it derives the symbol name from the last colon-segment and falls through to Tier 1→3 symbol resolution; (2) `_enrich_reverse` / `_enrich_forward` zero out dead graph-node IDs (`resolvable=False`) so callers don't re-query them; (3) `CodeGraphStorage.remove_file_nodes(file_path)` prunes all nodes and incident edges for a file; `IncrementalIndexer._remove_old_chunks` now calls it for every deleted/modified file, keeping the two stores in sync.
+
+- **`split_block` chunks emitted zero call edges** (`search/graph_integration.py`, `evaluation/metrics.py`) — `_extract_split_block_calls` attempted to `ast.parse` the stored content fragment (a bare body slice, not valid Python), so `PythonCallGraphExtractor.extract_calls` always returned `[]`. Fix: re-read the enclosing `FunctionDef` from the original source file using a per-file AST cache (one parse per file per build pass) and locate the method by line-range containment. A `_seen_split_methods` set deduplicates across split-block pieces so only the first block emits edges. `normalize_chunk_id` now maps `:split_block:` → `:method:` for benchmark ID alignment. Recall improvement on 5-query golden set: `mean_recall` 0.5667 → 0.9500, callers found 8/12 → 12/12 (baseline before Phase 3 pyan3 addition).
+
+- **Windows backslash `relative_path` caused zero pyan3 edges injected** (`evaluation/chunk_mapping.py`) — the metadata store persists `relative_path` with Windows backslashes (`chunking\file_summarizer.py`) while `_node_to_raw_chunk_id` produced forward-slash lookup paths, so every dict lookup returned `[]`. Added `.replace("\\", "/")` normalization in `build_line_to_chunk_map`. Regression test `test_windows_backslash_relative_path_normalized` added.
+
+- **Normalized chunk_ids raised `SearchError` in `_resolve_target`** (`search/relationship_analyzer.py`) — the stale-chunk_id symbol-retry fallback required `>= 4` colon-segments (raw format `file.py:10-20:type:name`) but `find_connections` callers and golden targets pass normalized ids with 3 segments (`file.py:type:name`). Threshold changed `>= 4` → `>= 3` so normalized ids fall through to symbol-retry instead of raising.
+
+- **Tier 3 semantic search failures in `_resolve_by_symbol` logged without stack trace** (`search/relationship_analyzer.py`) — added `exc_info=True` to the `logger.warning` so tracebacks appear in debug logs.
+
+- **pynvml per-device query failures in `handle_get_memory_status` swallowed silently** (`mcp_server/tools/status_handlers.py`) — added `exc_info=True` to the per-GPU exception handler so the failing device and error are visible in logs.
+
+- **pyan3 edge injection scoped to indexed files; per-file `ast.parse` pre-validation** (`chunking/relationships/external_call_graph.py`) — the injector now iterates only over files that were indexed in the current run, eliminating spurious edges from unindexed trees such as `Scripts/` and site-packages. Each file is pre-validated with `ast.parse` before being passed to pyan3, so one unparseable file (e.g. a TouchDesigner YAML-in-`.py` config) no longer aborts edge injection for the whole project.
+
+### Refactored
+
+- **`exc_info=True` added to swallow-and-degrade exception handlers** (`graph/`, `search/`, `chunking/`, `utils/`, `tools/`) — exception handlers that log a warning and continue (rather than re-raising) now include `exc_info=True` so stack traces appear in debug logs without changing runtime behavior. Affected files: `graph/community_detector.py`, `search/hybrid_searcher.py`, `search/reranking_engine.py`, `search/incremental_indexer.py`, `chunking/multi_language_chunker.py`, `chunking/relationships/call_graph_extractor.py`, `utils/observability.py`, `tools/convert_onnx.py`.
+
+### Security
+
+- Dependency audit 2026-06-03: `pyjwt` 2.12.1 → 2.13.0 (CVE-2026-48522, CVE-2026-48524, CVE-2026-48525, CVE-2026-48526), `uv` 0.11.6 → 0.11.18 (GHSA-4gg8-gxpx-9rph, malicious-wheel entry-point path traversal). Four advisories remain deferred: sqlitedict CVE-2024-35515 (mitigated via JSON serialization in `metadata.py`), transformers 2×RCE (blocked by optimum-onnx pin), starlette host-header injection (localhost-only deployment, low risk).
+
 ---
 
 ## [0.12.4] - 2026-05-29

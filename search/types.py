@@ -103,6 +103,22 @@ class ImpactReport:
 
     stale_chunk_count: int = 0
 
+    # Phase 4 observability: per-confidence counts for direct callers.
+    # Populated by RelationshipAnalyzer._enrich_callers.
+    # - exact: caller_id was resolved directly by get_by_chunk_id
+    # - recovered: stale/drifted ID re-resolved by _resolve_by_symbol
+    # - ambiguous: graph edge tagged confidence="ambiguous" (multiple candidates)
+    direct_callers_exact: int = 0
+    direct_callers_recovered: int = 0
+    direct_callers_ambiguous: int = 0
+
+    # Outbound call resolution: what the target calls.
+    # Populated by RelationshipAnalyzer._enrich_callees (bidirectional Stage).
+    direct_callees: list[dict[str, Any]] = field(default_factory=list)
+    direct_callees_exact: int = 0
+    direct_callees_recovered: int = 0
+    direct_callees_ambiguous: int = 0
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict, omitting empty fields."""
         result: dict[str, Any] = {
@@ -155,5 +171,31 @@ class ImpactReport:
 
         if self.stale_chunk_count > 0:
             result["stale_chunk_count"] = self.stale_chunk_count
+
+        # Emit caller-confidence breakdown whenever any non-zero counter is present
+        if (
+            self.direct_callers_exact
+            or self.direct_callers_recovered
+            or self.direct_callers_ambiguous
+        ):
+            result["caller_confidence"] = {
+                "exact": self.direct_callers_exact,
+                "recovered": self.direct_callers_recovered,
+                "ambiguous": self.direct_callers_ambiguous,
+            }
+
+        # Outbound callees (bidirectional)
+        if self.direct_callees:
+            result["direct_callees"] = self.direct_callees
+        if (
+            self.direct_callees_exact
+            or self.direct_callees_recovered
+            or self.direct_callees_ambiguous
+        ):
+            result["callee_confidence"] = {
+                "exact": self.direct_callees_exact,
+                "recovered": self.direct_callees_recovered,
+                "ambiguous": self.direct_callees_ambiguous,
+            }
 
         return result

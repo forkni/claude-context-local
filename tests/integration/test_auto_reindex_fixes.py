@@ -146,19 +146,25 @@ class TestMultiModelCleanupBeforeReindex:
         # Initialize multi-model pool (lazy loading)
         pool_manager.initialize_pool(lazy_load=True)
 
-        # Load all models in the pool by requesting them
-        # Note: full pool has qwen3 + bge_code
-        embedder_qwen3 = pool_manager.get_embedder("qwen3_0.6b")
-        pool_manager.get_embedder("bge_code")  # Load but don't need reference
+        # Load all models in the active pool by requesting them via pool-agnostic keys
+        # (pool may be "full" {qwen3_0.6b, coderankembed} or
+        #  "lightweight-speed" {gte_modernbert, bge_m3} depending on CI config)
+        pool_keys = list(pool_manager.get_pool_config().keys())
+        assert len(pool_keys) >= 2, f"Expected >=2 pool models, got {pool_keys}"
+        first_embedder = pool_manager.get_embedder(pool_keys[0])
+        for key in pool_keys[1:]:
+            pool_manager.get_embedder(key)  # Load but don't need reference
 
         # Verify all models loaded
-        assert state.embedders.get("qwen3_0.6b") is not None
-        assert state.embedders.get("bge_code") is not None
+        for key in pool_keys:
+            assert state.embedders.get(key) is not None, (
+                f"Model {key!r} not in embedders"
+            )
         initial_count = len(state.embedders)
         assert initial_count >= 2
 
         # Create indexer and perform initial index
-        indexer = IncrementalIndexer(embedder=embedder_qwen3)
+        indexer = IncrementalIndexer(embedder=first_embedder)
         result = indexer.incremental_index(str(temp_project), "test_project")
         assert result.success
 
@@ -235,12 +241,15 @@ class TestNoOOMDuringReindex:
         state = get_state()
         pool_manager = get_model_pool_manager()
 
-        # Load all 2 models in full pool
+        # Load all models in the active pool (pool-agnostic: may be "full" or "lightweight-speed")
         pool_manager.initialize_pool(lazy_load=True)
-        embedder_qwen3 = pool_manager.get_embedder("qwen3_0.6b")
-        _ = embedder_qwen3.model  # Force model loading into VRAM
-        embedder_bge_code = pool_manager.get_embedder("bge_code")
-        _ = embedder_bge_code.model  # Force model loading into VRAM
+        pool_keys = list(pool_manager.get_pool_config().keys())
+        assert len(pool_keys) >= 2, f"Expected >=2 pool models, got {pool_keys}"
+        first_embedder = pool_manager.get_embedder(pool_keys[0])
+        _ = first_embedder.model  # Force model loading into VRAM
+        for key in pool_keys[1:]:
+            other_embedder = pool_manager.get_embedder(key)
+            _ = other_embedder.model  # Force model loading into VRAM
 
         # Check VRAM before cleanup
         vram_before = torch.cuda.memory_allocated() / (1024**3)  # GB
@@ -250,7 +259,7 @@ class TestNoOOMDuringReindex:
         assert vram_before > 0
 
         # Create indexer and index
-        indexer = IncrementalIndexer(embedder=embedder_qwen3)
+        indexer = IncrementalIndexer(embedder=first_embedder)
         result = indexer.incremental_index(str(temp_project), "test_project")
         assert result.success
 
@@ -410,7 +419,7 @@ class TestUserFilterPreservation:
             patch("search.dimension_validator.validate_embedder_index_compatibility"),
             patch(
                 "mcp_server.model_pool_manager.get_model_key_from_name",
-                return_value="bge_code",
+                return_value="qwen3_0.6b",
             ),
         ]
 
@@ -419,7 +428,7 @@ class TestUserFilterPreservation:
                 stack.enter_context(p)
             from mcp_server.tools.search_handlers import _check_auto_reindex
 
-            _check_auto_reindex("/fake/project", "bge_code", max_age_minutes=0)
+            _check_auto_reindex("/fake/project", "qwen3_0.6b", max_age_minutes=0)
 
         assert chunker_calls, "MultiLanguageChunker was never constructed"
         args, kwargs = chunker_calls[0]

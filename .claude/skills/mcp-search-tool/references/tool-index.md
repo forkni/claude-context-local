@@ -27,7 +27,7 @@ Find code with natural language query or direct chunk lookup. Use for all initia
 **Result fields (optional):** `complexity_score`, `graph`, `reranker_score`, `summary`
 
 ### code-search:find_connections
-Find all callers, dependencies, and relationships for a given symbol. Preferred over Grep for caller/dependency discovery.
+Find all callers, callees, dependencies, and relationships for a given symbol. Returns `direct_callers` (inbound) and `direct_callees` (outbound) with per-entry provenance (`resolver_source`, `resolver_confidence`). Preferred over Grep for caller/dependency discovery.
 
 **Key options:** `chunk_id` (preferred), `symbol_name` (fallback — may be ambiguous), `max_depth` (default 3, range 1-5), `exclude_dirs`, `relationship_types`, `output_format`
 
@@ -73,7 +73,7 @@ Find shortest path between two code entities via the relationship graph. Uses bi
 
 | Tool | Purpose |
 |------|---------|
-| `code-search:list_embedding_models` | Show available models (BGE-M3, Qwen3-0.6B, CodeRankEmbed, GTE-ModernBERT, EmbeddingGemma-300m) |
+| `code-search:list_embedding_models` | Show available models (BGE-M3, Qwen3-0.6B, CodeRankEmbed, GTE-ModernBERT, EmbeddingGemma-300m, bge-code-v1, jina-embeddings-v5-text-small-retrieval) |
 | `code-search:switch_embedding_model` | Change embedding model (fast if previously loaded) |
 
 **Note:** In `code-search:search_code.model_key`, the BGE-family key is `bge_m3`. `code-search:configure_query_routing.default_model` additionally accepts `bge_code`; consult `code-search:list_embedding_models` at runtime for the authoritative list of currently valid keys.

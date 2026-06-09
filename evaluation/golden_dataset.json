@@ -21,14 +21,25 @@
       "note": "Baseline from first system version evaluated 2026-01-30"
     },
     "current_metrics": {
-      "mrr": 0.806,
-      "recall_at_5": 0.646,
-      "recall_at_7": 0.700,
-      "hit_rate_at_7": 1.00,
-      "note": "Manual MCP hybrid k=7 run 2026-05-25 post-Q01/Q05/Q19 label fix. Score-sorted top-7 (all sources). MRR+0.203 and Recall@5+0.108 vs pre-label-fix baseline."
+      "mrr": 0.797,
+      "recall_at_5": 0.689,
+      "recall_at_7": 0.736,
+      "recall_at_10": 0.770,
+      "hit_rate_at_5": 1.00,
+      "ndcg_at_5": 0.717,
+      "note": "Hybrid-default run 2026-06-08 (config bm25/dense 0.35/0.65, k=10, 13 queries), post Q05/Q35 golden drift fix and line-overlap fix. Matches the figures cited across README / BENCHMARKS.md / skill performance.md. Neural reranker dominates — all weight splits converge. Thresholds gate (R@5>=0.55) honored from this file: all PASS."
     },
     "recommended_k": 7,
     "changelog": [
+      {
+        "date": "2026-06-08",
+        "changes": [
+          "Q05: Removed search/filters.py:function:normalize_path from expected/expected_primary/relevance_grades — the function definition no longer exists in filters.py (only imported from utils/path_utils.py, already in the golden set); it was unretrievable and capping Q05 Recall at 0.67",
+          "Q35: Removed mcp_server/resource_manager.py:function:get_resource_manager (grade 1) and mcp_server/resource_manager.py:method:ResourceManager.cleanup_previous_resources (grade 0) from relevance_grades — neither symbol exists in the codebase (no ResourceManager class)",
+          "metrics.py: Added recall@7/hit@7 to calculate_metrics_from_results; aggregate_metrics now accepts thresholds param so pass/fail gate honors the JSON thresholds (recall_at_5=0.55) instead of the hardcoded module constant (0.70); added hit_rate@7 aggregate",
+          "run_sscg_benchmark.py: Wired dataset.get('thresholds') into aggregate_metrics call; added recall@7/hit@7 to error rows; added R@7 column to leaderboard and per-query drill-down; fixed pass/fail threshold display to read run_thresholds"
+        ]
+      },
       {
         "date": "2026-05-24",
         "changes": [
@@ -116,17 +127,14 @@
       "category": "A",
       "expected": [
         "utils/path_utils.py:function:normalize_path",
-        "search/filters.py:function:normalize_path",
         "search/filters.py:function:normalize_path_lower"
       ],
       "expected_primary": [
         "utils/path_utils.py:function:normalize_path",
-        "search/filters.py:function:normalize_path",
         "search/filters.py:function:normalize_path_lower"
       ],
       "relevance_grades": {
         "utils/path_utils.py:function:normalize_path": 3,
-        "search/filters.py:function:normalize_path": 3,
         "search/filters.py:function:normalize_path_lower": 3,
         "search/metadata.py:decorated_definition:MetadataStore.normalize_chunk_id": 1,
         "search/filters.py:method:DirectoryFilter.matches": 1,
@@ -347,9 +355,7 @@
       "relevance_grades": {
         "search/config.py:class:SearchConfigManager": 3,
         "search/config.py:function:get_config_manager": 3,
-        "search/config.py:method:SearchConfigManager.load_config": 2,
-        "mcp_server/resource_manager.py:function:get_resource_manager": 1,
-        "mcp_server/resource_manager.py:method:ResourceManager.cleanup_previous_resources": 0
+        "search/config.py:method:SearchConfigManager.load_config": 2
       }
     }
   ]

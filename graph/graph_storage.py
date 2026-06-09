@@ -25,6 +25,12 @@ except ImportError:
     nx = None
 
 
+# Legacy string confidence tags written by the in-house call extractor
+# (add_relationship_edge writes confidence=edge.confidence which is "exact" / "ambiguous").
+# These must be passed through unchanged by get_edge_data — do NOT coerce to float.
+# Downstream enrichers (_enrich_callers/_enrich_callees) read them as string tokens.
+_LEGACY_CONFIDENCE_TAGS: frozenset[str] = frozenset({"exact", "ambiguous", "recovered"})
+
 # Edge-type weights for weighted BFS (SOG paper: data flow > control flow > effect flow)
 # Higher weight = higher priority in graph traversal
 DEFAULT_EDGE_WEIGHTS: dict[str, float] = {
@@ -214,7 +220,10 @@ class CodeGraphStorage:
             is_method_call: Whether this is a method call
             is_resolved: Whether callee_name is fully resolved to a chunk_id
                 (vs qualified name or bare name)
-            **kwargs: Additional edge attributes
+            **kwargs: Additional edge attributes.  **⚠ Never pass ``source``
+                or ``target`` as a key** — NetworkX node-link format reserves
+                those names for edge endpoints and silently drops them on
+                save/load.  Use ``resolver_source`` instead.
         """
         # Create lightweight target_name node if it doesn't exist
         # This enables get_callers(callee_name) queries to work
@@ -239,6 +248,34 @@ class CodeGraphStorage:
             is_resolved=is_resolved,
             **kwargs,
         )
+
+    def upgrade_call_edge(
+        self, caller_id: str, callee_id: str, **attrs: object
+    ) -> None:
+        """Update attributes on an existing ``calls`` edge in-place.
+
+        Called by the resolver injection seam when a higher-confidence resolver
+        produces an edge that was already added by a lower-confidence resolver.
+        Only updates the keys supplied in *attrs*; all other edge attributes are
+        preserved.
+
+        Args:
+            caller_id: Source node (caller chunk_id).
+            callee_id: Target node (callee chunk_id or symbol name).
+            **attrs: Edge attribute key-value pairs to overwrite.  Typical keys:
+                ``resolver_source``, ``resolver_confidence``, ``is_resolved``, ``line``.
+
+                **⚠ Never use ``source`` or ``target`` as attr keys** — the
+                NetworkX node-link serialization format (`nx.node_link_data`)
+                reserves those names for edge endpoints; any edge attribute
+                named ``source`` or ``target`` is silently destroyed on
+                save/load round-trip.
+
+        Raises:
+            KeyError: If the edge ``(caller_id, callee_id)`` does not exist in
+                the graph.  Callers should check ``graph.has_edge`` first.
+        """
+        self.graph.edges[caller_id, callee_id].update(attrs)
 
     def add_relationship_edge(self, edge: "RelationshipEdge") -> None:
         """
@@ -650,14 +687,22 @@ class CodeGraphStorage:
             )
             edge_data["line_number"] = 0
 
-        try:
-            # Ensure confidence is float
-            edge_data["confidence"] = float(edge_data["confidence"])
-        except (ValueError, TypeError):
-            self.logger.warning(
-                f"Edge {caller_id} → {callee_id} has invalid confidence, defaulting to 1.0"
-            )
-            edge_data["confidence"] = 1.0
+        conf = edge_data["confidence"]
+        if isinstance(conf, str) and conf in _LEGACY_CONFIDENCE_TAGS:
+            # Known legacy string tag written by the in-house call extractor.
+            # Downstream enrichers (_enrich_callers/_enrich_callees) consume this
+            # as a string — do not coerce to float.
+            pass
+        else:
+            try:
+                # Ensure numeric confidence edges carry a float (e.g. resolver_confidence
+                # paths that also mirror to "confidence" in the future).
+                edge_data["confidence"] = float(conf)
+            except (ValueError, TypeError):
+                self.logger.warning(
+                    f"Edge {caller_id} → {callee_id} has invalid confidence, defaulting to 1.0"
+                )
+                edge_data["confidence"] = 1.0
 
         return edge_data
 
@@ -724,7 +769,7 @@ class CodeGraphStorage:
             return True
 
         except Exception as e:
-            self.logger.error(f"Failed to load graph: {e}")
+            self.logger.error(f"Failed to load graph: {e}", exc_info=True)
             # Initialize empty graph on error
             # pyrefly: ignore [missing-attribute]
             self.graph = nx.DiGraph()

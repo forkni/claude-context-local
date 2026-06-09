@@ -28,11 +28,12 @@
 
 ## Highlights
 
-- **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-05-25, 13 queries, k=7): **Hit@7 100%, MRR 0.806, Recall@7 0.700 (recommended k=7)** - [benchmarks](docs/BENCHMARKS.md)
+- **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-06-08, 13 queries, k=7): **Hit@5 100%, MRR 0.797, Recall@7 0.736 (recommended k=7)** - [benchmarks](docs/BENCHMARKS.md)
 - **Neural Reranking**: Cross-encoder models (default: `jinaai/jina-reranker-v3`; alternatives: BGE-reranker-v2-m3, gte-reranker-modernbert-base) improve ranking quality by 5-15% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
-- **SSCG Integration**: Structural-Semantic Code Graph — on the [SSCG benchmark](#benchmark-results) (2026-04-10, 13 queries, k=10; cutoffs @5/@10): **13/13 Hit@5 across all three modes (hybrid, BM25, semantic); BM25 MRR=0.846 (best overall)**
+- **SSCG Integration**: Structural-Semantic Code Graph — on the [SSCG benchmark](#benchmark-results) (2026-06-08, 13 queries, k=10): **13/13 Hit@5 across all three modes (hybrid, BM25, semantic); neural reranker active (all modes MRR 0.797); Hybrid best at deep recall (R@7 0.736, R@10 0.770)**
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
 - **Multi-Model Routing**: Intelligent query routing (Qwen3, BGE-M3, CodeRankEmbed) with 100% accuracy - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md)
+- **Layered Call-Graph Resolver Pipeline**: `find_connections` returns callers **and** callees with per-entry provenance (`resolver_source`, `resolver_confidence`). Confidence ladder: AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98. Install `pip install -e ".[callgraph]"` for pyan3 + LibCST; core is Apache-2.0-clean — [caller recall benchmark](docs/BENCHMARKS.md#caller-recall-benchmark)
 - **OTel Tracing** (opt-in): Zero-overhead `traced_block` / `@timed` spans across the search and index pipeline — export to Jaeger, Tempo, or any OTLP collector. See [Observability](docs/OBSERVABILITY.md).
 - **ONNX Runtime Backend** (opt-in): `performance.use_onnx` loads eligible models via `ORTModelForFeatureExtraction` with `CUDAExecutionProvider` + `gpu_mem_limit` arena cap — prevents WDDM shared-memory spillover on 8 GB laptop GPUs
 - **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
@@ -41,19 +42,22 @@
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
 - **File-Role Tagging**: Chunks tagged `role:src/test/doc/config` at index time — enables role-aware ranking and precision boosts
 
-**Status**: ✅ Production-ready | 2,318+ passing tests | All 19 MCP tools operational | Windows 10/11
+**Status**: ✅ Production-ready | 2,495 passing tests | All 19 MCP tools operational | Windows 10/11
 
-## What's New in v0.12.4
+## What's New in v0.15.0
 
-- **`switch_project` no longer logs "No indexed model detected"** — `_detect_indexed_model` now reads `project_info.json` (pool-agnostic) before falling back to the active-pool scan, correctly resolving models from any pool (e.g. `qwen3_0.6b` is found even when the active pool is `lightweight-speed`).
-- **`list_embedding_models` `loaded` field fixed** — was always `false` due to a pool-scoped reverse-lookup + `None`-slot false-positive; now accurately reports which models are in VRAM.
-- **`CodeGraphStorage.clear()` deletes backing JSON** — prevents stale phantom nodes from surviving a full reindex and emitting "Chunk not found" warnings in relationship queries.
-- **`GraphScoringStage` extracted** — centrality scoring, SSCG subgraph extraction, and the k×4 cap are encapsulated as `search/graph_scoring_stage.py`; `SearchOrchestrator._assemble` reduced to a 3-call sequence.
-- **`ServiceLocator` DI container removed** (ADR-0005) — `ResourceManager`/`SearchFactory` wrapper classes and the auto-registration loop deleted; all accessors are now plain module-level functions.
-- **Security**: idna 3.11 → 3.17 (CVE-2026-45409).
-- **2,318 unit tests** passing.
+- **LSP resolver repair** — three protocol bugs fixed: probe at column 0 → symbol-name position; JSON-RPC ID correlation (notifications/wrong-id discarded, `workspace/configuration` stubbed); percent-encoded drive-colon URI (`file:///f%3A/...`) decoded before `url2pathname`. LSP tier: **0 → 938 resolved edges** (added=64, upgraded=869) on this codebase.
+- **Resolver precision tuning** — pyan3 callee-flavor filter, wildcard down-weight, LibCST self-call resolution, namespace guards, `resolve_cache`.
+- **`CallGraphConfig.min_confidence`** — injection floor (default `0.65`); drops low-confidence edges before graph injection.
+- **`CallGraphConfig.use_pyproject_toml`** — src-layout project support for LibCST's `FullyQualifiedNameProvider`.
+- **`docs/CALL_GRAPH_TUNING.md`** — full tuning reference: API, confidence tiers, `min_confidence` recipes, §6.4 LSP diagnostics counters.
+- **2,495 unit tests** passing (44 new tests).
 
-**Previous (v0.12.3)**: Broken `chunking ↔ graph` import cycle — extraction cluster relocated from `graph/` into `chunking/relationships/`; `SearchOrchestrator` introduced (Phases A–D); 20+ helper extractions across `IncrementalIndexer`, `CentralityRanker`, `RelationshipAnalyzer`; default model → Qwen3-0.6B.
+**Previous (v0.14.0)**: Layered call-graph resolver pipeline (AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98), optional `[callgraph]`/`[lsp]` extras, `find_connections` bidirectional callees with `resolver_source`/`resolver_confidence` provenance, `CallGraphConfig`, edge-attribute rename `source`→`resolver_source`. 2,451 tests.
+
+**Previous (v0.13.0)**: pyan3 cross-module caller edges in `find_connections`, direct-caller recall 0.57→0.95, `split_block` call edges recovered, Windows backslash normalization, `exc_info=True` across all swallow-and-degrade handlers. Security: pyjwt 2.13.0, uv 0.11.18.
+
+**Previous (v0.12.4)**: Three MCP server bug fixes: `switch_project` no longer logs "No indexed model detected" (reads `project_info.json`); `list_embedding_models` `loaded` field fixed; `CodeGraphStorage.clear()` deletes backing JSON. `GraphScoringStage` extracted; `ServiceLocator`/`ResourceManager`/`SearchFactory` collapsed to module-level functions (ADR-0005). Security: idna 3.17.
 
 Previous release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -235,13 +239,13 @@ start_mcp_server.cmd → 3 (Search Configuration)
 
 ## Search Modes
 
-Quality metrics below are from the [SSCG benchmark](#benchmark-results) (2026-04-10, 13 queries, k=10; cutoffs @5/@10). They describe mode performance on this benchmark only — not general reliability guarantees.
+Quality metrics below are from the [SSCG benchmark](#benchmark-results) (2026-06-08, 13 queries, k=10). They describe mode performance on this benchmark only — not general reliability guarantees.
 
-| Mode | Description | SSCG Quality (2026-04-10, k=10) | Status |
+| Mode | Description | SSCG Quality (2026-06-08, k=10) | Status |
 |------|-------------|-------------------------------|--------|
-| **hybrid** (default) | BM25 + Semantic fusion | MRR 0.800, R@5 0.622, R@10 0.833, Hit@5 100% | ✅ Operational |
-| **semantic** | Dense vector search | MRR 0.712, R@5 0.660, Hit@5 100% | ✅ Operational |
-| **bm25** | Text-based sparse search | MRR 0.846 (best overall), R@5 0.660, P@1 0.769, Hit@5 100% | ✅ Operational |
+| **hybrid** (default) | BM25 + Semantic fusion | MRR 0.797, R@5 0.689, R@7 0.736, R@10 0.770, Hit@5 100% | ✅ Operational |
+| **semantic** | Dense vector search | MRR 0.797, R@5 0.676, R@10 0.758, Hit@5 100% | ✅ Operational |
+| **bm25** | Text-based sparse search | MRR 0.797, R@5 0.689, R@10 0.777, Hit@5 100% | ✅ Operational |
 
 **Configuration**: See [Hybrid Search Configuration Guide](docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md)
 
@@ -300,7 +304,8 @@ These tools are available to Claude Code as `mcp__code-search__*` functions. You
 - **Python**: 3.11+ (tested with 3.11 and 3.12)
 - **RAM**: 4GB minimum (8GB+ recommended for large codebases)
 - **Disk**: 2-4GB free space (model cache + embeddings)
-  - EmbeddingGemma: ~1.2GB
+  - Qwen3-0.6B: ~2.3GB (default)
+  - EmbeddingGemma: ~1.2GB (legacy)
   - BGE-M3: ~2.2GB (optional)
 - **Windows**: Windows 10/11 with PowerShell
 - **PyTorch**: 2.6.0+ (auto-installed with CUDA 11.8/12.4/12.6 support)
@@ -421,7 +426,7 @@ claude-context-local/
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 2,318+ tests (unit + integration)
+└── tests/             # 2,495+ tests (unit + integration)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -434,27 +439,29 @@ claude-context-local/
 
 ## Benchmark Results
 
-### Latest Validation (2026-05-25, hybrid k=7)
+### Latest Validation (2026-06-08, hybrid k=10)
 
-Post-label-fix single-mode run. Recommended operating point: **k=7** (`golden_dataset.recommended_k=7`).
+Post golden-set drift fix (`b5cfc24`) and line-overlap harness fix (`184e13b`). Recommended operating point: **k=7** (`golden_dataset.recommended_k=7`). All metrics auto-computed by `scripts/benchmark/run_sscg_benchmark.py`. Thresholds enforced from `evaluation/golden_dataset.json`.
 
-| MRR | Recall@5 | Recall@7 | Hit@7 | vs pre-fix baseline (k=5) |
-|-----|----------|----------|-------|---------------------------|
-| **0.806** | **0.646** | **0.700** | **13/13 (100%)** | +0.203 MRR, +0.108 Recall@5 |
+| MRR | Recall@5 | Recall@7 | Recall@10 | Hit@5 | NDCG@5 | Line Recall | Line Precision | Line IoU |
+|-----|----------|----------|-----------|-------|--------|-------------|----------------|----------|
+| **0.797** | **0.689** | **0.736** | **0.770** | **13/13 (100%)** | **0.717** | 0.852 | 0.267 | 0.304 |
 
-### SSCG Mode Comparison (2026-04-10, three-mode, k=10)
+Thresholds: MRR ≥ 0.50 ✓ | Recall@5 ≥ 0.55 ✓ | Hit@5 ≥ 0.80 ✓
 
-All three modes evaluated against 13 queries; cutoffs reported at @5/@10. All pass thresholds (MRR ≥ 0.50, Recall@5 ≥ 0.55, Hit@5 ≥ 0.80):
+### SSCG Mode Comparison (2026-06-08, k=10)
 
-| Mode | MRR | Recall@5 | Recall@10 | Hit@5 | NDCG@10 | Best category |
-|------|-----|----------|-----------|-------|---------|---------------|
-| **BM25** | **0.846** | 0.660 | 0.712 | 13/13 (100%) | 0.709 | A: 0.90 (exact symbol lookup) |
-| **Hybrid** | 0.800 | 0.622 | **0.833** | 13/13 (100%) | **0.730** | A: 0.85 |
-| **Semantic** | 0.712 | 0.660 | 0.731 | 13/13 (100%) | 0.685 | C: 0.80 |
+All three modes evaluated against 13 queries with neural reranker active. The cross-encoder reranker dominates final ranking — all modes reach the same MRR (0.797). Hybrid leads on deep recall.
 
-**Key findings**: BM25 best for exact symbol lookup; Hybrid best at deep recall (R@10, NDCG@10); Semantic ties BM25 on Cat C (Class Overview). See `evaluation/golden_dataset.json` and `scripts/benchmark/mcp_eval.py` for details.
+| Mode | MRR | Recall@5 | Recall@7 | Recall@10 | Hit@5 | NDCG@5 | Best for |
+|------|-----|----------|----------|-----------|-------|--------|----------|
+| **Hybrid** (default) | 0.797 | **0.689** | **0.736** | 0.770 | 13/13 (100%) | **0.717** | Deep recall, balanced |
+| **BM25** | 0.797 | **0.689** | 0.723 | **0.777** | 13/13 (100%) | **0.717** | Exact symbol lookup |
+| **Semantic** | 0.797 | 0.676 | 0.723 | 0.758 | 13/13 (100%) | 0.705 | Concept/intent queries |
 
-See [benchmarks](docs/BENCHMARKS.md) for token efficiency results (63% reduction).
+**Key findings**: Reranker normalises MRR across modes. Hybrid leads on R@7 (0.736); BM25 highest raw R@10 (0.777). All modes Hit@5 = 100% (13/13). See `evaluation/golden_dataset.json` and `scripts/benchmark/run_sscg_benchmark.py` for details.
+
+See [benchmarks](docs/BENCHMARKS.md) for full SSCG retrieval metrics and token efficiency results (63% reduction).
 
 ## Troubleshooting
 
@@ -487,6 +494,7 @@ scripts\batch\repair_installation.bat
 - [Installation Guide](docs/INSTALLATION_GUIDE.md) - Setup, configuration, troubleshooting
 - [MCP Tools Reference](docs/MCP_TOOLS_REFERENCE.md) - Complete tool documentation
 - [Advanced Features Guide](docs/ADVANCED_FEATURES_GUIDE.md) - Multi-model routing, graph search, optimization
+- [Call-Graph Tuning](docs/CALL_GRAPH_TUNING.md) - Resolver pipeline tuning, `min_confidence`, LSP diagnostics
 - [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) - **Setup guide for your projects** (see below)
 
 ### Configuration & Performance
@@ -524,7 +532,7 @@ The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic s
 
 ### Development
 
-- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (2,318+ passing)
+- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (2,495 unit + 19 integration, 100% pass rate)
 - [Git Workflow](docs/GIT_WORKFLOW.md) - Contributing guidelines
 - [Version History](docs/VERSION_HISTORY.md) - Changelog
 
