@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`recall@7` / `hit_rate@7`** auto-computed by the benchmark runner (`b5cfc24`, `evaluation/metrics.py`, `scripts/benchmark/run_sscg_benchmark.py`) — these metrics were previously manual figures; the runner now emits them automatically alongside @5 and @10.
 
+### Changed
+
+- **`golden_dataset.json` `current_metrics` reconciled to hybrid-default run** — the stored figures (MRR, Recall@5/@7/@10, NDCG@5) now reflect the canonical hybrid 0.35/0.65 k=10 run (MRR 0.797, R@5 0.689) that all documentation cites, replacing the earlier sweep-run figures (MRR 0.801, R@5 0.704 from a bm25_35_65 k=10 sweep). The `thresholds` block used for pass/fail gating is unchanged.
+
+### Refactored
+
+- **Dropped redundant `getattr` guards in `search_orchestrator._assemble`** (`mcp_server/tools/search_orchestrator.py:618,642`) — `OutputConfig` always carries `include_result_graph` and `include_subgraph` (both default `False`), so the `getattr(..., False)` safety guards are no-ops. Replaced with direct attribute access consistent with the rest of the config-access pattern.
+
+- **`calculate_metrics_from_results` return type corrected** (`evaluation/metrics.py`) — annotation updated from `dict[str, float]` to `dict[str, float | bool]` to reflect that `hit` and `hit@7` are boolean values. Caught by Copilot static-analysis review of PR #30.
+
 ---
 
 ## [0.15.0] - 2026-06-03

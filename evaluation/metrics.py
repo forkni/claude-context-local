@@ -143,7 +143,7 @@ def calculate_metrics_from_results(
     retrieved: list[str],
     expected: list[str],
     expected_primary: list[str] | None = None,
-) -> dict[str, float]:
+) -> dict[str, float | bool]:
     """Calculate all retrieval metrics for a single query.
 
     Args:

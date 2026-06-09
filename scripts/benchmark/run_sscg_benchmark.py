@@ -161,7 +161,11 @@ def _extract_ranges_from_results(
         start = meta.get("start_line") or 0
         end = meta.get("end_line") or 0
         if path and start and end:
-            ranges.setdefault(path, []).append((int(start), int(end)))
+            try:
+                s, e = int(start), int(end)
+            except (TypeError, ValueError):
+                continue
+            ranges.setdefault(path, []).append((s, e))
     return ranges
 
 

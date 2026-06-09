@@ -21,13 +21,13 @@
       "note": "Baseline from first system version evaluated 2026-01-30"
     },
     "current_metrics": {
-      "mrr": 0.801,
-      "recall_at_5": 0.704,
-      "recall_at_7": 0.749,
-      "recall_at_10": 0.783,
+      "mrr": 0.797,
+      "recall_at_5": 0.689,
+      "recall_at_7": 0.736,
+      "recall_at_10": 0.770,
       "hit_rate_at_5": 1.00,
-      "ndcg_at_5": 0.728,
-      "note": "Automated sweep run 2026-06-08 (post-3f1883d, post-Q05/Q35 golden drift fix). bm25_35_65 hybrid k=10, 13 queries. All 4 weight splits (20/80,35/65,50/50,65/35) produce identical scores — neural reranker dominates. Q05 fix (removed unretrievable search/filters.py:function:normalize_path) lifted R@5 from 0.646→0.704. HR@5=100% (up from HR@7=100%). Thresholds gate now honors JSON (0.55): all PASS."
+      "ndcg_at_5": 0.717,
+      "note": "Hybrid-default run 2026-06-08 (config bm25/dense 0.35/0.65, k=10, 13 queries), post Q05/Q35 golden drift fix and line-overlap fix. Matches the figures cited across README / BENCHMARKS.md / skill performance.md. Neural reranker dominates — all weight splits converge. Thresholds gate (R@5>=0.55) honored from this file: all PASS."
     },
     "recommended_k": 7,
     "changelog": [

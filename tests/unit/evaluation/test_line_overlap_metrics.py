@@ -7,6 +7,8 @@ including the range arithmetic helpers and the MetadataStore resolution utilitie
 import pytest
 
 from evaluation.metrics import (
+    THRESHOLDS,
+    aggregate_metrics,
     build_chunk_line_lookup,
     calculate_line_iou,
     calculate_line_precision,
@@ -479,3 +481,77 @@ class TestExtractRangesFromResults:
 
     def test_empty_results_returns_empty_dict(self):
         assert self._extract([]) == {}
+
+    def test_non_numeric_start_line_skipped(self):
+        """Non-numeric metadata values must not raise ValueError — silently skip."""
+        sr = self._make_sr(
+            "search/config.py:function:foo",
+            {"relative_path": "search/config.py", "start_line": "N/A", "end_line": 20},
+        )
+        result = self._extract([sr])
+        assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# aggregate_metrics — thresholds override contract (b5cfc24)
+# ---------------------------------------------------------------------------
+
+
+class TestAggregateMetricsThresholds:
+    """Tests for the aggregate_metrics(thresholds=...) JSON-override contract.
+
+    The module constant THRESHOLDS has recall_at_5 = 0.70 (high bar).
+    The golden_dataset.json ships thresholds.recall_at_5 = 0.55 (lower bar).
+    The merge ``_thresholds = {**THRESHOLDS, **(thresholds or {})}`` means the
+    JSON value wins for supplied keys; module constant is the fallback.
+    """
+
+    def _minimal_query(self, recall5: float, hit: bool) -> dict:
+        """Minimal per-query dict that satisfies aggregate_metrics float_keys."""
+        return {
+            "recall@1": 0.0,
+            "recall@5": recall5,
+            "recall@7": 0.0,
+            "recall@10": 0.0,
+            "precision@1": 0.0,
+            "precision@5": 0.0,
+            "precision@10": 0.0,
+            "mrr": 0.6,  # above THRESHOLDS["mrr"] = 0.50 → always PASS
+            "ndcg@5": 0.0,
+            "ndcg@10": 0.0,
+            "hit": hit,
+            "hit@7": hit,
+        }
+
+    def test_module_constant_fails_low_recall(self):
+        """Without override, recall@5 < 0.70 (module constant) → FAIL."""
+        per_query = [self._minimal_query(recall5=0.60, hit=True)]
+        result = aggregate_metrics(per_query)
+        assert result["pass_fail"]["recall@5"] == "FAIL"
+
+    def test_json_override_passes_low_recall(self):
+        """With JSON override recall_at_5=0.55, same 0.60 score → PASS."""
+        per_query = [self._minimal_query(recall5=0.60, hit=True)]
+        result = aggregate_metrics(per_query, thresholds={"recall_at_5": 0.55})
+        assert result["pass_fail"]["recall@5"] == "PASS"
+
+    def test_unspecified_keys_fall_back_to_module_constant(self):
+        """Keys absent from the override dict must use THRESHOLDS as fallback."""
+        per_query = [self._minimal_query(recall5=0.60, hit=True)]
+        # Only override recall_at_5; mrr and hit_rate_at_5 must use module constants
+        result = aggregate_metrics(per_query, thresholds={"recall_at_5": 0.55})
+        # mrr is 0.6, THRESHOLDS["mrr"] is 0.50 → PASS (fallback in effect)
+        assert result["pass_fail"]["mrr"] == "PASS"
+
+    def test_none_thresholds_behaves_as_module_constant(self):
+        """Passing thresholds=None must behave identically to the module constant."""
+        per_query = [self._minimal_query(recall5=0.60, hit=True)]
+        default_result = aggregate_metrics(per_query)
+        explicit_none_result = aggregate_metrics(per_query, thresholds=None)
+        assert default_result["pass_fail"] == explicit_none_result["pass_fail"]
+
+    def test_module_thresholds_dict_contents(self):
+        """Sanity: the module THRESHOLDS constant must contain the expected keys."""
+        assert "mrr" in THRESHOLDS
+        assert "recall_at_5" in THRESHOLDS
+        assert "hit_rate_at_5" in THRESHOLDS
