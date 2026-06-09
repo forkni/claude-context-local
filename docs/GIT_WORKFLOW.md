@@ -2106,7 +2106,7 @@ result=$(command)
 **Currently acceptable warnings**:
 
 - **E501 (line too long)** - Only if breaking would harm readability
-- **W293 (blank line with whitespace)** - Auto-fixed by black
+- **W293 (blank line with whitespace)** - Auto-fixed by ruff format
 - **Formatting warnings** - When using specialized formatting (docstrings, ASCII art, etc.)
 
 **Previously common but now resolved**:
