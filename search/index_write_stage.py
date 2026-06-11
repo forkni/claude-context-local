@@ -293,7 +293,7 @@ class IndexWriteStage:
                     skipped += 1
                     continue
 
-                if not g.has_edge(caller_id, callee_id):
+                if not g.has_edge(caller_id, callee_id, "calls"):
                     storage.add_call_edge(
                         caller_id,
                         callee_name=callee_id,
@@ -310,9 +310,11 @@ class IndexWriteStage:
                     injected += 1
                 else:
                     # Upgrade if this resolver has higher confidence.
-                    existing_confidence: float = g.edges[caller_id, callee_id].get(
-                        "resolver_confidence", 0.0
-                    )
+                    # Key on "calls" — a parallel "imports"/"uses_type" edge on the same
+                    # (u, v) pair must not be confused with the "calls" edge we manage.
+                    existing_confidence: float = g.edges[
+                        caller_id, callee_id, "calls"
+                    ].get("resolver_confidence", 0.0)
                     if edge.confidence > existing_confidence:
                         storage.upgrade_call_edge(
                             caller_id,
