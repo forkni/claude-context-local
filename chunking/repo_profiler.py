@@ -145,7 +145,7 @@ def profile_repository(
         )
         return None
 
-    # Calculate percentiles (statistics.quantiles uses inclusive interpolation)
+    # Calculate percentiles (statistics.quantiles default method="exclusive")
     sorted_sizes = sorted(sizes)
     quants = quantiles(sorted_sizes, n=4)  # [P25, P50, P75]
     p90_idx = max(0, int(len(sorted_sizes) * 0.9) - 1)

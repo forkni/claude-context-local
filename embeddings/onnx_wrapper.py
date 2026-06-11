@@ -152,7 +152,13 @@ class ONNXEmbeddingModel:
             embeddings = (last_hidden * mask_expanded).sum(dim=1)
             embeddings = embeddings / mask_expanded.sum(dim=1).clamp(min=1e-9)
 
-        # L2 normalize (standard for retrieval models)
+        # L2 normalize (standard for retrieval models).
+        # Normalization invariant: all embeddings leaving this wrapper are
+        # unit-norm.  FaissVectorIndex.add() also calls faiss.normalize_L2 on
+        # arrival, making the FAISS inner-product metric equivalent to cosine
+        # similarity on both ONNX and PyTorch backends.  Callers of the raw
+        # embed_query() output on the PyTorch path must NOT assume unit norm —
+        # the SentenceTransformer may or may not include a Normalize layer (#33).
         embeddings = F.normalize(embeddings.float(), p=2, dim=1)
 
         if convert_to_tensor:

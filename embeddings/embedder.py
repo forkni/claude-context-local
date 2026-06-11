@@ -190,8 +190,12 @@ def estimate_activation_gb_from_config(
 def _configure_cuda_allocator() -> None:
     """Configure PyTorch CUDA allocator for reduced fragmentation.
 
-    Must be called BEFORE any CUDA operations (import torch.cuda, tensor.cuda(), etc.)
-    Sets PYTORCH_CUDA_ALLOC_CONF environment variable with optimal settings:
+    Sets PYTORCH_CUDA_ALLOC_CONF before any CUDA allocation.  The env var is
+    read when the caching allocator initialises on the *first* CUDA allocation,
+    not at ``import torch`` (#30).  The call is made at module import time so
+    it normally wins the race, but server entry-points should ideally set it
+    even earlier (before importing this module) for guaranteed effect.
+
     - garbage_collection_threshold: Proactively frees old blocks at 80% usage
     - max_split_size_mb: Prevents splitting blocks >512MB (reduces fragmentation)
 
@@ -619,9 +623,9 @@ class CodeEmbedder:
 
         # Track per-model VRAM usage
         self._model_vram_usage: dict[str, float] = {}  # model_key -> VRAM MB
-
-        # Setup logging
-        logging.basicConfig(level=logging.INFO)
+        # Removed: logging.basicConfig(level=INFO) — library code must not
+        # mutate the root logger; it fights the MCP server's dual-handler
+        # setup and overrides any earlier basicConfig call (#37).
 
     @classmethod
     def get_supported_models(cls) -> dict[str, dict[str, Any]]:
@@ -1078,13 +1082,17 @@ class CodeEmbedder:
 
         # Use convert_to_tensor for GPU to avoid CPU<->GPU transfers
         use_tensor = self._is_gpu_device()
+        # Acquire lifecycle lock just like embed_chunks / embed_query (#35) so
+        # a concurrent cleanup() cannot null self.model mid-encode.
         # pyrefly: ignore [missing-attribute]
-        embedding = self.model.encode(
-            [content_to_embed],
-            show_progress_bar=False,
-            convert_to_tensor=use_tensor,
-            device=self.device if use_tensor else None,
-        )[0]
+        with self._lifecycle_lock:
+            # pyrefly: ignore [missing-attribute]
+            embedding = self.model.encode(
+                [content_to_embed],
+                show_progress_bar=False,
+                convert_to_tensor=use_tensor,
+                device=self.device if use_tensor else None,
+            )[0]
 
         # Convert back to numpy if tensor
         # Note: bf16 tensors must be converted to float32 first (numpy doesn't support bf16)
@@ -1256,151 +1264,158 @@ class CodeEmbedder:
         current_batch_size = batch_size
         total_batches = (len(chunks) + current_batch_size - 1) // current_batch_size
 
-        # Suppress INFO logs during progress bar to prevent line mixing
+        # Suppress INFO logs during progress bar to prevent line mixing.
+        # Use try/finally to restore the level even if VRAMExhaustedError or
+        # an OOM re-raise escapes the loop — without this the module logger
+        # stays permanently at WARNING, hiding all subsequent diagnostics (#20).
         original_log_level = self._logger.level
         self._logger.setLevel(logging.WARNING)
+        try:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TextColumn("({task.completed}/{task.total} batches)"),
+                console=console,
+                transient=False,
+            ) as progress:
+                task = progress.add_task("Embedding...", total=total_batches)
+                i = 0
+                batch_num = 0
+                while i < len(chunks):
+                    batch = chunks[i : i + current_batch_size]
+                    batch_num += 1
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            TextColumn("({task.completed}/{task.total} batches)"),
-            console=console,
-            transient=False,
-        ) as progress:
-            task = progress.add_task("Embedding...", total=total_batches)
-            i = 0
-            batch_num = 0
-            while i < len(chunks):
-                batch = chunks[i : i + current_batch_size]
-                batch_num += 1
+                    # Log VRAM before batch
+                    self._log_vram_usage("BATCH_START", batch_num)
 
-                # Log VRAM before batch
-                self._log_vram_usage("BATCH_START", batch_num)
+                    # Check VRAM before each batch
+                    vram_pct, should_warn, should_abort = self._check_vram_status()
 
-                # Check VRAM before each batch
-                vram_pct, should_warn, should_abort = self._check_vram_status()
-
-                if should_abort:
-                    self._logger.error(
-                        f"[VRAM] Aborting embedding - VRAM at {vram_pct:.1%} (threshold: 95%)"
-                    )
-                    raise VRAMExhaustedError(
-                        f"VRAM exhausted ({vram_pct:.1%}). "
-                        "Close other GPU applications and retry."
-                    )
-
-                if should_warn:
-                    self._logger.warning(f"[VRAM] High VRAM usage: {vram_pct:.1%}")
-
-                # Prepend passage prefix if it exists
-                if passage_prefix:
-                    batch_contents = [
-                        passage_prefix + self.create_embedding_content(chunk)
-                        for chunk in batch
-                    ]
-                else:
-                    batch_contents = [
-                        self.create_embedding_content(chunk) for chunk in batch
-                    ]
-
-                # Generate embeddings for batch with OOM recovery
-                # Use convert_to_tensor for GPU to avoid CPU<->GPU transfers (10-20% faster)
-                use_tensor = self._is_gpu_device()
-
-                try:
-                    # pyrefly: ignore [missing-attribute]
-                    with self._lifecycle_lock:
-                        # pyrefly: ignore [missing-attribute]
-                        batch_embeddings = self.model.encode(
-                            batch_contents,
-                            show_progress_bar=False,
-                            convert_to_tensor=use_tensor,
-                            device=self.device if use_tensor else None,
+                    if should_abort:
+                        self._logger.error(
+                            f"[VRAM] Aborting embedding - VRAM at {vram_pct:.1%} (threshold: 95%)"
                         )
-                except RuntimeError as e:
-                    # OOM recovery: halve current_batch_size and retry the same chunk
-                    # position with a smaller batch.  Applies to both PyTorch CUDA OOM
-                    # (torch.cuda.OutOfMemoryError subclasses RuntimeError) and ORT BFCArena OOM
-                    # ("BFCArena::AllocateRawInternal Available memory … smaller than requested").
-                    _oom_type = (
-                        getattr(torch.cuda, "OutOfMemoryError", None)
-                        if torch is not None
-                        else None
-                    )
-                    is_torch_oom = isinstance(_oom_type, type) and isinstance(
-                        e, _oom_type
-                    )
-                    err_str = str(e).lower()
-                    is_ort_oom = "bfcarena" in err_str or (
-                        "available memory" in err_str
-                        and "smaller than requested" in err_str
-                    )
-                    is_legacy_torch_oom = any(
-                        s in err_str for s in _PYTORCH_OOM_STRINGS
-                    )
-                    is_oom = is_torch_oom or is_ort_oom or is_legacy_torch_oom
-                    if is_oom and current_batch_size > 1:
-                        new_size = max(1, current_batch_size // 2)
-                        self._logger.warning(
-                            f"[OOM_RECOVERY] OOM at batch_size={current_batch_size} "
-                            f"({type(e).__name__}) — halving to {new_size}. "
-                            f"All subsequent batches will use size {new_size}."
+                        raise VRAMExhaustedError(
+                            f"VRAM exhausted ({vram_pct:.1%}). "
+                            "Close other GPU applications and retry."
                         )
-                        current_batch_size = new_size
-                        # Recalculate progress-bar total for the remaining smaller batches
-                        completed = int(progress.tasks[task].completed)
-                        remaining_chunks = len(chunks) - i
-                        remaining_batches = (
-                            remaining_chunks + current_batch_size - 1
-                        ) // current_batch_size
-                        progress.update(task, total=completed + remaining_batches)
-                        # Flush GPU caches before retry
-                        if torch and torch.cuda.is_available():
-                            torch.cuda.empty_cache()
-                        gc.collect()
-                        batch_num -= 1  # this attempt is retried, don't advance counter
-                        continue  # retry the same i with the smaller batch size
+
+                    if should_warn:
+                        self._logger.warning(f"[VRAM] High VRAM usage: {vram_pct:.1%}")
+
+                    # Prepend passage prefix if it exists
+                    if passage_prefix:
+                        batch_contents = [
+                            passage_prefix + self.create_embedding_content(chunk)
+                            for chunk in batch
+                        ]
                     else:
-                        if is_oom:
-                            self._logger.error(
-                                f"[OOM_RECOVERY] Cannot reduce batch further "
-                                f"(current_batch_size={current_batch_size}), re-raising OOM"
+                        batch_contents = [
+                            self.create_embedding_content(chunk) for chunk in batch
+                        ]
+
+                    # Generate embeddings for batch with OOM recovery
+                    # Use convert_to_tensor for GPU to avoid CPU<->GPU transfers (10-20% faster)
+                    use_tensor = self._is_gpu_device()
+
+                    try:
+                        # pyrefly: ignore [missing-attribute]
+                        with self._lifecycle_lock:
+                            # pyrefly: ignore [missing-attribute]
+                            batch_embeddings = self.model.encode(
+                                batch_contents,
+                                show_progress_bar=False,
+                                convert_to_tensor=use_tensor,
+                                device=self.device if use_tensor else None,
                             )
-                        raise
-
-                # Convert back to numpy for consistency with rest of codebase
-                # Note: bf16 tensors must be converted to float32 first (numpy doesn't support bf16)
-                if torch and torch.is_tensor(batch_embeddings):
-                    batch_embeddings = batch_embeddings.cpu().float().numpy()
-
-                # Note: Manual cache clearing removed (2026-01-04)
-                # CUDA allocator's garbage_collection_threshold:0.8 handles cleanup automatically
-                # Empirical testing showed no performance or stability difference vs manual clearing
-
-                # Create results
-                for _j, (chunk, embedding) in enumerate(
-                    zip(batch, batch_embeddings, strict=False)
-                ):
-                    chunk_id = self._build_chunk_id(chunk)
-                    metadata = self._build_chunk_metadata(chunk)
-
-                    results.append(
-                        EmbeddingResult(
-                            embedding=embedding, chunk_id=chunk_id, metadata=metadata
+                    except RuntimeError as e:
+                        # OOM recovery: halve current_batch_size and retry the same chunk
+                        # position with a smaller batch.  Applies to both PyTorch CUDA OOM
+                        # (torch.cuda.OutOfMemoryError subclasses RuntimeError) and ORT BFCArena OOM
+                        # ("BFCArena::AllocateRawInternal Available memory … smaller than requested").
+                        _oom_type = (
+                            getattr(torch.cuda, "OutOfMemoryError", None)
+                            if torch is not None
+                            else None
                         )
-                    )
+                        is_torch_oom = isinstance(_oom_type, type) and isinstance(
+                            e, _oom_type
+                        )
+                        err_str = str(e).lower()
+                        is_ort_oom = "bfcarena" in err_str or (
+                            "available memory" in err_str
+                            and "smaller than requested" in err_str
+                        )
+                        is_legacy_torch_oom = any(
+                            s in err_str for s in _PYTORCH_OOM_STRINGS
+                        )
+                        is_oom = is_torch_oom or is_ort_oom or is_legacy_torch_oom
+                        if is_oom and current_batch_size > 1:
+                            new_size = max(1, current_batch_size // 2)
+                            self._logger.warning(
+                                f"[OOM_RECOVERY] OOM at batch_size={current_batch_size} "
+                                f"({type(e).__name__}) — halving to {new_size}. "
+                                f"All subsequent batches will use size {new_size}."
+                            )
+                            current_batch_size = new_size
+                            # Recalculate progress-bar total for the remaining smaller batches
+                            completed = int(progress.tasks[task].completed)
+                            remaining_chunks = len(chunks) - i
+                            remaining_batches = (
+                                remaining_chunks + current_batch_size - 1
+                            ) // current_batch_size
+                            progress.update(task, total=completed + remaining_batches)
+                            # Flush GPU caches before retry
+                            if torch and torch.cuda.is_available():
+                                torch.cuda.empty_cache()
+                            gc.collect()
+                            batch_num -= (
+                                1  # this attempt is retried, don't advance counter
+                            )
+                            continue  # retry the same i with the smaller batch size
+                        else:
+                            if is_oom:
+                                self._logger.error(
+                                    f"[OOM_RECOVERY] Cannot reduce batch further "
+                                    f"(current_batch_size={current_batch_size}), re-raising OOM"
+                                )
+                            raise
 
-                # Log VRAM after batch
-                self._log_vram_usage("BATCH_END", batch_num)
+                    # Convert back to numpy for consistency with rest of codebase
+                    # Note: bf16 tensors must be converted to float32 first (numpy doesn't support bf16)
+                    if torch and torch.is_tensor(batch_embeddings):
+                        batch_embeddings = batch_embeddings.cpu().float().numpy()
 
-                # Advance to next chunk position and update progress bar
-                i += current_batch_size
-                progress.update(task, advance=1)
+                    # Note: Manual cache clearing removed (2026-01-04)
+                    # CUDA allocator's garbage_collection_threshold:0.8 handles cleanup automatically
+                    # Empirical testing showed no performance or stability difference vs manual clearing
 
-        # Restore original log level
-        self._logger.setLevel(original_log_level)
+                    # Create results
+                    for _j, (chunk, embedding) in enumerate(
+                        zip(batch, batch_embeddings, strict=True)
+                    ):
+                        chunk_id = self._build_chunk_id(chunk)
+                        metadata = self._build_chunk_metadata(chunk)
+
+                        results.append(
+                            EmbeddingResult(
+                                embedding=embedding,
+                                chunk_id=chunk_id,
+                                metadata=metadata,
+                            )
+                        )
+
+                    # Log VRAM after batch
+                    self._log_vram_usage("BATCH_END", batch_num)
+
+                    # Advance to next chunk position and update progress bar
+                    i += current_batch_size
+                    progress.update(task, advance=1)
+        finally:
+            # Restore log level even if VRAMExhaustedError / OOM escapes (#20).
+            self._logger.setLevel(original_log_level)
 
         self._logger.info("Embedding generation completed")
         return results

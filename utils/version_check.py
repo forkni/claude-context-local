@@ -27,14 +27,24 @@ def parse_version_tuple(version_str: str) -> tuple[int, ...]:
         version_str: Version string like "2.8.0" or "2.8.0+cu128"
 
     Returns:
-        Tuple of version numbers like (2, 8, 0)
+        Tuple of version numbers like (2, 8, 0), always at least 3 elements so
+        that ``(2, 8) < (2, 8, 0)`` false-positive is avoided (#41).
     """
     # Remove build metadata (+cu128, etc.)
     version_str = version_str.split("+")[0]
-    # Remove pre-release info (rc1, a1, etc.)
-    version_str = version_str.split("rc")[0].split("a")[0].split("b")[0]
-    # Parse into tuple
-    return tuple(int(x) for x in version_str.split(".") if x.isdigit())
+    # Remove pre-release suffix robustly: find the first non-digit, non-dot
+    # character after stripping build metadata, then truncate there.
+    # The old ``split("a")[0].split("b")[0]`` approach wrongly truncates any
+    # version segment that contains those letters (e.g. unlikely but fragile).
+    import re
+
+    version_str = re.split(r"[^0-9.]", version_str)[0].rstrip(".")
+    # Parse into tuple and pad to at least 3 elements so that short versions
+    # like "2.8" compare equal to "2.8.0" rather than less-than.
+    parts = tuple(int(x) for x in version_str.split(".") if x.isdigit())
+    while len(parts) < 3:
+        parts = parts + (0,)
+    return parts
 
 
 def check_dependency(package: str, requirement: str) -> tuple[bool, str]:

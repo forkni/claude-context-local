@@ -1180,16 +1180,16 @@ class IncrementalIndexer:
 
         all_embedding_results = []
         if chunks_to_embed:
-            try:
-                all_embedding_results = self.embedder.embed_chunks(chunks_to_embed)
-                # Update metadata
-                for chunk, embedding_result in zip(
-                    chunks_to_embed, all_embedding_results, strict=False
-                ):
-                    embedding_result.metadata["project_name"] = project_name
-                    embedding_result.metadata["content"] = chunk.content
-            except Exception as e:
-                logger.warning(f"Embedding failed: {e}", exc_info=True)
+            # Let embed failures propagate — the caller's except routes to
+            # _attempt_recovery, preventing a silent snapshot advance over
+            # chunks that were removed but never re-embedded (#1).
+            all_embedding_results = self.embedder.embed_chunks(chunks_to_embed)
+            # Update metadata
+            for chunk, embedding_result in zip(
+                chunks_to_embed, all_embedding_results, strict=True
+            ):
+                embedding_result.metadata["project_name"] = project_name
+                embedding_result.metadata["content"] = chunk.content
 
         # Add all embeddings to index at once
         if all_embedding_results:

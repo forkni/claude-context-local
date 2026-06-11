@@ -301,10 +301,14 @@ class ONNXModelLoader:
                         exc_info=True,
                     )
 
-            # Constrain ORT's own CUDA arena allocator so it cannot push the GPU
-            # into WDDM shared-memory spillover on Windows.
+            # Constrain ORT's own CUDA BFC arena allocator so it cannot push
+            # the GPU into WDDM shared-memory spillover on Windows.
             # Unlike PyTorch's set_per_process_memory_fraction (which ORT ignores),
-            # gpu_mem_limit is respected by the CUDAExecutionProvider arena.
+            # gpu_mem_limit is respected by the CUDAExecutionProvider BFC arena.
+            # IMPORTANT: this is NOT a hard total-VRAM ceiling — cuDNN workspaces
+            # and the CUDA context itself are allocated outside the ORT arena and
+            # are not bounded by this limit (#31).  Use it for conservative
+            # batch-sizing, not as a guarantee of total GPU memory usage.
             # Uses the same effective-cap formula as set_vram_limit() so both
             # backends share the same budget.  Not applied for CPUExecutionProvider.
             provider_options = None
@@ -337,12 +341,15 @@ class ONNXModelLoader:
                                 _other_gb,
                                 _headroom_gb,
                             ) = _cap_result
-                            provider_options = [
-                                {
-                                    "gpu_mem_limit": int(_cap_bytes),
-                                    "arena_extend_strategy": "kSameAsRequested",
-                                }
-                            ]
+                            # Pass as dict, not list. optimum 1.25.0 declares
+                            # provider_options: Optional[Dict] and wraps it into a
+                            # list internally; passing a list would double-wrap it
+                            # ([{...}] → [[{...}]]) causing session creation to
+                            # fail and silently fall back to PyTorch (#9).
+                            provider_options = {
+                                "gpu_mem_limit": int(_cap_bytes),
+                                "arena_extend_strategy": "kSameAsRequested",
+                            }
                             _log.info(
                                 f"[ONNX_VRAM] gpu_mem_limit={_cap_bytes / 1024**3:.2f}GB, "
                                 f"arena=kSameAsRequested "

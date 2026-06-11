@@ -517,9 +517,14 @@ class TestOrtProviderOptions:
         assert "provider_options" in call_kwargs
         po = call_kwargs["provider_options"]
         assert po is not None
-        assert len(po) == 1
-        assert po[0]["gpu_mem_limit"] == _cap_bytes
-        assert po[0]["arena_extend_strategy"] == "kSameAsRequested"
+        # After #9: provider_options is now a plain dict (not a one-element list).
+        # optimum 1.25.0 declared provider_options: Optional[Dict] and wrapped it
+        # internally; passing a list caused double-wrapping and a silent PyTorch
+        # fallback.  Newer optimum-onnx accepts Sequence[dict]|dict, so a dict
+        # works on both.
+        assert isinstance(po, dict)
+        assert po["gpu_mem_limit"] == _cap_bytes
+        assert po["arena_extend_strategy"] == "kSameAsRequested"
 
     def test_onnx_gpu_mem_limit_false_passes_none(self, tmp_path):
         """When onnx_gpu_mem_limit=False, provider_options is None."""

@@ -181,7 +181,9 @@ class MerkleDAG:
         Returns:
             MerkleNode or None if path should be ignored
         """
-        if self.should_ignore(path):
+        # Never ignore the root itself, even if its name is in the ignore list.
+        # Only apply should_ignore to paths *inside* the project root (#12).
+        if path != self.root_path and self.should_ignore(path):
             return None
 
         if base_path is None:

@@ -341,10 +341,10 @@ class FaissVectorIndex:
                     dimension = self._index.d
                     mmap_storage = MmapVectorStorage(self._mmap_path, dimension)
 
-                    # Reconstruct all vectors
-                    embeddings = np.array(
-                        [self._index.reconstruct(i) for i in range(self._index.ntotal)]
-                    )
+                    # Reconstruct all vectors in one C++ call (reconstruct_n
+                    # is a single memcpy for IndexFlatIP vs O(N) Python↔C++
+                    # crossings with per-vector reconstruct) (#19).
+                    embeddings = self._index.reconstruct_n(0, self._index.ntotal)
                     mmap_storage.save(embeddings, self._chunk_ids)
                     self._logger.info(
                         f"Saved mmap storage: {self._index.ntotal} vectors to {self._mmap_path}"
@@ -389,7 +389,15 @@ class FaissVectorIndex:
                 f"a different embedding model. Clear the index and re-index the project."
             )
 
-        # Normalize embeddings for cosine similarity
+        # Normalize embeddings for cosine similarity.
+        # L2-normalization invariant: all vectors in the index are unit-norm;
+        # search() also normalizes the query before scoring, making IndexFlatIP
+        # equivalent to cosine similarity. Both ONNX and PyTorch embeddings
+        # reach this point already approximately unit-norm; the explicit
+        # normalize_L2 here is the canonical source of that guarantee (#33).
+        # Copy first — normalize_L2 is in-place, and callers must not see
+        # their array mutated (#29).
+        embeddings = embeddings.copy()
         # pyrefly: ignore [missing-attribute]
         faiss.normalize_L2(embeddings)
 
@@ -438,7 +446,7 @@ class FaissVectorIndex:
                 f"a different embedding model. Clear the index and re-index the project."
             )
 
-        query = query.copy()  # normalize_L2 is in-place
+        query = query.copy()  # normalize_L2 is in-place (see add() for invariant doc)
         # pyrefly: ignore [missing-attribute]
         faiss.normalize_L2(query)
 

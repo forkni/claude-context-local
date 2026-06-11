@@ -359,7 +359,10 @@ class TestModelLoader:
 
         assert model == mock_model
         assert device == "cpu"
-        assert "[VALIDATED CACHE]" in caplog.text
+        # After #11: HF_HUB_OFFLINE env var (and its "[VALIDATED CACHE]" log) were
+        # removed to prevent offline-mode leaking across model loads.  The loading
+        # path now logs "Loading model from validated cache:" instead.
+        assert "validated cache" in caplog.text.lower()
 
     @patch("embeddings.model_loader.SentenceTransformer")
     @patch("embeddings.model_loader.torch")

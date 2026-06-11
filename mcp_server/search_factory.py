@@ -137,23 +137,25 @@ def get_searcher(
         or state.current_model_key != effective_model_key
         or state.searcher is None
     ):
-        state.current_project = project_path or state.current_project
-        state.current_model_key = effective_model_key
+        # Resolve keys that will be committed once construction succeeds (#2).
+        # Do NOT mutate state.current_project / state.current_model_key yet —
+        # if construction raises (e.g. DimensionMismatchError) the old searcher
+        # stays valid under the old keys, preventing a stale-searcher mismatch.
+        new_project = project_path or state.current_project
+        new_model_key = effective_model_key
         config = get_search_config()
-        logger.info(
-            f"[GET_SEARCHER] Initializing searcher for project: {state.current_project}"
-        )
+        logger.info(f"[GET_SEARCHER] Initializing searcher for project: {new_project}")
         if config.search_mode.enable_hybrid:
             project_storage = get_project_storage_dir(
                 # pyrefly: ignore [bad-argument-type]
-                state.current_project,
-                model_key=effective_model_key,
+                new_project,
+                model_key=new_model_key,
             )
             storage_dir = project_storage / "index"
             logger.info(f"[GET_SEARCHER] Using storage directory: {storage_dir}")
 
             # Pre-validate dimension compatibility
-            embedder = get_embedder(effective_model_key)
+            embedder = get_embedder(new_model_key)
 
             try:
                 validate_embedder_index_compatibility(
@@ -161,6 +163,7 @@ def get_searcher(
                 )
             except DimensionMismatchError as e:
                 logger.error(f"Cannot create searcher: {e}")
+                state.searcher = None  # force re-init on next call
                 raise  # Let caller handle recovery
 
             # Extract project_id from storage directory name
@@ -169,7 +172,7 @@ def get_searcher(
                 0
             ]  # Remove dimension suffix
 
-            state.searcher = HybridSearcher(
+            new_searcher = HybridSearcher(
                 storage_dir=str(storage_dir),
                 embedder=embedder,
                 bm25_weight=config.search_mode.bm25_weight,
@@ -185,13 +188,17 @@ def get_searcher(
                 f"HybridSearcher initialized (BM25: {config.search_mode.bm25_weight}, Dense: {config.search_mode.dense_weight})"
             )
         else:
-            state.searcher = IntelligentSearcher(
-                get_index_manager(project_path, model_key=effective_model_key),
-                get_embedder(effective_model_key),
+            new_searcher = IntelligentSearcher(
+                get_index_manager(project_path, model_key=new_model_key),
+                get_embedder(new_model_key),
                 config=config,
             )
             logger.info("IntelligentSearcher initialized (semantic-only mode)")
 
+        # Commit all three together only on success — no partial state visible (#2).
+        state.current_project = new_project
+        state.current_model_key = new_model_key
+        state.searcher = new_searcher
         logger.info(
             f"Searcher initialized for project: {Path(state.current_project).name if state.current_project else 'unknown'}"
         )
