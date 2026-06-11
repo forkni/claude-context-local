@@ -13,6 +13,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from utils.atomic_io import write_json_atomic
 from utils.path_utils import normalize_path
 
 
@@ -718,9 +719,8 @@ class CodeGraphStorage:
             # pyrefly: ignore [missing-attribute]
             data = nx.node_link_data(self.graph, edges="edges")
 
-            # Save to file
-            with open(self.graph_path, "w") as f:
-                json.dump(data, f, indent=2)
+            # Save to file (atomic write: tmp → os.replace)
+            write_json_atomic(self.graph_path, data)
 
             self.logger.info(
                 f"Saved call graph: {self.graph.number_of_nodes()} nodes, "
@@ -860,8 +860,7 @@ class CodeGraphStorage:
             community_map: Dict mapping chunk_id -> community_id
         """
         community_path = self.storage_dir / f"{self.project_id}_communities.json"
-        with open(community_path, "w") as f:
-            json.dump(community_map, f, indent=2)
+        write_json_atomic(community_path, community_map)
         self.logger.info(
             f"Stored {len(community_map)} community assignments to {community_path}"
         )
