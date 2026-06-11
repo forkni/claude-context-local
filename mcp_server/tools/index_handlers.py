@@ -535,12 +535,19 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
     """Clear the entire search index for ALL models."""
     import shutil
 
+    from mcp_server.server import close_project_resources
     from merkle.snapshot_manager import SnapshotManager
 
     state = get_state()
     current_project = state.current_project
     if current_project is None:
         return {"error": "No active project to clear"}
+
+    # Close all open DB/index handles BEFORE deleting files. Without this,
+    # SQLite and FAISS file handles are still open when unlink() runs, which
+    # raises PermissionError on Windows and leaves a partially-deleted index
+    # on any OS (#10). Mirrors the correct order used by handle_delete_project.
+    close_project_resources(current_project)
 
     # Get project info for pattern matching
     project_path = Path(current_project).resolve()

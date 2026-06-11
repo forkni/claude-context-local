@@ -254,11 +254,8 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
         if handler is None:
             raise ValueError(f"Unknown tool: {name}")
 
-        # Call handler
-        result = await handler(arguments)
-
-        # Apply output formatting (formatting-only, preserves all data)
-        # Use config default if no format specified
+        # Extract output_format BEFORE dispatch so handlers never receive the
+        # key (all current handlers ignore it, but future ones might not) (#36).
         from search.config import get_search_config
 
         config = get_search_config()
@@ -269,6 +266,9 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
             if isinstance(arguments, dict)
             else default_format
         )
+
+        # Call handler (arguments dict no longer contains output_format)
+        result = await handler(arguments)
         formatted_result = (
             format_response(result, output_format)
             if isinstance(result, dict)
