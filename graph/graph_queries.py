@@ -243,9 +243,10 @@ class GraphQueryEngine:
         Returns:
             Filtered subgraph view
         """
+        # Collect (u, v, key) triples — MultiDiGraph.edge_subgraph requires keys.
         filtered_edges = [
-            (u, v)
-            for u, v, d in self.storage.graph.edges(data=True)
+            (u, v, k)
+            for u, v, k, d in self.storage.graph.edges(keys=True, data=True)
             if d.get("relationship_type") in edge_types or d.get("type") in edge_types
         ]
         return self.storage.graph.edge_subgraph(filtered_edges)
@@ -437,9 +438,11 @@ class GraphQueryEngine:
         if chunk_id not in self.storage.graph:
             return {"calls_made": 0, "called_by_count": 0}
 
+        # Use distinct-neighbor counts to preserve "unique callee/caller" semantics
+        # under MultiDiGraph (out_degree/in_degree would count each parallel edge).
         return {
-            "calls_made": self.storage.graph.out_degree(chunk_id),
-            "called_by_count": self.storage.graph.in_degree(chunk_id),
+            "calls_made": len(set(self.storage.graph.successors(chunk_id))),
+            "called_by_count": len(set(self.storage.graph.predecessors(chunk_id))),
         }
 
     def find_entry_points(self) -> list[str]:
@@ -472,6 +475,20 @@ class GraphQueryEngine:
 
         return leaf_functions
 
+    def _simple_digraph_view(self) -> "nx.DiGraph":
+        """Collapse the MultiDiGraph to a simple DiGraph (one edge per (u,v) pair).
+
+        Used to preserve pre-multigraph parity for degree-based and pagerank
+        centrality so this correctness batch introduces no score drift.
+
+        .. note::
+            TODO: switch ``degree`` and ``pagerank`` to native MultiDiGraph counts
+            (degree = total relationship sites, pagerank weighted by edge multiplicity)
+            once dedicated value-shift tests are written.  Deferred from Batch 2A.
+        """
+        # pyrefly: ignore [missing-attribute]
+        return nx.DiGraph(self.storage.graph)
+
     def compute_centrality(self, method: str = "degree") -> dict[str, float]:
         """
         Compute centrality scores for functions.
@@ -483,18 +500,25 @@ class GraphQueryEngine:
             Dictionary mapping chunk_id → centrality score (float for all methods)
         """
         if method == "degree":
-            # graph.degree() returns (node, int) pairs; cast to float for a
-            # consistent return type matching the docstring and other methods (#40).
-            return {node: float(deg) for node, deg in self.storage.graph.degree()}
+            # Route through simple DiGraph view to preserve pre-multigraph parity.
+            # TODO: embrace multigraph counts once dedicated value-shift tests exist.
+            simple = self._simple_digraph_view()
+            return {node: float(deg) for node, deg in simple.degree()}
         elif method == "betweenness":
+            # betweenness_centrality is invariant to parallel edges (unweighted
+            # shortest paths), so no projection needed.
             # pyrefly: ignore [missing-attribute]
             return nx.betweenness_centrality(self.storage.graph)
         elif method == "closeness":
+            # closeness_centrality is invariant to parallel edges.
             # pyrefly: ignore [missing-attribute]
             return nx.closeness_centrality(self.storage.graph)
         elif method == "pagerank":
+            # Route through simple DiGraph view to preserve pre-multigraph parity.
+            # TODO: embrace multigraph pagerank (parallel edges → weight sum) once
+            # dedicated value-shift tests are written.
             # pyrefly: ignore [missing-attribute]
-            return nx.pagerank(self.storage.graph)
+            return nx.pagerank(self._simple_digraph_view())
         else:
             raise ValueError(
                 f"Unknown centrality method: {method}. "

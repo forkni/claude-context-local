@@ -40,7 +40,7 @@ class TestCodeGraphStorage:
         """Test graph storage initialization."""
         assert graph_storage.project_id == "test_project"
         assert graph_storage.storage_dir == temp_storage_dir
-        assert isinstance(graph_storage.graph, nx.DiGraph)
+        assert isinstance(graph_storage.graph, nx.MultiDiGraph)
         assert len(graph_storage) == 0
 
     def test_add_node(self, graph_storage):
@@ -437,7 +437,7 @@ class TestCodeGraphStorage:
         # Verify directionality
         assert new_storage.graph.has_edge("foo_id", "bar_id")
         assert not new_storage.graph.has_edge("bar_id", "foo_id")  # Not bidirectional
-        assert isinstance(new_storage.graph, nx.DiGraph)
+        assert isinstance(new_storage.graph, nx.MultiDiGraph)
 
     def test_json_serialization_format(self, graph_storage):
         """Test that saved JSON has expected format."""
@@ -460,6 +460,12 @@ class TestCodeGraphStorage:
         assert "edges" in data  # NetworkX 3.6+ uses "edges" for edges
         assert "directed" in data
         assert data["directed"] is True
+        assert data.get("multigraph") is True, (
+            "Saved JSON must mark graph as multigraph"
+        )
+        assert data.get("graph", {}).get("schema_version") == 2, (
+            "Saved JSON must carry schema_version=2"
+        )
 
     # ------------------------------------------------------------------
     # Fix 3: remove_file_nodes — graph prune on incremental reindex
@@ -612,7 +618,7 @@ class TestCodeGraphStorage:
         )
 
         assert reloaded.graph.has_edge(caller, callee), "Edge must survive round-trip"
-        edge_data = reloaded.graph.edges[caller, callee]
+        edge_data = reloaded.graph.edges[caller, callee, "calls"]
         assert edge_data.get("resolver_source") == "pyan", (
             "resolver_source must survive node-link JSON round-trip; "
             "if this fails the edge attr was accidentally named 'source' (reserved key)"
@@ -642,7 +648,7 @@ class TestCodeGraphStorage:
             resolver_confidence=0.90,
         )
 
-        edge_data = graph_storage.graph.edges[caller, callee]
+        edge_data = graph_storage.graph.edges[caller, callee, "calls"]
         # 'source' must NOT appear as an edge attribute (it would collide with the
         # node-link endpoint key and be lost on save/load)
         assert "source" not in edge_data, (
@@ -717,3 +723,92 @@ class TestCodeGraphStorage:
         assert edge_data["confidence"] == 1.0, (
             "Genuinely invalid confidence (non-string non-numeric) must default to 1.0"
         )
+
+    # ------------------------------------------------------------------
+    # MultiDiGraph — parallel edge correctness (#3)
+    # ------------------------------------------------------------------
+
+    def test_parallel_edge_types_survive_save_load(
+        self, graph_storage, temp_storage_dir
+    ):
+        """Two relationship types on the same (u, v) pair must both survive a save/load round-trip."""
+        u = "src/a.py:1-5:function:foo"
+        v = "src/b.py:1-5:function:bar"
+        graph_storage.add_node(u, "foo", "function", "src/a.py")
+        graph_storage.add_node(v, "bar", "function", "src/b.py")
+
+        # First edge via the public API (key="calls")
+        graph_storage.add_call_edge(u, v, line_number=3)
+        # Second edge injected directly with a different key
+        graph_storage.graph.add_edge(
+            u, v, key="imports", type="imports", line=1, confidence=1.0
+        )
+
+        graph_storage.save()
+
+        reloaded = CodeGraphStorage(
+            project_id="test_project", storage_dir=temp_storage_dir
+        )
+        assert isinstance(reloaded.graph, nx.MultiDiGraph)
+        all_edges = reloaded.graph.get_edge_data(u, v)
+        assert all_edges is not None, "Edge (u, v) must exist after reload"
+        assert "calls" in all_edges, "calls edge must survive round-trip"
+        assert "imports" in all_edges, "imports edge must survive round-trip"
+
+    def test_get_edge_data_relationship_type_filter(self, graph_storage):
+        """get_edge_data(u, v, relationship_type=...) must return the specific edge, not the primary."""
+        u = "src/a.py:1-5:function:foo"
+        v = "src/b.py:1-5:function:bar"
+        graph_storage.add_node(u, "foo", "function", "src/a.py")
+        graph_storage.add_node(v, "bar", "function", "src/b.py")
+
+        graph_storage.add_call_edge(u, v, line_number=3, resolver_confidence=0.8)
+        graph_storage.graph.add_edge(
+            u, v, key="imports", type="imports", line=1, confidence=1.0
+        )
+
+        calls_data = graph_storage.get_edge_data(u, v, relationship_type="calls")
+        assert calls_data is not None
+        assert calls_data.get("resolver_confidence") == 0.8
+
+        imports_data = graph_storage.get_edge_data(u, v, relationship_type="imports")
+        assert imports_data is not None
+        assert imports_data.get("relationship_type") == "imports"
+
+        # Missing key must return None
+        assert graph_storage.get_edge_data(u, v, relationship_type="inherits") is None
+
+    def test_coerce_on_load_upgrades_old_digraph_json(self, temp_storage_dir):
+        """Loading an old DiGraph-format (no 'multigraph' key) must yield a MultiDiGraph."""
+        import networkx as nx
+        from networkx.readwrite import node_link_data
+
+        # Build a plain DiGraph and write it as a node-link JSON (no multigraph key)
+        dg = nx.DiGraph()
+        dg.add_node("src/x.py:1-5:function:x", name="x", type="function")
+        dg.add_edge(
+            "src/x.py:1-5:function:x",
+            "src/y.py:1-5:function:y",
+            type="calls",
+            line=1,
+            confidence=1.0,
+        )
+        legacy_data = node_link_data(dg)
+        # Sanity: node_link_data for DiGraph must not have multigraph=True
+        assert not legacy_data.get("multigraph", False)
+
+        storage = CodeGraphStorage(
+            project_id="test_project", storage_dir=temp_storage_dir
+        )
+        graph_path = storage.graph_path
+        with open(graph_path, "w", encoding="utf-8") as f:
+            json.dump(legacy_data, f)
+
+        # Load a fresh instance — coerce-on-load must upgrade to MultiDiGraph
+        reloaded = CodeGraphStorage(
+            project_id="test_project", storage_dir=temp_storage_dir
+        )
+        assert isinstance(reloaded.graph, nx.MultiDiGraph), (
+            "Old DiGraph JSON must be coerced to MultiDiGraph on load"
+        )
+        assert reloaded.graph.number_of_nodes() >= 1
