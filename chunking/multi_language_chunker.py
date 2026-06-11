@@ -397,9 +397,12 @@ class MultiLanguageChunker:
         try:
             chunk_metadata = {
                 "chunk_id": chunk_id,
-                # Use the absolute file_path so import_resolver.read_file_imports
-                # can open the file regardless of the process CWD (#8).
-                "file_path": chunk.file_path,
+                # Prefer the absolute file_path (set by _convert_to_code_chunks)
+                # so import_resolver.read_file_imports can open the file regardless
+                # of the process CWD (#8).  Fall back to relative_path when the
+                # chunk was constructed without file_path (e.g. in unit tests that
+                # use CodeChunk.__new__ to avoid the full constructor).
+                "file_path": getattr(chunk, "file_path", None) or chunk.relative_path,
                 "name": chunk.name,
                 "chunk_type": chunk.chunk_type,
                 "parent_class": chunk.parent_name,
@@ -439,9 +442,12 @@ class MultiLanguageChunker:
         try:
             chunk_metadata = {
                 "chunk_id": chunk_id,
-                # Use the absolute file_path so import_resolver.read_file_imports
-                # can open the file regardless of the process CWD (#8).
-                "file_path": chunk.file_path,
+                # Prefer the absolute file_path (set by _convert_to_code_chunks)
+                # so import_resolver.read_file_imports can open the file regardless
+                # of the process CWD (#8).  Fall back to relative_path when the
+                # chunk was constructed without file_path (e.g. in unit tests that
+                # use CodeChunk.__new__ to avoid the full constructor).
+                "file_path": getattr(chunk, "file_path", None) or chunk.relative_path,
                 "name": chunk.name,
                 "chunk_type": chunk.chunk_type,
                 "parent_class": chunk.parent_name,
