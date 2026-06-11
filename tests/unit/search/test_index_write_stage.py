@@ -250,7 +250,7 @@ class TestInjectCallEdgesMinConfidence:
         _inject_call_edges accesses (graph, dense_index.metadata_store)."""
         import networkx as nx
 
-        g = nx.DiGraph()
+        g = nx.MultiDiGraph()
         g.add_node("caller_a")
         g.add_node("callee_a")
         g.add_node("caller_b")
@@ -342,6 +342,146 @@ class TestInjectCallEdgesMinConfidence:
         assert any("caller_a" in c and "callee_a" in c for c in calls), (
             f"Expected pyan (0.75) edge injected with min_confidence=0.0; calls: {calls}"
         )
+
+
+# ---------------------------------------------------------------------------
+# MultiDiGraph edge-injection correctness (#3 follow-up)
+# ---------------------------------------------------------------------------
+
+
+class TestInjectCallEdgesMultiGraph:
+    """_inject_call_edges must handle MultiDiGraph edge keying correctly.
+
+    Regression tests for the two bugs introduced by the DiGraph→MultiDiGraph migration
+    that were missed by the original blast-radius sweep:
+
+    Bug 1 (reported): g.edges[u, v] 2-tuple subscript → ValueError on MultiDiGraph.
+    Bug 2 (latent):   g.has_edge(u, v) returns True for any parallel edge type;
+                      a pre-existing "imports" edge caused upgrade_call_edge to be called
+                      for a "calls" edge that didn't exist → KeyError.
+    """
+
+    @staticmethod
+    def _make_resolved_edge(
+        caller: str, callee: str, confidence: float, source: str = "pyan"
+    ):
+        from chunking.relationships.call_edge_resolver import ResolvedEdge
+
+        return ResolvedEdge(
+            caller_id=caller,
+            callee_id=callee,
+            line=1,
+            is_method=False,
+            source=source,
+            confidence=confidence,
+        )
+
+    @staticmethod
+    def _make_stage_with_real_graph(extra_nodes=None):
+        """Return (stage, storage, g) where g is a real MultiDiGraph.
+
+        storage.add_call_edge / upgrade_call_edge are Mocks so calls are assertable,
+        but storage.graph is the *real* MultiDiGraph so g.edges[...] exercises real code.
+        """
+        import networkx as nx
+
+        g = nx.MultiDiGraph()
+        for node in ["src/a.py:1:function:foo", "src/b.py:1:function:bar"] + (
+            extra_nodes or []
+        ):
+            g.add_node(node)
+
+        storage = Mock()
+        storage.graph = g
+
+        graph_integration = Mock()
+        graph_integration.storage = storage
+
+        dense_index = Mock()
+        dense_index.metadata_store = Mock()
+
+        indexer = Mock()
+        indexer._graph = graph_integration
+        indexer.dense_index = dense_index
+
+        stage = IndexWriteStage(
+            embedder=Mock(),
+            indexer=indexer,
+            snapshot_manager=Mock(),
+            bm25_sync=Mock(),
+            build_metadata_fn=Mock(return_value={}),
+            clear_gpu_fn=Mock(),
+        )
+        return stage, storage, g
+
+    def test_upgrade_branch_reads_calls_edge_no_valueerror(self):
+        """Upgrade path: existing "calls" edge → upgrade_call_edge called, no ValueError.
+
+        Pre-fix: g.edges[u, v] raised ValueError on MultiDiGraph (expected 3-tuple key).
+        """
+        from search.config import CallGraphConfig
+
+        caller = "src/a.py:1:function:foo"
+        callee = "src/b.py:1:function:bar"
+        stage, storage, g = self._make_stage_with_real_graph()
+
+        # Seed a "calls" edge at low confidence — injection should upgrade it.
+        g.add_edge(caller, callee, key="calls", resolver_confidence=0.5)
+
+        edge = self._make_resolved_edge(
+            caller, callee, confidence=0.90, source="libcst"
+        )
+        merged = {(caller, callee): edge}
+
+        cg_cfg = CallGraphConfig(min_confidence=0.0)
+        mock_cfg = Mock()
+        mock_cfg.call_graph = cg_cfg
+
+        with (
+            patch("search.index_write_stage.build_line_to_chunk_map", return_value={}),
+            patch("search.config.get_search_config", return_value=mock_cfg),
+            patch("search.index_write_stage.run_resolvers", return_value=merged),
+            patch("search.index_write_stage.PyanResolver", return_value=Mock()),
+        ):
+            # Must not raise ValueError (was the crash)
+            stage._inject_call_edges("/fake/project")
+
+        storage.upgrade_call_edge.assert_called_once()
+        storage.add_call_edge.assert_not_called()
+
+    def test_parallel_imports_edge_does_not_block_calls_injection(self):
+        """Latent bug: "imports" parallel edge must not shadow missing "calls" edge.
+
+        Pre-fix: g.has_edge(u, v) returned True for the "imports" key, routing to the
+        upgrade branch which then did g.edges[u, v, "calls"] → KeyError.
+        """
+        from search.config import CallGraphConfig
+
+        caller = "src/a.py:1:function:foo"
+        callee = "src/b.py:1:function:bar"
+        stage, storage, g = self._make_stage_with_real_graph()
+
+        # Only an "imports" edge exists — NO "calls" edge yet.
+        g.add_edge(caller, callee, key="imports", type="imports", confidence=1.0)
+
+        edge = self._make_resolved_edge(caller, callee, confidence=0.75, source="pyan")
+        merged = {(caller, callee): edge}
+
+        cg_cfg = CallGraphConfig(min_confidence=0.0)
+        mock_cfg = Mock()
+        mock_cfg.call_graph = cg_cfg
+
+        with (
+            patch("search.index_write_stage.build_line_to_chunk_map", return_value={}),
+            patch("search.config.get_search_config", return_value=mock_cfg),
+            patch("search.index_write_stage.run_resolvers", return_value=merged),
+            patch("search.index_write_stage.PyanResolver", return_value=Mock()),
+        ):
+            stage._inject_call_edges("/fake/project")
+
+        # The "calls" edge did NOT exist → add_call_edge must be called, not upgrade.
+        storage.add_call_edge.assert_called_once()
+        storage.upgrade_call_edge.assert_not_called()
 
 
 class TestIndexWriteStageEmbeddingFailure:
