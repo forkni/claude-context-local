@@ -67,6 +67,12 @@ class GraphQueryEngine:
         Returns:
             List of chunk IDs forming the call chain, or None if no path exists
         """
+        # Normalize path separators before graph lookup (#40). chunk_ids on
+        # Windows may use backslashes while the graph was built with forward
+        # slashes (or vice-versa), causing spurious "not in graph" misses.
+        start_chunk_id = start_chunk_id.replace("\\", "/")
+        end_chunk_id = end_chunk_id.replace("\\", "/")
+
         if start_chunk_id not in self.storage.graph:
             self.logger.warning(f"Start chunk {start_chunk_id} not in graph")
             return None
@@ -474,10 +480,12 @@ class GraphQueryEngine:
             method: Centrality method ("degree", "betweenness", "closeness", "pagerank")
 
         Returns:
-            Dictionary mapping chunk_id → centrality score
+            Dictionary mapping chunk_id → centrality score (float for all methods)
         """
         if method == "degree":
-            return dict(self.storage.graph.degree())
+            # graph.degree() returns (node, int) pairs; cast to float for a
+            # consistent return type matching the docstring and other methods (#40).
+            return {node: float(deg) for node, deg in self.storage.graph.degree()}
         elif method == "betweenness":
             # pyrefly: ignore [missing-attribute]
             return nx.betweenness_centrality(self.storage.graph)
@@ -563,10 +571,21 @@ class GraphQueryEngine:
         relation_types: list[str] | None,
         max_depth: int,
     ) -> list[RelationshipEntry]:
-        """BFS over inbound edges with dual symbol-name lookup at each hop."""
+        """BFS over inbound edges with dual symbol-name lookup at each hop.
+
+        Uses two separate sets to prevent the "visited-before-filter" bug (#23):
+        - ``visited``: tracks nodes queued for BFS expansion (prevents loops).
+        - ``reported``: tracks nodes already added to results (prevents duplicates).
+
+        Without this separation, a predecessor reachable from two different
+        query-nodes via edges of different types would be marked visited on the
+        first (possibly non-matching) encounter, silently suppressing the second
+        (possibly matching) edge.
+        """
         results: list[RelationshipEntry] = []
         origin_set = set(self._node_variants(chunk_id))
-        visited: set[str] = set(origin_set)
+        visited: set[str] = set(origin_set)  # nodes queued for BFS expansion
+        reported: set[str] = set()  # nodes already in results
 
         # query_nodes: the node IDs whose predecessors we will inspect at this depth
         current_query: set[str] = {v for v in origin_set if v in self.storage.graph}
@@ -576,16 +595,15 @@ class GraphQueryEngine:
 
             for query_node in current_query:
                 for pred in self.storage.get_callers(query_node):
-                    if pred in visited:
-                        continue
-                    visited.add(pred)
-
                     edge_data = self.storage.get_edge_data(pred, query_node) or {}
                     rel_type = edge_data.get("relationship_type") or edge_data.get(
                         "type", "unknown"
                     )
 
-                    if relation_types is None or rel_type in relation_types:
+                    # Report once per node on first matching edge (#23).
+                    if pred not in reported and (
+                        relation_types is None or rel_type in relation_types
+                    ):
                         results.append(
                             RelationshipEntry(
                                 chunk_id=pred,
@@ -595,11 +613,14 @@ class GraphQueryEngine:
                                 edge_data=edge_data,
                             )
                         )
+                        reported.add(pred)
 
+                    # Queue for BFS expansion using a separate visited guard.
                     if depth < max_depth:
                         for v in self._node_variants(pred):
                             if v not in visited:
                                 next_query.add(v)
+                                visited.add(v)
 
             if not next_query:
                 break
@@ -613,9 +634,15 @@ class GraphQueryEngine:
         relation_types: list[str] | None,
         max_depth: int,
     ) -> list[RelationshipEntry]:
-        """BFS over outbound edges."""
+        """BFS over outbound edges.
+
+        Uses two separate sets for the same reason as _traverse_inbound (#23):
+        - ``visited``: BFS expansion dedup.
+        - ``reported``: result dedup.
+        """
         results: list[RelationshipEntry] = []
-        visited: set[str] = {chunk_id}
+        visited: set[str] = {chunk_id}  # nodes queued for BFS expansion
+        reported: set[str] = set()  # nodes already in results
         current_nodes: set[str] = (
             {chunk_id} if chunk_id in self.storage.graph else set()
         )
@@ -625,16 +652,15 @@ class GraphQueryEngine:
 
             for node in current_nodes:
                 for succ in self.storage.get_callees(node):
-                    if succ in visited:
-                        continue
-                    visited.add(succ)
-
                     edge_data = self.storage.get_edge_data(node, succ) or {}
                     rel_type = edge_data.get("relationship_type") or edge_data.get(
                         "type", "unknown"
                     )
 
-                    if relation_types is None or rel_type in relation_types:
+                    # Report once per node on first matching edge (#23).
+                    if succ not in reported and (
+                        relation_types is None or rel_type in relation_types
+                    ):
                         results.append(
                             RelationshipEntry(
                                 chunk_id=succ,
@@ -644,9 +670,12 @@ class GraphQueryEngine:
                                 edge_data=edge_data,
                             )
                         )
+                        reported.add(succ)
 
-                    if depth < max_depth:
+                    # Queue for BFS expansion.
+                    if depth < max_depth and succ not in visited:
                         next_nodes.add(succ)
+                        visited.add(succ)
 
             if not next_nodes:
                 break
