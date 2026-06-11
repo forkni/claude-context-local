@@ -215,8 +215,10 @@ class SnapshotManager:
 
             # Check version compatibility
             if snapshot_data.get("version") != "1.0":
-                print(
-                    f"Warning: Snapshot version mismatch: {snapshot_data.get('version')}"
+                # Use logger, not print() — stdout is the JSON-RPC channel in
+                # stdio mode and a stray print corrupts the protocol stream (#32).
+                logger.warning(
+                    "Snapshot version mismatch: %s", snapshot_data.get("version")
                 )
 
             return MerkleDAG.from_dict(snapshot_data["dag"])
@@ -389,33 +391,17 @@ class SnapshotManager:
         return sorted(snapshots, key=lambda x: x.get("last_snapshot", ""), reverse=True)
 
     def cleanup_old_snapshots(self, keep_count: int = 5) -> None:
-        """Remove old snapshots, keeping only the most recent ones.
+        """No-op — kept for API compatibility.
 
-        Args:
-            keep_count: Number of snapshots to keep per project
+        Snapshot filenames are unique per (project, model, dimension)
+        (``{project_id}_snapshot.json``), so each logical group always has
+        exactly one file.  ``files[keep_count:]`` is always empty and this
+        method has never deleted anything (#39).
+
+        If per-version snapshot retention is needed in the future, the naming
+        scheme must encode a timestamp or sequence number in the stem so that
+        multiple snapshots can share the same group key.
         """
-        # Group snapshots by project
-        project_snapshots: dict[str, list[Path]] = {}
-
-        for snapshot_file in self.storage_dir.glob("*_snapshot.json"):
-            project_id = snapshot_file.stem.replace("_snapshot", "")
-            if project_id not in project_snapshots:
-                project_snapshots[project_id] = []
-            project_snapshots[project_id].append(snapshot_file)
-
-        # Clean up old snapshots for each project
-        for project_id, files in project_snapshots.items():
-            # Sort by modification time
-            files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
-
-            # Delete old snapshots
-            for old_file in files[keep_count:]:
-                old_file.unlink()
-
-                # Also delete corresponding metadata
-                metadata_file = old_file.parent / f"{project_id}_metadata.json"
-                if metadata_file.exists():
-                    metadata_file.unlink()
 
     def get_snapshot_age(self, project_path: str) -> float | None:
         """Get the age of a snapshot in seconds.

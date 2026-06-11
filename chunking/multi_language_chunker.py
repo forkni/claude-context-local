@@ -103,8 +103,8 @@ class MultiLanguageChunker:
         self.root_path = root_path
         self.enable_entity_tracking = enable_entity_tracking
         self.relation_filter = relation_filter
-        # Use AST chunker for Python (more mature implementation)
-        # Use tree-sitter for other languages
+        # Use AST chunker for Python (chunking/python_ast_chunker.py — more mature).
+        # Use tree-sitter for all other languages.
         self.tree_sitter_chunker = TreeSitterChunker()
 
         # Initialize directory filter for index-time filtering
@@ -397,7 +397,9 @@ class MultiLanguageChunker:
         try:
             chunk_metadata = {
                 "chunk_id": chunk_id,
-                "file_path": chunk.relative_path,
+                # Use the absolute file_path so import_resolver.read_file_imports
+                # can open the file regardless of the process CWD (#8).
+                "file_path": chunk.file_path,
                 "name": chunk.name,
                 "chunk_type": chunk.chunk_type,
                 "parent_class": chunk.parent_name,
@@ -437,7 +439,9 @@ class MultiLanguageChunker:
         try:
             chunk_metadata = {
                 "chunk_id": chunk_id,
-                "file_path": chunk.relative_path,
+                # Use the absolute file_path so import_resolver.read_file_imports
+                # can open the file regardless of the process CWD (#8).
+                "file_path": chunk.file_path,
                 "name": chunk.name,
                 "chunk_type": chunk.chunk_type,
                 "parent_class": chunk.parent_name,
@@ -622,8 +626,15 @@ class MultiLanguageChunker:
         file_paths = []
         for ext in valid_extensions:
             for file_path in dir_path.rglob(f"*{ext}"):
-                # Skip common large/build/tooling directories
-                if any(part in self.DEFAULT_IGNORED_DIRS for part in file_path.parts):
+                # Skip common large/build/tooling directories.
+                # Scope the check to components *relative to the scan root*
+                # so ancestor directories named "build", "env", etc. don't
+                # suppress the entire project (#12).
+                try:
+                    rel_parts = file_path.relative_to(dir_path).parts
+                except ValueError:
+                    rel_parts = file_path.parts
+                if any(part in self.DEFAULT_IGNORED_DIRS for part in rel_parts):
                     continue
                 file_paths.append(file_path)
 

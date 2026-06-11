@@ -2,7 +2,7 @@
 
 Note: This is the tree-sitter based Python chunker for consistency with
 other languages. The main Python chunker used by the system is the AST-based
-one in chunking/python_chunker.py which provides better Python-specific analysis.
+one in chunking/python_ast_chunker.py which provides better Python-specific analysis.
 """
 
 from typing import Any
@@ -189,15 +189,14 @@ class PythonChunker(LanguageChunker):
             for child in first_statement.children:
                 if child.type == "string":
                     docstring_text = self.get_node_text(child, source)
-                    # Clean up the docstring - remove quotes and normalize whitespace
-                    if docstring_text.startswith('"""') or docstring_text.startswith(
-                        "'''"
-                    ):
-                        docstring_text = docstring_text[3:-3]
-                    elif docstring_text.startswith('"') or docstring_text.startswith(
-                        "'"
-                    ):
-                        docstring_text = docstring_text[1:-1]
+                    # Clean up the docstring - remove quotes and normalize whitespace.
+                    # Strip optional string prefix (r, b, rb, br, u, …) before
+                    # matching the quote style so r"""...""" is handled (#42).
+                    _inner = docstring_text.lstrip("rRbBuU")
+                    if _inner.startswith('"""') or _inner.startswith("'''"):
+                        docstring_text = _inner[3:-3]
+                    elif _inner.startswith('"') or _inner.startswith("'"):
+                        docstring_text = _inner[1:-1]
                     return docstring_text.strip()
 
         return None

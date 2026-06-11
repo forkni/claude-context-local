@@ -156,14 +156,20 @@ def _read_file_with_timeout(file_path: Path, timeout: float = FILE_READ_TIMEOUT)
         with open(file_path, encoding="utf-8") as f:
             return f.read()
 
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(read_file)
-        try:
-            return future.result(timeout=timeout)
-        except FuturesTimeoutError:
-            raise TimeoutError(
-                f"File read timed out after {timeout}s (possibly locked): {file_path}"
-            ) from None
+    # Do NOT use 'with executor' — the context-manager's __exit__ calls
+    # shutdown(wait=True), which blocks forever if the thread is hung on a
+    # locked file, making the timeout illusory (#6).
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(read_file)
+    try:
+        return future.result(timeout=timeout)
+    except FuturesTimeoutError:
+        executor.shutdown(wait=False, cancel_futures=True)  # release, don't hang
+        raise TimeoutError(
+            f"File read timed out after {timeout}s (possibly locked): {file_path}"
+        ) from None
+    finally:
+        executor.shutdown(wait=False)
 
 
 def _is_binary_file(file_path: Path, sample_size: int = 8192) -> bool:
