@@ -1,8 +1,12 @@
 """Merkle DAG (Directed Acyclic Graph) implementation for file change tracking."""
 
 import hashlib
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -97,10 +101,24 @@ class MerkleDAG:
         """
         name = path.name
 
-        # Check exact matches and patterns
+        # Check exact matches and patterns.
+        # Patterns containing a path separator are matched against the path
+        # relative to the project root (normalised to forward-slashes so they
+        # work identically on Windows and POSIX).  Separator-free patterns
+        # continue to match on the basename only, preserving existing behaviour
+        # for entries like ".git", "__pycache__", and "*.pyc".
         for pattern in self.ignore_patterns:
             if pattern.startswith("*"):
                 if name.endswith(pattern[1:]):
+                    return True
+            elif "/" in pattern or "\\" in pattern:
+                # Multi-segment pattern — compare against the root-relative path.
+                try:
+                    rel = path.relative_to(self.root_path).as_posix()
+                except ValueError:
+                    # Path is not under root; ignore it.
+                    return True
+                if rel == pattern.replace("\\", "/"):
                     return True
             elif name == pattern:
                 return True
@@ -219,17 +237,34 @@ class MerkleDAG:
             return node
 
         elif path.is_dir():
+            # (a) Skip directory symlinks — following them risks infinite
+            # recursion when a symlink points at an ancestor directory.
+            if path.is_symlink():
+                logger.warning("Skipping symlinked directory (cycle-safe): %s", path)
+                return None
+
             children = []
             child_hashes = []
 
+            # (b) Wrap the directory listing and each child separately so that
+            # one unreadable entry does not silently drop its siblings.
             try:
-                for child_path in sorted(path.iterdir()):
+                child_paths = sorted(path.iterdir())
+            except (PermissionError, OSError) as exc:
+                logger.warning(
+                    "Cannot list directory %s (%s); skipping its children", path, exc
+                )
+                child_paths = []
+
+            for child_path in child_paths:
+                try:
                     child_node = self.build_node(child_path, base_path)
-                    if child_node:
-                        children.append(child_node)
-                        child_hashes.append(child_node.hash)
-            except (PermissionError, OSError):
-                pass
+                except (PermissionError, OSError) as exc:
+                    logger.warning("Skipping unreadable path %s (%s)", child_path, exc)
+                    continue
+                if child_node:
+                    children.append(child_node)
+                    child_hashes.append(child_node.hash)
 
             dir_hash = self.hash_directory(path, child_hashes)
             node = MerkleNode(
