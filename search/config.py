@@ -11,6 +11,7 @@ from typing import Any
 # Import DEFAULT_EDGE_WEIGHTS for ego-graph weighted BFS
 from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
 from search.config_paths import resolve_config_path
+from utils.atomic_io import write_json_atomic
 
 
 # Model registry with specifications
@@ -1051,20 +1052,8 @@ class SearchConfigManager:
             # Create directory if needed (pathlib handles the current-dir no-op case)
             Path(self.config_file).parent.mkdir(parents=True, exist_ok=True)
 
-            # ATOMIC WRITE: Write to temp file first, then rename
-            # This prevents data loss if exception occurs during write
-            temp_file = self.config_file + ".tmp"
             config_dict = config.to_dict()  # Serialize BEFORE opening file
-
-            with open(temp_file, "w") as f:
-                json.dump(config_dict, f, indent=2)
-
-            # Validate temp file before replacing original
-            with open(temp_file) as f:
-                json.load(f)  # Verify valid JSON was written
-
-            # Atomic rename (safe on same filesystem)
-            os.replace(temp_file, self.config_file)
+            write_json_atomic(self.config_file, config_dict)
 
             self.logger.info(f"Saved search config to {self.config_file}")
             self._config = config  # Update cached config
@@ -1074,9 +1063,6 @@ class SearchConfigManager:
 
         except Exception as e:
             self.logger.error(f"Failed to save config to {self.config_file}: {e}")
-            # Clean up temp file if it exists
-            temp_file = self.config_file + ".tmp"
-            Path(temp_file).unlink(missing_ok=True)
             raise  # Re-raise so caller knows save failed
 
     def get_search_mode_for_query(

@@ -72,6 +72,22 @@ class ChangeDetector:
         self.exclude_dirs = exclude_dirs
         self.supported_extensions = supported_extensions
 
+    def _add_snapshot_ignore(self, dag: MerkleDAG, project_path: str) -> None:
+        """Add the snapshot directory to *dag*'s ignore patterns.
+
+        Only acts when the snapshot dir lives *inside* the project root.  The
+        pattern is stored as a POSIX-style forward-slash relative path so that
+        :meth:`MerkleDAG.should_ignore` can match it on both Windows and POSIX.
+        """
+        snapshot_dir = self.snapshot_manager.storage_dir
+        try:
+            relative_snapshot = snapshot_dir.relative_to(Path(project_path))
+            # Normalise to forward-slashes: should_ignore compares via .as_posix()
+            dag.ignore_patterns.add(relative_snapshot.as_posix())
+        except ValueError:
+            # Snapshot dir is outside the project root — nothing to ignore.
+            pass
+
     def detect_changes(self, old_dag: MerkleDAG, new_dag: MerkleDAG) -> FileChanges:
         """Detect file changes between two Merkle DAGs.
 
@@ -156,14 +172,7 @@ class ChangeDetector:
             supported_extensions=self.supported_extensions,
         )
 
-        # Add snapshot directory to ignore patterns if it's inside the project
-        snapshot_dir = self.snapshot_manager.storage_dir
-        try:
-            relative_snapshot = snapshot_dir.relative_to(Path(project_path))
-            current_dag.ignore_patterns.add(str(relative_snapshot))
-        except ValueError:
-            # Snapshot dir is not inside the project, no need to ignore
-            pass
+        self._add_snapshot_ignore(current_dag, project_path)
 
         current_dag.build()
 
@@ -220,14 +229,7 @@ class ChangeDetector:
             supported_extensions=self.supported_extensions,
         )
 
-        # Add snapshot directory to ignore patterns if it's inside the project
-        snapshot_dir = self.snapshot_manager.storage_dir
-        try:
-            relative_snapshot = snapshot_dir.relative_to(Path(project_path))
-            current_dag.ignore_patterns.add(str(relative_snapshot))
-        except ValueError:
-            # Snapshot dir is not inside the project, no need to ignore
-            pass
+        self._add_snapshot_ignore(current_dag, project_path)
 
         current_dag.build()
 

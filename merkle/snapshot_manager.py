@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from search.filters import compute_drive_agnostic_hash, compute_legacy_hash
+from utils.atomic_io import write_json_atomic
 
 from .merkle_dag import MerkleDAG
 
@@ -176,12 +177,12 @@ class SnapshotManager:
             "dag": dag.to_dict(),
         }
 
-        with open(snapshot_path, "w") as f:
-            json.dump(snapshot_data, f, indent=2)
+        write_json_atomic(snapshot_path, snapshot_data)
 
         # Save metadata
         metadata_path = self.get_metadata_path(project_path)
-        metadata_data = metadata or {}
+        # Copy before update to avoid mutating the caller's dict.
+        metadata_data = dict(metadata) if metadata else {}
         metadata_data.update(
             {
                 "project_path": project_path,
@@ -192,8 +193,7 @@ class SnapshotManager:
             }
         )
 
-        with open(metadata_path, "w") as f:
-            json.dump(metadata_data, f, indent=2)
+        write_json_atomic(metadata_path, metadata_data)
 
     def load_snapshot(self, project_path: str) -> MerkleDAG | None:
         """Load a Merkle DAG snapshot from disk.
