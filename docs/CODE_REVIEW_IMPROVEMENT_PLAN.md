@@ -21,6 +21,7 @@ Status legend: ✅ **FIXED** (branch `fix/code-review-batch1-criticals`) · ⏳ 
 ## Batch 1 — Critical fixes (small/trivial effort)
 
 ### ✅ 1. Silent, permanent index data loss when embedding fails mid-incremental-index
+
 **Where:** `search/incremental_indexer.py:1182-1192` (`_add_new_chunks`) and
 `incremental_index` (`:317`, `:322`, `:368`).
 
@@ -40,6 +41,7 @@ outer `except Exception` (`:393`) routes to `_attempt_recovery`. Also changed `z
 ---
 
 ### ✅ 2. Stale searcher served for the wrong project/model after a failed switch
+
 **Where:** `mcp_server/search_factory.py:134-181` (`get_searcher`).
 
 The function mutated `state.current_project` and `state.current_model_key` *before*
@@ -56,6 +58,7 @@ project/model; searches ran against the wrong index with no error.
 ---
 
 ### ⏳ 3. Call-graph silently drops all but one relationship type per node pair
+
 **Where:** `graph/graph_storage.py:149` (`nx.DiGraph`), `:242-250` (`add_call_edge`),
 `:323-330` (`add_relationship_edge`). *(verified)*
 
@@ -70,7 +73,8 @@ type into the edge key. **Effort:** Medium.
 
 ---
 
-### ⏳ 4. Parallel chunking shares non-thread-safe parser/extractor state
+### ✅ 4. Parallel chunking shares non-thread-safe parser/extractor state
+
 **Where:** `chunking/multi_language_chunker.py:678-710` (`_chunk_files_parallel`),
 `chunking/languages/base.py:159` (one shared `Parser` per language),
 `chunking/relationships/call_graph_extractor.py:160-200` (instance state
@@ -88,7 +92,8 @@ parallel *parsing* but serialize relationship extraction. **Effort:** Medium.
 
 ---
 
-### ⏳ 5. Async MCP pipeline: heavy synchronous work runs on the event loop
+### ✅ 5. Async MCP pipeline: heavy synchronous work runs on the event loop
+
 Per the [Python asyncio docs](https://docs.python.org/3/library/asyncio-dev.html#running-blocking-code),
 blocking calls inside a coroutine stall the whole loop — MCP pings time out, cancellation
 can't be processed, and in HTTP/stateless mode all concurrent requests freeze. The two
@@ -112,6 +117,7 @@ auto-reindex so two concurrent searches can't start overlapping reindexes.
 ---
 
 ### ✅ 6. File-read "timeout" deadlocks instead of timing out
+
 **Where:** `chunking/tree_sitter.py:159-166` (`_read_file_with_timeout`). *(verified)*
 
 `with ThreadPoolExecutor(...)` + `future.result(timeout=...)`: when the timeout fired,
@@ -124,7 +130,8 @@ thread pool per file read.
 
 ---
 
-### ⏳ 7. Shared mutable state has no synchronization (concurrent tool calls race)
+### ✅ 7. Shared mutable state has no synchronization (concurrent tool calls race)
+
 **Where:** `mcp_server/state.py` (entire `ApplicationState`),
 `mcp_server/model_pool_manager.py:211-234` (`_load_pool_embedder` check-then-act),
 `search_factory.py` lazy init.
@@ -142,6 +149,7 @@ construction/teardown, double-checked inside. **Effort:** Medium.
 ---
 
 ### ✅ 8. Import resolution silently broken when CWD ≠ project root
+
 **Where:** `chunking/multi_language_chunker.py:400` (and `:441`) pass
 `chunk.relative_path`; `chunking/relationships/resolvers/import_resolver.py:117`
 (`open(file_path)` against process CWD). *(verified)*
@@ -157,6 +165,7 @@ both call and phase-3 relationship extraction passes.
 ---
 
 ### ✅ 9. ONNX `provider_options` passed as a *list* breaks on the minimum-pinned Optimum
+
 **Where:** `embeddings/onnx_loader.py:340-345`. *(doc-verified)*
 
 In optimum **1.25.0** (`pyproject.toml` allows `optimum>=1.25.0`),
@@ -171,6 +180,7 @@ both the ONNX speedup and the ORT VRAM cap. Newer `optimum-onnx` accepts
 ---
 
 ### ✅ 10. `handle_clear_index` deletes index/DB files while handles are still open
+
 **Where:** `mcp_server/tools/index_handlers.py:533-609`.
 
 It deleted `chunks_metadata.db`, `code.index`, and the BM25 dir **before** resetting
@@ -184,6 +194,7 @@ Windows the open handles made `unlink()` raise `PermissionError`.
 ---
 
 ### ✅ 11. `HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` leak across model loads
+
 **Where:** `embeddings/model_loader.py:598-599`, cleared only in the failure fallback
 (`:689-690`).
 
@@ -198,6 +209,7 @@ which scopes offline behavior correctly — the env mutation was redundant *and*
 ---
 
 ### ✅ 12. Ancestor-directory names can disable indexing entirely
+
 **Where:** `chunking/multi_language_chunker.py:626`, `merkle/merkle_dag.py:184`. *(verified)*
 
 `any(part in DEFAULT_IGNORED_DIRS for part in file_path.parts)` inspected **absolute**
@@ -212,6 +224,7 @@ guard `build_node` with `path != self.root_path` before calling `should_ignore`.
 ---
 
 ### 13. JS/TS/Go methods chunked with `name=None` — **EXCLUDED (non-Python)**
+
 **Where:** `chunking/languages/javascript.py:44-48`, `typescript.py:52-56`,
 `go.py:42-46`.
 
@@ -225,6 +238,7 @@ Go grammar. **Status:** Known issue; non-Python language support is out of scope
 ## Batch 1 — Easy wins (trivial/small, low-risk)
 
 ### ✅ 19. mmap export reconstructs vectors one-by-one in Python
+
 **Where:** `search/faiss_index.py:345-347` (`save()`).
 
 `np.array([self._index.reconstruct(i) for i in range(ntotal)])` crossed Python↔C++ per
@@ -236,6 +250,7 @@ memcpy. Runs on every `save()` above 10k vectors.
 ---
 
 ### ✅ 20. Embedding-batch logger level leaked on exception
+
 **Where:** `embeddings/embedder.py:1260-1261` and `:1403`.
 
 `embed_chunks` set the module logger to WARNING for the progress bar and restored after
@@ -247,6 +262,7 @@ at WARNING for the rest of the process.
 ---
 
 ### ✅ 23. Graph traversal `visited`-before-filter drops legitimate results
+
 **Where:** `graph/graph_queries.py:577-602` (inbound), `:626-649` (outbound).
 
 Neighbors were marked visited *before* the `relation_types` filter applied; first
@@ -260,6 +276,7 @@ reaches them first.
 ---
 
 ### ✅ 29. `FaissVectorIndex.add()` mutates the caller's embedding array in place
+
 **Where:** `search/faiss_index.py:394` vs `:441` (search copies, add didn't).
 
 `faiss.normalize_L2` is in-place; callers reusing the array afterwards silently saw
@@ -271,6 +288,7 @@ classic aliasing trap.
 ---
 
 ### ✅ 30. CUDA allocator config comment overstates the constraint
+
 **Where:** `embeddings/embedder.py:188-217`.
 
 `PYTORCH_CUDA_ALLOC_CONF` is read when the caching allocator initializes (first CUDA
@@ -283,6 +301,7 @@ even earlier for a guaranteed effect.
 ---
 
 ### ✅ 31. `gpu_mem_limit` is not a total-VRAM cap
+
 **Where:** `embeddings/onnx_loader.py:304-309`.
 
 Per [ORT CUDA EP docs](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html)
@@ -294,6 +313,7 @@ on it as a hard total-VRAM ceiling.
 ---
 
 ### ✅ 32. `print()` on stdout in an MCP stdio server
+
 **Where:** `merkle/snapshot_manager.py:218-220`.
 
 stdout is the JSON-RPC channel; a version-mismatch warning could corrupt the protocol stream.
@@ -303,6 +323,7 @@ stdout is the JSON-RPC channel; a version-mismatch warning could corrupt the pro
 ---
 
 ### ✅ 33. Normalization invariant split across layers
+
 **Where:** `embeddings/onnx_wrapper.py:156`, `search/faiss_index.py:394,449`.
 
 ONNX wrapper always L2-normalizes; PyTorch path depends on the model; `FaissVectorIndex`
@@ -314,6 +335,7 @@ re-normalizes on add and query, making FAISS scores correct on both backends. Un
 ---
 
 ### ✅ 35. `embed_chunk` (singular) skips the lifecycle lock
+
 **Where:** `embeddings/embedder.py:1068-1099`.
 
 `embed_chunk` encoded without `_lifecycle_lock` while `embed_chunks`/`embed_query` took
@@ -324,6 +346,7 @@ it; a concurrent `cleanup()` could null `self.model` mid-call.
 ---
 
 ### ✅ 36. `handle_call_tool` pops `output_format` after dispatch
+
 **Where:** `mcp_server/server.py:258/267-271`.
 
 Handlers received the `output_format` key (all currently ignore it); pop should happen
@@ -334,6 +357,7 @@ before dispatch.
 ---
 
 ### ✅ 37. `logging.basicConfig(level=INFO)` inside `CodeEmbedder.__init__`
+
 **Where:** `embeddings/embedder.py:624`.
 
 Library code mutating root logging fights the server's dual-handler setup.
@@ -343,6 +367,7 @@ Library code mutating root logging fights the server's dual-handler setup.
 ---
 
 ### ✅ 38. `zip(..., strict=False)` in embedding result assembly
+
 **Where:** `embedder.py:1384`, `incremental_indexer.py:1187`.
 
 Counts are equal by contract; `strict=True` turns a silent truncation into a loud failure.
@@ -352,6 +377,7 @@ Counts are equal by contract; `strict=True` turns a silent truncation into a lou
 ---
 
 ### ✅ 39. `cleanup_old_snapshots` is a guaranteed no-op
+
 **Where:** `merkle/snapshot_manager.py:391-418`.
 
 Snapshot stems are unique per project/model/dim — exactly one file per group;
@@ -362,6 +388,7 @@ Snapshot stems are unique per project/model/dim — exactly one file per group;
 ---
 
 ### ✅ 40. `find_call_chain` doesn't normalize paths; `compute_centrality("degree")` returns raw ints
+
 **Where:** `graph/graph_queries.py:56-96, 479-480`.
 
 Windows-separator chunk_ids failed only in `find_call_chain`. Degree centrality
@@ -372,6 +399,7 @@ contradicted its `dict[str, float]` docstring by returning raw `int`.
 ---
 
 ### ✅ 41. `utils/version_check.py` version comparison bugs
+
 **Where:** `utils/version_check.py:23-37, 65`.
 
 `parse_version_tuple("2.8")` → `(2, 8)` compares `< (2, 8, 0)` → false "too old". The
@@ -384,6 +412,7 @@ strings.
 ---
 
 ### ✅ 42. Stale comments (various)
+
 Corrected in this batch:
 
 - `chunking/languages/python.py:3-5` and `chunking/languages/__init__.py:7,17` —
@@ -406,12 +435,14 @@ Corrected in this batch:
 ## Deferred — Re-evaluate after Batch 1 is tested
 
 ### Medium-effort criticals (Batch 2 priority)
+
 - **#3** — MultiDiGraph migration (call-graph lossy edge overwrite). Effort: Medium.
 - **#4** — Parallel-chunking thread-safety (shared parser + extractor state). Effort: Medium.
 - **#5** — Async `to_thread` offload (heavy sync work on event loop). Effort: Medium.
 - **#7** — State locking (`ApplicationState` race conditions). Effort: Medium.
 
 ### Correctness-adjacent perf (promote to front of Batch 2)
+
 - **#21** — Merkle traversal: symlink cycles, silent subtree drop (= data loss),
   snapshot-dir ignore pattern never matches (`merkle/merkle_dag.py:219-230`,
   `change_detector.py:152-166`).
@@ -423,6 +454,7 @@ Corrected in this batch:
   (`snapshot_manager.py:184-193`) is confirmed correct.
 
 ### Performance-heavy (Batch 3+)
+
 - **#14** — Per-chunk file re-reads inside embedding loop (`embedder.py:786-822, 824-880`).
 - **#15** — O(N) re-parse of chunk content per relationship extractor.
 - **#16** — O(M×N) community remerge (`chunking/languages/base.py:507-587`).
