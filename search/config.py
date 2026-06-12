@@ -1102,6 +1102,29 @@ class SearchConfigManager:
 # Global configuration manager instance
 _config_manager: SearchConfigManager | None = None
 
+# Transient override set by temporary_ram_fallback_off() during indexing.
+# Lives at module scope so it survives _config_manager = None (which clears
+# the singleton but does NOT touch this binding) and is never serialised to
+# disk, so it cannot trigger the Merkle reindex-loop that a disk write would.
+_indexing_ram_fallback_override: bool | None = None
+
+
+def set_indexing_ram_fallback_override(value: bool | None) -> None:
+    """Set (or clear) the transient RAM-fallback override used during indexing.
+
+    Call with ``False`` to suppress PyTorch VRAM spillover during indexing even
+    when ``allow_ram_fallback=True`` in the persisted config.  Call with ``None``
+    to restore normal config-driven behaviour.  This flag is module-level and
+    survives ``_config_manager = None`` resets that happen on every model switch.
+    """
+    global _indexing_ram_fallback_override
+    _indexing_ram_fallback_override = value
+
+
+def get_indexing_ram_fallback_override() -> bool | None:
+    """Return the current transient RAM-fallback override, or None if not set."""
+    return _indexing_ram_fallback_override
+
 
 def get_config_manager(config_file: str | None = None) -> SearchConfigManager:
     """Get or create global configuration manager."""

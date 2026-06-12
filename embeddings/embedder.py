@@ -32,6 +32,9 @@ from embeddings.query_cache import QueryEmbeddingCache
 from mcp_server.utils.config_helpers import (
     get_config_via_service_locator as _get_config_via_service_locator,
 )
+from search.config import (
+    get_indexing_ram_fallback_override as _get_ram_fallback_override,
+)
 from search.exceptions import VRAMExhaustedError
 from search.filters import normalize_path
 from utils.console import get_progress_console
@@ -330,9 +333,18 @@ def set_vram_limit(fraction: float = 0.90) -> bool:
         return False
 
     # Check if RAM fallback is allowed — if so, skip the PyTorch cap only.
+    # The module-level override (_indexing_ram_fallback_override in search.config) takes
+    # priority over the persisted config value: it survives _config_manager = None resets
+    # that happen on every model switch during multi-model indexing and would otherwise
+    # silently restore allow_ram_fallback=True from disk between per-model embed passes.
     try:
-        config = _get_config_via_service_locator()
-        if config and config.performance.allow_ram_fallback:
+        override = _get_ram_fallback_override()
+        if override is not None:
+            allow_fallback = override
+        else:
+            config = _get_config_via_service_locator()
+            allow_fallback = bool(config and config.performance.allow_ram_fallback)
+        if allow_fallback:
             logging.getLogger(__name__).info(
                 "[VRAM_LIMIT] RAM fallback allowed - skipping PyTorch VRAM cap"
             )
