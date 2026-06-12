@@ -759,10 +759,12 @@ async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
     if chunk_id:
         chunk_id = MetadataStore.normalize_chunk_id(chunk_id)
 
-    searcher = get_searcher()
+    # Offload blocking get_searcher + find_similar_to_chunk off the event loop.
+    def _run_find_similar() -> list:
+        _searcher = get_searcher()
+        return _searcher.find_similar_to_chunk(chunk_id, k=k)
 
-    # Simple implementation - delegate to searcher
-    results = searcher.find_similar_to_chunk(chunk_id, k=k)
+    results = await asyncio.to_thread(_run_find_similar)
 
     formatted_results = []
     for result in results:
@@ -814,20 +816,19 @@ async def handle_find_connections(arguments: dict[str, Any]) -> dict:
         f"[FIND_CONNECTIONS] chunk_id={chunk_id}, symbol_name={symbol_name}, depth={max_depth}"
     )
 
-    # Get searcher
-    searcher = get_searcher()
+    # Offload blocking get_searcher + analyze_impact off the event loop.
+    def _run_find_connections():
+        _searcher = get_searcher()
+        _analyzer = RelationshipAnalyzer.from_searcher(_searcher)
+        return _analyzer.analyze_impact(
+            chunk_id=chunk_id,
+            symbol_name=symbol_name,
+            max_depth=max_depth,
+            exclude_dirs=exclude_dirs,
+            relationship_types=relationship_types,
+        )
 
-    # Create analyzer
-    analyzer = RelationshipAnalyzer.from_searcher(searcher)
-
-    # Run analysis - raises ValueError for validation errors
-    report = analyzer.analyze_impact(
-        chunk_id=chunk_id,
-        symbol_name=symbol_name,
-        max_depth=max_depth,
-        exclude_dirs=exclude_dirs,
-        relationship_types=relationship_types,
-    )
+    report = await asyncio.to_thread(_run_find_connections)
 
     # Convert to dict
     response = report.to_dict()
@@ -879,8 +880,8 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
     if target_chunk_id:
         target_chunk_id = MetadataStore.normalize_chunk_id(target_chunk_id)
 
-    # Get searcher and graph
-    searcher = get_searcher()
+    # Offload get_searcher off the event loop (can construct HybridSearcher on miss).
+    searcher = await asyncio.to_thread(get_searcher)
 
     # Resolve symbol names to chunk_ids if needed
     resolved_source = source_chunk_id
@@ -928,7 +929,8 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
 
     query_engine = GraphQueryEngine(graph_storage)
 
-    result = query_engine.find_path(
+    result = await asyncio.to_thread(
+        query_engine.find_path,
         source_id=resolved_source,
         target_id=resolved_target,
         max_hops=max_hops,

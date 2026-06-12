@@ -902,68 +902,75 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
                 "[INDEX] RAM fallback auto-disabled for this indexing operation"
             )
 
-        # Multi-model batch indexing
-        if multi_model and get_state().multi_model_enabled:
-            logger.info(f"Multi-model batch indexing for: {directory_path}")
-            # Run in thread pool to avoid blocking asyncio event loop
-            import asyncio
+        # Per-project asyncio.Lock prevents two concurrent index_directory calls
+        # (or a concurrent search_code auto-reindex) from reindexing the same
+        # project simultaneously.
+        async with get_state().get_reindex_lock(str(directory_path)):
+            # Multi-model batch indexing
+            if multi_model and get_state().multi_model_enabled:
+                logger.info(f"Multi-model batch indexing for: {directory_path}")
+                # Run in thread pool to avoid blocking asyncio event loop
+                import asyncio
 
-            results = await asyncio.to_thread(
-                _index_with_all_models,
-                directory_path,
-                incremental,
-                include_dirs,
-                exclude_dirs,
-            )
-            return _build_index_response(
-                results, str(directory_path), multi_model=True, incremental=incremental
-            )
+                results = await asyncio.to_thread(
+                    _index_with_all_models,
+                    directory_path,
+                    incremental,
+                    include_dirs,
+                    exclude_dirs,
+                )
+                return _build_index_response(
+                    results,
+                    str(directory_path),
+                    multi_model=True,
+                    incremental=incremental,
+                )
 
-        # Single model indexing (original behavior)
-        else:
-            logger.info(f"Single-model indexing for: {directory_path}")
+            # Single model indexing (original behavior)
+            else:
+                logger.info(f"Single-model indexing for: {directory_path}")
 
-            # Get or create project storage
-            project_dir = get_project_storage_dir(str(directory_path))
-            index_dir = project_dir / "index"
-            index_dir.mkdir(exist_ok=True)
+                # Get or create project storage
+                project_dir = get_project_storage_dir(str(directory_path))
+                index_dir = project_dir / "index"
+                index_dir.mkdir(exist_ok=True)
 
-            # Load config for chunker initialization
-            config = get_config()
+                # Load config for chunker initialization
+                config = get_config()
 
-            # Initialize components using cached getter functions
-            chunker = MultiLanguageChunker(
-                str(directory_path),
-                include_dirs,
-                exclude_dirs,
-                enable_entity_tracking=config.performance.enable_entity_tracking,
-            )
-            embedder = get_embedder()
-            searcher_instance = get_searcher(str(directory_path))
-            indexer = (
-                searcher_instance
-                if config.search_mode.enable_hybrid
-                else get_index_manager(str(directory_path))
-            )
+                # Initialize components using cached getter functions
+                chunker = MultiLanguageChunker(
+                    str(directory_path),
+                    include_dirs,
+                    exclude_dirs,
+                    enable_entity_tracking=config.performance.enable_entity_tracking,
+                )
+                embedder = get_embedder()
+                searcher_instance = get_searcher(str(directory_path))
+                indexer = (
+                    searcher_instance
+                    if config.search_mode.enable_hybrid
+                    else get_index_manager(str(directory_path))
+                )
 
-            # Run indexing (using helper) - in thread pool to avoid blocking event loop
-            import asyncio
+                # Run indexing (using helper) - in thread pool to avoid blocking event loop
+                import asyncio
 
-            result = await asyncio.to_thread(
-                _run_indexing,
-                indexer,
-                embedder,
-                chunker,
-                str(directory_path),
-                incremental,
-                include_dirs,
-                exclude_dirs,
-            )
+                result = await asyncio.to_thread(
+                    _run_indexing,
+                    indexer,
+                    embedder,
+                    chunker,
+                    str(directory_path),
+                    incremental,
+                    include_dirs,
+                    exclude_dirs,
+                )
 
-            # Build response (using helper)
-            return _build_index_response(
-                [result],
-                str(directory_path),
-                multi_model=False,
-                incremental=incremental,
-            )
+                # Build response (using helper)
+                return _build_index_response(
+                    [result],
+                    str(directory_path),
+                    multi_model=False,
+                    incremental=incremental,
+                )
