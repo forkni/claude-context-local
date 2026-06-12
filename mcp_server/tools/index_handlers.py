@@ -384,10 +384,10 @@ def _index_with_all_models(
     results = []
     original_config = get_config()
     original_model = original_config.embedding.model_name
-    cached_repo_profile = (
+    cached_repo_profile: Any = (
         None  # Captured after first model; reused by subsequent models
     )
-    cached_dag = None  # Built MerkleDAG shared across models (avoids re-hashing)
+    cached_dag: Any = None  # Built MerkleDAG shared across models (avoids re-hashing)
 
     try:
         # Use pool from manager (respects config file setting)

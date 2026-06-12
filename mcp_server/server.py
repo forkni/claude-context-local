@@ -150,7 +150,7 @@ class _SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
     def doRollover(self) -> None:  # noqa: N802
         if self.stream:
             self.stream.close()
-            self.stream = None
+            self.stream = None  # pyrefly: ignore [bad-assignment]  # stdlib sets stream=None during rollover; typeshed stub is non-optional
         stem = Path(self.baseFilename).stem  # "mcp_server"
         dfn = str(Path(self.baseFilename).parent / f"{stem}_{_SESSION_START}.log")
         self.rotate(self.baseFilename, dfn)  # suppresses PermissionError/OSError

@@ -133,6 +133,8 @@ class ImportExtractor(BaseRelationshipExtractor):
             chunk_metadata: Chunk metadata
         """
         source_id = chunk_metadata.get("chunk_id")
+        if not source_id:
+            return
         line_number = import_node.lineno
 
         for alias in import_node.names:
@@ -176,6 +178,8 @@ class ImportExtractor(BaseRelationshipExtractor):
             chunk_metadata: Chunk metadata
         """
         source_id = chunk_metadata.get("chunk_id")
+        if not source_id:
+            return
         line_number = import_node.lineno
 
         # Get module name (may be None for relative imports)

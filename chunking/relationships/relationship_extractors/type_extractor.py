@@ -108,7 +108,9 @@ class TypeAnnotationExtractor(BaseRelationshipExtractor):
                 self._extract_from_annotated_assignment(node, chunk_metadata)
 
     def _extract_from_function(
-        self, func_node: ast.FunctionDef, chunk_metadata: dict[str, Any]
+        self,
+        func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+        chunk_metadata: dict[str, Any],
     ) -> None:
         """
         Extract type annotations from function/method definition.
@@ -189,6 +191,8 @@ class TypeAnnotationExtractor(BaseRelationshipExtractor):
         """
         # Get source ID (current class or module)
         source_id = self.current_class_id or chunk_metadata.get("chunk_id")
+        if not source_id:
+            return
 
         # Get attribute name
         if isinstance(ann_assign_node.target, ast.Name):

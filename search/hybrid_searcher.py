@@ -856,6 +856,7 @@ class HybridSearcher(BaseSearcher):
 
                     # Similarity-based scoring: compute cosine similarity with query
                     if query_embedding_available:
+                        assert query_embedding is not None
                         try:
                             # Get neighbor's index position
                             chunk_ids_list = list(self.dense_index.chunk_ids)
@@ -866,7 +867,6 @@ class HybridSearcher(BaseSearcher):
                             )
                             # Compute cosine similarity (embeddings are L2-normalized)
                             similarity = float(
-                                # pyrefly: ignore [bad-argument-type]
                                 np.dot(query_embedding, neighbor_embedding)
                             )
                             # QW5: configurable similarity threshold (intent-adaptive)

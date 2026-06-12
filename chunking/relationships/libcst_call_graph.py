@@ -186,6 +186,7 @@ if _LIBCST_AVAILABLE:
                 return
 
             # Line number from position metadata
+            # pyrefly: ignore [bad-argument-type]  # libcst stub: default typed as CodeRange, not Optional
             pos = self.get_metadata(PositionProvider, node, None)
             line = pos.start.line if pos is not None else 0
 

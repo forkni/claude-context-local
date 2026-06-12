@@ -20,10 +20,7 @@ from utils.path_utils import normalize_path
 if TYPE_CHECKING:
     from chunking.relationships.relationship_types import RelationshipEdge
 
-try:
-    import networkx as nx
-except ImportError:
-    nx = None
+import networkx as nx
 
 
 # Legacy string confidence tags written by the in-house call extractor
@@ -126,12 +123,6 @@ class CodeGraphStorage:
             project_id: Unique identifier for the project
             storage_dir: Directory for graph storage (default: ~/.claude_code_search/graphs)
         """
-        if nx is None:
-            raise ImportError(
-                "NetworkX is required for graph storage. "
-                "Install with: pip install networkx"
-            )
-
         self.logger = logging.getLogger(__name__)
         self.project_id = project_id
 
@@ -834,7 +825,6 @@ class CodeGraphStorage:
 
             # Reconstruct graph from JSON
             # Using edges="edges" for NetworkX 3.6+ forward compatibility
-            # pyrefly: ignore [missing-attribute]
             self.graph = nx.node_link_graph(data, directed=True, edges="edges")
 
             # Coerce pre-multigraph JSON (schema_version absent / < 2) written by
