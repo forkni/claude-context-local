@@ -323,11 +323,19 @@ class SearchOrchestrator:
         stored_model_key = None
         if plan.auto_reindex and current_project:
             try:
-                reindexed, stored_model_key = _check_auto_reindex(
-                    current_project, plan.selected_model_key, plan.max_age_minutes
-                )
+                # Per-project asyncio.Lock prevents two concurrent search/index
+                # calls from reindexing the same project simultaneously.
+                # _check_auto_reindex is blocking (can run a full incremental
+                # reindex + HybridSearcher construction), so offload to a thread.
+                async with get_state().get_reindex_lock(current_project):
+                    reindexed, stored_model_key = await asyncio.to_thread(
+                        _check_auto_reindex,
+                        current_project,
+                        plan.selected_model_key,
+                        plan.max_age_minutes,
+                    )
                 if reindexed:
-                    get_state().searcher = None
+                    get_state().reset_searcher()
             except DimensionMismatchError as e:
                 return {
                     "error": "Dimension mismatch",
@@ -351,7 +359,11 @@ class SearchOrchestrator:
             )
 
         try:
-            searcher = get_searcher(model_key=effective_search_model)
+            # get_searcher can construct a HybridSearcher on cache-miss — offload
+            # to avoid blocking the event loop during model/index init.
+            searcher = await asyncio.to_thread(
+                lambda: get_searcher(model_key=effective_search_model)
+            )
         except DimensionMismatchError as e:
             return {
                 "error": "Dimension mismatch",
@@ -665,7 +677,7 @@ class SearchOrchestrator:
         if chunk_id:
             from mcp_server.tools.search_handlers import _handle_chunk_id_lookup
 
-            return _handle_chunk_id_lookup(chunk_id)
+            return await asyncio.to_thread(_handle_chunk_id_lookup, chunk_id)
 
         plan = SearchPlanner().plan(arguments)
 

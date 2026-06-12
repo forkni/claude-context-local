@@ -1,6 +1,7 @@
 """Multi-language chunker that combines AST and tree-sitter approaches."""
 
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
@@ -112,21 +113,37 @@ class MultiLanguageChunker:
 
         self.directory_filter = DirectoryFilter(include_dirs, exclude_dirs)
 
-        # Initialize call graph extractor for Python
-        self.call_graph_extractor = None
+        # Per-thread extractor instances: call graph extractor and relationship
+        # extractors carry mutable state (edges, AST context dicts) that races
+        # under concurrent chunk_file() calls.  Each worker thread lazily builds
+        # its own set of extractors on first use via _ensure_thread_extractors().
+        self._local = threading.local()
+        # Pre-populate the main thread's slot so callers on the main thread never
+        # trigger a lazy-init on the hot path.
+        self._init_thread_extractors()
+
+    def _init_thread_extractors(self) -> None:
+        """Build and store per-thread extractor instances on ``self._local``.
+
+        Called once per thread (main thread in ``__init__``; worker threads on
+        first ``chunk_file`` call via ``_ensure_thread_extractors``).
+        """
+        # Call graph extractor
+        call_graph_extractor = None
         if CALL_GRAPH_AVAILABLE:
             try:
-                self.call_graph_extractor = CallGraphExtractorFactory.create("python")
-                logger.info("Call graph extraction enabled for Python")
+                call_graph_extractor = CallGraphExtractorFactory.create("python")
+                logger.info("Call graph extraction enabled for Python (thread-local)")
             except Exception as e:
                 logger.warning(
                     f"Failed to initialize call graph extractor: {e}", exc_info=True
                 )
+        self._local.call_graph_extractor = call_graph_extractor
 
-        # Initialize relationship extractors
-        self.relationship_extractors = []
+        # Relationship extractors
+        relationship_extractors: list = []
         try:
-            self.relationship_extractors = [
+            relationship_extractors = [
                 # Priority 1 (Foundation) - always enabled
                 InheritanceExtractor(),
                 TypeAnnotationExtractor(),
@@ -147,8 +164,8 @@ class MultiLanguageChunker:
             ]
 
             # Priority 4-5 (Entity Tracking) - conditional
-            if enable_entity_tracking:
-                self.relationship_extractors.extend(
+            if self.enable_entity_tracking:
+                relationship_extractors.extend(
                     [
                         EnumMemberExtractor(),
                         DefaultParameterExtractor(),
@@ -156,18 +173,24 @@ class MultiLanguageChunker:
                     ]
                 )
                 logger.info(
-                    f"Initialized {len(self.relationship_extractors)} relationship extractors "
+                    f"Initialized {len(relationship_extractors)} relationship extractors "
                     f"(foundation + core + data models + entity tracking)"
                 )
             else:
                 logger.info(
-                    f"Initialized {len(self.relationship_extractors)} relationship extractors "
+                    f"Initialized {len(relationship_extractors)} relationship extractors "
                     f"(foundation + core + data models; entity tracking disabled)"
                 )
         except Exception as e:
             logger.warning(
                 f"Failed to initialize relationship extractors: {e}", exc_info=True
             )
+        self._local.relationship_extractors = relationship_extractors
+
+    def _ensure_thread_extractors(self) -> None:
+        """Lazily initialize per-thread extractors for worker threads."""
+        if not hasattr(self._local, "call_graph_extractor"):
+            self._init_thread_extractors()
 
     def is_supported(self, file_path: str) -> bool:
         """Check if file type is supported.
@@ -386,8 +409,10 @@ class MultiLanguageChunker:
             tchunk: Tree-sitter chunk with source code
             chunk_id: Chunk identifier for logging
         """
+        self._ensure_thread_extractors()
+        call_graph_extractor = self._local.call_graph_extractor
         if (
-            self.call_graph_extractor is None
+            call_graph_extractor is None
             or tchunk.language != "python"
             or chunk.chunk_type
             not in ("function", "method", "decorated_definition", "split_block")
@@ -408,7 +433,7 @@ class MultiLanguageChunker:
                 "parent_class": chunk.parent_name,
             }
             # Extract function calls from this chunk
-            calls = self.call_graph_extractor.extract_calls(
+            calls = call_graph_extractor.extract_calls(
                 _smart_dedent(tchunk.content), chunk_metadata
             )
             chunk.calls = calls
@@ -436,7 +461,9 @@ class MultiLanguageChunker:
             tchunk: Tree-sitter chunk with source code
             chunk_id: Chunk identifier for logging
         """
-        if tchunk.language != "python" or not self.relationship_extractors:
+        self._ensure_thread_extractors()
+        relationship_extractors = self._local.relationship_extractors
+        if tchunk.language != "python" or not relationship_extractors:
             return
 
         try:
@@ -466,7 +493,7 @@ class MultiLanguageChunker:
                         dedented_content[:marker_pos].rstrip() + "\n    pass\n"
                     )
 
-            for extractor in self.relationship_extractors:
+            for extractor in relationship_extractors:
                 edges = extractor.extract(dedented_content, chunk_metadata)
                 all_relationships.extend(edges)
 

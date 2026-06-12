@@ -3,6 +3,7 @@
 Handlers for read-only status queries that don't modify state.
 """
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -31,10 +32,14 @@ async def handle_get_index_status(arguments: dict[str, Any]) -> dict:
     """Get current status and statistics of the search index."""
     state = get_state()
 
-    # Check if a project is selected
+    # Check if a project is selected — offload get_index_manager (may init lazily)
     try:
-        index_manager = get_index_manager(model_key=state.current_model_key)
-        stats = index_manager.get_stats()
+        current_model_key = state.current_model_key
+
+        def _get_index_stats() -> dict:
+            return get_index_manager(model_key=current_model_key).get_stats()
+
+        stats = await asyncio.to_thread(_get_index_stats)
     except ValueError as e:
         # No project selected - return clear error
         return {
@@ -49,15 +54,19 @@ async def handle_get_index_status(arguments: dict[str, Any]) -> dict:
     config = get_config()
     if config.search_mode.enable_hybrid:
         try:
-            # Initialize searcher if needed (lazy init)
-            searcher = get_searcher()
-            if isinstance(searcher, HybridSearcher):
-                hybrid_stats = searcher.get_stats()
-                # Only add if these keys exist (HybridSearcher-specific)
-                if "bm25_documents" in hybrid_stats:
-                    stats["bm25_documents"] = hybrid_stats.get("bm25_documents")
-                    stats["dense_vectors"] = hybrid_stats.get("dense_vectors")
-                    stats["synced"] = hybrid_stats.get("synced")
+            # Offload get_searcher + stats fetch off the event loop.
+            def _get_hybrid_stats() -> dict | None:
+                _searcher = get_searcher()
+                if isinstance(_searcher, HybridSearcher):
+                    return _searcher.get_stats()
+                return None
+
+            hybrid_stats = await asyncio.to_thread(_get_hybrid_stats)
+            # Only add if these keys exist (HybridSearcher-specific)
+            if hybrid_stats and "bm25_documents" in hybrid_stats:
+                stats["bm25_documents"] = hybrid_stats.get("bm25_documents")
+                stats["dense_vectors"] = hybrid_stats.get("dense_vectors")
+                stats["synced"] = hybrid_stats.get("synced")
         except Exception as e:
             logger.warning(f"Could not get hybrid searcher stats: {e}")
 

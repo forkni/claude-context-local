@@ -5,6 +5,7 @@ Manages embedding model lifecycle, lazy loading, and memory optimization.
 
 import logging
 import os
+import threading
 from pathlib import Path
 
 from embeddings.embedder import CodeEmbedder
@@ -18,6 +19,14 @@ from search.config import (
 
 
 logger = logging.getLogger(__name__)
+
+# Guards the _model_pool_manager module singleton and the per-embedder
+# construct-if-absent paths inside ModelPoolManager.get_embedder /
+# _load_pool_embedder.  Separate from state._lock (RLock on ApplicationState)
+# to keep pool construction independent of the searcher/index_manager lifecycle.
+# Lock ordering: state._lock is always acquired BEFORE _pool_lock (get_searcher
+# calls get_embedder).  Never acquire _pool_lock then state._lock.
+_pool_lock = threading.Lock()
 
 
 class ModelPoolManager:
@@ -152,11 +161,13 @@ class ModelPoolManager:
             for model_key, model_name in pool_config.items():
                 try:
                     logger.info(f"Loading {model_key} ({model_name})...")
-                    embedder = CodeEmbedder(
-                        model_name=model_name, cache_dir=str(cache_dir)
-                    )
-                    state.set_embedder(model_key, embedder)
-                    logger.info(f"✓ {model_key} loaded successfully")
+                    with _pool_lock:
+                        if state.embedders.get(model_key) is None:
+                            embedder = CodeEmbedder(
+                                model_name=model_name, cache_dir=str(cache_dir)
+                            )
+                            state.set_embedder(model_key, embedder)
+                            logger.info(f"✓ {model_key} loaded successfully")
                 except Exception as e:
                     logger.error(f"✗ Failed to load {model_key}: {e}", exc_info=True)
                     state.embedders[model_key] = None
@@ -208,30 +219,35 @@ class ModelPoolManager:
                 ``model_key`` in the error message.  Use ``"cross-pool model "`` for
                 Block A, empty string (default) for Blocks B and C.
         """
-        if model_key in state.embedders and state.embedders[model_key] is not None:
+        # Fast path outside lock — avoids construction overhead on every call.
+        if state.embedders.get(model_key) is not None:
             return state.embedders[model_key]
-        if loading_log:
-            logger.info(loading_log)
-        try:
-            embedder = CodeEmbedder(model_name=model_name, cache_dir=str(cache_dir))
-            state.set_embedder(model_key, embedder)
-            logger.info(success_log or f"✓ {model_key} loaded successfully")
-            return state.embedders[model_key]
-        except Exception as e:
-            logger.error(
-                f"✗ Failed to load {error_label}{model_key}: {e}", exc_info=exc_info
-            )
-            if allow_fallback:
-                pool_config = self.get_pool_config()
-                fallback_key = next(iter(pool_config.keys()))
-                if (
-                    model_key != fallback_key
-                    and fallback_key in state.embedders
-                    and state.embedders[fallback_key] is not None
-                ):
-                    logger.warning(f"Falling back to {fallback_key}")
-                    return state.embedders[fallback_key]
-            raise
+        with _pool_lock:
+            # Re-check inside lock — another thread may have loaded by now.
+            if state.embedders.get(model_key) is not None:
+                return state.embedders[model_key]
+            if loading_log:
+                logger.info(loading_log)
+            try:
+                embedder = CodeEmbedder(model_name=model_name, cache_dir=str(cache_dir))
+                state.set_embedder(model_key, embedder)
+                logger.info(success_log or f"✓ {model_key} loaded successfully")
+                return state.embedders[model_key]
+            except Exception as e:
+                logger.error(
+                    f"✗ Failed to load {error_label}{model_key}: {e}", exc_info=exc_info
+                )
+                if allow_fallback:
+                    pool_config = self.get_pool_config()
+                    fallback_key = next(iter(pool_config.keys()))
+                    if (
+                        model_key != fallback_key
+                        and fallback_key in state.embedders
+                        and state.embedders[fallback_key] is not None
+                    ):
+                        logger.warning(f"Falling back to {fallback_key}")
+                        return state.embedders[fallback_key]
+                raise
 
     def get_embedder(
         self, model_key: str | None = None, allow_cross_pool: bool = False
@@ -331,15 +347,14 @@ class ModelPoolManager:
                                 f"{list(pool_config.keys())}; loading it directly as "
                                 f"single-model (multi-model default-load bypassed)."
                             )
-                            if (
-                                "default" not in state.embedders
-                                or state.embedders["default"] is None
-                            ):
-                                embedder = CodeEmbedder(
-                                    model_name=config_model_name,
-                                    cache_dir=str(cache_dir),
-                                )
-                                state.set_embedder("default", embedder)
+                            if state.embedders.get("default") is None:
+                                with _pool_lock:
+                                    if state.embedders.get("default") is None:
+                                        embedder = CodeEmbedder(
+                                            model_name=config_model_name,
+                                            cache_dir=str(cache_dir),
+                                        )
+                                        state.set_embedder("default", embedder)
                             return state.embedders["default"]
                         pool_config = self.get_pool_config()
                         fallback_key = next(iter(pool_config.keys()))
@@ -394,19 +409,23 @@ class ModelPoolManager:
         # Single-model mode (legacy fallback)
         else:
             # Use old singleton pattern with "default" key
-            if "default" not in state.embedders or state.embedders["default"] is None:
-                try:
-                    config = get_config()
-                    model_name = config.embedding.model_name
-                    logger.info(f"Using single embedding model: {model_name}")
-                except (RuntimeError, AttributeError) as e:
-                    logger.warning(f"Failed to load model from config: {e}")
-                    model_name = "google/embeddinggemma-300m"
-                    logger.info(f"Falling back to default model: {model_name}")
+            if state.embedders.get("default") is None:
+                with _pool_lock:
+                    if state.embedders.get("default") is None:
+                        try:
+                            config = get_config()
+                            model_name = config.embedding.model_name
+                            logger.info(f"Using single embedding model: {model_name}")
+                        except (RuntimeError, AttributeError) as e:
+                            logger.warning(f"Failed to load model from config: {e}")
+                            model_name = "google/embeddinggemma-300m"
+                            logger.info(f"Falling back to default model: {model_name}")
 
-                embedder = CodeEmbedder(model_name=model_name, cache_dir=str(cache_dir))
-                state.set_embedder("default", embedder)
-                logger.info("Embedder initialized successfully")
+                        embedder = CodeEmbedder(
+                            model_name=model_name, cache_dir=str(cache_dir)
+                        )
+                        state.set_embedder("default", embedder)
+                        logger.info("Embedder initialized successfully")
 
             return state.embedders["default"]
 
@@ -423,7 +442,9 @@ def get_model_pool_manager() -> ModelPoolManager:
     """
     global _model_pool_manager
     if _model_pool_manager is None:
-        _model_pool_manager = ModelPoolManager()
+        with _pool_lock:
+            if _model_pool_manager is None:
+                _model_pool_manager = ModelPoolManager()
     return _model_pool_manager
 
 
@@ -523,4 +544,5 @@ def reset_pool_manager() -> None:
     This forces a fresh ModelPoolManager instance to be created on next access.
     """
     global _model_pool_manager
-    _model_pool_manager = None
+    with _pool_lock:
+        _model_pool_manager = None

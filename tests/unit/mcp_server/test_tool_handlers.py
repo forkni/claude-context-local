@@ -6,7 +6,7 @@ Tests all 14 tool handlers with mocked dependencies.
 import json
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -677,6 +677,10 @@ async def test_handle_search_code_no_index():
         mock_state = Mock()
         mock_state.current_project = "/test/project"
         mock_state.searcher = None
+        _reindex_lock_cm = MagicMock()
+        _reindex_lock_cm.__aenter__ = AsyncMock(return_value=None)
+        _reindex_lock_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_state.get_reindex_lock = Mock(return_value=_reindex_lock_cm)
         mock_get_state.return_value = mock_state
         mock_handler_state.return_value = mock_state
         mock_ic.return_value.classify.return_value = Mock(
@@ -749,6 +753,10 @@ async def test_handle_search_code_hybrid_searcher_ready():
         mock_state = Mock()
         mock_state.current_project = "/test/project"
         mock_state.searcher = None
+        _reindex_lock_cm = MagicMock()
+        _reindex_lock_cm.__aenter__ = AsyncMock(return_value=None)
+        _reindex_lock_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_state.get_reindex_lock = Mock(return_value=_reindex_lock_cm)
         mock_get_state.return_value = mock_state
         mock_handler_state.return_value = mock_state
         mock_dec_state.return_value = mock_state
@@ -808,6 +816,10 @@ async def test_handle_search_code_hybrid_searcher_not_ready():
         mock_state = Mock()
         mock_state.current_project = "/test/project"
         mock_state.searcher = None
+        _reindex_lock_cm = MagicMock()
+        _reindex_lock_cm.__aenter__ = AsyncMock(return_value=None)
+        _reindex_lock_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_state.get_reindex_lock = Mock(return_value=_reindex_lock_cm)
         mock_get_state.return_value = mock_state
         mock_handler_state.return_value = mock_state
         mock_ic.return_value.classify.return_value = Mock(
