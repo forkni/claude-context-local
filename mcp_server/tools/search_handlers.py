@@ -940,7 +940,7 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
         source_node = graph_storage.get_node_data(resolved_source)
         target_node = graph_storage.get_node_data(resolved_target)
 
-        response = {
+        response: dict[str, Any] = {
             "path_found": False,
             "source": {
                 "chunk_id": resolved_source,
@@ -965,7 +965,7 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
         }
     else:
         # Add source/target metadata
-        response = result
+        response: dict[str, Any] = result
         response["source"] = result["path"][0]["node"] if result["path"] else {}
         response["target"] = result["path"][-1]["node"] if result["path"] else {}
 

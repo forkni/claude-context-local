@@ -419,6 +419,7 @@ class SearchOrchestrator:
             nonlocal config_copy
             if config_copy is None:
                 config_copy = copy.deepcopy(config_singleton)
+            assert config_copy is not None  # set immediately above when None
             return config_copy
 
         if isinstance(searcher, HybridSearcher) and plan.ego_graph_enabled:

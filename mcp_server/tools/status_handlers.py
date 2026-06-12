@@ -226,6 +226,7 @@ async def handle_get_memory_status(arguments: dict[str, Any]) -> dict:
                 try:
                     # pyrefly: ignore [unbound-name]
                     handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                    # pyrefly: ignore [unbound-name]
                     mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
                     real_used_gb = round(mem_info.used / (1024**3), 2)
                     real_free_gb = round(mem_info.free / (1024**3), 2)

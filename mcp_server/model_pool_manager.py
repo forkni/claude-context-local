@@ -365,6 +365,7 @@ class ModelPoolManager:
                     iter(pool_config.keys())
                 )  # Fallback to first available model
 
+            assert model_key is not None  # guaranteed by validation/fallback above
             model_name = pool_config[model_key]
             # Cold-start detection for first-use messaging (computed here; used in logs)
             is_first_load = not any(state.embedders.values())
