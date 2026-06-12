@@ -1111,7 +1111,11 @@ class CodeEmbedder:
             "imports": chunk.imports,
             "complexity_score": chunk.complexity_score,
             "tags": chunk.tags,
-            "content": chunk.content,  # Full content for accurate token counting
+            # In-memory carrier for downstream BM25 document indexing (read in
+            # hybrid_searcher / indexer); stripped before persist so the
+            # MetadataStore keeps only content_preview (#55). NOT used for token
+            # counting — that runs at chunk build time on the live CodeChunk.
+            "content": chunk.content,
             "content_preview": (
                 chunk.content[:200] + "..."
                 if len(chunk.content) > 200

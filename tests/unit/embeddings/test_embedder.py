@@ -1044,6 +1044,84 @@ class TestSetVramLimitEffective:
 
         assert abs(eff1 - eff2) < 1e-9
 
+    # --- indexing RAM-fallback override (commit 0e60a1d) ---------------------
+    # The module-level override in search.config takes priority over the
+    # persisted config value so it survives `_config_manager = None` singleton
+    # resets during multi-model indexing. set_vram_limit consults it via the
+    # `_get_ram_fallback_override` alias before reading config.
+
+    @patch("embeddings.embedder._get_ram_fallback_override")
+    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.torch")
+    def test_override_false_forces_cap_over_config_true(
+        self, mock_torch, mock_cfg, mock_override
+    ):
+        """Regression (0e60a1d): override=False applies the cap even when the
+        persisted config still reads allow_ram_fallback=True."""
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.mem_get_info.return_value = (
+            int(24 * 1024**3),
+            int(24 * 1024**3),
+        )
+        mock_torch.cuda.memory_allocated.return_value = 0
+        # Config would otherwise skip the cap...
+        perf = MagicMock()
+        perf.allow_ram_fallback = True
+        cfg = MagicMock()
+        cfg.performance = perf
+        mock_cfg.return_value = cfg
+        # ...but the indexing override forces it on.
+        mock_override.return_value = False
+
+        from embeddings.embedder import set_vram_limit
+
+        result = set_vram_limit(0.8)
+
+        assert result is True
+        mock_torch.cuda.set_per_process_memory_fraction.assert_called_once()
+
+    @patch("embeddings.embedder._get_ram_fallback_override")
+    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.torch")
+    def test_override_true_skips_cap_over_config_false(
+        self, mock_torch, mock_cfg, mock_override
+    ):
+        """override=True skips the cap even when config reads allow_ram_fallback=False."""
+        mock_torch.cuda.is_available.return_value = True
+        perf = MagicMock()
+        perf.allow_ram_fallback = False
+        cfg = MagicMock()
+        cfg.performance = perf
+        mock_cfg.return_value = cfg
+        mock_override.return_value = True
+
+        from embeddings.embedder import set_vram_limit
+
+        result = set_vram_limit(0.8)
+
+        assert result is True
+        mock_torch.cuda.set_per_process_memory_fraction.assert_not_called()
+
+    @patch("embeddings.embedder._get_ram_fallback_override")
+    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.torch")
+    def test_override_none_defers_to_config(self, mock_torch, mock_cfg, mock_override):
+        """override=None defers to the persisted config (here: skip the cap)."""
+        mock_torch.cuda.is_available.return_value = True
+        perf = MagicMock()
+        perf.allow_ram_fallback = True
+        cfg = MagicMock()
+        cfg.performance = perf
+        mock_cfg.return_value = cfg
+        mock_override.return_value = None
+
+        from embeddings.embedder import set_vram_limit
+
+        result = set_vram_limit(0.8)
+
+        assert result is True
+        mock_torch.cuda.set_per_process_memory_fraction.assert_not_called()
+
 
 class TestComputeEffectiveVramCap:
     """Tests for compute_effective_vram_cap() — the pure helper used by both
