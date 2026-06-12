@@ -1241,9 +1241,19 @@ class CodeEmbedder:
                         model_vram_gb = model_vram_mb / 1024.0
 
                 # --- Architecture-derived activation cost per batch item ---
-                # Tier 1: use runtime-measured cost stored by ModelLoader at load time
-                activation_gb_per_item = getattr(
-                    self._model, "_activation_gb_per_item", 0.0
+                # Tier 1: runtime-measured cost stored by ModelLoader at load time.
+                # PyTorch only: that value is a torch peak-allocated delta — a true
+                # marginal per-item cost. For ONNX the loader can only measure an NVML
+                # delta, which captures ORT BFCArena arena growth (large contiguous
+                # buffers reserved up front) rather than the marginal cost per item; it
+                # over-reports by several× and, being larger than the calibrated floor,
+                # would silently defeat the Tier 3 floor guard below. So for ONNX skip
+                # the measured value and let the analytical estimate (Tier 2) and floor
+                # (Tier 3) govern — i.e. the cost becomes max(analytical, floor).
+                activation_gb_per_item = (
+                    0.0
+                    if self._is_onnx
+                    else getattr(self._model, "_activation_gb_per_item", 0.0)
                 )
                 # Tier 2: derive from HuggingFace model config when measurement unavailable
                 if activation_gb_per_item <= 0.0:

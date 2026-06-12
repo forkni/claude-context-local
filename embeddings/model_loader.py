@@ -197,7 +197,11 @@ class ModelLoader:
         dummy_batch = [_WARMUP_TEXT] * batch_size
         try:
             if is_onnx:
-                # ORT allocates outside PyTorch — use pynvml delta
+                # ORT allocates outside PyTorch — use pynvml delta. NOTE: this delta
+                # captures BFCArena arena growth, not marginal per-item cost, so it is
+                # logged for diagnostics but is NOT trusted for ONNX batch sizing — the
+                # consumer (embedder.calculate_optimal_batch_size path) ignores the ONNX
+                # measured value and uses max(analytical estimate, calibrated floor).
                 pre = _get_nvml_used_bytes(device)
                 model.encode(dummy_batch, batch_size=batch_size)
                 post = _get_nvml_used_bytes(device)
