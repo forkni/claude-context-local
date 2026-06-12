@@ -625,6 +625,11 @@ class CodeEmbedder:
 
         # Track per-model VRAM usage
         self._model_vram_usage: dict[str, float] = {}  # model_key -> VRAM MB
+
+        # File-content cache for _get_class_signature (#50).
+        # Avoids O(chunks × filesize) repeated re-reads when many methods share a file.
+        # Maps file_path → (mtime, full_file_content); invalidated on mtime change.
+        self._class_file_cache: dict[str, tuple[float, str]] = {}
         # Removed: logging.basicConfig(level=INFO) — library code must not
         # mutate the root logger; it fights the MCP server's dual-handler
         # setup and overrides any earlier basicConfig call (#37).
@@ -750,13 +755,31 @@ class CodeEmbedder:
             return 0.0, False, False
 
         try:
-            # Use PyTorch allocated memory, not CUDA driver-level mem_get_info().
-            # mem_get_info() includes PyTorch's caching allocator reserved blocks,
-            # which are pre-allocated and reused — not actual working-set pressure.
-            # This caused false 87% warnings regardless of batch size.
-            allocated = torch.cuda.memory_allocated(0)
             total_memory = torch.cuda.get_device_properties(0).total_memory
-            usage_pct = allocated / total_memory if total_memory > 0 else 0.0
+
+            # Use getattr: tests that construct via __new__ (skipping __init__)
+            # don't set _is_onnx; treat that as False (PyTorch path).
+            if getattr(self, "_is_onnx", False):
+                # ONNX Runtime allocates outside PyTorch's caching allocator;
+                # torch.cuda.memory_allocated() misses ORT's BFCArena allocations.
+                # Use NVML device-wide used/total for an accurate reading (#56).
+                # PyTorch path stays on memory_allocated — it avoids the false 87%
+                # warnings that mem_get_info()-style device-wide reads cause there
+                # (reserved blocks inflate the figure even under light load).
+                from embeddings.model_loader import _get_nvml_used_bytes
+
+                used_bytes = _get_nvml_used_bytes("cuda:0")
+                if used_bytes > 0 and total_memory > 0:
+                    usage_pct = used_bytes / total_memory
+                else:
+                    # NVML unavailable — fall back to torch allocated (undercounts ORT)
+                    allocated = torch.cuda.memory_allocated(0)
+                    usage_pct = allocated / total_memory if total_memory > 0 else 0.0
+            else:
+                # PyTorch path: use allocated (not mem_get_info reserved) to avoid
+                # false 87% warnings from allocator-reserved but unused blocks.
+                allocated = torch.cuda.memory_allocated(0)
+                usage_pct = allocated / total_memory if total_memory > 0 else 0.0
 
             should_warn = usage_pct > vram_warning_threshold
             should_abort = usage_pct > vram_abort_threshold
@@ -842,13 +865,33 @@ class CodeEmbedder:
             return ""
 
         try:
-            with open(chunk.file_path, encoding="utf-8") as f:
-                content = f.read()
+            import re
+
+            # Use cached file content to avoid re-reading the same file for every
+            # method chunk in it (O(chunks × filesize) → O(files)) (#50).
+            # Cache key is file_path; invalidated when mtime changes.
+            # getattr: tests that use __new__ (no __init__) won't have _class_file_cache.
+            _file_cache: dict[str, tuple[float, str]] = getattr(
+                self, "_class_file_cache", None
+            )
+            cached_mtime, content = (
+                _file_cache.get(chunk.file_path, (None, None))
+                if _file_cache is not None
+                else (None, None)
+            )
+            try:
+                current_mtime = Path(chunk.file_path).stat().st_mtime
+            except OSError:
+                current_mtime = None
+
+            if content is None or cached_mtime != current_mtime:
+                with open(chunk.file_path, encoding="utf-8") as f:
+                    content = f.read()
+                if _file_cache is not None and current_mtime is not None:
+                    _file_cache[chunk.file_path] = (current_mtime, content)
 
             # Find class definition containing this method
             # Pattern: "class ClassName" or "class ClassName(BaseClass)"
-            import re
-
             class_pattern = rf"^class\s+{re.escape(chunk.parent_name)}\s*[\(:]"
 
             match = re.search(class_pattern, content, re.MULTILINE)

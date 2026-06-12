@@ -39,7 +39,17 @@ _WARMUP_TEXT = (
     "        if len(item) <= max_length:\n"
     "            results.append(item.strip())\n"
     "    return results\n"
-) * 8  # repeat to fill ~512 tokens
+) * 32  # repeat to fill ~2048 tokens — matches the explicit max_length cap in
+# onnx_wrapper.py and t_eff in calculate_optimal_batch_size (#54/#46).
+# The probe must reflect peak-length inputs so the measured per-item activation
+# cost is representative of real indexing (code chunks regularly hit 1500+ tokens).
+
+
+# NVML init-once state: avoids repeated nvmlInit()/nvmlShutdown() per call (#53).
+# nvmlInit() is not free (~1–5 ms) and nvmlShutdown() invalidates all handles;
+# keeping them alive for the process lifetime is correct (NVML is process-scoped).
+_nvml_initialized: bool = False
+_nvml_handles: dict[int, Any] = {}  # device_index → nvml handle
 
 
 def _get_nvml_used_bytes(device: str = "cuda:0") -> int:
@@ -47,13 +57,19 @@ def _get_nvml_used_bytes(device: str = "cuda:0") -> int:
 
     Used to take before/after snapshots around ONNX model loads so that
     ORT's CUDAExecutionProvider allocations (invisible to PyTorch) can be
-    measured and reported to the dynamic batch-size calculator.
+    measured and reported to the dynamic batch-size calculator.  Also used
+    by ``CodeEmbedder._check_vram_status`` on the ONNX path (#56).
+
+    NVML is initialised once and device handles are cached across calls (#53).
+    ``nvmlShutdown()`` is never called — handles remain valid for the process
+    lifetime, and re-initialising would invalidate cached handles.
 
     Args:
         device: PyTorch device string (e.g. "cuda:0", "cuda:1", "cuda").
             The integer index is parsed from after the colon; bare "cuda"
             and non-cuda strings fall back to index 0.
     """
+    global _nvml_initialized, _nvml_handles
     try:
         # pyrefly: ignore [missing-import]
         import pynvml
@@ -66,10 +82,16 @@ def _get_nvml_used_bytes(device: str = "cuda:0") -> int:
             except ValueError:
                 idx = 0
 
-        pynvml.nvmlInit()
-        handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
-        mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
-        pynvml.nvmlShutdown()
+        # Init once — nvmlShutdown() intentionally omitted (init-once pattern).
+        if not _nvml_initialized:
+            pynvml.nvmlInit()
+            _nvml_initialized = True
+
+        # Cache per-device handles; nvmlDeviceGetHandleByIndex is slightly expensive.
+        if idx not in _nvml_handles:
+            _nvml_handles[idx] = pynvml.nvmlDeviceGetHandleByIndex(idx)
+
+        mem = pynvml.nvmlDeviceGetMemoryInfo(_nvml_handles[idx])
         return mem.used
     except Exception:
         return 0

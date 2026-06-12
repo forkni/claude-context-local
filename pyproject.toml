@@ -107,6 +107,14 @@ onnx = [
 # transformers is pinned to >=4.51.0,<4.58.0 in the main dependencies.
 # Install: uv pip install -e .[onnx]
 # See tools/convert_onnx.py for standalone conversion usage.
+gpu = [
+    # nvidia-ml-py (pynvml): NVML bindings for device-level GPU memory reporting.
+    # Used by _get_nvml_used_bytes() (model_loader.py) and _check_vram_status()
+    # on the ONNX path (#53/#56).  Separate from the onnx extra so PyTorch-path
+    # users can also get accurate VRAM readings without the ONNX runtime.
+    # Install: uv pip install -e .[gpu]
+    "nvidia-ml-py>=12.535.77",
+]
 otel = [
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",

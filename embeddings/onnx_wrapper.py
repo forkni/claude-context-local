@@ -122,8 +122,26 @@ class ONNXEmbeddingModel:
             _max_len = min(int(_raw_max), 2048)
         except (TypeError, ValueError):
             _max_len = 2048
+
+        # Length-sorted tokenization: sort sentences by char-length (proxy for token
+        # length) before tokenizing with padding=True (#51).  All-ones padding fills
+        # to the *longest* sentence in the batch; grouping short sentences together
+        # cuts wasted padding tokens and the quadratic T×T attention cost.
+        # Original order is restored by unsorting before return.
+
+        if len(sentences) > 1:
+            sort_idx = sorted(range(len(sentences)), key=lambda i: len(sentences[i]))
+            sorted_sentences = [sentences[i] for i in sort_idx]
+            unsort_idx = [0] * len(sort_idx)
+            for new_pos, orig_pos in enumerate(sort_idx):
+                unsort_idx[orig_pos] = new_pos
+        else:
+            sorted_sentences = sentences
+            sort_idx = None
+            unsort_idx = None
+
         encoded = self.tokenizer(
-            sentences,
+            sorted_sentences,
             padding=True,
             truncation=True,
             max_length=_max_len,
@@ -170,6 +188,11 @@ class ONNXEmbeddingModel:
         # embed_query() output on the PyTorch path must NOT assume unit norm —
         # the SentenceTransformer may or may not include a Normalize layer (#33).
         embeddings = F.normalize(embeddings.float(), p=2, dim=1)
+
+        # Restore original sentence order after length-sorted encoding (#51).
+        if unsort_idx is not None:
+            idx_tensor = torch.tensor(unsort_idx, dtype=torch.long)
+            embeddings = embeddings[idx_tensor]
 
         if convert_to_tensor:
             return embeddings  # torch.Tensor on target_device
