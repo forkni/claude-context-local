@@ -220,8 +220,10 @@ class ConstantExtractor(BaseRelationshipExtractor):
                 return True
 
         # Empty collections
-        if isinstance(node, (ast.List, ast.Dict, ast.Set, ast.Tuple)):
-            return len(node.elts if hasattr(node, "elts") else node.keys) == 0
+        if isinstance(node, ast.Dict):
+            return len(node.keys) == 0
+        if isinstance(node, (ast.List, ast.Set, ast.Tuple)):
+            return len(node.elts) == 0
 
         return False
 

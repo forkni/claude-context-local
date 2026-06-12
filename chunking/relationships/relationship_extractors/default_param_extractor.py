@@ -90,7 +90,9 @@ class DefaultParameterExtractor(BaseRelationshipExtractor):
         return self.edges
 
     def _extract_defaults(
-        self, node: ast.FunctionDef, chunk_metadata: dict[str, Any]
+        self,
+        node: ast.FunctionDef | ast.AsyncFunctionDef,
+        chunk_metadata: dict[str, Any],
     ) -> None:
         """
         Extract default values that are names (not literals).
