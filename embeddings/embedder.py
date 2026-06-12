@@ -883,7 +883,7 @@ class CodeEmbedder:
             # method chunk in it (O(chunks × filesize) → O(files)) (#50).
             # Cache key is file_path; invalidated when mtime changes.
             # getattr: tests that use __new__ (no __init__) won't have _class_file_cache.
-            _file_cache: dict[str, tuple[float, str]] = getattr(
+            _file_cache: dict[str, tuple[float, str]] | None = getattr(
                 self, "_class_file_cache", None
             )
             cached_mtime, content = (
