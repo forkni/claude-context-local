@@ -7,27 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [0.16.0] - 2026-06-11
 
-### Fixed
+### Fixed — Correctness & integrity (Batch 1)
 
-- **Line-overlap metrics returned 0.000 for every query** (`184e13b`, `scripts/benchmark/run_sscg_benchmark.py`) — `_extract_ranges_from_results` read `relative_path`/`start_line`/`end_line` as top-level attributes but `HybridSearcher` returns `search.reranker.SearchResult` whose line data lives in `.metadata`. Fixed to read `r.metadata.get(...)` with forward-slash path normalization. Regression test added in `tests/unit/evaluation/test_line_overlap_metrics.py` at the real seam (`reranker.SearchResult` with Windows-style backslash path). Line-overlap now reports real values (LR 0.852, LP 0.267, LIoU 0.304 hybrid aggregate, 2026-06-08). Also normalized path separators in `evaluation/metrics.py:build_chunk_line_lookup`.
-- **SSCG golden-set drift** (`b5cfc24`, `evaluation/golden_dataset.json`) — removed stale `search/filters.py:function:normalize_path` from Q05 `expected`/`expected_primary`/`relevance_grades` (symbol moved to `utils/path_utils.py`; its presence as a grade-3 expected item capped Q05 Recall at 0.67); cleaned two MISSING distractors from Q35 `relevance_grades` (`get_resource_manager`, `ResourceManager.cleanup_previous_resources`).
-- **SSCG pass/fail gate now enforces JSON thresholds** (`b5cfc24`, `evaluation/metrics.py:aggregate_metrics`) — the gate previously hardcoded the module-level `THRESHOLDS` constant, ignoring the `thresholds` block in `golden_dataset.json`. Now uses `aggregate_metrics(per_query, thresholds=dataset.get("thresholds"))` so the JSON becomes the single source of truth; the module constant is a fallback only.
+- **Silent, permanent index data loss on embed failure** (`0b7b94c`, `search/incremental_indexer.py:_add_new_chunks`) — `embed_chunks` was wrapped in a swallowing `except Exception: logger.warning(...)` that returned `0`. The incremental flow had already deleted old chunks, then silently advanced the Merkle snapshot, permanently dropping modified files from the index until their content changed again. Fix: removed the swallowing handler; let `embed_chunks` raise so the outer handler routes to `_attempt_recovery`. (#1)
+- **Stale searcher served for wrong project/model after failed switch** (`0b7b94c`, `mcp_server/search_factory.py:get_searcher`) — `current_project`/`current_model_key` were mutated *before* construction; a `DimensionMismatchError` left `state.searcher` pointing to the previous project's index while cache keys matched the new one, so the next call silently returned stale results. Fix: commit all three state fields atomically on success only; set `state.searcher = None` on failure. (#2)
+- **File-read "timeout" deadlocked instead of timing out** (`f4c3891`, `chunking/tree_sitter.py:_read_file_with_timeout`) — the `with ThreadPoolExecutor(...)` context-manager `__exit__` called `shutdown(wait=True)`, blocking forever on a genuinely locked file. Fix: drop context-manager form; call `shutdown(wait=False, cancel_futures=True)` on timeout. (#6)
+- **Import resolution silently broken when CWD ≠ project root** (`6780a94`, `chunking/multi_language_chunker.py`) — `chunk.relative_path` was passed to the import resolver, which opened it against the process CWD. For an MCP server started anywhere other than the project root every import read failed with `OSError`; an empty import map was cached per file, quietly degrading call-graph quality. Fix: pass `chunk.file_path` (absolute) to both call and phase-3 extraction passes. (#8)
+- **ONNX `provider_options` type mismatch caused silent PyTorch fallback** (`fb8372c`, `embeddings/onnx_loader.py:340`) — passing a list `[{...}]` to Optimum 1.25.0 (`provider_options: Optional[Dict]`) created a nested `[[{...}]]`; session creation failed and `load()` silently fell back to PyTorch, losing both the ONNX speedup and the VRAM cap. Fix: pass a plain dict. (#9)
+- **`handle_clear_index` deleted files while handles were open** (`535f5cd`, `mcp_server/tools/index_handlers.py`) — SQLite and index files were deleted before `reset_search_components()`, raising `PermissionError` on Windows. Fix: call `close_project_resources()` before any `rmtree`/`unlink`, matching `handle_delete_project`. (#10)
+- **`HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` leaked across model loads** (`fb8372c`, `embeddings/model_loader.py`) — env vars set after a successful cached load put the whole process in offline mode; loading a different uncached model later failed with a misleading "not found on Hub". Fix: removed both `os.environ.setdefault(...)` calls; the constructor's `local_files_only=True` is sufficient. (#11)
+- **Ancestor-directory names disabled indexing entirely** (`f4c3891`, `chunking/multi_language_chunker.py`, `merkle/merkle_dag.py`) — `any(part in DEFAULT_IGNORED_DIRS for part in file_path.parts)` matched *absolute* path components; a repo under any ancestor named `build`, `dist`, `env`, `logs`, etc. indexed zero files. Fix: scope the check to `file_path.relative_to(dir_path).parts`; guard `build_node` with `path != self.root_path`. (#12)
+- **`find_connections` results were iteration-order dependent** (`07965a0`, `graph/graph_queries.py`) — BFS marked nodes `visited` before the `relation_types` filter, so a first encounter via a non-matching edge permanently suppressed a later matching one. Fix: separate `visited` (BFS expansion) from `reported` (result dedup) sets. (#23)
+
+### Fixed — Concurrency / event-loop (Batch 2B)
+
+- **Shared MCP singletons had no construction/teardown synchronization** (`7067978`, `mcp_server/state.py`, `mcp_server/search_factory.py`, `mcp_server/model_pool_manager.py`) — in HTTP stateless mode concurrent `call_tool` requests could each construct their own `CodeEmbedder` (doubling VRAM, leaking the loser), produce duplicate FAISS/BM25 loads, or null a searcher mid-request during teardown. Fix: single `threading.RLock` on `ApplicationState` (survives `reset()`; reentrancy covers `get_searcher → get_index_manager → get_embedder` chain) + separate module-level `threading.Lock` for the pool factory; double-checked locking at every lazy-init and teardown site. See [ADR-0006](docs/adr/0006-thread-safety-of-module-singletons.md). (#7)
+- **Heavy synchronous work stalled the event loop** (`4ffa9cc`, `mcp_server/tools/search_orchestrator.py`, `mcp_server/tools/search_handlers.py`, `mcp_server/tools/index_handlers.py`) — `_check_auto_reindex` (worst case: full GPU reindex triggered by a routine `search_code` on a stale index) ran synchronously on the event loop, freezing all concurrent requests and timing out MCP pings for minutes. `get_searcher` (cache-miss path) and `_handle_chunk_id_lookup` also blocked inline. Fix: wrap each in `asyncio.to_thread()`; add a per-project `asyncio.Lock` (stored on `ApplicationState`) so two concurrent searches cannot start overlapping reindexes for the same project. (#5)
+- **Parallel chunker shared non-thread-safe parser and extractor state** (`7d8efc5`, `chunking/tree_sitter.py`, `chunking/multi_language_chunker.py`) — py-tree-sitter ≥0.25 releases the GIL during `parse()`; concurrent `parse()` calls on a shared `TSParser` are undefined behavior (crashes, corrupt trees). The call-graph and relationship extractors mutated per-call instance state (`self.edges`, `self._imports`, `self._current_class`), so concurrent files cross-contaminated. Fix: `TreeSitterChunker.get_chunker` uses `threading.local` for per-thread parser/chunker cache; `MultiLanguageChunker` builds `call_graph_extractor` and `relationship_extractors` per-thread via `_init_thread_extractors()` / `_ensure_thread_extractors()`. Parallel-vs-serial determinism verified: identical chunk IDs and relationship edges across 8 threads. (#4)
+
+### Changed — Batch 2A correctness
+
+- **Call graph migrated from `DiGraph` to `MultiDiGraph`** (`ae13947`, `d1b98da`, `graph/graph_storage.py`, `search/graph_integration.py`) — `nx.DiGraph` permits one edge per `(u, v)` pair; a chunk that both `calls` and `instantiates` the same symbol kept only the last extractor's type. All downstream consumers (`get_relationships`, `find_connections`, subgraph extraction) operated on a lossy graph. Fix: `MultiDiGraph` keyed by relationship type; backward-compat coerce-on-load for existing serialized graphs; centrality parity via a simple-digraph view. (#3)
+- **Atomic JSON writes at all snapshot and graph save sites** (`4a0981e`, `merkle/snapshot_manager.py`, `graph/graph_storage.py`) — `write_json_atomic` helper (write tmp → `os.replace`) introduced and wired into all 4 JSON write sites; a crash mid-write no longer leaves a truncated file that breaks the next load. Also fixed a caller-dict mutation bug in `save_snapshot`. (#27)
+- **Merkle traversal hardened** (`6b2aa45`, `merkle/merkle_dag.py`, `merkle/change_detector.py`) — symlink-cycle guard prevents infinite rglob traversal (= silent subtree-drop); per-entry exception isolation so one bad path doesn't abort the whole walk; snapshot-ignore path now compared relative to the root so it actually matches. (#21)
+- **Static type cleanup (pyrefly)** (`8773263`, `ad0a095`, `20502ed`) — Optional guards, unconditional `networkx` import, widened extractor annotations across `mcp_server/`, `search/`, and `chunking/relationships/`. No runtime behavior changes.
+
+### Fixed — Easy wins
+
+- `faiss_index.py:save()` — replaced `[reconstruct(i) for i in range(ntotal)]` with `reconstruct_n(0, ntotal)` (one C++ memcpy). (#19)
+- `embedder.py:embed_chunks` — module logger now restored in `finally`; a `VRAMExhaustedError` no longer silently left the logger at WARNING for the rest of the process. (#20)
+- `faiss_index.py:add()` — added `.copy()` before `faiss.normalize_L2` to avoid in-place mutation of the caller's embedding array. (#29)
+- `embedder.py:embed_chunk` — wrapped `model.encode()` in `with self._lifecycle_lock:` so a concurrent `cleanup()` cannot null `self.model` mid-call. (#35)
+- `embedder.py` / `incremental_indexer.py` — two `zip(...)` changed to `strict=True`; a length mismatch is now a loud failure, not a silent truncation. (#38)
+- `merkle/snapshot_manager.py` — `print(...)` version-mismatch warning changed to `logger.warning()` to avoid corrupting the MCP stdio JSON-RPC channel. (#32)
+- `utils/version_check.py` — version tuples padded to ≥3 elements; `(2, 8) < (2, 8, 0)` false-positive fixed. Pre-release stripping uses `re.split`. (#41)
+- `graph/graph_queries.py` — `find_call_chain` now normalizes path separators (Windows backslash fix); `compute_centrality("degree")` return values cast to `float`. (#40)
+- `mcp_server/server.py` — `output_format` popped before dispatch rather than after. (#36)
+- `embeddings/embedder.py` — `logging.basicConfig(level=INFO)` removed from `CodeEmbedder.__init__`; library code should not mutate root logging. (#37)
 
 ### Added
 
-- **`recall@7` / `hit_rate@7`** auto-computed by the benchmark runner (`b5cfc24`, `evaluation/metrics.py`, `scripts/benchmark/run_sscg_benchmark.py`) — these metrics were previously manual figures; the runner now emits them automatically alongside @5 and @10.
+- **`tests/unit/chunking/test_thread_isolation.py`** — 4 determinism tests: `TreeSitterChunker` 8-thread parallel-vs-serial chunk-ID equality; `MultiLanguageChunker` parallel chunk-ID equality, parallel relationship-edge equality, and cross-file non-contamination (4-file × 4-repeat matrix). All pass against production indexing paths.
 
-### Changed
+### Fixed — Benchmark harness (post-0.15.0, 2026-06-08)
 
-- **`golden_dataset.json` `current_metrics` reconciled to hybrid-default run** — the stored figures (MRR, Recall@5/@7/@10, NDCG@5) now reflect the canonical hybrid 0.35/0.65 k=10 run (MRR 0.797, R@5 0.689) that all documentation cites, replacing the earlier sweep-run figures (MRR 0.801, R@5 0.704 from a bm25_35_65 k=10 sweep). The `thresholds` block used for pass/fail gating is unchanged.
-
-### Refactored
-
-- **Dropped redundant `getattr` guards in `search_orchestrator._assemble`** (`mcp_server/tools/search_orchestrator.py:618,642`) — `OutputConfig` always carries `include_result_graph` and `include_subgraph` (both default `False`), so the `getattr(..., False)` safety guards are no-ops. Replaced with direct attribute access consistent with the rest of the config-access pattern.
-
-- **`calculate_metrics_from_results` return type corrected** (`evaluation/metrics.py`) — annotation updated from `dict[str, float]` to `dict[str, float | bool]` to reflect that `hit` and `hit@7` are boolean values. Caught by Copilot static-analysis review of PR #30.
+- **Line-overlap metrics returned 0.000** (`184e13b`, `scripts/benchmark/run_sscg_benchmark.py`) — `_extract_ranges_from_results` read line data as top-level attributes; `SearchResult` stores them in `.metadata`. Real values: LR 0.852, LP 0.267, LIoU 0.304.
+- **SSCG golden-set drift** (`b5cfc24`, `evaluation/golden_dataset.json`) — stale `search/filters.py:normalize_path` removed from Q05 (capped Recall at 0.67); two MISSING distractors cleaned from Q35.
+- **Pass/fail gate now enforces JSON thresholds** (`b5cfc24`, `evaluation/metrics.py`) — `aggregate_metrics` reads `thresholds` from `golden_dataset.json`; the module constant is a fallback only.
+- **`recall@7` / `hit_rate@7`** auto-computed by the benchmark runner; previously manual figures only.
 
 ---
 

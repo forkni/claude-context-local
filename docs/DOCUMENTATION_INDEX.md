@@ -139,7 +139,7 @@ Test suite documentation and validation reports.
 
 | Document | Description |
 |----------|-------------|
-| **[tests/TESTING_GUIDE.md](../tests/TESTING_GUIDE.md)** | Comprehensive testing documentation (2,495 unit + 19 integration tests) |
+| **[tests/TESTING_GUIDE.md](../tests/TESTING_GUIDE.md)** | Comprehensive testing documentation (2,533 unit + 19 integration tests) |
 | **[tests/README.md](../tests/README.md)** | Test suite organization and best practices |
 
 ### Testing Tools (scripts/test/)
@@ -185,11 +185,11 @@ Detailed technical documentation.
 
 | Document | Description |
 |----------|-------------|
-| **[VERSION_HISTORY.md](VERSION_HISTORY.md)** | Complete version history from v0.1.x to v0.15.0 |
+| **[VERSION_HISTORY.md](VERSION_HISTORY.md)** | Complete version history from v0.1.x to v0.16.0 |
 
 ### Key Versions
 
-- **post-0.15.0** (2026-06-08): benchmark harness fixes — line-overlap 0.000→real values (LR 0.852), golden drift Q05/Q35, recall@7/hit_rate@7 auto-computed, JSON thresholds gate
+- **v0.16.0** (2026-06-11): code-review hardening — 30 correctness/concurrency fixes (Batch 1/2A/2B); thread-safe MCP server, MultiDiGraph call graph, atomic writes, 2,533 tests
 - **v0.15.0** (2026-06-03): LSP resolver repair (0 → 938 edges), resolver precision tuning, `min_confidence`/`use_pyproject_toml` config knobs, `docs/CALL_GRAPH_TUNING.md`, 2,495 tests
 - **v0.14.0** (2026-06-03): Layered call-graph resolver pipeline (AST→pyan→LibCST→LSP), optional `[callgraph]`/`[lsp]` extras, `find_connections` bidirectional callees + `resolver_source`/`resolver_confidence` provenance
 - **v0.13.0** (2026-06-03): pyan3 cross-module caller edges, `find_connections` recall 0.57→0.95, split_block call-edge recovery, Windows path fixes
@@ -272,4 +272,4 @@ Detailed technical documentation.
 
 ---
 
-**Last Updated**: 2026-06-08 (post-0.15.0 — benchmark harness fixes: line-overlap, golden drift, recall@7 automation)
+**Last Updated**: 2026-06-11 (v0.16.0 — code-review hardening: Batch 1/2A/2B correctness + concurrency fixes; 2,533 tests)

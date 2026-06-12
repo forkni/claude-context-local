@@ -2,31 +2,58 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-06-08)
+## Current Status: All Features Operational (2026-06-11)
 
-- **Version**: 0.15.0 + unreleased benchmark fixes
-- **Status**: Production-ready
-- **Test Coverage**: 2,495 unit tests + 19 integration tests (100% pass rate)
+- **Version**: 0.16.0
+- **Status**: Production-ready, concurrency-safe
+- **Test Coverage**: 2,533 unit tests + 19 integration tests (100% pass rate)
 - **Dependencies**: 124 packages + optional `[callgraph]` / `[lsp]` extras
 - **SSCG Benchmark**: MRR 0.797, Recall@5 0.689, Recall@7 0.736, Hit@5 100% — all three modes pass thresholds (2026-06-08)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent**: post-0.15.0 — golden-set drift fix (Q05/Q35), line-overlap harness fix (LR/LP/LIoU were 0.000), recall@7/hit_rate@7 auto-computed, JSON thresholds gate
+- **Recent**: v0.16.0 — code-review correctness hardening (30 fixes across Batch 1/2A/2B) + concurrency safety for the async MCP server
 
 ---
 
-## Unreleased — Benchmark Harness Fixes (post-0.15.0, 2026-06-08)
+## v0.16.0 - Code-Review Hardening: Correctness + Concurrency (2026-06-11)
 
-Evaluation harness correctness fixes and golden-set maintenance. No change to search runtime behavior.
+Full-codebase code review across the embedding path, async MCP pipeline, chunking/merkle/graph subsystems. 30 distinct fixes spanning data integrity, event-loop correctness, thread safety, and call-graph fidelity. No change to search semantics, tool signatures, or benchmark results.
 
-### Fixed
+### Fixed — Correctness & integrity (Batch 1)
 
-- **Line-overlap metrics returned 0.000 for every query** (`184e13b`) — `_extract_ranges_from_results` read line data as top-level attributes on `search.reranker.SearchResult`, which stores them in `.metadata`. Fixed to read `r.metadata.get(...)` with forward-slash path normalization. Real values: LR 0.852, LP 0.267, LIoU 0.304 (hybrid, 13-query SSCG set).
-- **SSCG golden-set drift** (`b5cfc24`) — removed stale `search/filters.py:function:normalize_path` from Q05 (moved to `utils/path_utils.py`; its presence capped Q05 Recall at 0.67); cleaned two MISSING distractors from Q35 `relevance_grades`.
-- **Pass/fail gate now enforces JSON thresholds** (`b5cfc24`) — `aggregate_metrics` previously hardcoded the module constant; now reads `thresholds` from `golden_dataset.json` (recall_at_5 = 0.55).
+- **#1 Silent index data loss on embed failure** — `embed_chunks` swallowed exceptions and advanced the Merkle snapshot, permanently dropping modified files. Now raises so `_attempt_recovery` runs. (`search/incremental_indexer.py:_add_new_chunks`)
+- **#2 Stale searcher after failed project/model switch** — state mutated before construction; on error the old searcher was returned for the new project. Now atomic commit-on-success only. (`mcp_server/search_factory.py`)
+- **#6 File-read timeout deadlocked** — `with ThreadPoolExecutor` `__exit__` called `shutdown(wait=True)`, blocking forever on a locked file. Fixed to `shutdown(wait=False, cancel_futures=True)`. (`chunking/tree_sitter.py`)
+- **#8 Import resolution broken when CWD ≠ project root** — relative paths passed to the import resolver; every open failed with `OSError` and an empty map was cached. Fixed to pass absolute `file_path`. (`chunking/multi_language_chunker.py`)
+- **#9 ONNX `provider_options` list → silent PyTorch fallback** — nested `[[{...}]]` caused session creation failure; code silently fell back to PyTorch, losing ONNX speedup and VRAM cap. Fixed to pass plain dict. (`embeddings/onnx_loader.py`)
+- **#10 `handle_clear_index` deleted files with open handles** — `PermissionError` on Windows. Fixed: `close_project_resources()` before any `rmtree`/`unlink`. (`mcp_server/tools/index_handlers.py`)
+- **#11 `HF_HUB_OFFLINE` leaked across model loads** — a second uncached model failed with "not found on Hub". Removed `os.environ.setdefault(...)` calls. (`embeddings/model_loader.py`)
+- **#12 Ancestor-directory names disabled indexing** — `build`/`dist`/`env` etc. in any ancestor dir caused zero files indexed. Scoped check to relative path parts. (`chunking/multi_language_chunker.py`, `merkle/merkle_dag.py`)
+- **#23 `find_connections` results were iteration-order dependent** — BFS marked nodes visited before filter; first non-matching encounter suppressed all later matching ones. Separated `visited` vs `reported` sets. (`graph/graph_queries.py`)
+
+### Fixed — Concurrency / event-loop (Batch 2B)
+
+- **#7 Shared MCP singletons unsynchronized** — concurrent `call_tool` requests could double-allocate VRAM, produce duplicate FAISS/BM25 loads, or null a searcher mid-request. Fixed: `threading.RLock` on `ApplicationState` (reentrant; survives `reset()`) + separate module-level `threading.Lock` for model-pool factory; double-checked locking at all lazy-init/teardown sites. See ADR-0006. (`mcp_server/state.py`, `search_factory.py`, `model_pool_manager.py`)
+- **#5 Heavy sync work stalled event loop** — `_check_auto_reindex` (worst case: full GPU reindex triggered by `search_code` on a stale index) ran synchronously, freezing concurrent requests for minutes. `get_searcher` cache-miss and `_handle_chunk_id_lookup` also blocked inline. Fixed: `asyncio.to_thread()` for each; per-project `asyncio.Lock` prevents overlapping reindexes. (`mcp_server/tools/search_orchestrator.py`, `search_handlers.py`, `index_handlers.py`)
+- **#4 Parallel chunker shared non-thread-safe state** — py-tree-sitter ≥0.25 releases the GIL; shared `TSParser` → undefined behavior (crashes, corrupt trees). Relationship extractors mutated per-call instance state, cross-contaminating files. Fixed: `threading.local` per-thread parser/chunker cache in `TreeSitterChunker`; per-thread extractor bundle in `MultiLanguageChunker`. Determinism verified: 8 threads produce identical chunk IDs and relationship edges as serial. (`chunking/tree_sitter.py`, `chunking/multi_language_chunker.py`)
+
+### Changed — Batch 2A
+
+- **#3 Call graph `DiGraph` → `MultiDiGraph`** — parallel edges per `(u, v)` pair; `calls` + `instantiates` on same pair no longer overwrites. Backward-compat coerce-on-load; centrality via simple-digraph view. (`graph/graph_storage.py`, `search/graph_integration.py`)
+- **#27 Atomic JSON writes** — `write_json_atomic` helper at all 4 snapshot/graph save sites; crash mid-write no longer truncates the index. Also fixed caller-dict mutation in `save_snapshot`. (`merkle/snapshot_manager.py`, `graph/graph_storage.py`)
+- **#21 Merkle traversal hardened** — symlink-cycle guard (infinite traversal = silent subtree drop); per-entry exception isolation; path-relative snapshot-ignore so it actually matches. (`merkle/merkle_dag.py`, `merkle/change_detector.py`)
+- **Pyrefly static-type cleanup** — Optional guards, unconditional networkx import, widened extractor annotations. No runtime changes. (`mcp_server/`, `search/`, `chunking/relationships/`)
+
+### Fixed — Easy wins (#19 #20 #29 #32 #35 #36 #37 #38 #40 #41)
+
+FAISS `reconstruct_n` (one memcpy vs N Python↔C++ calls); embed-chunks logger restored in `finally`; FAISS `add()` `.copy()` before normalize; `embed_chunk` lifecycle lock; `zip(strict=True)` at two sites; `print()` → `logger.warning()` in stdio server; `logging.basicConfig` removed from `CodeEmbedder.__init__`; `output_format` popped before dispatch; `find_call_chain` path-separator normalization + degree centrality `float` cast; version-tuple padding + pre-release `re.split`.
 
 ### Added
 
-- `recall@7` / `hit_rate@7` auto-computed by the benchmark runner (`b5cfc24`); previously manual figures only.
+- `tests/unit/chunking/test_thread_isolation.py` — 4 determinism tests covering `TreeSitterChunker` and `MultiLanguageChunker` under 8-thread concurrency.
+
+### Fixed — Benchmark harness (2026-06-08)
+
+- Line-overlap metrics (LR/LP/LIoU were 0.000; now 0.852/0.267/0.304); SSCG golden-set drift Q05/Q35; pass/fail gate reads JSON thresholds; `recall@7`/`hit_rate@7` auto-computed.
 
 ---
 

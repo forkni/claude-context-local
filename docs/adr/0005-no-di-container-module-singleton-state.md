@@ -83,3 +83,9 @@ Reconsider a DI container if and when:
 
 Until both conditions hold simultaneously, the module-singleton pattern is simpler,
 easier to navigate, and carries zero overhead.
+
+## Addendum (2026-06-11)
+
+The `ApplicationState` singleton's concurrent construction and teardown are now
+lock-guarded; the model-pool factory singleton also carries its own lock.
+See [ADR-0006](0006-thread-safety-of-module-singletons.md) for the locking design.

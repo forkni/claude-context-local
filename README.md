@@ -42,16 +42,19 @@
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
 - **File-Role Tagging**: Chunks tagged `role:src/test/doc/config` at index time — enables role-aware ranking and precision boosts
 
-**Status**: ✅ Production-ready | 2,495 passing tests | All 19 MCP tools operational | Windows 10/11
+**Status**: ✅ Production-ready | 2,533 passing tests | All 19 MCP tools operational | Concurrency-safe | Windows 10/11
 
-## What's New in v0.15.0
+## What's New in v0.16.0
 
-- **LSP resolver repair** — three protocol bugs fixed: probe at column 0 → symbol-name position; JSON-RPC ID correlation (notifications/wrong-id discarded, `workspace/configuration` stubbed); percent-encoded drive-colon URI (`file:///f%3A/...`) decoded before `url2pathname`. LSP tier: **0 → 938 resolved edges** (added=64, upgraded=869) on this codebase.
-- **Resolver precision tuning** — pyan3 callee-flavor filter, wildcard down-weight, LibCST self-call resolution, namespace guards, `resolve_cache`.
-- **`CallGraphConfig.min_confidence`** — injection floor (default `0.65`); drops low-confidence edges before graph injection.
-- **`CallGraphConfig.use_pyproject_toml`** — src-layout project support for LibCST's `FullyQualifiedNameProvider`.
-- **`docs/CALL_GRAPH_TUNING.md`** — full tuning reference: API, confidence tiers, `min_confidence` recipes, §6.4 LSP diagnostics counters.
-- **2,495 unit tests** passing (44 new tests).
+- **Concurrency-safe MCP server** — `ApplicationState` singleton lazy-init and teardown now guarded by a `threading.RLock`; model-pool factory by a separate module-level lock. Concurrent tool calls no longer risk duplicate VRAM allocation or mid-request teardown (#7). See [ADR-0006](docs/adr/0006-thread-safety-of-module-singletons.md).
+- **Event-loop correctness** — `_check_auto_reindex`, cache-miss `get_searcher`, and chunk-id lookups are offloaded via `asyncio.to_thread`; a per-project `asyncio.Lock` serializes concurrent reindex requests (#5). A stale-index `search_code` no longer freezes the event loop for minutes.
+- **Deterministic parallel chunking** — tree-sitter `Parser` objects and relationship extractors are now per-thread (`threading.local`); parallel workers no longer share mutable state, eliminating corrupt-tree crashes and cross-file edge contamination (#4).
+- **Full-fidelity call graph** — `DiGraph` migrated to `MultiDiGraph`; a node pair that both `calls` and `instantiates` the same symbol now retains all edge types instead of overwriting to the last one (#3).
+- **Index integrity** — embedding failures during incremental index no longer silently drop modified files (#1); atomic JSON writes at all 4 snapshot/graph sites (#27); Merkle symlink-cycle guard prevents infinite traversal (#21).
+- **Bug fixes** — file-read timeout deadlock (#6), CWD-relative import resolution (#8), `clear_index` open-handle delete on Windows (#10), offline-env flag leak (#11), ancestor-directory ignore false-positive (#12), BFS `visited`-before-filter ordering bug (#23), ONNX `provider_options` type mismatch (#9), and more.
+- **2,533 unit tests** passing (4 new thread-isolation determinism tests).
+
+**Previous (v0.15.0)**: LSP resolver repair (0 → 938 resolved edges), resolver precision tuning, `min_confidence`/`use_pyproject_toml` config knobs, `docs/CALL_GRAPH_TUNING.md`.
 
 **Previous (v0.14.0)**: Layered call-graph resolver pipeline (AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98), optional `[callgraph]`/`[lsp]` extras, `find_connections` bidirectional callees with `resolver_source`/`resolver_confidence` provenance, `CallGraphConfig`, edge-attribute rename `source`→`resolver_source`. 2,451 tests.
 
@@ -426,7 +429,7 @@ claude-context-local/
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 2,495+ tests (unit + integration)
+└── tests/             # 2,533+ tests (unit + integration)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -532,7 +535,7 @@ The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic s
 
 ### Development
 
-- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (2,495 unit + 19 integration, 100% pass rate)
+- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (2,533 unit + 19 integration, 100% pass rate)
 - [Git Workflow](docs/GIT_WORKFLOW.md) - Contributing guidelines
 - [Version History](docs/VERSION_HISTORY.md) - Changelog
 
