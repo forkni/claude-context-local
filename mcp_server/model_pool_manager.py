@@ -355,7 +355,9 @@ class ModelPoolManager:
                                             cache_dir=str(cache_dir),
                                         )
                                         state.set_embedder("default", embedder)
-                            return state.embedders["default"]
+                            default_embedder = state.embedders["default"]
+                            assert default_embedder is not None  # set above under lock
+                            return default_embedder
                         pool_config = self.get_pool_config()
                         fallback_key = next(iter(pool_config.keys()))
                         logger.warning(
@@ -427,7 +429,9 @@ class ModelPoolManager:
                         state.set_embedder("default", embedder)
                         logger.info("Embedder initialized successfully")
 
-            return state.embedders["default"]
+            default_embedder = state.embedders["default"]
+            assert default_embedder is not None  # initialized above under lock
+            return default_embedder
 
 
 # Module-level singleton for backward compatibility
