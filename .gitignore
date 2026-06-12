@@ -277,6 +277,8 @@ docs/*
 !docs/VSCODE_SETUP.md
 !docs/VERSION_HISTORY.md
 !docs/OBSERVABILITY.md
+!docs/CODE_REVIEW_IMPROVEMENT_PLAN.md
+!docs/CODE_REVIEW_IMPROVEMENT_PLAN_V2.md
 
 # Development-only documentation (local-only)
 # - AUTOMATED_GIT_WORKFLOW.md (Claude orchestration guide - development only)
