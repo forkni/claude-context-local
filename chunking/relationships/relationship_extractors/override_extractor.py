@@ -83,56 +83,6 @@ class OverrideExtractor(BaseRelationshipExtractor):
         super().__init__()
         self.relationship_type = RelationshipType.OVERRIDES
 
-    def extract(
-        self, code: str, chunk_metadata: dict[str, Any]
-    ) -> list[RelationshipEdge]:
-        """
-        Extract override relationships from code.
-
-        Args:
-            code: Source code string
-            chunk_metadata: Metadata about the code chunk
-                - chunk_id: Unique identifier
-                - file_path: File path
-                - name: Symbol name (method name)
-                - chunk_type: Type (should be "method" or "class")
-
-        Returns:
-            List of RelationshipEdge objects representing overrides
-
-        Example:
-            >>> extractor = OverrideExtractor()
-            >>> code = '''
-            ... class Child(Parent):
-            ...     def foo(self):
-            ...         super().foo()
-            ... '''
-            >>> edges = extractor.extract(code, {"chunk_id": "test.py:2-4:method:Child.foo"})
-            >>> len(edges)
-            1
-            >>> edges[0].target_name
-            'foo'
-        """
-        self._reset_state()
-
-        # Parse code
-        try:
-            tree = ast.parse(code)
-        except SyntaxError as e:
-            # Method chunks often fail to parse standalone
-            self.logger.debug(
-                f"Failed to parse code in {chunk_metadata.get('file_path')}: {e}"
-            )
-            return []
-
-        # Extract override relationships
-        self._extract_from_tree(tree, chunk_metadata)
-
-        # Log results
-        self._log_extraction_result(chunk_metadata)
-
-        return self.edges
-
     def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         """
         Walk AST and extract override relationships.

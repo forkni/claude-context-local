@@ -23,7 +23,7 @@ from typing import Any
 from chunking.relationships.relationship_extractors.base_extractor import (
     BaseRelationshipExtractor,
 )
-from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
+from chunking.relationships.relationship_types import RelationshipType
 
 
 class EnumMemberExtractor(BaseRelationshipExtractor):
@@ -44,49 +44,10 @@ class EnumMemberExtractor(BaseRelationshipExtractor):
         super().__init__()
         self.relationship_type = RelationshipType.DEFINES_ENUM_MEMBER
 
-    def extract(
-        self, code: str, chunk_metadata: dict[str, Any]
-    ) -> list[RelationshipEdge]:
-        """
-        Extract enum member relationships from code.
-
-        Args:
-            code: Source code string to analyze
-            chunk_metadata: Metadata about the code chunk
-
-        Returns:
-            List of RelationshipEdge objects for enum members
-
-        Example:
-            >>> extractor = EnumMemberExtractor()
-            >>> code = '''
-            ... from enum import Enum
-            ... class Status(Enum):
-            ...     ACTIVE = 1
-            ...     INACTIVE = 2
-            ... '''
-            >>> edges = extractor.extract(code, {"chunk_id": "test.py:2-4:class:Status"})
-            >>> len(edges)
-            2  # Status.ACTIVE, Status.INACTIVE
-            >>> edges[0].target_name
-            'Status.ACTIVE'
-        """
-        self._reset_state()
-
-        try:
-            tree = ast.parse(code)
-        except SyntaxError:
-            self.logger.debug(
-                f"Syntax error parsing code in {chunk_metadata.get('chunk_id', 'unknown')}"
-            )
-            return []
-
+    def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef) and self._is_enum_class(node):
                 self._extract_enum_members(node, chunk_metadata)
-
-        self._log_extraction_result(chunk_metadata)
-        return self.edges
 
     def _is_enum_class(self, node: ast.ClassDef) -> bool:
         """

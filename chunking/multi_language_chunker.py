@@ -493,9 +493,23 @@ class MultiLanguageChunker:
                         dedented_content[:marker_pos].rstrip() + "\n    pass\n"
                     )
 
-            for extractor in relationship_extractors:
-                edges = extractor.extract(dedented_content, chunk_metadata)
-                all_relationships.extend(edges)
+            # Parse once; each extractor receives the shared tree via extract_from_tree
+            # (avoids 13–16× redundant ast.parse per chunk, #15).
+            try:
+                import ast as _ast
+
+                ast_tree = _ast.parse(dedented_content)
+            except SyntaxError as _syn_err:
+                # DEBUG: Method chunks often fail to parse standalone
+                logger.debug(f"[REL] SyntaxError in {chunk_id}: {_syn_err}")
+                ast_tree = None
+
+            if ast_tree is not None:
+                for extractor in relationship_extractors:
+                    edges = extractor.extract_from_tree(
+                        ast_tree, dedented_content, chunk_metadata
+                    )
+                    all_relationships.extend(edges)
 
             chunk.relationships = all_relationships
 

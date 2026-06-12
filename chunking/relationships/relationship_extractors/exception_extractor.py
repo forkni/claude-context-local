@@ -20,7 +20,7 @@ from typing import Any
 from chunking.relationships.relationship_extractors.base_extractor import (
     BaseRelationshipExtractor,
 )
-from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
+from chunking.relationships.relationship_types import RelationshipType
 
 
 class ExceptionExtractor(BaseRelationshipExtractor):
@@ -90,64 +90,6 @@ class ExceptionExtractor(BaseRelationshipExtractor):
         # This extractor handles both RAISES and CATCHES
         # relationship_type is set dynamically during extraction
         self.relationship_type = None
-
-    def extract(
-        self, code: str, chunk_metadata: dict[str, Any]
-    ) -> list[RelationshipEdge]:
-        """
-        Extract exception relationships from code.
-
-        Args:
-            code: Source code string
-            chunk_metadata: Metadata about the code chunk
-                - chunk_id: Unique identifier
-                - file_path: File path
-                - name: Symbol name
-                - chunk_type: Type (function/class/etc)
-
-        Returns:
-            List of RelationshipEdge objects representing raises/catches
-
-        Example:
-            >>> extractor = ExceptionExtractor()
-            >>> code = "raise ValueError('error')"
-            >>> edges = extractor.extract(code, {"chunk_id": "test.py:1-1:function:func"})
-            >>> len(edges)
-            1
-            >>> edges[0].target_name
-            'ValueError'
-            >>> edges[0].relationship_type
-            <RelationshipType.RAISES: 'raises'>
-        """
-        self._reset_state()
-
-        # Parse code
-        try:
-            tree = ast.parse(code)
-        except SyntaxError as e:
-            # DEBUG: Method chunks often fail to parse standalone but parent class chunks succeed
-            self.logger.debug(
-                f"Failed to parse code in {chunk_metadata.get('file_path')}: {e}"
-            )
-            return []
-
-        # Extract exception relationships
-        self._extract_from_tree(tree, chunk_metadata)
-
-        # Log results
-        if self.edges:
-            raises_count = sum(
-                1 for e in self.edges if e.relationship_type == RelationshipType.RAISES
-            )
-            catches_count = sum(
-                1 for e in self.edges if e.relationship_type == RelationshipType.CATCHES
-            )
-            chunk_id = chunk_metadata.get("chunk_id", "unknown")
-            self.logger.debug(
-                f"Extracted {raises_count} raises, {catches_count} catches from {chunk_id}"
-            )
-
-        return self.edges
 
     def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         """
