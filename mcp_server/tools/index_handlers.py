@@ -811,14 +811,17 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
         # Quick file accessibility check on a sample of files
         from chunking.tree_sitter import TreeSitterChunker
 
-        supported_exts = TreeSitterChunker.get_supported_extensions()
+        ext_set = set(TreeSitterChunker.get_supported_extensions())
         sample_files = []
 
-        # Collect a sample of files with supported extensions
-        for ext in supported_exts:
-            sample_files.extend(list(directory_path.rglob(f"*{ext}"))[:10])
-            if len(sample_files) >= 50:
-                break
+        # Single lazy pass over the directory tree; break early at 50 files.
+        # Avoids up to 19 separate rglob walks (one per extension) and eliminates
+        # the materialize-before-slice anti-pattern that defeats rglob laziness.
+        for p in directory_path.rglob("*"):
+            if p.is_file() and p.suffix.lower() in ext_set:
+                sample_files.append(p)
+                if len(sample_files) >= 50:
+                    break
 
         if sample_files:
             inaccessible = _check_file_accessibility(sample_files, sample_size=50)
