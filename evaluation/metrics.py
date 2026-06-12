@@ -451,8 +451,10 @@ def build_chunk_line_lookup(
     for raw_id, entry in metadata_store.items():
         meta = entry.get("metadata", {})
         path = (meta.get("relative_path", "") or "").replace("\\", "/")
-        start = meta.get("start_line") or 0
-        end = meta.get("end_line") or 0
+        # Same as chunk_mapping: get() without default so None and 0 are
+        # both filtered by the truthiness test below (#48).
+        start = meta.get("start_line")
+        end = meta.get("end_line")
         if path and start and end:
             normalized = normalize_chunk_id(raw_id)
             lookup[normalized] = (path, int(start), int(end))

@@ -270,7 +270,11 @@ class CodeGraphStorage:
             KeyError: If the edge ``(caller_id, callee_id)`` does not exist in
                 the graph.  Callers should check ``graph.has_edge`` first.
         """
-        self.graph.edges[caller_id, callee_id, "calls"].update(attrs)
+        # Normalize so Windows backslash ids don't cause KeyError when the
+        # graph was written with forward-slash ids (or vice-versa) (#47).
+        self.graph.edges[
+            normalize_path(caller_id), normalize_path(callee_id), "calls"
+        ].update(attrs)
 
     def add_relationship_edge(self, edge: "RelationshipEdge") -> None:
         """
@@ -935,7 +939,8 @@ class CodeGraphStorage:
 
     def __contains__(self, chunk_id: str) -> bool:
         """Check if chunk_id is in graph."""
-        return chunk_id in self.graph
+        # Normalize for cross-platform path consistency (#47).
+        return normalize_path(chunk_id) in self.graph
 
     def store_community_map(self, community_map: dict[str, int]) -> None:
         """Persist community assignments to JSON file.

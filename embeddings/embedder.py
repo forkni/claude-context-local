@@ -170,9 +170,11 @@ def estimate_activation_gb_from_config(
     # Running hidden state adds hidden per token on top of peak layer usage
     peak_per_token = max(attn_peak, mlp_peak) + hidden * dtype_bytes
 
-    # Effective sequence length: code chunks are 200–800 tokens after tokenization.
-    # Cap at 1024 — using model.max_ctx (up to 32K) would massively over-estimate.
-    t_eff = 1024
+    # Effective sequence length: code chunks regularly reach 1500–3000 tokens.
+    # Set to 2048 — matches the explicit max_length cap in the ONNX tokenizer
+    # (onnx_wrapper.py) so the batch-sizer and the tokenizer are consistent (#46).
+    # Using model.max_ctx (up to 32K) would massively over-estimate.
+    t_eff = 2048
 
     # Safety multiplier: accounts for PyTorch/ORT allocator overhead, GEMM workspace
     # buffers, and block retention. Calibrated to be ≥ empirically observed costs.

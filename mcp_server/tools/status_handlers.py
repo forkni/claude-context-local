@@ -327,7 +327,9 @@ async def handle_get_memory_status(arguments: dict[str, Any]) -> dict:
 @error_handler("Resource cleanup")
 async def handle_cleanup_resources(arguments: dict[str, Any]) -> dict:
     """Manually cleanup all resources to free memory."""
-    _cleanup_previous_resources()
+    # _cleanup_previous_resources() runs gc.collect() + torch.cuda.synchronize()
+    # + empty_cache() — can take hundreds of ms; offload to thread pool.
+    await asyncio.to_thread(_cleanup_previous_resources)
     return {"success": True, "message": "Resources cleaned up successfully"}
 
 

@@ -547,7 +547,11 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
     # SQLite and FAISS file handles are still open when unlink() runs, which
     # raises PermissionError on Windows and leaves a partially-deleted index
     # on any OS (#10). Mirrors the correct order used by handle_delete_project.
-    close_project_resources(current_project)
+    # close_project_resources() calls _cleanup_previous_resources() which
+    # blocks (gc.collect, torch.cuda ops, time.sleep(0.3)) — offload.
+    import asyncio
+
+    await asyncio.to_thread(close_project_resources, current_project)
 
     # Get project info for pattern matching
     project_path = Path(current_project).resolve()
@@ -557,50 +561,54 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
     new_hash = compute_drive_agnostic_hash(str(project_path))
     legacy_hash = compute_legacy_hash(str(project_path))
 
-    # Find ALL model directories for this project (check both patterns)
-    base_dir = get_storage_dir()
-    projects_dir = base_dir / "projects"
-    patterns = [f"{project_name}_{new_hash}_*", f"{project_name}_{legacy_hash}_*"]
+    # File deletion and snapshot removal can block on I/O — offload to thread pool.
+    def _delete_index_files() -> tuple[list[str], int]:
+        """Delete index files + Merkle snapshots; returns (cleared_dirs, snapshots_cleared)."""
+        _patterns = [
+            f"{project_name}_{new_hash}_*",
+            f"{project_name}_{legacy_hash}_*",
+        ]
+        _base_dir = get_storage_dir()
+        _projects_dir = _base_dir / "projects"
 
-    cleared_dirs = []
-    seen_dirs = set()  # Avoid processing same dir twice
+        _cleared: list[str] = []
+        _seen: set = set()
 
-    for pattern in patterns:
-        for model_dir in projects_dir.glob(pattern):
-            # Skip if already processed (in case both hashes match same dir)
-            if model_dir in seen_dirs:
-                continue
-            seen_dirs.add(model_dir)
+        for _pat in _patterns:
+            for _model_dir in _projects_dir.glob(_pat):
+                if _model_dir in _seen:
+                    continue
+                _seen.add(_model_dir)
 
-            # Delete BM25 directory
-            bm25_dir = model_dir / "index" / "bm25"
-            if bm25_dir.exists():
-                shutil.rmtree(bm25_dir)
-                logger.info(f"Deleted BM25 directory: {bm25_dir}")
+                # Delete BM25 directory
+                _bm25 = _model_dir / "index" / "bm25"
+                if _bm25.exists():
+                    shutil.rmtree(_bm25)
+                    logger.info(f"Deleted BM25 directory: {_bm25}")
 
-            # Delete dense index files
-            index_dir = model_dir / "index"
-            for file in ["code.index", "chunks_metadata.db", "stats.json"]:
-                filepath = index_dir / file
-                if filepath.exists():
-                    filepath.unlink()
-                    logger.info(f"Deleted: {filepath}")
+                # Delete dense index files
+                _idx_dir = _model_dir / "index"
+                for _fname in ["code.index", "chunks_metadata.db", "stats.json"]:
+                    _fp = _idx_dir / _fname
+                    if _fp.exists():
+                        _fp.unlink()
+                        logger.info(f"Deleted: {_fp}")
 
-            cleared_dirs.append(model_dir.name)
+                _cleared.append(_model_dir.name)
 
-    # Delete Merkle snapshots to ensure incremental re-indexing works correctly
-    snapshots_cleared = 0
-    try:
-        snapshot_mgr = SnapshotManager()
-        snapshots_cleared = snapshot_mgr.delete_all_snapshots(str(project_path))
-        logger.info(
-            f"Cleared {snapshots_cleared} Merkle snapshot(s) for {project_path}"
-        )
-    except Exception as e:
-        logger.warning(f"Failed to clear Merkle snapshots: {e}")
-        # Non-fatal - continue with index clearing
+        _snaps = 0
+        try:
+            _snap_mgr = SnapshotManager()
+            _snaps = _snap_mgr.delete_all_snapshots(str(project_path))
+            logger.info(f"Cleared {_snaps} Merkle snapshot(s) for {project_path}")
+        except Exception as _e:
+            logger.warning(f"Failed to clear Merkle snapshots: {_e}")
 
-    # Cleanup in-memory state
+        return _cleared, _snaps
+
+    cleared_dirs, snapshots_cleared = await asyncio.to_thread(_delete_index_files)
+
+    # Cleanup in-memory state (fast lock-guarded assignment, stays on event loop)
     state.reset_search_components()
 
     logger.info(f"Cleared indices for {len(cleared_dirs)} models: {cleared_dirs}")
@@ -938,34 +946,41 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
                 # Load config for chunker initialization
                 config = get_config()
 
-                # Initialize components using cached getter functions
+                # Initialize chunker eagerly (cheap, no I/O or model load).
                 chunker = MultiLanguageChunker(
                     str(directory_path),
                     include_dirs,
                     exclude_dirs,
                     enable_entity_tracking=config.performance.enable_entity_tracking,
                 )
-                embedder = get_embedder()
-                searcher_instance = get_searcher(str(directory_path))
-                indexer = (
-                    searcher_instance
-                    if config.search_mode.enable_hybrid
-                    else get_index_manager(str(directory_path))
-                )
 
-                # Run indexing (using helper) - in thread pool to avoid blocking event loop
+                # Capture loop-local values before entering the thread.
+                _dir = str(directory_path)
+                _enable_hybrid = config.search_mode.enable_hybrid
+                _incremental = incremental
+                _include = include_dirs
+                _exclude = exclude_dirs
+
+                # get_embedder() and get_searcher() can trigger multi-second model/
+                # index loads on first use — offload together with the indexing work
+                # so the event loop is never blocked during component initialisation.
                 import asyncio
 
-                result = await asyncio.to_thread(
-                    _run_indexing,
-                    indexer,
-                    embedder,
-                    chunker,
-                    str(directory_path),
-                    incremental,
-                    include_dirs,
-                    exclude_dirs,
-                )
+                def _setup_and_run():
+                    _embedder = get_embedder()
+                    _searcher = get_searcher(_dir)
+                    _indexer = _searcher if _enable_hybrid else get_index_manager(_dir)
+                    return _run_indexing(
+                        _indexer,
+                        _embedder,
+                        chunker,
+                        _dir,
+                        _incremental,
+                        _include,
+                        _exclude,
+                    )
+
+                result = await asyncio.to_thread(_setup_and_run)
 
                 # Build response (using helper)
                 return _build_index_response(

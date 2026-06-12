@@ -160,9 +160,27 @@ class MerkleDAG:
                 while chunk := f.read(8192):
                     sha256.update(chunk)
                     size += len(chunk)
-        except OSError:
-            # Handle permission errors or broken symlinks
-            sha256.update(str(file_path).encode())
+        except OSError as exc:
+            # Use an mtime-based sentinel instead of hashing the path (#49).
+            # Hashing the path produced a stable "hash" that matched across
+            # snapshots even when content changed during the unreadable window
+            # (missed modifications).
+            #
+            # Strategy: encode the file's mtime so the "hash" changes if the
+            # inode changes while unreadable.  Prefix with "UNREADABLE:" so it
+            # never collides with a real SHA-256 hex digest.  If stat also fails,
+            # fall back to an epoch-0 sentinel — still safe, because any change
+            # to the real file will flip the mtime on the next readable snapshot.
+            try:
+                mtime = str(int(file_path.stat().st_mtime))
+            except OSError:
+                mtime = "0"
+            sentinel = f"UNREADABLE:{mtime}"
+            logger.warning(
+                f"[MERKLE] Cannot read {file_path} — returning sentinel "
+                f"{sentinel!r} (will re-check next run): {exc}"
+            )
+            return sentinel, 0
 
         return sha256.hexdigest(), size
 

@@ -112,11 +112,21 @@ class ONNXEmbeddingModel:
 
         target_device = device or self.device
 
-        # Tokenize — let the tokenizer handle padding/truncation
+        # Tokenize with an explicit cap so no single chunk inflates the whole batch.
+        # The model may support up to 8192 tokens (e.g. BGE-M3), but without Flash-
+        # Attention the ORT path materializes a T×T attention matrix, so cost grows
+        # quadratically.  2048 aligns with t_eff in calculate_optimal_batch_size so
+        # the batch-sizer and the tokenizer share the same token-length contract (#46).
+        _raw_max = getattr(self.tokenizer, "model_max_length", 2048)
+        try:
+            _max_len = min(int(_raw_max), 2048)
+        except (TypeError, ValueError):
+            _max_len = 2048
         encoded = self.tokenizer(
             sentences,
             padding=True,
             truncation=True,
+            max_length=_max_len,
             return_tensors="pt",
         )
 

@@ -516,7 +516,9 @@ if __name__ == "__main__":
                     logger.info(
                         "[HTTP CLEANUP] Resource cleanup requested via /cleanup endpoint"
                     )
-                    _cleanup_previous_resources()
+                    # _cleanup_previous_resources() blocks (gc, CUDA ops, sleep) —
+                    # offload so the uvicorn event loop stays responsive.
+                    await asyncio.to_thread(_cleanup_previous_resources)
                     logger.info("[HTTP CLEANUP] Resources cleaned up successfully")
                     return JSONResponse(
                         {

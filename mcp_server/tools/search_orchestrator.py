@@ -679,7 +679,11 @@ class SearchOrchestrator:
 
             return await asyncio.to_thread(_handle_chunk_id_lookup, chunk_id)
 
-        plan = SearchPlanner().plan(arguments)
+        # SearchPlanner.plan() calls IntentClassifier.classify() which, when
+        # semantic_enabled=True (the default), runs embed_query() — a GPU forward
+        # pass per request.  It also probes the filesystem via _route_query_to_model.
+        # Offload to avoid blocking the event loop. plan() stays synchronous.
+        plan = await asyncio.to_thread(lambda: SearchPlanner().plan(arguments))
 
         if plan.redirect is not None:
             redirect = plan.redirect
@@ -697,7 +701,11 @@ class SearchOrchestrator:
                     f"{redirect.params.get('symbol_name')}"
                 )
                 try:
-                    _redirect_searcher = get_searcher(model_key=redirect.model_key)
+                    # get_searcher() can construct a HybridSearcher on cache-miss —
+                    # same reason the call 35 lines above is wrapped in to_thread.
+                    _redirect_searcher = await asyncio.to_thread(
+                        lambda: get_searcher(model_key=redirect.model_key)
+                    )
                     _redirect_result = await asyncio.to_thread(
                         _redirect_searcher.search,
                         redirect.params["symbol_name"],

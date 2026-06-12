@@ -177,10 +177,11 @@ class IntelligentSearcher(BaseSearcher):
                 for cid, sim, meta in similar_chunks[:2]  # Top 2 similar
             ]
 
-            # Add file context
+            # Add file context (folder_path only — total_chunks_in_file was
+            # returning the project-wide file count, not the per-file chunk count,
+            # and was read nowhere downstream so it has been removed (#45))
             # pyrefly: ignore [unsupported-operation]
             context_info["file_context"] = {
-                "total_chunks_in_file": self._count_chunks_in_file(relative_path),
                 "folder_path": "/".join(folder_structure) if folder_structure else None,
             }
 
@@ -200,14 +201,6 @@ class IntelligentSearcher(BaseSearcher):
             tags=metadata.get("tags", []),
             context_info=context_info,
         )
-
-    def _count_chunks_in_file(self, relative_path: str) -> int:
-        """Count total chunks in a specific file."""
-        stats = self.index_manager.get_stats()
-
-        # This is a simplified implementation
-        # In a real scenario, you might want to maintain this as a separate index
-        return stats.get("files_indexed", 0)
 
     def search_by_file_pattern(
         self,

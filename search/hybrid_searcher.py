@@ -1334,9 +1334,21 @@ class HybridSearcher(BaseSearcher):
                 "[CLEAR] Updated graph_storage reference after clear_index()"
             )
 
+        # Evict the metadata cache: stale entries (including cached-None lookups)
+        # from before the clear would otherwise survive and return wrong results
+        # after re-indexing the same file paths (#44).
+        self._metadata_cache.clear()
+        self._logger.debug("[CLEAR] Metadata cache cleared after clear_index()")
+
     def remove_file_chunks(self, file_path: str, project_name: str) -> int:
         """Remove chunks for a specific file from both indices. Delegates to IndexSynchronizer."""
-        return self.index_sync.remove_file_chunks(file_path, project_name)
+        removed = self.index_sync.remove_file_chunks(file_path, project_name)
+        # Evict all cache entries — a removed chunk's id could be reused after
+        # re-indexing the same file, so a cached-None or stale hit would be wrong (#44).
+        # Clearing wholesale is safe: it's a warm cache, not a source of truth.
+        if removed > 0:
+            self._metadata_cache.clear()
+        return removed
 
     def remove_multiple_files(self, file_paths: set, project_name: str) -> int:
         """Remove chunks for multiple files from both indices. Delegates to IndexSynchronizer."""
