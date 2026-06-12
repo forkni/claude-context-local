@@ -775,8 +775,6 @@ class IncrementalIndexer:
             logger.info(
                 f"Found {len(supported_files)} supported files out of {len(all_files)} total files"
             )
-            for sf in supported_files:
-                logger.info(f"  Supported: {sf}")
 
             # ========== Repository Profiling (Adaptive Sizing) ==========
             repo_profile = None
@@ -818,11 +816,12 @@ class IncrementalIndexer:
             )
             all_chunks = self._chunk_files_parallel(project_path, supported_files)
 
-            # Log any files that didn't produce chunks
+            # Log any files that didn't produce chunks (O(files+chunks) set lookup)
+            chunked_paths = {c.file_path for c in all_chunks}
             files_with_chunks = sum(
                 1
                 for f in supported_files
-                if any(c.file_path == str(Path(project_path) / f) for c in all_chunks)
+                if str(Path(project_path) / f) in chunked_paths
             )
             if files_with_chunks < len(supported_files):
                 logger.warning(
