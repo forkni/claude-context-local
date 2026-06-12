@@ -128,13 +128,20 @@ def _route_query_to_model(
             code_index_file = project_dir / "index" / "code.index"
 
             if code_index_file.exists():
-                # Routed model has valid index
-                return decision.model_key, {
+                # Routed model has valid index.
+                # Include rejected_model/rejected_score when the router fell back to the
+                # default due to low confidence — avoids the ambiguity where `confidence`
+                # is the *rejected* model's score but `model_selected` is the default.
+                routing_info: dict = {
                     "model_selected": decision.model_key,
                     "confidence": decision.confidence,
                     "reason": decision.reason,
                     "scores": decision.scores,
                 }
+                if decision.rejected_model is not None:
+                    routing_info["rejected_model"] = decision.rejected_model
+                    routing_info["rejected_score"] = decision.rejected_score
+                return decision.model_key, routing_info
             else:
                 logger.warning(
                     f"Routed model '{decision.model_key}' has no index. "

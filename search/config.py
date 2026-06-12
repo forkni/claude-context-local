@@ -888,7 +888,11 @@ class SearchConfigManager:
 
     def load_config(self) -> SearchConfig:
         """Load configuration from file and environment variables."""
-        # Check if file changed since last load
+        # Check if file changed since last load.
+        # stat() is called on every load_config() invocation to support hot-reload
+        # without a file-watcher thread (#61). A single stat() is ~1 µs — cheaper than
+        # any alternative that avoids it entirely — so this is intentional, not a
+        # performance concern. The cache hit-path (mtime unchanged) returns immediately.
         current_mtime = None
         _config_path = Path(self.config_file)
         if _config_path.exists():

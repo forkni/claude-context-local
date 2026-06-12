@@ -160,11 +160,16 @@ class ONNXEmbeddingModel:
             position_ids = position_ids.masked_fill(mask == 0, 1)
             encoded["position_ids"] = position_ids
 
-        # Move to target device
-        if target_device == "cuda":
-            encoded = {k: v.cuda() for k, v in encoded.items()}
+        # Move to target device.
+        # Use startswith("cuda") so "cuda:0" / "cuda:1" are handled correctly; .cuda()
+        # always targets device 0, causing an extra per-call H2D copy when a specific
+        # device is configured (#58).
+        if target_device.startswith("cuda"):
+            encoded = {k: v.to(target_device) for k, v in encoded.items()}
 
-        # Forward pass through ONNX Runtime
+        # Forward pass through ONNX Runtime.
+        # torch.no_grad() is a no-op here: ORT runs outside PyTorch autograd and
+        # optimum wraps its outputs in fresh tensors — it is kept for readability only.
         with torch.no_grad():
             output = self.ort_model(**encoded)
 

@@ -275,7 +275,12 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
             else result
         )
 
-        # Use compact JSON (no indent) for compact/toon formats, verbose for json format
+        # Use compact JSON (no indent) for compact/toon formats, verbose for json format.
+        # json.dumps runs inline on the event loop (#60). For typical search/index
+        # responses this is negligible (<1 ms). The only concern would be very large
+        # subgraph responses (find_connections with max_depth=5 on a dense graph); if
+        # that ever becomes a bottleneck, size-gate on len(result_text) and offload via
+        # asyncio.to_thread for payloads above ~1 MB.
         if output_format in ("compact", "ultra"):
             result_text = (
                 json.dumps(formatted_result, separators=(",", ":"))
@@ -307,7 +312,13 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
         raise
     except Exception as e:
         logger.error(f"[TOOL_ERROR] {name}: {e}", exc_info=True)
-        error_response = {"error": str(e), "tool": name, "arguments": arguments}
+        # Echo only argument keys (not values) to keep error payloads compact and avoid
+        # doubling log noise — exc_info=True above already captures full context (#62).
+        error_response = {
+            "error": str(e),
+            "tool": name,
+            "arguments_keys": list((arguments or {}).keys()),
+        }
         return [TextContent(type="text", text=json.dumps(error_response, indent=2))]
 
 

@@ -1188,13 +1188,17 @@ class CodeEmbedder:
         model_config = self._get_model_config()
         passage_prefix = model_config.get("passage_prefix", "")
 
-        # Ensure model is loaded BEFORE batch calculation (to get accurate VRAM)
-        # (model loads lazily on first encode() call - causes log interference)
+        # Ensure model is loaded BEFORE batch calculation (to get accurate VRAM).
+        # ModelLoader.load() already performs warmup + activation measurement on both
+        # backends, so accessing the property is enough — an extra encode(["warmup"])
+        # here was a redundant GPU forward pass (#57).
         if not hasattr(self, "_model_warmed_up") or not self._model_warmed_up:
             # pyrefly: ignore [missing-attribute]
             with self._lifecycle_lock:
                 # pyrefly: ignore [missing-attribute]
-                self.model.encode(["warmup"], show_progress_bar=False)
+                _ = (
+                    self.model
+                )  # property access triggers lazy load; warmup done in load()
             self._model_warmed_up = True
 
         # Log VRAM usage after model load
