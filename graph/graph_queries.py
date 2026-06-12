@@ -8,11 +8,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-
-try:
-    import networkx as nx
-except ImportError:
-    nx = None
+import networkx as nx
 
 from utils.path_utils import normalize_path
 
@@ -44,12 +40,6 @@ class GraphQueryEngine:
         Args:
             graph_storage: CodeGraphStorage instance
         """
-        if nx is None:
-            raise ImportError(
-                "NetworkX is required for graph queries. "
-                "Install with: pip install networkx"
-            )
-
         self.storage = graph_storage
         self.logger = logging.getLogger(__name__)
 
@@ -486,7 +476,6 @@ class GraphQueryEngine:
             (degree = total relationship sites, pagerank weighted by edge multiplicity)
             once dedicated value-shift tests are written.  Deferred from Batch 2A.
         """
-        # pyrefly: ignore [missing-attribute]
         return nx.DiGraph(self.storage.graph)
 
     def compute_centrality(self, method: str = "degree") -> dict[str, float]:
