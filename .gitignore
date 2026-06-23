@@ -277,6 +277,7 @@ docs/*
 !docs/VSCODE_SETUP.md
 !docs/VERSION_HISTORY.md
 !docs/OBSERVABILITY.md
+!docs/DSPY_SETUP.md
 
 # Development-only documentation (local-only)
 # - AUTOMATED_GIT_WORKFLOW.md (Claude orchestration guide - development only)
