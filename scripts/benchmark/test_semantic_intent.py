@@ -430,7 +430,7 @@ def print_classification_table(rows: list[dict[str, Any]]) -> None:
             if r.get("note"):
                 print(f"       note: {r['note']}")
 
-    _print_section(sscg_rows, "SSCG Golden Dataset (13 queries)")
+    _print_section(sscg_rows, f"SSCG Golden Dataset ({len(sscg_rows)} queries)")
     _print_section(novel_rows, "Novel Phrasings (8 queries -- not in keyword lists)")
 
     total = len(rows)

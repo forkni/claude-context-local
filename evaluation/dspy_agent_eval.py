@@ -45,7 +45,8 @@ logger = logging.getLogger(__name__)
 # Absolute path to the golden dataset shipped with this package.
 _GOLDEN_DATASET = Path(__file__).parent / "golden_dataset.json"
 
-# Categories whose expected tool is search_code (all categories with ground truth).
+# Categories whose expected tool is search_code (A/B/C).
+# Category D uses find_connections instead (connection/relationship queries).
 _SEARCH_CODE_CATEGORIES = {"A", "B", "C"}
 
 
@@ -74,6 +75,12 @@ class CodeNavQA(dspy.Signature):
        one module but the concept plausibly also lives in a sibling file.  Use synonyms,
        the names of likely-related symbols/files, and subsystem names as the second query.
        Aim for at least 2–3 diverse queries; do NOT finish after one.
+    4. For connection/relationship questions ("what calls X", "what does Y depend on",
+       "what inherits from Z"): first use search_code to locate the target chunk_id, then
+       call find_connections(chunk_id=<target_id>) to enumerate callers, callees, and
+       subclasses.  find_connections returns edges with resolver_confidence — prefer
+       lsp/libcst edges (exact) over ast edges (heuristic).  Do NOT attempt to answer
+       call-graph questions from search_code results alone.
 
     Selection (cast a wide net):
     Include the directly-named symbol AND closely-related siblings (definition + methods
@@ -122,6 +129,7 @@ class CodeNavQA(dspy.Signature):
 
 def load_examples(
     path: str | Path | None = None,
+    split: str | None = None,
 ) -> tuple[list[dspy.Example], dict]:
     """Load the SSCG golden dataset as a list of DSPy examples.
 
@@ -132,6 +140,9 @@ def load_examples(
     Args:
         path: Path to a golden-dataset JSON file.  Defaults to
             ``evaluation/golden_dataset.json`` relative to this module.
+        split: Optional split filter — ``"train"``, ``"val"``, or ``"test"``.
+            When ``None`` (default) all rows are returned (back-compatible).
+            Rows without a ``split`` field are included in all splits.
 
     Returns:
         A tuple ``(examples, thresholds)`` where ``examples`` is a list of
@@ -142,9 +153,11 @@ def load_examples(
         - ``question`` (InputField) — the query string.
         - ``expected`` — list of relevant chunk IDs (label ≥ 2).
         - ``expected_primary`` — list of highly-relevant chunk IDs (label = 3).
-        - ``category`` — ``"A"``, ``"B"``, or ``"C"``.
-        - ``expected_tool`` — ``"search_code"`` for all present categories.
+        - ``category`` — ``"A"``, ``"B"``, ``"C"``, or ``"D"``.
+        - ``expected_tool`` — ``"search_code"`` for A/B/C; ``"find_connections"``
+          for D (connection/relationship queries).
         - ``query_id`` — the ID string from the JSON (e.g. ``"Q01"``).
+        - ``split`` — ``"train"``, ``"val"``, or ``"test"`` (when present).
     """
     dataset_path = Path(path) if path else _GOLDEN_DATASET
     with open(dataset_path, encoding="utf-8") as fh:
@@ -152,8 +165,20 @@ def load_examples(
 
     examples = []
     for item in dataset.get("queries", []):
+        # Apply split filter when requested; rows without a split field pass through.
+        if split is not None:
+            row_split = item.get("split")
+            if row_split is not None and row_split != split:
+                continue
+
         category = item.get("category", "")
-        expected_tool = "search_code" if category in _SEARCH_CODE_CATEGORIES else None
+        if category == "D":
+            expected_tool = "find_connections"
+        elif category in _SEARCH_CODE_CATEGORIES:
+            expected_tool = "search_code"
+        else:
+            expected_tool = None
+
         ex = dspy.Example(
             question=item["query"],
             expected=item.get("expected", []),
@@ -161,14 +186,16 @@ def load_examples(
             category=category,
             expected_tool=expected_tool,
             query_id=item.get("id", ""),
+            split=item.get("split", ""),
         ).with_inputs("question")
         examples.append(ex)
 
     thresholds = dataset.get("thresholds", {})
     logger.info(
-        "Loaded %d examples from %s (thresholds=%s)",
+        "Loaded %d examples from %s (split=%s, thresholds=%s)",
         len(examples),
         dataset_path,
+        split or "all",
         thresholds,
     )
     return examples, thresholds

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """SSCG Automated Benchmark Runner.
 
-Evaluates retrieval quality against the 13-query SSCG golden dataset.
+Evaluates retrieval quality against the SSCG golden dataset (45 queries: A/B/C/D).
 Supports single-run evaluation and parameter sweep (config comparison).
 
 Inspired by DeepLearning.AI "Building and Evaluating Advanced RAG" patterns:
@@ -212,7 +212,10 @@ def run_benchmark(
         searcher: Initialized HybridSearcher instance.
         queries: List of query dicts from golden_dataset.json.
         k: Number of search results to retrieve.
-        category_filter: If set, only run queries in this category.
+        category_filter: If set, only run queries in this category.  When ``None``
+            (default), category D is excluded automatically — the pure-searcher
+            cannot traverse the call graph and D rows would score ~0 recall,
+            polluting the A/B/C aggregate.  Pass ``"D"`` explicitly to benchmark D.
         verbose: Print per-query details.
         line_lookup: Pre-built ``{normalized_chunk_id: (path, start, end)}`` lookup
             from ``_build_line_lookup``. When provided, line-overlap metrics
@@ -222,10 +225,18 @@ def run_benchmark(
     Returns:
         Tuple of (per_query_results, latencies).
     """
-    filtered = queries
     if category_filter:
         filtered = [q for q in queries if q.get("category") == category_filter]
         print(f"  Filtered to {len(filtered)} queries in category '{category_filter}'")
+    else:
+        # Exclude category D by default: this runner uses search_code only and cannot
+        # evaluate connection/call-graph queries.  Use --category D to run explicitly.
+        filtered = [q for q in queries if q.get("category") != "D"]
+        d_count = len(queries) - len(filtered)
+        if d_count:
+            print(
+                f"  Excluded {d_count} category-D queries (use --category D to include)"
+            )
 
     per_query: list[dict[str, Any]] = []
     latencies: list[float] = []
@@ -542,8 +553,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--category",
-        choices=["A", "B", "C"],
-        help="Filter queries by category (A=small_function, B=sibling, C=class_overview)",
+        choices=["A", "B", "C", "D"],
+        help=(
+            "Filter queries by category (A=small_function, B=sibling, C=class_overview, "
+            "D=connection). Category D is excluded by default because this runner uses "
+            "search_code only and cannot traverse the call graph; pass --category D to "
+            "run it explicitly (expect low recall — use find_connections for D queries)."
+        ),
     )
     parser.add_argument(
         "--bm25-weight",
