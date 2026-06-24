@@ -437,6 +437,22 @@ class TestTrajectoryRecallMetric:
         pred = _make_pred_with_trajectory([])
         assert trajectory_recall_metric(ex, pred, k=7) == 0.0
 
+    def test_expected_chunk_beyond_position_k_still_counts(self):
+        """Ceiling metric is unranked: an expected chunk at position 8 in a 10-item
+        surfaced set must count, even though k=7.  This prevents module/community
+        summary chunks in the first 7 positions from masking real method chunks."""
+        # Build 10 surfaced items; the expected one is at position 8 (0-indexed).
+        others = [
+            f'{{"chunk_id": "noise{i}.py:1-5:function:filler"}}' for i in range(9)
+        ]
+        target = '{"chunk_id": "target.py:10-20:method:Cls.expected"}'
+        # Interleave: 9 noise observations + 1 target, target is 10th item surfaced.
+        observations = others[:8] + [target] + others[8:]
+        ex = _make_example(expected=["target.py:method:Cls.expected"])
+        pred = _make_pred_with_trajectory(observations)
+        # With ceiling-k = len(surfaced) = 10, this should be 1.0; old k=7 = 0.0.
+        assert trajectory_recall_metric(ex, pred, k=7) == pytest.approx(1.0)
+
 
 # ---------------------------------------------------------------------------
 # Regression: verbatim raw chunk IDs still score correctly after normalisation

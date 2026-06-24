@@ -33,6 +33,7 @@ import dspy
 from evaluation.metrics import (
     aggregate_metrics,
     calculate_metrics_from_results,
+    calculate_recall_at_k,
     normalize_chunk_ids,
 )
 from utils.dspy_claude_code import ClaudeCodeLM
@@ -362,15 +363,14 @@ def trajectory_recall_metric(
         k: Recall cut-off (default 7).
 
     Returns:
-        Recall@k of the surfaced set in [0.0, 1.0].
+        Unranked recall of the surfaced set in [0.0, 1.0].  Uses ``k = len(surfaced)``
+        so ordering within the observation string (which places module/community
+        summary chunks first) does not hide method-level chunks at position 8+.
     """
     surfaced = _extract_chunk_ids_from_observations(getattr(pred, "trajectory", None))
-    scores = calculate_metrics_from_results(
-        retrieved=surfaced,
-        expected=example.expected,
-        expected_primary=example.get("expected_primary") or example.expected,
-    )
-    return float(scores.get(f"recall@{k}", 0.0))
+    # Ceiling metric: any chunk the tool surfaced counts, regardless of position.
+    ceiling_k = max(len(surfaced), k)
+    return float(calculate_recall_at_k(surfaced, example.expected, k=ceiling_k))
 
 
 # ---------------------------------------------------------------------------
@@ -406,13 +406,14 @@ async def _eval_one(
             )
 
             # Trajectory (tool ceiling) — what the tools actually surfaced
+            # Use k = len(surfaced) (unranked) so module/summary chunks in the
+            # first few positions of the raw observation don't mask method chunks
+            # that appear later in the same search result set.
             surfaced = _extract_chunk_ids_from_observations(traj)
-            traj_scores = calculate_metrics_from_results(
-                retrieved=surfaced,
-                expected=example.expected,
-                expected_primary=example.get("expected_primary") or example.expected,
+            ceiling_k = max(len(surfaced), k)
+            traj_recall = float(
+                calculate_recall_at_k(surfaced, example.expected, k=ceiling_k)
             )
-            traj_recall = float(traj_scores.get(f"recall@{k}", 0.0))
 
             # Tool-selection metric (separate from IR metrics)
             tool_score = tool_selection_metric(example, pred)
